@@ -8,8 +8,6 @@ export const remoteAccessMessages = {
   "remoteAccess.direct.help": "Kendi ağınız, VPN veya ters proxy üzerinden sunucu şifresiyle bağlanın. CodeNomad'e her yerden erişmek için yukarıdaki Uzaktan Kontrol daha basittir ve port açmaz.",
   "remoteAccess.sections.listeningMode.label": "Dinleme modu",
   "remoteAccess.sections.listeningMode.help": "Tüm arayüzlerde dinleyerek doğrudan bağlantılara izin verin veya bu sunucuyu yalnızca localhost'ta tutun. Uzaktan Kontrol bunu gerektirmez.",
-  "remoteAccess.toggle.on": "Açık",
-  "remoteAccess.toggle.off": "Kapalı",
   "remoteAccess.toggle.title": "Diğer IP'lerden bağlantılara izin ver",
   "remoteAccess.toggle.caption.all": "0.0.0.0 üzerinde dinleniyor",
   "remoteAccess.toggle.caption.local": "127.0.0.1 üzerinde dinleniyor",

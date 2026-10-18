@@ -5,6 +5,8 @@ import { useI18n } from "../lib/i18n"
 
 interface EnvironmentVariablesEditorProps {
   disabled?: boolean
+  /** Settings: the enclosing disclosure carries the title, count and explanation. */
+  bare?: boolean
 }
 
 const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (props) => {
@@ -62,15 +64,17 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
 
   return (
     <div class="space-y-3">
-      <div class="flex items-center gap-2 mb-3">
-        <Globe class="w-4 h-4 icon-muted" />
-        <span class="text-sm font-medium text-secondary">{t("envEditor.title")}</span>
-        <span class="text-xs text-muted">
-          {entries().length === 1
-            ? t("envEditor.count.one", { count: entries().length })
-            : t("envEditor.count.other", { count: entries().length })}
-        </span>
-      </div>
+      <Show when={!props.bare}>
+        <div class="flex items-center gap-2 mb-3">
+          <Globe class="w-4 h-4 icon-muted" />
+          <span class="text-sm font-medium text-secondary">{t("envEditor.title")}</span>
+          <span class="text-xs text-muted">
+            {entries().length === 1
+              ? t("envEditor.count.one", { count: entries().length })
+              : t("envEditor.count.other", { count: entries().length })}
+          </span>
+        </div>
+      </Show>
 
       {/* Existing variables */}
       <Show when={entries().length > 0}>
@@ -78,13 +82,13 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
           <For each={entries()}>
             {([key, value]) => (
               <div class="flex items-center gap-2">
-                <div class="flex-1 flex items-center gap-2">
+                <div class="flex-1 min-w-0 flex items-center gap-2">
                   <Key class="w-3.5 h-3.5 icon-muted flex-shrink-0" />
                   <input
                     type="text"
                     value={key}
                     disabled={props.disabled}
-                    class="flex-1 px-2.5 py-1.5 text-sm bg-surface-secondary border border-base text-muted cursor-not-allowed"
+                    class="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-surface-secondary border border-base text-muted cursor-not-allowed"
                     placeholder={t("envEditor.fields.name.placeholder")}
                     title={t("envEditor.fields.name.readOnlyTitle")}
                   />
@@ -93,7 +97,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
                     value={value}
                     disabled={props.disabled}
                     onInput={(e) => handleUpdateVariable(key, e.currentTarget.value)}
-                    class="flex-1 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+                    class="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
                     placeholder={t("envEditor.fields.value.placeholder")}
                     autocomplete={isSecureEnvVar(key) ? "new-password" : "off"}
                     spellcheck={isSecureEnvVar(key) ? false : undefined}
@@ -127,8 +131,8 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
       </Show>
 
       {/* Add new variable */}
-      <div class="flex items-center gap-2 pt-2 border-t border-base">
-        <div class="flex-1 flex items-center gap-2">
+      <div class="flex items-center gap-2" classList={{ "pt-2 border-t border-base": !props.bare || entries().length > 0 }}>
+        <div class="flex-1 min-w-0 flex items-center gap-2">
           <Key class="w-3.5 h-3.5 icon-muted flex-shrink-0" />
           <input
             type="text"
@@ -136,7 +140,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             onInput={(e) => setNewKey(e.currentTarget.value)}
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
-            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={t("envEditor.fields.name.placeholder")}
           />
           <input
@@ -145,7 +149,7 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
             onInput={(e) => setNewValue(e.currentTarget.value)}
             onKeyPress={handleKeyPress}
             disabled={props.disabled}
-            class="flex-1 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex-1 min-w-0 px-2.5 py-1.5 text-sm bg-surface-field border border-base text-primary focus-ring-accent disabled:opacity-50 disabled:cursor-not-allowed"
             placeholder={t("envEditor.fields.value.placeholder")}
             autocomplete="new-password"
           />
@@ -172,15 +176,17 @@ const EnvironmentVariablesEditor: Component<EnvironmentVariablesEditorProps> = (
         </button>
       </div>
 
-      <Show when={entries().length === 0}>
-        <div class="text-xs text-muted text-center py-2">
-          {t("envEditor.empty")}
+      <Show when={!props.bare}>
+        <Show when={entries().length === 0}>
+          <div class="text-xs text-muted text-center py-2">
+            {t("envEditor.empty")}
+          </div>
+        </Show>
+
+        <div class="text-xs text-muted mt-2">
+          {t("envEditor.help")}
         </div>
       </Show>
-
-      <div class="text-xs text-muted mt-2">
-        {t("envEditor.help")}
-      </div>
     </div>
   )
 }

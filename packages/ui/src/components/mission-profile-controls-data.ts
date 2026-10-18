@@ -35,6 +35,21 @@ export function changeMissionProfile(profiles: MissionProfiles | undefined, role
   } : undefined
 }
 
+/** A mission type's own choice for one role: any execution, even the all-native `{}`,
+ *  overrides the inherited global one; `undefined` inherits it again. */
+export function setMissionProfileRole(profiles: MissionProfiles | undefined, role: string, execution?: MissionExecution): MissionProfiles | undefined {
+  const choice = execution && { ...(execution.agent ? { agent: execution.agent } : {}), ...(execution.model ? { model: execution.model } : {}) }
+  const coordinator = role === "coordinator" ? choice : profiles?.coordinator
+  const roles = { ...profiles?.roles }
+  if (role !== "coordinator") {
+    if (choice) roles[role] = choice
+    else delete roles[role]
+  }
+  return coordinator || Object.keys(roles).length ? {
+    ...(coordinator ? { coordinator } : {}), ...(Object.keys(roles).length ? { roles } : {}),
+  } : undefined
+}
+
 /** An explicit template change drops only presets that are not legal there. */
 export function profilesForTemplate(profiles: MissionProfiles | undefined, template: MissionTemplateId): MissionProfiles | undefined {
   if (!profiles) return undefined

@@ -28,6 +28,11 @@ const text = (page: Page, key: string) => page.evaluate(key => window.missionDef
 const ensureOptions = async (page: Page) => { const summary = page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }); if (!await summary.evaluate(item => (item.parentElement as HTMLDetailsElement).open)) await summary.click() }
 const openProfiles = async (page: Page) => { await ensureOptions(page); await page.locator("summary").filter({ hasText: await text(page, "missions.create.agents") }).click() }
 const openModels = ensureOptions
+/** Settings folds every agent/model choice under one "Agents and models" disclosure. */
+const openSettingsProfiles = async (page: Page) => {
+  const summary = page.locator(".mission-profiles-disclosure > summary")
+  if (!await summary.evaluate(item => (item.parentElement as HTMLDetailsElement).open)) await summary.click()
+}
 const toggleOptions = (page: Page) => page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
 const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create"
 const pickBrief = async (page: Page, id: string) => page.getByLabel(await text(page, "missions.create.brief.start"), { exact: true }).selectOption(id)
@@ -38,6 +43,14 @@ const nameBrief = async (page: Page, name: string) => {
 const briefMenu = async (page: Page, key: string) => {
   await page.getByRole("button", { name: await text(page, "missions.create.brief.more"), exact: true }).click()
   await page.getByRole("menuitem", { name: await text(page, key), exact: true }).click()
+}
+/** Settings save each choice at once: wait until the nth write reached the server and its reply is applied. */
+async function waitForWrites(page: Page, fixture: { writes: unknown[] }, count: number) {
+  for (let attempt = 0; fixture.writes.length < count; attempt++) {
+    if (attempt > 500) throw new Error(`Expected ${count} writes, saw ${fixture.writes.length}`)
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+  await page.waitForFunction(() => window.missionDefaultsModels.loaded())
 }
 const dispatchOwner = (page: Page, owner: Record<string, unknown>) => page.evaluate(async value => {
   const path = "/src/lib/server-events.ts", { serverEvents } = await import(path)
@@ -169,32 +182,63 @@ test("saved models store briefs only and manual use creates fresh authority requ
   } finally { await page.close() }
 })
 
-test("global preference drafts survive tab remount; explicit reload confirms discard and pending writes stay locked", async () => {
+test("each preference choice saves at once; edits made during a write keep focus, queue behind it and survive remount", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
+  let release!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
-    assert.equal(await page.evaluate(() => window.missionDefaultsModels.discard()), true)
-    await page.getByRole("button", { name: await text(page, "missions.defaults.reset"), exact: true }).click()
+    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).count(), 0, "no separate save step")
+    const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
+    await page.route("**/api/storage/config/ui*", async route => { if (route.request().method() !== "GET") await hold; return route.fallback() })
+    await mode.focus(); await mode.selectOption("independent")
+    assert.equal(await mode.evaluate(element => element === document.activeElement), true, "a running write never disables the focused field")
+    await page.locator(".mission-preferences-scope select").selectOption("debug")
+    await mode.selectOption("native")
     await page.evaluate(() => window.missionDefaultsModels.view("closed"))
+    assert.equal(await page.evaluate(() => window.missionDefaultsModels.discard()), true, "no unsaved draft can trap navigation")
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
-    await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor()
-    const discarded = page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).click()
-    await page.getByRole("dialog").waitFor()
-    await page.getByRole("button", { name: await text(page, "settings.configFiles.confirmDiscard.cancelLabel"), exact: true }).click()
-    await discarded
-    assert.equal(await page.getByRole("button", { name: "Save", exact: true }).isDisabled(), false)
-    let release!: () => void
-    const hold = new Promise<void>(resolve => { release = resolve })
-    await page.route("**/api/storage/config/ui*", async route => { await hold; return route.fulfill({ json: { settings: { missionProfileDefaults: [] } } }) })
-    await page.getByRole("button", { name: "Save", exact: true }).click()
-    assert.equal(await page.getByRole("button", { name: await text(page, "missions.defaults.reload"), exact: true }).isDisabled(), true)
+    assert.equal(await mode.inputValue(), "native", "queued edits show at once, across remount")
+    assert.equal(fixture.writes.length, 0)
     release()
-    await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor({ state: "hidden" })
-    await page.evaluate(() => window.missionDefaultsModels.view("closed"))
-    assert.equal(await page.evaluate(() => window.missionDefaultsModels.discard()), true, "unmounted guard cannot trap navigation")
+    await page.waitForFunction(() => window.missionDefaultsModels.loaded() && window.missionDefaultsModels.preferences().missionProfileDefaults.length === 2)
+    assert.deepEqual(fixture.writes.map(write => write.settings.missionProfileDefaults), [
+      [{ template: "all", profiles: {}, taskMode: "independent" }],
+      [{ template: "all", profiles: {}, taskMode: "independent" }, { template: "debug", profiles: {}, taskMode: "native" }],
+    ], "each edit applies to the value stored at its turn")
     assert.deepEqual(fixture.errors, [])
-  } finally { await page.close() }
+  } finally { release(); await page.close() }
+})
+
+test("a rejected choice is not resent: later edits built on it are dropped and the stored values show again", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
+  let release!: () => void
+  const hold = new Promise<void>(resolve => { release = resolve })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.evaluate(() => window.missionDefaultsModels.view("settings"))
+    const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
+    await page.route("**/api/storage/config/ui*", async route => { if (route.request().method() !== "GET") await hold; return route.fallback() })
+    await mode.selectOption("independent")
+    await page.locator(".mission-preferences-scope select").selectOption("debug")
+    await mode.selectOption("native")
+    // Another window changes the document before the held write reaches the server.
+    fixture.replace({ ...fixture.bucket(), settings: { ...fixture.bucket().settings, missionProfileDefaults: [{ template: "wayfinder", profiles: {}, taskMode: "independent" }] } })
+    release()
+    await page.getByRole("alert").filter({ hasText: await text(page, "missions.defaults.error") }).waitFor()
+    await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    assert.equal(fixture.writes.length, 0, "the conflict is rejected and the queued edit is never sent")
+    assert.equal(await mode.inputValue(), "inherit", "the stored value replaces the dropped edit")
+    await page.locator(".mission-preferences-scope select").selectOption("wayfinder")
+    assert.equal(await mode.inputValue(), "independent")
+    await page.locator(".mission-preferences-scope select").selectOption("delivery")
+    await mode.selectOption("native")
+    await page.getByRole("alert").filter({ hasText: await text(page, "missions.defaults.error") }).waitFor({ state: "hidden" })
+    await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionProfileDefaults.some(item => item.template === "delivery"))
+    assert.equal(fixture.writes.length, 1)
+    assert.deepEqual(fixture.errors, [])
+  } finally { release(); await page.close() }
 })
 
 test("failed UI-owner reads stay fenced despite general readiness and server/state updates, then explicit reload recovers", async () => {
@@ -252,7 +296,10 @@ test("invalid documents cannot masquerade as empty; explicit repair uses raw con
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).isDisabled(), true)
     assert.equal(fixture.writes.length, 0)
     await page.getByRole("button", { name: await text(page, "missions.defaults.reset"), exact: true }).click()
-    await page.getByRole("button", { name: "Save", exact: true }).click()
+    await page.getByRole("dialog").getByRole("button", { name: await text(page, "missions.control.cancel"), exact: true }).click()
+    assert.equal(fixture.writes.length, 0, "repairing asks first")
+    await page.getByRole("button", { name: await text(page, "missions.defaults.reset"), exact: true }).click()
+    await page.getByRole("dialog").getByRole("button", { name: await text(page, "missions.defaults.reset"), exact: true }).click()
     await page.waitForFunction(() => !document.querySelector<HTMLSelectElement>('select[aria-label="Coordinator · Agent"]')?.disabled)
     await page.getByRole("button", { name: await text(page, "missions.models.reset"), exact: true }).click()
     await page.getByRole("dialog").getByRole("button", { name: await text(page, "missions.models.reset"), exact: true }).click()
@@ -376,36 +423,73 @@ test("a saved brief manually creates independent fresh requests and explicit rem
   } finally { await page.close() }
 })
 
-test("scenario native defaults remain explicit while the inherit choice restores the global baseline", async () => {
+test("a mission type's rows show the inherited global values, customize from them and keep native default distinct from inherit", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, { missionProfileDefaults: [{ template: "custom", profiles }] })
+  const wayfinder = () => window.missionDefaultsModels.preferences().missionProfileDefaults.find(item => item.template === "wayfinder")?.profiles
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
     await page.locator('.mission-preferences-scope select').selectOption("wayfinder")
-    const mode = page.locator(".mission-default-inheritance select").first()
-    assert.equal(await mode.inputValue(), "inherit")
-    await mode.selectOption("native")
-    await page.getByRole("button", { name: "Save", exact: true }).click()
-    await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionProfileDefaults.some(item => item.template === "wayfinder"))
-    assert.deepEqual(fixture.bucket().settings.missionProfileDefaults.find((item: { template: string }) => item.template === "wayfinder").profiles.coordinator, {})
-    await mode.selectOption("inherit")
-    await page.getByRole("button", { name: "Save", exact: true }).click()
-    await page.waitForFunction(() => window.missionDefaultsModels.preferences().missionProfileDefaults.find(item => item.template === "wayfinder")?.profiles.coordinator === undefined)
+    await openSettingsProfiles(page)
+    assert.equal(await page.locator(".mission-default-inheritance").count(), 0, "one row per role, no second selector level")
+    const row = page.locator(".mission-profile-row").filter({ has: page.getByLabel("Coordinator · Agent", { exact: true }) })
+    const agent = row.getByLabel("Coordinator · Agent", { exact: true }), model = row.getByLabel("Coordinator · Model", { exact: true })
+    await agent.locator('option[value="root"]').waitFor({ state: "attached" })
+    assert.equal(await agent.inputValue(), "root", "an inherited role shows the global value it really uses")
+    assert.equal(await model.inputValue(), JSON.stringify(["p", "m"]))
+    assert.equal(await row.locator(".mission-profile-origin").innerText(), await text(page, "missions.defaults.fromGlobal"))
+    assert.equal(await page.getByLabel("Cartographer · Agent", { exact: true }).inputValue(), "child", "task roles inherit the global Tasks profile")
+    await agent.selectOption("all")
+    await waitForWrites(page, fixture, 1)
+    assert.deepEqual(fixture.writes[0].settings.missionProfileDefaults.find((item: { template: string }) => item.template === "wayfinder").profiles,
+      { coordinator: { agent: "all", model: { providerID: "p", id: "m", variant: "high" } } }, "changing the agent keeps the global model")
+    assert.equal(await row.locator(".mission-profile-origin").count(), 0)
+    await agent.selectOption(""); await waitForWrites(page, fixture, 2)
+    await model.selectOption(""); await waitForWrites(page, fixture, 3)
+    assert.deepEqual(await page.evaluate(wayfinder), { coordinator: {} }, "an all-native choice stays an explicit override, not inherit")
+    assert.equal(await agent.inputValue(), "")
+    const revert = row.getByRole("button", { name: await page.evaluate(() => window.missionDefaultsModels.text("missions.defaults.revert").replace("{role}", "Coordinator")), exact: true })
+    await revert.click(); await waitForWrites(page, fixture, 4)
+    assert.equal(await page.evaluate(wayfinder), undefined, "reverting inherits the global values again")
+    assert.equal(await agent.inputValue(), "root")
+    assert.equal(await agent.evaluate(element => element === document.activeElement), true, "focus stays in the row after its revert button leaves")
     await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
-    assert.equal(fixture.writes.length, 2)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
 
-test("earlier unrelated SSE during Save B is reconciled from owner authority before a fresh editor freezes profile B", async () => {
+test("Reset inside Agents and models clears only the shown scope's agents and models, after confirmation", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const fixture = await setup(page, { missionProfileDefaults: [{ template: "all", profiles, taskMode: "independent" }, { template: "debug", profiles: { coordinator: { agent: "root" } } }] })
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
+    await page.evaluate(() => window.missionDefaultsModels.view("settings"))
+    await openSettingsProfiles(page)
+    const reset = page.locator(".mission-profiles-disclosure").getByRole("button", { name: await text(page, "missions.defaults.resetProfiles"), exact: true })
+    await reset.click()
+    await page.getByRole("dialog").getByRole("button", { name: await text(page, "missions.control.cancel"), exact: true }).click()
+    assert.equal(fixture.writes.length, 0)
+    await reset.click()
+    await page.getByRole("dialog").getByRole("button", { name: await text(page, "missions.preferences.reset"), exact: true }).click()
+    await waitForWrites(page, fixture, 1)
+    assert.deepEqual(fixture.writes[0].settings.missionProfileDefaults, [
+      { template: "debug", profiles: { coordinator: { agent: "root" } } }, { template: "all", profiles: {}, taskMode: "independent" },
+    ], "the task-session policy and other Mission types are kept")
+    assert.equal(await reset.isDisabled(), true, "nothing left to reset")
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("earlier unrelated SSE during write B is reconciled from owner authority before a fresh editor freezes profile B", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page, { missionProfileDefaults: [{ template: "custom", profiles }] })
   let release!: () => void, started!: () => void, reads = 0
   const hold = new Promise<void>(resolve => { release = resolve }), reached = new Promise<void>(resolve => { started = resolve })
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
+    await openSettingsProfiles(page)
     const agent = page.getByLabel("Coordinator · Agent", { exact: true })
-    await agent.locator('option[value="all"]').waitFor({ state: "attached" }); await agent.selectOption("all")
+    await agent.locator('option[value="all"]').waitFor({ state: "attached" })
     await page.route("**/api/storage/config/ui*", async route => {
       if (route.request().method() === "GET") { reads++; return route.fallback() }
       const body = route.request().postDataJSON()
@@ -415,7 +499,7 @@ test("earlier unrelated SSE during Save B is reconciled from owner authority bef
       started(); await hold
       return route.fulfill({ json: fixture.bucket() })
     })
-    await page.getByRole("button", { name: "Save", exact: true }).click(); await reached
+    await agent.selectOption("all"); await reached
     await dispatchOwner(page, { settings: { missionProfileDefaults: [{ template: "custom", profiles }], unrelated: "earlier-window-field" } })
     release()
     await page.waitForFunction(() => window.missionDefaultsModels.loaded() && window.missionDefaultsModels.preferences().missionProfileDefaults[0]?.profiles.coordinator?.agent === "all")
@@ -549,8 +633,7 @@ test("new independent Missions freeze task policy and expose only primary/all ta
     assert.equal(await mode.inputValue(), "independent")
     assert.equal(fixture.reads.length, 0)
     await openProfiles(page)
-    await page.locator("form.mission-editor").getByText("Optional task presets", { exact: true }).click()
-    const task = page.getByLabel("Default task · Agent", { exact: true })
+    const task = page.getByLabel("Tasks · Agent", { exact: true })
     await task.locator('option[value="root"]').waitFor({ state: "attached" })
     assert.equal(await task.locator('option[value="child"]').count(), 0)
     assert.equal(await page.getByLabel("Coordinator · Agent", { exact: true }).locator('option[value="child"]').count(), 0)
@@ -585,15 +668,13 @@ test("playbook task policy can inherit again without resetting profiles or other
     const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
     assert.equal(await mode.inputValue(), "native")
     await mode.selectOption("inherit")
-    await page.getByRole("button", { name: "Save", exact: true }).click()
-    await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor({ state: "hidden" })
+    await waitForWrites(page, fixture, 1)
     assert.deepEqual(fixture.writes[0].settings.missionProfileDefaults, [
       { template: "all", profiles: {}, taskMode: "independent" },
       { template: "wayfinder", profiles: { coordinator: { agent: "root" } } },
     ])
     await scope.selectOption("all"); await mode.selectOption("native")
-    await page.getByRole("button", { name: "Save", exact: true }).click()
-    await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor({ state: "hidden" })
+    await waitForWrites(page, fixture, 2)
     await scope.selectOption("wayfinder")
     assert.equal(await mode.inputValue(), "inherit")
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
@@ -605,7 +686,7 @@ test("playbook task policy can inherit again without resetting profiles or other
   } finally { await page.close() }
 })
 
-test("reset then a Flexible-only exception save keeps other Mission types unchanged after reload", async () => {
+test("a Flexible-only exception keeps other Mission types unchanged after reload", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   const fixture = await setup(page, { missionProfileDefaults: [{ template: "custom", profiles: {}, taskMode: "independent" }] })
   try {
@@ -613,13 +694,13 @@ test("reset then a Flexible-only exception save keeps other Mission types unchan
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
     const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
     assert.equal(await mode.inputValue(), "independent", "an old global Flexible record still reads as global")
-    await page.getByRole("button", { name: await text(page, "missions.defaults.reset"), exact: true }).click()
+    await mode.selectOption("native")
+    await waitForWrites(page, fixture, 1)
     await page.locator(".mission-preferences-scope select").selectOption("custom")
     await mode.selectOption("independent")
-    await page.getByRole("button", { name: "Save", exact: true }).click()
-    await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor({ state: "hidden" })
+    await waitForWrites(page, fixture, 2)
     assert.deepEqual(fixture.writes.at(-1)!.settings.missionProfileDefaults, [
-      { template: "all", profiles: {} }, { template: "custom", profiles: {}, taskMode: "independent" },
+      { template: "all", profiles: {}, taskMode: "native" }, { template: "custom", profiles: {}, taskMode: "independent" },
     ])
     await page.reload(); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
@@ -635,15 +716,14 @@ test("reset then a Flexible-only exception save keeps other Mission types unchan
   } finally { await page.close() }
 })
 
-test("native task defaults and independent preference edits keep global CAS drafts across remount without mutating existing Missions", async () => {
+test("native task defaults and an independent preference edit save once, compare-and-swapped, without mutating existing Missions", async () => {
   const page = await browser.newPage({ locale: "en-US" }), fixture = await setup(page)
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels.loaded())
     await ensureOptions(page)
     assert.equal(await page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true }).inputValue(), "native")
     await openProfiles(page)
-    await page.locator("form.mission-editor").getByText("Optional task presets", { exact: true }).click()
-    const task = page.getByLabel("Default task · Agent", { exact: true })
+    const task = page.getByLabel("Tasks · Agent", { exact: true })
     await task.locator('option[value="child"]').waitFor({ state: "attached" })
     assert.equal(await task.locator('option[value="root"]').count(), 0)
     await task.selectOption("child")
@@ -653,10 +733,9 @@ test("native task defaults and independent preference edits keep global CAS draf
     await page.evaluate(() => window.missionDefaultsModels.view("settings"))
     const mode = page.getByLabel(await text(page, "missions.taskMode.label"), { exact: true })
     await mode.selectOption("independent")
+    await waitForWrites(page, fixture, 1)
     await page.evaluate(() => window.missionDefaultsModels.view("closed")); await page.evaluate(() => window.missionDefaultsModels.view("settings"))
     assert.equal(await mode.inputValue(), "independent")
-    await page.getByRole("button", { name: "Save", exact: true }).click()
-    await page.getByText(await text(page, "missions.preferences.unsaved"), { exact: true }).waitFor({ state: "hidden" })
     assert.deepEqual(fixture.writes, [{ settings: { missionProfileDefaults: [{ template: "all", profiles: {}, taskMode: "independent" }] } }])
     assert.equal(fixture.creates.length, 0)
     assert.deepEqual(fixture.errors, [])

@@ -60,14 +60,14 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     ["cacheRead", data.tokens.cache.read], ["cacheWrite", data.tokens.cache.write], ["activeDays", data.activeDays], ["streak", data.streak],
   ] as const : [] })
   return <section class="settings-card usage-dashboard">
-    <h3>{t("settings.usage.title")}</h3>
-    <p>{t("settings.usage.scope")}</p>
+    <h3 class="settings-card-title">{t("settings.usage.title")}</h3>
+    <p class="settings-card-subtitle">{t("settings.usage.scope")}</p>
     <Show when={instanceId()} fallback={<p role="status">{t("settings.usage.noProject")}</p>}>
       <div class="usage-toolbar">
         <label>{t("settings.usage.period")}<select class="selector-trigger" aria-label={t("settings.usage.period")} value={days()} onChange={event => setDays(Number(event.currentTarget.value))}>
           <For each={[7, 30, 90, 365]}>{count => <option value={count}>{t("settings.usage.days", { count })}</option>}</For>
         </select></label>
-        <button class="selector-button" type="button" disabled={busy()} onClick={() => refresh()}>{t("settings.providers.refresh")}</button>
+        <button class="selector-button selector-button-secondary" type="button" disabled={busy()} onClick={() => refresh()}>{t("settings.providers.refresh")}</button>
       </div>
       <Show when={busy()}><p role="status">{t("settings.usage.loading")}</p></Show>
       <Show when={error()}><p role="alert">{t("settings.usage.error")}</p></Show>
@@ -77,13 +77,13 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
           <For each={metrics()}>{([label, value]) => <div><dt>{t(`settings.usage.${label}`)}</dt><dd>{number(value)}</dd></div>}</For>
           <div><dt>{t("settings.usage.cost")}</dt><dd>{money(data().stats.cost)}</dd></div>
         </dl>
-        <p>{t("settings.usage.costHint")}</p>
-        <h4>{t("settings.usage.models")}</h4>
+        <p class="settings-inline-note">{t("settings.usage.costHint")}</p>
+        <h4 class="settings-card-section-title">{t("settings.usage.models")}</h4>
         <div class="usage-table-scroll"><table>
           <thead><tr><th>{t("settings.usage.model")}</th><th>{t("settings.usage.steps")}</th><th>{t("settings.usage.input")}</th><th>{t("settings.usage.output")}</th><th>{t("settings.usage.cost")}</th></tr></thead>
           <tbody><For each={data().stats.models}>{model => <tr><th scope="row">{model.model.providerID}/{model.model.id}{model.model.variant ? ` · ${model.model.variant}` : ""}</th><td>{number(model.steps)}</td><td>{number(model.tokens.input)}</td><td>{number(model.tokens.output)}</td><td>{money(model.cost)}</td></tr>}</For></tbody>
         </table></div>
-        <h4>{t("settings.usage.activity")}</h4>
+        <h4 class="settings-card-section-title">{t("settings.usage.activity")}</h4>
         <div class="usage-activity"><For each={data().stats.activity}>{day => <div><time datetime={day.date}>{day.date}</time><meter min="0" max={Math.max(1, ...data().stats.activity.map(item => item.steps))} value={day.steps} aria-label={`${day.date} · ${t("settings.usage.steps")}`} /><span>{number(day.steps)}</span></div>}</For></div>
       </>}</Show>
     </Show>

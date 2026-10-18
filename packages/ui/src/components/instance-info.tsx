@@ -54,20 +54,20 @@ const InstanceInfo: Component<InstanceInfoProps> = (props) => {
       if (!confirmed || binary !== serverSettings().opencodeBinary || openCodeSetupBusy()) return
       const status = await runOpenCodeSetup("reload", { resumeWorkspace: false })
       if (status) {
-        showToastNotification({
+        showToastNotification({ category: "opencode",
           message: t("settings.opencode.setup.reloaded"),
           variant: "success",
           duration: 8000,
         })
       } else {
-        showToastNotification({
+        showToastNotification({ category: "opencode",
           message: t("settings.opencode.setup.actionFailed"),
           variant: "error",
         })
       }
     } catch (error) {
       log.error("Failed to reload OpenCode configuration", error)
-      showToastNotification({
+      showToastNotification({ category: "opencode",
         message: t("settings.opencode.setup.actionFailed"),
         variant: "error",
       })

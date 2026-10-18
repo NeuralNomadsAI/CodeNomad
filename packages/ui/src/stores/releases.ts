@@ -51,7 +51,7 @@ function ensureVisibilityEffect() {
 
     if (!activeToast || activeToastKey !== key) {
       dismissActiveToast()
-      activeToast = showToastNotification({
+      activeToast = showToastNotification({ category: "updates",
         title: support.message ?? tGlobal("releases.upgradeRequired.title"),
         message: support.latestServerVersion
           ? tGlobal("releases.upgradeRequired.message.withVersion", { version: support.latestServerVersion })
@@ -121,7 +121,7 @@ function maybeNotifyUiUpdated(meta: ServerMeta) {
   if (meta.ui?.source !== "downloaded") return
   if (!isSemverUpgrade(previousVersion, currentVersion)) return
 
-  showToastNotification({
+  showToastNotification({ category: "updates",
     title: tGlobal("releases.uiUpdated.title"),
     message: tGlobal("releases.uiUpdated.message", { version: currentVersion }),
     variant: "success",
@@ -141,7 +141,7 @@ function maybeNotifyDevReleaseAvailable(meta: ServerMeta) {
 
   safeWriteLocalStorage(DEV_RELEASE_STORAGE_KEY, update.version)
 
-  showToastNotification({
+  showToastNotification({ category: "updates",
     title: tGlobal("releases.devUpdateAvailable.title"),
     message: tGlobal("releases.devUpdateAvailable.message", { version: update.version }),
     variant: "info",

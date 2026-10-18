@@ -31,14 +31,13 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
   return (
     <div class="settings-section-stack">
       <div class="settings-card">
-        <div class="settings-card-header">
+        <div class="settings-card-header settings-language-row">
           <div>
             <h3 class="settings-card-title">{t("folderSelection.language.ariaLabel")}</h3>
             <p class="settings-card-subtitle">{t("settings.general.language.subtitle")}</p>
           </div>
-          <span class="settings-scope-badge">{t("settings.scope.device")}</span>
+          <LocaleSelector />
         </div>
-        <LocaleSelector />
       </div>
       <ThemeSchemeSettings />
 

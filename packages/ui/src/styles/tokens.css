@@ -37,6 +37,8 @@
   --border-muted: #e0e0e0;
   --border-strong: color-mix(in oklab, var(--border-base) 62%, var(--text-primary));
   --border-divider: color-mix(in oklab, var(--border-base) 82%, var(--text-primary));
+  /* Between rows inside one group; --border-divider separates the groups themselves. */
+  --border-row: color-mix(in oklab, var(--border-base) 78%, transparent);
   
   /* Text tokens */
   --text-primary: #111827;

@@ -219,13 +219,13 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
   const handleCopyPath = async (directory: string) => {
     try {
       const ok = await copyToClipboard(directory)
-      showToastNotification({
+      showToastNotification({ category: "copy",
         message: t(ok ? "instanceShell.filesShell.toast.copyPathSuccess" : "instanceShell.filesShell.toast.copyPathError"),
         variant: ok ? "success" : "error",
       })
     } catch (error) {
       log.error("Failed to copy worktree path", error)
-      showToastNotification({ message: t("instanceShell.filesShell.toast.copyPathError"), variant: "error" })
+      showToastNotification({ category: "copy", message: t("instanceShell.filesShell.toast.copyPathError"), variant: "error" })
     }
   }
 
@@ -234,7 +234,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       await openWorkspacePath({ target: "default", instanceId: props.instanceId, worktreeSlug })
     } catch (error) {
       log.error("Failed to open worktree in file manager", error)
-      showToastNotification({ message: t("instanceShell.worktree.openInFileManager.error"), variant: "error" })
+      showToastNotification({ category: "files", message: t("instanceShell.worktree.openInFileManager.error"), variant: "error" })
     }
   }
 
@@ -259,7 +259,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
 
     try {
       const ok = await copyToClipboard(text)
-      showToastNotification({
+      showToastNotification({ category: "copy",
         message: ok
           ? t(mode === "sanitized" ? "instanceShell.worktree.delete.error.copySanitizedSuccess" : "instanceShell.worktree.delete.error.copySuccess")
           : t("instanceShell.worktree.delete.error.copyFailure"),
@@ -267,7 +267,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
       })
     } catch (error) {
       log.error("Failed to copy delete worktree error", error)
-      showToastNotification({
+      showToastNotification({ category: "copy",
         message: t("instanceShell.worktree.delete.error.copyFailure"),
         variant: "error",
       })
@@ -567,11 +567,11 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       await reloadWorktrees(props.instanceId)
                       await setWorktreeSlugForParentSession(props.instanceId, parentId(), created.slug)
                       setCreateOpen(false)
-                      showToastNotification({ message: t("instanceShell.worktree.create.success", { slug }), variant: "success" })
+                      showToastNotification({ category: "files", message: t("instanceShell.worktree.create.success", { slug }), variant: "success" })
                     })()
                       .catch((error) => {
                         log.warn("Failed to create worktree", error)
-                        showToastNotification({
+                        showToastNotification({ category: "files",
                           message: error instanceof Error ? error.message : t("instanceShell.worktree.create.error"),
                           variant: "error",
                         })
@@ -648,7 +648,7 @@ export default function WorktreeSelector(props: WorktreeSelectorProps) {
                       await deleteWorktree(props.instanceId, target.slug, { force: forceDelete() })
 
                       closeDeleteDialog()
-                      showToastNotification({
+                      showToastNotification({ category: "files",
                         message: t("instanceShell.worktree.delete.success", { slug: target.raw.label ?? target.slug }),
                         variant: "success",
                       })

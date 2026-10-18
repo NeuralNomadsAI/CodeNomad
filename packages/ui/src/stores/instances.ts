@@ -289,7 +289,8 @@ function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause):
       .map((session) => session.title || session.id)
   }
   const { title, message } = describePendingRecovery(cause, instance ? getInstanceLabel(instance) : instanceId, sessionTitlesIn, tGlobal)
-  showToastNotification({ title, message, variant: "warning" })
+  // Requests the dock may be missing: routed with the questions awaiting an answer.
+  showToastNotification({ category: "needsInput", title, message, variant: "warning" })
 }
 
 // A cause marks an attempt that counts toward the warning; without one, the state only changes.
@@ -1349,7 +1350,7 @@ function handleWorkspaceEvent(event: WorkspaceEventPayload) {
       const locallyClosed = locallyRequestedWorkspaceCloses.delete(event.workspaceId)
       if (event.reason === "deleted" && instance && openInstanceTabIds().has(event.workspaceId)
         && !locallyClosed) {
-        showToastNotification({
+        showToastNotification({ category: "projects",
           message: tGlobal("app.closeInstance.toast.otherWindow", { project: getInstanceLabel(instance) }),
           variant: "info",
         })
@@ -1819,7 +1820,7 @@ function closeWorkspace(id: string): Promise<void> {
     .catch((error) => {
       log.error("Failed to close workspace", error)
       try {
-        showToastNotification({
+        showToastNotification({ category: "projects",
           message: tGlobal("app.closeInstance.toast.error"),
           variant: "error",
         })

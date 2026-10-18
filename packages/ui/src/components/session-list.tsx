@@ -336,13 +336,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     try {
       const success = await copyToClipboard(sessionId)
       if (success) {
-        showToastNotification({ message: t("sessionList.copyId.success"), variant: "success" })
+        showToastNotification({ category: "copy", message: t("sessionList.copyId.success"), variant: "success" })
       } else {
-        showToastNotification({ message: t("sessionList.copyId.error"), variant: "error" })
+        showToastNotification({ category: "copy", message: t("sessionList.copyId.error"), variant: "error" })
       }
     } catch (error) {
       log.error(`Failed to copy session ID ${sessionId}:`, error)
-      showToastNotification({ message: t("sessionList.copyId.error"), variant: "error" })
+      showToastNotification({ category: "copy", message: t("sessionList.copyId.error"), variant: "error" })
     }
   }
  
@@ -401,7 +401,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       }
     } catch (error) {
       log.error(`Failed to delete session ${sessionId}:`, error)
-      showToastNotification({ message: t("sessionList.delete.error"), variant: "error" })
+      showToastNotification({ category: "sessions", message: t("sessionList.delete.error"), variant: "error" })
     }
   }
 
@@ -427,7 +427,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       await loadMessages(props.instanceId, sessionId, { force: true })
     } catch (error) {
       log.error(`Failed to reload session ${sessionId}:`, error)
-      showToastNotification({ message: t("sessionList.reload.error"), variant: "error" })
+      showToastNotification({ category: "sessions", message: t("sessionList.reload.error"), variant: "error" })
     } finally {
       setReloadingSessionIds((prev) => {
         const next = new Set(prev)
@@ -451,7 +451,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       setRenameTarget(null)
     } catch (error) {
       log.error(`Failed to rename session ${target.id}:`, error)
-      showToastNotification({ message: t("sessionList.rename.error"), variant: "error" })
+      showToastNotification({ category: "sessions", message: t("sessionList.rename.error"), variant: "error" })
     } finally {
       setIsRenaming(false)
     }
@@ -553,7 +553,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
 
     if (failed > 0) {
-      showToastNotification({
+      showToastNotification({ category: "sessions",
         message: t("sessionList.bulkDelete.error", { count: failed }),
         variant: "error",
       })

@@ -1,4 +1,5 @@
 import { createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
+import { X } from "lucide-solid"
 import { useI18n } from "../../lib/i18n"
 import { getHotkeyDefinitions, type HotkeyDefinition } from "../../lib/hotkey-definitions"
 import { findHotkeyConflicts, hotkeyEventKey, type HotkeyBinding } from "../../lib/hotkey-bindings"
@@ -14,7 +15,7 @@ export const HotkeysSettingsSection: Component = () => {
   const [error, setError] = createSignal(false)
   const mac = navigator.platform.toLowerCase().includes("mac")
   const definitions = getHotkeyDefinitions()
-  const actionLabel = (definition: HotkeyDefinition) => t(definition.labelKey, { index: definition.id.match(/-(\d)$/)?.[1] })
+  const actionLabel = (definition: HotkeyDefinition) => t(definition.labelKey, { ...definition.labelParams, index: definition.id.match(/-(\d)$/)?.[1] })
   const rows = createMemo(() => {
     const query = filter().trim().toLocaleLowerCase()
     return definitions.filter(definition => `${actionLabel(definition)} ${hotkeyLabel(definition.id)}`.toLocaleLowerCase().includes(query))
@@ -74,7 +75,7 @@ export const HotkeysSettingsSection: Component = () => {
     <div class="window-toolbar hotkeys-toolbar">
       <input class="hotkeys-filter" type="search" aria-label={t("hotkeys.filter")} placeholder={t("hotkeys.filter")}
         value={filter()} onInput={event => { stopRecording(); setFilter(event.currentTarget.value) }} />
-      <button class="window-text-button" type="button" disabled={pending()} onClick={() => void mutate(resetHotkeyOverrides)}>{t("hotkeys.resetAll")}</button>
+      <button class="selector-button selector-button-secondary w-auto" type="button" disabled={pending()} onClick={() => void mutate(resetHotkeyOverrides)}>{t("hotkeys.resetAll")}</button>
     </div>
     <Show when={error()}><p class="hotkeys-warning" role="alert">{t("hotkeys.saveFailed")}</p></Show>
     <div class="hotkeys-list">
@@ -83,19 +84,31 @@ export const HotkeysSettingsSection: Component = () => {
           <span>{actionLabel(definition)}</span>
           <Show when={warning(definition.id)}>{text => <p class="hotkeys-warning" role="status">{text()}</p>}</Show>
         </div>
-        <Show when={recording() === definition.id} fallback={<kbd class="hotkeys-binding">{hotkeyLabel(definition.id) || t("hotkeys.disabled")}</kbd>}>
-          <input class="hotkeys-capture" readonly value="" placeholder={t("hotkeys.capture")}
-            aria-label={t("hotkeys.captureFor", { action: actionLabel(definition) })}
-            ref={element => queueMicrotask(() => element.isConnected && element.focus())}
-            onKeyDown={event => capture(definition.id, event)} onBlur={stopRecording} />
-        </Show>
-        <div class="window-actions hotkeys-actions">
-          <Show when={recording() === definition.id} fallback={<button class="window-text-button" type="button" disabled={pending()}
-            onClick={() => beginRecording(definition.id)}>{t("hotkeys.edit")}</button>}>
-            <button class="window-text-button" type="button" onClick={stopRecording}>{t("hotkeys.cancel")}</button>
+        <div class="hotkeys-shortcut">
+          <Show when={recording() === definition.id} fallback={
+            <kbd class="hotkeys-binding"><Show when={hotkeyLabel(definition.id)} fallback={<span class="text-muted">{t("hotkeys.empty")}</span>}>{hotkeyLabel(definition.id)}</Show></kbd>
+          }>
+            <input class="hotkeys-capture" readonly value="" placeholder={t("hotkeys.capture")}
+              aria-label={t("hotkeys.captureFor", { action: actionLabel(definition) })}
+              ref={element => queueMicrotask(() => element.isConnected && element.focus())}
+              onKeyDown={event => capture(definition.id, event)} onBlur={stopRecording} />
           </Show>
-          <button class="window-text-button" type="button" disabled={pending()} onClick={() => void mutate(() => saveHotkeyOverride(definition.id, []))}>{t("hotkeys.disable")}</button>
-          <button class="window-text-button" type="button" disabled={pending() || !Object.prototype.hasOwnProperty.call(preferences().hotkeyOverrides, definition.id)}
+          <button class="window-icon-button" type="button" aria-label={t("hotkeys.clear")} title={t("hotkeys.clear")}
+            onPointerDown={event => {
+              // Keep the recorder mounted until click; blur otherwise moves this
+              // button between pointerdown and pointerup and loses the clear action.
+              if (event.button === 0 && recording() === definition.id) event.preventDefault()
+            }}
+            disabled={pending() || !hotkeyLabel(definition.id)} onClick={() => void mutate(() => saveHotkeyOverride(definition.id, []))}>
+            <X aria-hidden="true" />
+          </button>
+        </div>
+        <div class="window-actions hotkeys-actions">
+          <Show when={recording() === definition.id} fallback={<button class="selector-button selector-button-secondary w-auto" type="button" disabled={pending()}
+            onClick={() => beginRecording(definition.id)}>{t("hotkeys.edit")}</button>}>
+            <button class="selector-button selector-button-secondary w-auto" type="button" onClick={stopRecording}>{t("hotkeys.cancel")}</button>
+          </Show>
+          <button class="selector-button selector-button-secondary w-auto" type="button" disabled={pending() || !Object.prototype.hasOwnProperty.call(preferences().hotkeyOverrides, definition.id)}
             onClick={() => void mutate(() => saveHotkeyOverride(definition.id))}>{t("hotkeys.reset")}</button>
         </div>
       </div>}</For>

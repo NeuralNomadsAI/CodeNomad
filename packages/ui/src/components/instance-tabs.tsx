@@ -1,5 +1,4 @@
 import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
-import { Dynamic } from "solid-js/web"
 import {
   DragDropProvider,
   DragDropSensors,
@@ -15,14 +14,12 @@ import TabScroll from "./tab-scroll"
 import ToastHistoryPanel from "./toast-history-panel"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { renameProject } from "../stores/project-names"
-import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
+import { Plus, MonitorUp, Bell, Settings } from "lucide-solid"
 import { hotkeyLabel } from "../lib/hotkeys"
 import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
-import { isOsNotificationSupportedSync } from "../lib/os-notifications"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { getUnreadToastCountSignal } from "../lib/notifications"
-import { useConfig } from "../stores/preferences"
 import { openSettings, toggleSettings } from "../stores/settings-screen"
 import type { AppTabRecord } from "../stores/app-tabs"
 
@@ -166,7 +163,6 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   })
   let tabList: HTMLDivElement | undefined
   const dragBound: DragBound = { overshoot: 0 }
-  const { preferences } = useConfig()
   const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
   const [dragReorderEnabled, setDragReorderEnabled] = createSignal(!isTouchOnlyPointer())
 
@@ -229,22 +225,8 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     })
   })
 
-  const notificationsSupported = createMemo(() => isOsNotificationSupportedSync())
-  const notificationsEnabled = createMemo(() => Boolean(preferences().osNotificationsEnabled))
-  const notificationIcon = createMemo(() => {
-    if (!notificationsSupported()) return BellOff
-    return notificationsEnabled() ? Bell : BellOff
-  })
-
   /** Unread notification count (reactive signal) */
   const unreadCount = getUnreadToastCountSignal()
-
-  const notificationTitle = createMemo(() => {
-    if (!notificationsSupported()) return t("settings.notifications.status.unsupported")
-    return notificationsEnabled()
-      ? t("settings.notifications.status.enabled")
-      : t("settings.notifications.status.disabled")
-  })
 
   const handleDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
     if (!droppable) return
@@ -330,13 +312,14 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
               <button
                 ref={notificationTriggerRef}
                 type="button"
-                class={`new-tab-button icon-toggle ${!notificationsSupported() ? "opacity-50" : ""}`}
+                class="new-tab-button icon-toggle"
                 onClick={() => setShowToastHistory((open) => !open)}
-                title={notificationTitle()}
-                aria-label={notificationTitle()}
+                title={t("toastHistory.title")}
+                aria-label={t("toastHistory.title")}
                 aria-expanded={showToastHistory()}
               >
-                <Dynamic component={notificationIcon()} class="w-4 h-4" />
+                {/* The bell is the notification history, independent of system notifications. */}
+                <Bell class="w-4 h-4" />
               </button>
               <Show when={unreadCount() > 0}>
                 <span

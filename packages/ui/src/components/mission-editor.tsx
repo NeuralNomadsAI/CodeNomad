@@ -380,7 +380,7 @@ export function MissionEditor(props: {
           <summary>{t("missions.create.agents")}</summary>
           <Show when={profileDetailsOpen()}>
             <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()}
-              requireRoleProfiles={mode() === "recurring"} taskMode={taskMode()}
+              taskMode={taskMode()}
               disabled={locked()} active={() => profileDetailsOpen() && optionsOpen() && isActive()}
               onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
           </Show>

@@ -3,13 +3,42 @@ import type { HotkeyBinding } from "./hotkey-bindings"
 export interface HotkeyDefinition {
   id: string
   labelKey: string
+  labelParams?: Record<string, string>
   category: "app" | "session" | "composer" | "search" | "files"
   scope: "app" | "main" | "home" | "instance" | "session" | "composer" | "aside" | "search" | "files" | "instance-tab"
 }
 
-const definition = (id: string, category: HotkeyDefinition["category"], scope: HotkeyDefinition["scope"]): HotkeyDefinition => ({
-  id, labelKey: `hotkeys.action.${id}`, category, scope,
+const definition = (id: string, category: HotkeyDefinition["category"], scope: HotkeyDefinition["scope"], labelKey = `hotkeys.action.${id}`): HotkeyDefinition => ({
+  id, labelKey, category, scope,
 })
+
+// These palette actions have no initial binding. Keep their metadata available
+// in native Preferences, where the application's command handlers are not mounted.
+export const commandHotkeyDefinitions: HotkeyDefinition[] = [
+  definition("new-temporary-instance", "app", "app", "commands.newTemporaryInstance.label"),
+  definition("open-workspace-folder", "app", "instance", "commands.openWorkspace.folder.label"),
+  definition("open-workspace-terminal", "app", "instance", "commands.openWorkspace.terminal.label"),
+  ...Object.entries({ vscode: "VS Code", cursor: "Cursor", zed: "Zed", vscodium: "VSCodium" }).map(([id, editor]) => ({
+    ...definition(`open-workspace-editor-${id}`, "app", "instance", "commands.openWorkspace.editor.label"), labelParams: { editor },
+  })),
+  definition("cleanup-blank-sessions", "session", "instance", "commands.scrubSessions.label"),
+  definition("compact", "session", "session", "commands.compactSession.label"),
+  definition("remove-session-tools-and-reasoning", "session", "session", "commands.removeSessionTechnicalParts.label"),
+  definition("undo", "session", "session", "commands.undoLastMessage.label"),
+  definition("redo", "session", "session", "commands.redoLastMessage.label"),
+  definition("thinking", "app", "app", "settings.behavior.thinking.title"),
+  definition("timeline-tools", "app", "app", "settings.behavior.timelineTools.title"),
+  definition("thinking-default-visibility", "app", "app", "settings.behavior.thinkingDefault.title"),
+  definition("diff-view-split", "app", "app", "commands.diffViewSplit.label"),
+  definition("diff-view-unified", "app", "app", "commands.diffViewUnified.label"),
+  definition("tool-output-default-visibility", "app", "app", "settings.behavior.toolOutputsDefault.title"),
+  definition("diagnostics-default-visibility", "app", "app", "settings.behavior.diagnosticsDefault.title"),
+  definition("tool-inputs-visibility", "app", "app", "settings.behavior.toolInputsVisibility.title"),
+  definition("token-usage-visibility", "app", "app", "settings.behavior.usageMetrics.title"),
+  definition("auto-cleanup-blank-sessions", "app", "app", "settings.behavior.autoCleanup.title"),
+  definition("open-help", "app", "app", "commands.openHelp.label"),
+  definition("open-about", "app", "app", "commands.openAbout.label"),
+]
 
 // Static metadata is available in Preferences without mounting the application.
 export const hotkeyDefinitions: HotkeyDefinition[] = [
@@ -27,6 +56,7 @@ export const hotkeyDefinitions: HotkeyDefinition[] = [
   definition("instance-rename", "app", "instance-tab"),
   ...Array.from({ length: 9 }, (_, i) => ({ ...definition(`app-tab-${i + 1}`, "app", "app"), labelKey: "hotkeys.action.app-tab" })),
   ...Array.from({ length: 9 }, (_, i) => ({ ...definition(`session-tab-${i + 1}`, "session", "instance"), labelKey: "hotkeys.action.session-tab" })),
+  ...commandHotkeyDefinitions,
 ]
 
 export function getHotkeyDefinitions(filter?: { category?: string }): HotkeyDefinition[] {

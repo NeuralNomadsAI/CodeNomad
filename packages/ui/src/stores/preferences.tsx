@@ -12,6 +12,7 @@ import { loadSpeechCapabilities, resetSpeechCapabilities } from "./speech"
 import { buildSpeechPatch } from "../lib/speech-patch"
 import { normalizeHotkeyOverrides, type HotkeyBinding, type HotkeyOverrides } from "../lib/hotkey-bindings"
 import { normalizeAppearancePreferences, selectAppearancePalette, type Appearance } from "../lib/appearance-preferences"
+import { defaultNotificationRouting, normalizeNotificationRouting, type NotificationRouting } from "../lib/notification-routing"
 import { encodeMissionDefaults, normalizeMissionDefaults, validMissionDefaults, type MissionProfileDefault } from "../lib/mission-defaults"
 import { normalizeMissionModels, validMissionModels, parseMissionModel, saveMissionModelRecord, removeMissionModelRecord, type UserMissionModel } from "../lib/mission-model-library"
 import { missionPreferenceExpectation, missionPreferenceValue, type MissionPreferenceKey, type MissionPreferenceExpectation } from "../lib/mission-preferences-document"
@@ -137,9 +138,13 @@ export interface UiSettings {
   missionProfileDefaults: MissionProfileDefault[]
   missionModels: UserMissionModel[]
 
-  // OS notifications
-  osNotificationsEnabled: boolean
+  /** Per notification category: on screen, in the history (badge) and/or as a system notification. */
+  notificationRouting: NotificationRouting
+
+  /** System notifications are also sent while this window is visible. */
   osNotificationsAllowWhenVisible: boolean
+  /** Legacy system switch and per-event toggles; only seed `notificationRouting` until it is first saved. */
+  osNotificationsEnabled: boolean
   notifyOnNeedsInput: boolean
   notifyOnIdle: boolean
 }
@@ -245,6 +250,8 @@ const defaultUiSettings: UiSettings = {
   modelVisibility: {},
   missionProfileDefaults: [],
   missionModels: [],
+
+  notificationRouting: defaultNotificationRouting,
 
   osNotificationsEnabled: false,
   osNotificationsAllowWhenVisible: false,
@@ -362,6 +369,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     modelVisibility: normalizeModelVisibilityPreferences(sanitized.modelVisibility),
     missionProfileDefaults: normalizeMissionDefaults(sanitized.missionProfileDefaults),
     missionModels: normalizeMissionModels(sanitized.missionModels),
+    notificationRouting: normalizeNotificationRouting(sanitized.notificationRouting, sanitized),
     osNotificationsEnabled: sanitized.osNotificationsEnabled ?? defaultUiSettings.osNotificationsEnabled,
     osNotificationsAllowWhenVisible:
       sanitized.osNotificationsAllowWhenVisible ?? defaultUiSettings.osNotificationsAllowWhenVisible,

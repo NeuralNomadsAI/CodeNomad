@@ -133,7 +133,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       },
     )
     if (confirmed && !await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)) {
-      showToastNotification({ message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
+      showToastNotification({ category: "sessions", message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
     }
   }
 

@@ -148,6 +148,8 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "Móvil horizontal (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "La sesión {label} fue compactada",
+  "sessionEvents.notify.needsInput": "La sesión «{label}» espera tu respuesta",
+  "sessionEvents.notify.done": "La sesión «{label}» ha terminado",
   "sessionEvents.sessionError.unknown": "Error desconocido",
   "sessionEvents.sessionError.title": "Error de sesión",
   "sessionEvents.sessionError.message": "Error: {message}",

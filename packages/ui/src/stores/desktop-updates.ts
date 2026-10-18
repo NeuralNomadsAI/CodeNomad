@@ -27,7 +27,7 @@ const releasePage = () => feed === "stable" ? `${releasesUrl}/latest` : releases
 
 function showProgress(message: string) {
   notice?.dismiss()
-  notice = showToastNotification({ message, variant: "info", duration: Number.POSITIVE_INFINITY })
+  notice = showToastNotification({ category: "updates", transient: true, message, variant: "info", duration: Number.POSITIVE_INFINITY })
 }
 
 function failed(error?: unknown) {
@@ -35,7 +35,7 @@ function failed(error?: unknown) {
   installing = false
   notice?.dismiss()
   if (error) log.error("Desktop update failed", error)
-  notice = showToastNotification({
+  notice = showToastNotification({ category: "updates",
     message: tGlobal("releases.desktop.failed"), variant: "error", duration: Number.POSITIVE_INFINITY,
     action: { label: tGlobal("releases.upgradeRequired.action.getUpdate"), href: releasePage() },
   })
@@ -132,11 +132,11 @@ export async function requestDesktopUpdate(announcedRelease?: string): Promise<v
     } else if (result.status === "unsupported") {
       await openExternalUrl(releasePage())
     } else if (result.status === "current") {
-      notice = showToastNotification({ message: tGlobal("releases.desktop.current"), variant: "success" })
+      notice = showToastNotification({ category: "updates", transient: true, message: tGlobal("releases.desktop.current"), variant: "success" })
     } else if (result.status === "busy") {
-      notice = showToastNotification({ message: tGlobal("releases.desktop.busy"), variant: "info" })
+      notice = showToastNotification({ category: "updates", transient: true, message: tGlobal("releases.desktop.busy"), variant: "info" })
     } else {
-      notice = showToastNotification({
+      notice = showToastNotification({ category: "updates",
         message: tGlobal("releases.desktop.available", { version: result.version }),
         variant: "info", duration: Number.POSITIVE_INFINITY,
         action: {

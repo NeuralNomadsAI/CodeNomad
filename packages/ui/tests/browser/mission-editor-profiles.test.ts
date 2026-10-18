@@ -149,7 +149,7 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     await page.getByLabel("Specification reviewer · Thinking", { exact: true }).selectOption("low")
     await page.getByLabel("Standards reviewer · Agent", { exact: true }).selectOption("all")
     await page.getByLabel("Fresh validator · Agent", { exact: true }).selectOption("child-only")
-    await page.locator("form.mission-editor").getByText("Optional task presets", { exact: true }).click()
+    assert.equal(await page.locator("form.mission-editor .mission-profiles details").count(), 0, "every Debugging role sits directly in the one Agents and models fold")
     await page.getByLabel("Implementer · Agent", { exact: true }).selectOption("all")
     const geometry = await root.evaluate(select => ({ radius: getComputedStyle(select).borderRadius,
       rowWidth: select.closest("fieldset")!.getBoundingClientRect().width, formWidth: select.closest("form")!.getBoundingClientRect().width }))

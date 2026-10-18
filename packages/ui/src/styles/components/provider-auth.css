@@ -42,7 +42,7 @@
 .providers-manager-embedded .providers-connect-panel,
 .providers-manager-embedded .providers-list-section {
   border: 0;
-  border-bottom: 1px solid var(--border-divider);
+  border-bottom: 1px solid var(--border-row);
   background: transparent;
 }
 
@@ -333,8 +333,7 @@
     align-items: stretch;
   }
 
-  .providers-connect-bar .selector-button,
-  .providers-connect-bar .settings-pill-button {
+  .providers-connect-bar .selector-button {
     width: 100%;
     justify-content: center;
   }

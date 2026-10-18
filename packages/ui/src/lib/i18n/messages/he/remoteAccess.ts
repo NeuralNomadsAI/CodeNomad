@@ -9,8 +9,6 @@ export const remoteAccessMessages = {
   "remoteAccess.direct.help": "התחברות דרך הרשת שלך, VPN או פרוקסי הפוך עם סיסמת השרת. לגישה ל-CodeNomad מכל מקום, שליטה מרחוק שלמעלה פשוטה יותר ואינה פותחת פורט.",
   "remoteAccess.sections.listeningMode.label": "מצב האזנה",
   "remoteAccess.sections.listeningMode.help": "אפשר חיבורים ישירים באמצעות האזנה בכל הממשקים, או השאר את השרת ב-localhost בלבד. שליטה מרחוק אינה זקוקה לכך.",
-  "remoteAccess.toggle.on": "פועל",
-  "remoteAccess.toggle.off": "כבוי",
   "remoteAccess.toggle.title": "אפשר חיבורים מכתובות IP אחרות",
   "remoteAccess.toggle.caption.all": "מקושר ל-0.0.0.0",
   "remoteAccess.toggle.caption.local": "מקושר ל-127.0.0.1",

@@ -276,7 +276,7 @@ export const InfoSettingsSection: Component = () => {
                   href={showDownloadLink().url!}
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="settings-pill-button"
+                  class="selector-button selector-button-secondary w-auto"
                 >
                   {t("settings.info.updates.download")}
                 </a>
@@ -285,7 +285,7 @@ export const InfoSettingsSection: Component = () => {
               {/* Installs in place when this build can; otherwise opens the same release page. */}
               <button
                 type="button"
-                class="settings-pill-button"
+                class="selector-button selector-button-secondary w-auto"
                 onClick={() => void requestDesktopUpdate(showDownloadLink().url!)}
               >
                 {t("settings.info.updates.install")}
@@ -294,7 +294,7 @@ export const InfoSettingsSection: Component = () => {
           )}
           <button
             type="button"
-            class="settings-pill-button"
+            class="selector-button selector-button-secondary w-auto"
             onClick={handleRefresh}
             disabled={meta.loading}
           >
@@ -316,21 +316,21 @@ export const InfoSettingsSection: Component = () => {
         <div class="settings-info-actions">
           <button
             type="button"
-            class="settings-pill-button"
+            class="selector-button selector-button-secondary w-auto"
             onClick={handleCopy}
           >
             {t("settings.info.diagnostics.copy")}
           </button>
           <button
             type="button"
-            class="settings-pill-button"
+            class="selector-button selector-button-secondary w-auto"
             onClick={handleDownload}
           >
             {t("settings.info.diagnostics.download")}
           </button>
           <button
             type="button"
-            class="settings-pill-button"
+            class="selector-button selector-button-primary w-auto"
             onClick={handleReportBug}
           >
             {t("settings.info.diagnostics.reportBug")}
@@ -434,7 +434,7 @@ export const InfoSettingsSection: Component = () => {
 
               <Show when={canOpenRemoteWindows()}>
                 <div class="settings-info-actions">
-                  <button type="button" class="settings-pill-button" onClick={() => openSettings("remote")}>
+                  <button type="button" class="selector-button selector-button-secondary w-auto" onClick={() => openSettings("remote")}>
                     {t("settings.nav.remote")}
                   </button>
                 </div>

@@ -38,7 +38,7 @@ const locales = { de, en, es, fr, he, ja, ne, ru, tr, "zh-Hans": zhHans }
 test("the user-facing mission journey has a translated key for every literal message", () => {
   const components = ["mission-task-tree.tsx", "mission-tracking.tsx", "mission-attention.tsx", "mission-overview-details.tsx",
     "mission-briefing.tsx", "mission-lifecycle-controls.tsx", "mission-recurrence-list.tsx", "mission-model-library.tsx",
-    "mission-profile-summary.tsx", "mission-default-inheritance-controls.tsx", "mission-editor.tsx", "mission-task-reader.tsx",
+    "mission-profile-summary.tsx", "mission-profile-controls.tsx", "mission-editor.tsx", "mission-task-reader.tsx",
     "mission-preferences.tsx", "mission-subagent-depth.tsx", "mission-task-mode-controls.tsx"]
   for (const file of components) {
     const source = readFileSync(new URL(`../../../components/${file}`, import.meta.url), "utf8")

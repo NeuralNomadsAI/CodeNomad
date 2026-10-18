@@ -9,8 +9,6 @@ export const remoteAccessMessages = {
   "remoteAccess.direct.help": "通过你自己的网络、VPN 或反向代理，使用服务器密码连接。要从任何地方访问 CodeNomad，上方的远程控制更简单，且无需开放端口。",
   "remoteAccess.sections.listeningMode.label": "监听模式",
   "remoteAccess.sections.listeningMode.help": "通过监听所有接口允许直接连接，或让此服务器仅限 localhost。远程控制不需要此设置。",
-  "remoteAccess.toggle.on": "开",
-  "remoteAccess.toggle.off": "关",
   "remoteAccess.toggle.title": "允许其他 IP 连接",
   "remoteAccess.toggle.caption.all": "绑定到 0.0.0.0",
   "remoteAccess.toggle.caption.local": "绑定到 127.0.0.1",

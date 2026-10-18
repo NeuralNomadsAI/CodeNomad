@@ -95,16 +95,16 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
           <p class="settings-toggle-caption">{t("settings.opencode.setup.untested", { version: data().daemonVersion ?? data().currentVersion ?? "" })}</p>
         </Show>
         <div class="settings-info-actions">
-          <Show when={data().canUpgrade}><button type="button" class="settings-pill-button" disabled={disabled()} onClick={() => void install()}>
+          <Show when={data().canUpgrade}><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled()} onClick={() => void install()}>
             {action() === "install" ? t("settings.opencode.update.updating") : installLabel(data())}
           </button></Show>
           <Show when={data().state === "ready" && !isOpenCodeConnected() && data().serviceState !== "restart_required" && data().serviceState !== "incompatible"}>
-            <button type="button" class="settings-pill-button" disabled={disabled()} onClick={() => void runOpenCodeSetup("start")}>{t("settings.opencode.setup.connect")}</button>
+            <button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled()} onClick={() => void runOpenCodeSetup("start")}>{t("settings.opencode.setup.connect")}</button>
           </Show>
           <Show when={isOpenCodeConnected() && canContinueOpenCodeSetup()}>
-            <button type="button" class="settings-pill-button" disabled={disabled()} onClick={() => void continueOpenCodeSetup()}>{t("settings.opencode.setup.continue")}</button>
+            <button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled()} onClick={() => void continueOpenCodeSetup()}>{t("settings.opencode.setup.continue")}</button>
           </Show>
-          <Show when={data().canRestart && (data().serviceState === "restart_required" || data().serviceState === "restart_available")}><button type="button" class="settings-pill-button" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
+          <Show when={data().canRestart && (data().serviceState === "restart_required" || data().serviceState === "restart_available")}><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
         </div>
         <Show when={data().canUpgrade && (data().state === "missing" || data().needsSharedInstallation)}>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.sharedInstallDescription")}</p>
@@ -115,13 +115,13 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
     <Show when={openCodeSetupCheckError()}><p class="settings-error-message" role="alert">{t("settings.opencode.setup.serviceError")}</p></Show>
     <Show when={openCodeSetupError()}><p class="settings-error-message" role="alert">{t(openCodeInstallationError() ? `settings.opencode.setup.${openCodeInstallationError()}` : "settings.opencode.setup.actionFailed")}</p></Show>
     <Show when={openCodeSetupFeedback()}><p role="status">{t(`settings.opencode.setup.${openCodeSetupFeedback()}`)}</p></Show>
-    <div class="settings-info-actions"><button type="button" class="settings-pill-button" disabled={disabled()} onClick={() => void refreshOpenCodeSetup(false, true)}>
+    <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled()} onClick={() => void refreshOpenCodeSetup(false, true)}>
       {t(checking() ? "settings.opencode.update.checking" : "settings.opencode.setup.check")}
     </button></div>
     {props.children}
     <Show when={status()}>
       {data => <>
-        <details class="opencode-setup-details">
+        <details class="settings-disclosure">
           <summary>{t("settings.opencode.setup.diagnostics")}</summary>
           <div class="settings-info-grid">
             <div class="settings-info-row"><span>{t("settings.opencode.setup.minimum")}</span><span>{data().minimumVersion}</span></div>
@@ -132,13 +132,13 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
             <p role="alert">{t(`settings.opencode.setup.${data().incompatibilityReason}`)}</p>
           </Show>
         </details>
-        <details class="opencode-setup-details">
+        <details class="settings-disclosure">
           <summary>{t("settings.opencode.setup.troubleshooting")}</summary>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.restartDescription")}</p>
-          <div class="settings-info-actions"><button type="button" class="settings-pill-button" disabled={disabled() || openCodeSetupCheckError() || !data().canRestart} onClick={() => void restartForTroubleshooting()}>{t("settings.opencode.setup.restartTroubleshooting")}</button></div>
+          <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled() || openCodeSetupCheckError() || !data().canRestart} onClick={() => void restartForTroubleshooting()}>{t("settings.opencode.setup.restartTroubleshooting")}</button></div>
           <Show when={data().canReload}>
             <p class="settings-toggle-caption">{t("settings.opencode.setup.reloadDescription")}</p>
-            <div class="settings-info-actions"><button type="button" class="settings-pill-button" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("reload")}>{t("settings.opencode.setup.reload")}</button></div>
+            <div class="settings-info-actions"><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("reload")}>{t("settings.opencode.setup.reload")}</button></div>
           </Show>
         </details>
       </>}

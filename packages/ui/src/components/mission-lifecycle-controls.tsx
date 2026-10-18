@@ -88,7 +88,7 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
       const matched = missionLifecycleIntents.finish(intent, outcome)
       // A certified rejection is announced once per exact request, even when
       // its view is hidden or gone; nothing is resent.
-      if (matched && outcome === "rejected") showToastNotification({ title: missionDisplayTitle(mission, 80),
+      if (matched && outcome === "rejected") showToastNotification({ category: "sessions", title: missionDisplayTitle(mission, 80),
         message: t(`missions.control.run.rejected.${intent.input.action}`), variant: "error" })
       if (matched && current()) {
         setRefreshing(true)

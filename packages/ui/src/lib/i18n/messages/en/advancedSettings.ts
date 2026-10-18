@@ -3,6 +3,6 @@ export const advancedSettingsMessages = {
   "advancedSettings.environmentVariables.title": "Environment Variables",
   "advancedSettings.environmentVariables.subtitle": "Applied before each prompt or session command",
   "advancedSettings.hideDiffWhitespace.title": "Hide whitespace-only changes",
-  "advancedSettings.hideDiffWhitespace.subtitle": "Leaves files whose only changes are whitespace or line endings out of the Changes list and its bulk actions, and ignores indentation and trailing spaces in diffs. Staged files always stay visible, so a commit never includes hidden changes.",
+  "advancedSettings.hideDiffWhitespace.subtitle": "Hides unstaged files whose only changes are whitespace or line endings, and ignores indentation and trailing spaces in diffs. Staged files stay visible.",
   "advancedSettings.actions.close": "Close",
 } as const

@@ -291,7 +291,7 @@ async function setWorktreeSlugForParentSession(
     }
     if (moveError) {
       log.warn("Failed to move session family", { instanceId, rootSessionId, error: moveError })
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: tGlobal("sessionList.worktreeMove.error"),
         variant: "error",
       })

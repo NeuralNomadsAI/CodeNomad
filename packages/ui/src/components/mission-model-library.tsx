@@ -71,11 +71,11 @@ function createMissionModelActions(props: LibraryProps) {
     finally { if (alive) setPending(false) }
   }
   /** Inline recovery offers only an explicit authoritative reload, never a replayed write. */
-  const status = (offerReload = true) => <>
+  const status = () => <>
     <Show when={pending()}><p role="status">{t("missions.control.mutation.pending")}</p></Show>
     <Show when={failed()}><p role="alert">{t("missions.models.error")}</p></Show>
     <Show when={reconciliationPending()}><p role="alert">{t("missions.defaults.reconciliationPending")}</p></Show>
-    <Show when={offerReload && (failed() || reconciliationPending())}>
+    <Show when={failed() || reconciliationPending()}>
       <button type="button" class="window-text-button" aria-label={t("missions.models.reload")} title={t("missions.models.reload")}
         disabled={pending() || !active()} onClick={() => void reload()}>{t("missions.preferences.reload")}</button>
     </Show>
@@ -83,29 +83,32 @@ function createMissionModelActions(props: LibraryProps) {
   return { pending, disabled, save, remove, reload, reset, status }
 }
 
-/** Preferences: manage the saved-brief library (select, remove, reload, repair). */
+/** Preferences: manage the saved-brief library (select, remove, repair); reloading is offered only after a failure. */
 export function MissionModelLibrary(props: LibraryProps) {
   const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
   const [selected, setSelected] = createSignal("")
   const selection = () => config.preferences().missionModels.find(model => model.id === selected())
   return <section class="mission-model-library" aria-label={t("missions.models.title")}>
-    <h4 title={t("missions.models.hint")} aria-description={t("missions.models.hint")}>{t("missions.models.title")}</h4>
+    {/* The group title names the list; the select needs no second visible label. */}
+    <header><h4 title={t("missions.models.hint")} aria-description={t("missions.models.hint")}>{t("missions.models.title")}</h4>
+      <select aria-label={t("missions.models.select")} value={selected()} disabled={actions.disabled()}
+        onChange={event => setSelected(event.currentTarget.value)}>
+        <option value="">{t("missions.models.none")}</option>
+        <For each={config.preferences().missionModels}>{model => <option value={model.id}>{model.name}</option>}</For>
+      </select></header>
     <Show when={config.isUiConfigLoaded() && !config.missionModelsValid()}><p role="alert">{t("missions.models.invalid")}</p>
-      <button type="button" class="window-action" disabled={actions.pending() || props.disabled} onClick={() => void actions.reset()}>{t("missions.models.reset")}</button></Show>
-    <label>{t("missions.models.select")}<select aria-label={t("missions.models.select")} value={selected()} disabled={actions.disabled()}
-      onChange={event => setSelected(event.currentTarget.value)}>
-      <option value="">{t("missions.models.none")}</option>
-      <For each={config.preferences().missionModels}>{model => <option value={model.id}>{model.name}</option>}</For>
-    </select></label>
+      <div class="window-actions">
+        <button type="button" class="window-action" disabled={actions.pending() || props.disabled} onClick={() => void actions.reset()}>{t("missions.models.reset")}</button>
+        <button type="button" class="window-action" aria-label={t("missions.models.reload")} title={t("missions.models.reload")}
+          disabled={actions.pending() || !(props.active?.() ?? true)} onClick={() => void actions.reload()}>{t("missions.preferences.reload")}</button>
+      </div></Show>
     <div class="window-actions">
       <button type="button" class="window-action" disabled={actions.disabled() || !selection()} onClick={async () => {
         const model = selection()
         if (model && await actions.remove(model)) setSelected("")
       }}>{t("missions.models.remove")}</button>
-      <button type="button" class="window-action" aria-label={t("missions.models.reload")} title={t("missions.models.reload")}
-        disabled={actions.pending() || !(props.active?.() ?? true)} onClick={() => void actions.reload()}>{t("missions.preferences.reload")}</button>
     </div>
-    {actions.status(false)}
+    {actions.status()}
   </section>
 }
 

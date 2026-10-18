@@ -238,7 +238,7 @@ async function runConversationQueue(): Promise<void> {
         clearConversationPlaybackForInstance(entry.instanceId)
         if (!playbackErrorShown) {
           playbackErrorShown = true
-          showToastNotification({
+          showToastNotification({ category: "sessions",
             title: tGlobal("promptInput.conversationMode.error.title"),
             message:
               error instanceof Error && error.message

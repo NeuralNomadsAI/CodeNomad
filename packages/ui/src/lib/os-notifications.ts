@@ -61,19 +61,6 @@ function hasElectronNotifier(): boolean {
   return Boolean(api && typeof api.showNotification === "function")
 }
 
-export function isOsNotificationSupportedSync(): boolean {
-  if (typeof window === "undefined") return false
-  if (isElectronHost()) {
-    return hasElectronNotifier()
-  }
-  if (isTauriHost()) {
-    // The authoritative check requires async import; treat Tauri as supported and let the
-    // settings modal surface missing plugin/capability errors.
-    return true
-  }
-  return hasWebNotificationApi()
-}
-
 async function sendElectronNotification(payload: OsNotificationPayload): Promise<void> {
   const api = (window as Window & { electronAPI?: any }).electronAPI
   if (!api || typeof api.showNotification !== "function") {

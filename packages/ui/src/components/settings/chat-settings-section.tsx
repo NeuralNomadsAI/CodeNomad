@@ -120,14 +120,13 @@ export const ChatSettingsSection: Component = () => {
     t(`settings.behavior.expansionPreset.${preset}.title`)
 
   return (
-    <div class="settings-section-stack">
+    <div class="settings-section-stack chat-settings">
       <section class="settings-card">
         <div class="settings-card-header">
           <div>
             <h3 class="settings-card-title">{t("settings.behavior.expansionPresets.ariaLabel")}</h3>
             <p class="settings-card-subtitle">{t("settings.appearance.behavior.subtitle")}</p>
           </div>
-          <span class="settings-scope-badge">{presetLabel(currentPreset())}</span>
         </div>
 
         <div class="settings-expansion-presets" aria-label={t("settings.behavior.expansionPresets.ariaLabel")}>
@@ -137,6 +136,7 @@ export const ChatSettingsSection: Component = () => {
                 type="button"
                 class="settings-expansion-preset"
                 data-selected={currentPreset() === preset ? "true" : "false"}
+                aria-pressed={currentPreset() === preset}
                 onClick={() => applyExpansionPreset(preset)}
               >
                 <span class="settings-expansion-preset-title">{presetLabel(preset)}</span>

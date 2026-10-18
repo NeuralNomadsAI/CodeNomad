@@ -30,11 +30,7 @@
 .modal-surface.settings-screen-shell .selector-button,
 .modal-surface.settings-screen-shell .selector-input,
 .modal-surface.settings-screen-shell .selector-search-input,
-.modal-surface.settings-screen-shell .remote-toggle,
-.modal-surface.settings-screen-shell .remote-toggle-switch,
-.modal-surface.settings-screen-shell .remote-toggle-thumb,
 .modal-surface.settings-screen-shell .remote-address,
-.modal-surface.settings-screen-shell .remote-pill,
 .modal-surface.settings-screen-shell .remote-qr,
 .modal-surface.settings-screen-shell .remote-card,
 .modal-surface.settings-screen-shell .remote-error {
@@ -251,8 +247,10 @@
 }
 
 .settings-screen-scroll {
+  /* Shared with full-bleed group separators (settings-disclosure.css). */
+  --settings-scroll-inline-padding: var(--space-lg);
   overflow-x: hidden;
-  padding: var(--space-md) var(--space-lg);
+  padding: var(--space-md) var(--settings-scroll-inline-padding);
   scrollbar-gutter: stable;
 }
 
@@ -295,6 +293,26 @@
   border-bottom: 0;
 }
 
+/* Title and text take the remaining width; the badge or switch stays beside the title. */
+.settings-card-header > :first-child {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.settings-card-header > :not(:first-child) {
+  flex: none;
+}
+
+/* Language: the selector sits beside its title like any other setting control. */
+.settings-language-row {
+  align-items: center;
+  margin-bottom: 0;
+}
+
+.settings-language-row > :last-child {
+  width: 11.25rem;
+}
+
 .settings-card-heading-with-icon {
   display: flex;
   align-items: flex-start;
@@ -308,9 +326,10 @@
   color: var(--text-muted);
 }
 
+/* Group titles stay one step above the 12px setting labels they contain. */
 .settings-card-title {
-  font-size: var(--font-size-sm);
-  font-weight: var(--font-weight-medium);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-semibold);
   color: var(--text-primary);
 }
 
@@ -417,23 +436,28 @@
   display: inline-flex;
   align-items: center;
   padding: 0.375rem 0.6rem;
-  background: color-mix(in oklab, var(--surface-secondary) 75%, var(--surface-inset));
-  color: var(--text-secondary);
+  background: color-mix(in oklab, var(--accent-primary) 12%, var(--surface-inset));
+  color: var(--accent-primary);
   font-size: var(--font-size-xs);
   font-weight: var(--font-weight-medium);
   white-space: nowrap;
 }
 
-.settings-scope-badge-server {
-  background: color-mix(in oklab, var(--accent-primary) 12%, var(--surface-inset));
-  color: var(--accent-primary);
+.chat-settings {
+  container: chat-settings / inline-size;
 }
 
 .settings-expansion-presets {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--space-sm);
   margin-bottom: var(--space-md);
+}
+
+@container chat-settings (min-width: 42rem) {
+  .settings-expansion-presets {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
 }
 
 .settings-expansion-preset {
@@ -489,7 +513,7 @@
 .settings-expansion-table-header,
 .settings-expansion-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(11rem, 13rem);
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, min(40%, 13rem));
   align-items: center;
   gap: 1rem;
 }
@@ -533,6 +557,7 @@
 
 .settings-expansion-select {
   width: 100%;
+  min-width: 0;
 }
 
 .settings-toggle-row {
@@ -541,7 +566,7 @@
   justify-content: space-between;
   gap: var(--space-md);
   padding: var(--space-sm) 0;
-  border-top: 1px solid color-mix(in oklab, var(--border-base) 78%, transparent);
+  border-top: 1px solid var(--border-row);
 }
 
 .settings-toggle-row:first-child {
@@ -566,6 +591,10 @@
   color: var(--text-muted);
 }
 
+.settings-inline-warning {
+  color: var(--status-warning);
+}
+
 .settings-checkbox-toggle {
   display: inline-flex;
   align-items: center;
@@ -577,6 +606,26 @@
 
 .settings-checkbox-toggle input {
   accent-color: var(--accent-primary);
+}
+
+.settings-switch {
+  flex-shrink: 0;
+}
+
+/* One of several grouped on/off settings: the whole row toggles its checkbox. */
+.settings-choice-row {
+  cursor: pointer;
+}
+
+.settings-choice-row input {
+  flex-shrink: 0;
+  accent-color: var(--accent-primary);
+}
+
+.settings-choice-row > span {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .settings-toolbar-inline {
@@ -654,9 +703,6 @@
     flex-shrink: 0;
   }
 
-  .settings-expansion-presets {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
 }
 
 @media (max-width: 640px) {
@@ -715,35 +761,30 @@
 
   .settings-screen-content-header,
   .settings-screen-scroll {
+    --settings-scroll-inline-padding: 0.75rem;
     padding: 0.75rem;
   }
 
-  .settings-card-header,
+
   .settings-toggle-row {
     flex-direction: column;
     align-items: stretch;
+  }
+
+  /* A switch or icon action stays beside its label; fields and lists take the row width. */
+  .settings-toggle-row:has(> .settings-switch, > .window-icon-button, > input[type="checkbox"]) {
+    flex-direction: row;
+    align-items: center;
+  }
+
+  .settings-toggle-row > .selector-trigger,
+  .settings-toggle-row > div > .selector-trigger,
+  .settings-toggle-row > .selector-button {
+    width: 100%;
   }
 
   .settings-toolbar-inline {
     justify-content: flex-start;
   }
 
-  .settings-expansion-presets {
-    grid-template-columns: 1fr;
-  }
-
-  .settings-expansion-table-header {
-    display: none;
-  }
-
-  .settings-expansion-row {
-    grid-template-columns: 1fr;
-    gap: 0.55rem;
-    align-items: stretch;
-    padding: 0.8rem;
-  }
-
-  .settings-expansion-row + .settings-expansion-row {
-    border-top: 1px solid color-mix(in oklab, var(--border-base) 72%, transparent);
-  }
 }

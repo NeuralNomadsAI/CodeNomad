@@ -23,7 +23,7 @@ export function PluginPackageAction(props: { instanceId: string; location: Plugi
     if (!item || busy() || props.active === false) return
     const captured = generation
     void runPluginPackageAction(props.instanceId, { ...props.location }, item.target, action()).catch(() => {
-      if (captured === generation && props.active !== false) showToastNotification({ variant: "error", message: t("settings.pluginPackages.error", { target: item.target }) })
+      if (captured === generation && props.active !== false) showToastNotification({ category: "opencode", variant: "error", message: t("settings.pluginPackages.error", { target: item.target }) })
     })
   }
   // The row stays minimal (one compact icon), but activating it names the

@@ -44,7 +44,7 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
                 setSaving(true)
                 try {
                   const saved = await updatePreferences(transcriptVisibilityPatch(preferences(), row, value))
-                  if (!saved) showToastNotification({ message: t("settings.speech.save.error"), variant: "error" })
+                  if (!saved) showToastNotification({ category: "settings", message: t("settings.speech.save.error"), variant: "error" })
                 } finally {
                   setSaving(false)
                 }

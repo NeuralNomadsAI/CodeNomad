@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { hotkeyDefinitions } from "./hotkey-definitions"
+import { commandHotkeyDefinitions, hotkeyDefinitions } from "./hotkey-definitions"
 import { applyMergePatch } from "../../../server/src/settings/merge-patch"
 import { findHotkeyConflicts, formatHotkeyBinding, hotkeyEventKey, hotkeyOverridePatch, matchesHotkeyBinding,
   normalizeHotkeyOverrides, resetHotkeyOverridesPatch, resolveHotkeyBindings, type HotkeyBinding, type HotkeyOverrides } from "./hotkey-bindings"
@@ -14,7 +14,7 @@ describe("hotkey catalog and effective bindings", () => {
     for (const locale of ["de", "en", "es", "fr", "he", "ja", "ne", "ru", "tr", "zh-Hans"]) {
       const module = await import(new URL(`./i18n/messages/${locale}/index.ts`, import.meta.url).href)
       const messages = Object.values(module).find(value => value && typeof value === "object") as Record<string, string>
-      for (const key of ["settings.nav.hotkeys", "hotkeys.edit", "hotkeys.capture", "hotkeys.disabled", "hotkeys.disable",
+      for (const key of ["settings.nav.hotkeys", "hotkeys.edit", "hotkeys.capture", "hotkeys.empty", "hotkeys.clear",
         "hotkeys.reset", "hotkeys.resetAll", "hotkeys.cancel", "hotkeys.filter", "hotkeys.saveFailed", "hotkeys.conflict",
         ...hotkeyDefinitions.map(definition => definition.labelKey)]) {
         assert.equal(typeof messages?.[key], "string", `${locale}: ${key}`)
@@ -22,14 +22,24 @@ describe("hotkey catalog and effective bindings", () => {
     }
   })
 
-  it("has 49 unique renderer actions with defaults, available without app registration", () => {
-    assert.equal(hotkeyDefinitions.length, 49)
+  it("includes bound and initially unbound actions without app registration or duplicate aliases", () => {
+    assert.equal(hotkeyDefinitions.length, 73)
     assert.equal(new Set(hotkeyDefinitions.map(item => item.id)).size, hotkeyDefinitions.length)
     for (const { id, labelKey } of hotkeyDefinitions) {
-      assert.ok(labelKey.startsWith("hotkeys.action."))
-      assert.ok(resolveHotkeyBindings(id, {}).length, id)
+      assert.ok(labelKey)
+      assert.equal(resolveHotkeyBindings(id, {}).length > 0, !commandHotkeyDefinitions.some(item => item.id === id), id)
     }
     assert.equal(hotkeyDefinitions.find(item => item.id === "app-tab-9")?.labelKey, "hotkeys.action.app-tab")
+    assert.equal(hotkeyDefinitions.some(item => item.id === "new-session" || item.id === "open-model-selector"), false)
+    const binding = [{ key: "h", mod: true, alt: true }]
+    const owner = { settings: { hotkeyOverrides: {} as HotkeyOverrides } }
+    const saved = applyMergePatch(owner, hotkeyOverridePatch("open-help", binding)) as typeof owner
+    assert.deepEqual(resolveHotkeyBindings("open-help", saved.settings.hotkeyOverrides), binding)
+    assert.deepEqual(resolveHotkeyBindings("open-help", { "open-help": [] }), [])
+    const reset = applyMergePatch(saved, hotkeyOverridePatch("open-help")) as typeof owner
+    assert.deepEqual(resolveHotkeyBindings("open-help", reset.settings.hotkeyOverrides), [])
+    assert.ok(findHotkeyConflicts({ "open-help": [{ key: "n", mod: true }] }, true, false)
+      .some(conflict => conflict.ids.includes("open-help") && conflict.ids.includes("browse-folder")))
   })
 
   it("keeps the saved Enter policy as a default, with explicit disabled and custom overrides", () => {

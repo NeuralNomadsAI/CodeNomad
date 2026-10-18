@@ -148,6 +148,8 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "मोबाइल ल्याण्डस्केप (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "सत्र {label} संक्षिप्त गरियो",
+  "sessionEvents.notify.needsInput": "सत्र “{label}” तपाईंको जवाफ पर्खिरहेको छ",
+  "sessionEvents.notify.done": "सत्र “{label}” सकियो",
   "sessionEvents.sessionError.unknown": "अज्ञात त्रुटि",
   "sessionEvents.sessionError.title": "सत्र त्रुटि",
   "sessionEvents.sessionError.message": "त्रुटि: {message}",

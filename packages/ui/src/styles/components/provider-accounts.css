@@ -23,10 +23,21 @@
   align-items: center;
   gap: var(--space-xs);
 }
+.provider-account-actions .icon-button-compact {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+}
+@media (max-width: 640px) {
+  .provider-account-actions .icon-button-compact { min-width: 2.25rem; min-height: 2.25rem; }
+}
 .provider-account-auto {
   grid-column: 1 / -1;
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: var(--space-sm);
   color: var(--text-secondary);
   font-size: var(--font-size-sm);
@@ -41,7 +52,7 @@
   padding-block: var(--space-lg);
   column-gap: var(--space-md);
   row-gap: 0;
-  border-block-end: 1px solid var(--border-base);
+  border-block-end: 1px solid var(--border-row);
   container: provider-account / inline-size;
 }
 .providers-accounts-list .providers-card:last-child { border-block-end: 0; }

@@ -9,8 +9,6 @@ export const remoteAccessMessages = {
   "remoteAccess.direct.help": "सर्भर पासवर्डसहित आफ्नै नेटवर्क, VPN वा रिभर्स प्रोक्सीमार्फत जडान गर्नुहोस्। जहाँबाट पनि CodeNomad पहुँच गर्न माथिको रिमोट कन्ट्रोल सजिलो छ र कुनै पोर्ट खोल्दैन।",
   "remoteAccess.sections.listeningMode.label": "लिस्निङ मोड (Listening mode)",
   "remoteAccess.sections.listeningMode.help": "सबै इन्टरफेसमा सुनेर प्रत्यक्ष जडानलाई अनुमति दिनुहोस्, वा यो सर्भरलाई localhost मा मात्र राख्नुहोस्। रिमोट कन्ट्रोललाई यसको आवश्यकता पर्दैन।",
-  "remoteAccess.toggle.on": "अन",
-  "remoteAccess.toggle.off": "अफ",
   "remoteAccess.toggle.title": "अन्य IP हरूबाट जडान अनुमति दिनुहोस्",
   "remoteAccess.toggle.caption.all": "0.0.0.0 मा बाइन्ड गर्दै",
   "remoteAccess.toggle.caption.local": "127.0.0.1 मा बाइन्ड गर्दै",

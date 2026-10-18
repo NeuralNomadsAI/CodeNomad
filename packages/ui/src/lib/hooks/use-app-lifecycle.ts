@@ -5,6 +5,8 @@ import { registerInputShortcuts } from "../shortcuts/input"
 import { registerAgentShortcuts } from "../shortcuts/agent"
 import { registerEscapeShortcut, setEscapeStateChangeHandler } from "../shortcuts/escape"
 import { keyboardRegistry } from "../keyboard-registry"
+import { commandHotkeyDefinitions } from "../hotkey-definitions"
+import { resolveResolvable, type Command } from "../commands"
 import { abortSession, getSessions, isSessionBusy } from "../../stores/sessions"
 import { showCommandPalette, hideCommandPalette } from "../../stores/command-palette"
 import type { Instance } from "../../types/instance"
@@ -23,6 +25,8 @@ interface UseAppLifecycleOptions {
   setShowFolderSelection: (value: boolean) => void
   getActiveInstance: () => Instance | null
   getActiveSessionIdForInstance: () => string | null
+  commands?: Accessor<Command[]>
+  executeCommand?: (command: Command) => void
 }
 
 export function useAppLifecycle(options: UseAppLifecycleOptions) {
@@ -119,6 +123,27 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
       { isOpen: options.showFolderSelection, close: () => options.setShowFolderSelection(false) },
     )
 
+    if (options.commands && options.executeCommand) {
+      const executeCommand = options.executeCommand
+      for (const definition of commandHotkeyDefinitions) {
+        const command = options.commands().find(candidate => candidate.id === definition.id)
+        if (!command) continue // Native workspace actions are absent on the web.
+        keyboardRegistry.register({
+          id: definition.id,
+          description: resolveResolvable(command.description),
+          handler: () => executeCommand(command),
+          repeat: false,
+          condition: () => {
+            if (command.disabled && resolveResolvable(command.disabled)) return false
+            if (definition.scope === "app") return true
+            if (!isMainView()) return false
+            return definition.scope === "session" ? hasActiveSession() : Boolean(options.getActiveInstance())
+          },
+        })
+        onCleanup(() => keyboardRegistry.unregister(definition.id))
+      }
+    }
+
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.defaultPrevented || document.querySelector('[role="dialog"][aria-modal="true"]')) return
       const target = e.target instanceof Element ? e.target : null
@@ -134,7 +159,7 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
       const shortcut = keyboardRegistry.findMatch(e)
       if (shortcut) {
         e.preventDefault()
-        if (!(shortcut.id === "session-abort" && e.repeat)) shortcut.handler()
+        if (!(e.repeat && (shortcut.id === "session-abort" || shortcut.repeat === false))) shortcut.handler()
       }
     }
 

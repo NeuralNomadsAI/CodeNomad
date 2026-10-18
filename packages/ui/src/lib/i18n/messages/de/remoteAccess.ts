@@ -9,8 +9,6 @@ export const remoteAccessMessages = {
   "remoteAccess.direct.help": "Verbinden Sie sich über Ihr eigenes Netzwerk, ein VPN oder einen Reverse-Proxy mit dem Serverpasswort. Für den Zugriff von überall ist die Fernsteuerung oben einfacher und öffnet keinen Port.",
   "remoteAccess.sections.listeningMode.label": "Abhörmodus (Listening mode)",
   "remoteAccess.sections.listeningMode.help": "Direkte Verbindungen erlauben, indem auf allen Schnittstellen gelauscht wird, oder diesen Server nur auf localhost belassen. Die Fernsteuerung benötigt dies nicht.",
-  "remoteAccess.toggle.on": "An",
-  "remoteAccess.toggle.off": "Aus",
   "remoteAccess.toggle.title": "Verbindungen von anderen IPs zulassen",
   "remoteAccess.toggle.caption.all": "Bindung an 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Bindung an 127.0.0.1",

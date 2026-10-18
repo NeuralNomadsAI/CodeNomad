@@ -9,8 +9,6 @@ export const remoteAccessMessages = {
   "remoteAccess.direct.help": "Подключайтесь через свою сеть, VPN или обратный прокси с паролем сервера. Для доступа к CodeNomad откуда угодно удобнее «Удалённое управление» выше: оно не открывает порты.",
   "remoteAccess.sections.listeningMode.label": "Режим прослушивания",
   "remoteAccess.sections.listeningMode.help": "Разрешите прямые подключения, слушая все интерфейсы, или оставьте сервер только на localhost. Для «Удалённого управления» это не требуется.",
-  "remoteAccess.toggle.on": "Вкл",
-  "remoteAccess.toggle.off": "Выкл",
   "remoteAccess.toggle.title": "Разрешить подключения с других IP",
   "remoteAccess.toggle.caption.all": "Привязка к 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Привязка к 127.0.0.1",

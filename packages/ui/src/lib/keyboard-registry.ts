@@ -6,6 +6,7 @@ export interface KeyboardShortcut {
   description: string
   context?: "global" | "input" | "messages"
   condition?: () => boolean
+  repeat?: boolean
 }
 
 class KeyboardRegistry {

@@ -913,7 +913,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!info) return
 
     const success = await copyToClipboard(info.text)
-    showToastNotification({
+    showToastNotification({ category: "copy",
       message: success ? t("messageSection.quote.copied") : t("messageSection.quote.copyFailed"),
       variant: success ? "success" : "error",
       duration: success ? 2000 : 6000,

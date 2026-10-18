@@ -18,7 +18,7 @@ export const StartupStateSettingsCard: Component = () => {
     try {
       await setRestorePreviousStateEnabled(enabled)
     } catch {
-      showToastNotification({ message: t("settings.appearance.startup.updateError"), variant: "error" })
+      showToastNotification({ category: "settings", message: t("settings.appearance.startup.updateError"), variant: "error" })
     } finally {
       setBusy(false)
     }
@@ -28,9 +28,9 @@ export const StartupStateSettingsCard: Component = () => {
     setBusy(true)
     try {
       await clearRestoredClientState()
-      showToastNotification({ message: t("settings.appearance.startup.clearSuccess"), variant: "success" })
+      showToastNotification({ category: "settings", message: t("settings.appearance.startup.clearSuccess"), variant: "success" })
     } catch {
-      showToastNotification({ message: t("settings.appearance.startup.clearError"), variant: "error" })
+      showToastNotification({ category: "settings", message: t("settings.appearance.startup.clearError"), variant: "error" })
     } finally {
       setBusy(false)
     }

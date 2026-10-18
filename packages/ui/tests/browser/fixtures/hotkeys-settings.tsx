@@ -19,22 +19,39 @@ serverApi.patchConfigOwner = async (_owner: string, patch: any) => {
 }
 serverApi.fetchStateOwner = async () => ({} as any)
 
-const [{ ConfigProvider, updatePreferences }, { I18nProvider }, { HotkeysSettingsSection }, { useAppLifecycle }, { hotkeyLabel, isHotkeyRecording }] = await Promise.all([
+const [{ ConfigProvider, updatePreferences, useConfig }, { I18nProvider }, { HotkeysSettingsSection }, { useAppLifecycle }, { hotkeyLabel, isHotkeyRecording }, { useCommands }, { keyboardRegistry }, { setSessions }] = await Promise.all([
   import("../../../src/stores/preferences"), import("../../../src/lib/i18n"),
   import("../../../src/components/settings/hotkeys-settings-section"),
   import("../../../src/lib/hooks/use-app-lifecycle"), import("../../../src/lib/hotkeys"),
+  import("../../../src/lib/hooks/use-commands"), import("../../../src/lib/keyboard-registry"), import("../../../src/stores/session-state"),
 ])
 await updatePreferences({ locale: "en" })
 patches.length = 0
 let newInstances = 0
+let temporaryInstances = 0, redos = 0
 const [visible, setVisible] = createSignal(true)
+const [home, setHome] = createSignal(false)
+const [hasInstance, setHasInstance] = createSignal(true)
+const [sessionId, setSessionId] = createSignal<string | null>("session")
+const instance = { id: "fixture", client: { session: { revert: { clear: async () => { redos++ } } } } }
 function Fixture() {
-  useAppLifecycle({
-    setEscapeInDebounce: () => {}, handleNewInstanceRequest: () => { newInstances++ },
+  const config = useConfig()
+  const actions = {
+    handleNewInstanceRequest: () => { newInstances++ },
+    handleNewTemporaryInstance: async () => { temporaryInstances++ },
     handleCloseActiveTab: async () => {}, handleNewSession: async () => {}, handleCloseSession: async () => {},
-    showFolderSelection: () => false, setShowFolderSelection: () => {},
-    getActiveInstance: () => ({ id: "fixture" }) as any, getActiveSessionIdForInstance: () => "session",
+    getActiveInstance: () => hasInstance() ? instance as any : null, getActiveSessionIdForInstance: sessionId,
+  }
+  const commands = useCommands({ ...config, ...actions })
+  useAppLifecycle({
+    ...actions, commands: commands.commands, executeCommand: commands.executeCommand,
+    setEscapeInDebounce: () => {}, showFolderSelection: home, setShowFolderSelection: setHome,
   })
+  ;(window as any).commandFixture = {
+    commands: () => commands.commands().map(({ id, shortcutId }) => ({ id, shortcutId })),
+    registered: (id: string) => Boolean(keyboardRegistry.get(id)),
+    preferences: config.preferences,
+  }
   return <>
     <button id="outside" title={hotkeyLabel("new-instance")}>Outside target</button>
     <div class="session-cache-pane" aria-hidden="false"><textarea class="prompt-input" aria-label="Prompt" /></div>
@@ -45,4 +62,8 @@ render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigPro
 ;(window as any).fixture = {
   newInstances: () => newInstances, config: () => config, patches: () => patches,
   isRecording: isHotkeyRecording, setVisible, failSave: (value: boolean) => { failSave = value },
+  temporaryInstances: () => temporaryInstances, redos: () => redos, setHome, setHasInstance, setSessionId,
+  setRevert: (enabled: boolean) => setSessions(previous => new Map(previous).set("fixture", new Map([
+    ["session", { id: "session", revert: enabled ? { messageID: "previous" } : undefined } as any],
+  ]))),
 }

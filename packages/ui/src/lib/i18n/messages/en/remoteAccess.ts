@@ -9,8 +9,6 @@ export const remoteAccessMessages = {
   "remoteAccess.direct.help": "Connect over your own network, VPN or reverse proxy with the server password. To reach CodeNomad from anywhere, Remote Control above is simpler and needs no open port.",
   "remoteAccess.sections.listeningMode.label": "Listening mode",
   "remoteAccess.sections.listeningMode.help": "Allow direct connections by listening on all interfaces, or keep this server on localhost only. Remote Control does not need this.",
-  "remoteAccess.toggle.on": "On",
-  "remoteAccess.toggle.off": "Off",
   "remoteAccess.toggle.title": "Allow connections from other IPs",
   "remoteAccess.toggle.caption.all": "Binding to 0.0.0.0",
   "remoteAccess.toggle.caption.local": "Binding to 127.0.0.1",

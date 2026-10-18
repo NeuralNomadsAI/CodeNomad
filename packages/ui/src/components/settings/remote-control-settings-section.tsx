@@ -153,10 +153,13 @@ export const RemoteControlSettingsSection: Component = () => {
               <p class="settings-card-subtitle">{t("remoteControl.description")}</p>
             </div>
           </div>
-          <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void refresh()} disabled={loading()}>
-            <RefreshCw class={`w-4 h-4 ${loading() ? "remote-spin" : ""}`} />
-            <span>{t("remoteControl.refresh")}</span>
-          </button>
+          <div class="settings-toolbar-inline remote-control-toolbar">
+            <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
+            <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void refresh()} disabled={loading()}>
+              <RefreshCw class={`w-4 h-4 ${loading() ? "remote-spin" : ""}`} />
+              <span>{t("remoteControl.refresh")}</span>
+            </button>
+          </div>
         </div>
 
         <div class="remote-control-status" data-state={status()?.state ?? "stopped"}>
@@ -177,7 +180,7 @@ export const RemoteControlSettingsSection: Component = () => {
               when={status()?.enabled}
               fallback={
                 <>
-                  <button class="selector-button w-auto" type="button" onClick={() => void start()} disabled={loading()}>
+                  <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void start()} disabled={loading()}>
                     <Link2 class="w-4 h-4" />
                     {t("remoteControl.start")}
                   </button>
@@ -186,7 +189,7 @@ export const RemoteControlSettingsSection: Component = () => {
                 </>
               }
             >
-              <button class="selector-button w-auto" type="button" onClick={() => void createPairing()} disabled={loading() || status()?.state !== "connected"}>
+              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void createPairing()} disabled={loading() || status()?.state !== "connected"}>
                 <Link2 class="w-4 h-4" />
                 {t("remoteControl.newLink")}
               </button>

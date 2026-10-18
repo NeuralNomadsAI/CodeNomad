@@ -59,10 +59,10 @@ export function useGitInit(options: {
     setPending(true)
     try {
       await serverApi.initializeWorkspaceGit(options.instanceId, options.directory())
-      if (!disposed) showToastNotification({ message: options.t("filesPanel.gitInit.success"), variant: "success" })
+      if (!disposed) showToastNotification({ category: "files", message: options.t("filesPanel.gitInit.success"), variant: "success" })
     } catch (error) {
       const key = errorKey(error)
-      if (!disposed) showToastNotification({
+      if (!disposed) showToastNotification({ category: "files",
         message: key ? options.t(key) : options.t("filesPanel.gitInit.error", { message: error instanceof Error ? error.message : String(error) }),
         variant: "error",
       })

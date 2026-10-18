@@ -636,6 +636,7 @@ export function useCommands(options: UseCommandsOptions) {
 
   onMount(() => {
     registerCommands()
+    for (const command of commandRegistry.getAll()) command.shortcutId ??= command.id
     refreshCommands()
   })
 

@@ -9,18 +9,21 @@ import { WebSearchProviderConnections } from "./websearch-provider-connections"
 const encode = (value: WebSearchSelection) => value === null ? "default" : value === false ? "off" : `provider:${value}`
 const decode = (value: string): WebSearchSelection => value === "default" ? null : value === "off" ? false : value.slice(9)
 
-export function WebSearchSettingsCard(props: { instanceId: string; location?: LocationRef }) {
+/** `embedded`: Settings → Providers titles and folds this group itself. */
+export function WebSearchSettingsCard(props: { instanceId: string; location?: LocationRef; embedded?: boolean }) {
   const { t } = useI18n()
   const settings = useWebSearchSettings(props)
   const label = (value: WebSearchSelection) => value === null ? t("settings.websearch.default")
     : value === false ? t("settings.websearch.off") : value === "random" ? t("settings.websearch.random")
       : settings.providers().find(item => item.id === value)?.name ?? value
 
-  return <section class="providers-settings-group websearch-settings" aria-labelledby="providers-websearch-heading">
-    <header class="settings-card-heading-with-icon">
-      <Globe class="settings-card-heading-icon" aria-hidden="true" />
-      <h3 id="providers-websearch-heading" class="settings-card-title">{t("settings.websearch.title")}</h3>
-    </header>
+  return <section class="websearch-settings" classList={{ "providers-settings-group": !props.embedded }} aria-labelledby="providers-websearch-heading">
+    <Show when={!props.embedded}>
+      <header class="settings-card-heading-with-icon">
+        <Globe class="settings-card-heading-icon" aria-hidden="true" />
+        <h3 id="providers-websearch-heading" class="settings-card-title">{t("settings.websearch.title")}</h3>
+      </header>
+    </Show>
     <Show when={settings.error()}><p role="alert">{t("settings.websearch.error")}</p></Show>
     <WebSearchProviderConnections providers={settings.providers()} integrations={settings.integrations()}
       contextKey={`${props.instanceId}:${settings.location().directory}`} busy={settings.busy()}

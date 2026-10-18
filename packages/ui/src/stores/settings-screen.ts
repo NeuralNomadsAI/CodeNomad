@@ -48,7 +48,7 @@ export async function openSettings(section?: SettingsSectionId, toggle = false) 
     } catch (error) {
       log.warn("Native Preferences rejected the request", error)
       const [{ showToastNotification }, { tGlobal }] = await Promise.all([import("../lib/notifications"), import("../lib/i18n")])
-      showToastNotification({ message: tGlobal("settings.native.openFailed"), variant: "error" })
+      showToastNotification({ category: "settings", message: tGlobal("settings.native.openFailed"), variant: "error" })
     }
     return
   }

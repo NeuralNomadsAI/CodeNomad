@@ -411,7 +411,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
       await reconcileGitSelection(previous)
     } catch (error) {
       if (!context.current()) return
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: error instanceof Error ? error.message : `Failed to ${action} file`,
         variant: "error",
       })
@@ -456,13 +456,13 @@ export function useGitChanges(options: UseGitChangesOptions) {
       if (!await loadGitStatus(true) || !context.current()) return
       await reconcileGitSelection(previous)
       if (!context.current()) return
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: options.t("instanceShell.gitChanges.commit.success"),
         variant: "success",
       })
     } catch (error) {
       if (!context.current()) return
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: error instanceof Error ? error.message : options.t("instanceShell.gitChanges.commit.error"),
         variant: "error",
       })

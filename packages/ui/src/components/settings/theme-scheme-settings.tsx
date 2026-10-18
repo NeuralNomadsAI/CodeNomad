@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { useTheme } from "../../lib/theme"
 import type { AppearanceMode } from "../../lib/appearance-preferences"
@@ -6,6 +6,7 @@ import { isDefaultCustomColors, nextColorSchemePresetName } from "../../lib/colo
 import { showConfirmDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
 import { registerSettingsDirtyGuard } from "../../stores/settings-dirty-guard"
+import { observePaletteStripFit } from "./palette-strip-fit"
 import {
   BUILT_IN_COLOR_SCHEMES,
   DEFAULT_CUSTOM_COLORS,
@@ -299,11 +300,14 @@ export const ThemeSchemeSettings: Component = () => {
 
   const colorsFor = (option: PaletteOption) => editingKey() === option.key ? draftColors() : option.colors
 
+  let workbench!: HTMLDivElement, actions!: HTMLDivElement
+  const [stripStacked, setStripStacked] = createSignal(false)
+  onMount(() => observePaletteStripFit(workbench, actions, setStripStacked))
+
   return (
     <div class="settings-card theme-scheme-settings">
       <div class="settings-card-header">
         <h3 class="settings-card-title">{t("settings.appearance.colorScheme.title")}</h3>
-        <span class="settings-scope-badge">{t("settings.scope.device")}</span>
       </div>
 
       <div class="theme-scheme-list">
@@ -319,8 +323,7 @@ export const ThemeSchemeSettings: Component = () => {
             )}</For>
           </div>
         </div>
-        <p class="settings-card-subtitle">{t("settings.appearance.palette.independent")}</p>
-        <div class="theme-scheme-workbench">
+        <div class="theme-scheme-workbench" ref={workbench} data-stacked={stripStacked() ? "true" : "false"}>
           <select
             class="selector-input theme-scheme-picker"
             value={pendingOption()?.key ?? editingOption()?.key ?? ""}
@@ -374,7 +377,7 @@ export const ThemeSchemeSettings: Component = () => {
               }}</For>
             </div>
           )}</Show>
-          <div class="theme-scheme-actions">
+          <div class="theme-scheme-actions" ref={actions}>
             <Show when={editingOption()?.presetId}>
               <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void deletePreset(editingOption()!)}>
                 {t("settings.appearance.colorScheme.custom.delete")}

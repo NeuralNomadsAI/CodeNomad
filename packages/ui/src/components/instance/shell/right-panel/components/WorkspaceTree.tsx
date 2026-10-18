@@ -51,7 +51,7 @@ export function WorkspaceTree(props: {
 
   const handleCopyPath = async (path: string) => {
     const ok = await copyToClipboard(path)
-    showToastNotification({
+    showToastNotification({ category: "copy",
       message: ok ? props.t("instanceShell.filesShell.toast.copyPathSuccess") : props.t("instanceShell.filesShell.toast.copyPathError"),
       variant: ok ? "success" : "error",
     })
@@ -61,7 +61,7 @@ export function WorkspaceTree(props: {
     try {
       await openWorkspacePath({ target, instanceId: props.instanceId, worktreeSlug: props.worktreeSlug, path })
     } catch (error) {
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: props.t("instanceShell.filesShell.toast.openError", {
           message: error instanceof Error ? error.message : String(error),
         }),

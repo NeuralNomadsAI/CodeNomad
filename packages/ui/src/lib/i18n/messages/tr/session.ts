@@ -140,6 +140,8 @@ export const sessionMessages = {
   "browserFrame.viewport.mobile": "Mobil viewport (390 x 844)",
   "browserFrame.viewport.mobileLandscape": "Mobil yatay (844 x 390)",
   "sessionEvents.sessionCompactedToast": "{label} adlı session sıkıştırıldı",
+  "sessionEvents.notify.needsInput": "“{label}” oturumu yanıtınızı bekliyor",
+  "sessionEvents.notify.done": "“{label}” oturumu tamamlandı",
   "sessionEvents.sessionError.unknown": "Bilinmeyen hata",
   "sessionEvents.sessionError.title": "Session hatası",
   "sessionEvents.sessionError.message": "Hata: {message}",

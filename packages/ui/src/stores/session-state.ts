@@ -1333,7 +1333,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
   }
 
   if (deletedCount > 0) {
-    showToastNotification({
+    showToastNotification({ category: "sessions",
       message: deletedCount === 1
         ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })
         : tGlobal("sessionState.cleanup.toast.other", { count: deletedCount }),

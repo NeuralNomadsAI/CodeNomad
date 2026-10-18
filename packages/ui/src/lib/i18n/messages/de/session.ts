@@ -148,6 +148,8 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "Mobile-Querformat (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "Sitzung {label} wurde komprimiert",
+  "sessionEvents.notify.needsInput": "Sitzung „{label}“ wartet auf Ihre Antwort",
+  "sessionEvents.notify.done": "Sitzung „{label}“ ist beendet",
   "sessionEvents.sessionError.unknown": "Unbekannter Fehler",
   "sessionEvents.sessionError.title": "Sitzungsfehler",
   "sessionEvents.sessionError.message": "Fehler: {message}",

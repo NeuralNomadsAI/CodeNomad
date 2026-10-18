@@ -63,6 +63,13 @@ async function setup(page: Page, windowContext: "local" | "remote" = "local") {
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } }))
 }
 const fixtureCall = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
+/** Polls a condition on test-process state, such as what a route handler recorded. */
+async function until(condition: () => boolean, timeout = 5_000) {
+  for (const start = Date.now(); !condition();) {
+    if (Date.now() - start > timeout) throw new Error("Condition not reached")
+    await new Promise(resolve => setTimeout(resolve, 10))
+  }
+}
 /** The selected Mission's detail: a separate section below the picker. */
 const selectedCard = (page: Page) => page.locator("section.mission-detail")
 /** Screen-reader status ("State · time") of the Mission shown in the current-mission field. */
@@ -94,6 +101,9 @@ async function openMissionSettings(page: Page, label = "Preferences") {
   const shell = settingsShell(page)
   await shell.locator(".mission-preferences").waitFor()
   assert.equal(await shell.locator('.settings-nav-button[aria-current="page"]').innerText(), await fixtureText(page, "settings.nav.missions"))
+  // Agent and model choices sit in one "Agents and models" disclosure.
+  const profiles = shell.locator(".mission-profiles-disclosure > summary")
+  if (!await profiles.evaluate(item => (item.parentElement as HTMLDetailsElement).open)) await profiles.click()
   return shell
 }
 async function closeMissionSettings(page: Page) {
@@ -114,7 +124,7 @@ async function openTaskTechnicalDetails(page: Page) {
   await page.locator(".mission-task-reader > details").filter({ has: page.locator("summary", { hasText: "Technical details" }) }).locator("summary").click()
 }
 
-test("Missions preferences open in Settings from the panel gear, retain dirty CAS drafts and fence hidden catalog demand without closing the reader", async () => {
+test("Missions preferences open in Settings from the panel gear, save each choice compare-and-swapped and fence hidden catalog demand without closing the reader", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
   const errors: string[] = [], catalogReads: string[] = [], writes: any[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -157,7 +167,8 @@ test("Missions preferences open in Settings from the panel gear, retain dirty CA
     const agent = page.getByLabel("Coordinator · Agent", { exact: true })
     await agent.locator('option[value="build"]').waitFor({ state: "attached" })
     await agent.selectOption("build")
-    await page.getByText("Unsaved changes", { exact: true }).waitFor()
+    await until(() => owner.settings.missionProfileDefaults.length === 1)
+    assert.deepEqual(writes[0].expected[0].value, [], "the write is compared against the value shown")
     await closeMissionSettings(page)
     const reads = catalogReads.length
     await page.evaluate(async () => {
@@ -178,23 +189,21 @@ test("Missions preferences open in Settings from the panel gear, retain dirty CA
     assert.equal(await agent.evaluate(element => element === document.activeElement), true)
     for (const width of [1100, 640, 390]) {
       await page.setViewportSize({ width, height: 850 })
-      await page.locator(".mission-preferences-actions").scrollIntoViewIfNeeded()
+      await page.locator(".mission-profiles-disclosure .mission-preferences-actions").scrollIntoViewIfNeeded()
       assert.equal(await settingsFits(page), true)
-      const actions = await page.locator(".mission-preferences-actions > button").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top))
-      assert.equal(new Set(actions).size, 1, "Save/Reset/Reload share one logical row")
       await page.screenshot({ path: screenshotPath(`mission-preferences-en-${width}`) })
     }
     await page.setViewportSize({ width: 1100, height: 850 })
+    assert.equal(await page.locator(".mission-preferences").getByRole("button", { name: /^(Save|Reload)$/ }).count(), 0, "no save or reload step")
+    // Another window changed the defaults; this window has not heard about it yet.
+    const stored = owner.settings.missionProfileDefaults
     owner = { settings: { missionProfileDefaults: [{ template: "custom", profiles: { coordinator: { agent: "other-window" } } }], unrelated: "keep" } }
-    await page.locator(".mission-preferences-actions").getByRole("button", { name: "Save", exact: true }).click()
+    await agent.selectOption("")
     await page.getByText(await fixtureText(page, "missions.defaults.error"), { exact: true }).waitFor()
-    assert.deepEqual(writes[0].expected[0].value, [], "navigation never refreshes the dirty draft's original expectation")
-    assert.equal(await agent.inputValue(), "build")
-    assert.equal(owner.settings.missionProfileDefaults[0].profiles.coordinator.agent, "other-window")
-    await page.locator(".mission-preferences-actions").getByRole("button", { name: "Reload saved defaults", exact: true }).click()
-    await page.getByRole("dialog").getByRole("button", { name: "Discard changes", exact: true }).click()
+    assert.deepEqual(writes[1].expected[0].value, stored, "the rejected write was compared against what this window showed")
     await page.waitForFunction(() => document.querySelector<HTMLSelectElement>('select[aria-label="Coordinator · Agent"]')?.value === "other-window")
-    assert.equal(writes.length, 1, "reload never replays the rejected mutation")
+    assert.equal(owner.settings.missionProfileDefaults[0].profiles.coordinator.agent, "other-window")
+    assert.equal(writes.length, 2, "the stored value is re-read; the rejected mutation is never replayed")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -217,8 +226,6 @@ test("empty Missions reaches localized preferences through the gear, without set
       assert.equal(await settings.locator(".mission-preferences > header h4").innerText(), await fixtureText(page, "missions.defaults.title"))
       assert.equal(await settings.locator(".mission-preferences .settings-card").count(), 0, "compact Mission controls, not wide settings cards")
       assert.equal(await settingsFits(page), true)
-      const actions = await page.locator(".mission-preferences-actions > button").evaluateAll(elements => elements.map(element => element.getBoundingClientRect().top))
-      assert.equal(new Set(actions).size, 1)
       await page.screenshot({ path: screenshotPath(`mission-preferences-${locale}`) })
       await closeMissionSettings(page)
       await missionGeneralAction(page, await fixtureText(page, "missions.control.create")).click()
@@ -289,7 +296,7 @@ for (const failBeforeRelease of [false, true]) test(`localized Missions preferen
   assert.equal(page.isClosed(), true)
 })
 
-test("Delegation depth reads only on demand, keeps its original Location draft and saves zero/inherit without native reload or global preference writes", async () => {
+test("Delegation depth reads only on demand, saves zero/inherit on Enter without native reload or global preference writes and keeps a rejected draft's original Location", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
   const mutations: Array<{ url: string; body: any }> = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -311,21 +318,24 @@ test("Delegation depth reads only on demand, keeps its original Location draft a
     await page.waitForFunction(() => (window as any).missionFixture.loaded())
     assert.equal(reads, 0)
     await openMissionSettings(page)
-    const controls = page.locator(".mission-depth"), input = controls.getByRole("spinbutton", { name: "Maximum depth", exact: true })
+    const controls = page.locator(".mission-depth"), input = controls.getByRole("spinbutton", { name: "Depth override for the project", exact: true })
     await controls.getByText("fixture/opencode.jsonc", { exact: true }).waitFor()
     assert.equal(await input.getAttribute("min"), "0")
     assert.equal(await input.getAttribute("max"), "4")
-    await controls.getByText("Effective depth unknown", { exact: true }).waitFor()
+    await controls.getByText("OpenCode effective depth unknown", { exact: true }).waitFor()
+    assert.equal(await controls.getByRole("button", { name: /^(Save|Refresh project depth)$/ }).count(), 0, "no save step; refreshing is only a recovery")
+    const rejected = controls.getByText(await fixtureText(page, "missions.depth.invalidValue"), { exact: true })
     for (const value of ["-1", "5", "1.5", "9007199254740992"]) {
-      await input.fill(value)
-      assert.equal(await controls.getByRole("button", { name: "Save Location depth", exact: true }).isDisabled(), true)
+      await input.fill(value); await input.press("Enter")
+      await rejected.waitFor()
     }
-    await input.fill(""); await input.press("-")
-    assert.equal(await controls.getByRole("button", { name: "Save Location depth", exact: true }).isDisabled(), true, "incomplete numeric input must not delete the override")
-    await input.fill("0")
+    await input.fill(""); await input.press("-"); await input.press("Enter")
+    await rejected.waitFor()
+    assert.equal(mutations.length, 0, "invalid or incomplete numeric input is never written, nor read as inherit")
+    await input.fill("5"); await input.press("Enter")
     await closeMissionSettings(page); await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true); await openMissionSettings(page)
-    assert.equal(await input.inputValue(), "0")
-    assert.equal(reads, 1, "dirty drafts never rebase the saved file expectation")
+    assert.equal(await input.inputValue(), "5")
+    assert.equal(reads, 1, "a rejected draft never rebases the saved file expectation")
     for (const width of [1100, 640, 390]) {
       await page.setViewportSize({ width, height: 850 })
       await controls.scrollIntoViewIfNeeded()
@@ -333,12 +343,14 @@ test("Delegation depth reads only on demand, keeps its original Location draft a
       await page.screenshot({ path: screenshotPath(`mission-delegation-depth-${width}`) })
     }
     await page.setViewportSize({ width: 1100, height: 850 })
-    await controls.getByRole("button", { name: "Save Location depth", exact: true }).click()
+    await input.fill("0"); await input.press("Enter")
     await controls.getByText("Configuration saved. OpenCode was not reloaded.", { exact: true }).waitFor()
+    assert.equal(await input.evaluate(element => element === document.activeElement), true, "saving keeps keyboard focus in the field")
     assert.deepEqual(mutations[0].body, { location: { directory: "fixture" }, depth: 0, expectation: "original-file" })
+    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
     await controls.getByRole("button", { name: "Inherit", exact: true }).click()
-    await controls.getByRole("button", { name: "Save Location depth", exact: true }).click()
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".mission-depth input")?.value === "")
+    await until(() => mutations.length === 2)
     assert.equal(mutations[1].body.depth, null)
     assert.equal(mutations[1].body.expectation, "saved-1")
     assert.ok(mutations.every(item => item.url.includes("/subagent-depth")))
@@ -373,15 +385,15 @@ test("visible clean depth revalidates after config and connection changes while 
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     const input = page.locator(".mission-depth input")
-    await openMissionSettings(page); await page.getByText("Effective depth: 1", { exact: true }).waitFor()
+    await openMissionSettings(page); await page.getByText("OpenCode effective depth: 1", { exact: true }).waitFor()
     depth = 4; expectation = "changed"
-    await invalidate(); await page.getByText("Effective depth: 4", { exact: true }).waitFor()
+    await invalidate(); await page.getByText("OpenCode effective depth: 4", { exact: true }).waitFor()
     assert.equal(reads, 2)
-    depth = 3; await invalidate(true); await page.getByText("Effective depth: 3", { exact: true }).waitFor()
+    depth = 3; await invalidate(true); await page.getByText("OpenCode effective depth: 3", { exact: true }).waitFor()
     assert.equal(reads, 3)
     await input.fill("2"); depth = 5; await invalidate(true); await page.waitForTimeout(150)
     assert.equal(await input.inputValue(), "2"); assert.equal(reads, 3, "dirty file expectation is not rebased")
-    await page.getByRole("button", { name: "Save Location depth", exact: true }).click()
+    await input.press("Enter")
     await page.getByText("Save not confirmed. Your draft is kept; refresh before another change. No automatic retry.", { exact: true }).waitFor()
     await invalidate(); await page.waitForTimeout(150)
     assert.equal(reads, 3); assert.equal(writes, 1, "unknown admission is not retried or silently refreshed")
@@ -390,7 +402,7 @@ test("visible clean depth revalidates after config and connection changes while 
   } finally { await page.close() }
 })
 
-test("config invalidation fences an admitted stale depth response and keeps editing locked through its trailing refresh", async () => {
+test("config invalidation fences an admitted stale depth response and keeps the field read-only through its trailing refresh", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let reads = 0, depth = 1, release!: () => void, reached!: () => void
   const held = new Promise<void>(resolve => { release = resolve }), started = new Promise<void>(resolve => { reached = resolve })
@@ -410,21 +422,21 @@ test("config invalidation fences an admitted stale depth response and keeps edit
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await openMissionSettings(page)
-    await page.getByText("Effective depth: 1", { exact: true }).waitFor()
+    await page.getByText("OpenCode effective depth: 1", { exact: true }).waitFor()
     await page.evaluate(() => {
       const bad: string[] = []; (window as any).staleDepthPublications = bad
       new MutationObserver(() => {
         const effective = document.querySelector(".mission-depth-effective")?.textContent
-        if (effective === "Effective depth: 2") bad.push(effective)
+        if (effective === "OpenCode effective depth: 2") bad.push(effective)
         const input = document.querySelector<HTMLInputElement>(".mission-depth input")
-        if (effective === "Effective depth: 1" && input && !input.disabled) bad.push("old snapshot unlocked")
+        if (effective === "OpenCode effective depth: 1" && input && !input.readOnly) bad.push("old snapshot unlocked")
       }).observe(document.querySelector(".mission-depth")!, { subtree: true, childList: true, characterData: true, attributes: true })
     })
     depth = 2; await invalidate(); await started
-    assert.equal(await page.locator(".mission-depth input").isDisabled(), true)
+    assert.equal(await page.locator(".mission-depth input").isEditable(), false)
     depth = 4; await invalidate(); release()
-    await page.getByText("Effective depth: 4", { exact: true }).waitFor()
-    assert.equal(await page.locator(".mission-depth input").isEnabled(), true)
+    await page.getByText("OpenCode effective depth: 4", { exact: true }).waitFor()
+    assert.equal(await page.locator(".mission-depth input").isEditable(), true)
     assert.equal(reads, 3)
     assert.deepEqual(await page.evaluate(() => (window as any).staleDepthPublications), [])
   } finally { release(); await page.close() }
@@ -448,10 +460,10 @@ test("depth uncertainty stays at its original Location through pending navigatio
     })
     await page.goto(url); await fixtureCall(page, "connectCatalog")
     await openMissionSettings(page)
-    const input = page.locator(".mission-depth input"), save = page.getByRole("button", { name: "Save Location depth", exact: true })
+    const input = page.locator(".mission-depth input"), refresh = page.getByRole("button", { name: "Refresh project depth", exact: true })
     await page.locator(".mission-depth-path").waitFor(); await input.fill("2")
-    await save.click(); await started
-    assert.equal(await page.getByRole("button", { name: "Refresh Location depth", exact: true, includeHidden: true }).isDisabled(), true)
+    await input.press("Enter"); await started
+    assert.equal(await refresh.count(), 0, "no refresh while the save is still pending")
     // The open Settings section follows the project's Location while the save is still pending.
     await fixtureCall(page, "directory", "other")
     await page.locator(".mission-depth-path").getByText("other/opencode.jsonc", { exact: true }).waitFor()
@@ -463,11 +475,12 @@ test("depth uncertainty stays at its original Location through pending navigatio
     await fixtureCall(page, "mount", false); await fixtureCall(page, "mount", true)
     await openMissionSettings(page)
     assert.equal(await input.inputValue(), "2")
-    assert.equal(await save.isDisabled(), true)
+    assert.equal(await input.isDisabled(), true, "an unconfirmed save locks the field until an explicit refresh")
+    await input.evaluate(element => element.dispatchEvent(new Event("change", { bubbles: true })))
     assert.equal(writes, 1)
     assert.equal(reads, 2)
-    await page.getByRole("button", { name: "Refresh Location depth", exact: true }).click()
-    assert.equal(await page.getByRole("button", { name: "Refresh Location depth", exact: true, includeHidden: true }).isDisabled(), true)
+    await refresh.click()
+    assert.equal(await page.getByRole("button", { name: "Refresh project depth", exact: true, includeHidden: true }).isDisabled(), true)
     await page.getByRole("dialog").getByRole("button", { name: "Discard changes", exact: true }).click()
     await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".mission-depth input")?.value === "1")
     assert.equal(writes, 1)

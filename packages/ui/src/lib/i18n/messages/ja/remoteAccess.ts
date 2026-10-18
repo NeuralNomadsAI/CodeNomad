@@ -9,8 +9,6 @@ export const remoteAccessMessages = {
   "remoteAccess.direct.help": "自分のネットワーク、VPN、リバースプロキシ経由でサーバーパスワードを使って接続します。どこからでも CodeNomad にアクセスするなら、上のリモートコントロールのほうが簡単で、ポートも開きません。",
   "remoteAccess.sections.listeningMode.label": "リッスンモード",
   "remoteAccess.sections.listeningMode.help": "すべてのインターフェースで待ち受けて直接接続を許可するか、このサーバーを localhost のみにします。リモートコントロールには不要です。",
-  "remoteAccess.toggle.on": "オン",
-  "remoteAccess.toggle.off": "オフ",
   "remoteAccess.toggle.title": "他の IP からの接続を許可",
   "remoteAccess.toggle.caption.all": "0.0.0.0 にバインド",
   "remoteAccess.toggle.caption.local": "127.0.0.1 にバインド",

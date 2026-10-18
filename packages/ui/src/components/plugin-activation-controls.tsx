@@ -100,7 +100,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     } catch (error) {
       log.error("Failed to update plugin activation rule", { pluginId: control.id, scope, error })
       if (requestGeneration === locationGeneration && props.active !== false) {
-        showToastNotification({
+        showToastNotification({ category: "opencode",
           variant: "error",
           message: t(errorMessageKey(error), { name: control.id, scope: scopeLabel(scope) }),
         })

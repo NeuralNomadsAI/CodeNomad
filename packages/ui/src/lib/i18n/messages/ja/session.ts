@@ -148,6 +148,8 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "モバイル横向き (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "セッション {label} をコンパクト化しました",
+  "sessionEvents.notify.needsInput": "セッション「{label}」が応答を待っています",
+  "sessionEvents.notify.done": "セッション「{label}」が終了しました",
   "sessionEvents.sessionError.unknown": "不明なエラー",
   "sessionEvents.sessionError.title": "セッションエラー",
   "sessionEvents.sessionError.message": "エラー: {message}",

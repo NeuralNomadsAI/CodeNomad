@@ -99,8 +99,12 @@ for (const host of ["electron", "tauri"] as const) {
       await Promise.all([
         page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/integration")),
         page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/model")),
-        page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/websearch-settings")),
         page.getByRole("button", { name: "Fournisseurs", exact: true }).click(),
+      ])
+      // Web search is folded by default and reads its settings only once opened.
+      await Promise.all([
+        page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/websearch-settings")),
+        page.getByRole("heading", { name: "Recherche web", exact: true }).click(),
       ])
       assert.deepEqual(new Set(workspaceRequests.map(request => new URL(request).pathname)), new Set([
         "/workspaces/current-project/instance/api/provider", "/workspaces/current-project/instance/api/model",

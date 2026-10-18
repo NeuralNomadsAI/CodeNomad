@@ -148,6 +148,8 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "移动横屏 (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "会话 {label} 已被压缩",
+  "sessionEvents.notify.needsInput": "会话“{label}”正在等待你的回复",
+  "sessionEvents.notify.done": "会话“{label}”已结束",
   "sessionEvents.sessionError.unknown": "未知错误",
   "sessionEvents.sessionError.title": "会话错误",
   "sessionEvents.sessionError.message": "错误：{message}",

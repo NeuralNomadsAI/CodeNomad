@@ -292,6 +292,16 @@
   @apply flex gap-2;
 }
 
+/* The field takes the width; its action keeps its natural size. */
+.selector-input-group > .selector-input {
+  min-width: 0;
+}
+
+.selector-input-group > .selector-button {
+  width: auto;
+  flex: 0 0 auto;
+}
+
 .selector-input {
   @apply flex-1 px-2 text-sm border outline-none transition-colors;
   min-height: var(--control-height);
@@ -312,6 +322,7 @@
 
 .selector-button {
   @apply px-3 text-sm transition-colors cursor-pointer w-full inline-flex items-center justify-center font-medium;
+  gap: 0.375rem;
   min-height: var(--control-height);
   border-radius: 0;
   background-color: var(--surface-secondary);

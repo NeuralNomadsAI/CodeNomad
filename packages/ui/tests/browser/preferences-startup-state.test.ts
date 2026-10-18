@@ -100,7 +100,9 @@ for (const host of ["electron", "tauri"] as const) {
   test(`${host} Preferences manages startup state of the exact opener window`, async () => {
     const { page, errors } = await openPreferences(host)
     try {
-      await page.getByText("Applies to the CodeNomad window that opened Preferences.").waitFor()
+      await page.waitForFunction(() => (document.querySelector('[data-testid="startup-state-settings"] input') as HTMLInputElement | null)?.checked === true)
+      // A reachable opener needs no explanation: the warning is reserved for its absence.
+      assert.equal(await page.getByText("is no longer available", { exact: false }).count(), 0)
       assert.equal(await restore(page).isChecked(), true)
       assert.equal(await restore(page).isEnabled(), true)
 
@@ -134,10 +136,10 @@ for (const host of ["electron", "tauri"] as const) {
       // The opener closes: the setting stays visible, truthful and unavailable.
       await page.evaluate(() => { delete (window as any).fixtureHost.windows["window-a"] })
       await refocus(page)
-      await page.getByText("The window that opened Preferences is closed or unavailable.", { exact: false }).waitFor()
+      await page.getByText("The CodeNomad window that opened Preferences is no longer available.", { exact: false }).waitFor()
       assert.equal(await restore(page).isVisible(), true)
       assert.equal(await restore(page).isDisabled(), true)
-      assert.equal(await page.getByRole("button", { name: "Clear saved state" }).isDisabled(), true)
+      assert.equal(await page.getByRole("button", { name: "Clear saved startup state" }).isDisabled(), true)
 
       state = await hostState(page)
       assert.deepEqual(state.clientStateCalls, [], "Preferences must never use client-state authority")

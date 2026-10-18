@@ -16,7 +16,9 @@ export type BehaviorToggleSetting = {
   kind: "toggle"
   id: string
   titleKey: string
-  subtitleKey: string
+  subtitleKey?: string
+  /** Secondary explanation shown behind an "i" beside the title. */
+  infoKey?: string
   get: (preferences: Preferences) => boolean
   set: (next: boolean) => void | Promise<unknown>
   disabled?: () => boolean
@@ -26,7 +28,8 @@ export type BehaviorEnumSetting<T extends string = string> = {
   kind: "enum"
   id: string
   titleKey: string
-  subtitleKey: string
+  subtitleKey?: string
+  infoKey?: string
   get: (preferences: Preferences) => T
   set: (next: T) => void
   options: Array<{ value: T; labelKey: string }>
@@ -118,7 +121,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.messageTimeline",
       titleKey: "settings.behavior.messageTimeline.title",
-      subtitleKey: "settings.behavior.messageTimeline.subtitle",
       get: (p) => Boolean(p.showMessageTimeline ?? true),
       set: (next) => {
         if (updatePreferences) {
@@ -136,7 +138,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.timelineToolCalls",
       titleKey: "settings.behavior.timelineTools.title",
-      subtitleKey: "settings.behavior.timelineTools.subtitle",
       get: (p) => Boolean(p.showTimelineTools),
       set: (next) => {
         if (updatePreferences) {
@@ -151,22 +152,19 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       },
     },
     {
-      kind: "enum",
+      kind: "toggle",
       id: "behavior.diffViewMode",
       titleKey: "settings.behavior.diffView.title",
-      subtitleKey: "settings.behavior.diffView.subtitle",
-      get: (p) => (p.diffViewMode ?? "split") as "split" | "unified",
+      // Checked shows split diffs; unchecked shows the unified view.
+      get: (p) => (p.diffViewMode ?? "split") === "split",
       set: (next) => {
+        const mode = next ? "split" : "unified"
         if (updatePreferences) {
-          updatePreferences({ diffViewMode: next as "split" | "unified" })
+          updatePreferences({ diffViewMode: mode })
           return
         }
-        actions.setDiffViewMode(next as "split" | "unified")
+        actions.setDiffViewMode(mode)
       },
-      options: [
-        { value: "split", labelKey: "settings.behavior.diffView.option.split" },
-        { value: "unified", labelKey: "settings.behavior.diffView.option.unified" },
-      ],
     },
     {
       kind: "enum",
@@ -308,7 +306,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.hideDiffWhitespaceChanges",
       titleKey: "advancedSettings.hideDiffWhitespace.title",
-      subtitleKey: "advancedSettings.hideDiffWhitespace.subtitle",
+      infoKey: "advancedSettings.hideDiffWhitespace.subtitle",
       get: (p) => p.hideDiffWhitespaceChanges ?? true,
       set: (next) => updatePreferences?.({ hideDiffWhitespaceChanges: next }),
     },
@@ -330,7 +328,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.promptVoiceInput",
       titleKey: "settings.behavior.promptVoiceInput.title",
-      subtitleKey: "settings.behavior.promptVoiceInput.subtitle",
+      infoKey: "settings.behavior.promptVoiceInput.subtitle",
       get: (p) => Boolean(p.showPromptVoiceInput ?? true),
       set: (next) => {
         if (updatePreferences) {
@@ -345,16 +343,12 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       },
     },
     {
-      kind: "enum",
+      kind: "toggle",
       id: "behavior.followUpBehavior",
       titleKey: "settings.behavior.followUpBehavior.title",
-      subtitleKey: "settings.behavior.followUpBehavior.subtitle",
-      get: (p) => p.followUpBehavior,
-      set: (next) => updatePreferences?.({ followUpBehavior: next as FollowUpBehavior }),
-      options: [
-        { value: "steer", labelKey: "settings.behavior.followUpBehavior.option.steer" },
-        { value: "queue", labelKey: "settings.behavior.followUpBehavior.option.queue" },
-      ],
+      // Checked queues prompts sent during a task; unchecked steers the running task.
+      get: (p) => p.followUpBehavior === "queue",
+      set: (next) => updatePreferences?.({ followUpBehavior: (next ? "queue" : "steer") satisfies FollowUpBehavior }),
     },
   ]
 }

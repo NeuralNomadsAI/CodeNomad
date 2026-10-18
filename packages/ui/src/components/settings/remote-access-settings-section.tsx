@@ -1,4 +1,3 @@
-import { Switch } from "@kobalte/core/switch"
 import { For, Show, createMemo, createSignal, type Component, onMount } from "solid-js"
 import { toDataURL } from "qrcode"
 import { ChevronRight, ExternalLink, Link2, Loader2, RefreshCw, Shield, Wifi } from "lucide-solid"
@@ -10,6 +9,7 @@ import { showConfirmDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
 import { useI18n } from "../../lib/i18n"
 import { splitRemoteAddresses, type RemoteAddressGroups } from "../../lib/remote-access-addresses"
+import { SettingsSwitch } from "./settings-switch"
 
 const log = getLogger("actions")
 
@@ -156,14 +156,9 @@ export const RemoteAccessSettingsSection: Component = () => {
   return (
     // Remote Control is the default way in; direct access is an advanced option,
     // shown open while the server already listens beyond localhost.
-    <details class="remote-direct-access" open={allowExternalConnections()}>
-      <summary class="remote-direct-access-summary">
-        <ChevronRight class="remote-direct-access-chevron disclosure-chevron" aria-hidden="true" />
-        <span>
-          <span class="settings-card-title">{t("remoteAccess.direct.title")}</span>
-          <span class="settings-card-subtitle remote-direct-access-help">{t("remoteAccess.direct.help")}</span>
-        </span>
-      </summary>
+    <details class="settings-disclosure remote-direct-access" open={allowExternalConnections()}>
+      <summary class="remote-direct-access-summary">{t("remoteAccess.direct.title")}</summary>
+      <p class="settings-inline-note">{t("remoteAccess.direct.help")}</p>
       <div class="settings-section-stack">
         <div class="settings-card">
           <div class="settings-card-header">
@@ -175,7 +170,6 @@ export const RemoteAccessSettingsSection: Component = () => {
               </div>
             </div>
             <div class="settings-toolbar-inline">
-              <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
               <button
                 class="selector-button selector-button-secondary w-auto"
                 type="button"
@@ -188,30 +182,24 @@ export const RemoteAccessSettingsSection: Component = () => {
             </div>
           </div>
 
-          <Switch
-            class="remote-toggle"
-            checked={allowExternalConnections()}
-            onChange={(nextChecked) => void handleAllowConnectionsChange(nextChecked)}
-            disabled={loading() || applyingListeningMode()}
-          >
-            <Switch.Input />
-            <Switch.Control class="remote-toggle-switch" data-checked={allowExternalConnections()}>
-              <span class="remote-toggle-state">
-                {allowExternalConnections() ? t("remoteAccess.toggle.on") : t("remoteAccess.toggle.off")}
-              </span>
-              <Switch.Thumb class="remote-toggle-thumb" />
-            </Switch.Control>
-            <div class="remote-toggle-copy">
-              <span class="remote-toggle-title">{t("remoteAccess.toggle.title")}</span>
-              <span class="remote-toggle-caption">
+          <div class="settings-toggle-row">
+            <div>
+              <div class="settings-toggle-title">{t("remoteAccess.toggle.title")}</div>
+              <div class="settings-toggle-caption">
                 {allowExternalConnections()
                   ? t("remoteAccess.toggle.caption.all")
                   : t("remoteAccess.toggle.caption.local")}
-              </span>
+              </div>
             </div>
-          </Switch>
+            <SettingsSwitch
+              checked={allowExternalConnections()}
+              label={t("remoteAccess.toggle.title")}
+              disabled={loading() || applyingListeningMode()}
+              onChange={(nextChecked) => void handleAllowConnectionsChange(nextChecked)}
+            />
+          </div>
 
-          <p class="remote-toggle-note">{t("remoteAccess.toggle.note")}</p>
+          <p class="settings-inline-note">{t("remoteAccess.toggle.note")}</p>
         </div>
 
         <div class="settings-card">
@@ -223,7 +211,6 @@ export const RemoteAccessSettingsSection: Component = () => {
                 <p class="settings-card-subtitle">{t("remoteAccess.sections.serverPassword.help")}</p>
               </div>
             </div>
-            <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
           </div>
 
           <Show
@@ -243,7 +230,7 @@ export const RemoteAccessSettingsSection: Component = () => {
 
                     <div class="settings-password-actions">
                       <button
-                        class="settings-pill-button"
+                        class="selector-button selector-button-secondary w-auto"
                         type="button"
                         onClick={() => {
                           setPasswordFormOpen(!passwordFormOpen())
@@ -285,7 +272,7 @@ export const RemoteAccessSettingsSection: Component = () => {
                     </Show>
 
                     <div class="settings-password-actions">
-                      <button class="settings-pill-button" type="button" disabled={savingPassword()} onClick={() => void handleSubmitPassword()}>
+                      <button class="selector-button selector-button-secondary w-auto" type="button" disabled={savingPassword()} onClick={() => void handleSubmitPassword()}>
                         {savingPassword() ? t("remoteAccess.password.save.saving") : t("remoteAccess.password.save.label")}
                       </button>
                     </div>
@@ -303,7 +290,6 @@ export const RemoteAccessSettingsSection: Component = () => {
                 <p class="settings-card-subtitle">{t("remoteAccess.sections.addresses.help")}</p>
               </div>
             </div>
-            <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
           </div>
 
           <Show when={!loading()} fallback={<div class="remote-card">{t("remoteAccess.addresses.loading")}</div>}>
@@ -326,12 +312,12 @@ export const RemoteAccessSettingsSection: Component = () => {
                               <p class="remote-address-meta">{t("remoteAccess.address.scope.loopback")}</p>
                             </div>
                             <div class="remote-actions">
-                              <button class="remote-pill" type="button" onClick={() => handleOpenUrl(value())}>
+                              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => handleOpenUrl(value())}>
                                 <ExternalLink class="remote-icon" />
                                 {t("remoteAccess.address.open")}
                               </button>
                               <button
-                                class="remote-pill"
+                                class="selector-button selector-button-secondary w-auto"
                                 type="button"
                                 onClick={() => void toggleExpanded(value())}
                                 aria-expanded={expandedState()}
@@ -382,12 +368,12 @@ export const RemoteAccessSettingsSection: Component = () => {
                               </p>
                             </div>
                             <div class="remote-actions">
-                              <button class="remote-pill" type="button" onClick={() => handleOpenUrl(url)}>
+                              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => handleOpenUrl(url)}>
                                 <ExternalLink class="remote-icon" />
                                 {t("remoteAccess.address.open")}
                               </button>
                               <button
-                                class="remote-pill"
+                                class="selector-button selector-button-secondary w-auto"
                                 type="button"
                                 onClick={() => void toggleExpanded(url)}
                                 aria-expanded={expandedState()}
@@ -455,12 +441,12 @@ export const RemoteAccessSettingsSection: Component = () => {
                                     </p>
                                   </div>
                                   <div class="remote-actions">
-                                    <button class="remote-pill" type="button" onClick={() => handleOpenUrl(url)}>
+                                    <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => handleOpenUrl(url)}>
                                       <ExternalLink class="remote-icon" />
                                       {t("remoteAccess.address.open")}
                                     </button>
                                     <button
-                                      class="remote-pill"
+                                      class="selector-button selector-button-secondary w-auto"
                                       type="button"
                                       onClick={() => void toggleExpanded(url)}
                                       aria-expanded={expandedState()}

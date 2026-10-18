@@ -1,8 +1,7 @@
-import { type Component } from "solid-js"
+import { Show, createSignal, type Component } from "solid-js"
 import type { LocationRef } from "@opencode/client"
 import { activeInstanceId } from "../../stores/instances"
 import { useI18n } from "../../lib/i18n"
-import { Boxes } from "lucide-solid"
 import { ProviderManagerModal } from "../provider-auth/provider-manager-modal"
 import { WebSearchSettingsCard } from "./websearch-settings-card"
 
@@ -11,17 +10,31 @@ interface ProvidersSettingsSectionProps {
   location?: LocationRef
 }
 
+// Window-lifetime fold state: switching Settings sections keeps each group as the user left it.
+const [modelsOpen, setModelsOpen] = createSignal(true)
+const [webSearchOpen, setWebSearchOpen] = createSignal(false)
+
+/** Models and Web search are the shared Settings disclosures; Web search starts folded. */
 export const ProvidersSettingsSection: Component<ProvidersSettingsSectionProps> = (props) => {
   const { t } = useI18n()
   const instanceId = () => props.instanceId ?? activeInstanceId() ?? ""
   return <div class="settings-section-stack">
-    <section class="providers-settings-group" aria-labelledby="providers-models-heading">
-      <header class="settings-card-heading-with-icon">
-        <Boxes class="settings-card-heading-icon" aria-hidden="true" />
-        <h3 id="providers-models-heading" class="settings-card-title">{t("settings.providers.models.title")}</h3>
-      </header>
-      <ProviderManagerModal instanceId={instanceId()} location={props.location} embedded />
-    </section>
-    <WebSearchSettingsCard instanceId={instanceId()} location={props.location} />
+    <div class="settings-card settings-group-card">
+      <details class="settings-disclosure" open={modelsOpen()} onToggle={event => setModelsOpen(event.currentTarget.open)}>
+        <summary><h3 id="providers-models-heading">{t("settings.providers.models.title")}</h3></summary>
+        <section aria-labelledby="providers-models-heading">
+          <ProviderManagerModal instanceId={instanceId()} location={props.location} embedded />
+        </section>
+      </details>
+    </div>
+    <div class="settings-card settings-group-card">
+      <details class="settings-disclosure" open={webSearchOpen()} onToggle={event => setWebSearchOpen(event.currentTarget.open)}>
+        <summary><h3 id="providers-websearch-heading">{t("settings.websearch.title")}</h3></summary>
+        {/* Search connections and defaults are read only while this group is open. */}
+        <Show when={webSearchOpen()}>
+          <WebSearchSettingsCard instanceId={instanceId()} location={props.location} embedded />
+        </Show>
+      </details>
+    </div>
   </div>
 }

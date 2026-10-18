@@ -10,7 +10,7 @@
   justify-content: space-between;
   gap: 1rem;
   padding: 0.72rem 0;
-  border-top: 1px solid color-mix(in oklab, var(--border-base) 78%, transparent);
+  border-top: 1px solid var(--border-row);
 }
 
 .settings-info-row:first-child {

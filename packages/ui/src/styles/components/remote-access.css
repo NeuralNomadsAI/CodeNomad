@@ -3,82 +3,6 @@
   height: 18px;
 }
 
-.remote-toggle {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 12px;
-  border-radius: 0;
-  border: 1px solid var(--border-base);
-  background: var(--surface-control);
-  cursor: pointer;
-}
-
-.remote-toggle-switch {
-  width: 58px;
-  height: 28px;
-  border-radius: 0;
-  background: var(--surface-secondary);
-  border: 1px solid var(--border-base);
-  display: inline-flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 0 8px 0 6px;
-  transition: background 0.2s ease, border-color 0.2s ease;
-  font-size: 11px;
-  font-weight: 600;
-  color: var(--text-secondary);
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-}
-
-.remote-toggle-state {
-  pointer-events: none;
-  white-space: nowrap;
-}
-
-.remote-toggle-thumb {
-  width: 18px;
-  height: 18px;
-  border-radius: 0;
-  background: var(--surface-primary);
-  transition: transform 0.2s ease;
-  transform: translateX(0);
-}
-
-.remote-toggle-switch[data-checked="true"] {
-  background: var(--accent-primary);
-  border-color: var(--accent-primary);
-  color: var(--surface-primary);
-}
-
-.remote-toggle-switch[data-checked="true"] .remote-toggle-thumb {
-  transform: translateX(20px);
-}
-
-.remote-toggle-copy {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.remote-toggle-title {
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.remote-toggle-caption {
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
-.remote-toggle-note {
-  margin: 12px 0 0;
-  font-size: 13px;
-  color: var(--text-secondary);
-}
-
 .remote-address-list {
   display: flex;
   flex-direction: column;
@@ -117,18 +41,6 @@
   gap: 8px;
 }
 
-.remote-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 0;
-  border: 1px solid var(--border-base);
-  background: var(--surface-secondary);
-  color: var(--text-primary);
-  cursor: pointer;
-}
-
 .remote-address-disclosure {
   border: 1px solid var(--border-base);
   border-radius: 0;
@@ -153,8 +65,8 @@
   grid-column: 2;
   justify-self: center;
   text-align: center;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
 }
 
 .remote-address-disclosure-chevron {

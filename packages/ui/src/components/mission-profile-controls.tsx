@@ -10,13 +10,17 @@ import { instances } from "../stores/instances"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
-import { changeMissionProfile, changeProfileModel, legalProfileAgents, missionProfileRoles, modelSelectionKey, type ProfileAgent, type ProfileModel } from "./mission-profile-controls-data"
+import { RotateCcw } from "lucide-solid"
+import { changeMissionProfile, changeProfileModel, legalProfileAgents, missionProfileRoles, modelSelectionKey, setMissionProfileRole, type ProfileAgent, type ProfileModel } from "./mission-profile-controls-data"
 
+/** One Agent / Model / Reasoning row per role (coordinator, then the type's roles), the same
+ *  in creation and in every Settings scope. Rows show what a new mission will use. */
 export function MissionProfileControls(props: {
   instanceId: string; directory?: string; template: MissionTemplateId
   profiles?: MissionProfiles; disabled: boolean; active: () => boolean
   taskMode?: MissionTaskMode
-  requireRoleProfiles?: boolean
+  /** Settings, mission type scope: the global choices each role inherits until it is customized. */
+  inherited?: MissionProfiles
   onChange: (profiles: MissionProfiles | undefined) => void
 }) {
   const { t } = useI18n()
@@ -73,17 +77,36 @@ export function MissionProfileControls(props: {
 
   const agents = () => catalog()?.key === identity() ? catalog()!.agents : []
   const models = () => catalog()?.key === identity() ? catalog()!.models : []
-  const selection = (role: string) => role === "coordinator" ? props.profiles?.coordinator : props.profiles?.roles?.[role]
-  const update = (role: string, execution: MissionExecution) => {
-    if (!props.disabled && props.active()) props.onChange(changeMissionProfile(props.profiles, role, execution))
+  const choice = (profiles: MissionProfiles | undefined, role: string) => role === "coordinator" ? profiles?.coordinator : profiles?.roles?.[role]
+  /** Without an inherited layer an empty choice is simply omitted (native default). */
+  const update = (role: string, execution: MissionExecution | undefined) => {
+    if (props.disabled || !props.active()) return
+    props.onChange(props.inherited ? setMissionProfileRole(props.profiles, role, execution) : changeMissionProfile(props.profiles, role, execution ?? {}))
   }
   const row = (role: string) => {
-    const selected = () => selection(role)
+    let fieldset: HTMLFieldSetElement | undefined
+    const own = () => choice(props.profiles, role)
+    const customized = () => own() !== undefined
+    // An inherited role shows the global values; editing one field customizes the role from them.
+    const selected = () => props.inherited && !customized() ? choice(props.inherited, role) : own()
     const availableAgents = () => legalProfileAgents(agents(), role === "coordinator" ? "coordinator" : props.taskMode ?? "native")
     const selectedModel = () => models().find(model => modelSelectionKey(model) === modelSelectionKey(selected()?.model))
     const label = () => t(`missions.control.profiles.role.${role}`)
-    return <fieldset class="mission-profile-row" disabled={props.disabled}>
-      <legend>{label()}</legend>
+    const inherit = () => {
+      update(role, undefined)
+      // The revert button disappears with the customization; keep keyboard focus in the row.
+      queueMicrotask(() => fieldset?.querySelector("select")?.focus())
+    }
+    return <fieldset ref={fieldset} class="mission-profile-row" disabled={props.disabled}>
+      <legend>{label()}
+        <Show when={props.inherited}>
+          <Show when={customized()} fallback={<span class="mission-profile-origin"
+            title={t("missions.defaults.fromGlobalHint", { all: t("missions.defaults.allPlaybooks") })}>{t("missions.defaults.fromGlobal")}</span>}>
+            <button type="button" class="mission-profile-revert" aria-label={t("missions.defaults.revert", { role: label() })}
+              title={t("missions.defaults.revert", { role: label() })} disabled={props.disabled} onClick={inherit}><RotateCcw aria-hidden="true" /></button>
+          </Show>
+        </Show>
+      </legend>
       <label>{t("missions.control.execution.agent")}
         <select aria-label={`${label()} · ${t("missions.control.execution.agent")}`} value={selected()?.agent ?? ""}
           onChange={event => update(role, { ...selected(), agent: event.currentTarget.value || undefined })}>
@@ -122,18 +145,9 @@ export function MissionProfileControls(props: {
     </fieldset>
   }
   return <section class="mission-profiles" aria-label={t("missions.control.profiles.title")}>
-    <h4 title={t("missions.taskMode.hint")} aria-description={t("missions.taskMode.hint")}>{t("missions.control.profiles.title")}</h4>
     {row("coordinator")}
-    <Show when={props.template === "debug"}>
-      <span class="sr-only">{t("missions.control.profiles.debug")}</span>
-      <For each={missionProfileRoles["debug"].slice(0, 3)}>{row}</For>
-    </Show>
-    <Show when={props.requireRoleProfiles}>
-      <For each={props.template === "debug" ? missionProfileRoles[props.template].slice(3) : missionProfileRoles[props.template]}>{row}</For>
-    </Show>
-    <Show when={!props.requireRoleProfiles}><details class="mission-profile-optional"><summary>{t("missions.control.profiles.optional")}</summary>
-      <For each={props.template === "debug" ? missionProfileRoles[props.template].slice(3) : missionProfileRoles[props.template]}>{row}</For>
-    </details></Show>
+    <Show when={props.template === "debug"}><span class="sr-only">{t("missions.control.profiles.debug")}</span></Show>
+    <For each={missionProfileRoles[props.template]}>{row}</For>
     <Show when={loading()}><p role="status">{t("missions.control.profiles.loading")}</p></Show>
     <Show when={failed()}><p role="status" title={failure() || undefined}>{t("missions.control.profiles.error")}</p></Show>
   </section>

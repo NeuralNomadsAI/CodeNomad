@@ -148,6 +148,8 @@ export const sessionMessages = {
   "browserFrame.viewport.mobileLandscape": "Mobile landscape (844 x 390)",
 
   "sessionEvents.sessionCompactedToast": "Session {label} was compacted",
+  "sessionEvents.notify.needsInput": "Session “{label}” needs your answer",
+  "sessionEvents.notify.done": "Session “{label}” finished",
   "sessionEvents.sessionError.unknown": "Unknown error",
   "sessionEvents.sessionError.title": "Session error",
   "sessionEvents.sessionError.message": "Error: {message}",

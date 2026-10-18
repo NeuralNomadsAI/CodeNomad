@@ -41,9 +41,9 @@ export const OpenerStartupStateSettingsCard: Component = () => {
     try {
       const result = await query(command, epoch)
       if (!result.applied || !result.state) throw new Error("Startup state owner changed")
-      if (success) showToastNotification({ message: t(success), variant: "success" })
+      if (success) showToastNotification({ category: "settings", message: t(success), variant: "success" })
     } catch {
-      showToastNotification({ message: t(failure), variant: "error" })
+      showToastNotification({ category: "settings", message: t(failure), variant: "error" })
     } finally {
       setBusy(false)
     }
@@ -63,10 +63,8 @@ export const OpenerStartupStateSettingsCard: Component = () => {
   })
 
   const state = () => opener()?.state ?? null
-  const note = () => {
-    if (opener() === undefined) return undefined
-    return state() ? t("settings.appearance.startup.opener.scope") : t("settings.appearance.startup.opener.unavailable")
-  }
+  // Warn only once the opener is known to be gone; never before the first answer.
+  const note = () => (opener() !== undefined && !state() ? t("settings.appearance.startup.opener.unavailable") : undefined)
 
   return (
     <StartupStateSettingsView

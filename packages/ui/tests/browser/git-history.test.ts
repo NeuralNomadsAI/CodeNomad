@@ -575,12 +575,14 @@ test("whitespace-only changes leave the Changes list by default and follow the A
     const lines = changes.reduce((sum: number, change: any) => sum + Math.max(0, change.modifiedEndLineNumber - change.modifiedStartLineNumber + 1), 0)
     return expected === undefined || lines === expected ? lines + 1 : 0
   }, { marker, expected }).then(async handle => (await handle.jsonValue() as number) - 1)
-  // The select trigger's accessible name is the setting title followed by its value.
-  const setting = () => page.getByRole("button", { name: /^Masquer les changements d'espaces (Activé|Désactivé)$/ })
-  const choose = async (value: "Activé" | "Désactivé") => {
-    await setting().click()
-    await page.getByRole("option", { name: value, exact: true }).click()
-    await page.getByRole("button", { name: `Masquer les changements d'espaces ${value}`, exact: true }).waitFor()
+  // Grouped Advanced toggles are checkboxes named by the setting title; the row
+  // keeps the owner's value until it confirms, so wait for the confirmed state.
+  const settingName = "Masquer les changements d'espaces"
+  const setting = () => page.getByRole("checkbox", { name: settingName, exact: true })
+  const choose = async (checked: boolean) => {
+    if (await setting().isChecked() !== checked) await setting().click()
+    await page.waitForFunction(({ name, checked }) =>
+      document.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)?.checked === checked, { name: settingName, checked })
   }
   const notice = () => page.getByRole("status").filter({ hasText: "Seuls des espaces ont changé dans ce fichier (indentation ou espaces en fin de ligne)." })
   const lineEndings = () => page.getByRole("status").filter({ hasText: "Seules les fins de ligne (ou une marque d'ordre des octets) ont changé" })
@@ -630,7 +632,8 @@ test("whitespace-only changes leave the Changes list by default and follow the A
         return patch(owner, value)
       }
     })
-    await page.getByRole("button", { name: "Masquer les changements d'espaces Activé", exact: true }).waitFor()
+    await setting().waitFor()
+    assert.equal(await setting().isChecked(), true, "hiding whitespace-only changes is the default")
 
     await page.getByRole("button", { name: /Changements/ }).click()
     await row("src/z-real.ts").waitFor()
@@ -655,7 +658,7 @@ test("whitespace-only changes leave the Changes list by default and follow the A
     assert.equal(await changedLines("if (y)", 2), 2, "diffs still ignore indentation by default")
     assert.equal(await notice().count(), 0)
 
-    await choose("Désactivé")
+    await choose(false)
     await row("src/crlf.txt").waitFor()
     assert.deepEqual(await visibleRows(), ["src/components/git-panel.tsx", "src/a-real.ts", "src/crlf.txt", "src/styles/panels/git-history.css", "src/z-real.ts"],
       "turning the option off shows every change")
@@ -682,7 +685,7 @@ test("whitespace-only changes leave the Changes list by default and follow the A
     await page.getByRole("button", { name: /Make Git history the starting point/ }).click()
     await open("src/components/git-panel.tsx")
     assert.ok(await changedLines("if (y)") > 2, "history diffs share the same reader and setting")
-    await choose("Activé")
+    await choose(true)
     assert.equal(await changedLines("if (y)", 2), 2)
 
     await page.getByRole("button", { name: /Changements/ }).click()

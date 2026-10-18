@@ -24,7 +24,6 @@ import {
 } from "../types/permission"
 import type { PermissionRequest } from "../types/permission"
 import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
-import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
 import {
   instances,
@@ -267,28 +266,14 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
   }
 }
 
-function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
-  if (typeof document === "undefined") return false
-  const pref = preferences()
-  if (!pref.osNotificationsEnabled) return false
-  if (!pref.osNotificationsAllowWhenVisible && document.visibilityState === "visible") return false
-  if (kind === "needsInput") return Boolean(pref.notifyOnNeedsInput)
-  if (kind === "idle") return Boolean(pref.notifyOnIdle)
-  return false
-}
-
 function isChildSession(instanceId: string, sessionId: string): boolean | null {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) return null
   return session.parentId !== null && session.parentId !== undefined
 }
 
-function shouldSendOsNotificationForSession(
-  kind: "needsInput" | "idle",
-  instanceId: string,
-  sessionId: string | undefined | null,
-): boolean {
-  if (!shouldSendOsNotification(kind)) return false
+/** Session attention notifications concern root sessions only. */
+function isNotifiableSession(instanceId: string, sessionId: string | undefined | null): boolean {
   if (!sessionId) return true
 
   const child = isChildSession(instanceId, sessionId)
@@ -312,20 +297,18 @@ function getSessionTitle(instanceId: string, sessionId: string | undefined | nul
   return title && title.length > 0 ? title : sessionId
 }
 
-function fireOsNotification(payload: { title: string; body: string }) {
-  void sendOsNotification(payload).catch((error) => {
-    log.warn("Failed to send OS notification", error)
-  })
+/** Routed like every notification: screen, history and/or system per Settings → Notifications. */
+function notifySessionAttention(category: "needsInput" | "sessionDone", instanceId: string, sessionId: string | undefined | null): void {
+  if (!isNotifiableSession(instanceId, sessionId)) return
+  const label = getSessionTitle(instanceId, sessionId)
+  const message = label
+    ? tGlobal(category === "needsInput" ? "sessionEvents.notify.needsInput" : "sessionEvents.notify.done", { label })
+    : tGlobal(`settings.notifications.category.${category}`)
+  showToastNotification({ category, title: getInstanceDisplayName(instanceId), message, variant: "info" })
 }
 
 queueMicrotask(() => {
-  setPendingFormAddedHandler((instanceId, form) => {
-    if (!shouldSendOsNotificationForSession("needsInput", instanceId, form.sessionID)) return
-    fireOsNotification({
-      title: getInstanceDisplayName(instanceId),
-      body: tGlobal("settings.notifications.events.needsInput"),
-    })
-  })
+  setPendingFormAddedHandler((instanceId, form) => notifySessionAttention("needsInput", instanceId, form.sessionID))
 })
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
@@ -550,12 +533,7 @@ function handleSessionIdle(instanceId: string, event: SessionIdle): void {
   if (!sessionId) return
 
   advanceNativeLifecycle(instanceId, sessionId)
-  if (shouldSendOsNotificationForSession("idle", instanceId, sessionId)) {
-    const title = getInstanceDisplayName(instanceId)
-    const label = getSessionTitle(instanceId, sessionId)
-    const body = label ? `Session "${label}" is idle` : "Session is idle"
-    fireOsNotification({ title, body })
-  }
+  notifySessionAttention("sessionDone", instanceId, sessionId)
 
   ensureSessionStatus(instanceId, sessionId, "idle", event.location?.directory)
   refreshSettledSessionMessages(instanceId, sessionId)
@@ -581,7 +559,8 @@ function handleSessionStatus(instanceId: string, event: SessionStatusUpdated): v
         : tGlobal("sessionList.status.retrying")
     const label = getSessionTitle(instanceId, sessionId)
     activeRetryToast?.dismiss()
-    activeRetryToast = showToastNotification({
+    // A live retry status replaced by the next attempt, not an event to keep.
+    activeRetryToast = showToastNotification({ category: "sessions", transient: true,
       title: label || getInstanceDisplayName(instanceId),
       message: tGlobal("sessionList.status.retryToast", {
         countdown,
@@ -613,7 +592,7 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   const instanceName = instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
   const displayLabel = label ? `"${label}"` : sessionID
 
-  showToastNotification({
+  showToastNotification({ category: "sessions",
     title: instanceName,
     message: tGlobal("sessionEvents.sessionCompactedToast", { label: displayLabel }),
     variant: "info",
@@ -657,7 +636,7 @@ function handleTuiToast(_instanceId: string, event: TuiToastShow): void {
     ? (payload.variant as ToastVariant)
     : "info"
 
-  showToastNotification({
+  showToastNotification({ category: "opencode",
     title: typeof payload.title === "string" ? payload.title : undefined,
     message: payload.message,
     variant,
@@ -676,14 +655,7 @@ function handlePermissionUpdated(instanceId: string, event: PermissionAsked): vo
   }
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
 
-  const sessionId = getPermissionSessionId(permission)
-
-  if (shouldSendOsNotificationForSession("needsInput", instanceId, sessionId)) {
-    const title = getInstanceDisplayName(instanceId)
-    const label = getSessionTitle(instanceId, sessionId)
-    const body = label ? `Session "${label}" needs permission` : "Session needs permission"
-    fireOsNotification({ title, body })
-  }
+  notifySessionAttention("needsInput", instanceId, getPermissionSessionId(permission))
 }
 
 function handlePermissionReplied(instanceId: string, event: PermissionReplied): void {

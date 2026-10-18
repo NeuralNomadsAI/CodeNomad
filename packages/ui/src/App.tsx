@@ -685,6 +685,8 @@ const App: Component = () => {
   })
 
   useAppLifecycle({
+    commands: paletteCommands,
+    executeCommand,
     setEscapeInDebounce,
     handleNewInstanceRequest,
     handleCloseActiveTab: () => handleCloseAppTab(activeAppTabId() ?? ""),

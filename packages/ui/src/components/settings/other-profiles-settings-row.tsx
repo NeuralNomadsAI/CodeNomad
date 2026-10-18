@@ -1,4 +1,4 @@
-import { RefreshCw } from "lucide-solid"
+import { RefreshCw, Trash2 } from "lucide-solid"
 import { createSignal, onMount, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import {
@@ -54,7 +54,7 @@ export const OtherProfilesSettingsRow: Component = () => {
         setSharedWebKitStorage(listed.sharedWebKitStorage)
       }
     } catch {
-      if (request === sequence) showToastNotification({ message: t(`${key}.loadError`), variant: "error" })
+      if (request === sequence) showToastNotification({ category: "settings", message: t(`${key}.loadError`), variant: "error" })
     } finally {
       if (request === sequence) setLoading(false)
     }
@@ -97,7 +97,7 @@ export const OtherProfilesSettingsRow: Component = () => {
     }
     if (result.choices === "busy" || result.choices === "failed") problems.push(t(`${key}.result.choicesNotUpdated`))
     if (!problems.length) {
-      showToastNotification({ message: t(`${key}.result.success.${deleted === 1 ? "one" : "other"}`, { count: deleted }), variant: "success" })
+      showToastNotification({ category: "settings", message: t(`${key}.result.success.${deleted === 1 ? "one" : "other"}`, { count: deleted }), variant: "success" })
       return
     }
     const success = deleted ? `${t(`${key}.result.success.${deleted === 1 ? "one" : "other"}`, { count: deleted })}\n` : ""
@@ -128,7 +128,7 @@ export const OtherProfilesSettingsRow: Component = () => {
     try {
       reportResult(await deleteOtherDataProfiles(deletable.map((profile) => profile.id)))
     } catch {
-      showToastNotification({ message: t(`${key}.deleteError`), variant: "error" })
+      showToastNotification({ category: "settings", message: t(`${key}.deleteError`), variant: "error" })
     } finally {
       setBusy(false)
       await load()
@@ -155,11 +155,13 @@ export const OtherProfilesSettingsRow: Component = () => {
           </button>
           <button
             type="button"
-            class="selector-button selector-button-secondary w-auto whitespace-nowrap"
+            class="files-header-icon-button"
+            title={t(`${key}.delete`)}
+            aria-label={t(`${key}.delete`)}
             disabled={loading() || busy()}
             onClick={() => void confirmDelete()}
           >
-            {t(`${key}.delete`)}
+            <Trash2 class="h-4 w-4" />
           </button>
         </div>
       </div>
