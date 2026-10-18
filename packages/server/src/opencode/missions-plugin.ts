@@ -1,6 +1,7 @@
 import {
   MissionControl,
   MissionControlError,
+  NO_TASK_CONVERSATION,
 } from "../missions/control"
 import type {
   MissionDelegateInput,
@@ -454,6 +455,8 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
             return
           }
           event.system.push({ type: "text", text: instruction })
+          // Scheduled passages have no backend route for these actions: do not offer them.
+          if (!selected.control.backendActions) for (const name of ["interrupt", "prepare"]) delete event.tools[`mission_${name}`]
           const snapshot = await selected.control.snapshot()
           if (!active) return
           const mission = snapshot.missions.find((candidate) => candidate.status === "active"
@@ -744,7 +747,8 @@ async function observedTaskView(control: MissionControl, sessionID: string, miss
   const [native, answers] = await Promise.allSettled([control.observeTask(sessionID, mission.id, taskKey),
     control.decisionCandidates(sessionID, mission.id, taskKey)])
   return { ...compactMission(mission), task: compactMissionTask(task), ...nativeAssignment(mission, task),
-    ...(native.status === "rejected" ? { native: { unknown: true } } : native.value ? { native: native.value } : {}),
+    ...(native.status === "rejected" ? { native: { unknown: true } } : native.value
+      ? { native: native.value.sessions.length ? native.value : { ...native.value, note: NO_TASK_CONVERSATION } } : {}),
     ...(answers.status === "rejected" ? { humanAnswers: { unknown: true } } : answers.value ? { humanAnswers: answers.value } : {}) }
 }
 

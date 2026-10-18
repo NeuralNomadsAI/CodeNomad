@@ -39,7 +39,9 @@ Wayfinder `decision` declaration also states the human-answer requirement that
 
 Coordinator actions that need native reads or effects outside the plugin's
 Promise API cross the authenticated desktop bridge (`sendMissionInput`), so they
-exist only with backend presence and refuse otherwise:
+exist only with backend presence and refuse otherwise. Scheduled passages have no
+such route: their coordinators are not offered `mission.interrupt` or
+`mission.prepare`, nor told about them.
 
 - `mission.inspect({ taskKey })` adds the task's observed native conversations
   (`server/routes/mission-task-native.ts`): the coordinator's direct children
@@ -48,25 +50,33 @@ exist only with backend presence and refuse otherwise:
   evidence, never settlement.
 - `mission.interrupt({ taskKey })` stops a retired native task's conversations:
   each one's family deepest first through `interruptNativeMissionFamily`, then the
-  conversation itself, cancelling its queued inputs. The coordinator, other tasks
-  and the plan are untouched, under the worktree-deletion fence; `complete: false`
-  is reported honestly.
+  conversation itself, then the same post-interrupt recheck, settle and quiet
+  verification as lifecycle Stop, cancelling its queued inputs. It is refused while
+  an open task continues that conversation (`reuseFromTaskKey`, along a chain) or
+  runs in it as its actor. The coordinator, other tasks and the plan are
+  untouched, under the worktree-deletion fence; `complete: false` is reported
+  honestly, and an empty result notes that only canonical assignments are visible.
 - `mission.prepare` creates a paused one-time hand-off through the same
   `prepareMissionCreation` pipeline, holds and fences as the editor, at the
   coordinator's Location. It never starts. The trusted `preparedBy`
   (`{ missionId, coordinatorSessionId }`) gives that coordinator read-only
   visibility (`inspect({ missionID })`, `inspect({ list: true })`), never control.
-  The requestID is scoped to the coordinator and mission, so retries replay.
+  The requestID is scoped to the coordinator and mission. A retry first reads the
+  journal's creation event and returns the saved mission (or a conflict) without
+  another backend call; a held uncertain attempt is reported uncertain, never as
+  nothing created.
 
 A native Wayfinder decision readout may omit its artifact: the human-answer gate's
 `discover` finds fresh children of the expected parent whose `subagent` call
 carried the exact assignment prompt, reads their confirmed UI marks and keeps
-only answers its own `verify` accepts. Exactly one candidate is used; none or
-several refuse, and `inspect({ taskKey })` lists them as ready artifacts. Nothing
-is inferred from text, titles or timing. `mission.briefing` also accepts
-requestID `"auto"` without `basedOnRevision`: the server uses the current revision,
-or refuses a different summary when the latest automatic briefing is still the
-last event. One replacement task may merge several retired tasks; it names one
+only answers its own `verify` accepts. A reached bound, a pending mark or a
+confirmed answer that fails verification makes the discovery incomplete. Only a
+complete discovery with exactly one candidate fills the artifact; anything else
+refuses, and `inspect({ taskKey })` lists the candidates as ready artifacts with
+their completeness. Nothing is inferred from text, titles or timing.
+`mission.briefing` treats requestID `"auto"` as `auto:<revision>` and may omit
+`basedOnRevision`: the server then uses the current revision, or refuses a
+different summary when the latest automatic briefing is still the last event. One replacement task may merge several retired tasks; it names one
 of them in `replacesTaskKey`.
 
 ## Durability and recovery

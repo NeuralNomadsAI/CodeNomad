@@ -286,6 +286,7 @@ test("a coordinator prepares a paused hand-off through the bridge's fenced creat
     assert.equal(f.rpcCreates, 1)
     assert.equal(JSON.parse((await prepare()).content).missionID, prepared.missionID, "the same requestID replays the same mission")
     await assert.rejects(prepare("A different objective"), /already prepared a different mission/)
+    assert.equal(f.rpcCreates, 1, "replays and conflicts are settled from the journal, without another creation")
     const listed = JSON.parse((await tool("inspect", { list: true })).content).missions
     assert.deepEqual(listed.map((entry: any) => [entry.missionID, entry.relation]), [[prepared.missionID, "prepared"], [source.id, "member"]])
     assert.equal(JSON.parse((await tool("inspect", { missionID: prepared.missionID })).content).mission.id, prepared.missionID)
@@ -293,7 +294,21 @@ test("a coordinator prepares a paused hand-off through the bridge's fenced creat
     const held = deferred(), deletion = f.fence.run(physical, [physical], () => held.promise)
     try { await assert.rejects(tool("prepare", { requestID: "fenced", objective: "Blocked", template: "custom" }), /nothing was created/) }
     finally { held.resolve(); await deletion }
-    assert.equal(f.rpcCreates, 3)
+    assert.equal(f.rpcCreates, 1)
+  } finally { await f.close() }
+})
+
+test("a lost prepare acknowledgement is reported uncertain, never as nothing created, and the retry returns the saved mission", async () => {
+  const f = await fixture()
+  try {
+    const { coordinator } = await specialist(f)
+    const prepare = () => f.tools.get("prepare").execute({ requestID: "pilot", objective: "Pilot the chosen seam", template: "custom" },
+      { sessionID: coordinator.id, id: "call-prepare", progress: async () => {} })
+    f.loseAck()
+    await assert.rejects(prepare(), /outcome is uncertain; retry with the same requestID/)
+    const saved = (await f.handlers.snapshot()).missions.find((mission: any) => mission.preparedBy?.coordinatorSessionId === coordinator.id)
+    assert.equal(JSON.parse((await prepare()).content).missionID, saved.id)
+    assert.equal(f.rpcCreates, 1, "the retry never asks for a second creation")
   } finally { await f.close() }
 })
 

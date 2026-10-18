@@ -9,7 +9,7 @@ import { canonicalAuthority } from "../../missions/authority-protocol"
 import { MISSION_JOURNAL_STORAGE_PREFIX, MissionJournal, stableToken, type MissionStorage } from "../../missions/journal"
 import { HUMAN_MARK_STORAGE_PREFIX, humanAnswerBindingInputSchema, humanAnswerBindingSchema, humanAnswerRpcInputSchema,
   humanDecisionDiscoverySchema, humanDecisionRequestSchema, assertHumanAnswerFresh, matchHumanQuestion,
-  type HumanDecisionCandidate, type HumanDecisionMark, type NativeHumanAnswerGate } from "../../missions/human-answer"
+  type HumanDecisionCandidate, type HumanDecisionDiscovery, type HumanDecisionMark, type NativeHumanAnswerGate } from "../../missions/human-answer"
 import { nativeDatabaseStorageID } from "./native-database-identity"
 import { verifyHumanAnswerBridge } from "../automation-plugin"
 import { isLocalNativeTool } from "../../missions/native-call-observation"
@@ -32,6 +32,7 @@ type StoredMark = HumanDecisionMark & { state: "pending" | "confirmed"; attemptI
 const MAX_DISCOVERED_CHILDREN = 64
 const MAX_DISCOVERED_MARKS = 16
 const MAX_DISCOVERED_ANSWERS = 16
+const MAX_DELEGATION_MESSAGES = 8
 type NativeForms = { get(id: string): Effect.Effect<unknown, unknown>; state(id: string): Effect.Effect<unknown, unknown>;
   reply(input: { id: string; answer: Form.Answer }): Effect.Effect<void, unknown> }
 
@@ -167,16 +168,19 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
     /** Exact native structure only: a child of the expected parent whose fresh `subagent`
      * call carried this assignment, its confirmed UI marks, and the gate's own verify.
      * Nothing is inferred from text, titles, timing or the model's assertion. */
-    discover: async (raw: unknown): Promise<HumanDecisionCandidate[]> => {
+    discover: async (raw: unknown): Promise<HumanDecisionDiscovery> => {
       const request = humanDecisionDiscoverySchema.parse(raw)
       if (request.projectID !== location.project.id || request.directory !== location.directory) throw new Error("Human decision Location mismatch")
       const candidates: HumanDecisionCandidate[] = []
-      const children = await run(query("SELECT id FROM session_v2 WHERE parent_id=? AND project_id=? ORDER BY id LIMIT ?",
-        [request.parentSessionID, location.project.id, MAX_DISCOVERED_CHILDREN]))
+      // Every bound reached or unverifiable confirmed answer leaves the discovery incomplete.
+      let complete = true
+      const bounded = <T>(rows: readonly T[], limit: number) => { if (rows.length > limit) complete = false; return rows.slice(0, limit) }
+      const children = bounded(await run(query("SELECT id FROM session_v2 WHERE parent_id=? AND project_id=? ORDER BY id LIMIT ?",
+        [request.parentSessionID, location.project.id, MAX_DISCOVERED_CHILDREN + 1])), MAX_DISCOVERED_CHILDREN)
       for (const child of children) {
-        if (typeof child.id !== "string") continue
-        const messages = await run(query("SELECT id,data FROM session_message WHERE session_id=? AND type='assistant' AND instr(data,?)>0 LIMIT 8",
-          [request.parentSessionID, JSON.stringify(child.id)]))
+        if (typeof child.id !== "string") { complete = false; continue }
+        const messages = bounded(await run(query("SELECT id,data FROM session_message WHERE session_id=? AND type='assistant' AND instr(data,?)>0 LIMIT ?",
+          [request.parentSessionID, JSON.stringify(child.id), MAX_DELEGATION_MESSAGES + 1])), MAX_DELEGATION_MESSAGES)
         let call: { parentMessageID: string; toolCallID: string } | undefined
         for (const message of messages) {
           const data = parse(message.data), content = object(data) && Array.isArray(data.content) ? data.content : []
@@ -188,9 +192,12 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
         }
         if (!call) continue
         const prefix = nativeKey(`${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/${child.id}/`)
-        const marks = await run(query("SELECT value FROM kv WHERE key>=? AND key<? LIMIT ?", [prefix, `${prefix.slice(0, -1)}0`, MAX_DISCOVERED_MARKS]))
+        const marks = bounded(await run(query("SELECT value FROM kv WHERE key>=? AND key<? LIMIT ?",
+          [prefix, `${prefix.slice(0, -1)}0`, MAX_DISCOVERED_MARKS + 1])), MAX_DISCOVERED_MARKS)
         for (const row of marks) {
           const stored = parse(row.value)
+          // A pending attempt never qualifies, but its outcome is unknown.
+          if (object(stored) && stored.state === "pending") { complete = false; continue }
           if (!object(stored) || stored.state !== "confirmed" || stored.via !== "ui" || stored.sessionID !== child.id || !object(stored.answer)) continue
           const form = (() => { try { return Schema.decodeUnknownSync(Schema.toType(Form.Info))(stored.form) } catch { return undefined } })()
           const tool = form?.metadata?.tool
@@ -205,14 +212,14 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
             try {
               await api.verify({ ...provenance, question: field.description, answer, projectID: request.projectID, directory: request.directory,
                 delegationToolName: "subagent", assignmentPrompt: request.assignmentPrompt })
-            } catch { continue }
+            } catch { complete = false; continue }
+            if (candidates.length >= MAX_DISCOVERED_ANSWERS) return { candidates, complete: false }
             const value = answer as string | string[]
             candidates.push({ question: field.description, answer: value, artifact: { kind: "decision", question: field.description, answer: value, provenance } })
-            if (candidates.length >= MAX_DISCOVERED_ANSWERS) return candidates
           }
         }
       }
-      return candidates
+      return { candidates, complete }
     },
     reply: async (raw: unknown) => {
       const input = humanAnswerRpcInputSchema.parse(raw), body = input.body

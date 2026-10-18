@@ -10,6 +10,7 @@ import { locationRequestOptions } from "../../opencode/compatibility/location"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { prepareMissionCreation, type MissionCreationPipelineManager } from "./mission-creation-pipeline"
+import { MissionCreationHoldError } from "./mission-creation-holds"
 
 const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
   missionID: z.string().min(1).max(100), requestID: z.string().min(1).max(128),
@@ -51,6 +52,11 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
         ...(input.profiles === undefined ? {} : { profiles: input.profiles }), ...(input.taskMode === undefined ? {} : { taskMode: input.taskMode }) } })
     return await creation.execute()
   } catch (error) {
+    // An earlier uncertain attempt with this identity stays held: never claim nothing exists.
+    if (error instanceof MissionCreationHoldError) {
+      if (error.code === "creation-conflict") throw new MissionControlError("This requestID already prepared a different mission", "prepare-conflict")
+      if (error.code === "creation-uncertain") throw new MissionControlError("The prepared mission's outcome is uncertain; retry with the same requestID", "prepare-uncertain")
+    }
     // Only a refusal before the native create proves nothing was created.
     const code = readMissionMutationError(error)?.code
     if (!creation?.dispatched || code === "mission-limit") throw new MissionControlError("The mission could not be prepared; nothing was created", "prepare-refused")

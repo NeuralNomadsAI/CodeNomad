@@ -11,10 +11,11 @@ const task = (key: string, status: MissionTask["status"] = "ready"): MissionTask
   executionMode: { kind: "native", parentTaskKey: null } })
 
 /** The coordinator launched ses_task for scope-a (with a running helper) and ses_other for scope-b. */
-function fixture(status: MissionTask["status"] = "withdrawn") {
+function fixture(status: MissionTask["status"] = "withdrawn", options: { reuse?: boolean; lateHelper?: boolean } = {}) {
+  const continuation = options.reuse ? { ...task("scope-b"), executionMode: { kind: "native" as const, parentTaskKey: null, reuseFromTaskKey: "scope-a" } } : task("scope-b")
   const mission = { version: 1, id: "msn_fixture", projectID: "project", projectCanonical: "/repo", objective: "Chart",
     template: "custom", taskMode: "native", status: "active", runState: "running", coordinatorSessionId: "ses_coordinator",
-    actors: [], tasks: [task("scope-a", status), task("scope-b")], reports: [], frontier: [], claims: [],
+    actors: [], tasks: [task("scope-a", status), continuation], reports: [], frontier: [], claims: [],
     createdAt: 1, updatedAt: 1, revision: 3, history: [], historyTruncated: false } as unknown as MissionMap
   const native = new Map<string, any>([
     ["ses_coordinator", { id: "ses_coordinator", projectID: "project", location }],
@@ -36,7 +37,15 @@ function fixture(status: MissionTask["status"] = "withdrawn") {
       get: async ({ sessionID }: any) => structuredClone(native.get(sessionID)),
       list: async ({ parentID }: any) => ({ data: [...native.values()].filter(session => session.parentID === parentID).map(session => structuredClone(session)), cursor: { next: null } }),
       active: async () => Object.fromEntries([...running].map(id => [id, { type: "running" }])),
-      interrupt: async ({ sessionID }: any) => { calls.push(`interrupt:${sessionID}`); return { interrupted: running.delete(sessionID) } },
+      interrupt: async ({ sessionID }: any) => {
+        calls.push(`interrupt:${sessionID}`)
+        // The task conversation launched one more helper just before its own interrupt.
+        if (options.lateHelper && sessionID === "ses_task" && !native.has("ses_late")) {
+          native.set("ses_late", { id: "ses_late", parentID: "ses_task", projectID: "project", location })
+          running.add("ses_late")
+        }
+        return { interrupted: running.delete(sessionID) }
+      },
       inbox: {
         list: async ({ sessionID }: any) => structuredClone(inboxes.get(sessionID) ?? []),
         cancel: async ({ sessionID, inboxID }: any) => { calls.push(`cancel:${sessionID}`); inboxes.set(sessionID, (inboxes.get(sessionID) ?? []).filter(item => item.id !== inboxID)) },
@@ -70,6 +79,22 @@ test("stopping a retired task interrupts its family deepest first, cancels its q
   assert.equal(result.complete, true)
   assert.deepEqual(result.sessions.map(session => [session.sessionID, session.interrupted, session.settled, session.descendants.interrupted]),
     [["ses_task", true, true, 1]])
+})
+
+test("a helper launched before the conversation's own interrupt is caught by the post-interrupt recheck", async () => {
+  const f = fixture("withdrawn", { lateHelper: true })
+  const result = await interruptMissionTask(f.manager, new WorktreeDeletionFence(), "ses_coordinator", f.command("interrupt"), f.signal)
+  assert.deepEqual(f.calls.filter(call => call.startsWith("interrupt:")), ["interrupt:ses_helper", "interrupt:ses_task", "interrupt:ses_late"])
+  assert.equal(f.running.has("ses_late"), false)
+  assert.equal(result.complete, true)
+  assert.equal(result.sessions[0].descendants.interrupted, 2)
+})
+
+test("a retired task whose conversation an open task continues is never interrupted", async () => {
+  const f = fixture("withdrawn", { reuse: true })
+  await assert.rejects(interruptMissionTask(f.manager, new WorktreeDeletionFence(), "ses_coordinator", f.command("interrupt"), f.signal),
+    (error: any) => error.code === "task-reused")
+  assert.deepEqual(f.calls, [])
 })
 
 test("live tasks and fenced worktrees are never interrupted", async () => {

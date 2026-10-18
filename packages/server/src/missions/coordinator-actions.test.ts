@@ -2,9 +2,10 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionControl } from "./control"
 import type { MissionInputTransport, MissionSessionAdapter, NativeMissionSession } from "./control-types"
-import type { HumanDecisionCandidate, NativeHumanAnswerGate } from "./human-answer"
+import type { HumanDecisionCandidate, HumanDecisionDiscovery, NativeHumanAnswerGate } from "./human-answer"
 import type { MissionStorage } from "./journal"
-import type { MissionJsonValue } from "./model"
+import type { MissionJsonValue, MissionTask } from "./model"
+import { liveContinuations } from "./coordinator-actions"
 
 class MemoryStorage implements MissionStorage {
   readonly values = new Map<string, MissionJsonValue>()
@@ -78,6 +79,8 @@ test("an automatic briefing may let the server pick the revision and never dupli
   assert.equal(later.mission.briefing?.requestID, `auto:${base + 2}`)
   assert.throws(() => f.control.briefing(coordinator, { ...brief, requestID: "ui-request" }), /Invalid briefing revision/,
     "only \"auto\" may omit basedOnRevision")
+  const explicit = await f.control.briefing(coordinator, { ...brief, basedOnRevision: base + 3, summary: "Same plan, explicit revision." })
+  assert.equal(explicit.mission.briefing?.requestID, `auto:${base + 3}`, "\"auto\" with a revision is still an automatic ID, never literal")
 })
 
 test("prepare creates a paused hand-off through the backend; its coordinator may read but never control it", async () => {
@@ -107,7 +110,25 @@ test("prepare creates a paused hand-off through the backend; its coordinator may
   await assert.rejects(control.inspect("ses_other", { missionID: mission.id }, "other"), /not visible/)
   const plain = fixture()
   await plain.start()
-  await assert.rejects(plain.control.prepare(coordinator, request), /needs the CodeNomad backend/)
+  await assert.rejects(plain.control.prepare(coordinator, request), /unavailable here/)
+})
+
+test("a prepare retry after a lost reply returns the saved hand-off without another backend call", async () => {
+  let control!: MissionControl, calls = 0
+  const f = fixture({ transport: { prepare: async (coordinatorID, input) => {
+    calls++
+    await control.create({ prepared: true, requestID: input.requestID, objective: input.objective, template: input.template,
+      taskMode: input.taskMode, preparedBy: { missionID: input.missionID, coordinatorSessionID: coordinatorID } })
+    throw new Error("Bridge reply lost")
+  } } })
+  control = f.control
+  await f.start()
+  const request = { requestID: "pilot", objective: "Run the pilot", template: "custom" as const }
+  await assert.rejects(control.prepare(coordinator, request), /reply lost/)
+  const { mission } = await control.prepare(coordinator, request)
+  assert.deepEqual([calls, mission.runState, mission.objective], [1, "prepared", "Run the pilot"])
+  await assert.rejects(control.prepare(coordinator, { ...request, objective: "A different pilot" }), /already prepared a different mission/)
+  assert.equal(calls, 1)
 })
 
 test("a retired native task's conversations are observed and stopped only through validated bridge replies", async () => {
@@ -127,6 +148,9 @@ test("a retired native task's conversations are observed and stopped only throug
   const stopped = await f.control.interruptTask(coordinator, { taskKey: "scope-a" })
   assert.equal(stopped.complete, true)
   assert.deepEqual(calls[calls.length - 1], ["interrupt", coordinator, { missionID: mission.id, taskKey: "scope-a" }])
+  reply = { sessions: [], complete: true }
+  assert.match((await f.control.interruptTask(coordinator, { taskKey: "scope-a" })).note ?? "", /another prompt is not visible here/,
+    "an empty result is never presented as proof that nothing runs")
   reply = { sessions: [{ sessionID: "ses_child", interrupted: true, settled: true, raw: "native error with secrets" }], complete: true }
   await assert.rejects(f.control.interruptTask(coordinator, { taskKey: "scope-a" }))
   await assert.rejects(f.control.interruptTask(coordinator, { taskKey: "missing" }), /Mission task not found/)
@@ -135,11 +159,21 @@ test("a retired native task's conversations are observed and stopped only throug
   assert.equal(await plain.control.observeTask(coordinator, undefined, "scope-a"), undefined, "no backend, no observation")
 })
 
-function decisionGate(candidates: () => HumanDecisionCandidate[]): NativeHumanAnswerGate {
+test("an open task continuing a retired task's conversation keeps that conversation from being stopped", () => {
+  const task = (key: string, status: MissionTask["status"], reuseFromTaskKey?: string): MissionTask => ({ id: key, key, title: key, brief: "", role: "specialist",
+    blockedBy: [], status, createdAt: 1, updatedAt: 1, outstandingExecution: false,
+    executionMode: { kind: "native", parentTaskKey: null, ...(reuseFromTaskKey ? { reuseFromTaskKey } : {}) } })
+  const tasks = [task("source", "withdrawn"), task("middle", "completed", "source"), task("live", "ready", "middle"), task("done", "completed", "source")]
+  assert.deepEqual(liveContinuations(tasks, "source"), ["live"], "a chain through a finished continuation still reaches the open task")
+  assert.deepEqual(liveContinuations(tasks.filter(item => item.key !== "live"), "source"), [])
+  assert.deepEqual(liveContinuations([task("a", "ready", "b"), task("b", "ready", "a")], "c"), [], "reuse cycles terminate")
+})
+
+function decisionGate(discovery: () => HumanDecisionDiscovery): NativeHumanAnswerGate {
   return Object.assign(async (request: Parameters<NativeHumanAnswerGate>[0]) => ({ formID: request.formID, sessionID: request.sessionID,
     answeredAt: 1, via: "ui" as const, answer: { [request.fieldKey]: request.answer },
     form: { metadata: { kind: "question", tool: { messageID: request.messageID, id: request.toolCallID } } } as never }),
-  { discover: async () => candidates() })
+  { discover: async () => discovery() })
 }
 
 const candidate = (missionID: string, answer: string): HumanDecisionCandidate => {
@@ -150,8 +184,8 @@ const candidate = (missionID: string, answer: string): HumanDecisionCandidate =>
 }
 
 test("a decision readout without an artifact uses the single qualifying human answer, still verified by the gate", async () => {
-  let found: HumanDecisionCandidate[] = []
-  const f = fixture({ humanGate: decisionGate(() => found) })
+  let found: HumanDecisionCandidate[] = [], complete = true
+  const f = fixture({ humanGate: decisionGate(() => ({ candidates: found, complete })) })
   const mission = await f.start()
   f.sessions.set("ses_decision", { id: "ses_decision", parentID: coordinator, projectID: "project-1", location: { directory: "/repo" } })
   await f.declare("choose", "decision")
@@ -159,8 +193,12 @@ test("a decision readout without an artifact uses the single qualifying human an
   await assert.rejects(f.control.report(coordinator, readout), /Human decision required/)
   found = [candidate(mission.id, "Module"), candidate(mission.id, "Adapter")]
   await assert.rejects(f.control.report(coordinator, readout), /Several answered questions qualify/)
-  assert.deepEqual((await f.control.decisionCandidates(coordinator, undefined, "choose"))?.map(item => item.answer), ["Module", "Adapter"])
+  assert.deepEqual((await f.control.decisionCandidates(coordinator, undefined, "choose"))?.candidates.map(item => item.answer), ["Module", "Adapter"])
   found = [found[0]]
+  complete = false
+  await assert.rejects(f.control.report(coordinator, readout), /Not every answered question could be checked/,
+    "an incomplete discovery never picks its only visible answer")
+  complete = true
   const reported = await f.control.report(coordinator, readout)
   assert.equal(reported.disposition, "reported")
   assert.deepEqual(reported.mission.tasks.find(task => task.key === "choose")?.report?.artifact, found[0].artifact)

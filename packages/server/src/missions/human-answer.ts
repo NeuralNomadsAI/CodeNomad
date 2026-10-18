@@ -64,7 +64,10 @@ export interface HumanDecisionMark {
 }
 /** `discover` lists qualifying answers for a decision task, each already verified by the gate. */
 export type NativeHumanAnswerGate = ((request: import("./native-human-evidence").NativeDecisionEvidenceRequest) => Promise<HumanDecisionMark>)
-  & { discover?(request: HumanDecisionDiscoveryRequest): Promise<HumanDecisionCandidate[]> }
+  & { discover?(request: HumanDecisionDiscoveryRequest): Promise<HumanDecisionDiscovery> }
+/** `complete` is false when a bound was reached or a confirmed answer could not be verified:
+ * a missing candidate cannot then be excluded, so no single answer may be chosen automatically. */
+export interface HumanDecisionDiscovery { candidates: HumanDecisionCandidate[]; complete: boolean }
 
 /** A decision task's own conversations: fresh children of `parentSessionID` born from this exact assignment. */
 export const humanDecisionDiscoverySchema = z.object({ contract: nativeDecisionProvenance.shape.contract, parentSessionID: id,

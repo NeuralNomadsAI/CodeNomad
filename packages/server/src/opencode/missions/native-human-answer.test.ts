@@ -259,18 +259,25 @@ test("a decision readout discovers the human's exact answer from native structur
     delegate(assignment)
     const candidates = () => control.decisionCandidates("ses_root", mission.id, "decision")
     const readout = { taskKey: "decision", outcome: "completed" as const, summary: "The human chose the module seam", evidence: [], next: [], final: false }
-    assert.deepEqual(await candidates(), [], "no UI mark yet")
+    assert.deepEqual(await candidates(), { candidates: [], complete: true }, "no UI mark yet")
     await assert.rejects(control.report("ses_root", readout), /Human decision required/)
     assert.equal((await f.submit()).statusCode, 204)
     delegate("Unrelated work")
-    assert.deepEqual(await candidates(), [], "a child born for other work never qualifies")
+    assert.deepEqual(await candidates(), { candidates: [], complete: true }, "a child born for other work never qualifies")
     delegate(assignment)
-    const [found, ...others] = (await candidates())!
+    const discovery = (await candidates())!
+    assert.equal(discovery.complete, true)
+    const [found, ...others] = discovery.candidates
     assert.deepEqual(others, [])
     assert.deepEqual(found, { question: "Choose the seam?", answer: "Module", artifact: { kind: "decision", question: "Choose the seam?", answer: "Module",
       provenance: { kind: "native-form-answer", contract: { missionID: mission.id, taskKey: "decision", generation: 1 },
         nativeCall: { generation: 1, parentSessionID: "ses_root", parentMessageID: "msg_delegate", toolCallID: "call_delegate" },
         sessionID: "ses_child", formID: f.form.id, messageID: "msg_question", toolCallID: "call_question", fieldKey: "q0" } } })
+    // A confirmed answer the gate cannot verify (here: the native Form now disagrees) leaves the discovery incomplete.
+    f.changeState("cancelled")
+    assert.deepEqual(await candidates(), { candidates: [], complete: false })
+    await assert.rejects(control.report("ses_root", readout), /Not every answered question could be checked/)
+    f.changeState("answered")
     assert.equal((await control.report("ses_root", readout)).disposition, "reported")
     assert.deepEqual((await control.snapshot()).missions[0].tasks[0].report?.artifact, found.artifact)
   } finally { await f.dispose() }

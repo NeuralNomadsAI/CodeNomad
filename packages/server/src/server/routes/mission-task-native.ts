@@ -4,7 +4,8 @@ import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import type { MissionMap, MissionSnapshot, MissionTask } from "../../missions/model"
 import { MissionControlError } from "../../missions/control-error"
 import { parseMissionChildTaskKey } from "../../missions/task-sessions"
-import { interruptNativeMissionFamily, settleInterruptedRoot, type MissionDescendantControl } from "../../missions/native-family-interrupt"
+import { interruptNativeMissionFamily, recheckNativeMissionFamily, settleInterruptedRoot, type MissionDescendantControl } from "../../missions/native-family-interrupt"
+import { liveContinuations } from "../../missions/coordinator-actions"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
@@ -12,8 +13,10 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 /** Direct coordinator children examined per call; more is an honest partial result. */
 const CHILD_BOUND = 200
 const CHILD_PAGE = 100
-/** Leaves headroom inside the bridge's lifecycle timeout. */
-const INTERRUPT_BUDGET_MS = 50_000
+/** Family passes, each recheck and the whole call stay inside the bridge's 85 s lifecycle timeout. */
+const INTERRUPT_BUDGET_MS = 45_000
+const RECHECK_BUDGET_MS = 10_000
+const TOTAL_BUDGET_MS = 75_000
 
 const taskCommand = (kind: "task-sessions" | "interrupt") => z.object({ kind: z.literal(kind), input: z.object({
   missionID: z.string().min(1).max(100), taskKey: z.string().regex(/^[a-z0-9][a-z0-9._-]{1,63}$/),
@@ -109,35 +112,51 @@ export async function interruptMissionTask(manager: Manager, fence: WorktreeDele
   signal: AbortSignal): Promise<MissionTaskInterruption> {
   const owned = await ownedTask(manager, coordinatorID, command, "interrupt", signal)
   const { client, connection, workspace, coordinator } = owned
-  const retired = (mission: MissionMap, task: MissionTask) => mission.status === "active" && task.status === "withdrawn"
-  if (!retired(owned.mission, owned.task)) throw new MissionControlError("Retire the task with mission.revise before stopping its work", "task-not-retired")
+  const assertStoppable = (mission: MissionMap, task: MissionTask) => {
+    if (mission.status !== "active" || task.status !== "withdrawn") throw new MissionControlError("Retire the task with mission.revise before stopping its work", "task-not-retired")
+    if (liveContinuations(mission.tasks, task.key).length) throw new MissionControlError("An open task continues this task's conversation; retire that task first", "task-reused")
+  }
+  assertStoppable(owned.mission, owned.task)
   const identity = await manager.getWorktreeIdentityForPath(workspace.id, coordinator.location.directory)
   if (!identity) throw new Error("Missing mission worktree")
   const release = fence.enter([identity])
   if (!release) throw new Error("Worktree mutation in progress")
   const current = () => { signal.throwIfAborted(); connection.assertCurrent() }
+  let roots: SessionInfo[] = []
   const checkpoint = async () => {
     current()
     const { mission, task } = await owned.read()
-    if (!retired(mission, task)) throw new MissionControlError("Retire the task with mission.revise before stopping its work", "task-not-retired")
+    assertStoppable(mission, task)
+    // A conversation that is an open task's actor keeps running that task.
+    if (mission.tasks.some(other => other.status !== "withdrawn" && other.actorSessionId && roots.some(root => root.id === other.actorSessionId))) {
+      throw new MissionControlError("An open task continues this task's conversation; retire that task first", "task-reused")
+    }
     const fresh = await client.session.get({ sessionID: coordinatorID }, { signal })
     if (fresh.id !== coordinatorID || fresh.parentID || !sameLocation(fresh.location, coordinator.location)
       || !await manager.ownsLocation(workspace.id, fresh.location, client)) throw new Error("Coordinator moved")
     current()
   }
   try {
-    const deadline = Date.now() + INTERRUPT_BUDGET_MS
+    const started = Date.now(), deadline = started + INTERRUPT_BUDGET_MS
     const found = await readTaskSessions(client, coordinator, owned.mission, owned.task, signal, current)
+    roots = found.roots
     const sessions: MissionTaskInterruption["sessions"] = []
-    for (const root of found.roots) {
+    for (const root of roots) {
       await checkpoint()
-      const { descendants } = await interruptNativeMissionFamily({ client, root, action: "stop", signal, current, checkpoint, deadline })
+      const { descendants, ledger } = await interruptNativeMissionFamily({ client, root, action: "stop", signal, current, checkpoint, deadline })
       await checkpoint()
       const interrupt = await client.session.interrupt({ sessionID: root.id, resume: false }, { signal })
       current()
+      // As in lifecycle Stop: the conversation ran until its own interrupt and may have launched
+      // helpers meanwhile. Stop those, settle the conversation, then confirm a whole quiet family.
+      const recheck = (control: MissionDescendantControl, interrupt: boolean) => recheckNativeMissionFamily({ client, root, action: "stop",
+        signal, current, checkpoint, deadline: Math.min(Date.now() + RECHECK_BUDGET_MS, started + TOTAL_BUDGET_MS) }, ledger, control, interrupt)
+      const caught = await recheck(descendants, true)
       // Retired work must not be re-woken by its own queued inputs or helper results.
       const settled = await settleInterruptedRoot({ client, root, action: "stop", signal, current, checkpoint, cancel: () => true })
-      sessions.push({ sessionID: root.id, interrupted: interrupt?.interrupted === true, settled, descendants })
+      const verified = await recheck(caught, false)
+      sessions.push({ sessionID: root.id, interrupted: interrupt?.interrupted === true, settled,
+        descendants: settled ? verified : { ...verified, unconfirmed: verified.unconfirmed + 1, complete: false } })
     }
     return { sessions, complete: found.complete && sessions.every(session => session.settled && session.descendants.complete) }
   } finally { release() }

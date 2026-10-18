@@ -19,9 +19,13 @@ import { buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionReci
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
 import { nativeDecisionProvenance, resolveDebuggingImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
-import type { HumanDecisionCandidate, NativeHumanAnswerGate } from "./human-answer"
-import { missionListEntry, missionRelation, taskInterruptionSchema, taskObservationSchema,
+import type { HumanDecisionDiscovery, NativeHumanAnswerGate } from "./human-answer"
+import { liveContinuations, missionListEntry, missionRelation, taskInterruptionSchema, taskObservationSchema,
   type MissionTaskInterruption, type MissionTaskObservation } from "./coordinator-actions"
+
+const BACKEND_ACTION_UNAVAILABLE = "This action is unavailable here: it needs a one-time mission with the CodeNomad app running"
+/** An empty result is not proof that nothing runs: only canonical assignments are recognized. */
+export const NO_TASK_CONVERSATION = "No conversation carrying this task's canonical assignment was found among the coordinator's direct children; a conversation launched with another prompt is not visible here."
 import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
@@ -150,11 +154,11 @@ export class MissionControl {
       this.assertCoordinator(mission, sessionID)
       const actor = mission.actors.find(actor => actor.sessionId === sessionID)
       if (!actor || !sameLocation(caller.location, actor.location)) throw new MissionControlError("Coordinator moved", "foreign-session")
-      // "auto" names the current revision, or the latest automatic briefing when it is still the
-      // last event: publishing advances the revision, so nothing changed since that milestone.
+      // "auto" always names an automatic briefing. Without a revision it takes the current one, or
+      // the latest automatic briefing's while that is still the last event (nothing changed since).
       const latest = mission.briefing
       const unchanged = latest !== undefined && isAutomaticBriefing(latest) && mission.revision === latest.basedOnRevision + 1
-      const resolved = request.requestID === AUTOMATIC_BRIEFING_REQUEST && request.basedOnRevision === undefined
+      const resolved = request.requestID === AUTOMATIC_BRIEFING_REQUEST
       const basedOnRevision = request.basedOnRevision ?? (unchanged && latest ? latest.basedOnRevision : mission.revision)
       const input: MissionBriefingInput = { ...request, basedOnRevision,
         requestID: resolved ? `${AUTOMATIC_BRIEFING_REQUEST}:${basedOnRevision}` : request.requestID }
@@ -683,12 +687,26 @@ export class MissionControl {
     const source = this.membership(await this.snapshot(), sessionID)
     if (!source || source.status !== "active") throw new MissionControlError("No active mission is associated with this session", "mission-not-found")
     this.assertCoordinator(source, sessionID)
-    if (!this.options.transport?.prepare) throw new MissionControlError("Preparing a mission needs the CodeNomad backend", "prepare-unavailable")
+    if (!this.options.transport?.prepare) throw new MissionControlError(BACKEND_ACTION_UNAVAILABLE, "prepare-unavailable")
     // Scoped to this coordinator and mission: another coordinator's requestID never replays into it.
     const requestID = `prepare_${stableToken(`${source.id}\0${sessionID}\0${input.requestID}`, 24)}`
+    // A retry after a lost or uncertain reply finds the saved creation instead of asking the backend again.
+    const missionID = `msn_${stableToken(`${this.options.project.id}\0${requestID}`, 24)}`
+    const created = await this.journal.event(missionID, this.eventID(missionID, "created"))
+    if (created) {
+      if (created.type !== "mission.created" || created.prepared !== true || created.objective !== input.objective
+        || created.title !== input.title || created.notes !== input.notes || created.template !== input.template
+        || (created.taskMode ?? "native") !== (input.taskMode ?? "native") || !sameMissionProfiles(created.profiles, input.profiles)
+        || created.preparedBy?.missionID !== source.id || created.preparedBy.coordinatorSessionID !== sessionID) {
+        throw new MissionControlError("This requestID already prepared a different mission", "prepare-conflict")
+      }
+      const saved = (await this.snapshot()).missions.find(mission => mission.id === missionID)
+      if (!saved) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
+      return { mission: saved }
+    }
     const result = await this.options.transport.prepare(sessionID, { ...structuredClone(input), requestID, missionID: source.id })
-    const missionID = (result as { mission?: { id?: unknown } } | undefined)?.mission?.id
-    const mission = typeof missionID === "string" ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
+    const returnedID = (result as { mission?: { id?: unknown } } | undefined)?.mission?.id
+    const mission = returnedID === missionID ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
     if (!mission || mission.preparedBy?.coordinatorSessionId !== sessionID || mission.preparedBy.missionId !== source.id) {
       throw new MissionControlError("The prepared mission's outcome is uncertain; retry with the same requestID", "prepare-uncertain")
     }
@@ -705,7 +723,7 @@ export class MissionControl {
   }
 
   /** Stops a retired native task's own conversations and their families; the plan is unchanged. */
-  async interruptTask(sessionID: string, input: { missionID?: string; taskKey: string }): Promise<MissionTaskInterruption> {
+  async interruptTask(sessionID: string, input: { missionID?: string; taskKey: string }): Promise<MissionTaskInterruption & { note?: string }> {
     await this.ownedRootSession(sessionID)
     const mission = this.selectMission(await this.snapshot(), sessionID, input.missionID)
     if (!mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
@@ -716,19 +734,23 @@ export class MissionControl {
       throw new MissionControlError("Only native tasks launched by the coordinator can be stopped here", "task-sessions-unavailable")
     }
     if (task.status !== "withdrawn") throw new MissionControlError("Retire the task with mission.revise before stopping its work", "task-not-retired")
-    if (!this.options.transport?.interruptTask) throw new MissionControlError("Stopping native work needs the CodeNomad backend", "interrupt-unavailable")
-    return taskInterruptionSchema.parse(await this.options.transport.interruptTask(sessionID, { missionID: mission.id, taskKey: task.key }))
+    if (liveContinuations(mission.tasks, task.key).length) {
+      throw new MissionControlError("An open task continues this task's conversation; retire that task first", "task-reused")
+    }
+    if (!this.options.transport?.interruptTask) throw new MissionControlError(BACKEND_ACTION_UNAVAILABLE, "interrupt-unavailable")
+    const result = taskInterruptionSchema.parse(await this.options.transport.interruptTask(sessionID, { missionID: mission.id, taskKey: task.key }))
+    return result.sessions.length ? result : { ...result, note: NO_TASK_CONVERSATION }
   }
 
   /** Answered native questions that qualify a native Wayfinder decision task, each verified by the gate. */
-  async decisionCandidates(sessionID: string, missionID: string | undefined, taskKey: string): Promise<HumanDecisionCandidate[] | undefined> {
+  async decisionCandidates(sessionID: string, missionID: string | undefined, taskKey: string): Promise<HumanDecisionDiscovery | undefined> {
     const mission = this.selectMission(await this.snapshot(), sessionID, missionID)
     const task = mission?.tasks.find(task => task.key === taskKey)
     if (!mission || !task || mission.template !== "wayfinder" || task.role !== "decision") return undefined
     return this.discoverDecisions(mission, task)
   }
 
-  private async discoverDecisions(mission: MissionMap, task: import("./model").MissionTask): Promise<HumanDecisionCandidate[] | undefined> {
+  private async discoverDecisions(mission: MissionMap, task: import("./model").MissionTask): Promise<HumanDecisionDiscovery | undefined> {
     const mode = task.executionMode
     const parent = mode?.kind !== "native" ? undefined : mode.parentTaskKey === null ? mission.coordinatorSessionId
       : mission.tasks.find(candidate => candidate.key === mode.parentTaskKey)?.actorSessionId
@@ -740,12 +762,14 @@ export class MissionControl {
       assignmentPrompt: buildAssignmentPrompt(mission, task), projectID: mission.projectID, directory: session.location.directory })
   }
 
-  /** A readout without an artifact uses the single qualifying answer; the gate still verifies it. */
+  /** A readout without an artifact uses the single qualifying answer of a complete discovery;
+   * the gate still verifies it. Anything else asks the coordinator to choose explicitly. */
   private async discoveredDecision(mission: MissionMap, task: import("./model").MissionTask): Promise<import("./model").MissionJsonValue> {
-    const candidates = await this.discoverDecisions(mission, task) ?? []
-    if (candidates.length === 1) return structuredClone(candidates[0].artifact) as unknown as import("./model").MissionJsonValue
-    if (!candidates.length) throw humanDecisionRequired(new Error("No answered native question qualifies for this decision task yet"))
-    throw new MissionControlError("Several answered questions qualify; pass the chosen one's artifact from mission.inspect({ taskKey })", "policy-unqualified")
+    const { candidates, complete } = await this.discoverDecisions(mission, task) ?? { candidates: [], complete: true }
+    if (complete && candidates.length === 1) return structuredClone(candidates[0].artifact) as unknown as import("./model").MissionJsonValue
+    if (complete && !candidates.length) throw humanDecisionRequired(new Error("No answered native question qualifies for this decision task yet"))
+    throw new MissionControlError(complete ? "Several answered questions qualify; pass the chosen one's artifact from mission.inspect({ taskKey })"
+      : "Not every answered question could be checked; pass the chosen artifact from mission.inspect({ taskKey })", "policy-unqualified")
   }
 
   delegate(sessionID: string, input: MissionDelegateInput): Promise<{ disposition: "blocked" | "dispatched" | "existing"; mission: MissionMap }> {
@@ -1117,7 +1141,13 @@ export class MissionControl {
     const mission = this.membership(snapshot, sessionID)
     if (!mission || mission.status !== "active") return undefined
     if (!missionIsRunning(mission)) return `Mission ${mission.id} is ${mission.runState}. Do not continue mission work or create a replacement mission. Wait for the user's Play action. Saved reports may still be recorded without waking the coordinator.`
-    return buildActorContext(mission, sessionID) || undefined
+    return buildActorContext(mission, sessionID, { backendActions: this.backendActions }) || undefined
+  }
+
+  /** Whether coordinator actions can reach the backend (one-time missions with presence, not passages). */
+  get backendActions(): boolean {
+    const transport = this.options.transport
+    return Boolean(transport?.prepare && transport.observeTask && transport.interruptTask)
   }
 
   private async finishDispatch(mission: MissionMap, taskKey: string): Promise<MissionMap> {

@@ -1,5 +1,5 @@
 import { z } from "zod"
-import type { MissionMap } from "./model"
+import type { MissionMap, MissionTask } from "./model"
 
 /** Bridge replies are revalidated before they reach a model: bounded and credential-free. */
 const sessionID = z.string().min(1).max(240)
@@ -18,6 +18,22 @@ export const taskInterruptionSchema = z.object({
   complete: z.boolean(),
 }).strict()
 export type MissionTaskInterruption = z.infer<typeof taskInterruptionSchema>
+
+/** Open tasks that continue this task's native conversation through `reuseFromTaskKey`,
+ * directly or along a chain: stopping that conversation would stop their work too. */
+export function liveContinuations(tasks: readonly MissionTask[], taskKey: string): string[] {
+  const byKey = new Map(tasks.map(task => [task.key, task]))
+  const reused = (task: MissionTask | undefined) => task?.executionMode?.kind === "native" ? task.executionMode.reuseFromTaskKey : undefined
+  const reaches = (task: MissionTask) => {
+    const seen = new Set<string>()
+    for (let key = reused(task); key && !seen.has(key); key = reused(byKey.get(key))) {
+      if (key === taskKey) return true
+      seen.add(key)
+    }
+    return false
+  }
+  return tasks.filter(task => !["withdrawn", "completed", "failed"].includes(task.status) && reaches(task)).map(task => task.key)
+}
 
 /** Missions a session may read: those it belongs to, and hand-offs it prepared (read-only). */
 export function missionRelation(mission: MissionMap, sessionID: string): "member" | "prepared" | undefined {

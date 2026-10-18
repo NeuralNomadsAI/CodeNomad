@@ -114,10 +114,12 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   await contextHook!(event)
   assert.equal(event.system[0]?.type, "text")
   assert.match(event.system[0]?.text ?? "", /Only this coordinator session/)
-  assert.ok(event.tools.mission_delegate && event.tools.mission_interrupt && event.tools.mission_prepare)
-  // Without the backend the hand-off and stop actions refuse instead of acting natively.
+  assert.ok(event.tools.mission_delegate)
+  // Without a backend route the hand-off and stop actions are neither offered nor performed natively.
+  assert.deepEqual([event.tools.mission_interrupt, event.tools.mission_prepare], [undefined, undefined])
+  assert.doesNotMatch(event.system[0]?.text ?? "", /mission\.interrupt|mission\.prepare/)
   await assert.rejects(tools.find(tool => tool.name === "prepare")!.execute({ requestID: "pilot", objective: "Pilot", template: "custom" }, {
-    sessionID: "ses_coordinator", messageID: "msg_p", id: "call_p", progress: async () => {} }), /needs the CodeNomad backend/)
+    sessionID: "ses_coordinator", messageID: "msg_p", id: "call_p", progress: async () => {} }), /unavailable here/)
   assert.deepEqual(JSON.parse((await inspect.execute({ list: true }, { sessionID: "ses_coordinator", messageID: "msg_l", id: "call_l",
     progress: async () => {} })).content).missions.map((entry: { relation: string }) => entry.relation), ["member"])
   const call = (id: string) => ({ sessionID: "ses_coordinator", messageID: `msg_${id}`, id: `call_${id}`, progress: async () => {} })
