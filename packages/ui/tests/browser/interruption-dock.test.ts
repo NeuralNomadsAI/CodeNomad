@@ -112,17 +112,21 @@ test("ordinary question answers settle through the ordinary reply; the human hea
   } finally { await page.close() }
 })
 
+/** Recovery warnings in the history; a question asked meanwhile adds its own "needs your answer" entry. */
+const recoveryWarnings = (page: Page) => page.evaluate(() => (window as any).fixture.notifications()
+  .filter((item: { title?: string; message?: string }) => /plugin that lists pending questions/.test(`${item.title ?? ""} ${item.message ?? ""}`)).length)
+
 test("persistently incomplete recovery uses existing notifications once until recovery, without banners or icons, and preserves drafts", async () => {
   const { page, errors } = await fixture(393)
   try {
     await page.evaluate(() => (window as any).fixture.recover("empty"))
     const warning = page.getByText(/^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./)
     // A single transient failure is retried by the liveness pass without a warning.
-    assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 0)
+    assert.equal(await recoveryWarnings(page), 0)
     await page.evaluate(() => (window as any).fixture.recover("unsupported"))
     await warning.waitFor()
     assert.equal(await warning.count(), 1)
-    assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 1)
+    assert.equal(await recoveryWarnings(page), 1)
     assert.equal(await page.getByRole("button", { name: /^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./ }).count(), 0)
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await warning.waitFor({ state: "detached" })
@@ -133,16 +137,16 @@ test("persistently incomplete recovery uses existing notifications once until re
     await page.evaluate(() => (window as any).fixture.invalidateRecovery())
     await page.evaluate(() => (window as any).fixture.recover("error"))
     assert.equal(await warning.count(), 0)
-    assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 1)
+    assert.equal(await recoveryWarnings(page), 1)
     assert.equal(await answer(page).inputValue(), "Keep this answer")
     await page.screenshot({ path: join(tmpdir(), "opencode", "pending-recovery-incomplete-393.png") })
     await page.evaluate(() => (window as any).fixture.recover("complete"))
     assert.equal(await warning.count(), 0)
     await page.evaluate(() => (window as any).fixture.recover("unsupported"))
-    assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 1)
+    assert.equal(await recoveryWarnings(page), 1)
     await page.evaluate(() => (window as any).fixture.recover("unsupported"))
     await warning.waitFor()
-    assert.equal(await page.evaluate(() => (window as any).fixture.notifications().length), 2)
+    assert.equal(await recoveryWarnings(page), 2)
     assert.equal(await answer(page).inputValue(), "Keep this answer")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
