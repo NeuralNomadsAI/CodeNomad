@@ -112,9 +112,10 @@ test("ordinary question answers settle through the ordinary reply; the human hea
   } finally { await page.close() }
 })
 
-/** Recovery warnings in the history; a question asked meanwhile adds its own "needs your answer" entry. */
+/** Recovery warnings of any cause in the history (one title for all causes); a question
+ *  asked meanwhile adds its own "needs your answer" entry. */
 const recoveryWarnings = (page: Page) => page.evaluate(() => (window as any).fixture.notifications()
-  .filter((item: { title?: string; message?: string }) => /plugin that lists pending questions/.test(`${item.title ?? ""} ${item.message ?? ""}`)).length)
+  .filter((item: { title?: string }) => /questions and permissions not fully recovered/.test(item.title ?? "")).length)
 
 test("persistently incomplete recovery uses existing notifications once until recovery, without banners or icons, and preserves drafts", async () => {
   const { page, errors } = await fixture(393)

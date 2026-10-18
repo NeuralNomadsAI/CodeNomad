@@ -289,8 +289,8 @@ function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause):
       .map((session) => session.title || session.id)
   }
   const { title, message } = describePendingRecovery(cause, instance ? getInstanceLabel(instance) : instanceId, sessionTitlesIn, tGlobal)
-  // An OpenCode-side diagnostic, not a request itself: it keeps its bubble and History entry.
-  showToastNotification({ category: "opencode", title, message, variant: "warning" })
+  // A project diagnostic, not a request itself: it keeps its bubble and History entry.
+  showToastNotification({ category: "projects", title, message, variant: "warning" })
 }
 
 // A cause marks an attempt that counts toward the warning; without one, the state only changes.
