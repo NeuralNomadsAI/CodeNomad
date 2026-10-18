@@ -262,7 +262,9 @@ Earlier GETs/ACKs never substitute stale cached defaults as authoritative creati
 Settings saves each defaults choice at once. Edits made during a write queue behind it,
 each applied to the document stored at its turn and compared against it; a role or
 task-session edit is refused when that stored value is no longer the one it was made
-from, so it never overwrites another window's change or resends a rejected edit.
+from, so it never overwrites another window's change to that value or resends a
+rejected edit of it. Customizing an inherited role still starts from the global
+values shown at edit time.
 
 ### Parallel workstreams and context reuse
 
