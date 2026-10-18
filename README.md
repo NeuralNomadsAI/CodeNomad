@@ -105,6 +105,8 @@ For a manual CLI installation, follow the [OpenCode V2 installation guide](https
 
 SideCars let you open web tools running on the CodeNomad server host inside CodeNomad as tabs. Start the service separately, then add it in **Preferences → SideCars**.
 
+A SideCar runs inside CodeNomad with the same access as the application, so only add services you trust, and avoid ones that display content you do not control.
+
 Session web previews are also available from the conversation toolbar. Agent-driven native browser automation is supported in Electron and Windows Tauri; other Tauri platforms use an iframe preview. See [Browser Automation](dev-docs/BROWSER_AUTOMATION.md) for platform details.
 
 <details>

@@ -126,7 +126,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 - Git mutations and Yolo policy remain CodeNomad-owned server boundaries.
 - Native desktop identity is channel plus config profile: one singleton process/backend per profile and multiple UUID windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window. Stable, dev, and non-default profiles isolate native/browser/client state; OpenCode sessions/messages stay shared while tabs, drafts, and views are per-window.
 - Desktop restore uses a V3 per-window envelope over the V2 content-addressed partition graph. Preserve atomic publication/migration, ownership write fencing, and post-commit conservative garbage collection in both Electron and Tauri.
-- Native SideCar/browser previews are sandboxed without same-origin access, so DOM comment inspection is web-only.
+- Browser preview iframes are sandboxed without same-origin access, so DOM comment inspection is web-only. SideCar iframes are same-origin by design: SideCars are trusted extensions of the application (see `dev-docs/architecture.md`).
 
 ### Key UI Files
 
