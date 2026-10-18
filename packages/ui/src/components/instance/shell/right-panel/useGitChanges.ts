@@ -76,7 +76,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     const pinned = new Set(gitBulkSelectedItemIds())
     for (const id of [gitSelectedItemId(), gitPreviewItemId()]) if (id) pinned.add(id)
     return pinned
-  }))
+  }), () => gitStatusEntries() !== null)
   const gitActive = createMemo(() => options.isActive() && options.rightPanelTab() === "git-changes")
   const cancelGitReads = () => {
     lifecycle += 1

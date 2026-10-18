@@ -59,9 +59,10 @@ const initialLimits = (): Record<GitChangeSection, number> => ({ staged: GIT_CHA
  * Per-section bounded windows. Reveals and sticky pins persist across refreshes
  * until `reset`, so a row shown beyond the bound never disappears because its
  * preview closed, the selection moved or focus left it; only leaving the
- * inventory or a reset removes it.
+ * loaded inventory or a reset removes it. An unloaded inventory (discarded
+ * while Changes is hidden) is not a departure: pins wait for the next read.
  */
-export function createGitChangeWindows(items: Accessor<GitChangeListItem[]>, pinned: Accessor<ReadonlySet<string>>) {
+export function createGitChangeWindows(items: Accessor<GitChangeListItem[]>, pinned: Accessor<ReadonlySet<string>>, loaded: Accessor<boolean> = () => true) {
   const [limits, setLimits] = createSignal(initialLimits())
   const [generation, setGeneration] = createSignal(0)
   const present = createMemo(() => new Set(items().map(item => item.id)))
@@ -70,7 +71,7 @@ export function createGitChangeWindows(items: Accessor<GitChangeListItem[]>, pin
     const current = generation()
     const kept = current === pinsGeneration ? previous : new Set<string>()
     pinsGeneration = current
-    return stickyPins(kept, pinned(), present())
+    return loaded() ? stickyPins(kept, pinned(), present()) : kept
   }, new Set())
   const window = (section: GitChangeSection) => createMemo(() =>
     buildGitChangeWindow(items().filter(item => item.section === section), limits()[section], pins()), undefined, { equals: sameGitChangeWindow })

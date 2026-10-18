@@ -301,6 +301,19 @@ test("a focused row that leaves the list hands focus to a neighbour row or the s
   const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
   try {
     await openLargeInventory(page)
+    // A bulk move removes the focused row's neighbours in the same update: focus goes to
+    // the nearest surviving row, and the list keeps its scroll position.
+    await row(page, 0, pathAt(150)).click()
+    await row(page, 0, pathAt(160)).click({ modifiers: ["Shift"] })
+    await section(page, 0).getByRole("button", { name: `Retirer de l'index · ${pathAt(155)}`, exact: true }).click()
+    await page.waitForFunction(path => (window as any).fixture.calls.some((call: any) => call.kind === "unstage" && call.path.includes(path)), pathAt(155))
+    await row(page, 0, pathAt(155)).waitFor({ state: "detached" })
+    assert.equal((await calls(page, "unstage"))[0].split(",").length, 11)
+    assert.equal(await row(page, 0, pathAt(150)).count(), 0)
+    assert.deepEqual(await active(page), { tag: "BUTTON", name: pathAt(161), section: 0 })
+    const scrollTop = await section(page, 0).evaluate(element => element.closest(".git-panel-body")!.scrollTop)
+    assert.ok(scrollTop > 1000, `the list keeps its position near the moved rows (scrollTop ${scrollTop})`)
+
     // A refresh changing the clicked row keeps focus on its replacement; removing it moves focus to the next row.
     await row(page, 0, pathAt(3)).click()
     await updateEntries(page, `return entries.map(entry => entry.path === "${pathAt(3)}" ? { ...entry, stagedAdditions: 9 } : entry)`)
@@ -333,6 +346,15 @@ test("sticky rows stay after the selection moves, leave with their file and clea
     assert.equal(await row(page, 1, pathAt(MOST_CHANGED)).getAttribute("aria-current"), null)
     assert.equal(await rows(page, 1).count(), BOUND + 1, "the formerly current row beyond the bound stays")
     const most = pathAt(MOST_CHANGED)
+    // A filesystem change while Changes is hidden discards the cached list; sticky rows survive the reread.
+    const before = await page.evaluate(() => (window as any).gitScale.calls)
+    await page.getByRole("button", { name: "Workspace", exact: true }).click()
+    await page.evaluate(() => (window as any).fixture.invalidate())
+    await page.getByRole("button", { name: "Changements", exact: true }).click()
+    await page.waitForFunction(before => (window as any).gitScale.calls > before, before)
+    await row(page, 1, pathAt(STAGED + 1)).waitFor()
+    assert.equal(await row(page, 1, most).count(), 1, "a hidden-mode discard does not unpin sticky rows")
+    assert.equal(await rows(page, 1).count(), BOUND + 1)
     await updateEntries(page, `globalThis.removedEntry = entries.find(entry => entry.path === "${most}"); return entries.filter(entry => entry !== globalThis.removedEntry)`)
     assert.equal(await row(page, 1, most).count(), 0)
     await updateEntries(page, `return [...entries, globalThis.removedEntry]`)

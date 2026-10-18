@@ -1,7 +1,9 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { GIT_CHANGE_ROW_LIMIT, buildGitChangeWindow, sameGitChangeWindow, stickyPins } from "./git-change-window.ts"
+import { createRoot, createSignal } from "solid-js"
+
+import { GIT_CHANGE_ROW_LIMIT, buildGitChangeWindow, createGitChangeWindows, sameGitChangeWindow, stickyPins } from "./git-change-window.ts"
 
 describe("stickyPins", () => {
   const set = (...ids: string[]) => new Set(ids)
@@ -59,6 +61,33 @@ describe("buildGitChangeWindow", () => {
     assert.equal(window.firstHiddenId, list[GIT_CHANGE_ROW_LIMIT + 1].id, "focus goes to the first row the reveal adds")
     assert.equal(window.nextReveal, GIT_CHANGE_ROW_LIMIT)
     assert.equal(window.nextLimit, 2 * GIT_CHANGE_ROW_LIMIT + 1, "the next batch skips the already rendered pinned row")
+  })
+})
+
+describe("createGitChangeWindows", () => {
+  it("keeps sticky rows while the inventory is unloaded and prunes them only from a loaded inventory", () => {
+    createRoot(dispose => {
+      const list = items(GIT_CHANGE_ROW_LIMIT + 5)
+      const far = list.at(-1)!
+      const [current, setCurrent] = createSignal(list)
+      const [loaded, setLoaded] = createSignal(true)
+      const [pinned, setPinned] = createSignal<ReadonlySet<string>>(new Set([far.id]))
+      const windows = createGitChangeWindows(current, pinned, loaded)
+      const shown = () => windows.window("unstaged").rows.includes(far)
+      assert.ok(shown())
+      setPinned(new Set<string>())
+      // Discarded while Changes is hidden: the list is momentarily empty, then read again.
+      setLoaded(false)
+      setCurrent([])
+      setCurrent(list)
+      setLoaded(true)
+      assert.ok(shown(), "a hidden-mode discard is not a departure")
+      setCurrent(list.slice(0, -1))
+      setCurrent(list)
+      assert.ok(!shown(), "leaving the loaded inventory unpins it")
+      windows.reset()
+      dispose()
+    })
   })
 })
 
