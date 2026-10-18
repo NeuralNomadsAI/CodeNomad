@@ -195,13 +195,15 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
         const marks = bounded(await run(query("SELECT value FROM kv WHERE key>=? AND key<? LIMIT ?",
           [prefix, `${prefix.slice(0, -1)}0`, MAX_DISCOVERED_MARKS + 1])), MAX_DISCOVERED_MARKS)
         for (const row of marks) {
-          const stored = parse(row.value)
-          // A pending attempt never qualifies, but its outcome is unknown.
-          if (object(stored) && stored.state === "pending") { complete = false; continue }
-          if (!object(stored) || stored.state !== "confirmed" || stored.via !== "ui" || stored.sessionID !== child.id || !object(stored.answer)) continue
-          const form = (() => { try { return Schema.decodeUnknownSync(Schema.toType(Form.Info))(stored.form) } catch { return undefined } })()
+          const stored = (() => { try { return parse(row.value) } catch { return undefined } })()
+          const form = (() => { try { return Schema.decodeUnknownSync(Schema.toType(Form.Info))(object(stored) ? stored.form : undefined) } catch { return undefined } })()
+          // Answers to other kinds of Forms are not decision candidates.
+          if (form && form.metadata?.kind !== "question") continue
           const tool = form?.metadata?.tool
-          if (!form || !object(tool) || typeof tool.messageID !== "string" || typeof tool.id !== "string") continue
+          // A pending attempt never qualifies but its outcome is unknown; an unreadable or
+          // mis-bound confirmed mark cannot be excluded either. Both leave discovery incomplete.
+          if (!object(stored) || stored.state !== "confirmed" || stored.via !== "ui" || stored.sessionID !== child.id || !object(stored.answer)
+            || !form || !object(tool) || typeof tool.messageID !== "string" || typeof tool.id !== "string") { complete = false; continue }
           for (const field of form.fields) {
             const answer = stored.answer[field.key]
             if (typeof field.description !== "string" || !(typeof answer === "string" && answer

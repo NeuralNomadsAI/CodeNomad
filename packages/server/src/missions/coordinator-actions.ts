@@ -19,20 +19,26 @@ export const taskInterruptionSchema = z.object({
 }).strict()
 export type MissionTaskInterruption = z.infer<typeof taskInterruptionSchema>
 
-/** Open tasks that continue this task's native conversation through `reuseFromTaskKey`,
- * directly or along a chain: stopping that conversation would stop their work too. */
+/** Open tasks whose native conversation lives in this task's conversation family: a
+ * continuation (`reuseFromTaskKey`) runs in it and a nested task (`parentTaskKey`) is
+ * launched under it, along chains through tasks of any status. Stopping that family
+ * would stop their work too. */
 export function liveContinuations(tasks: readonly MissionTask[], taskKey: string): string[] {
   const byKey = new Map(tasks.map(task => [task.key, task]))
-  const reused = (task: MissionTask | undefined) => task?.executionMode?.kind === "native" ? task.executionMode.reuseFromTaskKey : undefined
+  const edges = (task: MissionTask | undefined) => task?.executionMode?.kind !== "native" ? []
+    : [task.executionMode.reuseFromTaskKey, task.executionMode.parentTaskKey].filter((key): key is string => typeof key === "string")
   const reaches = (task: MissionTask) => {
-    const seen = new Set<string>()
-    for (let key = reused(task); key && !seen.has(key); key = reused(byKey.get(key))) {
+    const seen = new Set<string>(), queue = edges(task)
+    for (let index = 0; index < queue.length; index++) {
+      const key = queue[index]
       if (key === taskKey) return true
+      if (seen.has(key)) continue
       seen.add(key)
+      queue.push(...edges(byKey.get(key)))
     }
     return false
   }
-  return tasks.filter(task => !["withdrawn", "completed", "failed"].includes(task.status) && reaches(task)).map(task => task.key)
+  return tasks.filter(task => task.key !== taskKey && !["withdrawn", "completed", "failed"].includes(task.status) && reaches(task)).map(task => task.key)
 }
 
 /** Missions a session may read: those it belongs to, and hand-offs it prepared (read-only). */

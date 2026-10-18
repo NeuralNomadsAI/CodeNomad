@@ -273,6 +273,11 @@ test("a decision readout discovers the human's exact answer from native structur
       provenance: { kind: "native-form-answer", contract: { missionID: mission.id, taskKey: "decision", generation: 1 },
         nativeCall: { generation: 1, parentSessionID: "ses_root", parentMessageID: "msg_delegate", toolCallID: "call_delegate" },
         sessionID: "ses_child", formID: f.form.id, messageID: "msg_question", toolCallID: "call_question", fieldKey: "q0" } } })
+    // An unreadable confirmed mark cannot be excluded: the visible answer is listed but never auto-chosen.
+    f.put(f.markKey.replace(f.form.id, "frm_broken"), { state: "confirmed", via: "ui", sessionID: "ses_child", answer: { q0: "Adapter" }, form: { invalid: true } })
+    assert.deepEqual(await candidates(), { candidates: [found], complete: false })
+    await assert.rejects(control.report("ses_root", readout), /Not every answered question could be checked/)
+    f.db.prepare("DELETE FROM kv WHERE key LIKE ?").run("%frm_broken")
     // A confirmed answer the gate cannot verify (here: the native Form now disagrees) leaves the discovery incomplete.
     f.changeState("cancelled")
     assert.deepEqual(await candidates(), { candidates: [], complete: false })

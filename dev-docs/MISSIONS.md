@@ -52,8 +52,8 @@ such route: their coordinators are not offered `mission.interrupt` or
   each one's family deepest first through `interruptNativeMissionFamily`, then the
   conversation itself, then the same post-interrupt recheck, settle and quiet
   verification as lifecycle Stop, cancelling its queued inputs. It is refused while
-  an open task continues that conversation (`reuseFromTaskKey`, along a chain) or
-  runs in it as its actor. The coordinator, other tasks and the plan are
+  an open task lives in that conversation's family: a continuation or a nested
+  task along `reuseFromTaskKey`/`parentTaskKey` chains, or its actor. The coordinator, other tasks and the plan are
   untouched, under the worktree-deletion fence; `complete: false` is reported
   honestly, and an empty result notes that only canonical assignments are visible.
 - `mission.prepare` creates a paused one-time hand-off through the same

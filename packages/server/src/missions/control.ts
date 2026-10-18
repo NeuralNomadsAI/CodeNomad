@@ -170,8 +170,14 @@ export class MissionControl {
           requestID: existing.briefing.requestID, basedOnRevision: existing.briefing.basedOnRevision,
           summary: existing.briefing.summary, achieved: existing.briefing.achieved, ongoing: existing.briefing.ongoing,
           obstacles: existing.briefing.obstacles, next: existing.briefing.next,
-        })) throw new MissionControlError(resolved ? `Nothing changed since the automatic briefing ${input.requestID}; skip this one`
-          : "Briefing request ID already used", "request-conflict")
+        })) {
+          // Only a server-picked revision proves nothing changed; an explicit stale one is a revision conflict.
+          if (resolved && request.basedOnRevision === undefined) {
+            throw new MissionControlError(`Nothing changed since the automatic briefing ${input.requestID}; skip this one`, "request-conflict")
+          }
+          if (resolved) throw new MissionControlError("Read the current map before publishing a briefing", "revision-conflict")
+          throw new MissionControlError("Briefing request ID already used", "request-conflict")
+        }
         return { mission }
       }
       if (!missionIsRunning(mission)) throw new MissionControlError("Mission is not running", "mission-not-running")

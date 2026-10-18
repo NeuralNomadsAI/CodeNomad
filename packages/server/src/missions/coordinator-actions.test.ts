@@ -81,6 +81,10 @@ test("an automatic briefing may let the server pick the revision and never dupli
     "only \"auto\" may omit basedOnRevision")
   const explicit = await f.control.briefing(coordinator, { ...brief, basedOnRevision: base + 3, summary: "Same plan, explicit revision." })
   assert.equal(explicit.mission.briefing?.requestID, `auto:${base + 3}`, "\"auto\" with a revision is still an automatic ID, never literal")
+  await assert.rejects(f.control.briefing(coordinator, { ...brief, basedOnRevision: base, summary: "Stale but new content." }),
+    (error: any) => error.code === "revision-conflict" && !/Nothing changed/.test(error.message), "a stale explicit revision is never told to skip")
+  assert.equal((await f.control.briefing(coordinator, { ...brief, basedOnRevision: base })).mission.revision, base + 4,
+    "an identical explicit replay still returns the saved briefing")
 })
 
 test("prepare creates a paused hand-off through the backend; its coordinator may read but never control it", async () => {
@@ -160,12 +164,16 @@ test("a retired native task's conversations are observed and stopped only throug
 })
 
 test("an open task continuing a retired task's conversation keeps that conversation from being stopped", () => {
-  const task = (key: string, status: MissionTask["status"], reuseFromTaskKey?: string): MissionTask => ({ id: key, key, title: key, brief: "", role: "specialist",
-    blockedBy: [], status, createdAt: 1, updatedAt: 1, outstandingExecution: false,
-    executionMode: { kind: "native", parentTaskKey: null, ...(reuseFromTaskKey ? { reuseFromTaskKey } : {}) } })
+  const task = (key: string, status: MissionTask["status"], reuseFromTaskKey?: string, parentTaskKey: string | null = null): MissionTask => ({
+    id: key, key, title: key, brief: "", role: "specialist", blockedBy: [], status, createdAt: 1, updatedAt: 1, outstandingExecution: false,
+    executionMode: { kind: "native", parentTaskKey, ...(reuseFromTaskKey ? { reuseFromTaskKey } : {}) } })
   const tasks = [task("source", "withdrawn"), task("middle", "completed", "source"), task("live", "ready", "middle"), task("done", "completed", "source")]
   assert.deepEqual(liveContinuations(tasks, "source"), ["live"], "a chain through a finished continuation still reaches the open task")
   assert.deepEqual(liveContinuations(tasks.filter(item => item.key !== "live"), "source"), [])
+  // A nested task launched under a continuation of the retired conversation runs in its family too.
+  assert.deepEqual(liveContinuations([task("scope-a", "withdrawn"), task("scope-b", "completed", "scope-a"),
+    task("scope-c", "ready", undefined, "scope-b")], "scope-a"), ["scope-c"])
+  assert.deepEqual(liveContinuations([task("scope-a", "withdrawn"), task("nested", "queued", undefined, "scope-a")], "scope-a"), ["nested"])
   assert.deepEqual(liveContinuations([task("a", "ready", "b"), task("b", "ready", "a")], "c"), [], "reuse cycles terminate")
 })
 
