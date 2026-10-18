@@ -164,13 +164,37 @@ describe("SSE backpressure", () => {
     }
   })
 
+  it("queues one oversized frame while backpressured without disconnecting", async () => {
+    const test = harness({ limit: 256, timeout: 1_000 })
+    try {
+      const response = test.app.inject({ method: "GET", url: "/api/events?clientId=client&connectionId=connection" })
+      await waitFor(test.ready)
+      test.emit({ type: "workspace.stopped", workspaceId: "first", reason: "deleted" })
+      const marker = "x".repeat(512)
+      // An image frame arriving while an earlier frame drains must not end the stream.
+      test.emit({ type: "workspace.stopped", workspaceId: marker, reason: "deleted" })
+      test.emit({ type: "workspace.stopped", workspaceId: "after", reason: "deleted" })
+      assert.deepEqual(test.counts(), { unsubscribed: 0, unregistered: 0 })
+      test.drain()
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      test.close()
+      const result = await response
+      assert.ok(result.body.indexOf(marker) < result.body.indexOf('"workspaceId":"after"'))
+      assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 0 })
+    } finally {
+      await test.app.close()
+    }
+  })
+
   it("disconnects when the bounded pending buffer is exceeded", async () => {
     const test = harness({ limit: 256, timeout: 1_000 })
     try {
       const response = test.app.inject({ method: "GET", url: "/api/events?clientId=client&connectionId=connection" })
       await waitFor(test.ready)
       test.emit({ type: "workspace.stopped", workspaceId: "first", reason: "deleted" })
-      test.emit({ type: "workspace.stopped", workspaceId: "x".repeat(512), reason: "deleted" })
+      // A sustained backlog: the queue beyond its largest frame exceeds the limit.
+      test.emit({ type: "workspace.stopped", workspaceId: "x".repeat(200), reason: "deleted" })
+      test.emit({ type: "workspace.stopped", workspaceId: "y".repeat(200), reason: "deleted" })
       await response.catch(() => undefined)
       assert.deepEqual(test.counts(), { unsubscribed: 1, unregistered: 2 })
     } finally {
