@@ -21,7 +21,7 @@ const hooks = registerHooks({
     const sources: Record<string, string> = {
       "../../../../stores/opencode-client": "export const getRootClient = () => ({ vcs: { status: async () => ({ data: [] }) } })",
       "../../../../stores/instances": "export const instances = () => new Map()",
-      "../../../../stores/worktrees": "export const getWorktrees = () => [{ slug: 'root', directory: '/repo' }]",
+      "../../../../stores/worktrees": "export const getWorktrees = () => [{ slug: 'root', directory: '/repo' }, { slug: 'other', directory: '/other' }]",
       "../../../../lib/notifications": "export const showToastNotification = () => {}",
       "../../../../stores/preferences": "export const preferences = () => globalThis.__filesGitFixture.preferences()",
       "../../../../lib/api-client": `
@@ -81,7 +81,7 @@ async function until(predicate: () => boolean) {
   }
   assert.ok(predicate(), "hook settled before timeout")
 }
-async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")]) {
+async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")], worktreeSlug = () => "root") {
   fixture.entries = entries
   fixture.requests = []
   fixture.mutationGate = null
@@ -92,7 +92,7 @@ async function setup(entries = [entry("a.ts"), entry("b.ts"), entry("c.ts")]) {
     dispose = cleanup
     return useGitChanges({
       instanceId: "test", isActive: () => true, t: key => key, rightPanelTab: () => "git-changes",
-      worktreeSlug: () => "root", isPhoneLayout: () => false, promptInputApi: () => null,
+      worktreeSlug, isPhoneLayout: () => false, promptInputApi: () => null,
       closeGitList: () => {}, externalDiff: true,
     })
   })
@@ -327,6 +327,65 @@ test("a status read made under the other whitespace option never replaces the li
     await until(() => !h.git.gitStatusLoading() && h.git.gitStatusEntries()?.length === 2)
     assert.deepEqual(fixture.statusOptions.at(-1), { hideWhitespace: false })
   } finally { h.close(); setHideWhitespace(undefined) }
+})
+
+test("an identical refresh publishes nothing; a change keeps every unchanged row object", async () => {
+  const h = await setup()
+  let stop!: () => void
+  try {
+    let runs = 0
+    createRoot(dispose => {
+      stop = dispose
+      createEffect(() => { h.git.gitStatusEntries(); h.git.gitListItems(); h.git.gitChangeWindow("unstaged"); runs++ })
+    })
+    const entries = h.git.gitStatusEntries(), items = h.git.gitListItems()
+    await h.git.refreshGitStatus()
+    const reads = fixture.statusOptions.length
+    invalidateFilesystemCaches("test")
+    await until(() => fixture.statusOptions.length > reads && !h.git.gitStatusLoading())
+    assert.equal(runs, 1, "neither explicit nor passive identical refreshes recompute the list")
+    assert.equal(h.git.gitStatusEntries(), entries)
+    assert.equal(h.git.gitListItems(), items)
+    fixture.entries = [entry("a.ts"), { ...entry("b.ts"), unstagedAdditions: 5 }, entry("c.ts")]
+    await h.git.refreshGitStatus()
+    const next = h.git.gitListItems()
+    assert.deepEqual(next.map(item => items.includes(item)), [true, false, true])
+    assert.equal(next[1].additions, 5)
+  } finally { stop?.(); h.close() }
+})
+
+test("sections render a bounded window that keeps previewed rows, survives refreshes and resets with the worktree", async () => {
+  const [slug, setSlug] = createSignal("root")
+  const path = (index: number) => `f${String(index).padStart(3, "0")}.ts`
+  const h = await setup(Array.from({ length: 450 }, (_, index) => entry(path(index))), slug)
+  const unstaged = () => h.git.gitChangeWindow("unstaged")
+  try {
+    assert.equal(unstaged().total, 450)
+    assert.equal(unstaged().rows.length, 200)
+    assert.equal(h.git.gitSelectedItemId(), "unstaged:f000.ts", "the auto-selected row lies inside the window")
+    h.eye("unstaged:f300.ts")
+    assert.deepEqual(unstaged().rows.slice(200).map(item => item.path), [path(300)], "a preview beyond the bound still renders")
+    // The reveal adds 200 rows besides the already rendered previewed one.
+    h.git.revealGitChanges("unstaged")
+    assert.equal(unstaged().rows.length, 401)
+    assert.deepEqual(unstaged().rows.slice(299, 302).map(item => item.path), [path(299), path(300), path(301)])
+    await h.git.refreshGitStatus()
+    assert.equal(unstaged().rows.length, 401, "reveals survive refreshes")
+
+    setSlug("other")
+    await until(() => !h.git.gitStatusLoading() && h.git.gitStatusEntries() !== null)
+    setSlug("root")
+    await until(() => !h.git.gitStatusLoading() && h.git.gitSelectedItemId() === "unstaged:f000.ts")
+    assert.deepEqual(unstaged().rows.slice(199).map(item => item.path), [path(199), path(300)], "a worktree change resets the reveal")
+
+    // Ranges follow the rendered rows: f150…f199 and the previewed f300, never f200…f299.
+    h.select(`unstaged:${path(150)}`)
+    h.git.handleGitRowClick(h.item(`unstaged:${path(300)}`), { preventDefault() {}, shiftKey: true } as MouseEvent)
+    assert.equal(h.git.gitBulkSelectedItemIds().size, 51)
+    h.git.stageGitFile(h.item(`unstaged:${path(300)}`))
+    await until(() => fixture.requests.length === 1)
+    assert.deepEqual(fixture.requests[0].paths, [...Array.from({ length: 50 }, (_, index) => path(150 + index)), path(300)])
+  } finally { h.close() }
 })
 
 test("passive refresh and commits reconcile an eye-opened file without selecting it", async () => {

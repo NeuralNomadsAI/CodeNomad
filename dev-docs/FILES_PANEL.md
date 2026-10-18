@@ -34,6 +34,38 @@ commit draft and selection, causes no status read, and leaves its header as a
 drop target for staging/unstaging even when the file list is hidden. Mode switches
 and status refreshes preserve both sections' disclosure state.
 
+### Large inventories
+
+A checkout with thousands of changes once froze the renderer: every
+`filesystem.changed` refresh (agents keep firing them, including from nested
+worktrees) rebuilt every row object, so the keyed list destroyed and recreated
+all ~60k row nodes, and each row scanned the selection. Three rules now bound
+that cost:
+
+- **Unchanged refreshes publish nothing.** `reuseUnchanged`
+  (`git-changes-model.ts`) returns the previous status array when a read is
+  structurally identical, so no memo recomputes and no row is touched. When the
+  status changed, entries and list items whose fields all match (by path / by
+  item id) keep their previous objects; only changed, added or removed rows reach
+  the DOM. List items therefore hold primitive fields only. The request-version,
+  worktree and whitespace-option stale fences are unchanged.
+- **Bounded sections.** `git-change-window.ts` renders each section's first
+  `GIT_CHANGE_ROW_LIMIT` (200) rows and closes it with an in-place "Show 200
+  more" line stating how many files are not shown; header and file counts stay the
+  full totals. Revealing moves keyboard focus to the first revealed row. Reveals
+  survive refreshes and mode switches, and reset when the worktree changes. The
+  current, previewed and bulk-selected rows always render: beyond the bound they
+  follow the window in list order, so an auto-selected most-changed file or a
+  preview moved by staging stays reachable without rendering every row before it.
+  Shift ranges span the rendered rows only, so bulk actions never include files
+  hidden beyond the bound (collapsed sections keep their existing behavior).
+- **Per-row selection state** uses `createSelector`, so a selection change only
+  updates the rows whose state changed.
+
+The Changes body stays mounted (hidden) in Workspace/Commits modes to keep its
+disclosure state; with the bound and the unchanged-refresh rule that costs at
+most a few hundred idle rows.
+
 ## Folders without a repository
 
 When Git is available but the opened folder is not a repository (for example a
@@ -216,6 +248,14 @@ insertion into the composer remain available.
   "ours"-resolved re-indent (both listed `0 0`, kept visible) and a staged chmod;
   the `-w` read starting after the unstaged numstat; option-keyed singleflight
   and fail-open detection.
+- `tests/browser/git-changes-scale.test.ts`: a 2,700-file inventory renders 200
+  rows per section plus the auto-selected row beyond the bound; an identical
+  refresh mutates no node and a one-file change replaces only that row
+  (MutationObserver); Show more focus, reveal persistence and worktree reset;
+  cross-section ranges, row staging, a staged preview beyond the bound and drag.
+  It logs DOM/time measurements for each refresh.
+- `git-change-window.test.ts`, plus identity reuse in `git-changes-model.test.ts`
+  and unchanged-refresh/window behavior in `useGitChanges.test.ts`.
 - `useGitChanges.test.ts` / `git-changes-model.test.ts`: the option in the read,
   staged rows kept, bulk targets, live toggling and stale-option responses;
   `file-viewer/diff-whitespace.test.ts` (CRLF/CR/BOM, empty sides, linear time on

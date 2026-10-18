@@ -15,7 +15,6 @@ import type { useGitInit } from "../useGitInit"
 import { closeFilePreview, getFilePreview, type FilePreviewTarget } from "../../../../../stores/files-preview"
 import FileRowActions from "../FileRowActions"
 import type { ActionOverflowMenuItem } from "../../../../action-overflow-menu"
-import { buildGitChangeListItems } from "../git-changes-model"
 import type { GitChangeListItem, GitChangeSection } from "../types"
 import type { useWorkspaceTree } from "../useWorkspaceTree"
 import { WorkspaceTree } from "../components/WorkspaceTree"
@@ -42,7 +41,7 @@ interface FilesPanelProps {
 }
 
 const FilesPanel: Component<FilesPanelProps> = props => {
-  const items = createMemo(() => buildGitChangeListItems(props.git.gitStatusEntries()))
+  const items = props.git.gitListItems
   const [filter, setFilter] = createSignal("")
   const [selectedCommitFile, setSelectedCommitFile] = createSignal("")
   const previewActive = (file: Parameters<FilesPanelProps["onOpenFile"]>[0]) => {
@@ -163,7 +162,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
         <DragDropSensors>
           <Show when={items().length === 0}><p class="p-3 text-xs text-secondary">{props.git.gitStatusLoading() ? props.t("instanceInfo.loading") : props.t("instanceShell.gitChanges.empty")}</p></Show>
           <For each={["staged", "unstaged"] as const}>{section =>
-            <ChangeSection t={props.t} section={section} items={items().filter(item => item.section === section)}
+            <ChangeSection t={props.t} section={section}
               git={props.git} canOpenFile={props.canOpenFile} onOpenFile={togglePreview} previewActive={previewActive}>
               <Show when={section === "staged"}>
                 <div class="git-change-commit-box" role="group" aria-label={props.t("gitPanel.actions")}>
@@ -179,7 +178,7 @@ const FilesPanel: Component<FilesPanelProps> = props => {
                   }}</For>
                   <div class="git-change-commit-input-wrap">
                     <textarea class="git-change-commit-input" rows={1} aria-label={props.t("instanceShell.gitChanges.commit.placeholder")} placeholder={props.t("instanceShell.gitChanges.commit.placeholder")} value={props.git.gitCommitMessage()} onInput={event => props.git.setGitCommitMessage(event.currentTarget.value)} />
-                    <button type="button" class="git-change-commit-button git-change-commit-button-overlay" disabled={!props.git.gitCommitMessage().trim() || !items().some(item => item.section === "staged") || props.git.gitCommitSubmitting()} onClick={() => void props.git.submitGitCommit()}>{props.t(props.git.gitCommitSubmitting() ? "instanceShell.gitChanges.commit.submitting" : "instanceShell.gitChanges.commit.submit")}</button>
+                    <button type="button" class="git-change-commit-button git-change-commit-button-overlay" disabled={!props.git.gitCommitMessage().trim() || props.git.gitChangeWindow("staged").total === 0 || props.git.gitCommitSubmitting()} onClick={() => void props.git.submitGitCommit()}>{props.t(props.git.gitCommitSubmitting() ? "instanceShell.gitChanges.commit.submitting" : "instanceShell.gitChanges.commit.submit")}</button>
                   </div>
                 </div>
               </Show>
@@ -194,7 +193,6 @@ const FilesPanel: Component<FilesPanelProps> = props => {
 const ChangeSection: Component<{
   t: (key: string, vars?: Record<string, any>) => string
   section: GitChangeSection
-  items: GitChangeListItem[]
   git: ReturnType<typeof useGitChanges>
   canOpenFile: boolean
   onOpenFile: FilesPanelProps["onOpenFile"]
@@ -203,19 +201,42 @@ const ChangeSection: Component<{
 }> = sectionProps => {
   const droppable = createDroppable(sectionProps.section)
   const [open, setOpen] = createSignal(true)
-  const contentId = createUniqueId()
+  const contentId = createUniqueId(), hiddenLabelId = createUniqueId()
+  const rows = () => sectionProps.git.gitChangeWindow(sectionProps.section)
+  const count = (value: number) => value.toLocaleString(document.documentElement.lang || undefined)
+  let content!: HTMLDivElement
+  // In place, like hidden message parts: rows render synchronously above the
+  // control, and keyboard focus moves to the first revealed row.
+  const reveal = (button: HTMLButtonElement) => {
+    const first = rows().firstHiddenId
+    const hadFocus = document.activeElement === button
+    sectionProps.git.revealGitChanges(sectionProps.section)
+    if (!hadFocus || !first) return
+    const row = Array.from(content.querySelectorAll<HTMLElement>("[data-git-item-id]")).find(element => element.dataset.gitItemId === first)
+    row?.querySelector<HTMLButtonElement>("button:enabled")?.focus({ preventScroll: true })
+  }
   return <div ref={droppable} class="git-drop-zone git-change-section" classList={{ "git-drop-active": droppable.isActiveDroppable }}>
     <button type="button" class="git-change-section-header" aria-expanded={open()} aria-controls={contentId} onClick={() => setOpen(value => !value)}>
       <span class="git-change-section-header-main">
         <span class="git-change-section-chevron disclosure-chevron"><ChevronRight class="w-3.5 h-3.5" aria-hidden="true" /></span>
         <span class="git-change-section-title">{sectionProps.t(`instanceShell.gitChanges.sections.${sectionProps.section}`)}</span>
       </span>
-      <span class="git-change-section-count">{sectionProps.items.length}</span>
+      <span class="git-change-section-count">{rows().total}</span>
     </button>
-    <div id={contentId} hidden={!open()}>
+    <div ref={content} id={contentId} hidden={!open()}>
       {sectionProps.children}
-      <For each={sectionProps.items}>{item => <GitChangeRow t={sectionProps.t} item={item} git={sectionProps.git}
+      <For each={rows().rows}>{item => <GitChangeRow t={sectionProps.t} item={item} git={sectionProps.git}
         canOpenFile={sectionProps.canOpenFile} onOpenFile={sectionProps.onOpenFile} previewActive={sectionProps.previewActive} />}</For>
+      <Show when={rows().hidden > 0}>
+        <div class="git-change-hidden-rows">
+          <span id={hiddenLabelId} class="git-change-hidden-rows-label">
+            {sectionProps.t(rows().hidden === 1 ? "instanceShell.gitChanges.hiddenRows.one" : "instanceShell.gitChanges.hiddenRows.other", { count: count(rows().hidden) })}
+          </span>
+          <button type="button" class="button-secondary git-change-hidden-rows-button" aria-describedby={hiddenLabelId} onClick={event => reveal(event.currentTarget)}>
+            {sectionProps.t("instanceShell.gitChanges.hiddenRows.show", { count: count(rows().nextReveal) })}
+          </button>
+        </div>
+      </Show>
     </div>
   </div>
 }
@@ -244,8 +265,9 @@ const GitChangeRow: Component<{
     { key: "stage", get label() { return `${stageLabel()} · ${rowProps.item.path}` },
       icon: <Show when={staged()} fallback={<Plus size={14} />}><Minus size={14} /></Show>, onSelect: toggleStage },
   ]
-  return <div ref={draggable} class="git-panel-file-row" classList={{ "git-panel-file-selected": rowProps.git.gitActionItems().some(selected => selected.id === rowProps.item.id) }} style={transformStyle(draggable.transform)}>
-    <button class="git-panel-file git-panel-file-main" aria-pressed={rowProps.git.gitActionItems().some(selected => selected.id === rowProps.item.id)} aria-current={rowProps.git.gitSelectedItemId() === rowProps.item.id ? "true" : undefined} title={rowProps.item.path} disabled={!rowProps.canOpenFile} onClick={event => {
+  const selected = () => rowProps.git.isGitItemSelected(rowProps.item.id)
+  return <div ref={draggable} class="git-panel-file-row" data-git-item-id={rowProps.item.id} classList={{ "git-panel-file-selected": selected() }} style={transformStyle(draggable.transform)}>
+    <button class="git-panel-file git-panel-file-main" aria-pressed={selected()} aria-current={rowProps.git.isGitItemCurrent(rowProps.item.id) ? "true" : undefined} title={rowProps.item.path} disabled={!rowProps.canOpenFile} onClick={event => {
        rowProps.git.handleGitRowClick(rowProps.item, event)
     }}><span class="git-file-status">{rowProps.item.status.slice(0, 1).toUpperCase()}</span><span>{rowProps.item.path}</span><small><b class="file-list-item-additions">+{rowProps.item.additions}</b> <b class="file-list-item-deletions">−{rowProps.item.deletions}</b></small></button>
     <FileRowActions label={rowProps.t("instanceShell.filesShell.actions.more", { name: rowProps.item.path })} items={actions} />

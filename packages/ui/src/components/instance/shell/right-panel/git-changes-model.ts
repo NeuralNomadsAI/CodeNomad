@@ -93,8 +93,34 @@ export function hideWhitespaceOnlyChanges(entries: GitChangeEntry[] | null, hide
   })
 }
 
-function buildGitChangeListItemId(section: GitChangeSection, path: string): string {
+export function buildGitChangeListItemId(section: GitChangeSection, path: string): string {
   return `${section}:${path}`
+}
+
+function sameFields(a: object, b: object): boolean {
+  const keys = Object.keys(a)
+  return keys.length === Object.keys(b).length && keys.every(key =>
+    Object.prototype.hasOwnProperty.call(b, key) && (a as Record<string, unknown>)[key] === (b as Record<string, unknown>)[key])
+}
+
+/**
+ * Keeps the identity of unchanged status records across refreshes. Returns
+ * `previous` itself when `next` holds the same records in the same order, so
+ * an unchanged refresh publishes nothing; otherwise `next`, where every record
+ * whose fields all match its previous record (by `key`) is that previous object,
+ * so keyed lists only replace the rows that changed.
+ */
+export function reuseUnchanged<T extends object>(previous: T[] | null | undefined, next: T[], key: (value: T) => string): T[] {
+  if (!previous?.length) return previous && next.length === 0 ? previous : next
+  const byKey = new Map(previous.map(value => [key(value), value]))
+  let identical = previous.length === next.length
+  const reused = next.map((value, index) => {
+    const old = byKey.get(key(value))
+    const kept = old && sameFields(old, value) ? old : value
+    if (kept !== previous[index]) identical = false
+    return kept
+  })
+  return identical ? previous : reused
 }
 
 function splitGitChangePath(path: string) {
@@ -124,7 +150,6 @@ export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undef
         status: entry.stagedStatus,
         additions: entry.stagedAdditions ?? 0,
         deletions: entry.stagedDeletions ?? 0,
-        entry,
         displayName: pathParts.displayName,
         parentPath: pathParts.parentPath,
       })
@@ -138,7 +163,6 @@ export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undef
         status: entry.unstagedStatus,
         additions: entry.unstagedAdditions ?? entry.additions,
         deletions: entry.unstagedDeletions ?? entry.deletions,
-        entry,
         displayName: pathParts.displayName,
         parentPath: pathParts.parentPath,
       })
@@ -152,7 +176,6 @@ export function buildGitChangeListItems(entries: GitChangeEntry[] | null | undef
         status: entry.status,
         additions: entry.additions,
         deletions: entry.deletions,
-        entry,
         displayName: pathParts.displayName,
         parentPath: pathParts.parentPath,
       })

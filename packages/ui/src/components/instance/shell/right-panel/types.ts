@@ -26,6 +26,7 @@ export interface GitChangeEntry {
 
 export type GitChangeSection = "staged" | "unstaged"
 
+/** One rendered row. Only primitive fields: refreshes reuse an unchanged item by field equality. */
 export interface GitChangeListItem {
   id: string
   path: string
@@ -34,7 +35,6 @@ export interface GitChangeListItem {
   status: GitChangeStatus
   additions: number
   deletions: number
-  entry: GitChangeEntry
   displayName: string
   parentPath: string
 }

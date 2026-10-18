@@ -57,7 +57,9 @@ test("large Changes inventories keep the reader controls responsive", async () =
       ;(window as any).fixture.invalidate()
     })
     await page.getByRole("button", { name: "Changements", exact: true }).click()
-    await page.locator('.git-panel-file-row').nth(1599).waitFor({ state: "attached", timeout: 15000 })
+    // Sections render a bounded window (see git-changes-scale.test.ts).
+    await page.locator('.git-change-hidden-rows').waitFor({ state: "attached", timeout: 15000 })
+    assert.equal(await page.locator('.git-change-section .git-panel-file-row').count(), 200)
     await page.getByRole("button", { name: "Workspace", exact: true }).click({ timeout: 5000 })
     await page.getByRole("button", { name: "Aperçu du fichier · package.json", exact: true }).click({ timeout: 5000 })
     await page.locator('.workspace-file-view .view-line').first().waitFor({ timeout: 5000 })
