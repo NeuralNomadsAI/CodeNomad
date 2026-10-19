@@ -79,6 +79,15 @@ describe("BrowserController private page channel", () => {
     await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "Enter" } }), /visible/)
     assert.equal(events.length, 3)
   })
+  it("refuses unsupported ContextMenu instead of emitting an unknown native key", async () => {
+    const h = createHarness(), events: Electron.InputEvent[] = []
+    const { guest } = createGuest({ id: 83, owner: h.owner, sendInputEvent: event => { events.push(event) } })
+    h.add(guest, "one")
+    const lease = await begin(h.controller)
+    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "rawKeyDown", key: "ContextMenu" } }),
+      /does not support ContextMenu; use Shift\+F10/)
+    assert.deepEqual(events, [])
+  })
   it("inserts text through Electron's guest API while retaining lease checks", async () => {
     const h = createHarness(), inserted: string[] = [], methods: string[] = []
     const { guest } = createGuest({ id: 81, owner: h.owner,

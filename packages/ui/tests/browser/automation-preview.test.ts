@@ -74,6 +74,7 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   await execute({ action: "press", key: "Enter", ref: title })
   assert.equal((await execute({ action: "wait", text: "Submitted:1:Pilot", gone: false, timeout: 500 })).found, true,
     "Enter submits once without any prior pointer click")
+  await assert.rejects(execute({ action: "press", key: "ContextMenu", ref: title }), /does not support ContextMenu; use Shift\+F10/)
   assert.deepEqual((await execute({ action: "select", ref: plan, values: ["Exploration"] })).selected, ["Exploration"])
   await execute({ action: "click", ref: confirm })
   assert.equal((await execute({ action: "wait", text: "Pilot:wayfinder", gone: false, timeout: 1000 })).found, true)

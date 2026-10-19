@@ -456,6 +456,7 @@ function ensureDeadline(deadline: number): void {
 async function sendGuestKey(guest: WebContents, params: Record<string, unknown>): Promise<Record<string, unknown>> {
   const aliases: Record<string, string> = { ArrowDown: "Down", ArrowUp: "Up", ArrowLeft: "Left", ArrowRight: "Right", " ": "Space" }
   if (typeof params.key !== "string" || !["keyDown", "rawKeyDown", "keyUp"].includes(String(params.type))) throw new Error("Invalid browser key event")
+  if (params.key === "ContextMenu") throw new Error("Electron native input does not support ContextMenu; use Shift+F10")
   const mask = typeof params.modifiers === "number" ? params.modifiers : 0
   const modifiers = [[1, "alt"], [2, "control"], [4, "meta"], [8, "shift"]] as const
   const options = { keyCode: aliases[params.key] ?? params.key, modifiers: modifiers.filter(([bit]) => mask & bit).map(([, name]) => name) }
