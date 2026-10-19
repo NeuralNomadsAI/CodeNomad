@@ -5,8 +5,8 @@ import { serverEvents } from "../../lib/server-events"
 import { createEventRefreshScheduler } from "../../lib/event-refresh-scheduler"
 import { normalizeWorkspacePath } from "../../stores/app-session-reconciliation"
 
-type ProjectContext = Pick<NativePreferencesRequest, "instanceId" | "location">
-const key = (value: ProjectContext) => JSON.stringify([value.instanceId, value.location?.directory, value.location?.workspaceID])
+type ProjectContext = Pick<NativePreferencesRequest, "instanceId" | "workspacePath" | "location">
+const key = (value: ProjectContext) => JSON.stringify([value.instanceId, value.workspacePath, value.location?.directory, value.location?.workspaceID])
 
 /** Preferences is a secondary renderer: resolve only its requested project, without
  *  hydrating the application store, discovering worktrees or opening a workspace.
@@ -17,7 +17,7 @@ export function createPreferencesProjectContext(
   active: Accessor<boolean>,
   onRebound: (context: ProjectContext, current: () => boolean) => void,
 ) {
-  const target = createMemo(() => ({ instanceId: request().instanceId, location: request().location }), undefined,
+  const target = createMemo(() => ({ instanceId: request().instanceId, workspacePath: request().workspacePath, location: request().location }), undefined,
     { equals: (a, b) => key(a) === key(b) })
   const [resolved, setResolved] = createSignal<{ source: string; context: ProjectContext }>()
   // An explicitly closed occurrence must not silently turn into another tab of the same folder.
@@ -34,8 +34,11 @@ export function createPreferencesProjectContext(
     if (!reusable) setResolved(undefined)
     if (!source.instanceId) return
     const directory = source.location?.directory
-    const sameFolder = (path: string) => Boolean(directory && normalizeWorkspacePath(path) === normalizeWorkspacePath(directory))
+    // The opened folder is on the backend host; the selected Location may be a WSL path or a worktree.
+    const workspacePath = source.workspacePath ?? directory
+    const sameFolder = (path: string) => Boolean(workspacePath && normalizeWorkspacePath(path) === normalizeWorkspacePath(workspacePath))
     let disposed = false, revision = 0, controller: AbortController | undefined, boundId = previous?.instanceId
+    let candidateIds = new Set<string>()
     const current = (epoch: number) => !disposed && untrack(active) && revision === epoch && !deleted.has(source.instanceId!)
 
     const scheduler = createEventRefreshScheduler(async () => {
@@ -48,12 +51,14 @@ export function createPreferencesProjectContext(
         if (!current(epoch)) return
         if (!Array.isArray(workspaces)) throw new Error("Invalid workspace inventory")
         const exact = workspaces.find(workspace => workspace.id === source.instanceId)
-        const matches = workspaces.filter(workspace => sameFolder(workspace.path))
+        const matches = workspaces.filter(workspace => sameFolder(workspace.path) && !deleted.has(workspace.id))
+        candidateIds = new Set(matches.map(workspace => workspace.id))
         const workspace = exact ?? (matches.length === 1 ? matches[0] : undefined)
         boundId = workspace?.id
         if (!workspace || workspace.status !== "ready" || deleted.has(workspace.id)) { setResolved(undefined); return }
         const binding: ProjectContext = {
           instanceId: workspace.id,
+          workspacePath: workspace.path,
           // A new backend record must not inherit an old native workspace selector.
           location: workspace.id === source.instanceId && source.location ? source.location : { directory: directory ?? workspace.path },
         }
@@ -79,10 +84,13 @@ export function createPreferencesProjectContext(
         if (event.workspace.id === source.instanceId || event.workspace.id === boundId || !boundId && sameFolder(event.workspace.path)) {
           invalidate(event.workspace.status !== "ready")
         }
-      } else if (event.type === "workspace.stopped"
-        && (event.workspaceId === source.instanceId || event.workspaceId === boundId)) {
-        if (event.reason === "deleted") { deleted.add(source.instanceId!); deleted.add(event.workspaceId) }
-        invalidate(true)
+      } else if (event.type === "workspace.stopped") {
+        // A deletion can arrive before the first inventory response reveals its candidate IDs.
+        if (event.reason === "deleted") deleted.add(event.workspaceId)
+        if (event.workspaceId === source.instanceId || event.workspaceId === boundId) {
+          if (event.reason === "deleted") deleted.add(source.instanceId!)
+          invalidate(true)
+        } else if (candidateIds.has(event.workspaceId)) invalidate()
       }
     })
     const reconnect = serverEvents.onOpen(() => invalidate(true))

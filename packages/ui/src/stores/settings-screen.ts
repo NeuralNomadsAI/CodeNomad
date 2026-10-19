@@ -37,10 +37,11 @@ export async function openSettings(section?: SettingsSectionId, toggle = false) 
   if (section) setActiveSettingsSection(section)
   if ((runtimeEnv.host === "electron" || runtimeEnv.host === "tauri") && runtimeEnv.windowContext === "local") {
     try {
-      const { activeInstanceId } = await import("./instances")
+      const { activeInstanceId, instances } = await import("./instances")
       const instanceId = activeInstanceId() ?? undefined
       const request: NativePreferencesRequest = { section: section ?? "general", instanceId }
       if (instanceId) {
+        request.workspacePath = instances().get(instanceId)?.folder
         const { getActiveCatalogLocation } = await import("./sessions")
         request.location = getActiveCatalogLocation(instanceId)
       }

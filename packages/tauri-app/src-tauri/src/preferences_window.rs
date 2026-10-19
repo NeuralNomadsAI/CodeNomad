@@ -46,6 +46,8 @@ pub(crate) struct PreferencesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) workspace_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) location: Option<PreferencesLocation>,
 }
 
@@ -100,6 +102,7 @@ impl Default for PreferencesWindow {
                     section: DEFAULT_SECTION.to_string(),
                     scroll_top: None,
                     instance_id: None,
+                    workspace_path: None,
                     location: None,
                 },
                 opener: PreferencesOpener::default(),
@@ -174,6 +177,13 @@ pub(crate) fn validate_request(request: PreferencesRequest) -> Result<Preference
         .is_some_and(|value| value.is_empty() || value.len() > 512)
     {
         return Err("Invalid Preferences instance ID".to_string());
+    }
+    if request
+        .workspace_path
+        .as_ref()
+        .is_some_and(|value| value.is_empty() || value.len() > 32768 || value.contains('\0'))
+    {
+        return Err("Invalid Preferences workspace path".to_string());
     }
     if let Some(location) = &request.location {
         if location.directory.is_empty() || location.directory.len() > 32768 {
@@ -679,16 +689,29 @@ mod tests {
             scroll_top: None,
             section: "providers".into(),
             instance_id: Some("workspace-1".into()),
+            workspace_path: Some("C:\\repo".into()),
             location: Some(PreferencesLocation {
-                directory: "C:\\repo".into(),
+                directory: "/mnt/c/repo".into(),
                 workspace_id: Some("worktree-1".into()),
             }),
         })
         .unwrap();
         assert_eq!(
-            serde_json::to_value(request).unwrap()["location"]["workspaceID"],
+            serde_json::to_value(&request).unwrap()["location"]["workspaceID"],
             "worktree-1"
         );
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert_eq!(serialized["workspacePath"], "C:\\repo");
+        assert_eq!(serialized["location"]["directory"], "/mnt/c/repo");
+        assert_eq!(
+            serde_json::from_value::<PreferencesRequest>(serialized).unwrap(),
+            request
+        );
+        assert!(validate_request(PreferencesRequest {
+            workspace_path: Some("bad\0path".into()),
+            ..request
+        })
+        .is_err());
     }
 
     #[test]

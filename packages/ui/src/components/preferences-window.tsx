@@ -51,8 +51,8 @@ export const PreferencesWindow: Component = () => {
       const previous = request(), next = { ...previous, ...context, scrollTop }
       await persist(() => next)
       if (!current()) return
-      if (previous.instanceId) sdkManager.destroyClientsForInstance(previous.instanceId)
-      setRequest(next)
+      if (previous.instanceId && previous.instanceId !== context.instanceId) sdkManager.destroyClientsForInstance(previous.instanceId)
+      setRequest({ ...next, scrollTop })
     }).catch(() => undefined)
   })
   createEffect(() => {

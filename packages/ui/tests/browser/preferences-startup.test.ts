@@ -36,6 +36,11 @@ async function installHost(page: Page, host: "electron" | "tauri", request: Nati
     w.__CODENOMAD_RUNTIME_HOST__ = host
     w.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
     w.fixtureRequest = request
+    w.fixtureAccept = async (request) => {
+      w.fixtureSaving = request
+      if (w.fixtureHoldPersistence) await new Promise(resolve => { w.fixtureReleasePersistence = resolve })
+      w.fixtureRequest = request
+    }
     w.fixtureEvents = []
     w.EventSource = class extends EventTarget {
       constructor() { super(); w.fixtureEvents.push(this) }
@@ -43,7 +48,7 @@ async function installHost(page: Page, host: "electron" | "tauri", request: Nati
     }
     w.electronAPI = host === "electron" ? {
       getPreferencesRequest: async () => w.fixtureRequest,
-      acceptPreferencesRequest: async (request) => { w.fixtureRequest = request },
+      acceptPreferencesRequest: (request) => w.fixtureAccept(request),
       preferencesReady: async () => { w.fixtureReady = true },
       onPreferencesSection: (listener) => { w.fixtureOpen = listener; return () => {} },
       onPreferencesCloseRequested: () => () => {},
@@ -58,7 +63,7 @@ async function installHost(page: Page, host: "electron" | "tauri", request: Nati
             w.fixtureOpen = (payload) => callbacks.get(args.handler)?.({ event: args.event, payload })
           }
           if (command === "preferences_get_request") return w.fixtureRequest
-          if (command === "preferences_accept_request") w.fixtureRequest = args.request
+          if (command === "preferences_accept_request") await w.fixtureAccept(args.request)
           if (command === "preferences_window_ready") w.fixtureReady = true
           return 1
         },
@@ -303,5 +308,94 @@ for (const host of ["electron", "tauri"] as const) {
       assert.ok(fixture.requests.every(request => new URL(request).pathname.includes("/new/")))
       assert.deepEqual(fixture.errors, [])
     } finally { hold.resolve(); await page.unrouteAll({ behavior: "wait" }); await page.close() }
+  })
+
+  test(`${host}: a deleted replacement in the first pending inventory never gets published or saved`, async () => {
+    const page = await browser.newPage()
+    const fixture = await restoredFixture(page, host, { section: "providers", instanceId: "old", location: { directory: "D:/current-project" } })
+    const hold = Promise.withResolvers<void>()
+    await page.route("**/api/workspaces", async route => {
+      await hold.promise
+      await route.fulfill({ json: [workspace("deleted-replacement")] }).catch(() => {})
+    })
+    try {
+      await Promise.all([page.waitForRequest(request => new URL(request.url()).pathname === "/api/workspaces"), page.goto(url)])
+      await page.waitForFunction(() => (window as any).fixtureReady)
+      await emit(page, { type: "workspace.stopped", workspaceId: "deleted-replacement", reason: "deleted" })
+      await page.waitForTimeout(100) // let the real SSE dispatcher deliver the deletion before the held response
+      const response = page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspaces")
+      hold.resolve(); await response
+      await page.waitForTimeout(150)
+      assert.deepEqual(fixture.requests, [], "a record deleted before its identity was known never unlocks Providers")
+      assert.equal(await page.evaluate(() => (window as any).fixtureRequest.instanceId), "old")
+      assert.deepEqual(fixture.errors, [])
+    } finally { hold.resolve(); await page.unrouteAll({ behavior: "wait" }); await page.close() }
+  })
+
+  test(`${host}: deleting one ambiguous candidate revalidates and binds the remaining project`, async () => {
+    const page = await browser.newPage()
+    const fixture = await restoredFixture(page, host, { section: "providers", instanceId: "old", location: { directory: "D:/current-project" } })
+    const first = workspace("first"), second = workspace("second")
+    fixture.inventory([first, second])
+    try {
+      await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspaces"), page.goto(url)])
+      await page.waitForFunction(() => (window as any).fixtureReady)
+      assert.deepEqual(fixture.requests, [])
+      fixture.inventory([first])
+      await emit(page, { type: "workspace.stopped", workspaceId: "second", reason: "deleted" })
+      await page.locator(".providers-card-title").filter({ hasText: "Fixture AI" }).waitFor()
+      await page.waitForFunction(() => (window as any).fixtureRequest.instanceId === "first")
+      assert.ok(fixture.requests.length > 0 && fixture.requests.every(request => new URL(request).pathname.includes("/first/")))
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
+  })
+
+  test(`${host}: WSL restore matches the opened backend folder but retains the native worktree directory`, async () => {
+    const page = await browser.newPage()
+    const directory = "/mnt/d/repo/.codenomad/worktrees/feature"
+    const fixture = await restoredFixture(page, host, { section: "providers", instanceId: "old", workspacePath: "D:\\repo",
+      location: { directory, workspaceID: "old-native-worktree" } })
+    try {
+      await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspaces"), page.goto(url)])
+      await page.waitForFunction(() => (window as any).fixtureReady)
+      const ready = workspace("wsl", "d:/repo")
+      fixture.inventory([ready])
+      await emit(page, { type: "workspace.started", workspace: ready })
+      await page.locator(".providers-card-title").filter({ hasText: "Fixture AI" }).waitFor()
+      await page.getByRole("heading", { name: "Web search", exact: true }).click()
+      await page.getByLabel("Default search", { exact: true }).waitFor()
+      await page.waitForFunction(() => (window as any).fixtureRequest.instanceId === "wsl")
+      assert.equal(await page.evaluate(() => (window as any).fixtureRequest.workspacePath), ready.path)
+      assert.deepEqual(await page.evaluate(() => (window as any).fixtureRequest.location), { directory })
+      assert.ok(fixture.requests.length > 0 && fixture.requests.every(request => {
+        const target = new URL(request)
+        return target.pathname.includes("/wsl/") && target.searchParams.get(target.pathname.startsWith("/api/") ? "directory" : "location[directory]") === directory
+      }), "Windows root is only the lookup hint; reads keep their exact execution-host directory")
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
+  })
+
+  test(`${host}: user scrolling during rebound persistence is not undone by the saved request`, async () => {
+    const page = await browser.newPage({ viewport: { width: 1100, height: 650 } })
+    const fixture = await restoredFixture(page, host, { section: "providers", instanceId: "old", location: { directory: "D:/current-project" } })
+    try {
+      await Promise.all([page.waitForResponse(response => new URL(response.url()).pathname === "/api/workspaces"), page.goto(url)])
+      await page.waitForFunction(() => (window as any).fixtureReady)
+      await page.addStyleTag({ content: ".settings-screen-scroll > .settings-section-stack { min-height: 2000px; }" })
+      await page.evaluate(() => { (window as any).fixtureHoldPersistence = true })
+      const ready = workspace("new")
+      fixture.inventory([ready])
+      await emit(page, { type: "workspace.started", workspace: ready })
+      await page.waitForFunction(() => Boolean((window as any).fixtureReleasePersistence))
+      const scroll = page.locator(".settings-screen-scroll")
+      await scroll.hover(); await page.mouse.wheel(0, 350)
+      await page.waitForFunction(() => document.querySelector(".settings-screen-scroll")!.scrollTop >= 300)
+      const top = await scroll.evaluate(element => Math.round(element.scrollTop))
+      await page.evaluate(() => { (window as any).fixtureHoldPersistence = false; (window as any).fixtureReleasePersistence() })
+      await page.waitForFunction(() => (window as any).fixtureRequest.instanceId === "new")
+      await page.waitForTimeout(200) // includes the existing scroll debounce and restoration frame
+      assert.equal(await scroll.evaluate(element => Math.round(element.scrollTop)), top)
+      assert.deepEqual(fixture.errors, [])
+    } finally { await page.close() }
   })
 }

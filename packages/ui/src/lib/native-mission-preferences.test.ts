@@ -32,7 +32,8 @@ describe("Native Preferences section parity", () => {
   it("accepts a Providers request and preserves its owned window/location context in both TypeScript hosts", () => {
     const context = {
       instanceId: "workspace-1", scrollTop: 128,
-      location: { directory: "D:/CodeNomad/project", workspaceID: "worktree-1" },
+      workspacePath: "D:/CodeNomad/project",
+      location: { directory: "/mnt/d/CodeNomad/project", workspaceID: "worktree-1" },
     }
     assert.equal(requirePreferencesSection(providersSection), providersSection)
     assert.deepEqual(normalizeNativePreferencesRequest(providersSection), { section: providersSection })
@@ -47,9 +48,10 @@ describe("Native Preferences section parity", () => {
     assert.deepEqual(readPreferencesRequestFromUrl(url.toString()), { section: providersSection })
     url.searchParams.set("preferencesInstanceId", "workspace-1")
     url.searchParams.set("preferencesDirectory", "D:/CodeNomad/project")
+    url.searchParams.set("preferencesWorkspacePath", "D:/CodeNomad")
     url.searchParams.set("preferencesWorkspaceId", "worktree-1")
     assert.deepEqual(readPreferencesRequestFromUrl(url.toString()), {
-      section: providersSection, instanceId: "workspace-1",
+      section: providersSection, instanceId: "workspace-1", workspacePath: "D:/CodeNomad",
       location: { directory: "D:/CodeNomad/project", workspaceID: "worktree-1" },
     })
   })

@@ -69,12 +69,18 @@ test("the Missions gear opens the native Preferences window at Missions with the
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
   const fixture = await setup(page, "accept")
   try {
+    await page.evaluate(async () => {
+      const path = "/src/stores/session-state.ts", state = await import(path)
+      state.setSessions(new Map([["fixture", new Map([["selected", { id: "selected", location: { directory: "/mnt/d/repo/worktree" } }]])]]))
+      state.seedRestoredSessionSelection("fixture", "selected", "selected")
+    })
     await page.locator(".mission-control-header").getByRole("button", { name: "Preferences", exact: true }).click()
     await page.waitForFunction(() => (window as unknown as { __preferencesCalls: unknown[] }).__preferencesCalls.length === 1)
-    const [[section, context, toggle, resume]] = await calls(page) as Array<[string, { instanceId?: string; location?: { directory: string } }, boolean, boolean]>
+    const [[section, context, toggle, resume]] = await calls(page) as Array<[string, { instanceId?: string; workspacePath?: string; location?: { directory: string } }, boolean, boolean]>
     assert.equal(section, "missions")
     assert.equal(context.instanceId, "fixture")
-    assert.equal(context.location?.directory, "/fixture")
+    assert.equal(context.workspacePath, "/fixture", "record the opened backend folder independently of the session's native Location")
+    assert.equal(context.location?.directory, "/mnt/d/repo/worktree")
     assert.deepEqual([toggle, resume], [false, false])
     assert.equal(await settingsOpen(page), false, "no embedded Settings beside the native window")
     assert.deepEqual(fixture.errors, [])

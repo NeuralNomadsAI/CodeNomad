@@ -46,8 +46,9 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
         scroll_top: Some(420),
         section: "providers".into(),
         instance_id: Some("instance-1".into()),
+        workspace_path: Some("C:\\repo".into()),
         location: Some(crate::preferences_window::PreferencesLocation {
-            directory: "C:\\repo".into(),
+            directory: "/mnt/c/repo".into(),
             workspace_id: Some("workspace-1".into()),
         }),
     };
@@ -60,6 +61,8 @@ fn preferences_restoration_survives_final_window_removal_and_clears_explicitly()
     let bytes = fs::read(directory.path().join(CLIENT_STATE_FILENAME)).unwrap();
     let persisted: Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(persisted["preferences"]["section"], "providers");
+    assert_eq!(persisted["preferences"]["workspacePath"], "C:\\repo");
+    assert_eq!(persisted["preferences"]["location"]["directory"], "/mnt/c/repo");
     assert_eq!(
         persisted["preferences"]["location"]["workspaceID"],
         "workspace-1"

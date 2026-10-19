@@ -81,4 +81,10 @@ test("Preferences sections and backend URLs are constrained", () => {
   assert.throws(() => requirePreferencesSection("workspace"), /Invalid preferences section/)
   assert.equal(createPreferencesUrl("https://localhost:3000/app?keep=yes", "chat").toString(), "https://localhost:3000/app?keep=yes&preferences=chat")
   assert.throws(() => createPreferencesUrl("file:///tmp/index.html", "general"), /HTTP or HTTPS/)
+  assert.deepEqual(requirePreferencesRequest("providers", { instanceId: "workspace-1", workspacePath: "C:\\repo", location: { directory: "/mnt/c/repo" } }), {
+    section: "providers", instanceId: "workspace-1", workspacePath: "C:\\repo", location: { directory: "/mnt/c/repo" },
+  })
+  for (const workspacePath of [42, "x".repeat(32769), "bad\0path"]) {
+    assert.throws(() => requirePreferencesRequest("providers", { workspacePath }), /Invalid Preferences workspace path/)
+  }
 })
