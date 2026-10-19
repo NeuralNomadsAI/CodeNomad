@@ -9,9 +9,17 @@ const identity = (form: FormInfo) => JSON.stringify([form.id, form.sessionID, fo
  * too). This is first-party origin correlation, not physical-person attestation. */
 export function createFormAnswerInteraction(form: () => FormInfo, answer: () => FormAnswer) {
   let pending: FormAnswerInteraction | undefined
+  let automatedTurn = false
   const capture = (event: MouseEvent | KeyboardEvent) => {
     pending = undefined
-    if (!event.isTrusted || automationInputActive()) return
+    if (!event.isTrusted) return
+    if (automatedTurn || automationInputActive(event.timeStamp)) {
+      // A delayed Enter/Space can synthesize a default-button click with a newer
+      // timestamp in the same event turn. It inherits the key's provenance.
+      automatedTurn = true
+      setTimeout(() => { automatedTurn = false }, 0)
+      return
+    }
     const element = event.target
     if (!(element instanceof HTMLElement)) return
     const owner = event.currentTarget

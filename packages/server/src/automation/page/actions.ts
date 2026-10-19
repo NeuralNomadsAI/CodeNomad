@@ -73,9 +73,10 @@ export async function performAction(session: PageSession, action: PageAction): P
         return {}
       }
       case "drag": {
-        const from = await aim(session, action.ref, action.backendNodeId)
-        // The drop target may lie under the dragged element; only its position matters.
-        const to = await aim(session, action.to.ref, action.to.backendNodeId, { hitTest: false })
+        // Both ends must already be visible: scrolling to the second target would
+        // invalidate the first point and could press a different row underneath it.
+        const from = await aim(session, action.ref, action.backendNodeId, { scroll: false })
+        const to = await aim(session, action.to.ref, action.to.backendNodeId, { scroll: false })
         if (!from || !to) throw new Error(`${!from ? action.ref : action.to.ref} has no visible box to drag ${!from ? "from" : "to"}`)
         await dragBetween(session, from, to)
         return {}
@@ -185,7 +186,10 @@ const SELECT = `${CHOOSE}
   if (!select) throw new Error("codenomad:not-select");
   return choose(select, args[0]);`
 
-const FOCUS = `if (element instanceof HTMLElement || element instanceof SVGElement) element.focus(); return null;`
+const FOCUS = `if (element.matches(":disabled")) throw new Error("codenomad:disabled");
+  if (element instanceof HTMLElement || element instanceof SVGElement) element.focus();
+  if (element.getRootNode().activeElement !== element) throw new Error("codenomad:unfocusable");
+  return null;`
 
 const DESCRIBE = `const role = element.getAttribute("role") || element.tagName.toLowerCase();
   const name = (element.getAttribute("aria-label") || element.getAttribute("title") || element.getAttribute("placeholder")

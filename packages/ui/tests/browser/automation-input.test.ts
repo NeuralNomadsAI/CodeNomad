@@ -24,7 +24,7 @@ const INPUTS = `<!doctype html><html lang="en"><body style="margin:0"><main>
     <div id="cover" style="position:absolute;inset:0;background:#fff8" aria-label="Cover"></div></div>
   <p id="later"></p>
 </main><script>
-  const marked = () => Boolean(globalThis.__codenomadAutomationDepth) || (globalThis.__codenomadAutomationInputUntil || 0) > Date.now()
+  const marked = () => Boolean(globalThis.__codenomadAutomationDepth) || (globalThis.__codenomadAutomationInputUntil || 0) >= performance.now()
   window.log = []
   for (const type of ["keydown", "pointerdown", "click"]) document.addEventListener(type, event => {
     window.log.push(type + ":" + (event.target.id || event.target.tagName) + ":" + (event.key || "") + ":" + event.isTrusted + ":" + marked())
@@ -81,7 +81,8 @@ test("keys, hover, wheel, drag and pointer clicks behave like a user and are alw
     assert.deepEqual(await log(page), ["keydown:query:Enter:true:true", "click:BUTTON::true:true", "submit:hello"],
       "a trusted Enter submits the form through its default button; the key and the implicit click are both marked")
     assert.deepEqual(await act({ action: "press", key: "Tab" }), { focused: "button \"Go\"" }, "Tab moves focus like a keyboard")
-    assert.equal(await page.evaluate(() => (globalThis as any).__codenomadAutomationInputUntil), 0, "the mark is cleared after each action")
+    assert.equal(await page.evaluate(() => (globalThis as any).__codenomadAutomationInputUntil <= performance.now()), true,
+      "the mark ends after each action but retains its timestamp for queued events")
 
     await act({ action: "hover", ref: await refFor(/button "Hover me"/) })
     assert.equal(await page.textContent("#hover-state"), "hovered")
@@ -107,8 +108,40 @@ test("keys, hover, wheel, drag and pointer clicks behave like a user and are alw
   } finally { await run.close() }
 })
 
+test("a hidden press target never submits the focused draft, and dragging cannot scroll under its start point", async () => {
+  const run = await openAutomationPage(automation, `${base}/automation-inputs`)
+  try {
+    const { page, act, refFor } = run
+    await page.evaluate(() => {
+      const details = document.createElement("details")
+      details.open = true
+      details.innerHTML = '<summary>Target</summary><input aria-label="Hidden target">'
+      document.body.append(details)
+    })
+    const hidden = await refFor(/textbox "Hidden target"/)
+    await page.evaluate(() => { document.querySelector("details")!.open = false })
+    await page.focus("#query")
+    await log(page)
+    await assert.rejects(act({ action: "press", ref: hidden, key: "Enter" }), /cannot take focus/)
+    assert.deepEqual(await log(page), [], "no key or implicit submit reached the focused field")
+
+    await page.evaluate(() => {
+      const list = document.createElement("section")
+      list.innerHTML = Array.from({ length: 35 }, (_, index) => `<button style="display:block;height:65px" aria-label="Row ${index + 1}">${index + 1}</button>`).join("")
+      document.body.append(list)
+    })
+    const first = await refFor(/button "Row 1"/), last = await refFor(/button "Row 35"/)
+    await page.getByRole("button", { name: "Row 1", exact: true }).scrollIntoViewIfNeeded()
+    const before = await page.evaluate(() => scrollY)
+    await log(page)
+    await assert.rejects(act({ action: "drag", ref: first, to: last }), /no visible box to drag to/)
+    assert.equal(await page.evaluate(() => scrollY), before, "dragging never scrolls the page under a saved start point")
+    assert.deepEqual(await log(page), [], "no row was pressed")
+  } finally { await run.close() }
+})
+
 /** Answers the real InterruptionDock question and returns the human-answer header it sent. */
-async function answerDock(via: "click" | "press" | "human"): Promise<unknown> {
+async function answerDock(via: "click" | "press" | "press-stalled" | "human"): Promise<unknown> {
   const run = await openAutomationPage(automation, `${base}/automation-dock`, async page => {
     await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   })
@@ -124,7 +157,15 @@ async function answerDock(via: "click" | "press" | "human"): Promise<unknown> {
     } else {
       const ref = await refFor(/textbox/, "textbox")
       await act({ action: "type", ref, text: `Automation ${via}` })
-      if (via === "press") await act({ action: "press", key: "Enter", ref })
+      if (via === "press-stalled") {
+        await page.evaluate(() => window.addEventListener("keydown", () => {
+          const end = performance.now() + 16_000
+          while (performance.now() < end) { /* Renderer stalled beyond the 15-second input lease. */ }
+        }, { capture: true, once: true }))
+        await act({ action: "press", key: "Enter", ref }).catch(error => {
+          if (!/timed out/.test(error.message)) throw error
+        })
+      } else if (via === "press") await act({ action: "press", key: "Enter", ref })
       else await act({ action: "click", ref: await refFor(/button "Submit"/, "Submit") })
     }
     await page.waitForFunction(() => (window as any).fixture.replies.length === 1)
@@ -137,5 +178,6 @@ async function answerDock(via: "click" | "press" | "human"): Promise<unknown> {
 test("a dock answer given through trusted automation clicks or keys never carries the human-answer mark", async () => {
   assert.equal(await answerDock("click"), undefined, "a trusted automation click is not a human answer")
   assert.equal(await answerDock("press"), undefined, "a trusted automation Enter is not a human answer")
+  assert.equal(await answerDock("press-stalled"), undefined, "a key queued past lease expiry and its default click still are not human")
   assert.equal(await answerDock("human"), "1", "control: a real user click on the same dock is")
 })

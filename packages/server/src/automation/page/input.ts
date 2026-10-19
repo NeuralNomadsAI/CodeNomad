@@ -7,9 +7,9 @@ import { callOn, Handle, markedInput, OBJECT_GROUP, resolveElement, type PageSes
 export interface Point { x: number; y: number }
 
 /** The point a user would click, or undefined for an element without a visible box. */
-export async function aim(session: PageSession, ref: string, backendNodeId: number, options: { hitTest?: boolean } = {}): Promise<Point | undefined> {
+export async function aim(session: PageSession, ref: string, backendNodeId: number, options: { hitTest?: boolean; scroll?: boolean } = {}): Promise<Point | undefined> {
   const { channel } = session
-  await channel.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => undefined)
+  if (options.scroll !== false) await channel.send("DOM.scrollIntoViewIfNeeded", { backendNodeId }).catch(() => undefined)
   await session.checkpoint()
   const result = await channel.send("DOM.getContentQuads", { backendNodeId }).catch(() => ({} as Record<string, unknown>))
   await session.checkpoint()

@@ -211,7 +211,7 @@ describe("DeveloperCdp", () => {
 
     const sequence = chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent"
       || (command.method === "Runtime.evaluate" && /__codenomadAutomationInputUntil/.test(String(command.params?.expression))))
-      .map(command => command.method === "Runtime.evaluate" ? (/= 0;/.test(String(command.params!.expression)) ? "unmark" : "mark")
+      .map(command => command.method === "Runtime.evaluate" ? (/Math.min/.test(String(command.params!.expression)) ? "unmark" : "mark")
         : `${command.params!.type}@${command.params!.x},${command.params!.y}`)
     assert.deepEqual(sequence, ["mark", "mouseMoved@200,60", "mark", "mousePressed@200,60", "mark", "mouseReleased@200,60", "unmark"],
       "every trusted event in the CodeNomad window is marked, and the mark is cleared")

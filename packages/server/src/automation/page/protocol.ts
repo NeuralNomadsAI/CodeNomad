@@ -96,18 +96,37 @@ function pageError(ref: string, description: string): Error {
 /** Marks trusted input (DevTools mouse/keyboard events) in the CodeNomad window. A lease, not a
  * counter: if the clearing call is lost with the connection, the mark still expires. */
 export async function markedInput<T>(session: PageSession, run: (dispatch: (method: string, params: Record<string, unknown>) => Promise<void>) => Promise<T>): Promise<T> {
+  const held = new Map<string, { method: string; params: Record<string, unknown> }>()
+  let point = { x: 0, y: 0 }
   const dispatch = async (method: string, params: Record<string, unknown>) => {
     if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true })
+    const mouse = method === "Input.dispatchMouseEvent"
+    if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }
+    const id = mouse ? `mouse:${params.button}` : `key:${params.code}`
+    const down = mouse ? params.type === "mousePressed" : params.type === "keyDown" || params.type === "rawKeyDown"
+    const up = mouse ? params.type === "mouseReleased" : params.type === "keyUp"
+    if (down) held.set(id, { method, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0 } })
     await session.channel.send(method, params)
+    if (up) held.delete(id)
     await session.checkpoint()
   }
   try {
     return await run(dispatch)
   } finally {
+    // Failure may be after admission but before acknowledgement/checkpoint. Release
+    // anything potentially held, without a failed checkpoint suppressing cleanup.
+    for (const release of [...held.values()].reverse()) {
+      try {
+        if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true })
+        const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
+        await session.channel.send(release.method, { ...params, ...(release.method === "Input.dispatchMouseEvent" ? point : {}) })
+      } catch { /* Best effort, exact original channel only; never retry the action. */ }
+    }
     if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: UNMARK_INPUT, returnByValue: true }).catch(() => undefined)
   }
 }
 
 export const INPUT_MARK_LEASE_MS = 15_000
-const MARK_INPUT = `globalThis.__codenomadAutomationInputUntil = Date.now() + ${INPUT_MARK_LEASE_MS}; true`
-const UNMARK_INPUT = "globalThis.__codenomadAutomationInputUntil = 0; true"
+const MARK_INPUT = `globalThis.__codenomadAutomationInputUntil = performance.now() + ${INPUT_MARK_LEASE_MS}; true`
+// Keep the interval's end for events queued before a stalled renderer recovered.
+const UNMARK_INPUT = "globalThis.__codenomadAutomationInputUntil = Math.min(globalThis.__codenomadAutomationInputUntil || 0, performance.now()); true"
