@@ -12,6 +12,12 @@ import { EventBus } from "../events/bus"
 import { registerWorkspaceRoutes } from "../server/routes/workspaces"
 import { fixtureCatalogue } from "./__tests__/native-worktree-fixture"
 
+async function observed(events: Array<{ workspaceId: string }>, previous: number) {
+  const deadline = Date.now() + 5_000
+  while (events.length <= previous && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10))
+  assert.ok(events.length > previous, "an actual host filesystem change reaches the shared event bus")
+}
+
 test("project listing/search use an owned worktree and reject foreign directories and traversal", async () => {
   const root = await realpath(await mkdtemp(path.join(os.tmpdir(), "codenomad-attachment-root-")))
   const repo = path.join(root, "repo"), worktree = path.join(root, "worktree"), foreign = path.join(root, "foreign")
@@ -23,7 +29,9 @@ test("project listing/search use an owned worktree and reject foreign directorie
   await writeFile(path.join(repo, "main-only.txt"), "main")
   await writeFile(path.join(worktree, "worktree-only.txt"), "worktree")
   await writeFile(path.join(foreign, "secret.txt"), "private")
-  const manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
+  const eventBus = new EventBus(), changes: Array<{ workspaceId: string }> = []
+  const stop = eventBus.onEvent(event => { if (event.type === "workspace.filesChanged") changes.push(event) })
+  const manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus,
     settings: { getOwner: () => ({ environmentVariables: {} }) } as never,
     binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "fixture" }) } as never,
     sharedService: { headers: async () => ({}), client: async () => ({}),
@@ -51,6 +59,13 @@ test("project listing/search use an owned worktree and reject foreign directorie
     assert.equal(escape.statusCode, 400)
     const original = await app.inject(`${base}?path=.`)
     assert.ok(original.json().some((entry: any) => entry.path === "main-only.txt"))
+    const beforeRoot = changes.length
+    await writeFile(path.join(repo, "appears-without-f5.txt"), "root")
+    await observed(changes, beforeRoot)
+    const beforeWorktree = changes.length
+    await writeFile(path.join(worktree, "appears-in-worktree.txt"), "linked")
+    await observed(changes, beforeWorktree)
+    assert.ok(changes.every(event => event.workspaceId === id))
     // The explicitly opened physical directory remains usable without Git.
     process.env.PATH = foreign
     const degraded = await app.inject(`${base}?path=.&directory=${encodeURIComponent(repo)}`)
@@ -59,6 +74,7 @@ test("project listing/search use an owned worktree and reject foreign directorie
     process.env.PATH = savedPath
     await app.close()
     await manager.shutdown()
+    stop()
     await rm(root, { recursive: true, force: true })
   }
 })

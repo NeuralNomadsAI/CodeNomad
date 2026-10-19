@@ -39,13 +39,14 @@ export class FileSystemBrowser {
     this.isWindows = (options.platform ?? process.platform) === "win32"
   }
 
-  async list(relativePath = ".", options: { includeFiles?: boolean } = {}): Promise<FileSystemEntry[]> {
+  async list(relativePath = ".", options: { includeFiles?: boolean; observeDirectory?: (directory: string) => Promise<void> } = {}): Promise<FileSystemEntry[]> {
     if (this.unrestricted) {
       throw new Error("Relative listing is unavailable when running with unrestricted root")
     }
     const includeFiles = options.includeFiles ?? true
     const normalizedPath = this.normalizeRelativePath(relativePath)
     const absolutePath = this.toRestrictedAbsolute(normalizedPath)
+    await options.observeDirectory?.(absolutePath)
     return this.readDirectoryEntries(absolutePath, {
       includeFiles,
       formatPath: (entryName) => this.buildRelativePath(normalizedPath, entryName),

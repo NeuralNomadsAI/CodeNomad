@@ -10,6 +10,7 @@ import type { BinaryResolver } from "../settings/binaries"
 import { FileSystemBrowser } from "../filesystem/browser"
 import { searchWorkspaceFiles, WorkspaceFileSearchOptions } from "../filesystem/search"
 import { clearWorkspaceSearchCache } from "../filesystem/search-cache"
+import { WorkspaceFileWatches } from "./file-watches"
 import { WorkspaceDescriptor, WorkspaceFileResponse, FileSystemEntry } from "../api-types"
 import { Logger } from "../logger"
 import {
@@ -186,9 +187,14 @@ export class WorkspaceManager {
   private readonly sharedService: SharedService
   private serviceAuthorization?: string
   private warnedLegacyServiceEnvironment = false
+  private readonly fileWatches: WorkspaceFileWatches
 
   constructor(private readonly options: WorkspaceManagerOptions) {
     this.sharedService = options.sharedService ?? new OpenCodeSharedService()
+    this.fileWatches = new WorkspaceFileWatches(
+      (workspaceId, changes) => options.eventBus.publish({ type: "workspace.filesChanged", workspaceId, changes }),
+      error => options.logger.warn({ err: error }, "Workspace directory observation unavailable"),
+    )
   }
   list(): WorkspaceDescriptor[] {
     return Array.from(this.workspaces.values())
@@ -532,8 +538,11 @@ export class WorkspaceManager {
   }
 
   async listFiles(workspaceId: string, relativePath = ".", directory?: string): Promise<FileSystemEntry[]> {
-    const browser = new FileSystemBrowser({ rootDir: await this.fileBrowserRoot(workspaceId, directory) })
-    return browser.list(relativePath)
+    const record = this.requireWorkspace(workspaceId)
+    const root = await this.fileBrowserRoot(workspaceId, directory)
+    const browser = new FileSystemBrowser({ rootDir: root })
+    return browser.list(relativePath, { observeDirectory: target => this.fileWatches.observe(workspaceId, root, target,
+      () => !this.shuttingDown && this.workspaces.get(workspaceId) === record && !record[WORKSPACE_STATE].abortController.signal.aborted) })
   }
 
   async searchFiles(workspaceId: string, query: string, options?: WorkspaceFileSearchOptions, directory?: string): Promise<FileSystemEntry[]> {
@@ -863,6 +872,7 @@ export class WorkspaceManager {
 
   async shutdown() {
     this.shuttingDown = true
+    this.fileWatches.close()
     this.options.logger.info("Shutting down all workspaces")
     const shutdownTimeoutMs = Math.max(1, this.options.shutdownTimeoutMs ?? 10000)
     const deadlineAt = this.now() + shutdownTimeoutMs
@@ -1112,6 +1122,7 @@ export class WorkspaceManager {
   ): void {
     if (this.workspaces.get(id) !== record) return
     this.workspaces.delete(id)
+    this.fileWatches.forget(id)
     this.worktreeInventory.forget(id)
     this.eventWorktreeInventory.forget(id)
     invalidateWorktreeCache(id)

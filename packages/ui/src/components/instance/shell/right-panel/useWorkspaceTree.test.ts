@@ -23,7 +23,7 @@ const hooks = registerHooks({
 after(() => { hooks.deregister(); delete (globalThis as any).__workspaceTreeFixture })
 const { createRoot, createSignal } = await import("solid-js")
 const { useWorkspaceTree } = await import("./useWorkspaceTree")
-const { invalidateFilesystemCaches } = await import("../../../../lib/filesystem-events")
+const { invalidateFilesystemCaches, queueFilesystemInvalidation } = await import("../../../../lib/filesystem-events")
 const file = (path: string, type: "file" | "directory" = "file"): FileSystemEntry => ({ path, name: path.split("/").pop()!, type })
 async function until(predicate: () => boolean) {
   for (let i = 0; i < 100 && !predicate(); i++) await new Promise(resolve => setTimeout(resolve, 5))
@@ -100,4 +100,27 @@ test("worktree revisits keep cache-first rows but revalidate snapshots invalidat
     assert.equal(fixture.reads.filter(key => key === "/a:.").length, 2)
     assert.equal(fixture.reads.filter(key => key === "/a:src").length, 2)
   } finally { close() }
+})
+
+test("a coalesced multi-worktree file batch rereads only changed visible directories", async () => {
+  fixture.reads = []; fixture.gates.clear()
+  fixture.listings = new Map([
+    ["/a:.", [file("src", "directory"), file("other", "directory")]],
+    ["/a:src", [file("src/old.ts")]], ["/a:other", [file("other/unchanged.ts")]],
+  ])
+  let close!: () => void
+  const tree = createRoot(dispose => { close = dispose; return useWorkspaceTree("scoped-tree", () => "/a", () => true) })
+  try {
+    await until(() => tree.rows().some(row => row.path === "src") && !tree.busy().size)
+    tree.toggle("src"); tree.toggle("other")
+    await until(() => tree.rows().some(row => row.path === "other/unchanged.ts") && !tree.busy().size)
+    fixture.listings.set("/a:src", [file("src/new.ts")])
+    const before = [...fixture.reads]
+    queueFilesystemInvalidation("scoped-tree", [{ directory: "/b", path: "." }, { directory: "/a", path: "src" }])
+    await until(() => tree.rows().some(row => row.path === "src/new.ts") && !tree.busy().size)
+    assert.deepEqual(fixture.reads.slice(before.length), ["/a:src"], "neither another worktree nor an unchanged sibling/root is scanned")
+    tree.refresh()
+    await until(() => fixture.reads.length === before.length + 4 && !tree.busy().size)
+    assert.ok(tree.rows().some(row => row.path === "other/unchanged.ts"))
+  } finally { close(); invalidateFilesystemCaches("scoped-tree") }
 })
