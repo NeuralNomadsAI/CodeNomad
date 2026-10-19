@@ -2,10 +2,13 @@ import { watch, type FSWatcher } from "node:fs"
 import { realpath, stat } from "node:fs/promises"
 import path from "node:path"
 import type { WorkspaceDirectoryChange } from "../api-types"
+import { isPathWithinWorktree, normalizeWslUncPath } from "./worktree-directory"
 
 interface Entry {
   workspaceId: string
   root: string
+  listedDirectory: string
+  path: string
   target: string
   identity: string
   watcher: FSWatcher
@@ -27,18 +30,21 @@ export class WorkspaceFileWatches {
   async observe(workspaceId: string, root: string, directory: string, current: () => boolean): Promise<void> {
     if (this.closed || !current()) return
     let base: string, target: string, identity: string
+    const listedPath = path.relative(path.resolve(root), path.resolve(directory))
+    if (listedPath === ".." || listedPath.startsWith(`..${path.sep}`) || path.isAbsolute(listedPath)) return
     try {
       ;[base, target] = await Promise.all([realpath(root), realpath(directory)])
-      const relative = path.relative(base, target)
-      if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) return
+      if (!isPathWithinWorktree(base, target)) return
       const info = await stat(target, { bigint: true })
       if (!info.isDirectory()) return
       identity = `${info.dev}:${info.ino}`
     } catch { return }
     if (this.closed || !current()) return
-    const key = JSON.stringify([workspaceId, this.pathKey(base), this.pathKey(target)])
+    // Keep the listing identity, even when several in-tree aliases resolve to
+    // one inode: the renderer's cached paths are logical, not realpaths.
+    const key = JSON.stringify([workspaceId, this.pathKey(base), this.pathKey(path.resolve(directory))])
     const previous = this.entries.get(key)
-    if (previous?.identity === identity) {
+    if (previous?.identity === identity && previous.target === target) {
       this.entries.delete(key)
       this.entries.set(key, previous)
       return
@@ -55,7 +61,7 @@ export class WorkspaceFileWatches {
         const entry = this.entries.get(key)
         if (entry?.watcher === watcher) this.changed(key, entry)
       })
-      this.entries.set(key, { workspaceId, root: base, target, watcher, identity, current })
+      this.entries.set(key, { workspaceId, root: base, listedDirectory: directory, path: listedPath.replace(/\\/g, "/") || ".", target, watcher, identity, current })
       watcher.on("error", error => {
         if (this.entries.get(key)?.watcher !== watcher) return
         this.remove(key)
@@ -99,11 +105,11 @@ export class WorkspaceFileWatches {
       // Native watches follow moved inodes. Stop following a directory once it
       // no longer occupies the admitted physical path; invalidate it one last time.
       try {
-        const [root, target, info] = await Promise.all([realpath(entry.root), realpath(entry.target), stat(entry.target, { bigint: true })])
+        const [root, target, info] = await Promise.all([realpath(entry.root), realpath(entry.listedDirectory), stat(entry.listedDirectory, { bigint: true })])
         if (root !== entry.root || target !== entry.target || `${info.dev}:${info.ino}` !== entry.identity) this.remove(key)
       } catch { this.remove(key) }
       if (!entry.current()) return
-      return { directory: entry.root, path: path.relative(entry.root, entry.target).replace(/\\/g, "/") || "." }
+      return { directory: entry.root, path: entry.path }
     }))
     if (this.pending.get(workspaceId) !== pending || this.closed) return
     this.pending.delete(workspaceId)
@@ -112,7 +118,9 @@ export class WorkspaceFileWatches {
     for (const [key, entry] of pending.entries) if (this.entries.get(key) === entry) this.changed(key, entry)
   }
 
-  private pathKey(value: string): string { return process.platform === "win32" ? value.toLowerCase() : value }
+  private pathKey(value: string): string {
+    return normalizeWslUncPath(value) ?? (process.platform === "win32" ? value.toLowerCase() : value)
+  }
 
   private remove(key: string): void {
     const entry = this.entries.get(key)

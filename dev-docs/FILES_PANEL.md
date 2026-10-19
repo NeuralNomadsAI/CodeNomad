@@ -233,6 +233,15 @@ and closed on workspace removal/shutdown. Directory replacement rebinds its
 inode identity; errors remain best effort and a later listing can retry setup.
 Native OpenCode invalidations and explicit Refresh retain their existing paths.
 
+Directory entries carry an opaque device/inode identity, distinct from their
+modification time. When a parent listing discovers a removed or replaced child,
+the tree drops only that child's cached subtree, cancels its old pending reads,
+and reloads still-expanded paths so their observations bind to the replacement.
+Ordinary parent content/mtime changes never turn into subtree scans. Observations
+retain the logical listed path separately from the physical safety boundary;
+multiple internal junctions/symlinks of one physical directory notify each alias,
+not just its canonical target.
+
 - `/api/workspaces/:id/files/preview` accepts a relative `path` and the browsed
   `directory`, validates it through the manager's existing worktree ownership,
   and uses the bounded filesystem content reader (5 MiB, base64). This also works

@@ -24,7 +24,8 @@ after(() => { hooks.deregister(); delete (globalThis as any).__workspaceTreeFixt
 const { createRoot, createSignal } = await import("solid-js")
 const { useWorkspaceTree } = await import("./useWorkspaceTree")
 const { invalidateFilesystemCaches, queueFilesystemInvalidation } = await import("../../../../lib/filesystem-events")
-const file = (path: string, type: "file" | "directory" = "file"): FileSystemEntry => ({ path, name: path.split("/").pop()!, type })
+const file = (path: string, type: "file" | "directory" = "file", directoryIdentity?: string): FileSystemEntry => ({ path, name: path.split("/").pop()!, type,
+  ...(directoryIdentity ? { directoryIdentity } : {}) })
 async function until(predicate: () => boolean) {
   for (let i = 0; i < 100 && !predicate(); i++) await new Promise(resolve => setTimeout(resolve, 5))
   assert.ok(predicate(), "tree settled before timeout")
@@ -123,4 +124,74 @@ test("a coalesced multi-worktree file batch rereads only changed visible directo
     await until(() => fixture.reads.length === before.length + 4 && !tree.busy().size)
     assert.ok(tree.rows().some(row => row.path === "other/unchanged.ts"))
   } finally { close(); invalidateFilesystemCaches("scoped-tree") }
+})
+
+test("a parent-only observation discards replaced directory snapshots and reloads expanded descendants", async () => {
+  fixture.reads = []; fixture.gates.clear()
+  fixture.listings = new Map([
+    ["/a:.", [file("target", "directory", "inode-1")]],
+    ["/a:target", [file("target/old.txt"), file("target/deep", "directory", "deep-1")]],
+    ["/a:target/deep", [file("target/deep/old.txt")]],
+  ])
+  let close!: () => void
+  const tree = createRoot(dispose => { close = dispose; return useWorkspaceTree("replaced-tree", () => "/a", () => true) })
+  try {
+    await until(() => tree.rows().some(row => row.path === "target") && !tree.busy().size)
+    tree.toggle("target")
+    await until(() => tree.rows().some(row => row.path === "target/deep"))
+    tree.toggle("target/deep")
+    await until(() => tree.rows().some(row => row.path === "target/deep/old.txt") && !tree.busy().size)
+    fixture.listings.set("/a:.", [file("target", "directory", "inode-2")])
+    fixture.listings.set("/a:target", [file("target/new.txt"), file("target/deep", "directory", "deep-2")])
+    fixture.listings.set("/a:target/deep", [file("target/deep/new.txt")])
+    const before = fixture.reads.length
+    queueFilesystemInvalidation("replaced-tree", [{ directory: "/a", path: "." }])
+    await until(() => tree.rows().some(row => row.path === "target/deep/new.txt") && !tree.busy().size)
+    assert.ok(!tree.rows().some(row => row.path.endsWith("old.txt")))
+    assert.deepEqual(fixture.reads.slice(before), ["/a:.", "/a:target", "/a:target/deep"])
+    assert.ok(tree.state().expanded.has("target/deep"), "expansion is preserved through the replacement")
+  } finally { close(); invalidateFilesystemCaches("replaced-tree") }
+})
+
+test("unchanged physical directory identities do not turn parent events into subtree scans", async () => {
+  fixture.reads = []; fixture.gates.clear()
+  fixture.listings = new Map([
+    ["/a:.", [file("target", "directory", "same-inode")]],
+    ["/a:target", [file("target/unchanged.txt")]],
+  ])
+  let close!: () => void
+  const tree = createRoot(dispose => { close = dispose; return useWorkspaceTree("same-directory", () => "/a", () => true) })
+  try {
+    await until(() => tree.rows().some(row => row.path === "target") && !tree.busy().size)
+    tree.toggle("target")
+    await until(() => tree.rows().some(row => row.path === "target/unchanged.txt") && !tree.busy().size)
+    fixture.listings.set("/a:.", [{ ...file("target", "directory", "same-inode"), modifiedAt: "2026-10-20T12:00:00Z" }])
+    const before = fixture.reads.length
+    queueFilesystemInvalidation("same-directory", [{ directory: "/a", path: "." }])
+    await until(() => fixture.reads.length > before && !tree.busy().size)
+    assert.deepEqual(fixture.reads.slice(before), ["/a:."])
+  } finally { close(); invalidateFilesystemCaches("same-directory") }
+})
+
+test("an old in-flight listing cannot repopulate a directory after its parent detects replacement", async () => {
+  fixture.reads = []; fixture.gates.clear()
+  fixture.listings = new Map([["/a:.", [file("target", "directory", "old-inode")]], ["/a:target", [file("target/old.txt")]]])
+  let close!: () => void, release!: () => void
+  const tree = createRoot(dispose => { close = dispose; return useWorkspaceTree("replacement-flight", () => "/a", () => true) })
+  try {
+    await until(() => tree.rows().some(row => row.path === "target") && !tree.busy().size)
+    tree.toggle("target")
+    await until(() => tree.rows().some(row => row.path === "target/old.txt") && !tree.busy().size)
+    fixture.gates.set("/a:target", new Promise<void>(resolve => { release = resolve }))
+    const oldRead = tree.load("target", true)
+    await until(() => fixture.reads.filter(key => key === "/a:target").length === 2)
+    fixture.gates.delete("/a:target")
+    fixture.listings.set("/a:.", [file("target", "directory", "new-inode")])
+    fixture.listings.set("/a:target", [file("target/new.txt")])
+    await tree.load(".", true)
+    await until(() => tree.rows().some(row => row.path === "target/new.txt") && !tree.busy().size)
+    release(); await oldRead
+    assert.ok(!tree.rows().some(row => row.path === "target/old.txt"))
+    assert.equal(fixture.reads.filter(key => key === "/a:target").length, 3)
+  } finally { release?.(); fixture.gates.clear(); close() }
 })

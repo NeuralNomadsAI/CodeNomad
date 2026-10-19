@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { mkdtemp, mkdir, writeFile, rename, unlink, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, writeFile, rename, unlink, symlink, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -13,7 +13,7 @@ import { EventBus } from "../../../server/src/events/bus"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 
-test("actual file creation, rename and deletion refresh the Workspace tree through host events without F5", { timeout: 60_000 }, async t => {
+test("actual file creation, rename and deletion refresh the Workspace tree through host events without F5", { timeout: 90_000 }, async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-workspace-refresh-"))
   await mkdir(path.join(root, "src"))
   await writeFile(path.join(root, "initial.txt"), "initial")
@@ -100,5 +100,31 @@ test("actual file creation, rename and deletion refresh the Workspace tree throu
   assert.equal(reads.length, beforeHidden, "an inactive panel only invalidates its snapshot")
   await page.evaluate(() => (window as any).workspaceRefreshFixture.activate(true))
   await row("hidden.txt").waitFor()
+
+  // Parent-only notifications must detect a replaced open child and rebind it.
+  await mkdir(path.join(root, "target"))
+  await writeFile(path.join(root, "target", "old.txt"), "old inode")
+  await row("target").waitFor()
+  await row("target").click()
+  await row("target/old.txt").waitFor()
+  await rename(path.join(root, "target"), path.join(root, "moved"))
+  await mkdir(path.join(root, "target"))
+  await writeFile(path.join(root, "target", "new.txt"), "replacement inode")
+  await row("target/new.txt").waitFor()
+  await row("target/old.txt").waitFor({ state: "detached" })
+  await writeFile(path.join(root, "target", "later.txt"), "new observation is live")
+  await row("target/later.txt").waitFor()
+
+  for (const alias of ["alias", "other-alias"]) {
+    await symlink(path.join(root, "target"), path.join(root, alias), process.platform === "win32" ? "junction" : "dir")
+  }
+  for (const alias of ["alias", "other-alias"]) {
+    await row(alias).waitFor()
+    await row(alias).click()
+    await row(`${alias}/new.txt`).waitFor()
+  }
+  await writeFile(path.join(root, "target", "aliased.txt"), "one mutation, multiple logical subscribers")
+  await row("alias/aliased.txt").waitFor()
+  await row("other-alias/aliased.txt").waitFor()
   assert.deepEqual(errors, [])
 })

@@ -105,3 +105,19 @@ test("native watcher handles are bounded and repeated reads retain the most rece
   await until(() => changes.includes("a"))
   assert.equal(errors.length, 1)
 })
+
+test("internal junction aliases retain every logical listing path for a shared physical directory", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-file-watch-alias-"))
+  const target = path.join(root, "target"), first = path.join(root, "alias"), second = path.join(root, "other-alias")
+  await mkdir(target)
+  await symlink(target, first, process.platform === "win32" ? "junction" : "dir")
+  await symlink(target, second, process.platform === "win32" ? "junction" : "dir")
+  const changes: Array<{ directory: string; path: string }> = []
+  const watches = new WorkspaceFileWatches((_id, batch) => changes.push(...batch), () => {})
+  t.after(async () => { watches.close(); await rm(root, { recursive: true, force: true }) })
+  await watches.observe("workspace", root, first, () => true)
+  await watches.observe("workspace", root, second, () => true)
+  await writeFile(path.join(target, "new.txt"), "same physical inode, two listing identities")
+  await until(() => changes.some(change => change.path === "alias") && changes.some(change => change.path === "other-alias"))
+  assert.ok(!changes.some(change => change.path === "target"), "the unlisted physical target is not substituted for its logical aliases")
+})

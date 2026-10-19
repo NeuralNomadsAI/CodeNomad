@@ -256,10 +256,10 @@ export class FileSystemBrowser {
 
     for (const entry of dirents) {
       const absoluteEntryPath = path.join(directory, entry.name)
-      let stats: fs.Stats
+      let stats: fs.BigIntStats
       try {
         // Follow symlinks so linked directories remain visible in folder listings.
-        stats = await fs.promises.stat(absoluteEntryPath)
+        stats = await fs.promises.stat(absoluteEntryPath, { bigint: true })
       } catch {
         // Skip entries we cannot stat (insufficient permissions, etc.)
         continue
@@ -275,7 +275,8 @@ export class FileSystemBrowser {
         path: options.formatPath(entry.name),
         absolutePath: options.formatAbsolutePath(entry.name),
         type: isDirectory ? "directory" : "file",
-        size: isDirectory ? undefined : stats.size,
+        ...(isDirectory ? { directoryIdentity: `${stats.dev}:${stats.ino}` } : {}),
+        size: isDirectory ? undefined : Number(stats.size),
         modifiedAt: stats.mtime.toISOString(),
       })
     }

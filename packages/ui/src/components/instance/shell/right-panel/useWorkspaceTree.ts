@@ -37,9 +37,32 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
       const entries = await backgroundReads.run(controller.signal,
         () => serverApi.listWorkspaceFiles(instanceId, path, scope, controller.signal), "visible")
       if (controller.signal.aborted || directory() !== scope) return
+      const nextEntries = new Map(entries.map(entry => [entry.path, entry]))
+      const replaced = new Set((state().directories.get(path) ?? []).filter(entry => {
+        const next = nextEntries.get(entry.path)
+        return entry.type === "directory" && (!next || next.type !== "directory"
+          || Boolean(entry.directoryIdentity && next.directoryIdentity && entry.directoryIdentity !== next.directoryIdentity))
+      }).map(entry => entry.path))
+      const invalidated = (candidate: string) => {
+        for (let key = candidate; key && key !== "."; key = key.includes("/") ? key.slice(0, key.lastIndexOf("/")) : "") {
+          if (replaced.has(key)) return true
+        }
+        return false
+      }
+      if (replaced.size) {
+        for (const key of loadedVersions.keys()) if (invalidated(key)) loadedVersions.delete(key)
+        for (const [key, pending] of requests) if (invalidated(key)) { pending.abort(); requests.delete(key) }
+      }
       loadedVersions.set(path, version)
-      setState(previous => ({ ...previous, directories: new Map(previous.directories).set(path, entries
-        .slice().sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name))) }))
+      setState(previous => {
+        const directories = new Map(previous.directories)
+        if (replaced.size) for (const key of directories.keys()) if (invalidated(key)) directories.delete(key)
+        directories.set(path, entries.slice().sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name)))
+        return { ...previous, directories }
+      })
+      // A replacement can expose a still-expanded path (and then its expanded
+      // descendants). Reload only those stale visible listings and bind new watches.
+      if (hasStaleVisibleDirectories()) dirty = true
     } catch (error) {
       if (!controller.signal.aborted) setErrors(previous => new Map(previous).set(path, error instanceof Error ? error.message : String(error)))
     } finally {

@@ -332,6 +332,8 @@ export interface FileSystemEntry {
   /** Absolute path when available (unrestricted and multi-root listings). */
   absolutePath?: string
   type: "file" | "directory"
+  /** Opaque physical identity for detecting directory replacement, not content edits. */
+  directoryIdentity?: string
   size?: number
   /** ISO timestamp of last modification when available. */
   modifiedAt?: string
