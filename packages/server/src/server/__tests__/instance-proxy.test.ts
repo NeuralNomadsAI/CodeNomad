@@ -273,6 +273,10 @@ describe("instance proxy location enforcement", () => {
     // Only the reviewed session-scoped route is opened, never generic generation.
     const generic = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/generate", payload: { prompt: "test" } })
     assert.equal(generic.statusCode, 403)
+    // 2.0.32's voice session brokers a realtime token from server-stored provider keys; it stays unexposed.
+    const voice = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/voice/session",
+      payload: { model: "gpt-realtime", transport: { type: "websocket" } } })
+    assert.equal(voice.statusCode, 403)
     assert.equal(requestCount(), 1)
   })
 

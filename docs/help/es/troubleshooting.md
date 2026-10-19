@@ -42,7 +42,7 @@ Si no puede verificarse un worktree propio o la ubicación de una conversación,
 ## Entorno de ejecución OpenCode y WSL {#opencode-runtime}
 
 1. Abre **Preferencias → OpenCode** y comprueba el ejecutable seleccionado, la versión instalada y el estado del servicio en ejecución.
-2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.0.27**; recomendado/verificado: **2.0.29**.
+2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.0.27**; recomendado/verificado: **2.0.32**.
 3. Si la CLI instalada difiere del servicio en ejecución, decide explícitamente si reiniciar el servicio compartido.
 
 **Reiniciar servicio OpenCode** está disponible en **Solución de problemas** y requiere confirmación. Interrumpe el trabajo activo de todos los clientes conectados, pero conserva el historial de sesiones. Recargar la configuración es una acción separada: mantiene el proceso, pero reconstruye las Locations cargadas y cancela preguntas/permisos pendientes. Ninguna es una actualización inofensiva.

@@ -18,7 +18,7 @@ Installierte Programmdatei und laufender Dienst können unterschiedliche Version
 | Einstufung | Aktuelle Anforderung | Bedeutung |
 | --- | --- | --- |
 | Minimum | OpenCode **2.0.27** | Erforderliche native Plugin-Laufzeit; eine ältere stabile Laufzeit kann die gebündelten Plugins nicht laden. |
-| Empfohlen | OpenCode **2.0.29** | Qualifiziertes Ziel, getrennt vom technischen Minimum. |
+| Empfohlen | OpenCode **2.0.32** | Qualifiziertes Ziel, getrennt vom technischen Minimum. |
 | Ungeprüft | Neuere oder angepasste, nicht vollständig validierte Version | Nicht allein wegen fehlender Tests abgelehnt; geprüft werden die tatsächlichen API-Verträge des verbundenen Dienstes. |
 
 Auch die erforderlichen Verträge für Sitzungen, Berechtigungen, Forms, Posteingang und Sitzungsumgebung müssen verfügbar sein. Eine Programmversion allein beweist nicht deren Unterstützung durch den verbundenen Dienst. Meldet die Einrichtung einen nicht unterstützten laufenden Dienst, wählen/installieren Sie eine unterstützte CLI und führen Sie bei Bereitschaft den expliziten Neustart des gemeinsamen Dienstes aus.
