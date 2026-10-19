@@ -18,7 +18,7 @@ The installed executable and the running service can have different versions. Ch
 | Classification | Current requirement | Meaning |
 | --- | --- | --- |
 | Minimum | OpenCode **2.0.27** | Required native plugin runtime; an older stable runtime cannot load the bundled plugins. |
-| Recommended | OpenCode **2.0.29** | Qualified target, distinct from the technical minimum. |
+| Recommended | OpenCode **2.0.32** | Qualified target, distinct from the technical minimum. |
 | Unverified | A newer or custom version not fully validated | Not rejected merely for being untested; the connected service's actual API contracts are checked. |
 
 The required session, permission, Form, inbox and session-environment contracts must also be available. An executable version alone does not prove that the connected service supports them. If setup reports an unsupported running service, select/install a supported CLI and use the explicit shared-service restart when ready.

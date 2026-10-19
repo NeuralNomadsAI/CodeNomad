@@ -15,7 +15,7 @@ runtimes. Keep detailed results in the change's PR and CI logs, not in per-versi
 reports. Update this reference in place.
 
 The current technical minimum is **2.0.27** and the recommended/qualified target
-is **2.0.29**: shipped native plugins consume the stable Effect 4.0.1/Schema host
+is **2.0.32**: shipped native plugins consume the stable Effect 4.0.1/Schema host
 contract. Isolated
 2.0.26 loading fails at that boundary; see the transition evidence below.
 PR #696's previous timestamp-based floor was 2.0.7. Unlisted versions,
@@ -471,7 +471,99 @@ Isolated plugin-runtime, automation, pruning/history/proxy, Missions
 prompt skills, Git-degraded/init, provider usage/accounts, temporary workspaces,
 blank-session cleanup and the 2.0.15→2.0.29 native upgrade pass. The permission
 receipt recovery fixture times out identically on 2.0.27 with the previous pins;
-it is a pre-existing issue, not a 2.0.29 incompatibility.
+it is a pre-existing fixture defect, not a 2.0.29 incompatibility (root cause
+and correction under 2.0.32 below).
+
+### 2.0.32 qualification (2026-10-19)
+
+2.0.30–2.0.32 keep Effect **4.0.1**, so the 2.0.27 plugin-runtime floor is
+unchanged. Client/plugin pins and the recommendation move to 2.0.32, a reviewed
+contract beside 2.0.27 and 2.0.29; 2.0.28, 2.0.30 and 2.0.31 are untested and
+keep authenticated negotiation. V2 release notes are published at
+[opencode.ai/changelog](https://opencode.ai/changelog) (2.0.31 has no entry);
+GitHub Releases list V1. Deltas come from the exact `v2.0.29`/`v2.0.32` tags and
+published npm packages, not GitHub's compare view.
+
+- **API.** The authenticated runtime OpenAPI grows from 118 to 119 paths: the only
+  new operation is the experimental `POST /api/experimental/voice/session`
+  (`client.voice.session`), which brokers a realtime voice session from
+  server-stored provider keys and returns a session token. The 142 existing
+  operations are identical; schemas add optional model `temperature`/`reasoning`
+  capabilities and configured-model `releaseDate`, and the open TUI command
+  union drops `session.share`. CodeNomad consumes none of them; the voice route
+  stays outside the proxy allowlist (`instance-proxy.test.ts`).
+- **Packages.** 6/32 client declaration files change (voice, capabilities); the
+  63 plugin declarations are identical; protocol adds `groups/voice`. The
+  `@opencode/ai`/`util` dependency sets are unchanged, so the lockfile delta is
+  limited to `@opencode/*`. Built with either pin, the shipped automation and
+  pruning bundles are byte-identical; the Missions bundle differs only by its
+  embedded zero-Effect Promise client's unused `voice.session` method and chunk
+  comments, so the daemon-loaded contract at the 2.0.27 minimum is unchanged.
+- **Private contracts.** Core `form`, `permission`, `location`,
+  `location-service-map`, `rpc`, `plugin`, `session`, `session/inbox`, `shell`
+  and `bus`, plus schema `form`/`permission`, are byte-identical between the tags.
+- **Service lifecycle.** The Windows default service port moves from 49374
+  (0xC0DE) to 45278 (0xB0DE). CodeNomad assumes no default port: discovery uses
+  `service status` and the registration fallback, which fails closed without a
+  configured port. An ad hoc isolated probe of the production
+  `HostOpenCodeService` (real status, configured-port absence, start, password,
+  contract negotiation, stop; explicit port) passes on 2.0.29 and 2.0.32. 2.0.30
+  also applies `service env` in directly launched daemons; `service start`
+  already merged it over the inherited environment, and both runtimes show the
+  same precedence: a user's `opencode service set env` value overrides
+  CodeNomad's missing-daemon start variable of the same name. Per-send
+  `session.environment` is unaffected.
+- **Behavior.** `OPENCODE_DISABLE_CLAUDE_CODE(_SKILLS)` now hide `.claude`
+  skills (read from the daemon process environment, not `session.environment`);
+  configured `instructions` load globs and remote URLs; a missing `{file:}`
+  reference substitutes empty; MCP permission requests carry `metadata.input`,
+  which CodeNomad's permission UI and receipts ignore (they read bounded named
+  fields); compaction fits its output limit to the sent request; Windows
+  snapshots retry concurrent Git object writes. None requires an adapter.
+
+Windows 11 validation with Node 24.20.0 and isolated CLIs/homes/databases (never
+the shared daemon), new pins on 2.0.32: plugin runtime, automation, full
+pruning/history/proxy/Location/worktree/relay suite, the npm-packed pruning
+plugin with its rendered UI, Missions contract/family control/full
+journey/trajectory (including the #1024 one-time human decision), all eleven
+recurring journeys (ABCD, G/E/L/F/W, the Wayfinder Form gate Q and the ordinary
+dock Form N), subagent depth, session environment/fork/aside/interrupt, blank
+cleanup, prompt skills, provider usage/accounts/selection, service usage, web
+search and plugin-package settings, Git degraded/init, temporary workspaces,
+output-limit continuation, Promise-tool failure, real 2 MiB compaction
+isolation, permission receipts, migrations from 2.0.3/beta-19271, first
+installation, 1.x replacement and the native 2.0.15→2.0.32 upgrade. The minimum
+2.0.27 passes plugin runtime, automation, pruning, Missions contract/family
+control, environment, fork, aside, blank cleanup, Git degraded, prompt skills,
+compaction isolation, permission receipts and both migrations. Released
+2.0.29-pin bundles also load and negotiate on 2.0.32. Because the
+pending-snapshot study fixture is pinned to pre-2.0.27 published packages, an ad
+hoc probe additionally checks the shipped reader on 2.0.27 and 2.0.32: session,
+global root and global idle Forms, a pending permission, cold coverage and
+settlement back to empty. The maintained revert fixture stages with `files:
+false`, whereas CodeNomad's undo restores files; a further probe has the native
+`write` tool edit and create files, then checks that `revert.stage` restores
+both and `revert.clear` re-applies them on 2.0.27, 2.0.29 and 2.0.32. It
+exercises snapshot capture and restore, not the concurrent Git object-write race
+fixed in 2.0.32.
+
+The permission receipt fixture's timeout reproduces unchanged on the exact base
+with 2.0.27, 2.0.29 and 2.0.32. Its `WorkspaceManager` stub lacked
+`existingConnection`, which event-purpose ownership requires since #866, so
+worktree and descendant Locations threw before capture. With the stub completed,
+the unchanged product scenario passes on all three runtimes. The
+compaction-isolation runtime label guard now includes the runs above.
+
+Unit and rendering suites with the new pins: CI UI lists, the broad UI run, the
+Electron host, packaging, help and typechecks pass. The full server suite passes
+2,409 of 2,417 tests (7 skipped) but cancels `index.test.ts`'s five-second piped
+shutdown test under the parallel run; the exact base cancels it identically on
+this machine, and it passes alone. The full browser suite passes 1,259 of 1,263
+(2 skipped) with two 30-second waits timing out in history navigation and panel
+extensions; both pass on isolated candidate reruns (panel extensions on the base
+too). Neither is green evidence, nor shown to be caused by 2.0.32. This is
+Windows evidence only: Linux, macOS, WSL, packaged desktop, installers/updater
+and mobile remain separate gates.
 
 ### Capability-checked loaded-only pending recovery
 

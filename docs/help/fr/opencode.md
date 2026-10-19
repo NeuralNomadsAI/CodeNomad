@@ -18,7 +18,7 @@ L’exécutable installé et le service actif peuvent avoir des versions différ
 | Classification | Exigence actuelle | Signification |
 | --- | --- | --- |
 | Minimum | OpenCode **2.0.27** | Environnement natif de plugins requis ; un ancien environnement stable ne peut pas charger les plugins fournis. |
-| Recommandée | OpenCode **2.0.29** | Cible qualifiée, distincte du minimum technique. |
+| Recommandée | OpenCode **2.0.32** | Cible qualifiée, distincte du minimum technique. |
 | Non vérifiée | Version plus récente ou personnalisée non entièrement validée | Non rejetée simplement parce que non testée ; les contrats API réels du service connecté sont vérifiés. |
 
 Les contrats requis de session, permission, Form, boîte de réception et environnement de session doivent aussi être disponibles. Une version d’exécutable seule ne prouve pas que le service connecté les prend en charge. Si la configuration signale un service actif non pris en charge, sélectionnez/installez une CLI prise en charge et utilisez le redémarrage explicite du service partagé lorsque vous êtes prêt.
