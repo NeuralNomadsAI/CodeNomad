@@ -5,6 +5,7 @@ import { BrowserPage } from "./browser-page"
 class Native {
   generation = "run/guest/document-1"
   hidden = false
+  failMethod?: string
   calls: Array<{ method: string; input: Record<string, any> }> = []
   gate?: () => Promise<void>
   leases = new Map<string, string>()
@@ -19,6 +20,7 @@ class Native {
     }
     if (input.generation !== this.generation || this.leases.get(input.operationID) !== this.generation) throw new Error("Browser document changed")
     if (method === "browser.page.check") return { url: "https://example.test/" } as T
+    if (input.method === this.failMethod) throw new Error("Native reply uncertain")
     if (input.method === "Accessibility.getFullAXTree") { await this.gate?.(); return { nodes: this.nodes } as T }
     if (input.method === "DOM.resolveNode") return { object: { objectId: "object-1" } } as T
     if (input.method === "Runtime.callFunctionOn") return { result: { value: null } } as T
@@ -88,4 +90,25 @@ test("queued cancellation and shutdown perform no later input; aborted in-flight
   assert.equal(native.leases.size, 0)
   page.close()
   await assert.rejects(page.execute("a", { action: "snapshot" }), /shutting down/)
+})
+
+test("a failed native mutation is never replayed, and queue admission is bounded", async () => {
+  const native = new Native(), page = new BrowserPage(native)
+  const ref = firstRef((await page.execute("a", { action: "snapshot" })).snapshot)
+  native.failMethod = "Runtime.callFunctionOn"
+  await assert.rejects(page.execute("a", { action: "click", ref }), /reply uncertain/)
+  assert.equal(native.calls.filter(call => call.input.method === "Runtime.callFunctionOn").length, 1)
+  assert.equal(native.leases.size, 0)
+  native.failMethod = undefined
+  let release!: () => void, entered!: () => void
+  const started = new Promise<void>(resolve => { entered = resolve })
+  native.gate = async () => { entered(); await new Promise<void>(resolve => { release = resolve }) }
+  const first = page.execute("a", { action: "snapshot" }).catch(error => error)
+  await started
+  const pending = Array.from({ length: 31 }, () => page.execute("a", { action: "snapshot" }).catch(error => error))
+  await assert.rejects(page.execute("a", { action: "snapshot" }), /Too many pending/)
+  page.close()
+  release()
+  assert.ok((await Promise.all([first, ...pending])).every(result => result instanceof Error))
+  assert.equal(native.leases.size, 0)
 })
