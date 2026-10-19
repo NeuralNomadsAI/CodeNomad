@@ -647,7 +647,7 @@ export function createDeveloperToolTransform() {
         type: "object",
         properties: {
           ref: { type: "string", description: "Expand only this element's subtree (a ref from the latest inspection)" },
-          query: { type: "string", description: "Keep only elements whose name, value, description or role contains this text" },
+          query: { type: "string", description: "Keep only elements whose name, value or description contains this text, or whose role is exactly this text" },
         },
         additionalProperties: false,
       },

@@ -153,14 +153,15 @@ test("typing never lands in another field, and normalized inputs keep the browse
     assert.match(outline, /region "Mission editor" \[e\d+\]\n {4}- text "Mission"/, "a region's title does not swallow its text")
     assert.equal((await run.cdp.inspect(run.identity, { query: "value" })).snapshot, "No element matches \"value\"", "query ignores field labels")
 
-    const outside = await refFor(/textbox "Outside"/)
-    await act({ kind: "click", ref: outside })
+    // A focused field is where misdirected native text insertion would land.
+    await page.focus("#outside")
     // The ref was seen while its disclosure was open; it closed before typing (#1015 review).
     await page.evaluate(() => { document.querySelector("details")!.open = true })
     const hidden = await refFor(/textbox "Hidden"/)
     await page.evaluate(() => { document.querySelector("details")!.open = false })
     await assert.rejects(act({ kind: "type", ref: hidden, text: "Lost" }), /cannot take focus/)
     await assert.rejects(act({ kind: "type", ref: await refFor(/textbox "Locked"/), text: "Lost" }), /is disabled/)
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "outside")
     assert.equal(await page.inputValue("#outside"), "Kept", "nothing was typed into the focused field instead")
     const modalOutside = await refFor(/textbox "Outside"/)
     await page.evaluate(() => (document.getElementById("modal") as HTMLDialogElement).showModal())
@@ -173,8 +174,16 @@ test("typing never lands in another field, and normalized inputs keep the browse
     assert.deepEqual(await act({ kind: "type", ref: await refFor(/textbox "Mail"/), text: "x@y.z" }), { value: "x@y.z" }, "clearing works there too")
     // Through its label's text, which designates the labelled control.
     assert.deepEqual(await act({ kind: "type", ref: await refFor(/text "Tint"/), text: "#FF0000" }), { value: "#ff0000" })
-    assert.deepEqual(await act({ kind: "type", ref: await refFor(/slider "Volume"/), text: "55" }), { value: "60" }, "ranges snap to their step")
+    const volume = await refFor(/slider "Volume"/)
+    assert.deepEqual(await act({ kind: "type", ref: volume, text: "55" }), { value: "60" }, "ranges snap to their step")
     await page.evaluate(() => { (window as any).events.length = 0 })
+    for (const text of ["0x50", " 70", ""]) {
+      await assert.rejects(act({ kind: "type", ref: volume, text }), /is not a valid value/, `range ${JSON.stringify(text)}`)
+    }
+    await assert.rejects(act({ kind: "type", ref: await refFor(/text "Tint"/), text: "" }), /is not a valid value/, "a color has no empty value")
+    assert.deepEqual(await act({ kind: "type", ref: await refFor(/textbox "Mail"/), text: "", clear: false }), { value: "x@y.z" })
+    assert.deepEqual([await page.inputValue("#volume"), await page.inputValue("#tint")], ["60", "#ff0000"])
+    assert.deepEqual(await page.evaluate(() => (window as any).events), [], "refused or unchanged values fire nothing")
     await assert.rejects(act({ kind: "type", ref: await refFor(/Date "Day"/), text: "2026-13-45" }), /"2026-13-45" is not a valid value/)
     assert.equal(await page.inputValue("#day"), "2026-01-02", "an invalid date changes nothing")
     assert.deepEqual(await page.evaluate(() => (window as any).events), [])

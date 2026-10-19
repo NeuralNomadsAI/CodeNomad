@@ -110,6 +110,8 @@ test("numeric values show, text survives a region's title, and queries ignore fi
     "- link \"Docs\" [e9] url=\"https://example.test/docs\"",
   ].join("\n"))
   assert.equal(renderSnapshot(page, ref, { query: "url" }).text, "No element matches \"url\"")
+  assert.equal(renderSnapshot(page, ref, { query: "ink" }).text, "No element matches \"ink\"", "roles match exactly, never as a substring")
+  assert.equal(renderSnapshot(page, ref, { query: "LINK" }).text, "- link \"Docs\" [e9] url=\"https://example.test/docs\"")
   assert.equal(renderSnapshot(page, ref, { query: "55" }).text, "- slider \"Volume\" [e2] value=\"55\"", "values are searchable")
 })
 

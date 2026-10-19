@@ -58,7 +58,8 @@ interface View {
   head: string
   tail: string
   name: string
-  /** Role, name, value and description that `query` matches, never the field labels around them. */
+  /** `query` matches the exact role, or text within the name, value or description; never field labels. */
+  role: string
   searchable: string
   backend?: number
   children: View[]
@@ -98,7 +99,7 @@ export function renderSnapshot(nodes: readonly AxNode[], ref: (backendNodeId: nu
       // name computed from contents (a button's label pieces); a region's title keeps its text.
       const normalized = normalize(name)
       if (!normalized || (context.name && (context.name === normalized || (context.fromContents && context.name.includes(normalized))))) return []
-      return [view(`text ${quote(name)}`, "", name, node, name)]
+      return [view("text", `text ${quote(name)}`, "", name, node, name)]
     }
     const properties = new Map((node.properties ?? []).map(property => [property.name ?? "", property.value?.value]))
     const editable = typeof properties.get("editable") === "string" && properties.get("editable") !== ""
@@ -114,7 +115,7 @@ export function renderSnapshot(nodes: readonly AxNode[], ref: (backendNodeId: nu
       description && normalize(description) !== normalize(name) ? ` description=${quote(description)}` : "",
       ...states(role, properties, editable && !FIELD_ROLES.has(role)),
     ].join("")
-    const result = view(`${role}${name ? ` ${quote(name)}` : ""}`, tail, name, node, `${role} ${name} ${value} ${description}`)
+    const result = view(role, `${role}${name ? ` ${quote(name)}` : ""}`, tail, name, node, `${name} ${value} ${description}`)
     result.children = children
     return [result]
   }
@@ -157,8 +158,8 @@ export function renderSnapshot(nodes: readonly AxNode[], ref: (backendNodeId: nu
 /** The nearest printed ancestor's normalized name, and whether it was computed from its contents. */
 interface Context { name?: string; fromContents?: boolean }
 
-function view(head: string, tail: string, name: string, node: AxNode, searchable: string): View {
-  return { head, tail, name: normalize(name), searchable: normalize(searchable),
+function view(role: string, head: string, tail: string, name: string, node: AxNode, searchable: string): View {
+  return { head, tail, name: normalize(name), role: normalize(role), searchable: normalize(searchable),
     ...(Number.isInteger(node.backendDOMNodeId) ? { backend: node.backendDOMNodeId } : {}), children: [], size: 1, full: 0 }
 }
 
@@ -191,7 +192,7 @@ function states(role: string, properties: Map<string, unknown>, editable: boolea
 
 /** A match keeps its whole subtree; other nodes survive only as ancestors of a match. */
 function filter(item: View, query: string): View[] {
-  if (item.searchable.includes(query)) return [item]
+  if (item.role === query || item.searchable.includes(query)) return [item]
   const children = item.children.flatMap(child => filter(child, query))
   return children.length ? [{ ...item, children }] : []
 }

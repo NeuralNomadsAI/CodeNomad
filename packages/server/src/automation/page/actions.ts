@@ -216,13 +216,13 @@ const PREPARE = `const field = element, clear = args[0];
 /** Sets an input's value like a picker would. An invalid value is refused before anything changes;
  * a valid one keeps the browser's normalization (lowercase colors, snapped ranges). */
 const SET_VALUE = `const [text, append] = args, next = append ? element.value + text : text;
-  if (next !== "") {
-    const valid = element.type === "color" ? /^#[0-9a-f]{6}$/i.test(next)
-      : element.type === "range" ? next.trim() !== "" && Number.isFinite(Number(next))
-      : ${JSON.stringify(PROBED_TYPES)}.includes(element.type) ? (() => { const probe = document.createElement("input"); probe.type = element.type; probe.value = next; return probe.value !== ""; })()
-      : true;
-    if (!valid) throw new Error("codenomad:invalid-value:" + next);
-  }
+  // Ranges and colors have no empty value: the browser would substitute its default.
+  const valid = element.type === "color" ? /^#[0-9a-f]{6}$/i.test(next)
+    : element.type === "range" ? /^-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)(?:[eE][+-]?\\d+)?$/.test(next)
+    : next !== "" && ${JSON.stringify(PROBED_TYPES)}.includes(element.type) ? (() => { const probe = document.createElement("input"); probe.type = element.type; probe.value = next; return probe.value !== ""; })()
+    : true;
+  if (!valid) throw new Error("codenomad:invalid-value:" + next);
+  if (next === element.value) return null;
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(element, next);
   element.dispatchEvent(new Event("input", { bubbles: true, composed: true }));
   element.dispatchEvent(new Event("change", { bubbles: true }));
