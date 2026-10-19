@@ -803,7 +803,7 @@ export default function ToolCall(props: ToolCallProps) {
     await copyToClipboard(text)
   }
 
-  const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
+  const buildActionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
     if (hasToolInput()) {
@@ -848,6 +848,12 @@ export default function ToolCall(props: ToolCallProps) {
     return items
   }
 
+  // Memoized so tool-state events do not rebuild the item array (and its icon
+  // DOM) for every subscriber: re-evaluating on each store update would remount
+  // every header action through <For>.
+  const secondaryActionItems = createMemo(() => buildActionMenuItems(false))
+  const overflowEligibleItems = createMemo(() => buildActionMenuItems(true))
+
   const status = () => toolState()?.status || ""
 
   return (
@@ -866,7 +872,7 @@ export default function ToolCall(props: ToolCallProps) {
         data-part-id={toolCallIdentifier()}
       >
       <Show when={!hasPendingForm()}>
-        <div class="tool-call-header" ref={observeActionOverflow} data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}>
+        <div class="tool-call-header" ref={observeActionOverflow} data-action-overflow={overflowEligibleItems().length >= 2 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -914,7 +920,7 @@ export default function ToolCall(props: ToolCallProps) {
           {(action) => <span class="tool-call-header-action">{action()}</span>}
         </Show>
 
-        <For each={actionMenuItems()}>
+        <For each={secondaryActionItems()}>
           {(item) => (
             <button
               type="button"
@@ -935,7 +941,7 @@ export default function ToolCall(props: ToolCallProps) {
           )}
         </For>
         <ActionOverflowMenu
-          items={actionMenuItems(true)}
+          items={overflowEligibleItems()}
           label={t("messageItem.actions.more")}
           triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-narrow"
           minItems={2}

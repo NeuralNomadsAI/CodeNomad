@@ -1,4 +1,4 @@
-import { Suspense, createEffect, createSignal, createUniqueId, lazy, on, onCleanup, Show } from "solid-js"
+import { Suspense, createEffect, createMemo, createSignal, createUniqueId, lazy, on, onCleanup, Show } from "solid-js"
 import { Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
@@ -830,7 +830,7 @@ export default function PromptInput(props: PromptInputProps) {
     voiceInput.stopRecording()
   }
 
-  const promptActionMenuItems = (): ActionOverflowMenuItem[] => {
+  const buildPromptActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
     if (showVoiceInput()) {
       items.push({
@@ -886,6 +886,10 @@ export default function PromptInput(props: PromptInputProps) {
     })
     return items
   }
+
+  // Memoized so composer-state updates (voice transcription ticks, drafts) do
+  // not rebuild the item array and its icon DOM on every re-render.
+  const promptActionMenuItems = createMemo(() => buildPromptActionMenuItems())
 
   return (
     <div class="prompt-input-container">

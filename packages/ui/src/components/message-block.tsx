@@ -384,7 +384,7 @@ function ToolCallItem(props: ToolCallItemProps) {
     }
   }
 
-  const actionMenuItems = (): ActionOverflowMenuItem[] => {
+  const buildActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
     if (taskSessionId()) {
@@ -409,6 +409,11 @@ function ToolCallItem(props: ToolCallItemProps) {
 
     return items
   }
+
+  // Memoized: the consumer re-evaluates this function prop inside its own item
+  // builder, so an unmemoized build would recreate the array (and icon DOM) on
+  // every tool-state event of the owning message.
+  const actionMenuItems = createMemo(() => buildActionMenuItems())
 
   return (
     <Show when={Boolean(toolPart())}>

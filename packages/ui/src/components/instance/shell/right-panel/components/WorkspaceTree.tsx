@@ -132,6 +132,9 @@ export function WorkspaceTree(props: {
       <For each={props.tree.rows()}>{row => {
         const isFolder = row.type === "directory", Icon = icon(row.name)
         const expanded = () => props.tree.state().expanded.has(row.path)
+        // Memoized per row so tree-state changes (selection, expansion) do not
+        // rebuild the action array and its icon DOM for every row.
+        const actions = createMemo(() => rowActions(row))
         return <div role="treeitem" data-path={row.path} aria-label={row.name} aria-level={row.depth}
           aria-expanded={isFolder ? expanded() : undefined} aria-selected={props.tree.state().selected === row.path}
           class="workspace-tree-row" style={{ "padding-inline-start": `${8 + row.depth * 14}px` }} title={row.path}
@@ -143,7 +146,7 @@ export function WorkspaceTree(props: {
           </Show>
           <Show when={isFolder} fallback={<Icon size={14} />}><Show when={expanded()} fallback={<Folder size={14} />}><FolderOpen size={14} /></Show></Show>
           <span class="workspace-tree-label">{row.name}</span><Show when={props.tree.busy().has(row.path)}><RefreshCw size={12} class="animate-spin" /></Show>
-          <FileRowActions items={rowActions(row)} label={props.t("instanceShell.filesShell.actions.more", { name: row.name })} />
+          <FileRowActions items={actions()} label={props.t("instanceShell.filesShell.actions.more", { name: row.name })} />
         </div>
       }}</For>
     </div>

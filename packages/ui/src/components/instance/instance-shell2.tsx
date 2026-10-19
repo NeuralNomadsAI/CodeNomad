@@ -642,7 +642,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     setFiltersOpen(false)
   })
 
-  const headerActionMenuItems = (): ActionOverflowMenuItem[] => {
+  const buildHeaderActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = [{
       key: "commands",
       checked: paletteOpen(),
@@ -677,6 +677,10 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
     return items
   }
+
+  // Memoized: the header re-renders on session/status changes, and each
+  // evaluation would otherwise rebuild the item array and its icon DOM.
+  const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
   const instancePaletteCommands = createMemo(() => props.paletteCommands())
   const paletteOpen = createMemo(() => isCommandPaletteOpen(props.instance.id))

@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
 import { Bot, User, Copy, Eraser, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
 import type { SessionInboxUser } from "@opencode/client"
@@ -434,7 +434,7 @@ export default function MessageItem(props: MessageItemProps) {
     return formatWorkedFor(hours, "hours")
   }
 
-  const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
+  const buildActionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
     const pending = props.pendingPrompt
@@ -525,8 +525,14 @@ export default function MessageItem(props: MessageItemProps) {
     return items
   }
 
+  // Memoized so an identical re-projection of the message does not rebuild the
+  // item array (and its icon DOM) for every subscriber: re-evaluating on each
+  // store update would remount every action button through <For>.
+  const secondaryActionItems = createMemo(() => buildActionMenuItems(false))
+  const overflowEligibleItems = createMemo(() => buildActionMenuItems(true))
+
   const renderSecondaryActions = () => (
-    <For each={actionMenuItems()}>
+    <For each={secondaryActionItems()}>
       {(item) => (
         <button
           class="message-action-button"
@@ -596,7 +602,7 @@ export default function MessageItem(props: MessageItemProps) {
 
           <div
             class="message-item-actions"
-            data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}
+            data-action-overflow={overflowEligibleItems().length >= 2 ? "true" : undefined}
             ref={(el) => (actionsEl = el)}
           >
             <Show when={isUser()}>
@@ -663,7 +669,7 @@ export default function MessageItem(props: MessageItemProps) {
                 {renderSecondaryActions()}
               </div>
               <ActionOverflowMenu
-                items={actionMenuItems(true)}
+                items={overflowEligibleItems()}
                 label={t("messageItem.actions.more")}
                 triggerClass="message-action-button action-overflow-narrow"
                 minItems={2}
@@ -695,7 +701,7 @@ export default function MessageItem(props: MessageItemProps) {
                 {renderSecondaryActions()}
               </div>
               <ActionOverflowMenu
-                items={actionMenuItems(true)}
+                items={overflowEligibleItems()}
                 label={t("messageItem.actions.more")}
                 triggerClass="message-action-button action-overflow-narrow"
                 minItems={2}
