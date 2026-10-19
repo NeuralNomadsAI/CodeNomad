@@ -8,6 +8,7 @@ import { registerHooks, createRequire } from "node:module"
 import path from "node:path"
 import os from "node:os"
 import { pathToFileURL } from "node:url"
+import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
 import { tsImport } from "tsx/esm/api"
 import Fastify from "fastify"
@@ -36,6 +37,11 @@ const receipt = { status: "running", cli, artifacts: root, gates, checkpoints,
 let child, stopped, manager, plugin, removeBridge, output = "", failure, mission, coordinator, coordinatorStep = 0
 let stage = "isolated setup", nativeToolBefore, rootAfterLaunch = false, rootReleased = false
 let capture
+let decision = false, decisionStep = 0, assignment, journalBefore, humanAnswered = false
+const journal = () => {
+  const db = new DatabaseSync(path.join(root, "fixture.db"), { readOnly: true })
+  try { return db.prepare("SELECT key,value FROM kv WHERE key LIKE '%codenomad-missions/v2/%' ORDER BY key").all() } finally { db.close() }
+}
 const bridge = Fastify()
 const call = (tool, input, id) => ({ tool, input, id })
 const task = key => ({ taskKey: key, title: key, brief: `TRAJECTORY_${key.toUpperCase()}: Return bounded native evidence; recurse only within native permissions.`,
@@ -51,7 +57,29 @@ const provider = createServer(async (request, response) => {
     assert(requests.length < 100, "Provider request budget")
     let answer = "Private fixture title"
     if (kind === "primary") {
-      if (sessionID === coordinator) {
+      if (decision) {
+        const result = id => {
+          const content = body.messages.findLast(message => message.role === "tool" && message.tool_call_id === id)?.content
+          return typeof content === "string" ? content : content?.map(part => part.text ?? "").join("")
+        }
+        if (sessionID !== coordinator) {
+          if (result("ask")) { await until(() => humanAnswered); answer = "The human chose Module" }
+          else answer = call("question", { questions: [{ question: "Choose the seam?", header: "Seam", options: [{ label: "Module", description: "Own the boundary" }] }] }, "ask")
+        } else {
+          if (decisionStep === 1) { assignment = JSON.parse(result("declare")); journalBefore = journal(); assert(journalBefore.length) }
+          if (decisionStep === 2) {
+            assert.match(result("unanswered"), /Human decision required|Native human answer graph unavailable/)
+            assert.deepEqual(journal(), journalBefore, "Refusal leaves every one-time journal row unchanged")
+          }
+          if (decisionStep === 4) assert.equal(JSON.parse(result("decision")).disposition, "reported", result("decision"))
+          if (decisionStep === 5) assert.equal(JSON.parse(result("final")).disposition, "finished", result("final"))
+          answer = [call("mission_delegate", { taskKey: "decision", title: "Choose the seam", role: "decision", brief: "Ask the human through a native Form" }, "declare"),
+            call("mission_report", { taskKey: "decision", outcome: "completed", summary: "Premature decision" }, "unanswered"),
+            call("subagent", { agent: "trajectory_child", description: "Decision worker", prompt: assignment?.assignmentPrompt }, "launch"),
+            call("mission_report", { taskKey: "decision", outcome: "completed", summary: "The human chose Module" }, "decision"),
+            call("mission_report", { outcome: "completed", final: true, summary: "Human decision recorded" }, "final")][decisionStep++] ?? "Done"
+        }
+      } else if (sessionID === coordinator) {
         if (coordinatorStep === 0) { await capture("started"); answer = call("mission_inspect", { catalog: true }, "trajectory_catalog") }
         else if (coordinatorStep === 1) answer = call("mission_delegate", task("alpha"), "trajectory_declare_alpha")
         else if (coordinatorStep === 2) answer = call("mission_delegate", task("beta"), "trajectory_declare_beta")
@@ -148,10 +176,10 @@ try {
   const load = file => tsImport(`../packages/server/src/${file}`, import.meta.url)
   const [{ WorkspaceManager }, { EventBus }, { rememberRuntime }, { DesktopPluginLifecycle }, { resolveDesktopPluginPaths },
     { createAutomationBridgeRegistration, publishAutomationBridge }, { registerAutomationPluginRoute }, { registerMissionRoutes },
-    { WorktreeDeletionFence }, { CODENOMAD_MISSIONS_RPC }] = await Promise.all([
+    { WorktreeDeletionFence }, { CODENOMAD_MISSIONS_RPC }, { registerInstanceProxyRoutes }] = await Promise.all([
     load("workspaces/manager.ts"), load("events/bus.ts"), load("opencode/compatibility/runtime.ts"), load("opencode/desktop-plugin-lifecycle.ts"),
     load("opencode/desktop-plugin-paths.ts"), load("opencode/automation-plugin.ts"), load("server/routes/automation-plugin.ts"),
-    load("server/routes/missions.ts"), load("workspaces/worktree-session-evacuation.ts"), load("missions/rpc.ts")])
+    load("server/routes/missions.ts"), load("workspaces/worktree-session-evacuation.ts"), load("missions/rpc.ts"), load("server/http-server.ts")])
   await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
   const fixturePlugin = path.join(root, "fixture-plugin")
   await mkdir(fixturePlugin)
@@ -181,8 +209,13 @@ try {
   const info = await (await fetch(`${url}/api/info`, { headers: { authorization: `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })).json()
   receipt.runtime = { version: info.version, pid: info.pid, url }
   rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
-  manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
-    settings: { getOwner: () => ({ environmentVariables: {} }), readEnvironmentForAdmission: async () => ({}) },
+  const yaml = path.join(root, "profile.yaml"); await writeFile(yaml, "server:\n  environmentVariables: {}\n")
+  const settings = { getProfileScope: () => ({ channel: "native-fixture", configIdentity: yaml, key: createHash("sha256").update(`native-fixture\0${yaml}`).digest("hex") }), configYamlPathForAuthority: () => yaml,
+    getOwner: () => ({ environmentVariables: {} }), readEnvironmentForAdmission: async () => ({}) }
+  const human = headers => headers.cookie === "session=isolated-human" ? { sessionId: "isolated-human", username: "fixture-human" } : null
+  const auth = { isAuthEnabled: () => true, isLoopbackRequest: () => true, getCookieName: () => "session",
+    getSessionFromHeaders: human, getSessionFromRequest: request => human(request.headers) }
+  manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(), settings,
     binaryResolver: { resolveDefault: () => ({ path: cli, label: "Private native trajectory" }) },
     hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }) })
   const { workspace } = await manager.create(project), client = await manager.getSharedServiceClient()
@@ -192,7 +225,9 @@ try {
   const worktreeDeletionFence = new WorktreeDeletionFence()
   registerMissionRoutes(bridge, { workspaceManager: manager, worktreeDeletionFence })
   registerAutomationPluginRoute(bridge, { workspaceManager: manager, worktreeDeletionFence,
-    authManager: { isLoopbackRequest: () => true }, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
+    authManager: auth, settings, bridgeToken: registration.token, nativeParent: {}, developerCdp: {} })
+  registerInstanceProxyRoutes(bridge, { workspaceManager: manager, worktreeDeletionFence, logger: pino({ level: "silent" }),
+    humanAnswers: { auth, manager, settings, bridgeToken: registration.token } })
   await bridge.listen({ host: "127.0.0.1", port: 0 })
   registration.url = `http://127.0.0.1:${bridge.server.address().port}/api/opencode-plugin/automation`
   removeBridge = await publishAutomationBridge(registration)
@@ -275,6 +310,31 @@ try {
   assert.deepEqual(await client.rpc(definition).inspect({}, options()), nativeToolBefore)
   assert.equal((await client.server.info()).pid, info.pid)
   gate("native subagent schema/options unchanged and same isolated runtime survives")
+  stage = "one-time Wayfinder decision discovery"; decision = true
+  const wayfinder = await rpc.create({ requestID: "wayfinder-create", objective: "Choose the seam with a native human answer", template: "wayfinder", prepared: true }, options())
+  coordinator = wayfinder.mission.coordinatorSessionId
+  const play = await bridge.inject({ method: "POST", url: `${missionURL}/${wayfinder.mission.id}/control`,
+    payload: { requestId: "wayfinder-start", expectedRevision: wayfinder.mission.revision, action: "start" } })
+  assert.equal(play.statusCode, 200, play.body)
+  let forms
+  await until(async () => (forms = (await client.form.list({ location })).data).length === 1)
+  const form = forms[0]
+  assert.equal((await client.session.get({ sessionID: form.sessionID })).parentID, coordinator)
+  assert.equal(form.metadata?.kind, "question")
+  const reply = await bridge.inject({ method: "POST", url: `/workspaces/${workspace.id}/instance/api/session/${form.sessionID}/form/${form.id}/reply`,
+    headers: { cookie: "session=isolated-human", "content-type": "application/json", "x-codenomad-human-answer": "1" }, payload: JSON.stringify({ answer: { q0: "Module" } }) })
+  receipt.decision = { formID: form.id, replyStatus: reply.statusCode }
+  assert.equal(reply.statusCode, 204, reply.body); humanAnswered = true
+  await until(() => decisionStep === 6)
+  await client.session.wait({ sessionID: coordinator }, { signal: AbortSignal.timeout(20_000) })
+  const completed = (await rpc.snapshot({}, options())).missions.find(value => value.id === wayfinder.mission.id)
+  assert.equal(completed.status, "completed"); assert.equal(completed.tasks[0].status, "completed")
+  const report = completed.tasks[0].report
+  assert.equal(report.delivery, "coordinator-readout"); assert.equal(report.artifact.kind, "decision")
+  assert.equal(report.artifact.question, "Choose the seam?"); assert.equal(report.artifact.answer, "Module")
+  assert.equal(report.artifact.provenance.sessionID, form.sessionID); assert.equal(report.artifact.provenance.formID, form.id)
+  receipt.decision.report = report
+  gate("Wayfinder refuses without journal mutation then discovers the native child's authenticated UI answer without an artifact")
   receipt.status = "passed"; receipt.passCount = gates.length
   receipt.nativeToolResults = toolParts.map(({ id, name, state }) => ({ id, name, status: state.status }))
   receipt.providerPrimaryRequests = requests.filter(value => value.kind === "primary").length
