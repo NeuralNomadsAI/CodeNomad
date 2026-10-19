@@ -6,7 +6,7 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { build } from "esbuild"
-import electronPath from "electron"
+import { createRequire } from "node:module"
 import { _electron, type ElectronApplication } from "playwright"
 
 test("the shared engine drives a real Electron preview through the guarded native channel, without a visible window", { timeout: 90_000 }, async t => {
@@ -37,7 +37,8 @@ test("the shared engine drives a real Electron preview through the guarded nativ
     define: { "import.meta.url": JSON.stringify(pathToFileURL(bundle).href) } })
   const env = { ...process.env, CODENOMAD_TEST_PROFILE: profile, CODENOMAD_TEST_AUTOMATION_BUNDLE: bundle, CODENOMAD_TEST_GUEST_URL: guestURL }
   delete env.ELECTRON_RUN_AS_NODE
-  app = await _electron.launch({ executablePath: process.env.CODENOMAD_TEST_ELECTRON || electronPath,
+  const executablePath = process.env.CODENOMAD_TEST_ELECTRON || createRequire(import.meta.url)("electron") as string
+  app = await _electron.launch({ executablePath,
     args: ["--no-sandbox", fileURLToPath(new URL("fixtures/automation-preview-electron.cjs", import.meta.url))], env })
   const running = app
   const execute = (action: Record<string, unknown>) => running.evaluate(async (_electron, input) =>
