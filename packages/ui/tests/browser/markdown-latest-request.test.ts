@@ -261,11 +261,23 @@ for (const kind of ["prose", "code"] as const) {
     assert.ok(result.renders <= 5, `10 chunks 50 ms apart render at most once per 200 ms: ${result.renders}`)
     assert.equal(await page.locator(".markdown-body").getAttribute("data-markdown-highlight"), "false", "no highlighting while a long reply streams")
     const rendersBefore = (await calls(page)).length
-    const completion = await page.evaluate(() => { const start = performance.now(); (window as any).fixture.setStreaming(false); return start })
+    const final = `${result.final}FINAL-CHUNK`
+    const completion = await page.evaluate(async text => {
+      const f = (window as any).fixture, before = f.audit.calls.length
+      // Leave one last chunk queued, then complete in the same task. With the module
+      // already warm, completion starts the real parser in a microtask, before timers.
+      f.update(text, 2000)
+      const queued = f.audit.calls.length - before
+      f.setStreaming(false)
+      await Promise.resolve()
+      return { queued, started: f.audit.calls.slice(before) }
+    }, final)
+    assert.equal(completion.queued, 0, "the last streaming chunk waits for the coalescing timer")
+    assert.deepEqual(completion.started, [{ text: final, theme: "light" }], "completion flushes the latest text before any timer can run")
     await page.waitForFunction(() => document.querySelector(".markdown-body")?.getAttribute("data-markdown-highlight") === "true")
-    const completedIn = await page.evaluate(start => performance.now() - start, completion)
+    await settle(page)
     assert.equal((await calls(page)).length, rendersBefore + 1)
-    assert.equal((await calls(page)).at(-1).text, result.final)
-    assert.ok(completedIn < 150, `completion renders immediately, not after the coalescing interval: ${Math.round(completedIn)} ms`)
+    assert.equal((await calls(page)).at(-1).text, final)
+    assert.ok((await page.locator(".markdown-body").textContent())?.includes("FINAL-CHUNK"), "the final highlighted content is displayed")
   }))
 }
