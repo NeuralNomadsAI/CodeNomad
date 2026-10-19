@@ -381,6 +381,7 @@ export class BrowserController {
           // CDP Input.insertText is silently ignored by an embedded/background view.
           () => command === "Input.insertText" && typeof (params as { text?: unknown }).text === "string"
             ? lease.registration.guest.insertText((params as { text: string }).text).then(() => ({}))
+            : command === "Input.dispatchKeyEvent" ? sendGuestKey(lease.registration.guest, params as Record<string, unknown>)
             : lease.registration.guest.debugger.sendCommand(command, params), Math.min(deadline, lease.expires),
         )
         this.checkLease(lease, deadline)
@@ -450,6 +451,17 @@ export async function handleNativeBrowserRequest(controller: BrowserController, 
 
 function ensureDeadline(deadline: number): void {
   if (Date.now() >= deadline) throw new Error("Native request expired before execution")
+}
+
+async function sendGuestKey(guest: WebContents, params: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const aliases: Record<string, string> = { ArrowDown: "Down", ArrowUp: "Up", ArrowLeft: "Left", ArrowRight: "Right", " ": "Space" }
+  if (typeof params.key !== "string" || !["keyDown", "rawKeyDown", "keyUp"].includes(String(params.type))) throw new Error("Invalid browser key event")
+  const mask = typeof params.modifiers === "number" ? params.modifiers : 0
+  const modifiers = [[1, "alt"], [2, "control"], [4, "meta"], [8, "shift"]] as const
+  const options = { keyCode: aliases[params.key] ?? params.key, modifiers: modifiers.filter(([bit]) => mask & bit).map(([, name]) => name) }
+  guest.sendInputEvent({ type: params.type === "keyUp" ? "keyUp" : "keyDown", ...options })
+  if (params.type === "keyDown" && typeof params.text === "string" && params.text) guest.sendInputEvent({ type: "char", ...options, keyCode: params.text })
+  return {}
 }
 
 function validId(value: unknown, max: number): value is string {

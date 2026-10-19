@@ -14,13 +14,17 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   let app: ElectronApplication | undefined
   const server = createServer((_request, response) => {
     response.setHeader("Content-Type", "text/html")
-    response.end(`<!doctype html><main>
+    response.end(`<!doctype html><main><form>
       <label>Title <input value="Prefilled"></label>
       <label>Plan <select><option value="custom">Flexible</option><option value="wayfinder">Exploration</option></select></label>
-      <button id="confirm">Confirm</button><output id="result">Pending</output>
+      <button id="confirm" type="button">Confirm</button><button>Submit</button><output id="result">Pending</output>
       <script>document.getElementById('confirm').addEventListener('click', () => {
         document.getElementById('result').textContent = document.querySelector('input').value + ':' + document.querySelector('select').value
-      })</script></main>`)
+      }); document.querySelector('input').addEventListener('keydown', event => {
+        document.getElementById('result').textContent = 'Key:' + event.key
+      }); let submitted = 0; document.querySelector('form').addEventListener('submit', event => {
+        event.preventDefault(); document.getElementById('result').textContent = 'Submitted:' + (++submitted) + ':' + document.querySelector('input').value
+      })</script></form></main>`)
   })
   t.after(async () => {
     try { await app?.close() }
@@ -57,6 +61,19 @@ test("the shared engine drives a real Electron preview through the guarded nativ
   const ref = (pattern: RegExp) => new RegExp(`${pattern.source}[^\\n]*?\\[(b\\d+e\\d+)\\]`).exec(outline)![1]
   const title = ref(/textbox "Title"/), plan = ref(/combobox "Plan"/), confirm = ref(/button "Confirm"/)
   assert.deepEqual((await execute({ action: "type", ref: title, text: "Pilot", clear: true })).value, "Pilot")
+  await execute({ action: "press", key: "a", ref: title })
+  assert.equal((await execute({ action: "wait", text: "Key:a", gone: false, timeout: 500 })).found, true,
+    "keys reach a newly opened guest with no preceding pointer click")
+  assert.match(String((await execute({ action: "snapshot", ref: title })).snapshot), /value="Pilota"/)
+  await execute({ action: "press", key: "Control+A", ref: title })
+  await execute({ action: "press", key: "Backspace" })
+  assert.doesNotMatch(String((await execute({ action: "snapshot", ref: title })).snapshot), /value=/,
+    "native keyboard shortcuts affect the guest selection and default editing")
+  await execute({ action: "type", ref: title, text: "Pilot", clear: true })
+  assert.match(String((await execute({ action: "press", key: "Tab", ref: title })).focused), /select.*Plan/)
+  await execute({ action: "press", key: "Enter", ref: title })
+  assert.equal((await execute({ action: "wait", text: "Submitted:1:Pilot", gone: false, timeout: 500 })).found, true,
+    "Enter submits once without any prior pointer click")
   assert.deepEqual((await execute({ action: "select", ref: plan, values: ["Exploration"] })).selected, ["Exploration"])
   await execute({ action: "click", ref: confirm })
   assert.equal((await execute({ action: "wait", text: "Pilot:wayfinder", gone: false, timeout: 1000 })).found, true)

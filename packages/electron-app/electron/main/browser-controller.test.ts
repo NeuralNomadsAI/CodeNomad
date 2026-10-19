@@ -11,6 +11,7 @@ interface GuestOptions {
   loadURL?: (url: string) => Promise<void>
   sendCommand?: (method: string, params?: Record<string, unknown>) => Promise<unknown>
   insertText?: (text: string) => Promise<void>
+  sendInputEvent?: (event: Electron.InputEvent) => void
   loading?: boolean
 }
 
@@ -26,6 +27,7 @@ function createGuest(options: GuestOptions) {
     isLoading: () => options.loading ?? false,
     stop: () => undefined, reload: () => undefined, getURL: () => url,
     insertText: options.insertText ?? (async (text: string) => { await options.sendCommand?.("Input.insertText", { text }) }),
+    sendInputEvent: options.sendInputEvent ?? (() => undefined),
     loadURL: async (nextUrl: string) => { await options.loadURL?.(nextUrl); url = nextUrl },
     debugger: Object.assign(new EventEmitter(), {
       isAttached: () => attached,
@@ -62,6 +64,21 @@ async function begin(controller: BrowserController, sessionID = "session", opera
 }
 
 describe("BrowserController private page channel", () => {
+  it("maps key presses and their text/default effects to the exact native guest without a prior click", async () => {
+    const h = createHarness(), events: Electron.InputEvent[] = [], methods: string[] = []
+    const { guest } = createGuest({ id: 82, owner: h.owner, sendInputEvent: event => { events.push(event) },
+      sendCommand: async method => { methods.push(method); return {} } })
+    h.add(guest, "one")
+    const lease = await begin(h.controller)
+    await page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "a", text: "a", modifiers: 8 } })
+    await page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyUp", key: "a", modifiers: 0 } })
+    assert.deepEqual(events, [{ type: "keyDown", keyCode: "a", modifiers: ["shift"] },
+      { type: "char", keyCode: "a", modifiers: ["shift"] }, { type: "keyUp", keyCode: "a", modifiers: [] }])
+    assert.equal(methods.includes("Input.dispatchKeyEvent"), false)
+    h.hide()
+    await assert.rejects(page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyDown", key: "Enter" } }), /visible/)
+    assert.equal(events.length, 3)
+  })
   it("inserts text through Electron's guest API while retaining lease checks", async () => {
     const h = createHarness(), inserted: string[] = [], methods: string[] = []
     const { guest } = createGuest({ id: 81, owner: h.owner,
@@ -131,9 +148,10 @@ describe("BrowserController private page channel", () => {
     assert.deepEqual(calls, ["Accessibility.enable"])
     for (const method of ["Accessibility.getFullAXTree", "DOM.resolveNode", "DOM.scrollIntoViewIfNeeded", "DOM.getContentQuads",
       "DOM.getNodeForLocation", "Page.getLayoutMetrics", "Runtime.callFunctionOn", "Runtime.releaseObjectGroup",
-      "Input.insertText", "Input.dispatchMouseEvent", "Input.dispatchKeyEvent"]) {
+      "Input.insertText", "Input.dispatchMouseEvent"]) {
       assert.deepEqual(await page(h.controller, "send", { ...lease, method, params: {} }), { ok: true })
     }
+    assert.deepEqual(await page(h.controller, "send", { ...lease, method: "Input.dispatchKeyEvent", params: { type: "keyUp", key: "a" } }), {})
     await assert.rejects(page(h.controller, "send", { ...lease, method: "Runtime.evaluate" }), /response is too large/)
     assert.equal(guest.debugger.isAttached(), false)
     await assert.rejects(h.controller.execute("session", { action: "snapshot" } as never), /Invalid browser command/)
