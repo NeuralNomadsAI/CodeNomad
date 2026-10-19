@@ -260,11 +260,13 @@ const GitChangeRow: Component<{
   const target = () => ({ path: rowProps.item.path, originalPath: rowProps.item.originalPath, scope: rowProps.item.section })
   // Keep action identities stable when another reader opens. Recreating every
   // icon/menu for a preview-state change stalls large inventories, even hidden.
+  // The stage icon is a getter: FileRowActions renders it inline and in its
+  // overflow menu, and one DOM node cannot sit in both (the pinned eye never overflows).
   const actions: ActionOverflowMenuItem[] = [
     { key: "preview", get label() { return `${rowProps.t("filesPanel.viewer")} · ${rowProps.item.path}` }, icon: <Eye size={14} />,
       get checked() { return rowProps.previewActive(target()) }, get disabled() { return !rowProps.canOpenFile }, onSelect: () => rowProps.onOpenFile(target()) },
     { key: "stage", get label() { return `${stageLabel()} · ${rowProps.item.path}` },
-      icon: <Show when={staged()} fallback={<Plus size={14} />}><Minus size={14} /></Show>, onSelect: toggleStage },
+      get icon() { return <Show when={staged()} fallback={<Plus size={14} />}><Minus size={14} /></Show> }, onSelect: toggleStage },
   ]
   const selected = () => rowProps.git.isGitItemSelected(rowProps.item.id)
   // A focused row that leaves the list (moved to the other section, removed) hands focus on.

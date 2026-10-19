@@ -285,10 +285,23 @@ test("a row shown beyond the bound stays for real keyboard, mouse and menu use a
     assert.equal(await row(page, 1, pathAt(MOST_CHANGED)).count(), 1)
 
     // Compact layout: the row's … menu opens and its stage action works; focus then moves to Show more.
-    await page.locator("aside").evaluate(element => { element.style.width = "160px"; element.style.minWidth = "0"; element.style.maxWidth = "none" })
+    const narrow = (width: string) => page.locator("aside").evaluate((element, width) => {
+      element.style.width = width; element.style.minWidth = width ? "0" : ""; element.style.maxWidth = width ? "none" : ""
+    }, width)
+    const compact = (value: boolean) => page.waitForFunction(({ path, value }) =>
+      document.querySelector(`[data-git-item-id="staged:${path}"] .file-row-actions`)?.getAttribute("data-compact") === String(value), { path: previewed, value })
+    await narrow("160px")
     const actions = section(page, 0).locator(`.git-panel-file-row[data-git-item-id="staged:${previewed}"] .file-row-actions`)
     await row(page, 0, previewed).hover()
-    await page.waitForFunction(path => document.querySelector(`[data-git-item-id="staged:${path}"] .file-row-actions`)?.getAttribute("data-compact") === "true", previewed)
+    await compact(true)
+    // The menu renders the same stage action as the inline button: opening it must not move the icon out.
+    await actions.locator(".action-overflow-trigger").click()
+    await page.getByRole("menu").waitFor()
+    await page.keyboard.press("Escape")
+    await page.getByRole("menu").waitFor({ state: "detached" })
+    await narrow(""); await row(page, 0, previewed).hover(); await compact(false)
+    assert.equal(await actions.locator(".file-row-inline-actions button svg").count(), 1, "the inline stage button keeps its icon")
+    await narrow("160px"); await row(page, 0, previewed).hover(); await compact(true)
     await actions.locator(".action-overflow-trigger").click()
     await page.getByRole("menuitem", { name: `Retirer de l'index · ${previewed}` }).click()
     await page.waitForFunction(path => (window as any).fixture.calls.some((call: any) => call.kind === "unstage" && call.path === path), previewed)
