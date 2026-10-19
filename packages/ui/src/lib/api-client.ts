@@ -247,8 +247,8 @@ export const serverApi = {
       method: "POST", body: JSON.stringify(input),
     })
   },
-  fetchWorkspaces(): Promise<WorkspaceDescriptor[]> {
-    return request<WorkspaceDescriptor[]>("/api/workspaces")
+  fetchWorkspaces(signal?: AbortSignal): Promise<WorkspaceDescriptor[]> {
+    return request<WorkspaceDescriptor[]>("/api/workspaces", { signal })
   },
 
   fetchProviderUsage(instanceId: string, sessionId: string, providerId: string, modelId?: string): Promise<ProviderUsageResponse> {

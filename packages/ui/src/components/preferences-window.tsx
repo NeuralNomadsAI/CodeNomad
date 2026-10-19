@@ -1,4 +1,4 @@
-import { batch, createSignal, onCleanup, onMount, type Component } from "solid-js"
+import { batch, createEffect, createMemo, createSignal, onCleanup, onMount, type Component } from "solid-js"
 import { Toaster } from "solid-toast"
 import AlertDialog from "./alert-dialog"
 import OpenCodeSetup from "./opencode-setup"
@@ -15,10 +15,11 @@ import {
   type NativePreferencesRequest,
 } from "../lib/native/preferences-window"
 import { runNativeWindowAction } from "../lib/native/window-controls"
-import { setActiveSettingsSection } from "../stores/settings-screen"
+import { activeSettingsSection, setActiveSettingsSection } from "../stores/settings-screen"
 import { confirmSettingsDiscard } from "../stores/settings-dirty-guard"
 import { sdkManager } from "../lib/sdk-manager"
 import { observeDesktopUpdates } from "../stores/desktop-updates"
+import { createPreferencesProjectContext } from "./settings/preferences-project-context"
 
 export const PreferencesWindow: Component = () => {
   const [request, setRequest] = createSignal<NativePreferencesRequest>({ section: "general" })
@@ -41,6 +42,23 @@ export const PreferencesWindow: Component = () => {
     await requestQueue.catch(() => undefined)
     await flushScroll(generation)
   }
+
+  const projectDemand = createMemo(() => ["providers", "missions", "usage"].includes(activeSettingsSection()))
+  const project = createPreferencesProjectContext(request, projectDemand, (context, current) => {
+    // Share the native request queue: an explicit newer opener always wins over a late restore read.
+    requestQueue = requestQueue.catch(() => undefined).then(async () => {
+      if (!current()) return
+      const previous = request(), next = { ...previous, ...context, scrollTop }
+      await persist(() => next)
+      if (!current()) return
+      if (previous.instanceId) sdkManager.destroyClientsForInstance(previous.instanceId)
+      setRequest(next)
+    }).catch(() => undefined)
+  })
+  createEffect(() => {
+    const instanceId = project()?.instanceId
+    if (instanceId) onCleanup(() => sdkManager.destroyClientsForInstance(instanceId))
+  })
 
   const applyRequest = async (next: NativePreferencesRequest, guard = true) => {
     if (guard && !(await confirmSettingsDiscard())) return
@@ -140,19 +158,22 @@ export const PreferencesWindow: Component = () => {
     <>
       <SettingsScreen
         standalone
-        providerContext={{ instanceId: request().instanceId, location: request().location }}
+        providerContext={{ instanceId: project()?.instanceId ?? "", location: project()?.location }}
         scrollPosition={request()}
         onScrollPositionChange={(top) => {
           scrollTop = top
           clearTimeout(scrollTimer)
           scrollTimer = setTimeout(() => { void flushScroll().catch(() => undefined) }, 150)
         }}
-        onSectionChange={async (section) => {
-          clearTimeout(scrollTimer)
-          const next = { ...request(), section, scrollTop: 0 }
-          await persist(() => next)
-          scrollTop = 0
-          setRequest(next)
+        onSectionChange={(section) => {
+          requestQueue = requestQueue.catch(() => undefined).then(async () => {
+            clearTimeout(scrollTimer)
+            const next = { ...request(), section, scrollTop: 0 }
+            await persist(() => next)
+            scrollTop = 0
+            setRequest(next)
+          })
+          return requestQueue
         }}
         onClose={() => close(false)}
       />
