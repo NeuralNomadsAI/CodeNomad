@@ -190,7 +190,7 @@ test("Git context failures stay advisory while cancellation and retirement still
 })
 
 test("the authenticated bridge admits maximum contracts after XML and JSON escaping", async () => {
-  for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
+  for (const template of ["custom", "debug", "wayfinder", "delivery", "compare"] as const) {
     for (const character of ["&", "\u0000", "界"]) {
       const f = fixture()
       const start = parseInspectInput({ start: { objective: character.repeat(20_000), template } }).start!

@@ -5,7 +5,7 @@ import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../mission
 import type { MissionMap } from "../../missions/model"
 import { stableToken } from "../../missions/journal"
 import { isMissionCreateNoEffectError } from "../../missions/rpc-errors"
-import { missionProfilesInputSchema, sameMissionProfiles, validateMissionProfiles } from "../../missions/playbook-profiles"
+import { compareModelError, freezeCompareProfiles, missionProfilesInputSchema, sameMissionProfiles, validateMissionProfiles } from "../../missions/playbook-profiles"
 import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
 import { MISSION_TITLE_MAX, MISSION_TITLE_PATTERN } from "../../missions/mission-title"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
@@ -15,7 +15,7 @@ import { MissionCreationHoldError, missionCreationDigest } from "./mission-creat
 
 export const missionCreationRequestSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(), notes: z.string().max(20_000).optional(),
-  template: z.enum(["custom", "wayfinder", "debug", "delivery"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
+  template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]), coordinatorSessionId: z.string().trim().min(1).max(240).optional(),
   directory: z.string().trim().min(1).max(4_096).optional(), requestId: z.string().trim().min(1).max(128),
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.default("native"),
 }).strict()
@@ -45,6 +45,9 @@ export async function prepareMissionCreation(input: {
   const parsed = missionCreationRequestSchema.safeParse(input.request)
   if (!parsed.success) throw new MissionCreationPreparationError(400, "Invalid mission creation request")
   const request = parsed.data
+  const compareError = request.template === "compare" && compareModelError(request.profiles)
+  if (compareError) throw new MissionCreationPreparationError(400, compareError)
+  request.profiles = freezeCompareProfiles(request.template, request.profiles)
   try { validateMissionProfiles(request.template, request.profiles) }
   catch { throw new MissionCreationPreparationError(400, "Invalid mission creation request") }
   if (!input.fence) throw new MissionCreationPreparationError(503, "Mission creation unavailable")

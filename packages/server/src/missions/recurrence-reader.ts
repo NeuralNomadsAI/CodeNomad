@@ -3,6 +3,8 @@ import type { MissionStorage } from "./journal"
 import type { RecurrenceDocument } from "./recurrence-contract"
 import { recurrenceReadInput, recurrenceReadPage, RECURRENCE_READER_MAX_SECTIONS, RECURRENCE_READER_SECTIONS } from "./recurrence-reader-contract"
 import { missionMarkdownPage } from "./markdown-pages"
+import { compareArtifact, comparisonText } from "./compare-artifact"
+import { compareModelNames } from "./playbook-profiles"
 
 /** Read the isolated journal authorized by an archived receipt, not an arbitrary
  * browser mission/session. Native text is projected unchanged and paged once. */
@@ -29,11 +31,12 @@ export async function readArchivedRecurrencePage(storage: MissionStorage, docume
   if (history.discardedEvents || !history.events.some(event => event.type === "mission.created"
     && event.missionID === missionID && event.requestID === receipt.passage.id)) throw new Error("Archived recurrence creation binding unavailable")
 
-  const sections: Array<{ label: typeof recurrenceReadPage._type.sections[number]["label"]; title: string; text: string; raw: boolean }> = []
-  const add = (label: typeof sections[number]["label"], text: string | undefined, title = "", raw = false) => {
+  type Section = typeof recurrenceReadPage._type.sections[number]
+  const sections: Array<Omit<Section, "index"> & { text: string }> = []
+  const add = (label: Section["label"], text: string | undefined, title = "", raw = false, comparison?: Section["comparison"]) => {
     if (text) {
       if (text.length > 576_000 || sections.length >= RECURRENCE_READER_MAX_SECTIONS) throw new Error("Archived result section capacity")
-      sections.push({ label, text, title, raw })
+      sections.push({ label, text, title, raw, ...(comparison ? { comparison } : {}) })
     }
   }
   add("summary", mission.summary)
@@ -44,6 +47,11 @@ export async function readArchivedRecurrencePage(storage: MissionStorage, docume
     add("summary", report.summary, title)
     add("evidence", report.evidence.join("\n\n"), title)
     add("next", report.next.join("\n\n"), title)
+    if (mission.template === "compare") {
+      const parsed = compareArtifact.safeParse(report.artifact)
+      if (parsed.success) add("comparison", comparisonText(parsed.data), title, false,
+        { verdict: parsed.data.verdict, models: compareModelNames(mission.profiles) })
+    }
     if (report.artifact !== undefined) add("artifact", JSON.stringify(report.artifact, null, 2), title, true)
   }
   if (mission.briefing) {
@@ -61,7 +69,7 @@ export async function readArchivedRecurrencePage(storage: MissionStorage, docume
   return recurrenceReadPage.parse({ version: 1, projectID: document.projectID, scheduleID: document.id,
     passageID: receipt.passage.id, missionID, conversationID: receipt.result.conversationID, revision: mission.revision,
     section: input.section, sectionCount: sections.length, sections: sections.slice(offset, offset + RECURRENCE_READER_SECTIONS)
-      .map((item, index) => ({ index: offset + index, label: item.label, title: item.title, raw: item.raw })),
+      .map(({ text: _text, ...item }, index) => ({ index: offset + index, ...item })),
     page: input.page, pageCount, ...missionMarkdownPage(section.text, input.page),
   })
 }

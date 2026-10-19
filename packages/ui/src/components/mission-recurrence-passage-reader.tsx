@@ -7,12 +7,14 @@ import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { MissionReaderSection } from "./mission-reader"
 import { MissionReaderNumber } from "./mission-reader-number"
+import { MissionComparisonVerdict } from "./mission-comparison-report"
 
 const cache = new Map<string, { value: MissionRecurrenceReadPage; client: unknown; generation: number }>()
 const labels: Record<MissionRecurrenceReadPage["sections"][number]["label"], string> = {
   summary: "missions.control.summary", objective: "missions.control.objective", notes: "missions.control.notes",
   evidence: "missions.control.report.evidence", next: "missions.control.report.next", brief: "missions.control.brief",
   artifact: "missions.control.artifact", achieved: "missions.briefing.achieved", ongoing: "missions.briefing.ongoing", obstacles: "missions.briefing.obstacles",
+  comparison: "missions.compare.criteria",
 }
 
 /** Only mounted visible readers demand a bounded journal page; references remain in the parent on failure. */
@@ -89,9 +91,10 @@ export function MissionRecurrencePassageReader(props: { instanceId: string; scop
       </div></Show>
       <Show when={selected()}>{item => <>
         <Show when={item().title}><h3>{item().title}</h3></Show>
+        <Show when={item().comparison}>{comparison => <MissionComparisonVerdict verdict={comparison().verdict} models={comparison().models} />}</Show>
         <MissionReaderSection instanceId={props.instanceId} identity={binding()} label={labels[item().label]} raw={item().raw}
           text={result().sourceText} pagination={{ page: result().page, pageCount: result().pageCount,
-            content: { sourceText: result().sourceText, markdownText: result().markdownText }, onPage: selectPage }} />
+             content: { sourceText: result().sourceText, markdownText: result().markdownText }, onPage: selectPage }} />
       </>}</Show>
     </>}</Show>
   </div>

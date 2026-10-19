@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup } from "solid-js"
 import type { MissionMap } from "../../../server/src/api-types"
-import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
+import { compareModelError, freezeCompareProfiles, sameCompareModel, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { deletionErrorKey, MissionDeletionError } from "../lib/mission-cleanup"
@@ -81,7 +81,10 @@ export function MissionEditor(props: {
   const [defaultsRefreshing, setDefaultsRefreshing] = createSignal(false)
   const [defaultsFailed, setDefaultsFailed] = createSignal(false)
   const creationReady = () => defaultsReady() && (kind !== "create" || Boolean(held || recurrenceHold) || config.isUiConfigLoaded())
-  // Everything beyond the objective, title and schedule lives in one closed disclosure.
+  const effectiveProfiles = () => freezeCompareProfiles(template(), profiles())
+  const compareError = () => template() === "compare" ? compareModelError(profiles()) : undefined
+  const judgeWarning = () => template() === "compare" && ["model-a", "model-b"].some(role =>
+    sameCompareModel(effectiveProfiles()?.roles?.comparator?.model, profiles()?.roles?.[role]?.model))
   const [optionsOpen, setOptionsOpen] = createSignal(false)
   const [profileDetailsOpen, setProfileDetailsOpen] = createSignal(false)
   let zoneInput: HTMLInputElement | undefined
@@ -169,13 +172,14 @@ export function MissionEditor(props: {
     event.preventDefault()
     if (locked() || !isActive()) return
     setFieldError(undefined)
+    if (kind === "create" && compareError()) return
     const recurrence = kind === "create" && mode() === "recurring"
     if (recurrence) {
       try { recurrenceStartText({ consigne: objective().trim(), template: template(), taskMode: taskMode() ?? "native" }) }
       catch { fail("objective", t("missions.recurrence.instructionsTooLong", { limit: MISSION_LIFECYCLE_TEXT_LIMIT })); return }
       if (uncertainRecurrence(identity())) { setUncertain(true); return }
       if (missionCreationHold(identity())) { setAdopted(true); return }
-      const selected = copyMissionProfiles(profiles())
+      const selected = copyMissionProfiles(effectiveProfiles())
       if (!selected?.coordinator?.agent || !selected.coordinator.model?.providerID || !selected.coordinator.model.id
         || missionProfileRoles[template()].some(role => !selected.roles?.[role]?.agent
           || !selected.roles[role].model?.providerID || !selected.roles[role].model?.id)) {
@@ -245,7 +249,7 @@ export function MissionEditor(props: {
     const fields = { objective: objective().trim(), notes: notes(), template: template(),
       ...(kind === "create" ? { title: submittedTitle() } : {}),
       ...(kind === "create" && taskMode() !== undefined ? { taskMode: taskMode() } : {}),
-      ...(kind === "create" && profiles() !== undefined ? { profiles: copyMissionProfiles(profiles()) } : {}) }
+      ...(kind === "create" && effectiveProfiles() !== undefined ? { profiles: copyMissionProfiles(effectiveProfiles()) } : {}) }
     const payload = kind === "create" ? missionCreationPayloadIdentity({ ...fields, directory })
       : JSON.stringify(kind === "delete" ? { deleteManagedSessions: deleteManagedSessions() } : fields)
     if (lastPayload && lastPayload !== payload) requestId = crypto.randomUUID()
@@ -351,6 +355,13 @@ export function MissionEditor(props: {
       </Show>
       {inlineError("when", ids.whenError)}
     </fieldset>
+    <Show when={template() === "compare"}>
+      <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template="compare" profiles={profiles()}
+        roles={["model-a", "model-b"]} taskMode={taskMode()} disabled={locked()} active={isActive}
+        onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
+      <Show when={compareError()}>{error => <p role="alert" class="mission-create-field-error">{t(`missions.compare.${error()}`)}</p>}</Show>
+      <Show when={judgeWarning()}><p role="status">{t("missions.compare.judgeWarning")}</p></Show>
+    </Show>
     <details class="mission-profile-optional mission-create-options" open={optionsOpen()} onToggle={event => setOptionsOpen(event.currentTarget.open)}>
       <summary>{t("missions.create.options")}</summary>
       {/* Natively hidden while closed so local drafts survive; network demand follows optionsOpen. */}
@@ -368,7 +379,7 @@ export function MissionEditor(props: {
           setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
           if (!customTaskMode()) setTaskMode(missionTaskModeFor(defaults(), next))
         }}>
-          <For each={["custom", "debug", "wayfinder", "delivery"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
+          <For each={["custom", "debug", "wayfinder", "delivery", "compare"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
         </select>
       </label>
       <MissionTaskModeControls value={taskMode() ?? "native"} disabled={locked()}
@@ -380,6 +391,7 @@ export function MissionEditor(props: {
           <summary>{t("missions.create.agents")}</summary>
           <Show when={profileDetailsOpen()}>
             <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={template()} profiles={profiles()}
+              roles={template() === "compare" ? ["coordinator", "comparator"] : undefined}
               taskMode={taskMode()}
               disabled={locked()} active={() => profileDetailsOpen() && optionsOpen() && isActive()}
               onChange={value => { setCustomProfiles(true); setProfiles(value) }} />
@@ -419,7 +431,7 @@ export function MissionEditor(props: {
     </Show>
   </>
 
-  const createDisabled = () => locked() || !isActive() || !objective().trim()
+  const createDisabled = () => locked() || !isActive() || !objective().trim() || Boolean(compareError())
     || mode() === "recurring" && (!zoneValid() || !sourceLocationReady() || !sourceInputBudget().sufficient)
 
   return <form class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}>

@@ -305,7 +305,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, or product delivery mission. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
+        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, product delivery, or two-model comparison mission. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -497,7 +497,7 @@ const prepareSchema = {
     objective: { type: "string", minLength: 1, maxLength: 20_000 },
     title: { type: "string", minLength: 1, maxLength: MISSION_TITLE_MAX },
     notes: { type: "string", maxLength: 20_000 },
-    template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery"] },
+    template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
     profiles: missionProfilesSchema,
     taskMode: missionTaskModeSchema,
   },
@@ -536,7 +536,7 @@ const inspectSchema = {
       type: "object",
       properties: {
         objective: { type: "string", minLength: 1, maxLength: 20_000 },
-        template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery"] },
+        template: { type: "string", enum: ["custom", "debug", "wayfinder", "delivery", "compare"] },
         notes: { type: "string", maxLength: 20_000 },
         profiles: missionProfilesSchema,
         taskMode: { ...missionTaskModeSchema, description: "Declared task policy for this new mission only; omitted defaults to native. Independent requires explicit reasoned independent declarations, not a native-helper ban or new-root authorization." },
@@ -576,7 +576,7 @@ const reportSchema = {
     summary: { type: "string", minLength: 1, maxLength: 20_000 },
     evidence: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
     next: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
-    artifact: { description: "Optional structured playbook evidence. Required for completed Debugging tasks." },
+    artifact: { description: "Optional structured playbook evidence. Required for completed Debugging tasks and Compare comparator reports. Compare uses a version 1 comparison with completed model-a/model-b runRefs, criterion scores for both, evidence and verdict a, b, equivalent or inconclusive; run roles return ordinary output without artifacts." },
     final: { type: "boolean", description: "Coordinator-only terminal mission report." },
   },
   required: ["outcome", "summary"],
@@ -713,7 +713,7 @@ export function parseDelegateInput(input: unknown): MissionDelegateInput {
     missionID: optionalText(value.missionID, "missionID", 100),
     taskKey,
     title: requiredText(value.title, "title", 240),
-    brief: requiredText(value.brief, "brief", 20_000),
+    brief: briefText(value.brief, value.role, "brief"),
     role: identifier(value.role, "role"),
     ...(value.execution === undefined ? {} : { execution: parseExecution(value.execution) }),
     ...(value.executionMode === undefined ? {} : { executionMode: parseExecutionMode(value.executionMode) }),
@@ -766,6 +766,12 @@ function requiredText(value: unknown, name: string, max: number): string {
   return value.trim()
 }
 
+function briefText(value: unknown, role: unknown, name: string): string {
+  const normalized = requiredText(value, name, 20_000)
+  // Compare's run briefs must reach the equality check byte-for-byte.
+  return typeof role === "string" && ["model-a", "model-b"].includes(role.trim()) ? value as string : normalized
+}
+
 function missionTitle(value: unknown): string {
   const title = parseMissionTitle(value)
   if (title === undefined) throw new Error(`title must be a single line of 1–${MISSION_TITLE_MAX} characters`)
@@ -801,7 +807,7 @@ export function parseReviseInput(input: unknown): MissionReviseInput {
     return {
       taskKey: identifier(entry.taskKey, `addTasks[${index}].taskKey`),
       title: requiredText(entry.title, `addTasks[${index}].title`, 240),
-      brief: requiredText(entry.brief, `addTasks[${index}].brief`, 20_000),
+      brief: briefText(entry.brief, entry.role, `addTasks[${index}].brief`),
       role: identifier(entry.role, `addTasks[${index}].role`),
       ...(entry.execution === undefined ? {} : { execution: parseExecution(entry.execution) }),
       ...(entry.executionMode === undefined ? {} : { executionMode: parseExecutionMode(entry.executionMode) }),
@@ -849,7 +855,7 @@ function delivery(value: unknown): "queue" | "steer" {
 }
 
 function isTemplate(value: string): value is MissionTemplateId {
-  return value === "custom" || value === "debug" || value === "wayfinder" || value === "delivery"
+  return value === "custom" || value === "debug" || value === "wayfinder" || value === "delivery" || value === "compare"
 }
 
 function optionalJson(value: unknown): MissionJsonValue | undefined {

@@ -27,6 +27,7 @@ import { MissionRecurrenceReader } from "./mission-recurrence-reader"
 import type { MissionMarkdownPage } from "../lib/mission-markdown-pages"
 import { MissionReaderNumber } from "./mission-reader-number"
 import { MissionOverviewDetails } from "./mission-overview-details"
+import { MissionComparisonReport } from "./mission-comparison-report"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -305,14 +306,15 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       </Show>
       <Show when={target()?.kind === "overview" && mission()}>{value =>
         <MissionOverviewDetails instanceId={props.instanceId} scope={props.scope} mission={value()} recurrence={target()?.recurrence} />}</Show>
-      <Show when={target()?.kind === "report" && report()}>{value =>
+      <Show when={target()?.kind === "report" && report()}>{value => <>
+        <MissionComparisonReport artifact={value().artifact} profiles={mission()?.profiles} identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />
         <details class="mission-report-technical"><summary>{t("missions.control.task.details")}</summary>
           <MissionReportNotification report={value()} />
           <Show when={value().artifact !== undefined}><MissionReaderSection label="missions.control.artifact"
             text={JSON.stringify(value().artifact, null, 2)} raw
             identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} source={sectionSource("artifact")} /></Show>
         </details>
-      }</Show>
+      </>}</Show>
     </div>
   </section>
 }

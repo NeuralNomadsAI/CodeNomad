@@ -79,6 +79,21 @@ their completeness. Nothing is inferred from text, titles or timing.
 different summary when the latest automatic briefing is still the last event. One replacement task may merge several retired tasks; it names one
 of them in `replacesTaskKey`.
 
+## Compare two models (`compare`)
+
+The coordinator writes one task/input/criteria protocol; `model-a` and `model-b`
+receive byte-identical briefs and use required, different provider/model pairs.
+Their instructions and report contract are shared; per-task model changes are refused.
+The fresh `comparator` always judges anonymized X/Y outputs, even failed attempts,
+using the coordinator's model by default. Creation warns if the judge matches A/B.
+Version-1 `comparison` contains completed A/B `runRefs`, both scores (0–10) per
+criterion, evidence for each observation and `a`/`b`/`equivalent`/`inconclusive`.
+Current and archived readers show the verdict, model names and criterion scores.
+There are no lessons, approval, publication or separate protocol/run artifacts.
+Blinding is an instruction/data-presentation policy, not tool isolation.
+N-model comparisons, automatic per-run worktrees and composer launch are deferred.
+Native proof: `node scripts/test-missions-native-trajectory.mjs <CLI>`.
+
 ## Durability and recovery
 
 ### Human instructions and actionable attention

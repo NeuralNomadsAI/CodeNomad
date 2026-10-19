@@ -1,6 +1,6 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import type { MissionExecution } from "../../../server/src/missions/execution"
-import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
+import { missionRoleProfile, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
 import type { MissionTaskMode } from "../lib/mission-defaults"
 import { useI18n } from "../lib/i18n"
@@ -19,6 +19,7 @@ export function MissionProfileControls(props: {
   instanceId: string; directory?: string; template: MissionTemplateId
   profiles?: MissionProfiles; disabled: boolean; active: () => boolean
   taskMode?: MissionTaskMode
+  roles?: readonly string[]
   /** Settings, mission type scope: the global choices each role inherits until it is customized. */
   inherited?: MissionProfiles
   /** Creation: the whole edited request. */
@@ -92,7 +93,8 @@ export function MissionProfileControls(props: {
     const own = () => choice(props.profiles, role)
     const customized = () => own() !== undefined
     // An inherited role shows the global values; editing one field customizes the role from them.
-    const selected = () => props.inherited && !customized() ? choice(props.inherited, role) : own()
+    const selected = () => props.inherited && !customized() ? choice(props.inherited, role)
+      : props.template === "compare" && role === "comparator" ? missionRoleProfile(props.template, props.profiles, role) : own()
     const availableAgents = () => legalProfileAgents(agents(), role === "coordinator" ? "coordinator" : props.taskMode ?? "native")
     const selectedModel = () => models().find(model => modelSelectionKey(model) === modelSelectionKey(selected()?.model))
     const label = () => t(`missions.control.profiles.role.${role}`)
@@ -150,9 +152,8 @@ export function MissionProfileControls(props: {
     </fieldset>
   }
   return <section class="mission-profiles" aria-label={t("missions.control.profiles.title")}>
-    {row("coordinator")}
     <Show when={props.template === "debug"}><span class="sr-only">{t("missions.control.profiles.debug")}</span></Show>
-    <For each={missionProfileRoles[props.template]}>{row}</For>
+    <For each={props.roles ?? ["coordinator", ...missionProfileRoles[props.template]]}>{row}</For>
     <Show when={loading()}><p role="status">{t("missions.control.profiles.loading")}</p></Show>
     <Show when={failed()}><p role="status" title={failure() || undefined}>{t("missions.control.profiles.error")}</p></Show>
   </section>

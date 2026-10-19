@@ -113,7 +113,7 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
   registerAutomationPluginRoute(app, { workspaceManager: manager, worktreeDeletionFence: fence, bridgeToken: "private-token",
     authManager: { isLoopbackRequest: () => true }, nativeParent: {}, developerCdp: {} } as any)
   return {
-    app, fence, sessions, storage, tools, handlers, manager, creationStarted, publicationStarted, settlementStarted, track,
+    app, fence, sessions, storage, tools, handlers, manager, context, creationStarted, publicationStarted, settlementStarted, track,
     get creates() { return creates }, get writes() { return writes }, get rpcCreates() { return rpcCreates },
     loseAck: () => { lostAck = true }, failPublication: () => { failedPublication = true },
     mismatchProfile: () => { wrongProfile = true },
@@ -473,6 +473,36 @@ test("ordinary HTTP and extracted creation execute the same native catalog/root/
       assert.equal(mission.profiles.coordinator.agent, "fixture")
       assert.equal(f.rpcCreates, 1); assert.equal(f.creates, 1); assert.equal(f.writes, 1)
       await f.fence.run(physical, [physical], async () => {})
+    } finally { await f.close() }
+  }
+})
+
+test("HTTP, pipeline and coordinator prepare freeze the same Compare judge before acknowledgement or replay", async () => {
+  for (const path of ["http", "pipeline", "prepare"] as const) {
+    const f = await fixture()
+    try {
+      f.context.model.list = async () => ({ data: ["a", "b"].map(id => ({ providerID: "p", id, enabled: true, capabilities: { tools: true }, variants: [] })) })
+      const profiles = { coordinator: { agent: "fixture", model: { providerID: "p", id: "a" } },
+        roles: { "model-a": { model: { providerID: "p", id: "a" } }, "model-b": { model: { providerID: "p", id: "b" } } } }
+      const request = { ...payload, template: "compare", profiles }
+      const { coordinator } = path === "prepare" ? await specialist(f) : { coordinator: undefined }
+      const run = async () => {
+        if (path === "http") {
+          const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload: request })
+          assert.equal(response.statusCode, 200); return response.json().mission
+        }
+        if (path === "pipeline") {
+          const prepared = await prepareMissionCreation({ manager: f.manager, fence: f.fence, workspaceID: "workspace", request, signal: new AbortController().signal })
+          return (await prepared.execute()).mission
+        }
+        const result = await f.tools.get("prepare").execute({ requestID: "pilot", objective: payload.objective, template: "compare", profiles },
+          { sessionID: coordinator!.id, id: "call-prepare", progress: async () => {} })
+        return (await f.handlers.snapshot()).missions.find((mission: any) => mission.id === JSON.parse(result.content).missionID)
+      }
+      const mission = await run()
+      assert.deepEqual(mission.profiles.roles.comparator, { model: profiles.coordinator.model })
+      assert.deepEqual(await run(), mission)
+      assert.equal(f.creates, 1)
     } finally { await f.close() }
   }
 })

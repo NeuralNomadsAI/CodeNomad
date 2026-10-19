@@ -755,7 +755,7 @@ test("a Flexible-only exception keeps other Mission types unchanged after reload
     await ensureOptions(page)
     const template = page.getByLabel(await text(page, "missions.control.template"), { exact: true })
     assert.equal(await mode.inputValue(), "independent", "Flexible keeps its exception")
-    for (const other of ["debug", "wayfinder", "delivery"]) {
+    for (const other of ["debug", "wayfinder", "delivery", "compare"]) {
       await template.selectOption(other)
       assert.equal(await mode.inputValue(), "native", `${other} is unchanged by a Flexible exception`)
     }
@@ -786,6 +786,52 @@ test("native task defaults and an independent preference edit save once, compare
     assert.equal(await mode.inputValue(), "independent")
     assert.deepEqual(fixture.writes, [{ settings: { missionProfileDefaults: [{ template: "all", profiles: {}, taskMode: "independent" }] } }])
     assert.equal(fixture.creates.length, 0)
+    assert.deepEqual(fixture.errors, [])
+  } finally { await page.close() }
+})
+
+test("Compare exposes two main model selectors, refuses identical models and warns about the judge", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const fixture = await setup(page, { missionProfileDefaults: [{ template: "all", profiles }] })
+  await page.route("**/api/workspaces/fixture/missions", route => {
+    fixture.creates.push(route.request().postDataJSON())
+    return route.fulfill({ json: { mission: { id: "prepared-comparison", template: "compare", runState: "prepared" } } })
+  })
+  await page.route("**/workspaces/fixture/instance/api/model**", route => route.fulfill({ json: { data: ["m", "n", "j"].map(id => ({
+    providerID: "p", id, enabled: true, capabilities: { tools: true }, variants: id === "m" ? [{ id: "high" }] : [] })) } }))
+  try {
+    await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels?.loaded())
+    await ensureOptions(page)
+    const template = page.getByLabel("Playbook", { exact: true })
+    await template.selectOption("compare")
+    await page.locator("details.mission-create-options > summary").click()
+    const first = page.getByLabel("Model A · Model", { exact: true }), second = page.getByLabel("Model B · Model", { exact: true })
+    await first.locator('option[value=\'["p","m"]\']').waitFor({ state: "attached" })
+    assert.equal(await first.evaluate(node => Boolean(node.closest("details"))), false)
+    await first.selectOption(JSON.stringify(["p", "m"])); await second.selectOption(JSON.stringify(["p", "m"]))
+    await page.getByRole("alert").filter({ hasText: "A and B must use different models" }).waitFor()
+    await page.getByRole("status").filter({ hasText: "The judge uses the same model" }).waitFor()
+    await page.getByLabel(OBJECTIVE, { exact: true }).fill("Compare two models")
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
+    await second.selectOption(JSON.stringify(["p", "n"]))
+    assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isEnabled(), true)
+    await ensureOptions(page); await openProfiles(page)
+    await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "n"]))
+    assert.equal(await page.getByLabel("Blind judge · Model", { exact: true }).inputValue(), JSON.stringify(["p", "n"]))
+    assert((await page.locator("form.mission-editor .mission-profile-summary").innerText()).includes("Blind judge: p/n"))
+    await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "j"]))
+    assert.equal(await page.getByRole("status").filter({ hasText: "The judge uses the same model" }).count(), 0)
+    assert((await page.locator("form.mission-editor .mission-profile-summary").innerText()).includes("Blind judge: p/j"))
+    await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "n"]))
+    await page.getByLabel("Blind judge · Model", { exact: true }).selectOption(JSON.stringify(["p", "j"]))
+    await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "m"]))
+    assert.equal(await page.getByLabel("Blind judge · Model", { exact: true }).inputValue(), JSON.stringify(["p", "j"]))
+    assert.equal(await page.getByRole("status").filter({ hasText: "The judge uses the same model" }).count(), 0)
+    await page.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
+    await page.locator("form.mission-editor").waitFor({ state: "detached" })
+    assert.equal(fixture.creates[0].template, "compare")
+    assert.deepEqual(fixture.creates[0].profiles.roles.comparator, { model: { providerID: "p", id: "j" } })
+    assert.equal(fixture.creates[0].profiles.roles["model-b"].model.id, "n")
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })

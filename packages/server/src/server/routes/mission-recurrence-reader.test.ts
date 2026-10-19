@@ -8,7 +8,8 @@ import { Context, Effect, Schema } from "effect"
 import { parseCookies, sendUnauthorized } from "../../auth/http-auth"
 import { SessionManager } from "../../auth/session-manager"
 import { MISSION_JOURNAL_STORAGE_PREFIX, type MissionStorage } from "../../missions/journal"
-import type { MissionJsonValue } from "../../missions/model"
+import type { MissionJsonValue, MissionTemplateId } from "../../missions/model"
+import { missionProfileRoles } from "../../missions/playbook-profiles"
 import { type RecurrenceConfig, type RecurrenceDocument, RECURRENCE_STORAGE_PREFIX } from "../../missions/recurrence-contract"
 import { recurrencePassage } from "../../missions/recurrence-passage"
 import { recurrencePassageReadWire } from "../../missions/recurrence-reader-contract"
@@ -21,7 +22,7 @@ import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot
 
 type ReadInput = { scheduleID: string; passageID: string; section?: number; page?: number; revision?: number }
 
-async function fixture() {
+async function fixture(template: MissionTemplateId = "custom", artifact: MissionJsonValue = { result: "Exact draft artifact" }) {
   // All native services/storage below are in-memory. No daemon, filesystem or private native fixture.
   const directory = path.resolve("offline-archived-recurrence")
   const location = Schema.decodeUnknownSync(Location.Info)({ directory,
@@ -48,8 +49,9 @@ async function fixture() {
   }
   const store = new NativeMissionRecurrenceStore(storage, "project", directory)
   const selection = { agent: "private_agent", model: { providerID: "private_provider", id: "private_model" } }
-  const config: RecurrenceConfig = { title: "Review", template: "custom", consigne: "PRIVATE_STANDING_PROMPT", clock: { time: "07:00", zone: "UTC" },
-    profileID: "private_profile", executionHost: "private_host", profiles: { coordinator: selection, roles: { specialist: selection } },
+  const config: RecurrenceConfig = { title: "Review", template, consigne: "PRIVATE_STANDING_PROMPT", clock: { time: "07:00", zone: "UTC" },
+    profileID: "private_profile", executionHost: "private_host", profiles: { coordinator: selection, roles: Object.fromEntries(missionProfileRoles[template].map(role =>
+      [role, role === "model-b" ? { ...selection, model: { ...selection.model, id: "other" } } : selection])) },
     taskMode: "independent", roots: [{ mode: "directory-only", directory }], watchedConversationIDs: ["ses_private_watch"] }
   await store.create("daily_review", config, 100, () => true)
   const pending = await store.reserve("daily_review", 0,
@@ -66,14 +68,14 @@ async function fixture() {
   let clock = 100
   const base = (id: string) => ({ version: 1 as const, id, projectID: "project", missionID: scope.missionID, createdAt: ++clock })
   await scope.journal.append({ ...base("evt_created"), type: "mission.created", requestID: scope.passageID,
-    projectCanonical: directory, objective: "Archived objective", notes: "Archived notes", template: "custom",
+    projectCanonical: directory, objective: "Archived objective", notes: "Archived notes", template,
     profiles: config.profiles, taskMode: config.taskMode,
     coordinator: { sessionID: scope.coordinatorSessionID, title: "Coordinator", location: { directory } } })
   // >100 actual events exercise journal scan cursors; >32 sections exercise catalogue paging.
   for (let i = 0; i < 34; i++) {
     await scope.journal.append({ ...base(`evt_task_${i}`), type: "task.created",
       task: { id: `tsk_${i}`, key: `work_${i}`, title: `Work ${i}`, brief: i === 0 ? brief : `Brief ${i}`,
-        role: "specialist", executionMode: { kind: "independent", reason: "playbook", explanation: "Frozen independent passage policy" }, blockedBy: [] } })
+        role: template === "compare" ? "comparator" : "specialist", executionMode: { kind: "independent", reason: "playbook", explanation: "Frozen independent passage policy" }, blockedBy: [] } })
     await scope.journal.append({ ...base(`evt_dispatch_${i}`), type: "task.dispatching", taskKey: `work_${i}`,
       actor: { sessionID: "ses_worker", title: "Worker", location: { directory }, managed: true },
       admissionID: `admission_${i}`, delivery: "queue" })
@@ -82,7 +84,7 @@ async function fixture() {
   const reported = base("evt_reported")
   await scope.journal.append({ ...reported, type: "task.reported", report: { id: "rpt_work", taskKey: "work_0",
     sessionId: "ses_worker", outcome: "completed", summary: reportSummary, evidence, next: ["Exact next step"],
-    artifact: { result: "Exact draft artifact" }, createdAt: reported.createdAt } })
+    artifact, createdAt: reported.createdAt } })
   await scope.journal.append({ ...base("evt_finished"), type: "mission.finished", outcome: "completed", summary: finalSummary })
   await store.recordAdmission(pending.id, { kind: "accepted", passageID: scope.passageID, messageID: scope.messageID,
     missionID: scope.missionID, conversationID: scope.coordinatorSessionID }, 500, () => true)
@@ -195,6 +197,18 @@ test("sealed native archived reader preserves exact paged Markdown, report/evide
   ]) assert.equal(f.validateOutput(invalid), false, "standard strict JSON Schema rejects private/oversized output")
   assert.ok(f.scans.some(scan => scan.after !== undefined), "real >100-event journal scan is paginated")
   assert.deepEqual([...f.values], initial, "refresh/read never changes native storage")
+  f.assertReadOnly()
+})
+
+test("Compare archive retains verdict, model names and bounded criterion scores", async () => {
+  const evidence = [{ kind: "file", path: "output.txt", sha256: "a".repeat(64) }]
+  const f = await fixture("compare", { version: 1, kind: "comparison", runRefs: ["x", "y"], verdict: "equivalent",
+    results: [{ criterion: "quality", a: 8, b: 8, observation: "x".repeat(19_000) + "TAIL", evidence }] })
+  const first = await f.read(), section = first.sections.find(item => item.comparison)!
+  assert.deepEqual(section.comparison, { verdict: "equivalent", models: ["private_provider/private_model", "private_provider/other"] })
+  const pages = await Promise.all([0, 1, 2].map(page => f.read({ ...f.input, section: section.index, page })))
+  assert(pages.map(page => page.sourceText).join("").includes("| quality | 8 | 8 |"))
+  assert(pages[2].sourceText.includes("TAIL"))
   f.assertReadOnly()
 })
 

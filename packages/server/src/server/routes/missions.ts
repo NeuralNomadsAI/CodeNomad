@@ -122,7 +122,8 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       // carry a no-effect code; later failures stay codeless and uncertain.
       if (!creation?.dispatched) {
         if (error instanceof MissionCreationPreparationError) {
-          return reply.code(error.status).send({ error: error.message, ...(error.status === 503 ? { code: "creation-unavailable" } : {}) })
+          return reply.code(error.status).send({ error: error.message, ...(error.message.startsWith("compare-models-") ? { code: error.message }
+            : error.status === 503 ? { code: "creation-unavailable" } : {}) })
         }
         if (deleting) return reply.code(409).send({ error: "Worktree deletion is in progress", code: "creation-worktree-deleting" })
         return reply.code(503).send({ error: "Mission creation unavailable", code: "creation-unavailable" })

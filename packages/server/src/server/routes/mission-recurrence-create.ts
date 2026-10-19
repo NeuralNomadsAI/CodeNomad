@@ -6,7 +6,7 @@ import { canonicalAuthority } from "../../missions/authority-protocol"
 import type { SettingsService } from "../../settings/service"
 import { recurrenceConfigSchema, recurrenceTitle, type RecurrenceConfig } from "../../missions/recurrence-contract"
 import { dailyClockSchema } from "../../missions/recurrence-clock"
-import { missionProfileRoles, missionProfilesInputSchema, validateMissionProfileCatalog, validateMissionProfiles } from "../../missions/playbook-profiles"
+import { compareModelError, freezeCompareProfiles, missionProfileRoles, missionProfilesInputSchema, validateMissionProfileCatalog, validateMissionProfiles } from "../../missions/playbook-profiles"
 import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
 import { MISSION_TITLE_MAX, MISSION_TITLE_PATTERN } from "../../missions/mission-title"
 import { readMissionCatalog } from "../../missions/native-catalog"
@@ -31,7 +31,7 @@ const schema = z.object({ requestID: z.string().regex(/^[A-Za-z0-9_-]{3,100}$/),
   // historical 120-character bound in recurrenceConfigSchema.
   title: z.string().trim().min(1).max(MISSION_TITLE_MAX).regex(MISSION_TITLE_PATTERN).optional(),
   notes: z.string().max(20_000).optional(),
-  template: z.enum(["custom", "debug", "wayfinder", "delivery"]),
+  template: z.enum(["custom", "debug", "wayfinder", "delivery", "compare"]),
   directory: z.string().min(1).max(4096).optional(),
   watchedConversationIDs: z.array(z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)).max(32)
     .refine(ids => new Set(ids).size === ids.length),
@@ -66,6 +66,11 @@ export function registerMissionRecurrenceCreate(app: FastifyInstance, deps: { wo
         return reply.code(400).send({ error: "Invalid recurrence creation request" })
       }
       const input = parsed.data, manager = deps.workspaceManager, workspaceID = request.params.id
+      if (input.template === "compare") {
+        const error = compareModelError(input.profiles)
+        if (error) return reply.code(400).send({ error, code: error })
+        input.profiles = freezeCompareProfiles(input.template, input.profiles)
+      }
       try { recurrenceStartText({ consigne: input.instructions, template: input.template, taskMode: input.taskMode }) }
       catch { return reply.code(400).send({ error: "Recurrence start input exceeds lifecycle capacity", code: "recurrence-input-capacity" }) }
       if (!input.profiles?.coordinator || missionProfileRoles[input.template].some(role => !input.profiles?.roles?.[role])
