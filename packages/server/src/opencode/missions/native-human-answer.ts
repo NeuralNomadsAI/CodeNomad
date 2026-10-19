@@ -35,11 +35,13 @@ const MAX_DISCOVERED_ANSWERS = 16
 const MAX_DELEGATION_MESSAGES = 8
 type NativeForms = { get(id: string): Effect.Effect<unknown, unknown>; state(id: string): Effect.Effect<unknown, unknown>;
   reply(input: { id: string; answer: Form.Answer }): Effect.Effect<void, unknown> }
+type AnswerReadRunner = <A>(effect: Effect.Effect<A, unknown>) => Promise<A>
 
 /** Authenticated UI marks, independent of one-time/recurring scheduling.
  * verify(request): Promise<HumanDecisionMark> retains exact native binding checks. */
 export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanAnswers")(function* (
   ctx: Pick<Plugin.Context, "location"> & Partial<Pick<Plugin.Context, "storage">>,
+  read?: AnswerReadRunner,
 ) {
   const database = yield* Effect.serviceOption(databaseTag), origin = yield* Effect.serviceOption(locationTag)
   const formService = yield* Effect.serviceOption(formTag)
@@ -54,7 +56,9 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
   const graph = yield* Effect.context<never>()
   const query = (sql: string, args: readonly unknown[] = []) => db.db.$client.unsafe(sql, args).withoutTransform.pipe(
     Effect.flatMap(Schema.decodeUnknownEffect(rows)))
-  const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromise(effect.pipe(Effect.provide(graph)))
+  // One-time gates supply their invoking runner: nested SQL/Form/storage reads
+  // must share its signal, deadline and join, not start detached runtimes.
+  const run: AnswerReadRunner = read ?? (effect => Effect.runPromise(effect.pipe(Effect.provide(graph))))
   const get = (key: string) => query("SELECT value FROM kv WHERE key=?", [nativeKey(key)]).pipe(Effect.map(result =>
     result[0]?.value === undefined ? undefined : parse(result[0].value)))
   const put = (key: string, value: unknown) => query("INSERT INTO kv(key,value,time_created,time_updated) VALUES(?,?,?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value,time_updated=excluded.time_updated",

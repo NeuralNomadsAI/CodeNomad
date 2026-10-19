@@ -12,6 +12,7 @@ import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human
 import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent } from "./native-recurrence-current"
 import { readNativeRecurrencePage } from "./native-recurrence-reader"
 import { runNativeRecurrenceNow, readNativeRecurrenceRunNow } from "./native-recurrence-manual"
+import { nativeInvocation } from "./native-invocation"
 
 export function withNativeRecurrenceRpc(ctx: Plugin.Context): Plugin.Context["rpc"] {
   const register: typeof ctx.rpc.register = (definition, handlers) => ctx.rpc.register(definition,
@@ -39,17 +40,18 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
     const graph = yield* Effect.context<Scope.Scope>()
     const scope = yield* Scope.make()
     const run = Effect.runPromiseWith(Context.add(graph, Scope.Scope, scope))
-    const humanGate = nativeHumanAnswerGate(use => run(Effect.gen(function* () {
-      const answers = yield* acquireNativeHumanAnswers(ctx)
-      return yield* Effect.promise(() => use(answers))
-    }).pipe(Effect.orDie)))
+    const invocation = nativeInvocation()
+    const humanGate = nativeHumanAnswerGate(use => invocation.check(run => run(Effect.gen(function* () {
+      const answers = yield* acquireNativeHumanAnswers(ctx, run)
+      return yield* Effect.tryPromise({ try: () => use(answers), catch: error => error })
+    }))))
     // Keep schedule RPC available without desktop presence. One-shot handlers
     // remain dynamically bound to their existing presence-owned registration.
     type Handlers = Record<string, (...args: never[]) => Effect.Effect<unknown, unknown>>
     let ordinary: Handlers | undefined
     const forwarding = Object.fromEntries(Object.keys(CODENOMAD_MISSIONS_RPC.methods).map(name => [name,
-      (...args: never[]) => Effect.suspend(() => ordinary?.[name]?.(...args)
-        ?? Effect.die(new Error("CodeNomad Missions is no longer available")))]))
+      (...args: never[]) => invocation.capture(Effect.suspend(() => ordinary?.[name]?.(...args)
+        ?? Effect.die(new Error("CodeNomad Missions is no longer available"))))]))
     const persistent = yield* withNativeRecurrenceRpc(ctx).register(CODENOMAD_MISSIONS_RPC,
       forwarding as Parameters<typeof ctx.rpc.register<typeof CODENOMAD_MISSIONS_RPC>>[1]).pipe(Effect.orDie)
     const register: typeof ctx.rpc.register = (definition, handlers) => definition.id !== CODENOMAD_MISSIONS_RPC_ID
@@ -59,7 +61,17 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
         ordinary = selected
         return { events: persistent.events, dispose: Effect.sync(() => { if (ordinary === selected) ordinary = undefined }) }
       }) as ReturnType<typeof ctx.rpc.register>
-    const nativeCtx = { ...ctx, rpc: new Proxy(ctx.rpc, { get(target, key) {
+    const transform: typeof ctx.tool.transform = callback => ctx.tool.transform(editor => callback(new Proxy(editor, {
+      get(target, key) {
+        if (key !== "add") return Reflect.get(target, key)
+        const add: typeof editor.add = definition => editor.add({ ...definition,
+          execute: (input, context) => invocation.capture(definition.execute(input, context)) })
+        return add
+      },
+    })))
+    const nativeCtx = { ...ctx, tool: new Proxy(ctx.tool, { get(target, key) {
+      return key === "transform" ? transform : Reflect.get(target, key)
+    } }), rpc: new Proxy(ctx.rpc, { get(target, key) {
       return key === "register" ? register : Reflect.get(target, key)
     } }) }
     yield* ctx.rpc.register(Rpc.define(HUMAN_ANSWER_RPC), {
