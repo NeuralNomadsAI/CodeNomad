@@ -17,6 +17,7 @@ import { DeveloperInspectionTargets } from "../../automation/developer-inspectio
 import { missionRecoveryRejection } from "../../missions/recovery-error"
 import { verifyMissionHumanAnswer } from "./mission-human-answer"
 import { verifyHumanRecurrenceRequest } from "./mission-recurrence-proof"
+import { BrowserPage } from "../../automation/browser-page"
 import type { SettingsService } from "../../settings/service"
 import type { RemoteControlManager } from "../../remote-control/manager"
 
@@ -57,6 +58,8 @@ export function isAutomationPluginRequest(
 
 export function registerAutomationPluginRoute(app: FastifyInstance, deps: AutomationPluginRouteDeps): void {
   const inspectedTargets = new DeveloperInspectionTargets()
+  const browserPage = new BrowserPage(deps.nativeParent)
+  app.addHook("onClose", async () => browserPage.close())
   app.post(AUTOMATION_BRIDGE_PATH, { bodyLimit: 512 * 1024 }, async (request, reply) => {
     const lifetime = requestAdmission(request, reply)
     try {
@@ -144,7 +147,9 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
         return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) })
       }
       try {
-        const result = await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command })
+        const result = command.action === "open" || command.action === "navigate" || command.action === "screenshot"
+          ? await deps.nativeParent.request("browser.execute", { sessionID: body.sessionID, command })
+          : await browserPage.execute(body.sessionID, command, lifetime.signal)
         return reply.send({ result })
       } catch (error) {
         return reply.code(409).send({ error: error instanceof Error ? error.message : String(error) })

@@ -1,6 +1,6 @@
 # Browser Automation
 
-CodeNomad exposes `codenomad.browser` for controlling the visible web preview attached to the current OpenCode session. The supported actions are `open`, `navigate`, `snapshot`, `click`, `type`, and `screenshot`.
+CodeNomad exposes `codenomad.browser` for controlling the visible web preview attached to the current OpenCode session. It supports `open`, `navigate`, `snapshot`, `screenshot` and the same page actions as `codenomad.act`: `click`, `type`, `select`, `hover`, `drag`, `scroll`, `press` and `wait`.
 
 ## Integration and shared bridge
 
@@ -20,7 +20,7 @@ The bridge remains loopback-only, token-authenticated, bounded, and session-loca
 
 ## Page engine
 
-`codenomad.inspect` and `codenomad.act` (the CodeNomad window) run on the shared page engine in `packages/server/src/automation/page/`, which only needs a DevTools protocol channel: `snapshot.ts` renders the accessibility tree, `actions.ts` performs actions, `input.ts` dispatches trusted pointer, wheel and keyboard input, `keys.ts` maps key chords, `parse.ts` validates tool input on both sides of the bridge, `protocol.ts` holds the shared protocol primitives and `refs.ts` names DOM nodes. Browser-preview tools still use their native controllers.
+`codenomad.inspect` / `codenomad.act` (the CodeNomad window) and `codenomad.browser` (the session preview) run on the same page engine in `packages/server/src/automation/page/`, which only needs a DevTools protocol channel: `snapshot.ts` renders the accessibility tree, `actions.ts` performs actions, `input.ts` dispatches trusted pointer, wheel and keyboard input, `keys.ts` maps key chords, `parse.ts` validates tool input on both sides of the bridge, `protocol.ts` holds the shared protocol primitives and `refs.ts` names DOM nodes. The app uses `DeveloperCdp`; previews use `automation/browser-page.ts`. The preview's `snapshot({ ref, query })` has the same outline and scoping as the app's `inspect`.
 
 - Inspection is an indented outline with refs, read as plain text. Wrappers, unnamed images and text repeating its parent's name are dropped; fields show their value instead of their inner nodes; native selects list their options with `selected`/`disabled`. A character budget (32 000 by default) is shared among siblings: small parts stay whole while large ones collapse in place with `(+N hidden)` or `(+N more)`, keeping their first and last items, so nothing is cut silently. `ref` expands one subtree and `query` keeps elements whose name, value or description contains it, or whose role is exactly it, with their contents and ancestors.
 - A ref names one node within one target, run and navigation epoch. It keeps its name and stays usable for the life of that page generation, whatever is inspected later; a node that left the page fails its action explicitly.
@@ -31,6 +31,14 @@ The bridge remains loopback-only, token-authenticated, bounded, and session-loca
 - The marker returns the page's own epoch timestamp for CDP mouse/key events. Cleanup retains the original press timestamp even if its marker renewal times out, so delayed releases remain within the original provenance interval independently of command-timeout settings. Missing/invalid provenance timestamps refuse before input dispatch.
 - When a Preferences or remote window has focus, window automation targets the most recently used application window, as the update flow does; the Preferences window itself is not an automation target.
 - `packages/ui/tests/browser/automation-forms.test.ts` drives a real Chromium page and the real Mission editor through `DeveloperCdp`; `automation-input.test.ts` covers trusted input and proves that automation clicks and Enter in the real InterruptionDock never carry the human-answer header, while a real user click does.
+
+### Guarded preview channel
+
+The native hosts retain guest ownership, visibility, URL policy, storage, history, emulation, navigation and screenshots. They no longer implement page snapshots, refs or form input. The backend's `BrowserPage` serializes page operations per session and uses only the private native-parent `browser.page.begin/send/check/end` channel, never renderer IPC or Tauri commands.
+
+`begin` binds one expiring operation lease to the exact visible registered guest and document generation. Every `send` is bounded and allowlisted to the protocol methods the engine consumes; every `check` revalidates visibility, registration and document identity. Responses are fenced again after native I/O. A changed, hidden, ambiguous or missing target fails rather than switching guests. The backend owns refs per session and generation; it issues no refs from an unconfirmed read and never retries a failed mutation. `end` cleans up that exact lease even after cancellation or navigation, without detaching someone else's emulation overrides. Missing channel support in an older host fails explicitly, with no legacy implementation fallback.
+
+Only fixed engine functions and protocol arguments cross this channel: models cannot choose protocol methods or evaluate scripts. This does not grant guest pages any application/native capability. Preview pages do not receive the application's human-input provenance variables. `tests/browser/automation-preview.test.ts` exercises both production ends against a real isolated Electron guest, with the window hidden to avoid desktop focus changes.
 
 ## September 2026 architecture decision
 

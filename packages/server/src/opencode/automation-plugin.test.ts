@@ -12,6 +12,7 @@ import {
   parseBrowserAction,
   parseDeveloperAction,
   formatInspection,
+  formatBrowserSnapshot,
   publishAutomationBridge,
   removeLegacyAutomationPlugin,
   setupAutomationPlugin,
@@ -184,6 +185,22 @@ test("validates browser actions", () => {
     clear: false,
   })
   assert.throws(() => parseBrowserAction({ action: "open" }), /open requires url/)
+  for (const input of [
+    { action: "select", ref: "e1", values: ["Exploration"] },
+    { action: "hover", ref: "e1" },
+    { action: "press", key: "Shift+Tab" },
+    { action: "scroll", ref: "e1", direction: "down", amount: 120 },
+    { action: "drag", ref: "e1", to: "e2" },
+    { action: "wait", text: "Ready", timeout: 1000, gone: false },
+  ]) {
+    assert.deepEqual(parseBrowserAction(input), parseDeveloperAction(input), "both surfaces use the same page action contract")
+  }
+  assert.deepEqual(parseBrowserAction({ action: "snapshot", query: "dialog", ref: "e1" }), { action: "snapshot", query: "dialog", ref: "e1" })
+  assert.throws(() => parseBrowserAction({ action: "type", ref: "e1", text: "x", clear: "no" }), /clear must be/)
+  assert.throws(() => parseBrowserAction({ action: "snapshot", query: "x".repeat(201) }), /at most 200/)
+  assert.throws(() => parseBrowserAction({ action: "evaluate", expression: "document.cookie" }), /Unsupported browser action/)
+  assert.equal(formatBrowserSnapshot({ url: "https://example.test", snapshot: '- button "Go" [e1]', collapsed: 0 }),
+    'https://example.test\n\n- button "Go" [e1]', "browser outlines are plain text too, not escaped JSON")
 })
 
 test("registers developer tools while execution remains session-gated", async () => {

@@ -140,8 +140,12 @@ test("browser works with an unavailable developer target and unrelated inventory
     authManager: { isLoopbackRequest: () => true },
     bridgeToken: "secret",
     nativeParent: {
-      request: async (method: string, params: unknown) => {
+      request: async (method: string, params: any) => {
         nativeCalls.push({ method, params })
+        if (method === "browser.page.begin") return { generation: "preview-document", url: "https://example.com/" }
+        if (method === "browser.page.send" && params.method === "Accessibility.getFullAXTree") {
+          return { nodes: [{ nodeId: "one", backendDOMNodeId: 42, role: { value: "button" }, name: { value: "Preview action" } }] }
+        }
         return method === "developer.status" ? { status: { state: "stopped" } }
           : method === "browser.probe" ? { available: true } : { url: "https://example.com/" }
       },
@@ -175,6 +179,13 @@ test("browser works with an unavailable developer target and unrelated inventory
       params: { sessionID: "session-1", command: { action: "open", url: "https://example.com" } },
     },
   ])
+  const snapshot = await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "snapshot", query: "Preview" } })
+  assert.equal(snapshot.statusCode, 200)
+  assert.match(snapshot.json().result.snapshot, /- button "Preview action" \[b1e1\]/)
+  assert.equal(nativeCalls.at(-1)?.method, "browser.page.end", "browser snapshots now use the shared engine's private channel")
+  const count = nativeCalls.length
+  assert.equal((await request({ mode: "browser-execute", sessionID: "session-1", command: { action: "protocol", method: "Runtime.evaluate" } })).statusCode, 400)
+  assert.equal(nativeCalls.length, count, "a model can never choose protocol methods or scripts")
   const developer = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })
   assert.equal(developer.statusCode, 404)
   assert.match(developer.json().error, /Native automation has no active/)

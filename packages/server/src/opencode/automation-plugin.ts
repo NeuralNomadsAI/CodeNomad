@@ -36,9 +36,8 @@ const MAX_QUERY_LENGTH = 200
 export type BrowserAction =
   | { action: "open"; url: string }
   | { action: "navigate"; url: string }
-  | { action: "snapshot" }
-  | { action: "click"; ref: string }
-  | { action: "type"; ref: string; text: string; clear?: boolean }
+  | { action: "snapshot"; ref?: string; query?: string }
+  | RefAction
   | { action: "screenshot" }
 
 export interface AutomationBridgeRegistration {
@@ -232,11 +231,7 @@ export function parseDeveloperAction(input: unknown): DeveloperAction {
   const value = input as Record<string, unknown>
   switch (value.action) {
     case "inspect": {
-      if (value.ref !== undefined && typeof value.ref !== "string") throw new Error("inspect ref must be a ref from the latest inspection")
-      if (value.query !== undefined && (typeof value.query !== "string" || value.query.length > MAX_QUERY_LENGTH)) {
-        throw new Error(`inspect query must be text of at most ${MAX_QUERY_LENGTH} characters`)
-      }
-      return { action: "inspect", ...(value.ref ? { ref: value.ref } : {}), ...(value.query?.trim() ? { query: value.query } : {}) }
+      return { action: "inspect", ...inspectionScope(value, "inspect") }
     }
     case "restart":
     case "screenshot":
@@ -258,17 +253,24 @@ export function parseBrowserAction(input: unknown): BrowserAction {
       if (typeof value.url !== "string") throw new Error(`${value.action} requires url`)
       return { action: value.action, url: value.url }
     case "snapshot":
+      return { action: "snapshot", ...inspectionScope(value, "snapshot") }
     case "screenshot":
       return { action: value.action }
-    case "click":
-      if (typeof value.ref !== "string") throw new Error("click requires ref from the latest snapshot")
-      return { action: "click", ref: value.ref }
-    case "type":
-      if (typeof value.ref !== "string" || typeof value.text !== "string") throw new Error("type requires ref and text")
-      return { action: "type", ref: value.ref, text: value.text, clear: value.clear !== false }
-    default:
-      throw new Error("Unsupported browser action")
+    default: {
+      const page = parsePageAction(value, "snapshot")
+      if (!page) throw new Error("Unsupported browser action")
+      return page
+    }
   }
+}
+
+function inspectionScope(value: Record<string, unknown>, action: string): { ref?: string; query?: string } {
+  if (value.ref !== undefined && typeof value.ref !== "string") throw new Error(`${action} ref must be a ref from the latest inspection`)
+  if (value.query !== undefined && (typeof value.query !== "string" || value.query.length > MAX_QUERY_LENGTH)) {
+    throw new Error(`${action} query must be text of at most ${MAX_QUERY_LENGTH} characters`)
+  }
+  return { ...(value.ref ? { ref: value.ref as string } : {}),
+    ...(typeof value.query === "string" && value.query.trim() ? { query: value.query } : {}) }
 }
 
 /** Fixed human-answer proof callback. The cookie exists only in this private
@@ -465,10 +467,17 @@ export function formatInspection(result: InspectionResult): string {
   return lines.join("\n")
 }
 
+export function formatBrowserSnapshot(result: { url: string; snapshot: string; collapsed?: number }): string {
+  return `${result.url}\n\n${result.snapshot}${result.collapsed ? "\n\nCollapsed elements: snapshot with their ref to expand them. (+N more) omits siblings: use their parent's ref or query to find them." : ""}`
+}
+
 function formatBridgeResult(resultValue: unknown, screenshot = { text: "Captured the connected CodeNomad build.", name: "codenomad.png" }) {
   const result = resultValue as { image?: { data: string; mime: string }; [key: string]: unknown } | undefined
   if (typeof result?.snapshot === "string" && result.target && result.context && Array.isArray(result.diagnostics)) {
     return { content: formatInspection(result as unknown as InspectionResult) }
+  }
+  if (typeof result?.snapshot === "string" && typeof result.url === "string") {
+    return { content: formatBrowserSnapshot(result as { url: string; snapshot: string; collapsed?: number }) }
   }
   if (result?.image) {
     const content = [
