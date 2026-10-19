@@ -384,6 +384,9 @@ test("Workspace actions measure the whole row and share the subtle rollover acro
     await page.keyboard.press("Escape")
     await page.waitForFunction(() => document.querySelector('[data-path="README.md"] .file-row-actions')?.getAttribute('data-compact') === "false")
     assert.equal(await actions.locator('.file-row-inline-actions').evaluate(element => (element as HTMLElement).inert), false)
+    // The overflow menu rendered the same items: their icons must not have been moved out of the inline buttons.
+    assert.equal(await actions.locator('.file-row-inline-actions button svg').count(), 3)
+    assert.equal(await actions.locator('.file-row-pinned-actions button svg').count(), 1)
     await page.evaluate(() => { document.documentElement.dir = "rtl"; document.body.style.zoom = "1.25" })
     await row.hover()
     assert.equal(await actions.getAttribute("data-compact"), "false")

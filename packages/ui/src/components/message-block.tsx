@@ -384,7 +384,10 @@ function ToolCallItem(props: ToolCallItemProps) {
     }
   }
 
-  const buildActionMenuItems = (): ActionOverflowMenuItem[] => {
+  // Not memoized: ToolCall memoizes the arrays that embed these items, once
+  // for its header buttons and once for its overflow menu. Each call must
+  // return fresh icon elements, because one DOM node cannot be in both places.
+  const actionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
     if (taskSessionId()) {
@@ -409,11 +412,6 @@ function ToolCallItem(props: ToolCallItemProps) {
 
     return items
   }
-
-  // Memoized: the consumer re-evaluates this function prop inside its own item
-  // builder, so an unmemoized build would recreate the array (and icon DOM) on
-  // every tool-state event of the owning message.
-  const actionMenuItems = createMemo(() => buildActionMenuItems())
 
   return (
     <Show when={Boolean(toolPart())}>

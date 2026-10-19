@@ -107,3 +107,30 @@ test("reasoning and tool headers show OpenCode V2 durations, live while running"
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("tool header actions keep their icons after the overflow menu opens and closes", async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    const header = page.locator('.tool-call[data-part-id="finished-tool"] .tool-call-header')
+    await header.waitFor()
+    // Show the narrow-layout trigger while the inline actions stay mounted beside it.
+    await page.addStyleTag({ content: ".tool-call-header .action-overflow-narrow { display: inline-flex !important; }" })
+    const inlineIcons = () => header.locator("button:not(.action-overflow-narrow) svg").count()
+    const before = await inlineIcons()
+    assert.ok(before > 0)
+    await header.hover()
+    await header.locator(".action-overflow-narrow").click()
+    const menu = page.getByRole("menu")
+    await menu.waitFor()
+    assert.ok(await menu.locator("svg").count() > 0, "menu items render their own icons")
+    await page.keyboard.press("Escape")
+    await menu.waitFor({ state: "detached" })
+    // Items shared with message-block's headerMenuItems (delete part) must not lose their inline icon.
+    assert.equal(await inlineIcons(), before)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
