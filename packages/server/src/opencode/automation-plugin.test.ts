@@ -90,6 +90,33 @@ test("validates Developer Mode actions", () => {
   assert.throws(() => parseDeveloperAction({ action: "click" }), /click requires ref/)
 })
 
+test("validates trusted-input actions, and parsing is idempotent across the bridge", () => {
+  const cases: Array<[Record<string, unknown>, unknown]> = [
+    [{ action: "click", ref: "e1", button: "right" }, { action: "click", ref: "e1", button: "right" }],
+    [{ action: "click", ref: "e1", button: "left" }, { action: "click", ref: "e1" }],
+    [{ action: "hover", ref: "e2" }, { action: "hover", ref: "e2" }],
+    [{ action: "drag", ref: "e2", to: "e3" }, { action: "drag", ref: "e2", to: "e3" }],
+    [{ action: "scroll", direction: "down" }, { action: "scroll", direction: "down", amount: 600 }],
+    [{ action: "scroll", ref: "e4", direction: "left", amount: 120 }, { action: "scroll", ref: "e4", direction: "left", amount: 120 }],
+    [{ action: "press", key: "Shift+Tab" }, { action: "press", key: "Shift+Tab" }],
+    [{ action: "press", key: "Enter", ref: "e5" }, { action: "press", key: "Enter", ref: "e5" }],
+    [{ action: "wait", text: "Ready" }, { action: "wait", text: "Ready", gone: false, timeout: 5_000 }],
+    [{ action: "wait", text: "Saving", gone: true, timeout: 0 }, { action: "wait", text: "Saving", gone: true, timeout: 0 }],
+  ]
+  for (const [input, expected] of cases) {
+    assert.deepEqual(parseDeveloperAction(input), expected)
+    assert.deepEqual(parseDeveloperAction(parseDeveloperAction(input)), expected, "the backend re-parses the same flat command")
+  }
+  assert.throws(() => parseDeveloperAction({ action: "click", ref: "e1", button: "middle" }), /left or right/)
+  assert.throws(() => parseDeveloperAction({ action: "drag", ref: "e1" }), /drag requires to/)
+  assert.throws(() => parseDeveloperAction({ action: "scroll", direction: "sideways" }), /up, down, left or right/)
+  assert.throws(() => parseDeveloperAction({ action: "scroll", direction: "up", amount: 10_001 }), /from 1 to 10000/)
+  assert.throws(() => parseDeveloperAction({ action: "press", key: "" }), /press requires key/)
+  assert.throws(() => parseDeveloperAction({ action: "press", key: "Hyper+Q" }), /Unknown modifier/)
+  assert.throws(() => parseDeveloperAction({ action: "wait", text: " " }), /wait requires text/)
+  assert.throws(() => parseDeveloperAction({ action: "wait", text: "x", timeout: 20_000 }), /from 0 to 15000/)
+})
+
 test("an inspection reads as a plain outline with its window, collapse note and diagnostics", () => {
   const text = formatInspection({
     target: { title: "CodeNomad", url: "http://127.0.0.1:9899/" },

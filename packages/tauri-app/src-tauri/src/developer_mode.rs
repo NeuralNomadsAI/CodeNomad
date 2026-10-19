@@ -123,8 +123,10 @@ impl DeveloperMode {
         }
     }
 
+    /// Like the update flow, automation targets an application window: a focused
+    /// Preferences or remote window falls back to the most recently used one.
     fn focused_window_id(app: &AppHandle) -> Option<String> {
-        crate::local_windows::focused_local_window(app)
+        crate::local_windows::update_flow_window(app)
             .and_then(|window| crate::identity::local_window_id(window.label()).ok())
     }
 

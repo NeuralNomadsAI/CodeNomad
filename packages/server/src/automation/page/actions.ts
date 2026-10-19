@@ -1,5 +1,5 @@
 import { aim, clickAt, dragBetween, hoverAt, pressKeys, waitForText, wheelAt, type MouseButton } from "./input"
-import { callOn, OBJECT_GROUP, releaseObjects, resolveElement, VALUE_LIMIT, type PageSession } from "./protocol"
+import { callOn, markedInput, OBJECT_GROUP, releaseObjects, resolveElement, VALUE_LIMIT, type PageSession } from "./protocol"
 import type { RefAction } from "./parse"
 import { renderSnapshot, type AxNode, type Snapshot, type SnapshotOptions } from "./snapshot"
 
@@ -123,10 +123,8 @@ async function type(session: PageSession, action: Target & { text: string; clear
   const field = await callOn(session, action.ref, element, FIELD, [], false) as string
   const mode = await callOn(session, action.ref, field, PREPARE, [action.clear])
   if (mode === "value" || mode === "append") await callOn(session, action.ref, field, SET_VALUE, [action.text, mode === "append"])
-  else if (action.text) {
-    await session.channel.send("Input.insertText", { text: action.text })
-    await session.checkpoint()
-  } else if (action.clear) await callOn(session, action.ref, field, DELETE_SELECTION, [])
+  else if (action.text) await markedInput(session, dispatch => dispatch("Input.insertText", { text: action.text }))
+  else if (action.clear) await callOn(session, action.ref, field, DELETE_SELECTION, [])
   return { value: String(await callOn(session, action.ref, field, READ_VALUE, [])) }
 }
 

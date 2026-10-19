@@ -29,8 +29,9 @@ export async function aim(session: PageSession, ref: string, backendNodeId: numb
 
 /** Refuses a point that another element covers, instead of acting on whatever is on top. */
 async function assertReceives(session: PageSession, ref: string, backendNodeId: number, point: Point): Promise<void> {
+  // Like real events, hit testing passes through `pointer-events: none` layers (toasts, overlays' gaps).
   const hit = await session.channel.send("DOM.getNodeForLocation", { x: Math.floor(point.x), y: Math.floor(point.y),
-    includeUserAgentShadowDOM: false, ignorePointerEventsNone: true }).catch(() => undefined)
+    includeUserAgentShadowDOM: false, ignorePointerEventsNone: false }).catch(() => undefined)
   await session.checkpoint()
   const hitNode = hit?.backendNodeId
   if (typeof hitNode !== "number" || hitNode === backendNodeId) return
@@ -45,7 +46,7 @@ const RECEIVES = `const hit = args[0] && (args[0].nodeType === Node.ELEMENT_NODE
   if (!hit || element === hit || element.contains(hit)) return null;
   const label = hit.closest("label");
   if (label && (label.control === element || label.contains(element))) return null;
-  const name = (hit.getAttribute("aria-label") || hit.getAttribute("title") || hit.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 60);
+  const name = (hit.getAttribute("aria-label") || hit.getAttribute("title") || hit.innerText || "").replace(/\\s+/g, " ").trim().slice(0, 60);
   return hit.tagName.toLowerCase() + (name ? " " + JSON.stringify(name) : "");`
 
 async function layoutViewport(session: PageSession): Promise<{ width: number; height: number }> {

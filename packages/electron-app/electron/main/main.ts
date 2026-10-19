@@ -191,9 +191,11 @@ function runPrimary(firstIntent: LaunchIntent) {
   const developerMode = new DeveloperMode({
     devtoolsDataPath: sessionDataPath,
     nativeIdentity: developerNativeIdentity,
+    // A focused Preferences or remote window is not an automation target: fall back to the
+    // most recently used application window instead of reporting no target at all.
     targetWindowId: () => {
       const focused = BrowserWindow.getFocusedWindow()
-      return focused ? registry.resolve(focused.webContents)?.id : registry.mruRecord()?.id
+      return (focused ? registry.resolve(focused.webContents)?.id : undefined) ?? registry.mruRecord()?.id
     },
     requestRelaunch: () => lifecycle.requestRelaunch(),
   })
