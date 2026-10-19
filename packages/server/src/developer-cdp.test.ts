@@ -74,7 +74,8 @@ class FakeChrome {
       this.deferred.set(command.method, { socket, command })
       return
     }
-    queueMicrotask(() => socket.respond(command, this.result(command.method)))
+    queueMicrotask(() => socket.respond(command, command.method === "Runtime.evaluate" && String(command.params?.expression).includes("__codenomadAutomationInputUntil")
+      ? { result: { value: 1_700_000_000 } } : this.result(command.method)))
   }
 
   /** Visible box of every element, or none; and the element hit at its centre. */

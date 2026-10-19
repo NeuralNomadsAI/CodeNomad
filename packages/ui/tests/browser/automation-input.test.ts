@@ -141,7 +141,7 @@ test("a hidden press target never submits the focused draft, and dragging cannot
 })
 
 /** Answers the real InterruptionDock question and returns the human-answer header it sent. */
-async function answerDock(via: "click" | "press" | "press-stalled" | "human"): Promise<unknown> {
+async function answerDock(via: "click" | "press" | "press-stalled" | "click-stalled" | "human"): Promise<unknown> {
   const run = await openAutomationPage(automation, `${base}/automation-dock`, async page => {
     await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   })
@@ -157,12 +157,14 @@ async function answerDock(via: "click" | "press" | "press-stalled" | "human"): P
     } else {
       const ref = await refFor(/textbox/, "textbox")
       await act({ action: "type", ref, text: `Automation ${via}` })
-      if (via === "press-stalled") {
-        await page.evaluate(() => window.addEventListener("keydown", () => {
-          const end = performance.now() + 16_000
+      if (via === "press-stalled" || via === "click-stalled") {
+        await page.evaluate(({ event, duration }) => window.addEventListener(event, () => {
+          const end = performance.now() + duration
           while (performance.now() < end) { /* Renderer stalled beyond the 15-second input lease. */ }
-        }, { capture: true, once: true }))
-        await act({ action: "press", key: "Enter", ref }).catch(error => {
+        }, { capture: true, once: true }), { event: via === "press-stalled" ? "keydown" : "pointerdown", duration: via === "press-stalled" ? 16_000 : 25_000 })
+        const input = via === "press-stalled" ? { action: "press", key: "Enter", ref }
+          : { action: "click", ref: await refFor(/button "Submit"/, "Submit") }
+        await act(input).catch(error => {
           if (!/timed out/.test(error.message)) throw error
         })
       } else if (via === "press") await act({ action: "press", key: "Enter", ref })
@@ -179,5 +181,6 @@ test("a dock answer given through trusted automation clicks or keys never carrie
   assert.equal(await answerDock("click"), undefined, "a trusted automation click is not a human answer")
   assert.equal(await answerDock("press"), undefined, "a trusted automation Enter is not a human answer")
   assert.equal(await answerDock("press-stalled"), undefined, "a key queued past lease expiry and its default click still are not human")
+  assert.equal(await answerDock("click-stalled"), undefined, "a cleanup release after two 10-second command timeouts retains its original provenance")
   assert.equal(await answerDock("human"), "1", "control: a real user click on the same dock is")
 })

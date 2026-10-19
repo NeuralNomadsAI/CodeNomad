@@ -12,7 +12,7 @@ test("failed pointer and key sequences release potentially held inputs without r
       channel: { send: async (method, params = {}) => {
         calls.push({ method, params })
         if (params.type === "mousePressed" || params.type === "rawKeyDown") pressed = true
-        return {}
+        return method === "Runtime.evaluate" ? { result: { value: 1_700_000_000 } } : {}
       } },
       checkpoint: async () => { if (pressed && !failed) { failed = true; throw new Error("Page changed") } },
     }
@@ -42,14 +42,24 @@ test("a frozen mark write cannot suppress release, and late input effects are re
           if (recoversBeforeRelease) clicks++
           else { queuedRelease = () => { clicks++ }; throw new Error("CDP release timed out") }
         }
-        return {}
+        return method === "Runtime.evaluate" ? { result: { value: 1_700_000_000 } } : {}
       } },
     }
     await assert.rejects(clickAt(session, { x: 10, y: 20 }), /outcome is unknown.*may still be delivered; inspect before retrying/)
     assert.equal(calls.filter(call => call.params.type === "mousePressed").length, 1)
     assert.equal(calls.filter(call => call.params.type === "mouseReleased").length, 1,
       "release is attempted even if its mark write times out")
+    assert.equal(calls.find(call => call.params.type === "mouseReleased")?.params.timestamp,
+      calls.find(call => call.params.type === "mousePressed")?.params.timestamp, "late release retains the original press timestamp")
     queuedRelease?.()
     assert.equal(clicks, 1, "cleanup can complete the admitted click after a timeout, but never replays its press")
   }
+})
+
+test("input refuses when the page cannot supply a valid provenance timestamp", async () => {
+  const methods: string[] = []
+  await assert.rejects(pressKeys({ markAutomation: true, checkpoint: async () => {},
+    channel: { send: async method => { methods.push(method); return { result: { value: null } } } },
+  }, "Enter"), /Cannot establish automation input provenance/)
+  assert.ok(methods.every(method => method === "Runtime.evaluate"))
 })

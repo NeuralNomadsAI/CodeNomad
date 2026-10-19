@@ -100,15 +100,23 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (meth
   let point = { x: 0, y: 0 }
   let attempted = false
   const dispatch = async (method: string, params: Record<string, unknown>) => {
-    if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true })
+    let timestamp: number | undefined
+    if (session.markAutomation) {
+      const result = await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true })
+      const stamp = (result.result as { value?: unknown } | undefined)?.value
+      if (typeof stamp !== "number" || !Number.isFinite(stamp) || stamp <= 0) throw new Error("Cannot establish automation input provenance")
+      timestamp = stamp
+    }
     const mouse = method === "Input.dispatchMouseEvent"
     if (mouse && typeof params.x === "number" && typeof params.y === "number") point = { x: params.x, y: params.y }
     const id = mouse ? `mouse:${params.button}` : `key:${params.code}`
     const down = mouse ? params.type === "mousePressed" : params.type === "keyDown" || params.type === "rawKeyDown"
     const up = mouse ? params.type === "mouseReleased" : params.type === "keyUp"
-    if (down) held.set(id, { method, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0 } })
+    if (down) held.set(id, { method, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0,
+      ...(timestamp === undefined ? {} : { timestamp }) } })
     attempted = true
-    await session.channel.send(method, params)
+    await session.channel.send(method, { ...params,
+      ...(timestamp === undefined || !["Input.dispatchMouseEvent", "Input.dispatchKeyEvent"].includes(method) ? {} : { timestamp }) })
     if (up) held.delete(id)
     await session.checkpoint()
   }
@@ -124,8 +132,8 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (meth
     // anything potentially held, without a failed checkpoint suppressing cleanup.
     for (const release of [...held.values()].reverse()) {
       try {
-        // A frozen page can time out this write too. Still queue the release: the
-        // earlier input interval (and this queued renewal) retain its provenance.
+        // A frozen page can time out this write too. The release retains the
+        // original press's timestamp, so provenance never depends on the timeout.
         if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true }).catch(() => undefined)
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
         await session.channel.send(release.method, { ...params, ...(release.method === "Input.dispatchMouseEvent" ? point : {}) })
@@ -136,6 +144,8 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (meth
 }
 
 export const INPUT_MARK_LEASE_MS = 15_000
-const MARK_INPUT = `globalThis.__codenomadAutomationInputUntil = performance.now() + ${INPUT_MARK_LEASE_MS}; true`
+// CDP timestamps use epoch seconds; DOM event.timeStamp uses the page's monotonic
+// origin. Reading both in the page keeps delayed input within its original interval.
+const MARK_INPUT = `globalThis.__codenomadAutomationInputUntil = performance.now() + ${INPUT_MARK_LEASE_MS}; Date.now() / 1000`
 // Keep the interval's end for events queued before a stalled renderer recovered.
 const UNMARK_INPUT = "globalThis.__codenomadAutomationInputUntil = Math.min(globalThis.__codenomadAutomationInputUntil || 0, performance.now()); true"
