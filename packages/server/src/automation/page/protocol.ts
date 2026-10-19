@@ -98,6 +98,7 @@ function pageError(ref: string, description: string): Error {
 export async function markedInput<T>(session: PageSession, run: (dispatch: (method: string, params: Record<string, unknown>) => Promise<void>) => Promise<T>): Promise<T> {
   const held = new Map<string, { method: string; params: Record<string, unknown> }>()
   let point = { x: 0, y: 0 }
+  let attempted = false
   const dispatch = async (method: string, params: Record<string, unknown>) => {
     if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true })
     const mouse = method === "Input.dispatchMouseEvent"
@@ -106,18 +107,26 @@ export async function markedInput<T>(session: PageSession, run: (dispatch: (meth
     const down = mouse ? params.type === "mousePressed" : params.type === "keyDown" || params.type === "rawKeyDown"
     const up = mouse ? params.type === "mouseReleased" : params.type === "keyUp"
     if (down) held.set(id, { method, params: { ...params, type: mouse ? "mouseReleased" : "keyUp", buttons: 0, modifiers: 0 } })
+    attempted = true
     await session.channel.send(method, params)
     if (up) held.delete(id)
     await session.checkpoint()
   }
   try {
     return await run(dispatch)
+  } catch (error) {
+    if (attempted && error instanceof Error && /timed out|timeout/i.test(error.message)) {
+      throw new Error("Input timed out: its outcome is unknown. The page was busy and the input may still be delivered; inspect before retrying.")
+    }
+    throw error
   } finally {
     // Failure may be after admission but before acknowledgement/checkpoint. Release
     // anything potentially held, without a failed checkpoint suppressing cleanup.
     for (const release of [...held.values()].reverse()) {
       try {
-        if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true })
+        // A frozen page can time out this write too. Still queue the release: the
+        // earlier input interval (and this queued renewal) retain its provenance.
+        if (session.markAutomation) await session.channel.send("Runtime.evaluate", { expression: MARK_INPUT, returnByValue: true }).catch(() => undefined)
         const { text: _text, unmodifiedText: _unmodified, ...params } = release.params
         await session.channel.send(release.method, { ...params, ...(release.method === "Input.dispatchMouseEvent" ? point : {}) })
       } catch { /* Best effort, exact original channel only; never retry the action. */ }
