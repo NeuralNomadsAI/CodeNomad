@@ -797,6 +797,10 @@ export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: st
   await ensureTranscript(instanceId, sessionId, directory).entry.data.session.pending.sync(sessionId)
 }
 
+// The reduce store mutates message rows in place (Solid `produce`), so list and
+// row references stay stable across content changes; identity can never prove
+// a session unchanged. Projections always run and rely on record reuse inside
+// hydrateMessages to keep unchanged messages cheap.
 export function projectOpenCodeMessages(
   instanceId: string,
   sessionId: string,

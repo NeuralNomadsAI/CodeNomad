@@ -84,7 +84,7 @@ function clonePart(part: ClientPart): ClientPart {
   return part
 }
 
-function areMessageIdListsEqual(a: string[], b: string[]): boolean {
+function areMessageIdListsEqual(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) {
     return false
   }
@@ -123,6 +123,41 @@ function resolveClientPromptDisplayText(
   }
 
   return previous?.clientPromptDisplayMetadata
+}
+
+// Structural equality without serializing: the per-event window comparison
+// walks every part of every resident message, so it must not allocate
+// throwaway strings (JSON.stringify) on the unchanged common path.
+function partDataEqual(a: unknown, b: unknown): boolean {
+  if (a === b) return true
+  if (typeof a !== "object" || typeof b !== "object" || !a || !b) return false
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false
+    for (let index = 0; index < a.length; index++) {
+      if (!partDataEqual(a[index], b[index])) return false
+    }
+    return true
+  }
+  const aKeys = Object.keys(a as Record<string, unknown>)
+  const bKeys = Object.keys(b as Record<string, unknown>)
+  if (aKeys.length !== bKeys.length) return false
+  for (const key of aKeys) {
+    if (!partDataEqual((a as Record<string, unknown>)[key], (b as Record<string, unknown>)[key])) return false
+  }
+  return true
+}
+
+function messageInfoEqual(a: MessageInfo, b: MessageInfo): boolean {
+  return partDataEqual(a, b)
+}
+
+function samePromptDisplayMetadata(
+  next: MessageRecord["clientPromptDisplayMetadata"],
+  previous: MessageRecord["clientPromptDisplayMetadata"],
+): boolean {
+  if (next === previous) return true
+  if (!next || !previous) return false
+  return JSON.stringify(next) === JSON.stringify(previous)
 }
 
 function extractUsageEntry(info: MessageInfo | undefined): UsageEntry | null {
@@ -515,7 +550,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       const nextPart = nextMap[id]
       if (prevPart === nextPart) continue
       if (!prevPart || !nextPart) return true
-      if (JSON.stringify(prevPart.data) !== JSON.stringify(nextPart.data)) return true
+      if (!partDataEqual(prevPart.data, nextPart.data)) return true
     }
     return false
   }
@@ -584,6 +619,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const normalizedRecords: Record<string, MessageRecord> = {}
     const now = Date.now()
+    let contentChanged = false
 
     dedupedInputs.forEach((input) => {
       const normalizedParts = normalizeParts(input.id, input.parts)
@@ -597,6 +633,21 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       // so `previous` IS the optimistic record and its client-only
       // prompt-display metadata carries over unchanged.
       const clientPromptDisplayMetadata = resolveClientPromptDisplayText(instanceId, input, previous)
+      // The window is re-projected on every native event, so unchanged
+      // messages must keep their resident record object: replacing it would
+      // notify every Solid subscriber of that message and re-render it.
+      const recordUnchanged = Boolean(previous) && !shouldBump
+        && previous.role === input.role
+        && previous.sessionId === input.sessionId
+        && (input.createdAt === undefined || previous.createdAt === input.createdAt)
+        && (input.updatedAt === undefined || previous.updatedAt === input.updatedAt)
+        && (input.isEphemeral === undefined || previous.isEphemeral === input.isEphemeral)
+        && samePromptDisplayMetadata(clientPromptDisplayMetadata, previous.clientPromptDisplayMetadata)
+      if (recordUnchanged) {
+        normalizedRecords[input.id] = previous
+        return
+      }
+      contentChanged = true
       normalizedRecords[input.id] = {
         id: input.id,
         sessionId: input.sessionId,
@@ -615,15 +666,6 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     const isVisibleInfo = (info: MessageInfo) => !revertMessageId || info.id < revertMessageId
     const infoList = infos ? Array.from(infos).filter(isVisibleInfo) : undefined
-    const usageInfos = options?.preserveOmitted && infoList
-      ? new Map([
-          ...Array.from(messageInfoCache.values())
-            .filter((info) => info.sessionID === sessionId && isVisibleInfo(info))
-            .map((info) => [info.id as string, info] as const),
-          ...infoList.map((info) => [info.id as string, info] as const),
-        ]).values()
-      : infoList
-    const usageState = usageInfos ? rebuildUsageStateFromInfos(usageInfos) : state.usage[sessionId]
 
     const nextMessages: Record<string, MessageRecord> = { ...state.messages }
     const nextMessageInfoVersion: Record<string, number> = { ...state.messageInfoVersion }
@@ -658,6 +700,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       })
     }
 
+    let infoChangedAny = false
     if (infoList) {
       for (const info of infoList) {
         const messageId = info.id as string
@@ -667,14 +710,32 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         // An identical snapshot (the common case on a reconnect force-reload)
         // must not invalidate those caches.
         const previousInfo = messageInfoCache.get(messageId)
-        const infoChanged = !previousInfo || JSON.stringify(previousInfo) !== JSON.stringify(info)
+        const infoChanged = !previousInfo || !messageInfoEqual(previousInfo, info)
+        if (!infoChanged) continue
+        infoChangedAny = true
         messageInfoCache.set(messageId, info)
-        if (infoChanged) {
-          const currentVersion = nextMessageInfoVersion[messageId] ?? 0
-          nextMessageInfoVersion[messageId] = currentVersion + 1
-        }
+        const currentVersion = nextMessageInfoVersion[messageId] ?? 0
+        nextMessageInfoVersion[messageId] = currentVersion + 1
       }
     }
+
+    // An identical snapshot leaves the whole resident session untouched: no
+    // record replacement, no session-entry write, no revision bump. This is
+    // what keeps a re-projected window from invalidating every mounted row.
+    if (!contentChanged && omittedIds.length === 0 && !infoChangedAny
+      && areMessageIdListsEqual(previousMessageIds, incomingIds)) {
+      return
+    }
+
+    const usageInfos = options?.preserveOmitted && infoList
+      ? new Map([
+          ...Array.from(messageInfoCache.values())
+            .filter((info) => info.sessionID === sessionId && isVisibleInfo(info))
+            .map((info) => [info.id as string, info] as const),
+          ...infoList.map((info) => [info.id as string, info] as const),
+        ]).values()
+      : infoList
+    const usageState = usageInfos ? rebuildUsageStateFromInfos(usageInfos) : state.usage[sessionId]
 
     batch(() => {
       setState("messages", () => nextMessages)

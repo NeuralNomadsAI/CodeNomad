@@ -883,7 +883,10 @@ describe("session request authority", () => {
       await loadMessages(instanceId, sessionId, { force: true })
       assert.deepEqual(store.getSessionMessageIds(sessionId), Array.from({ length: 200 }, (_, index) => `message-${index + 201}`))
       assert.equal(store.getMessageInfo("message-1"), undefined)
-      assert.notStrictEqual(store.getMessageInfo("message-201"), retainedInfo)
+      // A forced refresh of identical content must repopulate semantics without
+      // swapping the resident info identity: content-equal infos keep their
+      // object so identity-sensitive render caches stay valid.
+      assert.equal(store.getMessageInfo("message-201"), retainedInfo)
       assert.equal(store.getSessionUsage(sessionId)?.totalCost, 200)
       assert.equal(hasMoreMessages(instanceId, sessionId), true)
 

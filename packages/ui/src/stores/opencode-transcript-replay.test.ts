@@ -110,6 +110,41 @@ function costClock(ctx: TestContext, data: Data) {
   })
 }
 
+test("a stream delta projection replaces only its own record", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("replay-stable")
+  const hydration = ctx.mock.method(f.store, "hydrateMessages")
+  const ids = [...f.store.getSessionMessageIds(sessionId)]
+  const resident = new Map(ids.map(id => [id, f.store.getMessage(id)]))
+
+  // Re-projecting the unchanged window keeps every resident record identity:
+  // the SDK reduce mutates rows in place, so projections always re-run, but
+  // unchanged messages must not be invalidated by them.
+  projectOpenCodeMessages(f.instanceId, sessionId, f.data())
+  projectOpenCodeMessages(f.instanceId, sessionId, f.data())
+  assert.deepEqual(f.store.getSessionMessageIds(sessionId), ids)
+  for (const id of ids) {
+    assert.equal(f.store.getMessage(id), resident.get(id), "unchanged records keep their identity")
+  }
+
+  const base = { assistantMessageID: "msg_live", ordinal: 0 }
+  const before = hydration.mock.callCount()
+  f.apply("session.step.started", { ...base, agent: "build", model, started: 500 })
+  f.apply("session.text.started", base)
+  f.apply("session.text.delta", { ...base, delta: "x" })
+  await finish(ctx, () => Boolean(f.store.getMessage("msg_live") || (f.data().session.message as any).get(sessionId, "msg_live")))
+  projectOpenCodeMessages(f.instanceId, sessionId, f.data())
+  assert.ok(hydration.mock.callCount() > before, "changed session data re-hydrates")
+  // The bounded window evicts exactly the oldest message; every other
+  // resident record keeps its identity.
+  assert.equal(f.store.getMessage(ids[0]), undefined, "the oldest message falls out of the bounded window")
+  for (const id of ids.slice(1)) {
+    assert.equal(f.store.getMessage(id), resident.get(id), "a streamed delta must not replace other records")
+  }
+  assert.ok(f.store.getMessage("msg_live"), "the new streaming record is resident")
+  f.cleanup()
+})
+
 test("real dispatcher skips queued ingress hydration and publishes bounded chunks before an input timer", async ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("replay-dispatch", true)

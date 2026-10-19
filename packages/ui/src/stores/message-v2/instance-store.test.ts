@@ -579,3 +579,78 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.equal(store.state.messageInfoVersion["msg-1"], (versionAfterFirst ?? 0) + 1, "changed info must bump the version")
   })
 })
+
+describe("identical re-hydration stability", () => {
+  const part = (text: string) => ({ id: "p1", type: "text", text } as any)
+
+  it("reuses the previous record object when a re-hydrated message is unchanged", () => {
+    const store = createInstanceMessageStore("stable-identity")
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    const first = store.getMessage("msg_1")!
+    const firstParts = first.parts
+    const sessionRevision = store.getSessionRevision("session")
+
+    // The SDK projection rebuilds input objects on every event; identical
+    // content must not invalidate the resident record.
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    const second = store.getMessage("msg_1")!
+    assert.equal(second, first, "an unchanged message must keep its record identity")
+    assert.equal(second.parts, firstParts, "unchanged parts must keep their identity")
+    assert.equal(second.revision, first.revision)
+    assert.equal(store.getSessionRevision("session"), sessionRevision, "an unchanged snapshot must not bump the session revision")
+  })
+
+  it("keeps record identity when input parts are the same object references", () => {
+    const store = createInstanceMessageStore("stable-refs")
+    const parts = [part("streamed")]
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts, updatedAt: 1000 },
+    ])
+    const first = store.getMessage("msg_1")!
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts, updatedAt: 1000 },
+    ])
+    assert.equal(store.getMessage("msg_1"), first, "reference-stable parts must skip content comparison")
+  })
+
+  it("replaces the record and bumps revisions when a streamed part changes", () => {
+    const store = createInstanceMessageStore("stable-change")
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    const first = store.getMessage("msg_1")!
+    const sessionRevision = store.getSessionRevision("session")
+
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello world")], updatedAt: 1000 },
+    ])
+    const second = store.getMessage("msg_1")!
+    assert.notEqual(second, first, "a changed message must receive a new record object")
+    assert.equal(second.revision, first.revision + 1)
+    assert.equal(store.getSessionRevision("session"), sessionRevision + 1)
+  })
+
+  it("replaces the record when only the status or an explicit updatedAt changes", () => {
+    const store = createInstanceMessageStore("stable-status")
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    const first = store.getMessage("msg_1")!
+
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "complete" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    assert.notEqual(store.getMessage("msg_1"), first, "a status change must replace the record")
+
+    const completed = store.getMessage("msg_1")!
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "complete" as const, parts: [part("hello")], updatedAt: 2000 },
+    ])
+    assert.notEqual(store.getMessage("msg_1"), completed, "an explicit updatedAt change must replace the record")
+    assert.equal(store.getMessage("msg_1")!.updatedAt, 2000)
+  })
+})
