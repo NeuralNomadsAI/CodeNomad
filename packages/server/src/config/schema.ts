@@ -24,7 +24,7 @@ const PreferencesSchema = z
   toolOutputExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
   diagnosticsExpansion: z.enum(["hidden", "expanded", "collapsed"]).default("expanded"),
   systemMessagesVisibility: z.enum(["hidden", "expanded", "collapsed"]).default("hidden"),
-  showUsageMetrics: z.boolean().default(true),
+  showUsageMetrics: z.boolean().default(false),
   usageMetricsExpansion: z.enum(["expanded", "collapsed"]).default("collapsed"),
   autoCleanupBlankSessions: z.boolean().default(true),
   listeningMode: z.enum(["local", "all"]).default("local"),

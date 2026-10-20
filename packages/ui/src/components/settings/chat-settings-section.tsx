@@ -33,7 +33,7 @@ const transcriptDetailPresets = {
     showThinkingBlocks: false,
     diagnosticsExpansion: "expanded",
     toolInputsVisibility: "collapsed",
-    showUsageMetrics: true,
+    showUsageMetrics: false,
     usageMetricsExpansion: "collapsed",
   },
   detailed: {
@@ -41,7 +41,7 @@ const transcriptDetailPresets = {
     showThinkingBlocks: true,
     diagnosticsExpansion: "expanded",
     toolInputsVisibility: "collapsed",
-    showUsageMetrics: true,
+    showUsageMetrics: false,
     usageMetricsExpansion: "expanded",
   },
   everything: {

@@ -241,7 +241,7 @@ const defaultUiSettings: UiSettings = {
   diagnosticsExpansion: "expanded",
   systemMessagesVisibility: "hidden",
   toolInputsVisibility: "collapsed",
-  showUsageMetrics: true,
+  showUsageMetrics: false,
   usageMetricsExpansion: "collapsed",
   showProviderUsageCreditBalance: false,
   autoCleanupBlankSessions: true,

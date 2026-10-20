@@ -10,6 +10,7 @@ interface CoreRightPanelRenderers {
 
 interface CoreStatusSectionRenderers {
   renderTokens: () => JSX.Element
+  renderTokensSummary?: () => JSX.Element
   renderYoloModeSection: () => JSX.Element
   renderProviderUsage: () => JSX.Element
   renderBackgroundProcesses: () => JSX.Element
@@ -59,7 +60,7 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
     statusSections: CORE_STATUS_SECTION_ITEMS.map((section) => {
       const render = sectionRenderers[section.id]
       if (!render) throw new Error(`Missing core right panel section renderer: ${section.id}`)
-      return { ...section, render }
+      return { ...section, render, renderSummary: section.id === "tokens" ? renderers.renderTokensSummary : undefined }
     }),
   }
 }

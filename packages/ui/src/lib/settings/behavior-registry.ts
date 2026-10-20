@@ -237,14 +237,14 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.usageMetrics",
       titleKey: "settings.behavior.usageMetrics.title",
       subtitleKey: "settings.behavior.usageMetrics.subtitle",
-      get: (p) => Boolean(p.showUsageMetrics ?? true),
+      get: (p) => Boolean(p.showUsageMetrics ?? false),
       set: (next) => {
         if (updatePreferences) {
           updatePreferences({ showUsageMetrics: next })
           return
         }
         setBooleanByToggle(
-          () => Boolean(prefs().showUsageMetrics ?? true),
+          () => Boolean(prefs().showUsageMetrics ?? false),
           actions.toggleUsageMetrics,
           next,
         )
@@ -484,7 +484,7 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
     {
       id: "token-usage-visibility",
       label: () => {
-        const visible = actions.preferences().showUsageMetrics ?? true
+        const visible = actions.preferences().showUsageMetrics ?? false
         const state = visible ? tGlobal("commands.common.visible") : tGlobal("commands.common.hidden")
         return tGlobal("commands.tokenUsageDisplay.label", { state })
       },

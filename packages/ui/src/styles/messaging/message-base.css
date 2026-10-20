@@ -224,40 +224,6 @@
   margin-top: -0.125rem;
 }
 
-.message-step-usage {
-  @apply flex flex-wrap items-center gap-1 text-[10px] text-[var(--text-muted)];
-}
-
-.message-step-usage-toggle {
-  @apply flex min-w-0 items-center gap-1 text-left;
-}
-
-.message-step-usage-disclosure {
-  @apply shrink-0;
-  width: 0.75rem;
-  height: 0.75rem;
-  color: var(--text-muted);
-}
-
-.message-step-usage-chip {
-  @apply inline-flex items-center border border-[var(--border-base)] px-2 text-[10px];
-  min-height: 22px;
-  color: var(--icon-button-hover-color);
-  font-weight: var(--font-weight-semibold);
-  line-height: 1;
-}
-
-.message-step-usage-chip::before {
-  content: attr(data-label);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-  font-size: 9px;
-  color: var(--text-muted);
-  font-weight: var(--font-weight-medium);
-  line-height: 1;
-  margin-inline-end: 0.35rem;
-}
-
 .message-queued-badge {
   @apply inline-flex items-center font-bold px-3 py-1 text-xs tracking-wide;
   align-self: center;

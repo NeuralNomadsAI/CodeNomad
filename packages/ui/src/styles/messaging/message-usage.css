@@ -1,0 +1,56 @@
+.message-step-usage {
+  @apply flex flex-wrap items-center gap-1 text-[10px] text-[var(--text-muted)];
+}
+
+.message-step-usage-toggle {
+  @apply flex w-full min-w-0 items-center gap-1;
+  min-height: 22px;
+  text-align: start;
+}
+
+.message-step-usage-label {
+  @apply text-[10px] text-[var(--text-muted)];
+}
+
+.message-step-usage-summary {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-step-usage-summary .message-step-usage-chip + .message-step-usage-chip {
+  margin-inline-start: var(--space-xs);
+}
+
+.message-step-usage-content {
+  margin-block-start: var(--space-xs);
+  margin-inline-start: 1rem;
+}
+
+.message-step-usage-disclosure {
+  @apply shrink-0;
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--text-muted);
+}
+
+.message-step-usage-chip {
+  @apply inline-flex items-center border border-[var(--border-base)] px-2 text-[10px];
+  min-height: 22px;
+  color: var(--icon-button-hover-color);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+.message-step-usage-chip::before {
+  content: attr(data-label);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  margin-inline-end: 0.35rem;
+}

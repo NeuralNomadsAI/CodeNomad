@@ -1,4 +1,5 @@
 @import "./messaging/message-base.css";
+@import "./messaging/message-usage.css";
 @import "./messaging/permission-receipts.css";
 @import "./messaging/prompt-input.css";
 @import "./messaging/prompt-input-footer.css";

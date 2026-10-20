@@ -1,4 +1,5 @@
 import { render } from "solid-js/web"
+import { createSignal } from "solid-js"
 import SessionView from "../../../src/components/session/session-view"
 import TranscriptFilters from "../../../src/components/transcript-filters"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
@@ -49,21 +50,23 @@ addInstance({ id: instanceId, folder: "/fixture", port: 0, pid: 0, proxyPath: ""
 setProviders(prev => new Map(prev).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
 await fetchSessions(instanceId)
 setActiveSession(instanceId, sessionId)
+const [width, setWidth] = createSignal(900)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
-  <div style={{ display: "flex", "flex-direction": "column", height: "100vh", width: "900px" }}>
+  <div data-usage-fixture style={{ display: "flex", "flex-direction": "column", height: "100vh", width: `${width()}px` }}>
     <header><TranscriptFilters /></header>
     <div style={{ display: "flex", flex: 1, "min-height": 0 }}>
       <SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={true} />
     </div>
   </div>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-await updatePreferences({ locale: "en" })
+await updatePreferences({ locale: "en", showUsageMetrics: true })
 let seq = 0
 const emit = (type: string, data: Record<string, unknown>) => (sseManager as any).handleEvent(instanceId, {
   id: `evt_live_${++seq}`, type, created: 10 + seq, durable: { aggregateID: sessionId, seq, version: 1 },
   location: { directory: "/fixture" }, data: { sessionID: sessionId, ...data },
 })
 ;(window as any).fixture = {
+  width: setWidth,
   // The live V2 step sequence recorded from an isolated OpenCode 2.1.0 run.
   startStep: () => {
     emit("session.execution.started", {})

@@ -1,13 +1,13 @@
-import { createMemo, Show, type Component } from "solid-js"
+import { createMemo, For, Show, type Component } from "solid-js"
 import { getChildSessions, getSessionInfo, getThreadTotals } from "../../stores/sessions"
 import { formatTokenTotal } from "../../lib/formatters"
 import { useI18n } from "../../lib/i18n"
-import { useConfig } from "../../stores/preferences"
 
 interface ContextUsagePanelProps {
   instanceId: string
   sessionId: string
   class?: string
+  summary?: boolean
 }
 
 const chipClass = "badge-shape inline-flex items-center gap-1 border border-base px-2 py-0.5 text-xs text-primary"
@@ -15,81 +15,49 @@ const chipLabelClass = "uppercase text-[10px] tracking-wide text-muted"
 
 const ContextUsagePanel: Component<ContextUsagePanelProps> = (props) => {
   const { t } = useI18n()
-  const { preferences } = useConfig()
-  const showUsage = createMemo(() => preferences().showUsageMetrics ?? true)
-  const info = createMemo(
-    () =>
-      getSessionInfo(props.instanceId, props.sessionId) ?? {
-        cost: 0,
-        contextWindow: 0,
-        isSubscriptionModel: false,
-        inputTokens: 0,
-        outputTokens: 0,
-        reasoningTokens: 0,
-        actualUsageTokens: 0,
-        modelOutputLimit: 0,
-        contextAvailableTokens: null,
-      },
+  const info = createMemo(() => getSessionInfo(props.instanceId, props.sessionId))
+  const hasChildren = createMemo(() => getChildSessions(props.instanceId, props.sessionId).length > 0)
+  const threadTotals = createMemo(() => getThreadTotals(props.instanceId, props.sessionId))
+  const tokenMetric = (label: string, value = 0) => ({ label: t(`contextUsagePanel.labels.${label}`), value: formatTokenTotal(value), full: String(value) })
+  const costMetric = (label: string, value: string) => ({ label: t(`contextUsagePanel.labels.${label}`), value, full: value })
+  const sessionMetrics = createMemo(() => {
+    const session = info()
+    const cost = session?.cost ?? 0
+    return [
+      tokenMetric("input", session?.inputTokens),
+      tokenMetric("output", session?.outputTokens),
+      costMetric("cost", session?.isSubscriptionModel ? t("contextUsagePanel.included") : `$${(cost > 0 ? cost : 0).toFixed(2)}`),
+    ]
+  })
+  const totalMetrics = createMemo(() => [
+    tokenMetric("totalInput", threadTotals()?.inputTokens),
+    tokenMetric("totalOutput", threadTotals()?.outputTokens),
+    costMetric("totalCost", `$${(threadTotals()?.cost ?? 0).toFixed(2)}`),
+    tokenMetric("totalReasoning", threadTotals()?.reasoningTokens),
+  ])
+  const summaryLabel = createMemo(() => sessionMetrics().map(metric => `${metric.label}: ${metric.full}`).join(" · "))
+  const renderMetrics = (metrics: ReturnType<typeof sessionMetrics>) => (
+    <For each={metrics}>
+      {(metric) => (
+        <span class={props.summary ? "status-token-metric" : chipClass} title={`${metric.label}: ${metric.full}`}>
+          <span class={props.summary ? "status-token-label" : chipLabelClass}>{metric.label}</span>
+          <span class={props.summary ? "" : "font-semibold text-primary"}>{metric.value}</span>
+        </span>
+      )}
+    </For>
   )
 
-  const children = createMemo(() => getChildSessions(props.instanceId, props.sessionId))
-  const hasChildren = createMemo(() => children().length > 0)
-
-  const threadTotals = createMemo(() => {
-    if (!hasChildren()) return { cost: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0 }
-    return getThreadTotals(props.instanceId, props.sessionId) ?? { cost: 0, inputTokens: 0, outputTokens: 0, reasoningTokens: 0 }
-  })
-
-  const totalCostDisplay = createMemo(() => `$${threadTotals().cost.toFixed(2)}`)
-
-  const totalInputTokens = createMemo(() => threadTotals().inputTokens)
-  const totalOutputTokens = createMemo(() => threadTotals().outputTokens)
-  const totalReasoningTokens = createMemo(() => threadTotals().reasoningTokens)
-
-  const inputTokens = createMemo(() => info().inputTokens ?? 0)
-  const outputTokens = createMemo(() => info().outputTokens ?? 0)
-  const costValue = createMemo(() => {
-    const value = info().isSubscriptionModel ? 0 : info().cost
-    return value > 0 ? value : 0
-  })
-
-  const costDisplay = createMemo(() => info().isSubscriptionModel ? t("contextUsagePanel.included") : `$${costValue().toFixed(2)}`)
-
   return (
-    <div class={`session-context-panel px-4 py-2 ${props.class ?? ""}`}>
-      <div class="flex flex-wrap items-center gap-2 text-xs text-primary opacity-50">
-        <div class={chipClass}>
-          <span class={chipLabelClass}>{t("contextUsagePanel.labels.input")}</span>
-          <span class="font-semibold text-primary">{formatTokenTotal(inputTokens())}</span>
-        </div>
-        <div class={chipClass}>
-          <span class={chipLabelClass}>{t("contextUsagePanel.labels.output")}</span>
-          <span class="font-semibold text-primary">{formatTokenTotal(outputTokens())}</span>
-        </div>
-        <div class={chipClass}>
-          <span class={chipLabelClass}>{t("contextUsagePanel.labels.cost")}</span>
-          <span class="font-semibold text-primary">{costDisplay()}</span>
-        </div>
-        <Show when={hasChildren() && showUsage()}>
-          <div class={chipClass}>
-            <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalInput")}</span>
-            <span class="font-semibold text-primary">{formatTokenTotal(totalInputTokens())}</span>
-          </div>
-          <div class={chipClass}>
-            <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalOutput")}</span>
-            <span class="font-semibold text-primary">{formatTokenTotal(totalOutputTokens())}</span>
-          </div>
-          <div class={chipClass}>
-            <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalCost")}</span>
-            <span class="font-semibold text-primary">{totalCostDisplay()}</span>
-          </div>
-          <div class={chipClass}>
-            <span class={chipLabelClass}>{t("contextUsagePanel.labels.totalReasoning")}</span>
-            <span class="font-semibold text-primary">{formatTokenTotal(totalReasoningTokens())}</span>
-          </div>
+    <Show when={props.summary} fallback={
+      <div class={`session-context-panel status-token-groups py-2 text-xs text-primary opacity-50 ${props.class ?? ""}`}>
+        <div class="status-token-group" data-token-group="session">{renderMetrics(sessionMetrics())}</div>
+        <Show when={hasChildren()}>
+          <div class="status-token-group" data-token-group="thread">{renderMetrics(totalMetrics())}</div>
         </Show>
       </div>
-    </div>
+    }>
+      <span class="status-token-summary" title={summaryLabel()} aria-label={summaryLabel()}>{renderMetrics(sessionMetrics())}</span>
+    </Show>
   )
 }
 

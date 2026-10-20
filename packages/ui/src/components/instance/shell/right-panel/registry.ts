@@ -16,6 +16,8 @@ export interface RightPanelTabModule extends RightPanelItem {
 export interface RightPanelSectionModule extends RightPanelItem {
   tooltipKey: string
   defaultExpanded?: boolean
+  /** Non-interactive inline content, shown only while collapsed. */
+  renderSummary?: () => JSX.Element
   render: () => JSX.Element
 }
 
