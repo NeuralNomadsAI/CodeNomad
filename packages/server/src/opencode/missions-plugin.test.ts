@@ -6,6 +6,9 @@ import { buildAssignmentPrompt } from "../missions/recipes"
 import type { MissionMap } from "../missions/model"
 
 test("validates the compact mission tool contracts", () => {
+  for (const template of ["custom", "debug", "wayfinder", "delivery", "compare"] as const) {
+    assert.equal(parseInspectInput({ start: { objective: "Bounded comparison", template } }).start!.template, template)
+  }
   assert.deepEqual(parseInspectInput({ start: { objective: "Fix it", template: "debug" } }), {
     start: { objective: "Fix it", template: "debug", notes: undefined, taskMode: "native" },
     missionID: undefined,
@@ -101,6 +104,8 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   assert.match(description("briefing"), /Publish unprompted after the initial plan, after settling each task, when starting to wait on a human and before the final report/)
   assert.match(description("briefing"), /requestID "auto:<revision>" matching basedOnRevision; for an explicit UI request use its exact requestID/)
   const inspect = tools.find((tool) => tool.name === "inspect")!
+  assert.deepEqual((inspect as any).input.properties.start.properties.template.enum, ["custom", "debug", "wayfinder", "delivery", "compare"])
+  assert.match((tools.find(tool => tool.name === "report") as any).input.properties.artifact.description, /Compare comparator.*version 1 comparison/)
   await inspect.execute({ start: { objective: "Coordinate", template: "custom" } }, {
     sessionID: "ses_coordinator", messageID: "msg_1", id: "call_1", progress: async () => {},
   })

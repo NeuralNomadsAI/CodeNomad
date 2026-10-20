@@ -140,3 +140,40 @@ test("a current one-line remote summary has no Page 1 of 11 illusion and aligns 
     await captureMissionView(page, "current-report-390-rtl")
   } finally { await page.close() }
 })
+
+test("comparison task and direct readers show verdict, model names and bounded criterion scores", async () => {
+  const page = await browser.newPage(), value = snapshot(), mutations: string[] = [], errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  const mission = value.missions[0], task = mission.tasks[0], report = task.lateReports![0]
+  mission.template = "compare"; task.role = "comparator"; task.status = "completed"
+  mission.profiles = { roles: { "model-a": { model: { providerID: "p", id: "a" } }, "model-b": { model: { providerID: "p", id: "b" } } } }
+  task.report = { ...report, late: false, artifact: { version: 1, kind: "comparison", runRefs: ["x", "y"], verdict: "equivalent",
+    results: [{ criterion: "quality", a: 9, b: 9, observation: "x".repeat(19_000) + "COMPARISON_TAIL",
+      evidence: [{ kind: "file", path: "output.txt", sha256: "a".repeat(64) }] }] } }
+  task.lateReports = []; mission.reports = [task.report]
+  try {
+    await page.route("**/api/**", route => {
+      if (route.request().method() !== "GET") mutations.push(route.request().url())
+      return route.fulfill({ json: route.request().url().endsWith("/missions") ? value
+        : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).resultReader))
+    for (const [kind, id] of [["report", "late"], ["task", "task"]]) {
+      await page.evaluate(([kind, id]) => (window as any).resultReader.show(kind, id), [kind, id])
+      const reader = page.locator(".mission-reader")
+      await reader.getByText(en["missions.compare.verdict.equivalent"], { exact: true }).waitFor()
+      await reader.getByText("p/a", { exact: true }).waitFor(); await reader.getByText("p/b", { exact: true }).waitFor()
+      const scores = reader.locator("article").filter({ has: page.getByRole("heading", { name: en["missions.compare.criteria"], exact: true }) })
+      await scores.getByRole("row").filter({ hasText: "quality" }).waitFor()
+      assert.equal(await scores.getByText(/COMPARISON_TAIL/).count(), 0)
+      const input = scores.getByRole("spinbutton")
+      await input.fill((await input.getAttribute("max"))!)
+      await scores.getByText(/COMPARISON_TAIL/).waitFor()
+      assert.equal(await scores.getByText("output.txt", { exact: true }).count(), 1)
+      assert(!(await scores.innerText()).includes("a".repeat(64)), "digest stays in Technical details, not visible prose")
+    }
+    assert.deepEqual(mutations, [], "reading a verdict never mutates the mission")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

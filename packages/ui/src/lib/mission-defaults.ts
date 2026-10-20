@@ -5,7 +5,7 @@ export type MissionTaskMode = "native" | "independent"
 /** `all` is the global default; a mission type entry is an exception overriding it. */
 export type MissionDefaultScope = "all" | MissionTemplateId
 export interface MissionProfileDefault { template: MissionDefaultScope; profiles: MissionProfiles; taskMode?: MissionTaskMode }
-const scopes: MissionDefaultScope[] = ["all", "custom", "debug", "wayfinder", "delivery"]
+const scopes: MissionDefaultScope[] = ["all", "custom", "debug", "wayfinder", "delivery", "compare"]
 // The global default carries one task profile, like the Flexible specialist.
 const scopeRoles = (scope: MissionDefaultScope): readonly string[] => missionProfileRoles[scope === "all" ? "custom" : scope]
 
@@ -58,7 +58,7 @@ export function missionDefaultsFor(value: readonly MissionProfileDefault[], temp
   const specific = exceptions ? value.find(item => item.template === template)?.profiles : undefined
   const coordinator = specific?.coordinator ?? base?.coordinator
   const roles = Object.fromEntries(missionProfileRoles[template].flatMap(role => {
-    const execution = specific?.roles?.[role] ?? base?.roles?.specialist
+    const execution = specific?.roles?.[role] ?? (template === "compare" && role === "comparator" ? undefined : base?.roles?.specialist)
     return execution ? [[role, execution]] : []
   }))
   if (!coordinator && !Object.keys(roles).length) return undefined

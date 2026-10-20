@@ -4,7 +4,7 @@ import { stableToken } from "./journal"
 export { recurrenceMessageID } from "./receipt-identity"
 import { recurrenceMessageID } from "./receipt-identity"
 import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
-import { missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
+import { compareModelError, missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "./lifecycle-input"
 
@@ -26,7 +26,7 @@ export const recurrenceConfigSchema = z.object({
   title: z.string().trim().min(1).max(120),
   consigne: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT), clock: dailyClockSchema,
   notes: z.string().max(20_000).optional(),
-  template: z.enum(["custom", "debug", "wayfinder", "delivery"]),
+  template: z.enum(["custom", "debug", "wayfinder", "delivery", "compare"]),
   profileID: id, executionHost: id,
   profiles: missionProfilesInputSchema,
   taskMode: missionTaskModeInputSchema,
@@ -39,6 +39,7 @@ export const recurrenceConfigSchema = z.object({
   const profiles = config.profiles
   if (!profiles?.coordinator || missionProfileRoles[config.template].some(role => !profiles.roles?.[role])) return false
   try { validateMissionProfiles(config.template, profiles) } catch { return false }
+  if (config.template === "compare" && compareModelError(profiles)) return false
   return [profiles.coordinator, ...Object.values(profiles.roles ?? {})].every(selection =>
     !!selection.agent && !!selection.model?.providerID && !!selection.model.id)
 }, "Recurrence requires exact coordinator and playbook role agent/model selections").refine(config => {

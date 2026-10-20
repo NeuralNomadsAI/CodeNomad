@@ -3,7 +3,9 @@ import { z } from "zod"
 import type { MissionJsonValue, MissionReportOutcome, MissionTask, MissionTemplateId, MissionNativeBinding } from "./model"
 import { taskContractReferenceSchema, type TaskContractReference } from "./task-declaration"
 import { parseNativeBinding, sameNativeCall } from "./native-report-provenance"
-import { missionProfileRoles } from "./playbook-profiles"
+import { missionProfileRoles, sameCompareModel, type MissionProfiles } from "./playbook-profiles"
+import type { MissionExecution } from "./execution"
+import { validateCompareArtifact } from "./compare-artifact"
 
 const nativeID = z.string().min(1).max(240).regex(/^[^\s\x00-\x1f\x7f]+$/)
 const decisionAnswer = z.union([z.string().min(1).max(20_000), z.array(z.string().min(1).max(20_000)).min(1).max(32)])
@@ -157,12 +159,27 @@ export function validateMissionDelegationPolicy(input: {
   executionMode?: ExecutionMode
   phase?: "declaration" | "admission"
   tasks: readonly PolicyTask[]
+  brief?: string
+  execution?: MissionExecution
+  profiles?: MissionProfiles
+  taskKey?: string
 }): void {
   if (input.template === "custom" && !input.executionMode && input.phase !== "declaration") return
   const roles: readonly string[] = input.template === "debug"
     ? Object.keys(debugContracts)
     : missionProfileRoles[input.template]
   if (input.template !== "custom" && !roles.includes(input.role)) throw new Error(`${input.role} is not a ${input.template} playbook role`)
+  if (input.template === "compare" && (input.targetSessionID || input.executionMode?.kind === "native" && input.executionMode.reuseFromTaskKey))
+    throw new Error("Compare runs and blind judge require fresh conversations")
+  if (input.template === "compare" && ["model-a", "model-b"].includes(input.role)) {
+    const model = input.profiles?.roles?.[input.role]?.model
+    if (!sameCompareModel(input.execution?.model, model) || input.execution?.model?.variant !== model?.variant)
+      throw new Error("Compare run cannot override its role model")
+    const runs = input.tasks.filter(task => ["model-a", "model-b"].includes(task.role) && task.status !== "withdrawn" && !task.replacedByTaskKey)
+    if (runs.some(task => task.role === input.role && task.key !== input.taskKey)) throw new Error("Compare admits exactly one live task per model")
+    if (runs.some(task => task.role !== input.role && (task as PolicyTask & { brief?: string }).brief !== input.brief))
+      throw new Error("Compare model briefs must be byte-identical")
+  }
   if (input.executionMode || input.phase === "declaration") {
     const mode = input.executionMode
     const keys = dependencyKeys(input.tasks, input.blockedBy ?? [])
@@ -251,6 +268,18 @@ export function validateMissionCompletionPolicy(input: {
   outcome: "completed" | "failed"
   tasks: readonly (Pick<MissionTask, "role" | "status"> & Partial<MissionTask>)[]
 }): void {
+  if (input.template === "compare" && input.outcome === "completed") {
+    const tasks = input.tasks.filter((task): task is MissionTask => Boolean(task.key && task.blockedBy))
+    for (const role of ["model-a", "model-b", "comparator"]) {
+      if (!tasks.some(task => task.role === role && task.status === "completed" && !task.replacedByTaskKey && task.report?.outcome === "completed"))
+        throw new Error(`Compare completion requires completed ${role} evidence`)
+    }
+    for (const task of tasks.filter(task => task.status === "completed" && !task.replacedByTaskKey)) {
+      validateMissionReportArtifact({ template: "compare", role: task.role, outcome: "completed",
+        artifact: task.report?.artifact, tasks })
+    }
+    return
+  }
   if (input.template !== "debug" || input.outcome !== "completed") return
   if (input.tasks.some(task => task.executionMode)) {
     const tasks = input.tasks.filter((task): task is MissionTask => Boolean(task.key && task.blockedBy))
@@ -299,12 +328,18 @@ export function validateMissionReportArtifact(input: {
   role: string
   outcome: MissionReportOutcome
   artifact?: MissionJsonValue
+  tasks?: readonly MissionTask[]
   /** Explicit native admission only; historical/root reports remain unchanged. */
   nativeDecision?: NativeDecisionArtifactBinding
 }): MissionJsonValue | undefined {
   if (input.template === "wayfinder" && input.role === "decision" && input.outcome === "completed" && input.nativeDecision) {
     validateNativeDecisionArtifact({ ...input.nativeDecision, artifact: input.artifact })
     return input.artifact
+  }
+  if (input.template === "compare" && (input.outcome === "completed" || input.artifact !== undefined)) {
+    if (input.role === "comparator") return validateCompareArtifact(input.artifact, input.tasks ?? [])
+    if (input.artifact !== undefined) throw new Error("Only the Compare comparator reports an artifact")
+    return undefined
   }
   if (input.template !== "debug" || input.outcome !== "completed") return input.artifact
   const contract = debugContracts[input.role]

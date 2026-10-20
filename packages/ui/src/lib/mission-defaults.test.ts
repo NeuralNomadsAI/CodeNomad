@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { encodeMissionDefaults, missionDefaultsFor, missionTaskModeFor, normalizeMissionDefaults, type MissionProfileDefault } from "./mission-defaults"
+import { freezeCompareProfiles, missionRoleProfile } from "../../../server/src/missions/playbook-profiles"
 
 const coordinator = { agent: "general", model: { providerID: "openai", id: "coordinator", variant: "high" } }
 const specialist = { agent: "explore", model: { providerID: "openai", id: "specialist", variant: "low" } }
@@ -9,6 +10,7 @@ const templateRoles = {
   debug: ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
   wayfinder: ["cartographer", "research", "prototype", "grilling", "decision"],
   delivery: ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"],
+  compare: ["model-a", "model-b", "comparator"],
 } as const
 
 describe("mission profile default normalization", () => {
@@ -69,6 +71,20 @@ describe("mission profile default normalization", () => {
 })
 
 describe("mission defaults for future creation", () => {
+  it("keeps the Compare judge inherited until explicitly selected", () => {
+    const inherited = missionDefaultsFor([{ template: "all", profiles: { coordinator, roles: { specialist } } }], "compare")!
+    assert.equal(inherited.roles?.comparator, undefined)
+    inherited.coordinator = { ...coordinator, model: { providerID: "p", id: "new" } }
+    assert.deepEqual(missionRoleProfile("compare", inherited, "comparator")?.model, inherited.coordinator.model)
+    const payload = freezeCompareProfiles("compare", inherited)!
+    assert.equal(inherited.roles?.comparator, undefined, "building the payload does not freeze the editable draft")
+    inherited.coordinator = coordinator
+    assert.equal(payload.roles?.comparator?.model?.id, "new")
+    assert.deepEqual(freezeCompareProfiles("compare", payload), payload, "the server keeps the same frozen payload")
+    inherited.roles!.comparator = specialist
+    assert.deepEqual(missionRoleProfile("compare", inherited, "comparator")?.model, specialist.model)
+    assert.deepEqual(freezeCompareProfiles("compare", inherited)?.roles?.comparator, specialist)
+  })
   it("resolves explicit task policy per scenario without inventing a global helper ban", () => {
     const defaults: MissionProfileDefault[] = [{ template: "all", profiles: {}, taskMode: "independent" }, { template: "wayfinder", profiles: {}, taskMode: "native" }]
     assert.deepEqual(normalizeMissionDefaults(defaults), defaults)
@@ -85,10 +101,11 @@ describe("mission defaults for future creation", () => {
 
   it("expands the custom specialist fallback to every role of the selected playbook only", () => {
     const defaults: MissionProfileDefault[] = [{ template: "all", profiles: { coordinator, roles: { specialist } } }]
-    for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
+    for (const template of ["custom", "debug", "wayfinder", "delivery", "compare"] as const) {
       const resolved = missionDefaultsFor(defaults, template)!
       assert.deepEqual(resolved.coordinator, coordinator)
-      assert.deepEqual(resolved.roles, Object.fromEntries(templateRoles[template].map(role => [role, specialist])))
+      assert.deepEqual(resolved.roles, Object.fromEntries(templateRoles[template].filter(role => template !== "compare" || role !== "comparator")
+        .map(role => [role, specialist])))
     }
   })
 
@@ -124,7 +141,7 @@ describe("mission defaults for future creation", () => {
     const migrated = normalizeMissionDefaults(legacy)
     assert.deepEqual(migrated, [{ ...legacy[0], template: "all" }])
     assert.equal(legacy[0].template, "custom", "reading never mutates the saved document")
-    for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
+    for (const template of ["custom", "debug", "wayfinder", "delivery", "compare"] as const) {
       assert.deepEqual(missionDefaultsFor(migrated, template)!.coordinator, coordinator)
       assert.equal(missionTaskModeFor(migrated, template), "independent")
     }

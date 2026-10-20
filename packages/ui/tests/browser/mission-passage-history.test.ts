@@ -14,6 +14,7 @@ import { missionMarkdownPage } from "../../src/lib/mission-markdown-pages"
 import type {} from "./fixtures/mission-passage-history"
 import { captureMissionView } from "./mission-view-capture"
 import { missionPickerExpander, selectMission } from "./mission-actions"
+import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -187,10 +188,12 @@ test("central reader fetches exact archived long Markdown/evidence/brief pages a
   const requests: Array<{ section: number; page: number; revision?: number }> = [], unexpected: string[] = []
   const texts = ["# Archived summary\n\n" + "Verified passage result. ".repeat(420) + "\n\n```ts\n" + "const exact = 1;\n".repeat(450) + "```\n\nFINAL END",
     "## Exact evidence\n\n" + "Verified line of evidence.\n".repeat(400) + "EVIDENCE END",
-    "## Original brief\n\n" + "Bounded requested objective.\n".repeat(370) + "BRIEF END"]
+     "## Original brief\n\n" + "Bounded requested objective.\n".repeat(370) + "BRIEF END",
+     "| correctness | 10 | 8 |\n\n" + "x".repeat(19_000) + "COMPARISON END"]
   const sections: MissionRecurrenceReadPage["sections"] = [
     { index: 0, label: "summary", title: "", raw: false }, { index: 1, label: "evidence", title: "Exact review", raw: false },
     { index: 2, label: "brief", title: "Exact review", raw: false },
+    { index: 3, label: "comparison", title: "Comparator", raw: false, comparison: { verdict: "a", models: ["p/a", "p/b"] } },
   ]
   let missing = false, heldRelease: (() => void) | undefined, holdOld = false
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
@@ -238,6 +241,18 @@ test("central reader fetches exact archived long Markdown/evidence/brief pages a
     await result.getByRole("heading", { name: "Original brief", exact: true }).waitFor()
     const briefPage = result.getByRole("spinbutton", { name: /Page 1 of/ })
     await briefPage.fill("2"); await briefPage.press("Enter")
+    await result.getByText("BRIEF END", { exact: false }).waitFor()
+    await result.getByRole("combobox").selectOption("3")
+    await result.getByText(en["missions.compare.verdict.a"], { exact: true }).waitFor()
+    await result.getByText("p/a", { exact: true }).waitFor(); await result.getByText("p/b", { exact: true }).waitFor()
+    assert.equal(await result.getByText(/COMPARISON END/).count(), 0)
+    const lessonPage = result.getByRole("spinbutton", { name: /Page 1 of/ })
+    await lessonPage.fill("3"); await lessonPage.press("Enter")
+    await result.getByText(/COMPARISON END/).waitFor()
+    assert.deepEqual([requests.at(-1)?.section, requests.at(-1)?.page], [3, 2])
+    await result.getByRole("combobox").selectOption("2")
+    const restoredBriefPage = result.getByRole("spinbutton", { name: /Page 1 of/ })
+    await restoredBriefPage.fill("2"); await restoredBriefPage.press("Enter")
     await result.getByText("BRIEF END", { exact: false }).waitFor()
     await page.setViewportSize({ width: 390, height: 800 })
     await page.evaluate(() => { document.documentElement.dir = "rtl" })

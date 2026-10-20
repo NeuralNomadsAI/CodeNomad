@@ -15,7 +15,7 @@ import { MissionCreationHoldError } from "./mission-creation-holds"
 const commandSchema = z.object({ kind: z.literal("prepare"), input: z.object({
   missionID: z.string().min(1).max(100), requestID: z.string().min(1).max(128),
   objective: z.string().min(1).max(20_000), title: z.string().min(1).max(MISSION_TITLE_MAX).optional(),
-  notes: z.string().max(20_000).optional(), template: z.enum(["custom", "wayfinder", "debug", "delivery"]),
+  notes: z.string().max(20_000).optional(), template: z.enum(["custom", "wayfinder", "debug", "delivery", "compare"]),
   profiles: missionProfilesInputSchema, taskMode: missionTaskModeInputSchema.optional(),
 }).strict() }).strict()
 
@@ -52,6 +52,8 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
         ...(input.profiles === undefined ? {} : { profiles: input.profiles }), ...(input.taskMode === undefined ? {} : { taskMode: input.taskMode }) } })
     return await creation.execute()
   } catch (error) {
+    if (!creation?.dispatched && error instanceof Error && error.message.startsWith("compare-models-"))
+      throw new MissionControlError(error.message, "prepare-refused")
     // An earlier uncertain attempt with this identity stays held: never claim nothing exists.
     if (error instanceof MissionCreationHoldError) {
       if (error.code === "creation-conflict") throw new MissionControlError("This requestID already prepared a different mission", "prepare-conflict")

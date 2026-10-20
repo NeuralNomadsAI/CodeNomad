@@ -5,7 +5,7 @@ import { getMissionRecipe } from "./recipes"
 import type { MissionProfiles } from "./playbook-profiles"
 
 test("profile roles match every playbook's declared role catalog", () => {
-  for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
+  for (const template of ["custom", "debug", "wayfinder", "delivery", "compare"] as const) {
     assert.deepEqual([...missionProfileRoles[template]].sort(), getMissionRecipe(template).roles.map(role => role.id).sort())
   }
 })

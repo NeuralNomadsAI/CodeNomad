@@ -51,15 +51,15 @@ test("a mission type's role choice keeps explicit native distinct from inherit a
   assert.deepEqual(setMissionProfileRole(undefined, "validator", { agent: undefined, model: { providerID: "p", id: "m" } }), { roles: { validator: { model: { providerID: "p", id: "m" } } } })
 })
 
-test("all ten locale bundles own all twenty-four profile labels without English fallback", () => {
+test("all ten locale bundles own every profile label without English fallback", () => {
   const keys = Object.keys(en).filter(key => key.startsWith("missions.control.profiles."))
-  assert.equal(keys.length, 24)
+  assert.equal(keys.length, 27)
   const locales = { en, de, es, fr, he, ja, ne, ru, tr, "zh-Hans": zhHans }
   for (const [locale, bundle] of Object.entries(locales)) for (const key of keys) {
     assert.ok(Object.prototype.hasOwnProperty.call(bundle, key), `${locale} owns ${key}`)
     const value = (bundle as Record<string, string>)[key]
     assert.ok(value.trim(), `${locale} has text for ${key}`)
-    if (locale !== "en") assert.notEqual(value, (en as Record<string, string>)[key], `${locale} translates ${key}`)
+    if (locale !== "en" && !/\.model-[ab]$/.test(key)) assert.notEqual(value, (en as Record<string, string>)[key], `${locale} translates ${key}`)
   }
   assert.match(en["missions.control.profiles.debug"], /separate standards and specification axes/)
   assert.match(en["missions.control.profiles.debug"], /exact implementer child/)

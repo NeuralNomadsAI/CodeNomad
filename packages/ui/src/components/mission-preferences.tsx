@@ -113,7 +113,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
       <select ref={scopeSelect} aria-label={t("missions.defaults.scope")} value={template()} disabled={disabled()}
       onChange={event => setTemplate(event.currentTarget.value as MissionDefaultScope)}>
       <option value="all">{t("missions.defaults.allPlaybooks")}</option>
-      <For each={["custom", "debug", "wayfinder", "delivery"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
+      <For each={["custom", "debug", "wayfinder", "delivery", "compare"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
     </select></label>
     <MissionTaskModeControls value={exception() ? entry()?.taskMode : globalMissionTaskMode(shown())}
       onInherit={exception() ? () => commit(withTaskMode(template(), entry()?.taskMode)) : undefined} disabled={disabled()}

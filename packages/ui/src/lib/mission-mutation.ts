@@ -3,11 +3,11 @@ import { authenticatedFetch } from "./auth-recovery"
 import { HttpResponseError } from "./retryable-file-search"
 
 const codes = ["creation-uncertain", "creation-conflict", "creation-capacity", "creation-unavailable", "creation-worktree-deleting",
-  "mission-limit", "revision-conflict", "request-conflict"] as const
+  "mission-limit", "revision-conflict", "request-conflict", "compare-models-required", "compare-models-identical"] as const
 type MissionMutationCode = typeof codes[number]
 type Operation = "create" | "edit"
 // The route forwards a native mission-limit only with its exact no-effect receipt.
-const createOnly = (code: MissionMutationCode) => code.startsWith("creation-") || code === "mission-limit"
+const createOnly = (code: MissionMutationCode) => code.startsWith("creation-") || code.startsWith("compare-models-") || code === "mission-limit"
 
 export function missionMutationCode(body: unknown, operation: Operation): MissionMutationCode | undefined {
   if (!body || typeof body !== "object" || !("code" in body)) return undefined
@@ -60,6 +60,7 @@ export function isDefinitiveCreationRejection(error: unknown): boolean {
 export function recurrenceCreationRefusalKey(error: unknown): string | undefined {
   if (!(error instanceof HttpResponseError)) return undefined
   const { status, code } = error
+  if (status === 400 && (code === "compare-models-required" || code === "compare-models-identical")) return `missions.compare.${code}`
   if (status === 400) return "missions.recurrence.invalid"
   if (status === 503 && code === "recurrence-capacity") return "missions.recurrence.capacity"
   if (status === 503 && code === "creation-capacity") return "missions.control.creation.capacity"
@@ -72,6 +73,7 @@ export function recurrenceCreationRefusalKey(error: unknown): string | undefined
 
 export function missionMutationErrorKey(error: unknown): string {
   if (error instanceof MissionMutationError) {
+    if (error.code === "compare-models-required" || error.code === "compare-models-identical") return `missions.compare.${error.code}`
     if (isUncertainCreation(error)) return "missions.control.creation.uncertain"
     if (error.status === 409 && error.code === "creation-conflict") return "missions.control.creation.scopeConflict"
     if (error.status === 503 && error.code === "creation-capacity") return "missions.control.creation.capacity"
