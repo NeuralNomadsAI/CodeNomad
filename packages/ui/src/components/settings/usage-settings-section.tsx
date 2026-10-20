@@ -1,4 +1,5 @@
 import { For, Show, createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
+import { RefreshCw } from "lucide-solid"
 import type { ServiceUsageSnapshot } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
@@ -140,7 +141,10 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
         <label>{t("settings.usage.period")}<select class="selector-trigger" aria-label={t("settings.usage.period")} value={days()} onChange={event => setChoice({ id: instanceId(), days: Number(event.currentTarget.value) })}>
           <For each={[7, 30, 90, 365]}>{count => <option value={count}>{t("settings.usage.days", { count })}</option>}</For>
         </select></label>
-        <button class="selector-button selector-button-secondary" type="button" disabled={busy()} onClick={() => refresh()}>{t("settings.providers.refresh")}</button>
+        <button class="window-icon-button disabled:cursor-not-allowed" type="button" disabled={busy()} onClick={() => refresh()}
+          aria-label={t("settings.providers.refresh")} title={t("settings.providers.refresh")}>
+          <RefreshCw class={`w-4 h-4 ${busy() ? "animate-spin" : ""}`} aria-hidden="true" />
+        </button>
       </div>
       <Show when={busy() && !snapshot()}><p role="status">{t("settings.usage.loading")}</p></Show>
       <Show when={snapshot() && stale()}><p role="status">{t("settings.usage.cached")}</p></Show>

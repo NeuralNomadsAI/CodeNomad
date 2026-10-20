@@ -357,7 +357,6 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Saved startup state cleared.",
   "settings.appearance.startup.clearError": "Could not clear the saved startup state.",
   "settings.appearance.startup.updateError": "Could not update the startup restore setting.",
-  "settings.appearance.startup.opener.unavailable": "The CodeNomad window that opened Preferences is no longer available. Reopen Preferences from a CodeNomad window to change these settings.",
   "settings.appearance.startup.otherProfiles.title": "Other saved profiles",
   "settings.appearance.startup.otherProfiles.summary.one": "{count} profile, {size}",
   "settings.appearance.startup.otherProfiles.summary.other": "{count} profiles, {size}",

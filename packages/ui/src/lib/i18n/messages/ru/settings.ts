@@ -356,7 +356,6 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Сохранённое состояние запуска очищено.",
   "settings.appearance.startup.clearError": "Не удалось очистить сохранённое состояние запуска.",
   "settings.appearance.startup.updateError": "Не удалось обновить настройку восстановления при запуске.",
-  "settings.appearance.startup.opener.unavailable": "Окно CodeNomad, из которого были открыты настройки, больше недоступно. Откройте настройки заново из окна CodeNomad, чтобы изменить эти параметры.",
   "settings.appearance.startup.otherProfiles.title": "Другие сохранённые профили",
   "settings.appearance.startup.otherProfiles.summary.one": "{count} профиль, {size}",
   "settings.appearance.startup.otherProfiles.summary.other": "Профилей: {count}, {size}",

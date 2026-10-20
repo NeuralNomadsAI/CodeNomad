@@ -356,7 +356,6 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "已清除保存的启动状态。",
   "settings.appearance.startup.clearError": "无法清除保存的启动状态。",
   "settings.appearance.startup.updateError": "无法更新启动恢复设置。",
-  "settings.appearance.startup.opener.unavailable": "打开偏好设置的 CodeNomad 窗口已不可用。请从 CodeNomad 窗口重新打开偏好设置以更改这些设置。",
   "settings.appearance.startup.otherProfiles.title": "其他已保存的配置文件",
   "settings.appearance.startup.otherProfiles.summary.one": "{count} 个配置文件，{size}",
   "settings.appearance.startup.otherProfiles.summary.other": "{count} 个配置文件，{size}",

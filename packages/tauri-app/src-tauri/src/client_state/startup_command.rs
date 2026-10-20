@@ -142,8 +142,8 @@ pub(crate) fn command_name(value: &str) -> Result<&'static str, String> {
         .ok_or_else(|| "Invalid startup state command".to_string())
 }
 
-/// Returns `Ok(None)` when the opener is closed, ephemeral or has not claimed
-/// client-state access; never falls back to another window.
+/// Returns `Ok(None)` when the window is closed, ephemeral or has not claimed
+/// client-state access; the caller chooses which window to ask.
 pub(crate) async fn run_in_local_window(
     app: &AppHandle,
     label: &str,

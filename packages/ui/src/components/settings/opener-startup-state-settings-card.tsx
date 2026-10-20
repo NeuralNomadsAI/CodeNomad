@@ -7,8 +7,8 @@ import { StartupStateSettingsView } from "./startup-state-settings-view"
 
 /**
  * Startup state for the native Preferences window. This renderer owns no
- * client state: values and changes belong to the local window that opened
- * Preferences, and the host forwards each command to that exact window.
+ * client state: the host forwards each command to a local application window
+ * (the one that opened Preferences, otherwise the most recently used one).
  */
 export const OpenerStartupStateSettingsCard: Component = () => {
   const { t } = useI18n()
@@ -63,14 +63,11 @@ export const OpenerStartupStateSettingsCard: Component = () => {
   })
 
   const state = () => opener()?.state ?? null
-  // Warn only once the opener is known to be gone; never before the first answer.
-  const note = () => (opener() !== undefined && !state() ? t("settings.appearance.startup.opener.unavailable") : undefined)
 
   return (
     <StartupStateSettingsView
       restoreEnabled={state()?.restoreEnabled ?? false}
       disabled={busy() || !state()?.isPrimary}
-      note={note()}
       onRestoreChange={(enabled) => void mutate(enabled ? "enable-restore" : "disable-restore", "settings.appearance.startup.updateError")}
       onClear={() => void mutate("clear", "settings.appearance.startup.clearError", "settings.appearance.startup.clearSuccess")}
     />

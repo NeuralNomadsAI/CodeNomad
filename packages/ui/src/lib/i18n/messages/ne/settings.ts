@@ -356,7 +356,6 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "सुरक्षित सुरुआत अवस्था खाली गरियो।",
   "settings.appearance.startup.clearError": "सुरक्षित सुरुआत अवस्था खाली गर्न सकिएन।",
   "settings.appearance.startup.updateError": "सुरुआत पुनर्स्थापना सेटिङ अद्यावधिक गर्न सकिएन।",
-  "settings.appearance.startup.opener.unavailable": "प्राथमिकताहरू खोल्ने CodeNomad सञ्झ्याल अब उपलब्ध छैन। यी सेटिङहरू परिवर्तन गर्न CodeNomad सञ्झ्यालबाट प्राथमिकताहरू फेरि खोल्नुहोस्।",
   "settings.appearance.startup.otherProfiles.title": "अन्य सुरक्षित प्रोफाइलहरू",
   "settings.appearance.startup.otherProfiles.summary.one": "{count} प्रोफाइल, {size}",
   "settings.appearance.startup.otherProfiles.summary.other": "{count} प्रोफाइलहरू, {size}",

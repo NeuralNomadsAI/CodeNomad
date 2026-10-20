@@ -356,7 +356,6 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Se borró el estado de inicio guardado.",
   "settings.appearance.startup.clearError": "No se pudo borrar el estado de inicio guardado.",
   "settings.appearance.startup.updateError": "No se pudo actualizar el ajuste de restauración al inicio.",
-  "settings.appearance.startup.opener.unavailable": "La ventana de CodeNomad que abrió las Preferencias ya no está disponible. Vuelve a abrir las Preferencias desde una ventana de CodeNomad para cambiar estos ajustes.",
   "settings.appearance.startup.otherProfiles.title": "Otros perfiles guardados",
   "settings.appearance.startup.otherProfiles.summary.one": "{count} perfil, {size}",
   "settings.appearance.startup.otherProfiles.summary.other": "{count} perfiles, {size}",

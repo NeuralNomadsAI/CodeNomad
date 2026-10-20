@@ -54,9 +54,17 @@ export async function runStartupStateCommandInWindow(
 }
 
 /**
- * Resolves the Preferences opener on the host and forwards the command only to
- * that local window. A mutation fenced by a stale epoch degrades to a read of
- * the current opener and is reported as not applied.
+ * Startup state belongs to the application, not to one window: when the opener
+ * is unknown (Preferences restored at launch) or closed, the most recently used
+ * local window answers instead.
+ */
+export function startupStateTargetId(openerId: string | undefined, isLive: (id: string) => boolean, recentId: string | undefined): string | undefined {
+  return openerId && isLive(openerId) ? openerId : recentId
+}
+
+/**
+ * Forwards the command to the resolved local window. A mutation fenced by a
+ * stale opener epoch degrades to a read and is reported as not applied.
  */
 export async function forwardOpenerStartupState(
   opener: PreferencesOpener,

@@ -348,7 +348,6 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Kayıtlı başlangıç durumu temizlendi.",
   "settings.appearance.startup.clearError": "Kayıtlı başlangıç durumu temizlenemedi.",
   "settings.appearance.startup.updateError": "Başlangıç geri yükleme ayarı güncellenemedi.",
-  "settings.appearance.startup.opener.unavailable": "Tercihleri açan CodeNomad penceresi artık kullanılamıyor. Bu ayarları değiştirmek için Tercihleri bir CodeNomad penceresinden yeniden açın.",
   "settings.appearance.startup.otherProfiles.title": "Diğer kayıtlı profiller",
   "settings.appearance.startup.otherProfiles.summary.one": "{count} profil, {size}",
   "settings.appearance.startup.otherProfiles.summary.other": "{count} profil, {size}",

@@ -4,6 +4,8 @@
 .usage-toolbar { display: flex; flex-wrap: wrap; gap: var(--space-md); align-items: end; }
 .usage-toolbar label { display: flex; flex-direction: column; gap: var(--space-xs); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
 .usage-toolbar button { width: auto; }
+/* The icon-only refresh matches the period select it sits beside. */
+.usage-toolbar .window-icon-button { width: var(--selector-height); height: var(--selector-height); }
 .usage-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr)); gap: var(--space-sm); margin-block: var(--space-lg); }
 .usage-metrics > div { padding: var(--space-md); background: var(--surface-inset); border: 1px solid var(--border-base); min-width: 0; }
 .usage-metrics dt { color: var(--text-secondary); font-size: var(--font-size-sm); }

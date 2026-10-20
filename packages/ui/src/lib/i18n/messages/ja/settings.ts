@@ -356,7 +356,6 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "保存された起動状態を消去しました。",
   "settings.appearance.startup.clearError": "保存された起動状態を消去できませんでした。",
   "settings.appearance.startup.updateError": "起動時の復元設定を更新できませんでした。",
-  "settings.appearance.startup.opener.unavailable": "環境設定を開いた CodeNomad ウィンドウは利用できなくなりました。これらの設定を変更するには、CodeNomad ウィンドウから環境設定を開き直してください。",
   "settings.appearance.startup.otherProfiles.title": "その他の保存済みプロファイル",
   "settings.appearance.startup.otherProfiles.summary.one": "{count} 個のプロファイル、{size}",
   "settings.appearance.startup.otherProfiles.summary.other": "{count} 個のプロファイル、{size}",

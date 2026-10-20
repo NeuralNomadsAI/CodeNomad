@@ -356,7 +356,6 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "מצב ההפעלה השמור נוקה.",
   "settings.appearance.startup.clearError": "לא ניתן לנקות את מצב ההפעלה השמור.",
   "settings.appearance.startup.updateError": "לא ניתן לעדכן את הגדרת השחזור בעת הפעלה.",
-  "settings.appearance.startup.opener.unavailable": "חלון CodeNomad שפתח את ההעדפות אינו זמין עוד. פתח מחדש את ההעדפות מחלון CodeNomad כדי לשנות הגדרות אלה.",
   "settings.appearance.startup.otherProfiles.title": "פרופילים שמורים אחרים",
   "settings.appearance.startup.otherProfiles.summary.one": "פרופיל {count}, {size}",
   "settings.appearance.startup.otherProfiles.summary.other": "{count} פרופילים, {size}",

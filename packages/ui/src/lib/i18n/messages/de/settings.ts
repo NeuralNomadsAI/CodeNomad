@@ -356,7 +356,6 @@ export const settingsMessages = {
   "settings.appearance.startup.clearSuccess": "Gespeicherter Startzustand wurde gelöscht.",
   "settings.appearance.startup.clearError": "Der gespeicherte Startzustand konnte nicht gelöscht werden.",
   "settings.appearance.startup.updateError": "Die Einstellung zur Wiederherstellung beim Start konnte nicht aktualisiert werden.",
-  "settings.appearance.startup.opener.unavailable": "Das CodeNomad-Fenster, das die Einstellungen geöffnet hat, ist nicht mehr verfügbar. Öffne die Einstellungen erneut aus einem CodeNomad-Fenster, um diese Optionen zu ändern.",
   "settings.appearance.startup.otherProfiles.title": "Andere gespeicherte Profile",
   "settings.appearance.startup.otherProfiles.summary.one": "{count} Profil, {size}",
   "settings.appearance.startup.otherProfiles.summary.other": "{count} Profile, {size}",

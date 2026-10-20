@@ -101,8 +101,6 @@ for (const host of ["electron", "tauri"] as const) {
     const { page, errors } = await openPreferences(host)
     try {
       await page.waitForFunction(() => (document.querySelector('[data-testid="startup-state-settings"] input') as HTMLInputElement | null)?.checked === true)
-      // A reachable opener needs no explanation: the warning is reserved for its absence.
-      assert.equal(await page.getByText("is no longer available", { exact: false }).count(), 0)
       assert.equal(await restore(page).isChecked(), true)
       assert.equal(await restore(page).isEnabled(), true)
 
@@ -133,10 +131,12 @@ for (const host of ["electron", "tauri"] as const) {
       assert.equal(state.windows["window-b"].restoreEnabled, true)
       assert.ok(state.commands.some((entry: any) => entry.command === "disable-restore" && entry.epoch === 2 && entry.effective === "read"))
 
-      // The opener closes: the setting stays visible, truthful and unavailable.
+      // No local window can answer (the host falls back to the most recent one,
+      // so only when none is open): the setting stays visible and disabled, without a warning.
       await page.evaluate(() => { delete (window as any).fixtureHost.windows["window-a"] })
       await refocus(page)
-      await page.getByText("The CodeNomad window that opened Preferences is no longer available.", { exact: false }).waitFor()
+      await page.waitForFunction(() => (document.querySelector('[data-testid="startup-state-settings"] input') as HTMLInputElement).disabled)
+      assert.equal(await page.locator('[data-testid="startup-state-settings"] [role="status"]').count(), 0)
       assert.equal(await restore(page).isVisible(), true)
       assert.equal(await restore(page).isDisabled(), true)
       assert.equal(await page.getByRole("button", { name: "Clear saved startup state" }).isDisabled(), true)
