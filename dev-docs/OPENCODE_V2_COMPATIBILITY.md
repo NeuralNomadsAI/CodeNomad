@@ -596,8 +596,9 @@ isolated OpenAPI dumps.
   `stores/session-actions.ts` refuses the deletion client-side with "The message
   changed since it was selected" before any prune request. That is the
   pruning UI failure on all three CI platforms (`test-session-pruning-ui.mjs`
-  after "reasoning group deletion across messages"); its timing depends on
-  whether the store holds event-built or HTTP-hydrated parts. The regression in
+  after "reasoning group deletion across messages"). Local runs passed with
+  both pin sets, consistent with it depending on whether the store still holds
+  event-built parts or has rehydrated them over HTTP. The regression in
   `session-pruning-projection.test.ts` reproduces it deterministically with the
   2.0.29 client and passes with 2.1.0. The 2.1 reducer conversely cannot
   interpret 2.0.x events, and 2.0.x OpenAPI declares the retired fields, so
@@ -645,25 +646,40 @@ Windows 11 validation with Node 24.20.0 and isolated CLIs/homes/databases (never
 the shared daemon), new pins on 2.1.0: plugin runtime, automation, full
 pruning/history/proxy/Location/worktree/relay suite, the npm-packed pruning
 plugin with its rendered UI, Missions contract/family control/full
-journey/trajectory, all eleven recurring journeys, subagent depth, session
-environment/fork/aside/interrupt, blank cleanup, prompt skills, provider
-usage/accounts/selection, service usage, web search and plugin-package
+journey/trajectory (including the one-time human decision and the two-model
+comparison with its blind verdict), all eleven recurring journeys, subagent
+depth, session environment/fork/aside/interrupt, blank cleanup, prompt skills,
+provider usage/accounts/selection, service usage, web search and plugin-package
 settings, Git degraded/init, temporary workspaces, output-limit continuation,
 Promise-tool failure, compaction isolation with a real 2 MiB corpus, permission
 receipts, migrations from 2.0.3, beta-19271 and 2.0.32, first installation, 1.x
 replacement and the native 2.0.15 → 2.1.0 upgrade (the live daemon keeps its
-PID and version). Ad hoc probes check the shipped pending-snapshot reader, file
-revert and the production host lifecycle on 2.1.0, and run production admission
+PID and version). After merging #1026, plugin runtime, the Missions suites and
+the recurring journeys were rerun. Ad hoc probes check the shipped
+pending-snapshot reader, file revert and the production host lifecycle on
+2.1.0, and run production admission
 against real isolated 2.0.27/2.0.32 daemons: both are refused
 (`native_contract`, HTTP 426) after read-only discovery, and their schemas are
 refused under a custom label after reading only `/openapi.json`, whereas 2.1.0
 is admitted and recognised.
 
 Unit and rendering suites with the new pins: CI UI lists, the Electron host,
-packaging, CI fixture diagnostics, help and typechecks pass. The full server
-suite passes 2,416 of 2,424 tests (7 skipped) and cancels the same
-`index.test.ts` piped-shutdown test under the parallel run as the 2.0.32 base.
-<!-- 2.1.0 unit/browser results -->
+packaging, CI fixture diagnostics, help and typechecks pass. After merging the
+two-model comparison Mission (#1026), the full server suite passes 2,432 of
+2,440 tests (7 skipped) and cancels the same `index.test.ts` piped-shutdown test
+under the parallel run as the 2.0.32 base; it passes alone.
+The broad UI run passes 1,625 of 1,625, but intermittently a
+`device-file-selection.test.ts` child process stalls idle (no CPU) until the
+runner is killed, including once inside the CI "changed runnable UI behavior"
+list. The exact base (2.0.29 pins) stalls the same way in alternating bounded
+runs, and the 2.0.32 qualification saw it too, so this is a pre-existing
+harness stall, not a 2.1 effect; its cause is not established. The full
+browser suite passes 1,264 of 1,267 (2 skipped); `git-init.test.ts` failed
+navigation with `ERR_ADDRESS_IN_USE` on its Vite port (the run also logged
+transient `ERR_EMPTY_RESPONSE` retries on that port while another worktree's
+browser tests were active on the machine) and passes alone. This is Windows
+evidence only: Linux, macOS, WSL, packaged desktop, installers/updater and
+mobile remain separate gates.
 
 ### Capability-checked loaded-only pending recovery
 
