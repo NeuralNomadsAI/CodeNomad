@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { afterEach, beforeEach, describe, it } from "node:test"
+import { afterEach, beforeEach, describe, it, mock } from "node:test"
 import toast from "solid-toast"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
@@ -82,12 +82,12 @@ async function settled(id: string) {
 }
 
 describe("V2 session lifecycle signals", () => {
-  beforeEach(async (context) => {
+  beforeEach(async () => {
     // Preferences are a singleton: load and write only fixture owner buckets,
     // and await restoration before releasing the storage/network mocks.
     originalRouting = preferences().notificationRouting
     let config: OwnerBucket = {}
-    context.mock.method(globalThis, "fetch", async () => { throw new Error("Unexpected fixture network request") })
+    mock.method(globalThis, "fetch", async () => { throw new Error("Unexpected fixture network request") })
     storage.loadConfigOwner = async () => ({})
     storage.loadStateOwner = async () => ({})
     storage.revalidateUiConfigOwner = async () => structuredClone(config)
@@ -139,6 +139,7 @@ describe("V2 session lifecycle signals", () => {
       assert.deepEqual(preferences().notificationRouting, originalRouting)
     } finally {
       Object.assign(storage, originalStorage)
+      mock.restoreAll()
     }
   })
 
