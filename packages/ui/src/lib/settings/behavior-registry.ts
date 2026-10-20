@@ -46,7 +46,6 @@ export type BehaviorRegistryActions = {
   updatePreferences?: (updates: Partial<Preferences>) => void | Promise<boolean>
   toggleShowThinkingBlocks: () => void
   toggleShowMessageTimeline: () => void
-  toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
   toggleShowPromptVoiceInput: () => void
@@ -127,23 +126,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         setBooleanByToggle(
           () => Boolean(prefs().showMessageTimeline ?? true),
           actions.toggleShowMessageTimeline,
-          next,
-        )
-      },
-    },
-    {
-      kind: "toggle",
-      id: "behavior.timelineToolCalls",
-      titleKey: "settings.behavior.timelineTools.title",
-      get: (p) => Boolean(p.showTimelineTools),
-      set: (next) => {
-        if (updatePreferences) {
-          updatePreferences({ showTimelineTools: next })
-          return
-        }
-        setBooleanByToggle(
-          () => Boolean(prefs().showTimelineTools),
-          actions.toggleShowTimelineTools,
           next,
         )
       },
@@ -364,19 +346,6 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
       category: "System",
       keywords: () => ["/thinking", ...splitKeywords("commands.thinkingBlocks.keywords")],
       action: actions.toggleShowThinkingBlocks,
-    },
-    {
-      id: "timeline-tools",
-      label: () =>
-        tGlobal(
-          actions.preferences().showTimelineTools
-            ? "commands.timelineToolCalls.label.hide"
-            : "commands.timelineToolCalls.label.show",
-        ),
-      description: () => tGlobal("commands.timelineToolCalls.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.timelineToolCalls.keywords"),
-      action: actions.toggleShowTimelineTools,
     },
     {
       id: "thinking-default-visibility",

@@ -10,7 +10,6 @@ export const appMessages = {
   "window.menu.leftPanel": "Левая панель",
   "window.menu.rightPanel": "Правая панель",
   "window.menu.timeline": "Временная шкала",
-  "window.menu.timelineTools": "Инструменты на временной шкале",
   "window.menu.window": "Окно",
   "window.menu.help": "Справка",
   "window.menu.native.getUpdates": "Проверить обновления…",

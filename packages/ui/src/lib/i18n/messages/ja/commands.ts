@@ -120,10 +120,6 @@ export const commandMessages = {
   "commands.thinkingBlocks.description": "AI の思考セクションを表示/非表示",
   "commands.thinkingBlocks.keywords": "思考, 推論, 切り替え, 表示, 非表示, thinking, reasoning, toggle, show, hide",
 
-  "commands.timelineToolCalls.label.show": "タイムラインのツールコールを表示",
-  "commands.timelineToolCalls.label.hide": "タイムラインのツールコールを非表示",
-  "commands.timelineToolCalls.description": "メッセージタイムラインのツールコール表示を切り替え",
-  "commands.timelineToolCalls.keywords": "タイムライン, ツール, 切り替え, timeline, tool, toggle",
 
   "commands.keyboardShortcutHints.label.show": "キーボードショートカットのヒントを表示",
   "commands.keyboardShortcutHints.label.hide": "キーボードショートカットのヒントを非表示",

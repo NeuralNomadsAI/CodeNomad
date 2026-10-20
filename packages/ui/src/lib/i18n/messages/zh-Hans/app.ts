@@ -10,7 +10,6 @@ export const appMessages = {
   "window.menu.leftPanel": "左侧面板",
   "window.menu.rightPanel": "右侧面板",
   "window.menu.timeline": "时间线",
-  "window.menu.timelineTools": "时间线中的工具",
   "window.menu.window": "窗口",
   "window.menu.help": "帮助",
   "window.menu.native.getUpdates": "检查更新…",

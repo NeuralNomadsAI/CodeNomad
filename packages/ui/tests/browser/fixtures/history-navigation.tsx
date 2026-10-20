@@ -2,6 +2,7 @@ import { createEffect, createRoot, createSignal, Show } from "solid-js"
 import { render } from "solid-js/web"
 import SessionView from "../../../src/components/session/session-view"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
+import { transcriptPresetPatch } from "../../../src/components/transcript-visibility"
 import { setSessionSearchOpen } from "../../../src/stores/session-search"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -113,7 +114,8 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
       })
     })
   },
-  tools: (showTimelineTools: boolean) => updatePreferences({ showTimelineTools }),
+  // Timeline tool markers follow Message content: Everything shows them, Nothing hides them.
+  tools: (visible: boolean) => updatePreferences(transcriptPresetPatch(visible ? "everything" : "nothing")),
   status: (status: 'idle' | 'working') => setSessions(previous => {
     const next = new Map(previous), group = new Map(next.get(instanceId)!)
     group.set(sessionId, { ...group.get(sessionId)!, status })

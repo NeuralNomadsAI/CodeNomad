@@ -57,14 +57,14 @@ for (const host of ["electron", "tauri"]) test(`${host}: native view state follo
     await rightToggle.click()
     await page.waitForFunction(() => (window as any).viewSnapshot.state.rightPanel.checked)
 
-    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true, showTimelineTools: true }))
-    await page.waitForFunction(() => (window as any).viewSnapshot.state.timelineTools.enabled && (window as any).viewSnapshot.state.timelineTools.checked)
+    // Timeline tool markers follow Message content; the View menu has no separate tools item.
+    await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
+    await page.waitForFunction(() => (window as any).viewSnapshot.state.timeline.checked)
+    assert.equal(await page.evaluate(() => "timelineTools" in (window as any).viewSnapshot.state), false)
     await page.evaluate(() => (window as any).fixture.viewAction("view-timeline"))
-    await page.waitForFunction(() => !(window as any).viewSnapshot.state.timeline.checked && !(window as any).viewSnapshot.state.timelineTools.enabled)
-    await page.evaluate(() => (window as any).fixture.viewAction("view-timeline-tools"))
-    assert.equal(await page.evaluate(() => (window as any).viewSnapshot.state.timelineTools.checked), true)
+    await page.waitForFunction(() => !(window as any).viewSnapshot.state.timeline.checked)
     await page.evaluate(() => (window as any).fixture.viewAction("view-timeline"))
-    await page.waitForFunction(() => (window as any).viewSnapshot.state.timelineTools.enabled && (window as any).viewSnapshot.state.timelineTools.checked)
+    await page.waitForFunction(() => (window as any).viewSnapshot.state.timeline.checked)
 
     await page.evaluate(() => (window as any).fixture.setPreferences({ locale: "fr" }))
     await page.waitForFunction(() => (window as any).viewSnapshot.state.leftPanel.label === "Volet gauche")

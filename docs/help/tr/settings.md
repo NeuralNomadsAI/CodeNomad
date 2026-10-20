@@ -42,7 +42,7 @@ Yerleşik düzen proje değişikliği değil, pencere yerleşimidir. Uzantı ona
 
 1. Konuşma dökümü ayrıntısı varsayılanlarını seçmek için **Sohbet** öğesini açın. Ön ayarlar **Hiçbir şey**, **Minimal**, **Dengeli** ve **Her şey**'dir; bireysel değişiklikler **Özel** öğesini üretir.
 2. Düşünceyi, araç girişlerini/çıkışlarını, teşhisleri ve belirteç ayrıntılarını ayarlayın veya paylaşılan görünürlük kontrolleri için görüşmenin **Mesaj içeriği** açılır penceresini kullanın.
-3. **Genel** bölümünde **Mesaj zaman çizelgesi**, **Zaman çizelgesi araç çağrıları**, **Diff görünümü** ve **Takip davranışı** öğesini gerektiği gibi ayarlayın.
+3. **Genel** bölümünde **Mesaj zaman çizelgesi**, **Diff görünümü** ve **Takip davranışı** öğesini gerektiği gibi ayarlayın.
 4. Yeniden boyutlandırma kontrolünü kullanarak ileti düzenleyicisini yeniden boyutlandırın; uzun taslaklar alanın içinde kayar.
 
 Görünürlük ve genişletme ayarları yalnızca sunumu değiştirir. Saklanan araçları/akıl yürütmeyi kaldırmaz veya model bağlamını sıkıştırmaz. Yıkıcı işlemler için bkz. [Geçmiş ve temizleme](history.md).

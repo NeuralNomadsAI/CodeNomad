@@ -22,7 +22,6 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
     getBehaviorSettings(config).filter(
       (setting) =>
         setting.id === "behavior.messageTimeline" ||
-        setting.id === "behavior.timelineToolCalls" ||
         setting.id === "behavior.diffViewMode" ||
         setting.id === "behavior.followUpBehavior",
     ),

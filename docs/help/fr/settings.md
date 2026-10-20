@@ -42,7 +42,7 @@ La disposition intégrée est propre à la fenêtre, pas une modification du pro
 
 1. Ouvrez **Chat** pour choisir les niveaux de détail par défaut. Les préréglages sont **Rien**, **Minimal**, **Équilibré** et **Tout** ; les changements individuels produisent **Personnalisé**.
 2. Ajustez réflexion, entrées/sorties d’outils, diagnostics et détails des tokens, ou utilisez le menu **Contenu des messages** de la conversation pour les commandes de visibilité partagées.
-3. Dans **Général**, ajustez **Chronologie des messages**, **Appels d'outils dans la chronologie**, **Vue du diff** et **Comportement des messages de suivi** au besoin.
+3. Dans **Général**, ajustez **Chronologie des messages**, **Vue du diff** et **Comportement des messages de suivi** au besoin.
 4. Redimensionnez la zone de saisie avec sa commande ; les longs brouillons défilent dans le champ.
 
 Les réglages de visibilité et de développement changent seulement la présentation. Ils ne retirent pas les outils/raisonnements enregistrés et ne compactent pas le contexte du modèle. Voir [Historique et nettoyage](history.md) pour les opérations destructrices.

@@ -113,7 +113,6 @@ export interface UiSettings {
   showThinkingBlocks: boolean
   thinkingBlocksExpansion: ExpansionPreference
   showMessageTimeline: boolean
-  showTimelineTools: boolean
   holdLongAssistantReplies: boolean
   promptSubmitOnEnter: boolean
   hotkeyOverrides: HotkeyOverrides
@@ -228,7 +227,6 @@ const defaultUiSettings: UiSettings = {
   showThinkingBlocks: false,
   thinkingBlocksExpansion: "collapsed",
   showMessageTimeline: true,
-  showTimelineTools: false,
   holdLongAssistantReplies: true,
   promptSubmitOnEnter: true,
   hotkeyOverrides: {},
@@ -340,7 +338,6 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
     showThinkingBlocks: sanitized.showThinkingBlocks ?? defaultUiSettings.showThinkingBlocks,
     thinkingBlocksExpansion: sanitized.thinkingBlocksExpansion ?? defaultUiSettings.thinkingBlocksExpansion,
     showMessageTimeline: sanitized.showMessageTimeline ?? defaultUiSettings.showMessageTimeline,
-    showTimelineTools: sanitized.showTimelineTools ?? defaultUiSettings.showTimelineTools,
     holdLongAssistantReplies: sanitized.holdLongAssistantReplies ?? defaultUiSettings.holdLongAssistantReplies,
     promptSubmitOnEnter: sanitized.promptSubmitOnEnter ?? defaultUiSettings.promptSubmitOnEnter,
     hotkeyOverrides: normalizeHotkeyOverrides(sanitized.hotkeyOverrides),
@@ -1288,10 +1285,6 @@ function toggleShowThinkingBlocks(): void {
   updateUiSettings({ showThinkingBlocks: !preferences().showThinkingBlocks })
 }
 
-function toggleShowTimelineTools(): void {
-  updateUiSettings({ showTimelineTools: !preferences().showTimelineTools })
-}
-
 function toggleShowMessageTimeline(): void {
   updateUiSettings({ showMessageTimeline: !(preferences().showMessageTimeline ?? true) })
 }
@@ -1405,7 +1398,6 @@ interface ConfigContextValue {
   // ui settings helpers
   toggleShowThinkingBlocks: typeof toggleShowThinkingBlocks
   toggleShowMessageTimeline: typeof toggleShowMessageTimeline
-  toggleShowTimelineTools: typeof toggleShowTimelineTools
   toggleUsageMetrics: typeof toggleUsageMetrics
   toggleAutoCleanupBlankSessions: typeof toggleAutoCleanupBlankSessions
   toggleShowPromptVoiceInput: typeof toggleShowPromptVoiceInput
@@ -1486,7 +1478,6 @@ const configContextValue: ConfigContextValue = {
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
   toggleShowMessageTimeline,
-  toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
   toggleShowPromptVoiceInput,
@@ -1585,7 +1576,6 @@ export {
   getModelThinkingSelection,
   setModelThinkingSelection,
   toggleShowThinkingBlocks,
-  toggleShowTimelineTools,
   toggleUsageMetrics,
   toggleAutoCleanupBlankSessions,
   toggleShowPromptVoiceInput,

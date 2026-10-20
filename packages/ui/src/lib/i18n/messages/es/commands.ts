@@ -120,10 +120,6 @@ export const commandMessages = {
   "commands.thinkingBlocks.description": "Mostrar u ocultar secciones de pensamiento de IA",
   "commands.thinkingBlocks.keywords": "pensamiento, razonamiento, alternar, mostrar, ocultar",
 
-  "commands.timelineToolCalls.label.show": "Mostrar llamadas de herramienta en la línea de tiempo",
-  "commands.timelineToolCalls.label.hide": "Ocultar llamadas de herramienta en la línea de tiempo",
-  "commands.timelineToolCalls.description": "Alternar entradas de llamadas de herramienta en la línea de tiempo de mensajes",
-  "commands.timelineToolCalls.keywords": "línea de tiempo, herramienta, alternar",
 
   "commands.keyboardShortcutHints.label.show": "Mostrar atajos de teclado",
   "commands.keyboardShortcutHints.label.hide": "Ocultar atajos de teclado",

@@ -2022,8 +2022,7 @@ fn main() {
                 | "open-workspace-editor-vscodium"
                 | "view-left-panel"
                 | "view-right-panel"
-                | "view-timeline"
-                | "view-timeline-tools") => {
+                | "view-timeline") => {
                     emit_menu_action(app_handle, action);
                 }
                 "new-window" => {

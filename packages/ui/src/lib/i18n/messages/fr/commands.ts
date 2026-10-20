@@ -120,10 +120,6 @@ export const commandMessages = {
   "commands.thinkingBlocks.description": "Afficher ou masquer les sections de réflexion de l'IA",
   "commands.thinkingBlocks.keywords": "réflexion, raisonnement, basculer, afficher, masquer",
 
-  "commands.timelineToolCalls.label.show": "Afficher les appels d'outil dans la timeline",
-  "commands.timelineToolCalls.label.hide": "Masquer les appels d'outil dans la timeline",
-  "commands.timelineToolCalls.description": "Afficher/masquer les entrées d'appel d'outil dans la timeline des messages",
-  "commands.timelineToolCalls.keywords": "timeline, outil, basculer",
 
   "commands.keyboardShortcutHints.label.show": "Afficher les raccourcis clavier",
   "commands.keyboardShortcutHints.label.hide": "Masquer les raccourcis clavier",

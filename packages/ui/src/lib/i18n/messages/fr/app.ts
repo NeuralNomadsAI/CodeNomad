@@ -10,7 +10,6 @@ export const appMessages = {
   "window.menu.leftPanel": "Volet gauche",
   "window.menu.rightPanel": "Volet droit",
   "window.menu.timeline": "Timeline",
-  "window.menu.timelineTools": "Outils dans la timeline",
   "window.menu.window": "Fenêtre",
   "window.menu.help": "Aide",
   "window.menu.native.getUpdates": "Rechercher des mises à jour…",

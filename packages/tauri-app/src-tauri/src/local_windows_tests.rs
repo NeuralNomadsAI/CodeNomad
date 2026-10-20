@@ -81,8 +81,7 @@ fn menu_toggle_during_native_focus_gap_keeps_view_and_file_commands_enabled() {
         serde_json::from_value::<crate::view_menu::ViewMenuState>(serde_json::json!({
             "leftPanel": { "label": "Left", "checked": checked, "enabled": true },
             "rightPanel": { "label": "Right", "checked": true, "enabled": true },
-            "timeline": { "label": "Timeline", "checked": true, "enabled": true },
-            "timelineTools": { "label": "Tools", "checked": true, "enabled": true }
+            "timeline": { "label": "Timeline", "checked": true, "enabled": true }
         })).unwrap()
     };
     windows.set_workspace_menu_enabled(&local.label, true).unwrap();

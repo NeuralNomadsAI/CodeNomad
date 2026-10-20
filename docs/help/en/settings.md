@@ -42,7 +42,7 @@ Built-in layout is window layout, not a project mutation. Extension checkboxes a
 
 1. Open **Chat** to choose transcript detail defaults. Presets are **Nothing**, **Minimal**, **Balanced** and **Everything**; individual changes produce **Custom**.
 2. Adjust thinking, tool inputs/outputs, diagnostics and token details, or use the conversation's **Message content** popup for the shared visibility controls.
-3. In **General**, adjust **Message timeline**, **Timeline tool calls**, **Diff view** and **Follow-up behavior** as needed.
+3. In **General**, adjust **Message timeline**, **Diff view** and **Follow-up behavior** as needed.
 4. Resize the composer using its resize control; long drafts scroll inside the field.
 
 Visibility and expansion settings only change presentation. They do not remove stored tools/reasoning or compact the model context. See [History and cleanup](history.md) for destructive operations.

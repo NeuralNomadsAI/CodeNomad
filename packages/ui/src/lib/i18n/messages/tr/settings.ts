@@ -536,7 +536,6 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "Düşünme varsayılanı",
   "settings.behavior.thinkingDefault.subtitle": "Düşünme bölümlerinin genişletilmiş mi yoksa daraltılmış mı başlayacağını seçin.",
   "settings.behavior.messageTimeline.title": "Mesaj zaman çizelgesini göster",
-  "settings.behavior.timelineTools.title": "Araç çağrılarını zaman çizelgesinde göster",
   "settings.behavior.diffView.title": "Araç çağrısı diff'lerini böl",
   "settings.behavior.toolOutputsDefault.title": "Araç çıktıları varsayılanı",
   "settings.behavior.toolOutputsDefault.subtitle": "Araç çıktılarının genişletilmiş mi yoksa daraltılmış mı başlayacağını seçin.",

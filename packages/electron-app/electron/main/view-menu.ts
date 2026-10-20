@@ -6,7 +6,6 @@ const entries = [
   ["leftPanel", "view-left-panel"],
   ["rightPanel", "view-right-panel"],
   ["timeline", "view-timeline"],
-  ["timelineTools", "view-timeline-tools"],
 ] as const
 
 type Entry = { label: string; checked: boolean; enabled: boolean }

@@ -10,7 +10,6 @@ export const appMessages = {
   "window.menu.leftPanel": "左パネル",
   "window.menu.rightPanel": "右パネル",
   "window.menu.timeline": "タイムライン",
-  "window.menu.timelineTools": "タイムラインのツール",
   "window.menu.window": "ウィンドウ",
   "window.menu.help": "ヘルプ",
   "window.menu.native.getUpdates": "アップデートを確認…",

@@ -10,7 +10,6 @@ export const appMessages = {
   "window.menu.leftPanel": "Sol panel",
   "window.menu.rightPanel": "Sağ panel",
   "window.menu.timeline": "Zaman çizelgesi",
-  "window.menu.timelineTools": "Zaman çizelgesindeki araçlar",
   "window.menu.window": "Pencere",
   "window.menu.help": "Yardım",
   "window.menu.native.getUpdates": "Güncellemeleri denetle…",

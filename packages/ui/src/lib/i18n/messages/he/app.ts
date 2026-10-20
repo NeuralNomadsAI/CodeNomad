@@ -10,7 +10,6 @@ export const appMessages = {
   "window.menu.leftPanel": "חלונית שמאלית",
   "window.menu.rightPanel": "חלונית ימנית",
   "window.menu.timeline": "ציר הזמן",
-  "window.menu.timelineTools": "כלים בציר הזמן",
   "window.menu.window": "חלון",
   "window.menu.help": "עזרה",
   "window.menu.native.getUpdates": "חיפוש עדכונים…",

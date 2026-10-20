@@ -6,7 +6,7 @@ test("view menu snapshots follow the target window and clear on reload/close", (
   const clicks: string[] = []
   let items = viewMenuItems(id => () => { clicks.push(id) }, null)
   const menu = { getMenuItemById: (id: string) => items.find(item => item.id === id) }
-  const state = (checked: boolean) => Object.fromEntries(["leftPanel", "rightPanel", "timeline", "timelineTools"].map(key => [key, {
+  const state = (checked: boolean) => Object.fromEntries(["leftPanel", "rightPanel", "timeline"].map(key => [key, {
     label: `${key}-${checked}`, checked, enabled: true,
   }]))
   setViewMenuState(1, state(true))
@@ -34,7 +34,7 @@ test("view menu snapshots follow the target window and clear on reload/close", (
 })
 
 test("native menu labels follow the target window's locale and keep it for windows without one", () => {
-  const view = Object.fromEntries(["leftPanel", "rightPanel", "timeline", "timelineTools"].map(key => [key, { label: key, checked: false, enabled: true }]))
+  const view = Object.fromEntries(["leftPanel", "rightPanel", "timeline"].map(key => [key, { label: key, checked: false, enabled: true }]))
   const win = (id: number) => ({ webContents: { id } }) as any
   assert.equal(nativeMenuLabels(null).undo, "Undo", "English before any renderer reports")
   setViewMenuState(11, { ...view, menuLabels: { undo: "Annuler", about: "À propos de CodeNomad", unknown: "ignored" } })

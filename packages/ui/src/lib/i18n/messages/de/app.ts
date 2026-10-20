@@ -10,7 +10,6 @@ export const appMessages = {
   "window.menu.leftPanel": "Linke Seitenleiste",
   "window.menu.rightPanel": "Rechte Seitenleiste",
   "window.menu.timeline": "Zeitleiste",
-  "window.menu.timelineTools": "Werkzeuge in der Zeitleiste",
   "window.menu.window": "Fenster",
   "window.menu.help": "Hilfe",
   "window.menu.native.getUpdates": "Nach Updates suchen…",

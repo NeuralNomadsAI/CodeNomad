@@ -42,7 +42,7 @@ Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskäst
 
 1. Öffnen Sie **Chat**, um Standarddetails des Verlaufs zu wählen. Vorgaben sind **Nichts**, **Minimal**, **Ausgewogen** und **Alles**; Einzeländerungen erzeugen **Benutzerdefiniert**.
 2. Passen Sie Denken, Werkzeugeingaben/-ausgaben, Diagnosen und Tokendetails an oder verwenden Sie das Popup **Nachrichteninhalt** der Unterhaltung für dieselben Sichtbarkeitsoptionen.
-3. Passen Sie unter **Allgemein** nach Bedarf **Nachrichten-Timeline**, **Timeline-Tool-Aufrufe**, **Diff-Ansicht** und **Folgeprompt-Verhalten** an.
+3. Passen Sie unter **Allgemein** nach Bedarf **Nachrichten-Timeline**, **Diff-Ansicht** und **Folgeprompt-Verhalten** an.
 4. Ändern Sie die Größe des Eingabefelds über dessen Größensteuerung; lange Entwürfe scrollen im Feld.
 
 Sichtbarkeits- und Aufklappeinstellungen ändern nur die Darstellung. Sie entfernen keine gespeicherten Werkzeuge/Denkprozesse und komprimieren keinen Modellkontext. Destruktive Vorgänge siehe [Verlauf und Bereinigung](history.md).

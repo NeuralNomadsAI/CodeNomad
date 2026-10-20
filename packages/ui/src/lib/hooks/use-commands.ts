@@ -42,7 +42,6 @@ export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
   toggleShowThinkingBlocks: () => void
   toggleShowMessageTimeline: () => void
-  toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
   toggleShowPromptVoiceInput: () => void
@@ -581,7 +580,6 @@ export function useCommands(options: UseCommandsOptions) {
       preferences: options.preferences,
       toggleShowThinkingBlocks: options.toggleShowThinkingBlocks,
       toggleShowMessageTimeline: options.toggleShowMessageTimeline,
-      toggleShowTimelineTools: options.toggleShowTimelineTools,
       toggleUsageMetrics: options.toggleUsageMetrics,
       toggleAutoCleanupBlankSessions: options.toggleAutoCleanupBlankSessions,
       toggleShowPromptVoiceInput: options.toggleShowPromptVoiceInput,

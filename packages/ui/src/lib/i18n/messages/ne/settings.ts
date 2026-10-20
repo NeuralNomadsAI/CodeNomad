@@ -551,7 +551,6 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "सोचाइ पूर्वनिर्धारित",
   "settings.behavior.thinkingDefault.subtitle": "सोचाइ खण्डहरू विस्तार वा संकुचित रूपमा सुरु हुने छनौट गर्नुहोस्।",
   "settings.behavior.messageTimeline.title": "सन्देश समयरेखा देखाउनुहोस्",
-  "settings.behavior.timelineTools.title": "समयरेखामा उपकरण कलहरू देखाउनुहोस्",
   "settings.behavior.diffView.title": "उपकरण कलका diff हरू विभाजित गर्नुहोस्",
   "settings.behavior.toolOutputsDefault.title": "उपकरण आउटपुट पूर्वनिर्धारित",
   "settings.behavior.toolOutputsDefault.subtitle": "उपकरण आउटपुटहरू विस्तार वा संकुचित रूपमा सुरु हुने छनौट गर्नुहोस्।",

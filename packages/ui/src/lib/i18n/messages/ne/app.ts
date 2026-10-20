@@ -10,7 +10,6 @@ export const appMessages = {
   "window.menu.leftPanel": "बायाँ प्यानल",
   "window.menu.rightPanel": "दायाँ प्यानल",
   "window.menu.timeline": "समयरेखा",
-  "window.menu.timelineTools": "समयरेखामा उपकरणहरू",
   "window.menu.window": "सञ्झ्याल",
   "window.menu.help": "मद्दत",
   "window.menu.native.getUpdates": "अपडेटहरू जाँच गर्नुहोस्…",

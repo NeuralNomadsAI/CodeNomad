@@ -27,7 +27,6 @@ export const commandHotkeyDefinitions: HotkeyDefinition[] = [
   definition("undo", "session", "session", "commands.undoLastMessage.label"),
   definition("redo", "session", "session", "commands.redoLastMessage.label"),
   definition("thinking", "app", "app", "settings.behavior.thinking.title"),
-  definition("timeline-tools", "app", "app", "settings.behavior.timelineTools.title"),
   definition("thinking-default-visibility", "app", "app", "settings.behavior.thinkingDefault.title"),
   definition("diff-view-split", "app", "app", "commands.diffViewSplit.label"),
   definition("diff-view-unified", "app", "app", "commands.diffViewUnified.label"),

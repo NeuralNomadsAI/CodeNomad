@@ -113,7 +113,6 @@ export default function MessageSection(props: MessageSectionProps) {
   const usageMetricsVisibility = () =>
     preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
-  const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
   const emptyStateVariant = () => props.emptyStateVariant ?? "messages"
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
@@ -291,7 +290,6 @@ export default function MessageSection(props: MessageSectionProps) {
     navigateToMessage(segment.messageId)
   }
 
-  const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
   // Workspace metadata updates can re-evaluate the identity accessors without
   // changing search visibility. Only a real close may cancel history reads.
   const isSearchOpen = createMemo(() => isSessionSearchOpen(props.instanceId, props.sessionId))
@@ -1610,12 +1608,11 @@ export default function MessageSection(props: MessageSectionProps) {
               isActive={isActive()}
               segments={timelineSegments()}
               onSegmentClick={handleTimelineSegmentClick}
-              expandedMessageIds={expandedMessageIds}
               activeSegmentId={activeSegmentId()}
               revealActiveToken={revealActiveToken()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
-              showToolSegments={showTimelineToolsPreference()}
+              isToolHidden={(toolName) => resolveToolVisibility(preferences(), toolName) === "hidden"}
               searchMatchedSegmentIds={searchMatchedTimelineSegmentIds}
               activeSearchSegmentId={activeSearchTimelineSegmentId}
             />

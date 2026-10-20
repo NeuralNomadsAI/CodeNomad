@@ -63,7 +63,7 @@ try {
     await window.__TAURI__.event.listen('menu:action',event=>window.fixtureActions.push(event.payload))
   })
   const publish=checked=>page.evaluate(checked=>window.__TAURI__.core.invoke('set_workspace_menu_enabled',{
-    enabled:true,viewState:Object.fromEntries(['leftPanel','rightPanel','timeline','timelineTools'].map(key=>[key,{label:`fixture-${key}`,checked,enabled:true}]))
+    enabled:true,viewState:Object.fromEntries(['leftPanel','rightPanel','timeline'].map(key=>[key,{label:`fixture-${key}`,checked,enabled:true}]))
   }),checked)
   const popup=async()=>{
     await page.evaluate(()=>{window.fixturePopupError=null;window.fixturePopup=window.__TAURI__.core.invoke('popup_titlebar_menu',{menu:'view',x:100,y:50});window.fixturePopup.catch(error=>{window.fixturePopupError=String(error)})})
@@ -73,10 +73,10 @@ try {
   console.log('Opening initial native popup')
   let result=await popup()
   const retainedMenu=result.menus[0].menuHandle
-  assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&i.checked&&i.enabled).length,4)
+  assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&i.checked&&i.enabled).length,3)
   await publish(false)
   console.log('Published deferred state')
-  assert.equal(native().menus[0].items.filter(i=>i.text.startsWith('fixture-')&&i.checked).length,4,'updates during tracking are deferred')
+  assert.equal(native().menus[0].items.filter(i=>i.text.startsWith('fixture-')&&i.checked).length,3,'updates during tracking are deferred')
   const nested=await page.evaluate(()=>window.__TAURI__.core.invoke('popup_titlebar_menu',{menu:'file',x:100,y:50}).then(()=>null,error=>String(error)))
   assert.match(nested,/already open/)
   console.log('Nested popup rejected')
@@ -84,7 +84,7 @@ try {
   await page.evaluate(()=>window.fixturePopup)
   console.log('Initial popup dismissed')
   result=native('snapshot',local.handle,0,retainedMenu)
-  assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&!i.checked&&i.enabled).length,4,'latest snapshot applies after tracking')
+  assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&!i.checked&&i.enabled).length,3,'latest snapshot applies after tracking')
   checks.push('native state, deferred reentrant publication, nested-popup rejection and trailing refresh')
   await page.evaluate(()=>{
     window.concurrentResults=[]
@@ -117,7 +117,7 @@ try {
   checks.push('8 async popup/focus cycles complete with native IPC heartbeat')
   await publish(false)
   result=await popup()
-  assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&!i.checked&&i.enabled).length,4)
+  assert.equal(result.menus[0].items.filter(i=>i.text.startsWith('fixture-')&&!i.checked&&i.enabled).length,3)
   native('select',0,0)
   console.log('Native selection sent')
   await writeFile(path.join(profile,'selection-state.json'),JSON.stringify({native:native(),actions:await page.evaluate(()=>window.fixtureActions)},null,2))

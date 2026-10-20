@@ -120,10 +120,6 @@ export const commandMessages = {
   "commands.thinkingBlocks.description": "एआईको सोचाइ खण्डहरू देखाउनुहोस् वा लुकाउनुहोस्",
   "commands.thinkingBlocks.keywords": "सोच, तर्क, टगल, देखाउनुहोस्, लुकाउनुहोस्",
 
-  "commands.timelineToolCalls.label.show": "टाइमलाइन उपकरण कलहरू देखाउनुहोस्",
-  "commands.timelineToolCalls.label.hide": "टाइमलाइन उपकरण कलहरू लुकाउनुहोस्",
-  "commands.timelineToolCalls.description": "सन्देश टाइमलाइनमा उपकरण कल प्रविष्टिहरू टगल गर्नुहोस्",
-  "commands.timelineToolCalls.keywords": "टाइमलाइन, उपकरण, टगल",
 
   "commands.keyboardShortcutHints.label.show": "किबोर्ड सर्टकट संकेतहरू देखाउनुहोस्",
   "commands.keyboardShortcutHints.label.hide": "किबोर्ड सर्टकट संकेतहरू लुकाउनुहोस्",

@@ -550,7 +550,6 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "思考の既定",
   "settings.behavior.thinkingDefault.subtitle": "思考セクションを最初に展開/折りたたみのどちらで表示するかを選びます。",
   "settings.behavior.messageTimeline.title": "メッセージのタイムラインを表示",
-  "settings.behavior.timelineTools.title": "タイムラインにツール呼び出しを表示",
   "settings.behavior.diffView.title": "ツール呼び出しの差分を分割表示",
   "settings.behavior.toolOutputsDefault.title": "ツール出力の既定",
   "settings.behavior.toolOutputsDefault.subtitle": "ツール出力を最初に展開/折りたたみのどちらで表示するかを選びます。",

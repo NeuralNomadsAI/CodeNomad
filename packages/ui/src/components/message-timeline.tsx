@@ -32,12 +32,12 @@ export interface TimelineSegment {
 interface MessageTimelineProps {
   segments: TimelineSegment[]
   onSegmentClick?: (segment: TimelineSegment) => void
-  expandedMessageIds?: Accessor<Set<string>>
   activeSegmentId?: string | null
   instanceId: string
   sessionId: string
   isActive?: boolean
-  showToolSegments?: boolean
+  /** Tool types hidden in Message content are hidden here too. */
+  isToolHidden?: (toolName: string) => boolean
   searchMatchedSegmentIds?: Accessor<Set<string>>
   activeSearchSegmentId?: Accessor<string | null>
   revealActiveToken?: number
@@ -336,7 +336,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const [tooltipElement, setTooltipElement] = createSignal<HTMLDivElement | null>(null)
   let hoverTimer: number | null = null
   let closeTimer: number | null = null
-  const showTools = () => props.showToolSegments ?? true
   const clearHoverTimer = () => {
     if (hoverTimer !== null && typeof window !== "undefined") {
       window.clearTimeout(hoverTimer)
@@ -458,7 +457,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   })
 
   const segmentStates = createMemo(() => {
-    const expandedMessages = props.expandedMessageIds?.()
     const resolvedStore = store()
     const result = new Map<string, TimelineSegmentState>()
 
@@ -475,12 +473,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         }
       }
 
-      const hidden = segment.type === "tool" && !(
-        showTools()
-        || expandedMessages?.has(segment.messageId)
-        || props.activeSegmentId === segment.id
-        || hasActivePermission
-      )
+      // A marker follows its tool type (the one its icon shows); pending permissions stay visible.
+      const hidden = segment.type === "tool" && !hasActivePermission && Boolean(props.isToolHidden?.(segment.toolName ?? ""))
 
       result.set(segment.id, {
         hasActivePermission,

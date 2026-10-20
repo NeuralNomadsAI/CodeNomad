@@ -15,7 +15,6 @@ export interface ViewMenuState {
   leftPanel: ViewMenuItemState
   rightPanel: ViewMenuItemState
   timeline: ViewMenuItemState
-  timelineTools: ViewMenuItemState
   /** Labels for the rest of the native menu; older hosts ignore this field. */
   menuLabels?: NativeMenuLabels
 }
@@ -44,7 +43,7 @@ export function registerViewMenuPanels(instanceId: string, controller: ViewMenuP
 
 export function useViewMenu(activeInstanceId: Accessor<string | undefined>) {
   const { t } = useI18n()
-  const { preferences, toggleShowMessageTimeline, toggleShowTimelineTools } = useConfig()
+  const { preferences, toggleShowMessageTimeline } = useConfig()
   const controller = () => panels().get(activeInstanceId() ?? "")
   const panelEnabled = () => Boolean(controller()?.enabled())
   let pending = Promise.resolve()
@@ -52,12 +51,10 @@ export function useViewMenu(activeInstanceId: Accessor<string | undefined>) {
   createEffect(() => {
     const enabled = Boolean(activeInstanceId())
     const drawersEnabled = panelEnabled()
-    const timeline = preferences().showMessageTimeline
     const state: ViewMenuState = {
       leftPanel: { label: t("window.menu.leftPanel"), checked: drawersEnabled && Boolean(controller()?.leftOpen()), enabled: drawersEnabled },
       rightPanel: { label: t("window.menu.rightPanel"), checked: drawersEnabled && Boolean(controller()?.rightOpen()), enabled: drawersEnabled },
-      timeline: { label: t("window.menu.timeline"), checked: timeline, enabled },
-      timelineTools: { label: t("window.menu.timelineTools"), checked: preferences().showTimelineTools, enabled: enabled && timeline },
+      timeline: { label: t("window.menu.timeline"), checked: preferences().showMessageTimeline, enabled },
       menuLabels: nativeMenuLabels(t),
     }
     // Keep IPC updates ordered when a project switch and its shell mount race.
@@ -75,9 +72,6 @@ export function useViewMenu(activeInstanceId: Accessor<string | undefined>) {
         return true
       case "view-timeline":
         if (activeInstanceId()) toggleShowMessageTimeline()
-        return true
-      case "view-timeline-tools":
-        if (activeInstanceId() && preferences().showMessageTimeline) toggleShowTimelineTools()
         return true
       default:
         return false

@@ -30,22 +30,22 @@ test("real Electron View menu rebuilds native labels on initial sync, locale and
     app = await _electron.launch({ timeout: 15000, executablePath: process.env.CODENOMAD_TEST_ELECTRON || createRequire(import.meta.url)("electron"),
       args: [fileURLToPath(new URL("fixtures/view-menu-electron.cjs", import.meta.url))], env })
     await app.evaluate(async ({ app }) => { await app.whenReady() })
-    const makeState = (locale: string, checked = true) => Object.fromEntries(["leftPanel", "rightPanel", "timeline", "timelineTools"].map(key => [key, {
-      label: `${locale}-${key}`, checked, enabled: key !== "timelineTools",
+    const makeState = (locale: string, checked = true) => Object.fromEntries(["leftPanel", "rightPanel", "timeline"].map(key => [key, {
+      label: `${locale}-${key}`, checked, enabled: key !== "timeline",
     }]))
     assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.snapshot()), [])
     await app.evaluate((_electron, state) => (globalThis as any).menuFixture.set(0, state), makeState("fr"))
     const read = () => app!.evaluate(() => (globalThis as any).menuFixture.snapshot())
     let native = await read()
-    assert.deepEqual(native.map((item: any) => item.label), ["fr-leftPanel", "fr-rightPanel", "fr-timeline", "fr-timelineTools"])
+    assert.deepEqual(native.map((item: any) => item.label), ["fr-leftPanel", "fr-rightPanel", "fr-timeline"])
     assert.ok(native.every((item: any) => item.checked))
-    assert.equal(native[3].enabled, false)
+    assert.equal(native[2].enabled, false)
     await app.evaluate(() => { const f = (globalThis as any).menuFixture; f.beforeMenu = f.menu() })
     await app.evaluate(() => (globalThis as any).menuFixture.blur())
     await app.evaluate((_electron, state) => (globalThis as any).menuFixture.set(0, state), makeState("fr", false))
     assert.equal(await app.evaluate(() => { const f = (globalThis as any).menuFixture; return f.beforeMenu === f.menu() }), true, "checkbox-only updates do not replace an open menu")
     assert.ok((await read()).every((item: any) => !item.checked))
-    assert.ok((await read()).slice(0, 3).every((item: any) => item.enabled), "native focus gap must not disable unrelated View controls")
+    assert.ok((await read()).slice(0, 2).every((item: any) => item.enabled), "native focus gap must not disable unrelated View controls")
     assert.deepEqual(await app.evaluate(() => (globalThis as any).menuFixture.workspaceEnabled()), [true, true, true], "File commands use the same retained target")
     await app.evaluate((_electron, state) => (globalThis as any).menuFixture.set(1, state), makeState("en"))
     assert.equal((await read())[0].label, "fr-leftPanel", "background renderer cannot change focused labels")

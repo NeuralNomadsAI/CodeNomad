@@ -120,10 +120,6 @@ export const commandMessages = {
   "commands.thinkingBlocks.description": "显示或隐藏 AI 思考部分",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, toggle, show, hide, 思考, 推理, 切换, 显示, 隐藏",
 
-  "commands.timelineToolCalls.label.show": "显示时间轴工具调用",
-  "commands.timelineToolCalls.label.hide": "隐藏时间轴工具调用",
-  "commands.timelineToolCalls.description": "切换消息时间轴中的工具调用条目",
-  "commands.timelineToolCalls.keywords": "timeline, tool, toggle, 时间轴, 工具, 切换",
 
   "commands.keyboardShortcutHints.label.show": "显示键盘快捷键提示",
   "commands.keyboardShortcutHints.label.hide": "隐藏键盘快捷键提示",

@@ -550,7 +550,6 @@ export const settingsMessages = {
   "settings.behavior.thinkingDefault.title": "Etat initial de la reflexion",
   "settings.behavior.thinkingDefault.subtitle": "Choisir si les sections de reflexion commencent developpees ou reduites.",
   "settings.behavior.messageTimeline.title": "Afficher la chronologie des messages",
-  "settings.behavior.timelineTools.title": "Afficher les appels d’outils dans la chronologie",
   "settings.behavior.diffView.title": "Scinder les diffs des appels d’outils",
   "settings.behavior.toolOutputsDefault.title": "Etat initial des sorties d'outils",
   "settings.behavior.toolOutputsDefault.subtitle": "Choisir si les sorties d'outils commencent developpees ou reduites.",

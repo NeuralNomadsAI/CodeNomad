@@ -120,10 +120,6 @@ export const commandMessages = {
   "commands.thinkingBlocks.description": "Show or hide AI thinking sections",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, toggle, show, hide",
 
-  "commands.timelineToolCalls.label.show": "Show Timeline Tool Calls",
-  "commands.timelineToolCalls.label.hide": "Hide Timeline Tool Calls",
-  "commands.timelineToolCalls.description": "Toggle tool call entries in the message timeline",
-  "commands.timelineToolCalls.keywords": "timeline, tool, toggle",
 
   "commands.keyboardShortcutHints.label.show": "Show Keyboard Shortcut Hints",
   "commands.keyboardShortcutHints.label.hide": "Hide Keyboard Shortcut Hints",
