@@ -214,7 +214,7 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       auto: source.reason === "auto",
       text: "summary" in source ? source.summary : source.error.message,
       ...(source.status === "completed"
-        ? { model: source.model, providerState: source.providerState }
+        ? { model: source.model, native: source.native }
         : {}),
       sessionID: sessionId,
       messageID: source.id,

@@ -239,9 +239,10 @@ test("actual native source method reads only bounded new messages, pins placemen
     Schema.decodeUnknownSync(SessionMessage.Info)({ id: "msg_first", type: "user", text: "First reply",
       files: [{ data: "SU1BR0VfQllURVM=", source: { type: "inline" }, mime: "image/png", name: "image" }], time: { created: 1 } }),
     Schema.decodeUnknownSync(SessionMessage.Info)({ id: "msg_second", type: "assistant", agent: "build",
-      model: { providerID: "provider", id: "model" }, providerState: { credential: "CREDENTIAL_BYTES" },
+      model: { providerID: "provider", id: "model" }, native: { credential: "CREDENTIAL_BYTES" },
       content: [{ type: "text", text: "Native answer" }], time: { created: 2, completed: 3 } }),
   ]
+  assert(JSON.stringify(output[1]).includes("CREDENTIAL_BYTES"), "the decoded fixture carries provider replay data")
   const service = { get: () => Effect.succeed({ ...info, location: { directory: moved ? `${directory}-moved` : directory } }),
     create: () => Effect.die("Unexpected create"), inbox: () => Effect.succeed([]), environment: () => Effect.succeed({}),
     prompt: () => Effect.succeed(receipt(command)), synthetic: () => Effect.succeed(receipt({ ...command, kind: "synthetic" })),

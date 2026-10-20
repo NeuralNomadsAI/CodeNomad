@@ -8,7 +8,7 @@ import { UnsupportedOpenCodeError } from "../runtime-support"
 test("unknown contracts perform authenticated bounded read negotiation before any mutation", async () => {
   for (const kind of ["unauthorized", "unrecognized", "oversized"] as const) {
     const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "opencode", password: "fixture" } }
-    rememberRuntime(endpoint, { version: "2.0.100", pid: 1, discovery: "status" })
+    rememberRuntime(endpoint, { version: "2.1.100", pid: 1, discovery: "status" })
     let calls = 0, cancelled = false
     const transport = createRuntimeFetch(endpoint, async (input, init) => {
       calls++
@@ -32,7 +32,11 @@ test("unknown contracts perform authenticated bounded read negotiation before an
 test("unknown labels with an obsolete contract or missing environment fail for a concrete API reason", async () => {
   const missingEnvironment = structuredClone(modernContractFixture)
   delete (missingEnvironment.paths as Record<string, unknown>)["/api/session/{sessionID}/environment"]
-  for (const [schema, reason] of [[legacyContractFixture, "canonical_api"], [missingEnvironment, "session_environment"]] as const) {
+  // A 2.0.x-shaped replay contract under an unfamiliar label: `state` and compaction `recent`.
+  const preNative = structuredClone(modernContractFixture) as any
+  preNative.components.schemas["Session.Message.Assistant.Text"] = { properties: { type: {}, text: {}, state: {} } }
+  preNative.components.schemas["Session.Message.Compaction.Completed"] = { properties: { type: {}, metadata: {}, providerState: {}, summary: {}, recent: {} } }
+  for (const [schema, reason] of [[legacyContractFixture, "canonical_api"], [missingEnvironment, "session_environment"], [preNative, "native_contract"]] as const) {
     const endpoint = { url: "http://127.0.0.1:4321" }
     rememberRuntime(endpoint, { version: "custom-build", pid: 1, discovery: "info" })
     let calls = 0
@@ -49,7 +53,7 @@ test("unknown labels with an obsolete contract or missing environment fail for a
 
 test("shared negotiation has independent subscriber cancellation and never retries a mutation", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.0.100", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.1.100", pid: 1, discovery: "info" })
   let complete!: (response: Response) => void
   let negotiationSignal: AbortSignal | null | undefined
   const calls: string[] = []

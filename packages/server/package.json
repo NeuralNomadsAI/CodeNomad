@@ -32,7 +32,7 @@
     "@fastify/cors": "^8.5.0",
     "@fastify/reply-from": "^9.8.0",
     "@fastify/static": "^7.0.4",
-    "@opencode/client": "2.0.32",
+    "@opencode/client": "2.1.0",
     "commander": "^12.1.0",
     "fastify": "^4.28.1",
     "fuzzysort": "^2.0.4",
@@ -48,7 +48,7 @@
   "devDependencies": {
     "@codenomad/remote-tunnel": "file:../remote-tunnel",
     "esbuild": "^0.25.12",
-    "@opencode/plugin": "2.0.32",
+    "@opencode/plugin": "2.1.0",
     "@types/node-forge": "^1.3.14",
     "@types/yauzl": "^2.10.0",
     "cross-env": "^7.0.3",

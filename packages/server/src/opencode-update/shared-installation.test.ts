@@ -9,7 +9,7 @@ import { withInstallationLock } from "./installation-lock"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 
-const validV2 = () => ({ valid: true, version: "2.0.30" })
+const validV2 = () => ({ valid: true, version: "2.1.2" })
 
 async function npmFixture(prefix: string, version: string) {
   const binary = npmExecutable(prefix)
@@ -30,10 +30,10 @@ test("private copies and their receipts are ignored; PATH wins over the user npm
   const host = { home, env }
   try {
     const root = path.join(home, ".local/share/codenomad/opencode")
-    const legacy = path.join(root, "2.0.99/node_modules/@opencode/cli/bin/opencode.exe")
+    const legacy = path.join(root, "2.1.99/node_modules/@opencode/cli/bin/opencode.exe")
     await mkdir(path.dirname(legacy), { recursive: true }); await writeFile(legacy, "legacy")
-    await mkdir(path.join(root, "selected")); await writeFile(path.join(root, "selected/2.0.99"), "")
-    await writeFile(path.join(root, "current"), "2.0.99")
+    await mkdir(path.join(root, "selected")); await writeFile(path.join(root, "selected/2.1.99"), "")
+    await writeFile(path.join(root, "current"), "2.1.99")
     assert.deepEqual(resolveDefaultInstallation(host), { path: "opencode2" })
     assert.equal(sharedInstallPrefix(host), userNpmPrefix(host))
     const prefix = userNpmPrefix(host)
@@ -57,7 +57,7 @@ test("normal global-user npm install publishes terminal command and retries PATH
     execute: async (_file: string, args: string[]) => {
       installs++
       if (args[0] === "upgrade") {
-        assert.deepEqual(args, ["upgrade", "2.0.28", "--method", "npm"])
+        assert.deepEqual(args, ["upgrade", "2.1.1", "--method", "npm"])
         await npmFixture(prefix, args[1]!)
         return
       }
@@ -74,22 +74,22 @@ test("normal global-user npm install publishes terminal command and retries PATH
     },
   }
   try {
-    await assert.rejects(installSharedOpenCode("2.0.27", options), /PATH write failed/)
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.0.27", "installation survives PATH failure")
+    await assert.rejects(installSharedOpenCode("2.1.0", options), /PATH write failed/)
+    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.0", "installation survives PATH failure")
     assert.equal((resolveDefaultInstallation(options)).source, "user", "repair remains discoverable")
-    assert.equal(await installSharedOpenCode("2.0.27", options), npmExecutable(prefix))
+    assert.equal(await installSharedOpenCode("2.1.0", options), npmExecutable(prefix))
     assert.equal(installs, 1)
     assert.equal(resolveDefaultInstallation(options).path, findPathOpenCode(options))
     assert.equal(resolveDefaultInstallation(options).source, "path")
-    await installSharedOpenCode("2.0.28", options)
+    await installSharedOpenCode("2.1.1", options)
     assert.equal(installs, 2)
-    await installSharedOpenCode("2.0.27", options)
+    await installSharedOpenCode("2.1.0", options)
     assert.equal(installs, 2, "never downgrade a newer common installation")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.0.28")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.1")
     await rm(findPathOpenCode(options)!)
-    await installSharedOpenCode("2.0.27", options)
+    await installSharedOpenCode("2.1.0", options)
     assert.equal(installs, 3, "missing command is repaired at the newer installed version")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.0.28")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.1")
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
@@ -214,7 +214,7 @@ test("non-npm PATH executables are reused without allowing npm to shadow them", 
     const options = { home, env: { PATH: home }, npm: "fixture-npm.js", probeForeign: validV2 }
     assert.equal(resolveDefaultInstallation(options).path, binary)
     assert.equal(sharedInstallPrefix(options), undefined)
-    await assert.rejects(installSharedOpenCode("2.0.27", options), /not a writable npm installation/)
+    await assert.rejects(installSharedOpenCode("2.1.0", options), /not a writable npm installation/)
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 

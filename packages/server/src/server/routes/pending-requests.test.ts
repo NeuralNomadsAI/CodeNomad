@@ -80,7 +80,7 @@ test("raw pending adapter retains the bound service authentication and fails clo
   const h = await harness()
   try {
     const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "opencode", password: "isolated-fixture" } }
-    rememberRuntime(endpoint, { version: "2.0.27", pid: 123, discovery: "info" })
+    rememberRuntime(endpoint, { version: "2.1.0", pid: 123, discovery: "info" })
     h.connection.endpoint = endpoint
     h.connection.fetch = createRuntimeFetch(endpoint, async (input, init) => {
       h.state.calls.push(new URL(String(input)))

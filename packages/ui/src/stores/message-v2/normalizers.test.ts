@@ -136,12 +136,12 @@ describe("native session message normalization", () => {
       output: { output: "/repo", cursor: 5, size: 5, truncated: false }, time: { created: 1, completed: 2 },
     }).message
     const compacted = normalizeSessionMessage("session", {
-      id: "compact", type: "compaction", status: "completed", reason: "manual", summary: "summary", recent: "recent",
-      model: { providerID: "anthropic", id: "claude", variant: "high" }, providerState: { cache: "warm" },
+      id: "compact", type: "compaction", status: "completed", reason: "manual", summary: "summary", metadata: { keepID: "kept" },
+      model: { providerID: "anthropic", id: "claude", variant: "high" }, native: { cache: "warm" },
       time: { created: 1 },
     }).message
     const running = normalizeSessionMessage("session", {
-      id: "running", type: "compaction", status: "running", reason: "auto", summary: "partial", recent: "recent",
+      id: "running", type: "compaction", status: "running", reason: "auto", summary: "partial", metadata: { keepID: "kept" },
       time: { created: 1 },
     }).message
     const failed = normalizeSessionMessage("session", {
@@ -153,7 +153,7 @@ describe("native session message normalization", () => {
     assert.equal(compacted.status, "complete")
     assert.equal((compacted.parts[0] as any).text, "summary")
     assert.deepEqual((compacted.parts[0] as any).model, { providerID: "anthropic", id: "claude", variant: "high" })
-    assert.deepEqual((compacted.parts[0] as any).providerState, { cache: "warm" })
+    assert.deepEqual((compacted.parts[0] as any).native, { cache: "warm" })
     assert.equal(running.status, "sent")
     assert.equal((running.parts[0] as any).text, "partial")
     assert.equal(failed.message.status, "error")

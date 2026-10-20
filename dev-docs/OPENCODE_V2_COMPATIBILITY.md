@@ -14,14 +14,18 @@ compatibility code and historical-data handling do not imply support for older
 runtimes. Keep detailed results in the change's PR and CI logs, not in per-version
 reports. Update this reference in place.
 
-The current technical minimum is **2.0.27** and the recommended/qualified target
-is **2.0.32**: shipped native plugins consume the stable Effect 4.0.1/Schema host
-contract. Isolated
-2.0.26 loading fails at that boundary; see the transition evidence below.
-PR #696's previous timestamp-based floor was 2.0.7. Unlisted versions,
+The current technical minimum and recommended/qualified target are both
+**2.1.0**: CodeNomad consumes the 2.1 native replay contract (`native` provider
+data, `metadata.keepID`/`metadata.recent` compactions) through the pinned 2.1
+client reducer and codecs; 2.0.x daemons emit the retired shapes, and the 2.0.x
+reducer breaks pruning identity on 2.1 events (see the 2.1.0 qualification
+below). OpenCode 2.1 reads data stored by earlier releases. The previous floor,
+2.0.27, followed the Effect 4.0.1/Schema plugin host contract, which 2.1.0
+keeps; PR #696's timestamp-based floor was 2.0.7. Unlisted versions,
 including prereleases/custom labels/future majors, undergo authenticated contract
 recognition rather than being refused solely for their label. Missing canonical
-APIs or session environment support produce a concrete incompatibility reason.
+APIs, session environment support or the 2.1 replay shape produce a concrete
+incompatibility reason.
 The bundled Node/npm installer and explicit daemon restart are distinct actions.
 Pre-2.0.4 wire adapters and the pre-2.0.7 timestamp fallback are retired, including
 remaining legacy live location serializers. Historical internal identity,
@@ -564,6 +568,118 @@ extensions; both pass on isolated candidate reruns (panel extensions on the base
 too). Neither is green evidence, nor shown to be caused by 2.0.32. This is
 Windows evidence only: Linux, macOS, WSL, packaged desktop, installers/updater
 and mobile remain separate gates.
+
+### 2.1.0 qualification (2026-10-20)
+
+2.1.0 keeps Effect **4.0.1** and the plugin host contract, but renames the
+provider replay data consumed by CodeNomad's transcript reducer, so the minimum
+and recommendation both move to **2.1.0** with client/plugin pins. Deltas come
+from the exact `v2.0.32`/`v2.1.0` tags, published npm packages and authenticated
+isolated OpenAPI dumps.
+
+- **Replay contract.** Text, reasoning, tool and assistant-step provider data
+  become one `native` field on events and messages (formerly `state`,
+  `providerState` and `providerResultState`; tool call and result data merge,
+  the result winning a shared key). Summary compactions reference a kept
+  boundary through `metadata.keepID`; text formerly in `recent` moves to
+  `metadata.recent`. Provider compactions replay their replacement window from
+  `native.messages`. The official `SessionLegacy` codec (`@opencode/schema`)
+  upgrades stored rows and events on every read; stored bytes are not rewritten.
+  It intentionally retires two values: a compaction's `providerContext.version`
+  and `provenance` (replay now compares the model's provider and model IDs), and
+  an older `providerState` stored beside a `providerContext`, which was never
+  replayed.
+- **Why the minimum moves.** The UI reduces native events with the pinned
+  `createData` (`@opencode/client/solid`, `stores/opencode-data.ts`). Under 2.0.x
+  pins it reads the retired `state`, so reasoning built from 2.1 events lacks
+  `native`, its identity differs from the HTTP projection, and
+  `stores/session-actions.ts` refuses the deletion client-side with "The message
+  changed since it was selected" before any prune request. That is the
+  pruning UI failure on all three CI platforms (`test-session-pruning-ui.mjs`
+  after "reasoning group deletion across messages"). Local runs passed with
+  both pin sets, consistent with it depending on whether the store still holds
+  event-built parts or has rehydrated them over HTTP. The regression in
+  `session-pruning-projection.test.ts` reproduces it deterministically with the
+  2.0.29 client and passes with 2.1.0. The 2.1 reducer conversely cannot
+  interpret 2.0.x events, and 2.0.x OpenAPI declares the retired fields, so
+  2.0.x daemons are refused at admission (`native_contract`) before plugin
+  provisioning or functional requests. Custom/future labels must expose
+  `Session.Message.Assistant.Text.native` without `state` and a
+  `Session.Message.Compaction.Completed` with `metadata` but no `recent`
+  (`compatibility/negotiate.ts`). No 2.0.x adapter is retained.
+- **Historical data.** Pruning hashed raw stored JSON while the browser hashes
+  the 2.1 projection, so rows written before 2.1 would conflict. `planner.ts`
+  now hashes the `SessionLegacy` projection (idempotent on 2.1 rows) and still
+  writes back the surviving stored parts unchanged (`pruning.test.ts`). The
+  history migration fixture seeds every replay field its source OpenAPI
+  declares, compares the 2.1 export with the official codec, checks each value
+  at its 2.1 location independently, and re-imports an earlier export into a
+  fresh 2.1 database; message IDs are database-wide, so importing the same
+  transcript beside its migrated copy fails on `session_message.id` (the
+  migration CI failure was the expected `recent` → `metadata.recent` rename, not
+  loss). CI now also seeds from 2.0.32.
+- **API.** 119 paths; 143 → 144 operations with saved-permission
+  `PATCH /api/permission/saved/{id}`. Session list and update gain an optional
+  `archived` flag (an omitted filter still lists every session, and CodeNomad
+  does not archive), message list gains an idle filter, and the experimental
+  import accepts older transcripts. New `session.archived`/`unarchived` events
+  only invalidate. The plugin API adds `ctx.session.list` and renames the
+  compaction hook's `providerState` to `native`; CodeNomad uses neither. Core
+  `form`, `location`, `location-service-map` and `rpc` are unchanged;
+  `permission` only drops undefined metadata values. The UI compaction part
+  retains `native` (`normalizers.ts`). The official 2.1 reducer does not copy
+  `native` from `session.text.ended`; text parts are not pruning targets.
+- **Not fixed.** Upstream #52922 (Bus routing before Location fanout) is still
+  open: the `bus.ts` live publish/subscribe paths are identical between the
+  tags, and its delta only decodes stored events. Keep the discovery and
+  event-relay mitigations.
+
+The packed pruning plugin ships its TypeScript sources, so it now declares
+`@opencode/schema`; `package.test.ts` requires every bare import of the packed
+files to be a declared dependency. Tests that used 2.0.x labels as current
+runtimes or installation targets now use 2.1.x samples, and fixtures seeding the
+retired `state`/`providerState` now use `native`. One Missions test had become
+vacuous: 2.1's message schema strips the retired field, so its provider-secret
+exclusion check saw no secret; it now asserts that the fixture carries one.
+
+Windows 11 validation with Node 24.20.0 and isolated CLIs/homes/databases (never
+the shared daemon), new pins on 2.1.0: plugin runtime, automation, full
+pruning/history/proxy/Location/worktree/relay suite, the npm-packed pruning
+plugin with its rendered UI, Missions contract/family control/full
+journey/trajectory (including the one-time human decision and the two-model
+comparison with its blind verdict), all eleven recurring journeys, subagent
+depth, session environment/fork/aside/interrupt, blank cleanup, prompt skills,
+provider usage/accounts/selection, service usage, web search and plugin-package
+settings, Git degraded/init, temporary workspaces, output-limit continuation,
+Promise-tool failure, compaction isolation with a real 2 MiB corpus, permission
+receipts, migrations from 2.0.3, beta-19271 and 2.0.32, first installation, 1.x
+replacement and the native 2.0.15 → 2.1.0 upgrade (the live daemon keeps its
+PID and version). After merging #1026, plugin runtime, the Missions suites and
+the recurring journeys were rerun. Ad hoc probes check the shipped
+pending-snapshot reader, file revert and the production host lifecycle on
+2.1.0, and run production admission
+against real isolated 2.0.27/2.0.32 daemons: both are refused
+(`native_contract`, HTTP 426) after read-only discovery, and their schemas are
+refused under a custom label after reading only `/openapi.json`, whereas 2.1.0
+is admitted and recognised.
+
+Unit and rendering suites with the new pins: CI UI lists, the Electron host,
+packaging, CI fixture diagnostics, help and typechecks pass. After merging the
+two-model comparison Mission (#1026), the full server suite passes 2,432 of
+2,440 tests (7 skipped) and cancels the same `index.test.ts` piped-shutdown test
+under the parallel run as the 2.0.32 base; it passes alone.
+The broad UI run passes 1,625 of 1,625, but intermittently a
+`device-file-selection.test.ts` child process stalls idle (no CPU) until the
+runner is killed, including once inside the CI "changed runnable UI behavior"
+list. The exact base (2.0.29 pins) stalls the same way in alternating bounded
+runs, and the 2.0.32 qualification saw it too, so this is a pre-existing
+harness stall, not a 2.1 effect; its cause is not established. The full
+browser suite passes 1,264 of 1,267 (2 skipped); `git-init.test.ts` failed
+navigation with `ERR_ADDRESS_IN_USE` on its Vite port (the run also logged
+transient `ERR_EMPTY_RESPONSE` retries on that port while another worktree's
+browser tests were active on the machine) and passes alone. This is Windows
+evidence only: Linux, macOS, WSL, packaged desktop, installers/updater and
+mobile remain separate gates.
 
 ### Capability-checked loaded-only pending recovery
 

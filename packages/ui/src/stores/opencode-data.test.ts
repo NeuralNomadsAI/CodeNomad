@@ -321,9 +321,9 @@ describe("OpenCode data projection", () => {
         id: "m200", type: "session.step.started", created: 201,
         data: { sessionID: sessionId, assistantMessageID: "m200", agent: "build", model: { providerID: "provider", id: "model" }, snapshot: "next-start" },
       } as any)
-      applyOpenCodeDataEvent(instanceId, "/work", { id: "reason-start", type: "session.reasoning.started", created: 202, data: { sessionID: sessionId, assistantMessageID: "m200", state: { phase: "start" } } } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", { id: "reason-start", type: "session.reasoning.started", created: 202, data: { sessionID: sessionId, assistantMessageID: "m200", native: { phase: "start" } } } as any)
       applyOpenCodeDataEvent(instanceId, "/work", { id: "reason-delta", type: "session.reasoning.delta", created: 203, data: { sessionID: sessionId, assistantMessageID: "m200", delta: "thinking" } } as any)
-      applyOpenCodeDataEvent(instanceId, "/work", { id: "reason-end", type: "session.reasoning.ended", created: 204, data: { sessionID: sessionId, assistantMessageID: "m200", text: "thought", state: { phase: "done" } } } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", { id: "reason-end", type: "session.reasoning.ended", created: 204, data: { sessionID: sessionId, assistantMessageID: "m200", text: "thought", native: { phase: "done" } } } as any)
       data = applyOpenCodeDataEvent(instanceId, "/work", {
         id: "next-end", type: "session.step.ended", created: 205,
         data: { sessionID: sessionId, assistantMessageID: "m200", finish: "stop", snapshot: "next-end" },
@@ -336,7 +336,7 @@ describe("OpenCode data projection", () => {
       assert.equal(prior.snapshot.start, "prior-start")
       assert.deepEqual(next.snapshot, { start: "next-start", end: "next-end" })
       assert.equal(next.content[0].text, "thought")
-      assert.deepEqual(next.content[0].state, { phase: "done" })
+      assert.deepEqual(next.content[0].native, { phase: "done" })
       projectOpenCodeMessages(instanceId, sessionId, data)
       assert.equal(data.session.message.list(sessionId).length, 200)
 

@@ -103,7 +103,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} n’a pas été entièrement validé avec cette version de CodeNomad. Cela n’empêche pas à lui seul la connexion.",
   "settings.opencode.setup.error": "L’exécutable sélectionné n’a pas pu être vérifié.",
   "settings.opencode.setup.minimum": "Version minimale",
-  "settings.opencode.setup.minimumReason": "Cette version de CodeNomad nécessite OpenCode {version} ou plus récent pour son moteur natif de plugins Effect 4.0.1 et Schema. Les moteurs antérieurs ne peuvent pas charger ces plugins.",
+  "settings.opencode.setup.minimumReason": "Cette version de CodeNomad nécessite OpenCode {version} ou plus récent pour son format natif de transcription, de rejeu et de compaction. Les conversations enregistrées par les versions antérieures restent lisibles après la mise à jour d’OpenCode.",
   "settings.opencode.setup.canonical_api": "Le service en cours n’expose pas l’API de sessions, permissions, formulaires et file d’attente nécessaire à cette version de CodeNomad.",
   "settings.opencode.setup.session_environment": "Le service en cours ne permet pas de remplacer l’environnement de la session, une opération nécessaire avant l’envoi de messages ou de commandes.",
   "settings.opencode.setup.daemon": "Service en cours",

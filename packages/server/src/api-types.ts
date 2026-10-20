@@ -616,7 +616,7 @@ export interface OpenCodeUpdateStatus {
   minimumVersion: string
   recommendedVersion: string
   versionAssessment: "tested" | "untested" | "incompatible"
-  incompatibilityReason?: "plugin_runtime" | "step_timestamp" | "canonical_api" | "session_environment"
+  incompatibilityReason?: "native_contract" | "canonical_api" | "session_environment"
   state: "missing" | "update_required" | "ready" | "error"
   binaryPath: string
   /** `managed`: the user npm OpenCode 2 is preferred over an older PATH command. */

@@ -57,22 +57,22 @@ test("shared update delegates to native CLI, verifies publication, and never ret
       execute: async (file: string, args: string[]) => {
         calls++
         assert.equal(file, binary)
-        assert.deepEqual(args, ["upgrade", "2.0.27", "--method", "npm"])
+        assert.deepEqual(args, ["upgrade", "2.1.0", "--method", "npm"])
         throw new Error("native failure")
       },
     }
-    await assert.rejects(installSharedOpenCode("2.0.27", options), /native failure/)
+    await assert.rejects(installSharedOpenCode("2.1.0", options), /native failure/)
     assert.equal(calls, 1, "no npm fallback after a failed native mutation")
     assert.equal(registrations, 0)
-    await assert.rejects(installSharedOpenCode("2.0.27", { ...options, execute: async () => {} }), /version verification failed/)
-    await installSharedOpenCode("2.0.27", { ...options, execute: async () => { await writeFile(binary, "2.0.27") } })
-    await installSharedOpenCode("2.0.27", options)
+    await assert.rejects(installSharedOpenCode("2.1.0", { ...options, execute: async () => {} }), /version verification failed/)
+    await installSharedOpenCode("2.1.0", { ...options, execute: async () => { await writeFile(binary, "2.1.0") } })
+    await installSharedOpenCode("2.1.0", options)
     assert.equal(calls, 1, "no downgrade or same-version native invocation")
     assert.equal(registrations, 2)
-    assert.equal(await readFile(binary, "utf8"), "2.0.27")
-    await writeFile(binary, "2.0.28")
-    await installSharedOpenCode("2.0.27", options)
-    assert.equal(await readFile(binary, "utf8"), "2.0.28", "never downgrade a newer verified installation")
+    assert.equal(await readFile(binary, "utf8"), "2.1.0")
+    await writeFile(binary, "2.1.1")
+    await installSharedOpenCode("2.1.0", options)
+    assert.equal(await readFile(binary, "utf8"), "2.1.1", "never downgrade a newer verified installation")
     assert.equal(calls, 1)
   } finally { await rm(home, { recursive: true, force: true }) }
 })

@@ -46,7 +46,7 @@ test("an explicit retry repairs leftover launchers and restores update status", 
     const service = new OpenCodeUpdateService({
       resolveBinary: () => ({ ...resolveDefaultInstallation(host), label: "fixture" }),
       probeBinary: probe,
-      resolveLatestVersion: async () => "2.0.27",
+      resolveLatestVersion: async () => "2.1.0",
       canUpgradeBinary: () => Boolean(sharedInstallPrefix(host)),
       upgradeBinary: async (_binary, version) => {
         await installSharedOpenCode(version, { ...host, npm: "fixture-npm.js", probe, registerPath: async () => {},

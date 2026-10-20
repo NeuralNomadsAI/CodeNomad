@@ -27,9 +27,14 @@ test("every packed plugin entrypoint resolves without sibling checkout sources",
       absWorkingDir: isolated,
       entryPoints: Object.values(manifest.exports) as string[],
       outdir: "dist", bundle: true, write: false, platform: "node", format: "esm",
-      packages: "external", logLevel: "silent",
+      packages: "external", logLevel: "silent", metafile: true,
     })
     assert.equal(result.outputFiles.length, Object.keys(manifest.exports).length)
+    // Installed copies resolve bare imports from their own manifest, not from hoisting.
+    const imported = Object.values(result.metafile.outputs).flatMap(output => output.imports)
+      .filter(entry => entry.external && !entry.path.startsWith("node:"))
+      .map(entry => entry.path.split("/").slice(0, entry.path.startsWith("@") ? 2 : 1).join("/"))
+    for (const name of new Set(imported)) assert.ok(manifest.dependencies?.[name], `${name} is a declared dependency`)
   } finally {
     await rm(isolated, { recursive: true, force: true })
   }

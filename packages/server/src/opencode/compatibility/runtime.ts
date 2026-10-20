@@ -22,9 +22,9 @@ export function contractProfile(identity: RuntimeIdentity | undefined): Contract
   // Custom embedded/test lifecycles that don't negotiate use the pinned contract.
   if (!identity) return "modern"
   if (identity.contract?.profile) return identity.contract.profile
-  // Publication contracts reviewed and exercised by the isolated native suites
-  // (minimum, previous and current qualification targets). Unlisted versions
-  // still negotiate their authenticated schema.
-  if (identity.version === "2.0.27" || identity.version === "2.0.29" || identity.version === "2.0.32") return "modern"
+  // Publication contract reviewed and exercised by the isolated native suites
+  // (minimum and qualification target). Unlisted versions still negotiate their
+  // authenticated schema.
+  if (identity.version === "2.1.0") return "modern"
   return "unknown"
 }
