@@ -9,6 +9,11 @@ const root = fileURLToPath(new URL("../", import.meta.url))
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
 const manifest = readJson(path.join(root, "package.json"))
 const workspaces = manifest.workspaces.packages
+const committedLock = readJson(path.join(root, "package-lock.json"))
+for (const workspace of ["", ...workspaces]) {
+  assert.equal(readJson(path.join(root, workspace, "package.json")).version, manifest.version, `${workspace || "root"} version`)
+  assert.equal(committedLock.packages[workspace].version, manifest.version, `${workspace || "root"} lock version`)
+}
 const directory = mkdtempSync(path.join(tmpdir(), "codenomad-release-version-"))
 
 function npm(args) {
@@ -36,7 +41,7 @@ try {
     writeFileSync(path.join(directory, workspace, "package.json"), JSON.stringify(target))
   }
 
-  for (const version of ["0.20.2", "0.20.2-dev-20261010-8ef07b04"]) {
+  for (const version of ["1.0.0", "1.0.0-dev-20261020-4d4bf149"]) {
     npm(["version", version, "--workspaces", "--include-workspace-root", "--no-git-tag-version", "--allow-same-version", "--offline"])
     const lock = readJson(path.join(directory, "package-lock.json"))
     for (const workspace of ["", ...workspaces]) {

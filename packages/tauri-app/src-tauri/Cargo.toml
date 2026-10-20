@@ -1,6 +1,6 @@
 [package]
 name = "codenomad-tauri"
-version = "0.20.1"
+version = "1.0.0"
 edition = "2021"
 license = "MIT"
 
