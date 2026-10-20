@@ -44,6 +44,7 @@ interface SortableAppTabProps {
 }
 
 const AppTabContent: Component<SortableAppTabProps> = (props) => {
+  const { t } = useI18n()
   return (
     <>
       {props.tab.kind === "instance" ? (
@@ -78,6 +79,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
               props.onClose(props.tab.id)
             }}
             aria-label={props.tab.sidecarTab.name}
+            title={props.tab.id === props.activeTabId ? withHotkey(t("instanceTab.actions.close.ariaLabel"), "close-instance") : t("instanceTab.actions.close.ariaLabel")}
           >
             ×
           </button>

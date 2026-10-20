@@ -571,8 +571,9 @@ export function useCommands(options: UseCommandsOptions) {
       keywords: () => splitKeywords("commands.clearInput.keywords"),
       shortcutId: "clear-input",
       action: () => {
-        const textarea = findVisiblePromptTextarea()
-        if (textarea) textarea.value = ""
+        const instance = activeInstance()
+        if (!instance) return
+        emitSessionSidebarRequest({ instanceId: instance.id, action: "clear-prompt" })
       },
     })
 

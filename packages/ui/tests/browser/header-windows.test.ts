@@ -826,7 +826,7 @@ test("composer tooltips follow effective bindings without permanent key strips",
     assert.equal(await header.getByRole("button", { name: "Open command palette", exact: true }).getAttribute("title"), "Open command palette (Ctrl+Shift+P)")
     assert.equal(await search.getAttribute("title"), "Search chat history (Ctrl+F)")
     for (const key of ["Ctrl+Shift+A", "Ctrl+Shift+M", "Ctrl+Shift+T"]) {
-      assert.equal(await page.locator(`.selector-trigger[title$=" (${key})"]:visible`).count(), 1, `composer selector names ${key}`)
+      await page.locator(`.selector-trigger[title$=" (${key})"]:visible`).waitFor()
     }
     await page.evaluate(() => (window as any).fixture.setPreferences({ hotkeyOverrides: {
       "prompt-send": [{ key: "j", mod: true }], "session-abort": [{ key: "e", mod: true }],
@@ -855,6 +855,30 @@ test("composer tooltips follow effective bindings without permanent key strips",
     assert.equal(await reminder.locator("kbd").count(), 0)
     assert.equal(await composer.getAttribute("aria-describedby"), await reminder.getAttribute("id"))
     assert.equal(await composer.inputValue(), "A draft survives the first abort key")
+  } finally { await page.close() }
+})
+
+test("Clear and selector shortcuts drive the shown composer, in a conversation and before the first one", async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const composer = page.locator("textarea.prompt-input:visible"), send = page.locator(".send-button:visible")
+    for (const draft of ["A conversation draft to clear", "A first prompt to clear"]) {
+      await composer.fill(draft)
+      assert.equal(await send.isEnabled(), true)
+      await page.locator("#outside").focus()
+      await page.keyboard.press("Control+k")
+      assert.equal(await composer.inputValue(), "")
+      // The composer's own Clear empties its draft state too, so the old text cannot be sent.
+      assert.equal(await send.isEnabled(), false)
+      assert.equal(await composer.evaluate(element => element === document.activeElement), true)
+      await page.keyboard.press("Control+Shift+A")
+      await page.waitForFunction(() => document.activeElement?.hasAttribute("data-agent-selector"))
+      await page.keyboard.press("Escape")
+      await page.evaluate(() => (window as any).fixture.selectSession(null))
+    }
   } finally { await page.close() }
 })
 

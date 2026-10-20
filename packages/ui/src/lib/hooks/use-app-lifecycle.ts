@@ -11,7 +11,7 @@ import { abortSession, getSessions, isSessionBusy } from "../../stores/sessions"
 import { showCommandPalette, hideCommandPalette } from "../../stores/command-palette"
 import type { Instance } from "../../types/instance"
 import { getLogger } from "../logger"
-import { emitSessionSidebarRequest } from "../session-sidebar-events"
+import { emitSessionSidebarRequest, type SessionSidebarRequestAction } from "../session-sidebar-events"
 
 const log = getLogger("actions")
 
@@ -37,6 +37,15 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
       const id = options.getActiveSessionIdForInstance()
       return isMainView() && Boolean(options.getActiveInstance() && id && id !== "info" && id !== "logs")
     }
+    // A composer is shown in a conversation and, before the first one, in the draft view.
+    const hasComposer = () => {
+      const id = options.getActiveSessionIdForInstance()
+      return isMainView() && Boolean(options.getActiveInstance()) && id !== "info" && id !== "logs"
+    }
+    const requestComposer = (action: SessionSidebarRequestAction) => {
+      const instance = options.getActiveInstance()
+      if (instance) emitSessionSidebarRequest({ instanceId: instance.id, action })
+    }
 
     const cleanupTabs = setupTabKeyboardShortcuts(
       options.handleNewInstanceRequest,
@@ -54,12 +63,7 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
 
     const cleanupNavigation = registerNavigationShortcuts(isMainView)
     const cleanupInput = registerInputShortcuts(
-      () => {
-        const textarea = document.querySelector(
-          ".session-cache-pane[aria-hidden=\"false\"] .prompt-input",
-        ) as HTMLTextAreaElement
-        if (textarea) textarea.value = ""
-      },
+      () => requestComposer("clear-prompt"),
       () => {
         const textarea = document.querySelector(
           ".session-cache-pane[aria-hidden=\"false\"] .prompt-input",
@@ -67,25 +71,14 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         textarea?.focus()
       },
       () => hasActiveSession() && Boolean(document.querySelector('.session-cache-pane[aria-hidden="false"] .prompt-input')),
+      hasComposer,
     )
 
     const cleanupAgent = registerAgentShortcuts(
-      () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-model-selector" })
-      },
-      () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-agent-selector" })
-      },
-      () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-variant-selector" })
-      },
-      hasActiveSession,
+      () => requestComposer("focus-model-selector"),
+      () => requestComposer("focus-agent-selector"),
+      () => requestComposer("focus-variant-selector"),
+      hasComposer,
     )
 
     const cleanupEscape = registerEscapeShortcut(

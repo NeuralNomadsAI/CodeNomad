@@ -1,10 +1,15 @@
 import { keyboardRegistry } from "../keyboard-registry"
 
-export function registerInputShortcuts(clearInput: () => void, focusInput: () => void, condition: () => boolean = () => true) {
+export function registerInputShortcuts(
+  clearInput: () => void,
+  focusInput: () => void,
+  condition: () => boolean = () => true,
+  clearCondition: () => boolean = condition,
+) {
 
   keyboardRegistry.register({
     id: "clear-input",
-    condition,
+    condition: clearCondition,
     handler: clearInput,
     description: "clear input",
     context: "global",

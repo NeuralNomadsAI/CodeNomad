@@ -7,6 +7,7 @@ import { findConversationStream, focusConversationStream } from "./focus-convers
 import { shouldTypeIntoComposer } from "./prompt-input/type-to-focus"
 import { hotkeyLabel, withHotkey } from "../lib/hotkeys"
 import { keyboardRegistry } from "../lib/keyboard-registry"
+import { PROMPT_CLEAR_EVENT } from "../lib/session-sidebar-events"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
@@ -939,7 +940,11 @@ export default function PromptInput(props: PromptInputProps) {
               style={fieldHeightStyle()}
             >
               <textarea
-                ref={textareaRef}
+                ref={(element) => {
+                  textareaRef = element
+                  // The Clear shortcut and palette command run this composer's own Clear action.
+                  element.addEventListener(PROMPT_CLEAR_EVENT, handleClearPrompt)
+                }}
                 class={`prompt-input ${mode() === "shell" ? "shell-mode" : ""}`}
                 dir="auto"
                 placeholder={getPlaceholder()}

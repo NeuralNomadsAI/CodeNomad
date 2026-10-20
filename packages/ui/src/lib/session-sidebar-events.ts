@@ -2,7 +2,11 @@ export type SessionSidebarRequestAction =
   | "focus-agent-selector"
   | "focus-model-selector"
   | "focus-variant-selector"
+  | "clear-prompt"
   | "show-session-list"
+
+/** Dispatched on a composer's textarea to run that composer's own Clear action. */
+export const PROMPT_CLEAR_EVENT = "codenomad:prompt-clear"
 
 export interface SessionSidebarRequestDetail {
   instanceId: string

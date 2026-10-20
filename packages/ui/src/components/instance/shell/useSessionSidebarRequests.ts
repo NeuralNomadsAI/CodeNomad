@@ -1,5 +1,6 @@
 import { createEffect, createSignal, onCleanup, onMount, type Accessor } from "solid-js"
 import {
+  PROMPT_CLEAR_EVENT,
   SESSION_SIDEBAR_EVENT,
   type SessionSidebarRequestAction,
   type SessionSidebarRequestDetail,
@@ -76,6 +77,14 @@ export function useSessionSidebarRequests(options: UseSessionSidebarRequestsOpti
     const action = pending.action
     if (action !== "show-session-list" && options.activeSessionId() === "info") {
       setPendingSidebarAction(null)
+      return
+    }
+    if (action === "clear-prompt") {
+      // Never kept pending: a late clear would erase text typed afterwards.
+      setPendingSidebarAction(null)
+      const composers = activeSelectorContentEl()?.querySelectorAll<HTMLTextAreaElement>("textarea.prompt-input") ?? []
+      Array.from(composers).find(textarea => !textarea.closest('[aria-hidden="true"]'))
+        ?.dispatchEvent(new CustomEvent(PROMPT_CLEAR_EVENT))
       return
     }
     const contentReady = action === "show-session-list"
