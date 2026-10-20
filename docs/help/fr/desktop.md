@@ -16,7 +16,7 @@ Les onglets de projet, conversations sélectionnées et dispositions appartienne
 
 La restauration peut rouvrir onglets d’espace de travail/SideCar et sessions actives, texte non envoyé, positions de défilement, panneaux, placement et zoom de fenêtre. C’est un état client par fenêtre, pas une copie de la base de conversations natives. L’effacer retire onglets, brouillons et disposition enregistrés ; cela ne supprime ni configuration CodeNomad ni conversations OpenCode. Enregistrez d’abord ailleurs tout brouillon non envoyé important.
 
-La fenêtre Preferences ne possède pas d’état de restauration séparé : Démarrage cible la fenêtre exacte qui l’a ouverte. Si cette fenêtre ferme ou change, les commandes indisponibles/périmées n’écrivent pas silencieusement dans l’état d’une autre fenêtre. Rouvrez Preferences depuis la fenêtre voulue. Les paramètres propres au projet utilisent aussi la Location d’origine ; ils restent indisponibles sans elle.
+La fenêtre Preferences ne possède pas d’état de restauration séparé : Démarrage cible la fenêtre qui l’a ouverte. Si cette fenêtre est fermée, ou inconnue parce que Preferences a été rouvert au lancement, Démarrage suit la dernière fenêtre utilisée ; une modification préparée pour une autre fenêtre n’est jamais appliquée, les commandes affichent d’abord la valeur de la nouvelle fenêtre. Pour régler une fenêtre précise, ouvrez Preferences depuis celle-ci. Les paramètres propres au projet utilisent aussi la Location d’origine ; ils restent indisponibles sans elle.
 
 Les paramètres navigateur et distants sont intégrés, plutôt qu’un second propriétaire natif de Preferences. Une erreur d’ouverture des préférences natives est signalée ; elle ne permet pas de supposer qu’un écran intégré caché s’est ouvert à la place.
 

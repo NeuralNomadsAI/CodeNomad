@@ -97,7 +97,7 @@ const hostState = (page: Page) => page.evaluate(() => JSON.parse(JSON.stringify(
 const refocus = (page: Page) => page.evaluate(() => window.dispatchEvent(new Event("focus")))
 
 for (const host of ["electron", "tauri"] as const) {
-  test(`${host} Preferences manages startup state of the exact opener window`, async () => {
+  test(`${host} Preferences manages the startup state of the window the host targets`, async () => {
     const { page, errors } = await openPreferences(host)
     try {
       await page.waitForFunction(() => (document.querySelector('[data-testid="startup-state-settings"] input') as HTMLInputElement | null)?.checked === true)
@@ -131,8 +131,8 @@ for (const host of ["electron", "tauri"] as const) {
       assert.equal(state.windows["window-b"].restoreEnabled, true)
       assert.ok(state.commands.some((entry: any) => entry.command === "disable-restore" && entry.epoch === 2 && entry.effective === "read"))
 
-      // No local window can answer (the host falls back to the most recent one,
-      // so only when none is open): the setting stays visible and disabled, without a warning.
+      // The host answers without state (no local window could reply): the
+      // setting stays visible and disabled, without a warning.
       await page.evaluate(() => { delete (window as any).fixtureHost.windows["window-a"] })
       await refocus(page)
       await page.waitForFunction(() => (document.querySelector('[data-testid="startup-state-settings"] input') as HTMLInputElement).disabled)

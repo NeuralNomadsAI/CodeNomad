@@ -54,9 +54,9 @@ export async function runStartupStateCommandInWindow(
 }
 
 /**
- * Startup state belongs to the application, not to one window: when the opener
- * is unknown (Preferences restored at launch) or closed, the most recently used
- * local window answers instead.
+ * Startup state is each window's own. When the opener is unknown (Preferences
+ * restored at launch) or closed, the most recently used local window is adopted
+ * as the opener, with a new epoch so no change prepared for another window lands on it.
  */
 export function startupStateTargetId(openerId: string | undefined, isLive: (id: string) => boolean, recentId: string | undefined): string | undefined {
   return openerId && isLive(openerId) ? openerId : recentId

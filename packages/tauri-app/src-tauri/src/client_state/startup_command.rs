@@ -1,5 +1,5 @@
-//! Forwards Preferences startup-state commands to the exact local window that
-//! opened Preferences. That renderer runs them through its own client-state
+//! Forwards Preferences startup-state commands to the local window chosen as
+//! the Preferences opener. That renderer runs them through its own client-state
 //! store and replies with its access proof; Preferences never writes state.
 
 use super::ClientState;

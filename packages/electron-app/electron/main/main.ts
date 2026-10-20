@@ -445,12 +445,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     openPreferences,
     getRequest: (window) => preferencesWindows.request(window),
     openerStartupState: async (window, command, epoch) => {
-      const opener = preferencesWindows.opener(window)
+      let opener = preferencesWindows.opener(window)
       if (!opener) throw new Error("Preferences window is no longer current")
       const live = (id: string) => { const target = registry.get(id)?.window; return Boolean(target && !target.isDestroyed()) }
       const id = startupStateTargetId(opener.id, live, registry.mruRecord()?.id)
-      return forwardOpenerStartupState({ id, epoch: opener.epoch }, command, epoch, (openerId, effective) => {
-        const target = registry.get(openerId)?.window
+      if (id && id !== opener.id) opener = preferencesWindows.adoptOpener(window, id) ?? opener
+      return forwardOpenerStartupState(opener, command, epoch, (targetId, effective) => {
+        const target = registry.get(targetId)?.window
         return runStartupStateCommandInWindow(target, effective, (url) => isAllowedRendererOrigin(url, getAllowedOrigins(target ?? null)))
       })
     },

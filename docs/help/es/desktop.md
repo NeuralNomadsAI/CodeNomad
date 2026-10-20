@@ -16,7 +16,7 @@ Las pestañas de proyectos, conversaciones seleccionadas y disposición pertenec
 
 La restauración puede reabrir pestañas de espacios de trabajo/SideCar y sesiones activas, texto sin enviar, posiciones de desplazamiento, paneles, posición de ventanas y zoom. Es estado del cliente por ventana, no una copia de la base de datos nativa de conversaciones. Borrarlo elimina pestañas guardadas, borradores y disposición; no elimina la configuración de CodeNomad ni conversaciones OpenCode. Guarda primero cualquier borrador importante sin enviar en otro lugar.
 
-La ventana de Preferencias no tiene un estado de restauración independiente: Inicio apunta a la ventana exacta que la abrió. Si esa ventana se cierra o cambia, los controles no disponibles/obsoletos no escriben silenciosamente el estado de otra ventana. Vuelve a abrir Preferencias desde la ventana deseada. Los ajustes con ámbito de proyecto usan igualmente la Location de origen; sin ella no están disponibles.
+La ventana de Preferencias no tiene un estado de restauración independiente: Inicio apunta a la ventana que la abrió. Si esa ventana se cerró, o es desconocida porque Preferencias se reabrió al iniciar, Inicio sigue la ventana usada más recientemente; un cambio preparado para otra ventana nunca se aplica, los controles muestran primero el valor de la nueva ventana. Para configurar una ventana concreta, abre Preferencias desde ella. Los ajustes con ámbito de proyecto usan igualmente la Location de origen; sin ella no están disponibles.
 
 La configuración del navegador y remota está integrada en lugar de tener un segundo propietario nativo de Preferencias. Se informa de un error al abrir Preferencias nativas; no es motivo para suponer que se abrió una pantalla integrada oculta en su lugar.
 

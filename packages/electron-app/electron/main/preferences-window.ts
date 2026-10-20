@@ -134,6 +134,13 @@ export class PreferencesWindowRegistry {
     return this.current() === window ? { ...this.record!.opener } : undefined
   }
 
+  /** Makes another local window the opener; its new epoch fences changes prepared for the previous one. */
+  adoptOpener(window: BrowserWindow, openerId: string): PreferencesOpener | undefined {
+    if (this.current() !== window) return undefined
+    if (openerId !== this.record!.opener.id) this.record!.opener = { id: openerId, epoch: ++this.openerEpoch }
+    return { ...this.record!.opener }
+  }
+
   markReady(window: BrowserWindow): void {
     if (this.current() === window) this.record!.guarded = true
   }

@@ -16,7 +16,7 @@ Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode o
 
 Geri yükleme, çalışma alanı/SideCar sekmelerini ve etkin oturumları, gönderilmemiş metni, kaydırma konumlarını, panelleri, pencere yerleşimini ve yakınlaştırmayı yeniden açabilir. Bu, yerel konuşma veritabanının bir kopyası değil, pencere başına istemci durumudur. Temizlendiğinde kayıtlı sekmeler, taslaklar ve düzen kaldırılır; CodeNomad yapılandırmasını veya OpenCode konuşmalarını silmez. Gönderilmemiş önemli taslakları önce başka bir yere kaydedin.
 
-Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: Başlangıç, kendisini açan pencereyi tam olarak hedefler. Bu pencere kapanırsa veya değişirse, kullanılamayan/eski kontroller sessizce başka bir pencerenin durumunu yazmaz. İstediğiniz pencereden Tercihler'i tekrar açın. Proje kapsamlı ayarlar aynı şekilde açıcının Location'sini kullanır; biri olmadan kullanılamaz durumda kalırlar.
+Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: Başlangıç, kendisini açan pencereyi hedefler. Bu pencere kapanmışsa veya Tercihler başlangıçta yeniden açıldığı için bilinmiyorsa, Başlangıç en son kullanılan pencereyi izler; başka bir pencere için hazırlanan değişiklik asla uygulanmaz, kontroller önce yeni pencerenin değerini gösterir. Belirli bir pencereyi yapılandırmak için Tercihler'i o pencereden açın. Proje kapsamlı ayarlar aynı şekilde açıcının Location'sini kullanır; biri olmadan kullanılamaz durumda kalırlar.
 
 Tarayıcı ve uzak istemci ayarları, ikinci bir native Preferences sahibi açmak yerine istemciye gömülüdür. Native Preferences açılış hatası bildirilir; bunun yerine gizli bir gömülü ayar ekranı açıldığını varsaymayın.
 

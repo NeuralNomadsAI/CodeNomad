@@ -517,9 +517,9 @@ fn effective_startup_command(
     }
 }
 
-/// Startup state belongs to the application, not to one window: when the
-/// opener is unknown (Preferences restored at launch) or closed, the most
-/// recently used local window answers instead.
+/// Startup state is each window's own. When the opener is unknown (Preferences
+/// restored at launch) or closed, the most recently used local window is
+/// adopted as the opener, with a new epoch fencing changes prepared before.
 fn startup_state_target(
     opener: Option<String>,
     is_live: impl Fn(&str) -> bool,
@@ -542,15 +542,19 @@ pub(crate) async fn preferences_opener_startup_state(
         return Err("Opener startup state requires the Preferences window".to_string());
     }
     let command = crate::client_state::startup_state_command(&command)?;
-    let opener = preferences.opener();
-    let effective = effective_startup_command(&opener, command, epoch);
+    let current = preferences.opener();
     let target = startup_state_target(
-        opener.label.clone(),
+        current.label.clone(),
         |label| app.get_webview_window(label).is_some(),
         app.state::<crate::local_windows::LocalWindows>()
             .mru_label(),
     );
-    let state = match target.as_deref() {
+    if target.is_some() && target != current.label {
+        preferences.set_opener(target, false);
+    }
+    let opener = preferences.opener();
+    let effective = effective_startup_command(&opener, command, epoch);
+    let state = match opener.label.as_deref() {
         Some(label) => {
             crate::client_state::run_startup_state_command(&app, label, effective).await?
         }
@@ -837,6 +841,19 @@ mod tests {
         );
         assert_eq!(target(None, Some("window-b")).as_deref(), Some("window-b"));
         assert_eq!(target(None, None), None);
+
+        // Adopting the target as opener rotates the epoch, fencing earlier changes.
+        let preferences = PreferencesWindow::default();
+        preferences.set_opener(None, true);
+        let restored = preferences.opener();
+        preferences.set_opener(target(restored.label.as_deref(), Some("window-b")), false);
+        let adopted = preferences.opener();
+        assert_eq!(adopted.label.as_deref(), Some("window-b"));
+        assert!(adopted.epoch > restored.epoch);
+        assert_eq!(
+            effective_startup_command(&adopted, "clear", Some(restored.epoch)),
+            "read"
+        );
     }
 
     #[test]

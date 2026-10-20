@@ -1,4 +1,4 @@
-import { Show, type Component, type JSX } from "solid-js"
+import type { Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { OtherProfilesSettingsRow } from "./other-profiles-settings-row"
 import { SettingsSwitch } from "./settings-switch"
@@ -6,7 +6,6 @@ import { SettingsSwitch } from "./settings-switch"
 interface StartupStateSettingsViewProps {
   restoreEnabled: boolean
   disabled: boolean
-  note?: JSX.Element
   onRestoreChange: (enabled: boolean) => void
   onClear: () => void
 }
@@ -41,8 +40,6 @@ export const StartupStateSettingsView: Component<StartupStateSettingsViewProps> 
         </div>
 
         <OtherProfilesSettingsRow />
-        {/* Only when the opener-owned controls above are unavailable. */}
-        <Show when={props.note}><p class="settings-inline-note settings-inline-warning" role="status">{props.note}</p></Show>
       </div>
     </div>
   )

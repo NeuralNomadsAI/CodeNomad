@@ -29,9 +29,21 @@ export const OpenerStartupStateSettingsCard: Component = () => {
     return result
   }
 
+  // Preferences restored at launch can ask before the window it adopts has
+  // started; a few spaced re-reads let it answer without waiting for a refocus.
+  let retries = 0
+  let retryTimer: ReturnType<typeof setTimeout> | undefined
+  const retryIfUnanswered = (result: OpenerStartupStateResult | null) => {
+    if (result?.state) { retries = 0; return }
+    if (retryTimer !== undefined || retries >= 3) return
+    retries++
+    retryTimer = setTimeout(() => { retryTimer = undefined; refresh() }, 1000)
+  }
+  onCleanup(() => clearTimeout(retryTimer))
+
   const refresh = () => {
     if (busy()) return
-    void query("read").catch(() => undefined)
+    void query("read").then(retryIfUnanswered, () => retryIfUnanswered(null))
   }
 
   const mutate = async (command: StartupStateCommand, failure: string, success?: string) => {

@@ -1,6 +1,6 @@
 // Wire contract shared by a local window, its native host and the Preferences
-// window. Commands are a closed set; the host forwards them only to the exact
-// local window that opened Preferences.
+// window. Commands are a closed set; the host forwards them to the local window that
+// opened Preferences, or adopts the most recently used one when that is unknown or closed.
 export const STARTUP_STATE_COMMANDS = ["read", "enable-restore", "disable-restore", "clear"] as const
 export type StartupStateCommand = typeof STARTUP_STATE_COMMANDS[number]
 
@@ -9,7 +9,7 @@ export interface StartupStateSnapshot {
   restoreEnabled: boolean
 }
 
-/** `state` is null when the opener is closed, ephemeral or not yet reachable. */
+/** `state` is null when no local window could answer (closed, ephemeral or not yet started). */
 export interface OpenerStartupStateResult {
   epoch: number
   state: StartupStateSnapshot | null
