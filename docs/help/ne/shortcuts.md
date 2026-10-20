@@ -43,7 +43,7 @@ save असफल भए पुरानो shortcut उपलब्ध रा�
 | model variant चयन | `Mod+Shift+T` |
 | blocking tool background मा सार्ने (कम्पोजर) | `Mod+B` |
 | prompt पठाउने | `Enter` |
-| वैकल्पिक follow-up व्यवहारमा पठाउने | `Alt+Enter` वा `Mod+Shift+Enter` |
+| वैकल्पिक follow-up व्यवहारमा पठाउने | `Alt+Enter` (Windows, Linux) वा `Mod+Shift+Enter` |
 | नयाँ line राख्ने | `Shift+Enter` वा `Mod+Enter` |
 | अघिल्लो / अर्को prompt (कम्पोजर) | `ArrowUp` / `ArrowDown` |
 | prompt focus हटाउने / shell mode छोड्ने | कम्पोजर सन्दर्भअनुसार `Escape` |

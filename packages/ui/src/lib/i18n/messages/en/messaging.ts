@@ -289,7 +289,6 @@ export const messagingMessages = {
   "promptInput.clear.title": "Clear prompt text",
   "promptInput.send.ariaLabel": "Send message",
   "promptInput.send.queueAriaLabel": "Queue message",
-  "promptInput.send.nowLabel": "Send now",
   "promptQueue.title": "Prompt queue ({count})",
   "promptQueue.delivery.queue": "Queued",
   "promptQueue.delivery.steer": "Steering",

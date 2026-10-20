@@ -43,7 +43,7 @@ Si el guardado falla, conserva disponible el atajo anterior y reintenta tras com
 | Seleccionar variante del modelo | `Mod+Shift+T` |
 | Pasar herramientas bloqueantes a segundo plano (editor) | `Mod+B` |
 | Enviar entrada | `Enter` |
-| Enviar con comportamiento de seguimiento alternativo | `Alt+Enter` o `Mod+Shift+Enter` |
+| Enviar con comportamiento de seguimiento alternativo | `Alt+Enter` (Windows, Linux) o `Mod+Shift+Enter` |
 | Insertar nueva línea | `Shift+Enter` o `Mod+Enter` |
 | Entrada anterior / siguiente (editor) | `ArrowUp` / `ArrowDown` |
 | Quitar foco de la entrada / Salir del modo shell | `Escape`, según el contexto del editor |

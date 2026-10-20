@@ -289,7 +289,6 @@ export const messagingMessages = {
   "promptInput.clear.title": "प्रम्प्ट पाठ सफा गर्नुहोस्",
   "promptInput.send.ariaLabel": "सन्देश पठाउनुहोस्",
   "promptInput.send.queueAriaLabel": "सन्देश लाममा राख्नुहोस्",
-  "promptInput.send.nowLabel": "अहिले पठाउनुहोस्",
   "promptQueue.title": "प्रम्प्ट लाम ({count})",
   "promptQueue.delivery.queue": "लाममा",
   "promptQueue.delivery.steer": "अहिले पठाइँदै",

@@ -43,7 +43,7 @@ Si l’enregistrement échoue, gardez l’ancien raccourci disponible et réessa
 | Sélectionner une variante de modèle | `Mod+Shift+T` |
 | Déplacer les outils bloquants en arrière-plan (saisie) | `Mod+B` |
 | Envoyer la saisie | `Enter` |
-| Envoyer avec le comportement de suivi alternatif | `Alt+Enter` ou `Mod+Shift+Enter` |
+| Envoyer avec le comportement de suivi alternatif | `Alt+Enter` (Windows, Linux) ou `Mod+Shift+Enter` |
 | Insérer une nouvelle ligne | `Shift+Enter` ou `Mod+Enter` |
 | Prompt précédent / suivant (saisie) | `ArrowUp` / `ArrowDown` |
 | Quitter la saisie / Quitter le mode shell | `Escape`, selon le contexte de saisie |

@@ -289,7 +289,6 @@ export const messagingMessages = {
   "promptInput.clear.title": "Prompt-Text löschen",
   "promptInput.send.ariaLabel": "Nachricht senden",
   "promptInput.send.queueAriaLabel": "Nachricht einreihen",
-  "promptInput.send.nowLabel": "Jetzt senden",
   "promptQueue.title": "Prompt-Warteschlange ({count})",
   "promptQueue.delivery.queue": "Eingereiht",
   "promptQueue.delivery.steer": "Wird eingeschoben",

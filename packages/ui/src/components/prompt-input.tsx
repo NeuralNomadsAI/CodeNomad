@@ -719,8 +719,8 @@ export default function PromptInput(props: PromptInputProps) {
     return hasText || attachments().length > 0
   }
 
-  const canClearPrompt = () => prompt().length > 0
-  // A boolean memo, so the action menu does not rebuild on every keystroke.
+  // Boolean memos, so the action menu rebuilds only when they flip, not per keystroke.
+  const canClearPrompt = createMemo(() => prompt().length > 0)
   const canSendDraft = createMemo(() => canSend())
 
   const submitOnEnter = () => preferences().promptSubmitOnEnter
@@ -806,13 +806,14 @@ export default function PromptInput(props: PromptInputProps) {
     const alternate = preferences().followUpBehavior === "queue" ? "steer" : "queue"
     items.push({
       key: "alternate-send",
-      label: t(alternate === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.nowLabel"),
+      label: t(alternate === "queue" ? "promptInput.send.queueAriaLabel" : "promptQueue.actions.steer"),
       description: hotkeyLabel("prompt-alternate-send") || undefined,
       icon: alternate === "queue"
         ? <ListEnd class="h-4 w-4" aria-hidden="true" />
         : <SendHorizontal class="h-4 w-4" aria-hidden="true" />,
       disabled: mode() !== "normal" || !props.isSessionBusy || !canSendDraft(),
-      onSelect: () => void handleSend(alternate),
+      // The shortcut's own resolution: an idle session always sends normally.
+      onSelect: () => void handleSend(promptDelivery(true)),
     })
     if (showVoiceInput()) {
       items.push({

@@ -39,7 +39,7 @@ function setup(submitOnEnter = true, pickerOpen = false, overrides: HotkeyOverri
     getAttachments: () => [],
     removeAttachment: () => {},
     submitOnEnter: () => submitOnEnter,
-    matchHotkey: (id, event) => resolveHotkeyBindings(id, overrides, submitOnEnter)
+    matchHotkey: (id, event) => resolveHotkeyBindings(id, overrides, submitOnEnter, false)
       .some(binding => matchesHotkeyBinding(binding, event, false)),
     onSend: (alternate) => sends.push(alternate),
     onBackground: () => {

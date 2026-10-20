@@ -291,7 +291,6 @@ export const messagingMessages = {
   "promptInput.clear.title": "清除输入框文本",
   "promptInput.send.ariaLabel": "发送消息",
   "promptInput.send.queueAriaLabel": "将消息加入队列",
-  "promptInput.send.nowLabel": "立即发送",
   "promptQueue.title": "提示词队列（{count}）",
   "promptQueue.delivery.queue": "已排队",
   "promptQueue.delivery.steer": "正在插入",

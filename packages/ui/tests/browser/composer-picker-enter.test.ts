@@ -62,7 +62,7 @@ for (const submitOnEnter of [true, false]) {
       await f.assertDraft("@missing/path")
       await f.searches[0].fulfill({ json: [] })
       await f.page.getByText("No results found", { exact: true }).waitFor()
-      for (const key of ["Enter", "Shift+Enter", "Control+Enter", "Meta+Enter", "Control+Shift+Enter", "Meta+Shift+Enter"]) {
+      for (const key of ["Enter", "Shift+Enter", "Alt+Enter", "Control+Enter", "Meta+Enter", "Control+Shift+Enter", "Meta+Shift+Enter"]) {
         await f.input.press(key)
         await f.assertDraft("@missing/path")
         assert.equal(await f.picker.count(), 1)
@@ -183,7 +183,7 @@ test("modified Enter cannot send a highlighted file; Shift+Enter retains path-on
     await f.picker.waitFor(); await f.waitSearch(1)
     await f.searches[0].fulfill({ json: [{ name: "server.txt", path: "server.txt", type: "file" }] })
     await f.page.getByText("server.txt", { exact: true }).last().waitFor()
-    for (const key of ["Control+Enter", "Control+Shift+Enter", "Meta+Enter", "Meta+Shift+Enter"]) {
+    for (const key of ["Alt+Enter", "Control+Enter", "Control+Shift+Enter", "Meta+Enter", "Meta+Shift+Enter"]) {
       await f.input.press(key)
       await f.assertDraft("@server")
       assert.equal(await f.page.evaluate(() => (window as any).fixture.attachments().length), 0)

@@ -292,7 +292,6 @@ export const messagingMessages = {
   "promptInput.clear.title": "Очистить текст prompt",
   "promptInput.send.ariaLabel": "Отправить сообщение",
   "promptInput.send.queueAriaLabel": "Поставить сообщение в очередь",
-  "promptInput.send.nowLabel": "Отправить сейчас",
   "promptQueue.title": "Очередь запросов ({count})",
   "promptQueue.delivery.queue": "В очереди",
   "promptQueue.delivery.steer": "Направляется сейчас",

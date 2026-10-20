@@ -271,7 +271,6 @@ export const messagingMessages = {
   "promptInput.clear.title": "Prompt metnini temizle",
   "promptInput.send.ariaLabel": "Mesaj gönder",
   "promptInput.send.queueAriaLabel": "Mesajı kuyruğa ekle",
-  "promptInput.send.nowLabel": "Şimdi gönder",
   "promptInput.background.title": "Bloklayan araçları arka plana taşı",
   "promptInput.background.error.title": "Arka plan işlemi başarısız",
   "promptInput.background.error.message": "Bloklayan araçlar arka plana taşılamadı",

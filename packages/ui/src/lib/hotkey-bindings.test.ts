@@ -43,6 +43,9 @@ describe("hotkey catalog and effective bindings", () => {
   })
 
   it("keeps the saved Enter policy as a default, with explicit disabled and custom overrides", () => {
+    // Alt+Enter leads outside macOS, where Option+Return is the native line break.
+    assert.deepEqual(resolveHotkeyBindings("prompt-alternate-send", {}, true, false), [{ key: "Enter", alt: true }, { key: "Enter", mod: true, shift: true }])
+    assert.deepEqual(resolveHotkeyBindings("prompt-alternate-send", {}, true, true), [{ key: "Enter", mod: true, shift: true }])
     assert.deepEqual(resolveHotkeyBindings("prompt-send", {}, true), [{ key: "Enter" }])
     assert.deepEqual(resolveHotkeyBindings("prompt-send", {}, false), [{ key: "Enter", mod: true }])
     assert.deepEqual(resolveHotkeyBindings("prompt-newline", {}, true), [{ key: "Enter", shift: true }, { key: "Enter", mod: true }])

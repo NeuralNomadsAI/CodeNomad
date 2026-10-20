@@ -487,7 +487,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       e.stopPropagation()
       // Solid delegates textarea key handlers at document too, so propagation
       // alone cannot keep modified submit shortcuts out of this listener.
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) return
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey || e.altKey)) return
       const selected = items[selectedIndex()]
       if (selected) {
         const action: PickerSelectAction = e.key === "Tab" ? "tab" : e.shiftKey ? "shiftEnter" : "enter"

@@ -1,4 +1,4 @@
-import { defaultHotkeyBindings, getHotkeyDefinitions, hotkeyDefinitions, type HotkeyDefinition } from "./hotkey-definitions"
+import { defaultHotkeyBindings, getHotkeyDefinitions, hotkeyDefinitions, isMacPlatform as macPlatform, type HotkeyDefinition } from "./hotkey-definitions"
 
 export interface HotkeyBinding {
   key: string
@@ -23,7 +23,6 @@ const canonicalKey = (key: string) => /^digit[0-9]$/i.test(key) ? key.slice(-1)
   : Object.prototype.hasOwnProperty.call(aliases, key.toLowerCase()) ? aliases[key.toLowerCase()] : key.toLowerCase()
 const validKey = (key: unknown): key is string => typeof key === "string" && Boolean(key) && key.length <= 40
   && !/[\u0000-\u001f\u007f-\u009f]/.test(key) && !modifierKeys.has(key.toLowerCase())
-const macPlatform = () => typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("mac")
 
 /** Digits/brackets have one physical identity; all other keys stay logical.
  * Legacy layout symbols on these slots must be re-recorded: key-only storage
@@ -60,11 +59,11 @@ export function normalizeHotkeyOverrides(input: unknown): HotkeyOverrides {
   return output
 }
 
-export function resolveHotkeyBindings(id: string, overrides: HotkeyOverrides, submitOnEnter = true): HotkeyBinding[] {
+export function resolveHotkeyBindings(id: string, overrides: HotkeyOverrides, submitOnEnter = true, mac = macPlatform()): HotkeyBinding[] {
   if (!hotkeyDefinitions.some(definition => definition.id === id)) return []
   const bindings = overrides && Object.prototype.hasOwnProperty.call(overrides, id)
     ? normalizeHotkeyOverrides({ [id]: overrides[id] })[id] : undefined
-  return bindings ?? defaultHotkeyBindings(id, submitOnEnter)
+  return bindings ?? defaultHotkeyBindings(id, submitOnEnter, mac)
 }
 
 function modifiers(binding: HotkeyBinding, mac: boolean) {
@@ -115,8 +114,8 @@ export function findHotkeyConflicts(overrides: HotkeyOverrides, submitOnEnter = 
     const a = definitions[i]
     for (const b of definitions.slice(i + 1)) {
       if (!scopesOverlap(a, b)) continue
-      for (const binding of resolveHotkeyBindings(a.id, overrides, submitOnEnter)) {
-        if (!resolveHotkeyBindings(b.id, overrides, submitOnEnter).some(other => bindingsOverlap(binding, other, mac))) continue
+      for (const binding of resolveHotkeyBindings(a.id, overrides, submitOnEnter, mac)) {
+        if (!resolveHotkeyBindings(b.id, overrides, submitOnEnter, mac).some(other => bindingsOverlap(binding, other, mac))) continue
         const label = formatHotkeyBinding(binding, mac)
         const ids = conflicts.get(label) ?? new Set<string>()
         ids.add(a.id); ids.add(b.id); conflicts.set(label, ids)
