@@ -16,6 +16,12 @@ let releaseCache: (() => void) | undefined
 const queries: any[] = []
 const backend = new URLSearchParams(location.search).has("backend")
 const getUsage = serverApi.getServiceUsage
+let ownerReplies = 0, cacheReplies = 0
+if (backend) {
+  const getOwner = serverApi.getServiceUsageOwner, getCache = serverApi.getCachedServiceUsage
+  serverApi.getServiceUsageOwner = async (...args) => { const value = await getOwner(...args); ownerReplies++; return value }
+  serverApi.getCachedServiceUsage = async (...args) => { const value = await getCache(...args); cacheReplies++; return value }
+}
 const memory = new Map<string, any>()
 let owner = "fixture-service", identity = "fixture-discovery"
 let connection = "fixture-connection"
@@ -54,6 +60,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
     : <main style={{ width: "min(760px, 100%)" }}><UsageSettingsSection instanceId={instanceId()} /></main>}
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = { queries, setInstanceId, setVisible, mountedAt, get metricsAt() { return metricsAt }, fail: () => { fail = true }, defer: () => { defer = true }, release: () => release?.(), releaseCache: () => releaseCache?.(),
+  get ownerReplies() { return ownerReplies }, get cacheReplies() { return cacheReplies },
   changeOwner: () => { owner = "changed-service"; connection += "next"; memory.clear() }, changeDiscovery: () => { identity = "changed-discovery"; connection += "next"; memory.clear() },
   documentHidden: (hidden: boolean) => { Object.defineProperty(document, "visibilityState", { configurable: true, value: hidden ? "hidden" : "visible" }); document.dispatchEvent(new Event("visibilitychange")) },
   connection: (status = "connected", generation = 1) => (serverEvents as any).dispatch({ type: "instance.eventStatus", instanceId: "usage", status, generation }),

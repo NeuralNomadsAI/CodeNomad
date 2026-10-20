@@ -35,7 +35,7 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
       const epoch = ++revision, observed = invalidation
       controller = new AbortController()
       const signal = controller.signal
-      let verifiedOwner: string | undefined, verifiedIdentity: string | undefined
+      let verified: Pick<ServiceUsageSnapshot, "owner" | "identity" | "connection"> | undefined
       setBusy(true)
       // These are independent reads: optional discovery/restoration never gates
       // native aggregation. Only the last known owner survives disconnects.
@@ -49,7 +49,7 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
       void serverApi.getServiceUsageOwner(id, signal).then(value => {
         if (!current(epoch) || freshEpoch === epoch) return
         verify(value.owner, value.identity, value.connection)
-        verifiedOwner = value.owner; verifiedIdentity = value.identity
+        verified = value
       }).catch(() => {})
       if (restore) {
         void serverApi.getCachedServiceUsage(id, timezone, selected, signal).then(cached => {
@@ -58,14 +58,15 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
             const fresh = untrack(snapshot)
             // Bind identity metadata only, never cached totals/period, and only
             // when discovery belongs to the very same native connection.
-            if (fresh && fresh.connection && fresh.connection === cached.connection && fresh.owner === cached.owner
+            if (fresh && fresh.owner && fresh.connection && fresh.connection === cached.connection && fresh.owner === cached.owner
               && !fresh.identity && cached.identity) setSnapshot({ ...fresh, identity: cached.identity })
             return
           }
-          if (verifiedOwner && cached.owner && verifiedOwner !== cached.owner
-            || verifiedIdentity && cached.identity && verifiedIdentity !== cached.identity) return
+          if (verified?.owner && cached.owner && verified.owner !== cached.owner
+            || verified?.identity && cached.identity && verified.identity !== cached.identity) return
           verify(cached.owner, cached.identity, cached.connection)
-          verifiedOwner = cached.owner ?? verifiedOwner; verifiedIdentity = cached.identity ?? verifiedIdentity
+          // A proof is one tuple; never splice A's discovery into B's connection.
+          verified = { owner: cached.owner, identity: cached.identity, connection: cached.connection }
           count = cached.days; periodKnown = true; setDays(count)
           if (cached.snapshot) { setSnapshot(cached.snapshot); setStale(true) }
         }).catch(() => {}).finally(() => {
@@ -76,11 +77,16 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
       try {
         const next = await serverApi.getServiceUsage(id, { from: to - count * 86_400_000, to, timezone, ...(!periodKnown ? { restorePeriod: true } : {}) }, signal)
         if (current(epoch)) {
-          if (verifiedOwner && next.owner && verifiedOwner !== next.owner
-            || verifiedIdentity && next.identity && verifiedIdentity !== next.identity) throw new Error("Stats display owner changed")
+          if (verified?.owner && next.owner && verified.owner !== next.owner
+            || verified?.identity && next.identity && verified.identity !== next.identity) {
+            setSnapshot(undefined); freshEpoch = epoch // Fence late optional replies as well as retained metrics.
+            throw new Error("Stats display owner changed")
+          }
           freshEpoch = epoch
           count = (next.stats.range.to - next.stats.range.from) / 86_400_000; periodKnown = true; setDays(count)
-          setSnapshot({ ...next, identity: next.identity ?? verifiedIdentity }); setError(false); setStale(observed !== invalidation)
+          const identity = verified?.owner && verified.connection && next.owner === verified.owner && next.connection === verified.connection
+            ? verified.identity : undefined
+          setSnapshot({ ...next, identity: next.identity ?? identity }); setError(false); setStale(observed !== invalidation)
         }
       } catch { if (current(epoch)) { setError(true); setStale(true) } }
       if (current(epoch)) setBusy(false)

@@ -17,6 +17,96 @@ async function statsPage(fixture: Awaited<ReturnType<typeof startProductFixture>
   return page
 }
 
+function ownerProbeSnapshot(steps: number, owner: string, connection: string, identity?: string) {
+  const to = Date.now(), tokens = { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } }
+  return { scope: "service", owner, connection, ...(identity ? { identity } : {}), stats: {
+    range: { from: to - 30 * 86400000, to }, sessions: 1, subagents: 0, prompts: 1, steps,
+    tokens, cost: 0, tools: { mode: "none" }, activeDays: 1, streak: 1, models: [], activity: [{ date: "2026-10-20", steps }],
+  } }
+}
+
+test("Pass2 missing fresh identity cannot inherit another connection's proof, with cache before or after fresh totals", async () => {
+  const fixture = await startProductFixture("service-usage")
+  try {
+    for (const cacheFirst of [true, false]) {
+      const page = await statsPage(fixture, { locale: "en-US" })
+      let returning = false, releaseFresh!: () => void, releaseCache!: () => void
+      const freshGate = new Promise<void>(resolve => { releaseFresh = resolve }), cacheGate = new Promise<void>(resolve => { releaseCache = resolve })
+      const proofA = { owner: "shared-channel", identity: "discovery-a", connection: "connection-a" }
+      await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+      await page.route("**/api/workspaces/*/service-usage**", async route => {
+        const path = new URL(route.request().url()).pathname
+        if (path.endsWith("/owner")) return route.fulfill({ json: proofA })
+        if (path.endsWith("/cache")) {
+          await cacheGate
+          return route.fulfill({ json: { ...proofA, days: 30, ...(!returning ? { snapshot: ownerProbeSnapshot(11, proofA.owner, proofA.connection, proofA.identity) } : {}) } })
+        }
+        if (returning) return route.fulfill({ status: 503, json: {} })
+        await freshGate
+        return route.fulfill({ json: ownerProbeSnapshot(84, proofA.owner, "connection-b") })
+      })
+      try {
+        await page.goto(`${fixture.url}?backend`)
+        await page.waitForFunction(() => (window as any).fixture.ownerReplies === 1)
+        if (cacheFirst) {
+          releaseCache()
+          await page.waitForFunction(() => [...document.querySelectorAll(".usage-metrics dt")].find(el => el.textContent === "Steps")?.nextElementSibling?.textContent === "11")
+        }
+        releaseFresh()
+        await page.waitForFunction(() => [...document.querySelectorAll(".usage-metrics dt")].find(el => el.textContent === "Steps")?.nextElementSibling?.textContent === "84")
+        releaseCache()
+        await page.waitForFunction(() => (window as any).fixture.cacheReplies === 1)
+        returning = true
+        await page.evaluate(() => (window as any).fixture.connection("connected", 2))
+        await page.getByRole("alert").waitFor()
+        assert.equal(await page.locator(".usage-metrics").count(), 0, `B totals must not be relabelled as A (cacheFirst=${cacheFirst})`)
+        assert.equal(await page.locator("meter").count(), 0)
+      } finally { releaseFresh(); releaseCache(); await page.close() }
+    }
+  } finally { await fixture.close() }
+})
+
+test("Pass2 fresh owner or discovery conflicts revoke retained cached metrics instead of leaving them beside an error", async () => {
+  const fixture = await startProductFixture("service-usage")
+  try {
+    for (const { change, cacheFirst } of [
+      { change: "owner", cacheFirst: true }, { change: "identity", cacheFirst: true },
+      { change: "owner", cacheFirst: false }, { change: "identity", cacheFirst: false },
+    ]) {
+      const page = await statsPage(fixture, { locale: "en-US" })
+      let release!: () => void, releaseCache!: () => void
+      const gate = new Promise<void>(resolve => { release = resolve })
+      const cacheGate = new Promise<void>(resolve => { releaseCache = resolve })
+      const proofA = { owner: "owner-a", identity: "discovery-a", connection: "connection-a" }
+      await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+      await page.route("**/api/workspaces/*/service-usage**", async route => {
+        const path = new URL(route.request().url()).pathname
+        if (path.endsWith("/owner")) return route.fulfill({ json: proofA })
+        if (path.endsWith("/cache")) {
+          await cacheGate
+          return route.fulfill({ json: { ...proofA, days: 30, snapshot: ownerProbeSnapshot(11, proofA.owner, proofA.connection, proofA.identity) } })
+        }
+        await gate
+        return route.fulfill({ json: ownerProbeSnapshot(84, change === "owner" ? "owner-b" : proofA.owner, "connection-b", "discovery-b") })
+      })
+      try {
+        await page.goto(`${fixture.url}?backend`)
+        await page.waitForFunction(() => (window as any).fixture.ownerReplies === 1)
+        if (cacheFirst) {
+          releaseCache()
+          await page.waitForFunction(() => [...document.querySelectorAll(".usage-metrics dt")].find(el => el.textContent === "Steps")?.nextElementSibling?.textContent === "11")
+        }
+        release()
+        await page.getByRole("alert").waitFor()
+        releaseCache()
+        await page.waitForFunction(() => (window as any).fixture.cacheReplies === 1)
+        assert.equal(await page.locator(".usage-metrics").count(), 0, `confirmed ${change} conflict must revoke A totals`)
+        assert.equal(await page.locator("meter").count(), 0)
+      } finally { release(); releaseCache(); await page.close() }
+    }
+  } finally { await fixture.close() }
+})
+
 test("service-wide usage dashboard declares scope, bounds requests, fences stale connection reads and stops when disposed", async () => {
   const fixture = await startProductFixture("service-usage"), page = await statsPage(fixture, { viewport: { width: 380, height: 1000 }, locale: "en-US" })
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))
