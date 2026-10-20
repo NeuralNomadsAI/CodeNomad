@@ -18,7 +18,6 @@ Recent entries are shortcuts. **Rename workspace** changes its displayed name; *
 
 1. Long-press or right-click `+`; with keyboard focus there, use **Alt+Down**, **Shift+F10** or the Menu key.
 2. Search recent projects, or select **Browse…**, **Temporary** or **Clone…**.
-3. Use **Remote servers**, **SideCar** or **Full home page** for the other destinations.
 
 A normal click still opens the full home page. The launcher is a shortcut, not the management surface: rename/remove recent projects and manage server bookmarks on the home page. Escape dismisses the launcher and returns focus to `+`.
 

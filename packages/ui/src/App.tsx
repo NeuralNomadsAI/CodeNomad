@@ -892,8 +892,6 @@ const App: Component = () => {
           onSelectFolder={(path) => void handleSelectFolder(path)}
           onSelectExistingInstance={handleSelectExistingInstance}
           onNewTemporaryInstance={() => void handleNewTemporaryInstance()}
-          onOpenSidecar={handleOpenSidecarPicker}
-          onOpenHome={handleNewInstanceRequest}
         />
         <SettingsScreen />
         <SideCarPickerDialog open={sidecarPickerOpen()} onClose={() => setSidecarPickerOpen(false)} onOpenSidecar={handleOpenSidecar} />

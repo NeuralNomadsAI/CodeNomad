@@ -12,12 +12,13 @@ interface NewInstanceDialogsOptions {
   defaultPath: () => string | undefined
   isLoading: () => boolean
   onSelectFolder: (path: string) => void
-  onSaveServer: ComponentProps<typeof RemoteServerDialog>["onSubmit"]
+  /** Only the home page offers remote-server setup. */
+  onSaveServer?: ComponentProps<typeof RemoteServerDialog>["onSubmit"]
 }
 
 /**
- * Browse, clone and add-server flows shared by the home page and the
- * new-instance launcher. Mount `Dialogs` where it outlives the trigger.
+ * Browse and clone flows shared by the home page and the new-instance
+ * launcher, plus optional home-page server setup. Mount `Dialogs` where it outlives the trigger.
  */
 export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
   const { t } = useI18n()
@@ -237,7 +238,9 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
           </Dialog.Portal>
         </Dialog>
 
-        <RemoteServerDialog open={isServerDialogOpen()} onOpenChange={setIsServerDialogOpen} onSubmit={options.onSaveServer} />
+        <Show when={options.onSaveServer}>
+          {(onSubmit) => <RemoteServerDialog open={isServerDialogOpen()} onOpenChange={setIsServerDialogOpen} onSubmit={onSubmit()} />}
+        </Show>
       </>
     )
   }

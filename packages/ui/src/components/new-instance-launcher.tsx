@@ -1,11 +1,9 @@
 import { Popover } from "@kobalte/core/popover"
 import { For, Show, createEffect, createMemo, createSignal, on } from "solid-js"
-import { ChevronRight, Folder, FolderPlus, GitBranch, Globe, Home, Hourglass, MonitorUp, Plus, Search } from "lucide-solid"
+import { Folder, FolderPlus, GitBranch, Hourglass, Search } from "lucide-solid"
 import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useI18n } from "../lib/i18n"
-import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
-import { canOpenRemoteWindows } from "../lib/runtime-env"
 import { getExistingInstanceForFolder } from "../stores/instances"
 import { useConfig } from "../stores/preferences"
 
@@ -18,30 +16,25 @@ interface NewInstanceLauncherProps {
   onSelectFolder: (path: string) => void
   onSelectExistingInstance: (instanceId: string, recentPath: string) => void
   onNewTemporaryInstance: () => void
-  onOpenSidecar?: () => void
-  onOpenHome: () => void
 }
 
 /**
  * Compact launcher opened by a long press, right-click or Alt+Down on the
  * new-instance button: recent projects first (type to filter, Enter to open),
- * then creation actions, then secondary destinations. Management (rename,
- * remove, settings) stays on the full home page.
+ * then project creation actions. Management (rename, remove, settings) stays
+ * on the full home page.
  */
 export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
   const { t } = useI18n()
   const { recentFolders } = useConfig()
-  const { remoteServers, saveServer, connectSavedServer } = useRemoteServerProfiles()
   const [query, setQuery] = createSignal("")
   const [activeIndex, setActiveIndex] = createSignal(0)
-  const [serversExpanded, setServersExpanded] = createSignal(false)
   let listRef: HTMLDivElement | undefined
 
   const dialogs = createNewInstanceDialogs({
     defaultPath: () => recentFolders()[0]?.path,
     isLoading: () => props.isLoading,
     onSelectFolder: (path) => props.onSelectFolder(path),
-    onSaveServer: saveServer,
   })
 
   const matches = createMemo(() => {
@@ -63,7 +56,6 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
     if (!open) return
     setQuery("")
     setActiveIndex(0)
-    setServersExpanded(false)
     returnFocus = false
   }))
   createEffect(on(matches, () => setActiveIndex(0), { defer: true }))
@@ -209,45 +201,6 @@ export default function NewInstanceLauncher(props: NewInstanceLauncherProps) {
                 <span>{t("newInstanceLauncher.clone")}</span>
               </button>
             </div>
-
-            <Show when={serversExpanded()}>
-              <div class="new-instance-launcher-servers" role="group" aria-label={t("newInstanceLauncher.servers")}>
-                <For each={remoteServers()}>
-                  {(server) => (
-                    <button type="button" class="new-instance-launcher-server" title={server.baseUrl} disabled={props.isLoading}
-                      onClick={() => run(() => void connectSavedServer(server.id))}>
-                      <Globe class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
-                      <span class="new-instance-launcher-recent-name">{server.name}</span>
-                    </button>
-                  )}
-                </For>
-                <button type="button" class="new-instance-launcher-server" disabled={props.isLoading} onClick={() => run(dialogs.addServer)}>
-                  <Plus class="w-4 h-4 icon-muted shrink-0" aria-hidden="true" />
-                  <span class="new-instance-launcher-recent-name">{t("newInstanceLauncher.addServer")}</span>
-                </button>
-              </div>
-            </Show>
-
-            <footer class="window-footer new-instance-launcher-footer">
-              <Show when={canOpenRemoteWindows()}>
-                <button type="button" class="window-action" disabled={props.isLoading} aria-expanded={serversExpanded()}
-                  onClick={() => setServersExpanded((value) => !value)}>
-                  <Globe class="w-4 h-4" aria-hidden="true" />
-                  <span>{t("newInstanceLauncher.servers")}</span>
-                  <ChevronRight class="disclosure-chevron w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-              </Show>
-              <Show when={props.onOpenSidecar}>
-                <button type="button" class="window-action" disabled={props.isLoading} onClick={() => run(() => props.onOpenSidecar?.())}>
-                  <MonitorUp class="w-4 h-4" aria-hidden="true" />
-                  <span>{t("newInstanceLauncher.sidecar")}</span>
-                </button>
-              </Show>
-              <button type="button" class="window-action new-instance-launcher-home" disabled={props.isLoading} onClick={() => run(props.onOpenHome)}>
-                <Home class="w-4 h-4" aria-hidden="true" />
-                <span>{t("newInstanceLauncher.fullHome")}</span>
-              </button>
-            </footer>
           </Popover.Content>
         </Popover.Portal>
       </Popover>

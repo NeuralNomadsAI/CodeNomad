@@ -18,7 +18,6 @@ Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** g
 
 1. `+`'ye uzun basın veya sağ tıklayın; Klavye odağı oradayken **Alt+Down**, **Shift+F10** veya Menü tuşunu kullanın.
 2. Son projeleri arayın veya **Gözat…**, **Geçici** veya **Klonla…** öğesini seçin.
-3. Diğer hedefler için **Uzak sunucular**, **SideCar** veya **Tam ana sayfa** öğesini kullanın.
 
 Normal bir tıklama yine de tam ana sayfayı açar. Başlatıcı, yönetim yüzeyi değil, bir kısayoldur: ana sayfadaki son projeleri yeniden adlandırın/kaldırın ve sunucu yer imlerini yönetin. Escape, başlatıcıyı kapatır ve odağı `+`'ye döndürür.
 

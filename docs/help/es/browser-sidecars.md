@@ -45,7 +45,7 @@ Las plantillas móviles nativas establecen identidad Android/Chromium, orientaci
 1. Inicia la herramienta web por separado en el equipo del backend de CodeNomad, escuchando en `127.0.0.1:<port>`.
 2. Abre **Configuración → SideCars**. Introduce **Nombre** y **Puerto**; comprueba la **Ruta base** derivada (`/sidecars/<id>`).
 3. Establece **Protocolo** para que coincida con el servicio de destino y elige **Modo de prefijo**.
-4. Elige **Añadir SideCar** y después **Abrir SideCar** desde la página de inicio o el lanzador de nuevas instancias para abrir su pestaña.
+4. Elige **Añadir SideCar** y después **Abrir SideCar** desde la página de inicio para abrir su pestaña.
 
 | Opción | Efecto exacto |
 | --- | --- |

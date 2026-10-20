@@ -85,6 +85,6 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 2. Introduce **Nombre del servidor** y **URL del servidor** usando un origen HTTPS de confianza. Deja sin marcar **Omitir la verificación TLS para certificados autofirmados.**; establece confianza en su lugar.
 3. Elige **Guardar** para crear un marcador o **Conectar** para guardarlo y abrirlo. Inicia sesión en ese servidor.
 
-Los marcadores pertenecen a esta configuración de CodeNomad, no a los proyectos del servidor remoto. Guardar una URL no inicia el servidor ni concede acceso. **Eliminar servidor guardado** elimina el marcador, no las conversaciones remotas, el backend ni sus credenciales. Los servidores guardados también se pueden abrir desde la lista **Servidores remotos** del lanzador de nuevas instancias.
+Los marcadores pertenecen a esta configuración de CodeNomad, no a los proyectos del servidor remoto. Guardar una URL no inicia el servidor ni concede acceso. **Eliminar servidor guardado** elimina el marcador, no las conversaciones remotas, el backend ni sus credenciales.
 
 Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL del servidor**. El marcador conserva solo el origen del túnel, nunca el código de un solo uso; consulta [Control remoto](remote-control.md) para volver a emparejar tras perder la cookie del dispositivo.

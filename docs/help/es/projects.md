@@ -18,7 +18,6 @@ Las entradas recientes son accesos directos. **Renombrar workspace** cambia su n
 
 1. Mantén pulsado `+` o haz clic derecho; con el foco del teclado allí, usa **Alt+Down**, **Shift+F10** o la tecla Menú.
 2. Busca proyectos recientes o selecciona **Examinar…**, **Temporal** o **Clonar…**.
-3. Usa **Servidores remotos**, **SideCar** o **Página de inicio completa** para los demás destinos.
 
 Un clic normal sigue abriendo la página de inicio completa. El lanzador es un acceso directo, no la superficie de gestión: renombra/elimina proyectos recientes y gestiona los marcadores de servidores en la página de inicio. Escape cierra el lanzador y devuelve el foco a `+`.
 

@@ -18,7 +18,6 @@ Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** cha
 
 1. Appuyez longuement ou faites un clic droit sur `+` ; lorsque ce bouton a le focus clavier, utilisez **Alt+Down**, **Shift+F10** ou la touche Menu.
 2. Recherchez les projets récents ou sélectionnez **Parcourir…**, **Temporaire** ou **Cloner…**.
-3. Utilisez **Serveurs distants**, **SideCar** ou **Accueil complet** pour les autres destinations.
 
 Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, pas l’interface de gestion : renommez/retirez les projets récents et gérez les serveurs enregistrés depuis l’accueil. Échap ferme le lanceur et rend le focus à `+`.
 

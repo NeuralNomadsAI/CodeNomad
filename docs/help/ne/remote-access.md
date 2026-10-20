@@ -85,6 +85,6 @@ certificate चेतावनी आए रोकिएर hostname, SAN, trust
 2. trusted HTTPS origin सहित **सर्भरको नाम** र **सर्भर URL** भर्नुहोस्। **स्व-हस्ताक्षरित प्रमाणपत्रहरूको लागि TLS प्रमाणीकरण छोड्नुहोस्।** नछान्नुहोस्; बरु trust स्थापित गर्नुहोस्।
 3. bookmark गर्न **बचत गर्नुहोस्**, वा बचत र खोल्न **जडान गर्नुहोस्** रोज्नुहोस्। त्यो server मा sign in गर्नुहोस्।
 
-bookmark यो CodeNomad कन्फिगरेसनका हुन्, remote server का project होइनन्। URL बचतले server सुरु वा access प्रदान गर्दैन। **बचत गरिएको सर्भर हटाउनुहोस्** ले bookmark हटाउँछ, remote कुराकानी, backend वा credential होइन। new-instance launcher को **रिमोट सर्भरहरू** सूचीबाट पनि खोल्न सकिन्छ।
+bookmark यो CodeNomad कन्फिगरेसनका हुन्, remote server का project होइनन्। URL बचतले server सुरु वा access प्रदान गर्दैन। **बचत गरिएको सर्भर हटाउनुहोस्** ले bookmark हटाउँछ, remote कुराकानी, backend वा credential होइन।
 
 Remote Control मा **सर्भर URL** मा नयाँ pairing link paste गर्नुहोस्। bookmark ले tunnel origin मात्र राख्छ, one-use code कहिल्यै होइन; device-cookie हराएपछि पुनःpair गर्न [Remote Control](remote-control.md) हेर्नुहोस्।

@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+  cache = await createFixtureCache()
+  server = await createServer({ configFile: false, cacheDir: cache.cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     plugins: [solid(), { name: "new-instance-launcher-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -20,16 +23,25 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 
-async function prepare(width = 1100) {
+async function prepare(width = 1100, home = false) {
   const page = await browser.newPage({ viewport: { width, height: 760 }, locale: "en-US" })
   const errors: string[] = []
+  const remoteRequests: string[] = []
   page.on("pageerror", error => errors.push(error.message))
+  page.on("request", request => {
+    if (/\/api\/remote-/.test(request.url())) remoteRequests.push(request.url())
+  })
+  // Local native-window capabilities, without any real host or user state.
+  await page.addInitScript(() => {
+    (window as any).__CODENOMAD_RUNTIME_HOST__ = "electron"
+    window.__CODENOMAD_WINDOW_CONTEXT__ = "local"
+  })
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-  await page.goto(url)
+  await page.goto(home ? `${url}?home` : url)
   await page.waitForFunction(() => Boolean((window as any).launcherFixture))
-  return { page, errors, calls: () => page.evaluate(() => [...(window as any).launcherFixture.calls]) }
+  return { page, errors, remoteRequests, calls: () => page.evaluate(() => [...(window as any).launcherFixture.calls]) }
 }
 const plus = (page: Page) => page.locator(".new-instance-button")
 const launcher = (page: Page) => page.locator(".new-instance-launcher")
@@ -41,7 +53,7 @@ const openedWithFocus = async (page: Page) => {
 }
 
 test("a click keeps the full home page while a long press opens the launcher", async () => {
-  const { page, errors, calls } = await prepare()
+  const { page, errors, remoteRequests, calls } = await prepare()
   try {
     await plus(page).click()
     assert.deepEqual(await calls(), ["home"])
@@ -61,6 +73,10 @@ test("a click keeps the full home page while a long press opens the launcher", a
     assert.equal(await options(page).first().getAttribute("aria-selected"), "true")
     assert.match(await options(page).first().innerText(), /CodeNomad[\s\S]*open/)
     assert.match(await options(page).nth(2).innerText(), /Blender tools/)
+    assert.equal(await launcher(page).locator("footer, .new-instance-launcher-servers").count(), 0)
+    assert.equal(await launcher(page).getByRole("button", { name: /Remote servers|SideCar|Full home page|Add a server/ }).count(), 0)
+    assert.deepEqual(await launcher(page).getByRole("button").allTextContents(), ["Browse…", "Temporary", "Clone…"])
+    assert.deepEqual(remoteRequests, [], "saved profiles do not trigger launcher remote reads or probes")
     if (process.env.CODENOMAD_LAUNCHER_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_CAPTURE })
     assert.deepEqual(errors, [])
   } finally { await page.close() }
@@ -99,17 +115,26 @@ test("typing filters recent projects and the keyboard opens or switches to them"
   } finally { await page.close() }
 })
 
-test("creation and secondary actions close the launcher before running", async () => {
+test("project actions stay available in a narrow launcher and close it before running", async () => {
   const { page, errors, calls } = await prepare(390)
   try {
-    for (const [name, call] of [["Temporary", "temporary"], ["SideCar", "sidecar"], ["Full home page", "full-home"]] as const) {
+    // Exercise the real browser folder picker rather than a native OS dialog.
+    await page.evaluate(() => { (window as any).__CODENOMAD_RUNTIME_HOST__ = "web" })
+    for (const name of ["Browse…", "Temporary", "Clone…"]) {
       await plus(page).click({ button: "right" })
       await launcher(page).waitFor()
       const width = await launcher(page).evaluate(el => el.getBoundingClientRect().width)
       assert.ok(width <= 390, `launcher fits a narrow window (${width}px)`)
+      assert.equal(await launcher(page).locator("footer").count(), 0)
+      if (name === "Temporary" && process.env.CODENOMAD_LAUNCHER_NARROW_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_NARROW_CAPTURE })
       await launcher(page).getByRole("button", { name, exact: true }).click()
       await launcher(page).waitFor({ state: "detached" })
-      assert.equal((await calls()).at(-1), call)
+      if (name === "Temporary") assert.equal((await calls()).at(-1), "temporary")
+      else {
+        await page.getByRole("dialog").getByRole("heading", { name: name === "Browse…" ? "Select Workspace" : "Clone Git Repository", exact: true }).waitFor()
+        await page.keyboard.press("Escape")
+        await page.getByRole("dialog").waitFor({ state: "detached" })
+      }
     }
     assert.deepEqual(errors, [])
   } finally { await page.close() }
@@ -118,12 +143,14 @@ test("creation and secondary actions close the launcher before running", async (
 test("dismissal returns focus, aborted long presses keep keyboard activation, and the active row stays visible", async () => {
   const { page, errors, calls } = await prepare()
   try {
-    await plus(page).focus()
-    await page.keyboard.press("Alt+ArrowDown")
-    await openedWithFocus(page)
-    await page.keyboard.press("Escape")
-    await launcher(page).waitFor({ state: "detached" })
-    await page.waitForFunction(() => document.activeElement?.classList.contains("new-instance-button"))
+    for (const key of ["Alt+ArrowDown", "Shift+F10", "ContextMenu"]) {
+      await plus(page).focus()
+      await page.keyboard.press(key)
+      await openedWithFocus(page)
+      await page.keyboard.press("Escape")
+      await launcher(page).waitFor({ state: "detached" })
+      await page.waitForFunction(() => document.activeElement?.classList.contains("new-instance-button"))
+    }
 
     // Long press, then release away from the button: no click ends it.
     const box = (await plus(page).boundingBox())!
@@ -211,6 +238,20 @@ test("the new-instance button follows the last tab like a browser", async () => 
     assert.ok(gap.afterTab >= 0 && gap.afterTab < 24, `button sits right after the last tab (${gap.afterTab}px)`)
     assert.ok(gap.beforeActions > 200, `free space stays between the button and the bar actions (${gap.beforeActions}px)`)
     if (process.env.CODENOMAD_LAUNCHER_TABS_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_LAUNCHER_TABS_CAPTURE, clip: { x: 0, y: 0, width: 1100, height: 60 } })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("the full home page keeps saved servers, server setup and SideCar actions", async () => {
+  const { page, errors, calls } = await prepare(1100, true)
+  try {
+    await page.getByRole("button", { name: "Servers 1 Servers", exact: true }).click()
+    await page.getByRole("button", { name: /^Saved remote/ }).waitFor()
+    await page.getByRole("button", { name: "Connect CodeNomad Server", exact: true }).click()
+    await page.getByRole("dialog", { name: "Connect to Server", exact: true }).waitFor()
+    await page.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.getByRole("button", { name: "Open SideCar", exact: true }).click()
+    assert.deepEqual(await calls(), ["sidecar"])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

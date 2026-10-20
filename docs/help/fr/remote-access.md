@@ -85,6 +85,6 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 2. Saisissez **Nom du serveur** et **URL du serveur** avec une origine HTTPS de confiance. Laissez **Ignorer la vérification TLS pour les certificats auto-signés.** décoché ; établissez plutôt la confiance.
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.
 
-Les favoris appartiennent à cette configuration CodeNomad, pas aux projets du serveur distant. Enregistrer une URL ne démarre pas le serveur et n’accorde pas l’accès. **Supprimer le serveur enregistré** retire le favori, pas les conversations distantes, le backend ou ses identifiants. Les serveurs enregistrés peuvent aussi s’ouvrir depuis la liste **Serveurs distants** du lanceur de nouvelle instance.
+Les favoris appartiennent à cette configuration CodeNomad, pas aux projets du serveur distant. Enregistrer une URL ne démarre pas le serveur et n’accorde pas l’accès. **Supprimer le serveur enregistré** retire le favori, pas les conversations distantes, le backend ou ses identifiants.
 
 Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans **URL du serveur**. Le favori ne conserve que l’origine du tunnel, jamais le code d’appairage à usage unique ; voir [Contrôle à distance](remote-control.md) pour le réappairage après perte du cookie de l’appareil.
