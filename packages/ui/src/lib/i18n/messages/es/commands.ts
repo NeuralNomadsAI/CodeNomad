@@ -114,12 +114,10 @@ export const commandMessages = {
   "commands.clearInput.description": "Borrar el área de texto del prompt",
   "commands.clearInput.keywords": "limpiar, reiniciar",
 
-
   "commands.thinkingBlocks.label.show": "Mostrar pensamiento",
   "commands.thinkingBlocks.label.hide": "Ocultar pensamiento",
   "commands.thinkingBlocks.description": "Mostrar u ocultar secciones de pensamiento de IA",
   "commands.thinkingBlocks.keywords": "pensamiento, razonamiento, alternar, mostrar, ocultar",
-
 
   "commands.keyboardShortcutHints.label.show": "Mostrar atajos de teclado",
   "commands.keyboardShortcutHints.label.hide": "Ocultar atajos de teclado",

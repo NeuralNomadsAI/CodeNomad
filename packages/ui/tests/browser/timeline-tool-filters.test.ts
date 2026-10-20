@@ -29,8 +29,18 @@ test("timeline tool markers follow the tool types hidden in Message content", as
 
     await page.evaluate(() => (window as any).fixture.preset("nothing"))
     await settle(["message-0", "message-3"])
+    // The transcript's active marker stays shown and highlighted while its tool type is hidden.
+    const current = () => page.evaluate(() => (window as any).fixture.current())
+    await page.evaluate(() => (window as any).fixture.setActive("tool-2"))
+    await settle(["message-0", "message-2", "message-3"])
+    assert.deepEqual(await current(), ["tool"])
+    await page.evaluate(() => (window as any).fixture.setActive("user-0"))
+    await settle(["message-0", "message-3"])
+    assert.deepEqual(await current(), ["user"])
     await page.evaluate(() => (window as any).fixture.preset("everything"))
     await settle(["message-0", "message-1", "message-2", "message-3", "message-3"])
+    await page.evaluate(() => (window as any).fixture.setActive("tool-3"))
+    assert.deepEqual(await current(), ["tool"], "a visible tool marker keeps its own highlight")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

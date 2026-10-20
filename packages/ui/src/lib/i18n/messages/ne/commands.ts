@@ -114,12 +114,10 @@ export const commandMessages = {
   "commands.clearInput.description": "प्रम्प्ट पाठ क्षेत्र सफा गर्नुहोस्",
   "commands.clearInput.keywords": "सफा, रिसेट",
 
-
   "commands.thinkingBlocks.label.show": "सोचाइ देखाउनुहोस् (Show Thinking)",
   "commands.thinkingBlocks.label.hide": "सोचाइ लुकाउनुहोस् (Hide Thinking)",
   "commands.thinkingBlocks.description": "एआईको सोचाइ खण्डहरू देखाउनुहोस् वा लुकाउनुहोस्",
   "commands.thinkingBlocks.keywords": "सोच, तर्क, टगल, देखाउनुहोस्, लुकाउनुहोस्",
-
 
   "commands.keyboardShortcutHints.label.show": "किबोर्ड सर्टकट संकेतहरू देखाउनुहोस्",
   "commands.keyboardShortcutHints.label.hide": "किबोर्ड सर्टकट संकेतहरू लुकाउनुहोस्",

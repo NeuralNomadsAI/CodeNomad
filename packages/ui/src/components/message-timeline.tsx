@@ -473,8 +473,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         }
       }
 
-      // A marker follows its tool type (the one its icon shows); pending permissions stay visible.
-      const hidden = segment.type === "tool" && !hasActivePermission && Boolean(props.isToolHidden?.(segment.toolName ?? ""))
+      // A marker follows its tool type (the one its icon shows); the active
+      // marker and pending permissions stay visible, as with hidden tools before.
+      const hidden = segment.type === "tool" && !hasActivePermission && props.activeSegmentId !== segment.id
+        && Boolean(props.isToolHidden?.(segment.toolName ?? ""))
 
       result.set(segment.id, {
         hasActivePermission,

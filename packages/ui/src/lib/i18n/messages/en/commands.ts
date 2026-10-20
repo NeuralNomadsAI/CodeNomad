@@ -114,12 +114,10 @@ export const commandMessages = {
   "commands.clearInput.description": "Clear the prompt textarea",
   "commands.clearInput.keywords": "clear, reset",
 
-
   "commands.thinkingBlocks.label.show": "Show Thinking",
   "commands.thinkingBlocks.label.hide": "Hide Thinking",
   "commands.thinkingBlocks.description": "Show or hide AI thinking sections",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, toggle, show, hide",
-
 
   "commands.keyboardShortcutHints.label.show": "Show Keyboard Shortcut Hints",
   "commands.keyboardShortcutHints.label.hide": "Hide Keyboard Shortcut Hints",

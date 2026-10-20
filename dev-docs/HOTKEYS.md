@@ -2,7 +2,7 @@
 
 Settings → Keyboard shortcuts manages the 72 renderer actions in
 `packages/ui/src/lib/hotkey-definitions.ts`, without mounting the app first.
-The 24 initially unbound palette commands appear with “No shortcut” and reuse
+The 23 initially unbound palette commands appear with “No shortcut” and reuse
 their existing translated names. Existing aliases (such as `new-session` →
 `session-new`) keep one settings row. Native workspace actions can be configured
 here but only register for execution in local desktop windows.

@@ -114,12 +114,10 @@ export const commandMessages = {
   "commands.clearInput.description": "Effacer la zone de texte du prompt",
   "commands.clearInput.keywords": "effacer, réinitialiser, prompt",
 
-
   "commands.thinkingBlocks.label.show": "Afficher la réflexion",
   "commands.thinkingBlocks.label.hide": "Masquer la réflexion",
   "commands.thinkingBlocks.description": "Afficher ou masquer les sections de réflexion de l'IA",
   "commands.thinkingBlocks.keywords": "réflexion, raisonnement, basculer, afficher, masquer",
-
 
   "commands.keyboardShortcutHints.label.show": "Afficher les raccourcis clavier",
   "commands.keyboardShortcutHints.label.hide": "Masquer les raccourcis clavier",

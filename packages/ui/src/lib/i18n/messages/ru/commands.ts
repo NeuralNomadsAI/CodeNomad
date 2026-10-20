@@ -114,12 +114,10 @@ export const commandMessages = {
   "commands.clearInput.description": "Очистить поле prompt",
   "commands.clearInput.keywords": "очистить, сброс",
 
-
   "commands.thinkingBlocks.label.show": "Показать размышления",
   "commands.thinkingBlocks.label.hide": "Скрыть размышления",
   "commands.thinkingBlocks.description": "Показать или скрыть секции размышлений ИИ",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, переключить, показать, скрыть",
-
 
   "commands.keyboardShortcutHints.label.show": "Показать подсказки сочетаний",
   "commands.keyboardShortcutHints.label.hide": "Скрыть подсказки сочетаний",

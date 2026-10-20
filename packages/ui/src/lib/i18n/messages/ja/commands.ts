@@ -114,12 +114,10 @@ export const commandMessages = {
   "commands.clearInput.description": "プロンプト入力欄をクリア",
   "commands.clearInput.keywords": "クリア, リセット, clear, reset",
 
-
   "commands.thinkingBlocks.label.show": "思考を表示",
   "commands.thinkingBlocks.label.hide": "思考を非表示",
   "commands.thinkingBlocks.description": "AI の思考セクションを表示/非表示",
   "commands.thinkingBlocks.keywords": "思考, 推論, 切り替え, 表示, 非表示, thinking, reasoning, toggle, show, hide",
-
 
   "commands.keyboardShortcutHints.label.show": "キーボードショートカットのヒントを表示",
   "commands.keyboardShortcutHints.label.hide": "キーボードショートカットのヒントを非表示",

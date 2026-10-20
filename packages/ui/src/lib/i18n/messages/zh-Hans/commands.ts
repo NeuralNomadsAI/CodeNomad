@@ -114,12 +114,10 @@ export const commandMessages = {
   "commands.clearInput.description": "清空 prompt 输入框",
   "commands.clearInput.keywords": "clear, reset, 清空, 重置",
 
-
   "commands.thinkingBlocks.label.show": "显示思考",
   "commands.thinkingBlocks.label.hide": "隐藏思考",
   "commands.thinkingBlocks.description": "显示或隐藏 AI 思考部分",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, toggle, show, hide, 思考, 推理, 切换, 显示, 隐藏",
-
 
   "commands.keyboardShortcutHints.label.show": "显示键盘快捷键提示",
   "commands.keyboardShortcutHints.label.hide": "隐藏键盘快捷键提示",
