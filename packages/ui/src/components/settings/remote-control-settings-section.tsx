@@ -155,9 +155,9 @@ export const RemoteControlSettingsSection: Component = () => {
           </div>
           <div class="settings-toolbar-inline remote-control-toolbar">
             <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
-            <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void refresh()} disabled={loading()}>
-              <RefreshCw class={`w-4 h-4 ${loading() ? "remote-spin" : ""}`} />
-              <span>{t("remoteControl.refresh")}</span>
+            <button class="window-icon-button disabled:opacity-50 disabled:cursor-not-allowed" type="button"
+              aria-label={t("remoteControl.refresh")} title={t("remoteControl.refresh")} onClick={() => void refresh()} disabled={loading()}>
+              <RefreshCw class={`w-4 h-4 ${loading() ? "remote-spin" : ""}`} aria-hidden="true" />
             </button>
           </div>
         </div>
@@ -180,7 +180,7 @@ export const RemoteControlSettingsSection: Component = () => {
               when={status()?.enabled}
               fallback={
                 <>
-                  <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void start()} disabled={loading()}>
+                  <button class="selector-button selector-button-primary w-auto" type="button" onClick={() => void start()} disabled={loading()}>
                     <Link2 class="w-4 h-4" />
                     {t("remoteControl.start")}
                   </button>
@@ -189,7 +189,7 @@ export const RemoteControlSettingsSection: Component = () => {
                 </>
               }
             >
-              <button class="selector-button selector-button-secondary w-auto" type="button" onClick={() => void createPairing()} disabled={loading() || status()?.state !== "connected"}>
+              <button class="selector-button selector-button-primary w-auto" type="button" onClick={() => void createPairing()} disabled={loading() || status()?.state !== "connected"}>
                 <Link2 class="w-4 h-4" />
                 {t("remoteControl.newLink")}
               </button>

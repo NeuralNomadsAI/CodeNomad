@@ -95,7 +95,7 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
           <p class="settings-toggle-caption">{t("settings.opencode.setup.untested", { version: data().daemonVersion ?? data().currentVersion ?? "" })}</p>
         </Show>
         <div class="settings-info-actions">
-          <Show when={data().canUpgrade}><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled()} onClick={() => void install()}>
+          <Show when={data().canUpgrade}><button type="button" class="selector-button selector-button-primary w-auto" disabled={disabled()} onClick={() => void install()}>
             {action() === "install" ? t("settings.opencode.update.updating") : installLabel(data())}
           </button></Show>
           <Show when={data().state === "ready" && !isOpenCodeConnected() && data().serviceState !== "restart_required" && data().serviceState !== "incompatible"}>
@@ -104,7 +104,7 @@ export function OpenCodeSetupPanel(props: ParentProps = {}) {
           <Show when={isOpenCodeConnected() && canContinueOpenCodeSetup()}>
             <button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled()} onClick={() => void continueOpenCodeSetup()}>{t("settings.opencode.setup.continue")}</button>
           </Show>
-          <Show when={data().canRestart && (data().serviceState === "restart_required" || data().serviceState === "restart_available")}><button type="button" class="selector-button selector-button-secondary w-auto" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
+          <Show when={data().canRestart && (data().serviceState === "restart_required" || data().serviceState === "restart_available")}><button type="button" class="selector-button selector-button-primary w-auto" disabled={disabled() || openCodeSetupCheckError()} onClick={() => void runOpenCodeSetup("restart")}>{t("settings.opencode.setup.restart")}</button></Show>
         </div>
         <Show when={data().canUpgrade && (data().state === "missing" || data().needsSharedInstallation)}>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.sharedInstallDescription")}</p>

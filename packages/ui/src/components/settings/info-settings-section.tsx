@@ -276,7 +276,7 @@ export const InfoSettingsSection: Component = () => {
                   href={showDownloadLink().url!}
                   target="_blank"
                   rel="noopener noreferrer"
-                  class="selector-button selector-button-secondary w-auto"
+                  class="selector-button selector-button-primary w-auto"
                 >
                   {t("settings.info.updates.download")}
                 </a>
@@ -285,7 +285,7 @@ export const InfoSettingsSection: Component = () => {
               {/* Installs in place when this build can; otherwise opens the same release page. */}
               <button
                 type="button"
-                class="selector-button selector-button-secondary w-auto"
+                class="selector-button selector-button-primary w-auto"
                 onClick={() => void requestDesktopUpdate(showDownloadLink().url!)}
               >
                 {t("settings.info.updates.install")}
