@@ -36,12 +36,14 @@ test("Tokens can be collapsed, hidden and restored across reloads with legacy Pl
   })
   try {
     await page.goto(url)
-    const tokens = page.getByRole("button", { name: "Tokens", exact: true })
+    // Collapsed, the trigger's name also carries the compact token summary.
+    const tokens = page.getByRole("button", { name: /^Tokens\b/ })
     const metrics = page.locator(".session-context-panel")
     await metrics.waitFor({ state: "visible" })
     assert.equal(await page.getByRole("button", { name: "Plan", exact: true }).count(), 0)
     await tokens.click()
     await metrics.waitFor({ state: "hidden" })
+    await page.locator(".status-token-summary").waitFor()
     await tokens.click()
     await metrics.waitFor({ state: "visible" })
 
