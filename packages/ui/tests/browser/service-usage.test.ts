@@ -7,9 +7,18 @@ import os from "node:os"
 import { SettingsService } from "../../../server/src/settings/service"
 import { resolveConfigLocation } from "../../../server/src/config/location"
 import { ServiceUsage } from "../../../server/src/opencode/service-usage"
+import type { BrowserContextOptions } from "playwright"
+
+async function statsPage(fixture: Awaited<ReturnType<typeof startProductFixture>>, options: BrowserContextOptions = {}) {
+  const page = await fixture.browser.newPage(options)
+  // Events are dispatched explicitly by this fixture. A JSON stub is not a
+  // real SSE connection and must not generate unrelated reconnect failures.
+  await page.addInitScript(() => { window.EventSource = class extends EventTarget { close() {} } as any })
+  return page
+}
 
 test("service-wide usage dashboard declares scope, bounds requests, fences stale connection reads and stops when disposed", async () => {
-  const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 380, height: 1000 }, locale: "en-US" })
+  const fixture = await startProductFixture("service-usage"), page = await statsPage(fixture, { viewport: { width: 380, height: 1000 }, locale: "en-US" })
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
@@ -43,7 +52,7 @@ test("service-wide usage dashboard declares scope, bounds requests, fences stale
 })
 
 test("a mounted but hidden Preferences document does not read Stats until activation", async () => {
-  const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage()
+  const fixture = await startProductFixture("service-usage"), page = await statsPage(fixture)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(`${fixture.url}?hidden`)
@@ -61,7 +70,7 @@ test("a mounted but hidden Preferences document does not read Stats until activa
 })
 
 test("hidden Stats never read; native hints coalesce and hidden in-flight work cannot launch trailing scans", async () => {
-  const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 760, height: 1000 }, locale: "en-US" })
+  const fixture = await startProductFixture("service-usage"), page = await statsPage(fixture, { viewport: { width: 760, height: 1000 }, locale: "en-US" })
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
@@ -111,7 +120,7 @@ test("hidden Stats never read; native hints coalesce and hidden in-flight work c
 })
 
 test("Stats is reachable in the real preferences screen", async () => {
-  const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
+  const fixture = await startProductFixture("service-usage"), page = await statsPage(fixture, { viewport: { width: 1100, height: 900 }, locale: "en-US" })
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
@@ -120,6 +129,55 @@ test("Stats is reachable in the real preferences screen", async () => {
     assert.equal(await page.getByRole("navigation").getByRole("button", { name: "Stats", exact: true }).getAttribute("aria-current"), "page")
     if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE, fullPage: true })
     assert.deepEqual(errors, [])
+  } finally { await page.close(); await fixture.close() }
+})
+
+test("P1 an unresolved optional cache cannot hold fresh Stats display", async () => {
+  const fixture = await startProductFixture("service-usage"), page = await statsPage(fixture, { locale: "en-US" })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.clock.install()
+    await page.goto(`${fixture.url}?heldCache`)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.clock.runFor(100)
+    assert.equal(await page.evaluate(() => (window as any).fixture.queries.length), 1, "fresh HTTP starts before cache release")
+    assert.equal(await page.locator(".usage-metrics").count(), 1)
+    await page.evaluate(() => (window as any).fixture.releaseCache())
+    await page.clock.runFor(100)
+    assert.equal(await page.locator(".usage-metrics").count(), 1, "late empty cache cannot erase fresh totals")
+  } finally { await page.close(); await fixture.close() }
+})
+
+test("P3 transient disconnect and failed reconnect keep explicitly stale totals and charts", async () => {
+  const fixture = await startProductFixture("service-usage"), page = await statsPage(fixture, { locale: "en-US" })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(fixture.url); await page.locator(".usage-metrics").waitFor()
+    await page.clock.install()
+    await page.evaluate(() => (window as any).fixture.connection("disconnected", 1))
+    await page.evaluate(() => (window as any).fixture.transport("disconnected"))
+    assert.equal(await page.locator(".usage-metrics").count(), 1, "disconnect keeps last known owner's totals")
+    assert.equal(await page.locator("meter").count(), 2)
+    await page.getByText("Previous saved statistics · awaiting refresh", { exact: true }).waitFor()
+    await page.evaluate(() => { (window as any).fixture.fail(); (window as any).fixture.connection("connected", 2) })
+    await page.clock.runFor(100)
+    await page.getByRole("alert").waitFor()
+    assert.equal(await page.locator(".usage-metrics").count(), 1)
+    // A different authenticated channel or native discovery root is NOT a
+    // transient disconnect. Fence an older result and revoke the old display.
+    for (const change of ["changeOwner", "changeDiscovery"]) {
+      await page.evaluate(() => { (window as any).fixture.defer(); (window as any).fixture.refresh("session.deleted") })
+      await page.clock.runFor(100)
+      await page.evaluate(change => { (window as any).fixture[change](); (window as any).fixture.fail(); (window as any).fixture.connection("connected", change === "changeOwner" ? 3 : 4) }, change)
+      await page.clock.runFor(100)
+      assert.equal(await page.locator(".usage-metrics").count(), 0, `${change} clears old service totals`)
+      await page.evaluate(() => (window as any).fixture.release())
+      await page.clock.runFor(100)
+      assert.equal(await page.locator(".usage-metrics").count(), 0, "superseded native results stay fenced")
+      await page.getByRole("button", { name: "Refresh", exact: true }).click()
+      await page.clock.runFor(100)
+      assert.equal(await page.locator(".usage-metrics").count(), 1)
+    }
   } finally { await page.close(); await fixture.close() }
 })
 
@@ -148,14 +206,14 @@ test("a new Preferences renderer/backend restores totals and charts before a two
   const reopen = () => new ServiceUsage(manager, new SettingsService(resolveConfigLocation(path.join(root, "config.yaml")), undefined, logger))
   let service = reopen()
   const pageFor = async (instance: string) => {
-    const page = await fixture.browser.newPage({ locale: "en-US" })
+    const page = await statsPage(fixture, { locale: "en-US" })
     await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
     await page.route("**/api/workspaces/*/service-usage**", async route => {
       const url = new URL(route.request().url()), id = url.pathname.split("/")[3]
       try {
-        const result = url.pathname.endsWith("/cache")
+        const result = url.pathname.endsWith("/owner") ? await service.owner(id) : url.pathname.endsWith("/cache")
           ? await service.cached(id, url.searchParams.get("timezone")!, url.searchParams.has("days") ? Number(url.searchParams.get("days")) : undefined)
-          : await service.read(id, { from: Number(url.searchParams.get("from")), to: Number(url.searchParams.get("to")), timezone: url.searchParams.get("timezone")! })
+          : await service.read(id, { from: Number(url.searchParams.get("from")), to: Number(url.searchParams.get("to")), timezone: url.searchParams.get("timezone")!, restorePeriod: url.searchParams.get("restorePeriod") === "true" })
         await route.fulfill({ contentType: "application/json", body: JSON.stringify(result) })
       } catch { await route.fulfill({ status: 503, contentType: "application/json", body: "{}" }) }
     })
@@ -171,7 +229,7 @@ test("a new Preferences renderer/backend restores totals and charts before a two
     await cold.getByRole("button", { name: "Refresh", exact: true }).waitFor({ state: "visible" })
     await cold.waitForFunction(() => (document.querySelector(".usage-toolbar button") as HTMLButtonElement)?.disabled === false && (window as any).fixture.queries.length === 2)
     await cold.close()
-    service = reopen(); steps = 99 // New backend/settings and JS window; no renderer Map survives.
+    await service.close(); service = reopen(); steps = 99 // New backend/settings and JS window; no renderer Map survives.
     const warm = await pageFor("new-workspace-uuid")
     await warm.locator(".usage-metrics").waitFor()
     const warmMs = await warm.evaluate(() => (window as any).fixture.metricsAt - (window as any).fixture.mountedAt)
@@ -188,5 +246,69 @@ test("a new Preferences renderer/backend restores totals and charts before a two
     assert.equal(await total.innerText(), "99")
     console.log(`Stats isolated delayed-read latency: cold=${Math.round(coldMs)}ms, restored=${Math.round(warmMs)}ms; native delay=2000ms; calls=${calls}`)
     await warm.close()
-  } finally { await fixture.close(); await rm(root, { recursive: true, force: true }) }
+  } finally { await fixture.close(); await service.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test("P1/P2 held discovery cannot block real fresh display; abandoned periods cannot change restart restoration", async () => {
+  const parent = path.join(os.tmpdir(), "opencode"); await mkdir(parent, { recursive: true })
+  const root = await mkdtemp(path.join(parent, "stats-period-race-")), fixture = await startProductFixture("service-usage")
+  const logger: any = { child() { return this }, warn() {}, info() {}, debug() {} }
+  let release!: () => void, releaseDiscovery!: () => void, released!: () => void, oldReturned!: () => void, entered!: () => void
+  const held = new Promise<void>(resolve => { release = resolve }), done = new Promise<void>(resolve => { oldReturned = resolve })
+  const finished = new Promise<void>(resolve => { released = resolve })
+  const admitted = new Promise<void>(resolve => { entered = resolve })
+  const discovery = new Promise<void>(resolve => { releaseDiscovery = resolve })
+  const calls: number[] = [], record = { path: "/fixture/project" }
+  const connection = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "fixture-only" } }, assertCurrent() {}, client: {
+    config: { get: async () => { await discovery; return [{ type: "directory", path: "/fixture/discovery" }] } },
+    session: { stats: async (query: any) => {
+      const days = (query.to - query.from) / 86400000; calls.push(days)
+      if (days === 30) { entered(); await held; released() }
+      const tokens = { input: 1, output: 1, reasoning: 0, cache: { read: 0, write: 0 } }
+      return { range: { from: query.from, to: query.to }, sessions: 1, subagents: 0, prompts: 1, steps: days,
+        tokens, cost: 0, tools: { mode: "none" }, activeDays: 1, streak: 1, models: [], activity: [{ date: "2026-10-20", steps: days }] }
+    } },
+  } }
+  const manager: any = { get: () => record, getSharedServiceConnection: async () => connection,
+    getServicePathStyle: () => "posix", getServiceWslDistro: () => undefined }
+  const reopen = () => new ServiceUsage(manager, new SettingsService(resolveConfigLocation(path.join(root, "config.yaml")), undefined, logger))
+  let service = reopen()
+  const open = async (instance: string) => {
+    const page = await statsPage(fixture, { locale: "en-US", timezoneId: "UTC" })
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    await page.route("**/api/workspaces/*/service-usage**", async route => {
+      const url = new URL(route.request().url())
+      try {
+        const result = url.pathname.endsWith("/owner") ? await service.owner(instance)
+          : url.pathname.endsWith("/cache") ? await service.cached(instance, "UTC", url.searchParams.has("days") ? Number(url.searchParams.get("days")) : undefined)
+          : await service.read(instance, { from: Number(url.searchParams.get("from")), to: Number(url.searchParams.get("to")), timezone: "UTC", restorePeriod: url.searchParams.get("restorePeriod") === "true" })
+        await route.fulfill({ contentType: "application/json", body: JSON.stringify(result) })
+      } catch { /* Browser cancellation is deliberately NOT backend cancellation. */ }
+      finally { if (calls.includes(30) && url.pathname.endsWith("service-usage") && url.searchParams.get("from") === String(Number(url.searchParams.get("to")) - 30 * 86400000)) oldReturned() }
+    })
+    await page.goto(`${fixture.url}?backend&instance=${instance}`)
+    return page
+  }
+  try {
+    const page = await open("before-restart")
+    await page.waitForFunction(() => (window as any).fixture.queries.length === 1)
+    // The route has admitted the real initial native request before selection.
+    await admitted
+    assert.deepEqual(calls, [30])
+    await page.getByLabel("Period", { exact: true }).selectOption("7")
+    await page.waitForFunction(() => [...document.querySelectorAll(".usage-metrics dt")].find(el => el.textContent === "Steps")?.nextElementSibling?.textContent === "7")
+    // Both the UI cache request and the backend's optional identity work are
+    // still held. These fresh totals came through the real production service.
+    releaseDiscovery(); await service.cached("before-restart", "UTC", 7)
+    release(); await finished; await done
+    assert.equal(await page.getByLabel("Period", { exact: true }).inputValue(), "7")
+    assert.equal(await page.locator(".usage-metrics dd").nth(3).innerText(), "7")
+    await page.close(); await service.close(); service = reopen()
+    assert.equal((await service.cached("after-restart", "UTC")).days, 7)
+    const restored = await open("after-restart")
+    await restored.locator(".usage-metrics").waitFor()
+    assert.equal(await restored.getByLabel("Period", { exact: true }).inputValue(), "7")
+    assert.deepEqual(calls, [30, 7, 7], "restart chooses saved period without waiting for optional discovery")
+    await restored.close()
+  } finally { release(); releaseDiscovery(); await fixture.close(); await service.close(); await rm(root, { recursive: true, force: true }) }
 })

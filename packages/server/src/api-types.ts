@@ -888,5 +888,8 @@ export type {
 export type { PruneRequest, PruneResult } from "./opencode/session-pruning/contract"
 export interface ServiceUsageSnapshot {
   scope: "service"
+  owner?: string
+  identity?: string
+  connection?: string
   stats: import("@opencode/client").SessionStatsInfo
 }

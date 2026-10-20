@@ -28,7 +28,7 @@ where their authority, lifetime or runtime differs.
 | Timeline previews | At most 512 bounded Markdown excerpts. Visible-nearby batches of 12, hovered ID first; obsolete demand cancels. Thirty-second age prompts on-demand revalidation only. Generation, mutation and undo fence reuse. No transcript-window loads or geometry changes. | `packages/ui/src/stores/timeline-previews.ts` |
 | Providers/models | Retained signals; shared in-flight catalogue load; dirty-bit trailing refresh; instance, location and request-generation checks. No completed-result TTL inside `fetchProviders` itself. | `packages/ui/src/stores/session-api.ts` |
 | Provider Usage | Panel-local snapshot; same-location `provider.updated` revalidates in place with one in-flight read and coalesced trailing demand. Window-label keys preserve quota DOM across responses. Duplicate transport statuses and instance/status/native-generation snapshots are no-ops, not reconnects. A changed native generation still fences quotas even if the disconnect was missed. Credential/integration/config events, native `server.connected`, real connection transitions and source changes clear the snapshot immediately and fence old responses/trailing demand. Failures revoke quotas rather than retain a possibly different account. Hidden panels do not read; no global browser quota cache. | `components/session/provider-usage-panel.tsx`, `provider-usage-state.ts` |
-| Stats | Backend-owned `state.ui.serviceUsage` saves eight validated display snapshots (1 MiB aggregate), period and timezone. Authenticated native discovery root/execution host/channel fingerprint plus exact opened folder, not workspace UUID, isolate reuse. Preferences only reads this cache; it never writes the opener's client state. Cached totals/charts render before native revalidation, explicitly stale; failures retain them. Only a mounted, visible Stats section reads. Hiding/disposal cancels queued demand and fences in-flight publication; activation reads once. Terminal hints use the existing five-second activity cooldown and one trailing refresh; deletion/pruning, explicit refresh, period changes and reconnect retain their demand semantics. No polling or transcript reads. | server `opencode/service-usage-cache.ts`, `service-usage.ts`; UI `settings/usage-settings-section.tsx` |
+| Stats | Backend-owned `state.ui.serviceUsage` saves eight validated display snapshots and eight period choices (1 MiB aggregate). Authenticated native discovery root/execution host/channel fingerprint plus exact opened folder, not workspace UUID, isolate snapshot reuse. Native aggregation, optional restoration and owner checks run independently; discovery cannot hold fresh totals. Backend admission order controls the saved period across windows, not response order or client timestamps. Preferences never writes the opener's client state. Previous totals/charts remain explicitly stale through same-owner disconnect/errors; a verified different owner/discovery identity revokes them. A mounted, document-visible Stats section reads; hiding/disposal cancels queued demand and fences in-flight publication. Terminal hints use the shared five-second activity cooldown. Native hidden/minimized/occluded window behavior is not qualified (see below). No polling or transcript reads. | server `opencode/service-usage-cache.ts`, `service-usage.ts`; UI `settings/usage-settings-section.tsx` |
 | Session model selection | Native selection events invalidate rather than overwrite the displayed selection, because SSE echoes can lag successful HTTP writes. Coalesced authoritative reads share the session admission queue with prompts and explicit selections; client/generation and captured-selection checks fence late responses. Catalog merges preserve pending optimistic choices; successful writes publish a fresh model object so pre-confirmation snapshots lose authority. Read failures retain display state until the next event or reconnect refresh. | `stores/session-model-reconciliation.ts`, `stores/session-action-queue.ts`, `stores/session-generation-recovery.ts` |
 | OpenCode setup | Shared in-flight status read plus coalesced trailing refresh for focus/visibility/reconnect demand. Executable changes and explicit actions fence old responses. Failed reads retain version/path diagnostics but revoke the connected claim and stale reload/restart controls; Continue checks again before retrying the pending workspace. Activation requires a successful pre-action status read. | UI `stores/opencode-setup.ts`, `components/settings/opencode-setup-panel.tsx` |
 | Filesystem invalidations | Host directory observations and native filesystem events coalesce before cache publication: 100 ms quiet-case delay, then at most once per five seconds in continuous activity, with no idle timer. Explicit mutations/recovery invalidate immediately. Workspace versions target the browsing root and listed directory; only changed visible directories reread. Hidden/collapsed caches stay stale until demand. Bounded metadata falls back conservatively to full invalidation. | `filesystem-events.ts`, `useWorkspaceTree.ts`, server `workspaces/file-watches.ts` |
@@ -65,12 +65,53 @@ UUID are serialized. Changing the authenticated service channel deliberately
 misses the cache; snapshots never authorize a Location or mutation. Period and
 timezone stay separate, and corrupt/oversized entries are optional display misses.
 
+Fresh aggregation does not await discovery or cache restoration. The UI starts a
+cheap authenticated owner check, an optional cache read and native aggregation
+in parallel. Initial native reads can restore the selected period synchronously
+from bounded UI state using the fast execution-host/channel/folder owner key;
+that preference is not authorization to reuse metrics. Cache data still requires
+the full native discovery identity. A late cache response never replaces fresh
+totals or their period. Late discovery may attach identity metadata only when its
+opaque live connection token matches the fresh response; tokens are not saved.
+
+The backend assigns monotonically increasing receipt order before asynchronous
+connection acquisition. Only an owned, current connection admits that order to
+the bounded owner/timezone frontier (64 entries, retired-order floor). The latest
+admitted request chooses the saved period, including across windows. Older
+responses and out-of-order discovery cannot publish over it. Client `from`/`to`
+values never act as freshness authority. Optional snapshot publication is capped
+at 32 pending operations, rechecks connection/workspace/admission ownership and
+uses the existing 10-second discovery deadline; backend close aborts and drains
+these operations before their Settings owner can be disposed.
+
+Disconnect keeps only explicitly stale, last-known-owner display data; it grants
+no connected or mutation authority. Reconnect checks host/channel/folder promptly
+without discovery. A different owner clears old data, and a different full
+discovery identity clears it when verified. If a previous fresh display had no
+verified discovery identity, a changed live connection cannot adopt it blindly.
+Unknown/failing reconnect observations do not relabel old metrics as new data.
+
+**Native visibility limit:** the visibility regressions change the document's
+visibility state synthetically. The reviewed Electron Preferences bridge exposes
+minimize as an action but no passive visible/minimized subscription; host-side
+`BrowserWindow.isVisible/isMinimized` is not a renderer hook. No corresponding
+shared Preferences visibility observation is exposed by the Tauri abstraction.
+The gatekeeper's isolated native minimize/background probes did not produce a
+hidden document. This change does not claim Electron/Tauri hidden/minimized or
+occlusion acceptance. A visible but unfocused window is not necessarily unseen,
+so blur is deliberately not treated as hidden. No native window framework or
+installed-user-app probe was added; reliable native visibility remains separate
+work if the hosts do not publish document visibility transitions.
+
 The isolated browser test recreates both the renderer and SettingsService, changes
 the workspace UUID, and delays `session.stats` by 2 s: observed cold display
 2,120 ms, restored totals/charts 81 ms, followed by replacement from the current
 read. A separate hidden-start regression fails on the original component (one
 Stats call while hidden, expected zero). These are fixture observations, not a
-claim about the user's service or upstream speed.
+claim about the user's service or upstream speed. Additional deferred-promise
+regressions hold discovery through native admission and fresh rendering, release
+abandoned 30-day reads after a seven-day selection, recreate the backend/renderer,
+and verify same-owner disconnect retention and changed-owner/discovery rejection.
 
 Reviewed OpenCode 2.1.0 source (`packages/server/src/handlers/session.ts:71-90`,
 `packages/core/src/session/stats.ts:85-190,282-315`) invokes aggregation on every

@@ -9,6 +9,7 @@ import path from "node:path"
 import { SettingsService } from "../settings/service"
 import { resolveConfigLocation } from "../config/location"
 import { ServiceUsageCache } from "./service-usage-cache"
+import { applyMergePatch } from "../settings/merge-patch"
 
 function fixture() {
   let current = true, present = true, defer: (() => void) | undefined
@@ -73,7 +74,9 @@ test("Stats UI-owner snapshots survive a new backend/settings instance, not work
   try {
     const first = fixture(), owner = settings()
     owner.mergePatchOwner("state", "ui", { recentFolders: ["keep-me"] })
-    await new ServiceUsage(first.manager, owner).read("old-uuid", period)
+    const firstService = new ServiceUsage(first.manager, owner)
+    await firstService.read("old-uuid", period)
+    await firstService.cached("old-uuid", "UTC") // Observe completion of optional identity publication, not a timer.
     const serialized = JSON.stringify(owner.getOwner("state", "ui"))
     assert.ok(!serialized.includes("secret-must-not-persist") && !serialized.includes("old-uuid") && !serialized.includes("/fixture"))
     const reopened = fixture(), restored = settings(), service = new ServiceUsage(reopened.manager, restored)
@@ -98,13 +101,13 @@ test("Stats UI-owner snapshots survive a new backend/settings instance, not work
   } finally { await rm(root, { recursive: true, force: true }) }
 })
 
-test("Stats cache validates optional display state, caps retention and keeps a newer result", () => {
+test("Stats cache validates optional display state and caps retention without treating query timestamps as admission order", () => {
   let owner: any = { unrelated: true }
   const settings: any = { getOwner: () => owner, mergePatchOwner: (_kind: string, _owner: string, patch: any) => { owner = { ...owner, ...patch } } }
   const cache = new ServiceUsageCache(settings), identity = "a".repeat(64), snapshot = { scope: "service" as const, stats: stats(1, 1 + 30 * 86_400_000) }
   cache.set(identity, "UTC", 30, snapshot)
   cache.set(identity, "UTC", 30, { ...snapshot, stats: { ...snapshot.stats, range: { from: 0, to: 30 * 86_400_000 }, steps: 1 } })
-  assert.equal(cache.get(identity, "UTC").snapshot?.stats.steps, 42)
+  assert.equal(cache.get(identity, "UTC").snapshot?.stats.steps, 1, "freshness belongs to service admission, not a client-supplied range end")
   for (const broken of [null, { version: 2, entries: owner.serviceUsage.entries }, { version: 1, entries: [{ ...owner.serviceUsage.entries[0], days: 7 }] },
     { version: 1, entries: [{ ...owner.serviceUsage.entries[0], snapshot: { ...snapshot, stats: { ...snapshot.stats, steps: -1 } } }] }]) {
     owner.serviceUsage = broken
@@ -119,7 +122,77 @@ test("optional cache identity/storage failures do not suppress fresh native tota
   const period = { from: 1, to: 1 + 7 * 86_400_000, timezone: "UTC" }
   const settings: any = { getOwner: () => ({}), mergePatchOwner: () => { throw new Error("fixture disk unavailable") } }
   const unavailable = fixture()
-  unavailable.connection.client.config.get = async () => { throw new Error("fixture identity unavailable") }
-  assert.equal((await new ServiceUsage(unavailable.manager, settings).read("w", period)).stats.steps, 42)
+  unavailable.connection.client.config.get = () => { throw new Error("fixture identity unavailable") }
+  const service = new ServiceUsage(unavailable.manager, settings)
+  assert.equal((await service.read("w", period)).stats.steps, 42)
+  await service.close()
   assert.equal((await new ServiceUsage(fixture().manager, settings).read("w", period)).stats.steps, 42)
+})
+
+test("P1 held optional discovery never delays native Stats admission or its result", async () => {
+  const f = fixture(), settings: any = { getOwner: () => ({}), mergePatchOwner: () => ({}) }
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  f.connection.client.config.get = async () => { await held; return [{ type: "directory", path: "/fixture/discovery" }] }
+  const service = new ServiceUsage(f.manager, settings)
+  const pending = service.read("w", query)
+  try {
+    await new Promise(resolve => setImmediate(resolve))
+    assert.equal(f.calls.length, 1, "optional config.get must not gate session.stats")
+    assert.equal((await pending).stats.steps, 42, "fresh totals finish while discovery is held")
+  } finally { release(); await pending }
+})
+
+test("P2 abandoned periods cannot reset restoration, including reversed connection admission across windows", async () => {
+  for (const holdContext of [false, true]) {
+    const f = fixture()
+    let owner: any = {}, release!: () => void
+    const held = new Promise<void>(resolve => { release = resolve })
+    const settings: any = { getOwner: () => owner, mergePatchOwner: (_kind: string, _owner: string, patch: any) => { owner = applyMergePatch(owner, patch); return owner } }
+    if (holdContext) {
+      let first = true
+      f.manager.getSharedServiceConnection = async () => { if (first) { first = false; await held }; return f.connection }
+    } else {
+      f.connection.client.session.stats = async input => { if ((input.to - input.from) / 86400000 === 30) await held; return stats(input.from, input.to) }
+    }
+    const service = new ServiceUsage(f.manager, settings), to = 365 * 86400000
+    const abandoned = service.read("window-a", { from: to - 30 * 86400000, to, timezone: "UTC" })
+    await new Promise(resolve => setImmediate(resolve))
+    await service.read("window-b", { from: to - 7 * 86400000, to, timezone: "UTC" })
+    release(); await abandoned
+    const restored = await new ServiceUsage(f.manager, settings).cached("new-workspace-id", "UTC")
+    assert.equal(restored.days, 7, `response order must not choose period (held context=${holdContext})`)
+  }
+})
+
+test("optional persistence is cancelled on shutdown, even when discovery ignores abort", async () => {
+  const f = fixture(); let owner: any = {}, release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  f.connection.client.config.get = async () => { await held; return [{ type: "directory", path: "/fixture/discovery" }] }
+  const settings: any = { getOwner: () => owner, mergePatchOwner: (_kind: string, _owner: string, patch: any) => { owner = applyMergePatch(owner, patch); return owner } }
+  const service = new ServiceUsage(f.manager, settings)
+  await service.read("w", { from: 1, to: 1 + 7 * 86400000, timezone: "UTC" })
+  await service.close()
+  const before = JSON.stringify(owner)
+  release(); await new Promise(resolve => setImmediate(resolve))
+  assert.equal(JSON.stringify(owner), before, "closed backend cannot write after its owner is disposed")
+  assert.deepEqual(owner.serviceUsage.entries, [])
+})
+
+test("P2 out-of-order discovery across connections cannot reset the latest admitted period", async () => {
+  const first = fixture(), second = fixture(); let owner: any = {}, release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  first.connection.client.config.get = async () => { await held; return [{ type: "directory", path: "/old/discovery" }] }
+  const settings: any = { getOwner: () => owner, mergePatchOwner: (_kind: string, _owner: string, patch: any) => { owner = applyMergePatch(owner, patch); return owner } }
+  let connection = first.connection
+  first.manager.getSharedServiceConnection = async () => connection
+  const service = new ServiceUsage(first.manager, settings), to = 365 * 86400000
+  await service.read("window-a", { from: to - 30 * 86400000, to, timezone: "UTC" })
+  connection = second.connection
+  await service.read("window-b", { from: to - 7 * 86400000, to, timezone: "UTC" })
+  await service.cached("window-b", "UTC")
+  release(); await new Promise(resolve => setImmediate(resolve))
+  assert.equal((await new ServiceUsage(first.manager, settings).cached("restarted", "UTC")).days, 7)
+  assert.equal(owner.serviceUsage.entries.length, 1, "late old identity cannot publish a superseded snapshot")
+  await service.close()
 })

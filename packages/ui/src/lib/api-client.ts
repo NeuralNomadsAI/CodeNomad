@@ -402,11 +402,14 @@ export const serverApi = {
   getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
   },
-  getCachedServiceUsage(instanceId: string, timezone: string, days?: number, signal?: AbortSignal): Promise<{ days: number; snapshot?: import("../../../server/src/api-types").ServiceUsageSnapshot }> {
+  getServiceUsageOwner(instanceId: string, signal?: AbortSignal): Promise<{ owner: string; identity?: string; connection?: string }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/owner`, { signal })
+  },
+  getCachedServiceUsage(instanceId: string, timezone: string, days?: number, signal?: AbortSignal): Promise<{ days: number; owner?: string; identity?: string; connection?: string; snapshot?: import("../../../server/src/api-types").ServiceUsageSnapshot }> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/cache?${new URLSearchParams({ timezone, ...(days ? { days: String(days) } : {}) })}`, { signal })
   },
-  getServiceUsage(instanceId: string, query: { from: number; to: number; timezone: string }, signal?: AbortSignal): Promise<import("../../../server/src/api-types").ServiceUsageSnapshot> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone })}`, { signal })
+  getServiceUsage(instanceId: string, query: { from: number; to: number; timezone: string; restorePeriod?: boolean }, signal?: AbortSignal): Promise<import("../../../server/src/api-types").ServiceUsageSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone, ...(query.restorePeriod ? { restorePeriod: "true" } : {}) })}`, { signal })
   },
   setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })

@@ -23,37 +23,72 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
   let refresh = () => {}
   createEffect(() => {
     const id = instanceId(), selected = choice()?.id === id ? choice()?.days : undefined
-    let count = selected ?? 30, disposed = false, revision = 0, invalidation = 0, restore = true
+    let count = selected ?? 30, disposed = false, revision = 0, invalidation = 0, restore = true, connected = true
+    let periodKnown = selected !== undefined, freshEpoch = -1
     let controller: AbortController | undefined
     setDays(count); setSnapshot(undefined); setError(false); setBusy(false); setStale(true)
     if (!id) return
     const current = (epoch: number) => !disposed && untrack(visible) && epoch === revision
     const load = async () => {
-      if (disposed || !untrack(visible)) return
-      const epoch = revision, observed = invalidation
+      if (disposed || !untrack(visible) || !connected) return
+      controller?.abort()
+      const epoch = ++revision, observed = invalidation
       controller = new AbortController()
       const signal = controller.signal
+      let verifiedOwner: string | undefined, verifiedIdentity: string | undefined
       setBusy(true)
+      // These are independent reads: optional discovery/restoration never gates
+      // native aggregation. Only the last known owner survives disconnects.
+      const verify = (owner?: string, identity?: string, connection?: string) => {
+        if (!current(epoch) || freshEpoch === epoch) return
+        const previous = untrack(snapshot)
+        if (previous && (owner && previous.owner && owner !== previous.owner
+          || identity && previous.identity && identity !== previous.identity
+          || !previous.identity && connection && previous.connection && connection !== previous.connection)) setSnapshot(undefined)
+      }
+      void serverApi.getServiceUsageOwner(id, signal).then(value => {
+        if (!current(epoch) || freshEpoch === epoch) return
+        verify(value.owner, value.identity, value.connection)
+        verifiedOwner = value.owner; verifiedIdentity = value.identity
+      }).catch(() => {})
       if (restore) {
-        try {
-          const cached = await serverApi.getCachedServiceUsage(id, timezone, selected, signal)
+        void serverApi.getCachedServiceUsage(id, timezone, selected, signal).then(cached => {
           if (!current(epoch)) return
-          count = cached.days; setDays(count)
-          setSnapshot(cached.snapshot); setStale(true)
-          restore = false
-        } catch { if (!current(epoch)) return /* Cache failure must not suppress a real read. */ }
+          if (freshEpoch === epoch) {
+            const fresh = untrack(snapshot)
+            // Bind identity metadata only, never cached totals/period, and only
+            // when discovery belongs to the very same native connection.
+            if (fresh && fresh.connection && fresh.connection === cached.connection && fresh.owner === cached.owner
+              && !fresh.identity && cached.identity) setSnapshot({ ...fresh, identity: cached.identity })
+            return
+          }
+          if (verifiedOwner && cached.owner && verifiedOwner !== cached.owner
+            || verifiedIdentity && cached.identity && verifiedIdentity !== cached.identity) return
+          verify(cached.owner, cached.identity, cached.connection)
+          verifiedOwner = cached.owner ?? verifiedOwner; verifiedIdentity = cached.identity ?? verifiedIdentity
+          count = cached.days; periodKnown = true; setDays(count)
+          if (cached.snapshot) { setSnapshot(cached.snapshot); setStale(true) }
+        }).catch(() => {}).finally(() => {
+          if (current(epoch)) restore = false
+        })
       }
       const to = Date.now()
       try {
-        const next = await serverApi.getServiceUsage(id, { from: to - count * 86_400_000, to, timezone }, signal)
-        if (current(epoch)) { setSnapshot(next); setError(false); setStale(observed !== invalidation) }
+        const next = await serverApi.getServiceUsage(id, { from: to - count * 86_400_000, to, timezone, ...(!periodKnown ? { restorePeriod: true } : {}) }, signal)
+        if (current(epoch)) {
+          if (verifiedOwner && next.owner && verifiedOwner !== next.owner
+            || verifiedIdentity && next.identity && verifiedIdentity !== next.identity) throw new Error("Stats display owner changed")
+          freshEpoch = epoch
+          count = (next.stats.range.to - next.stats.range.from) / 86_400_000; periodKnown = true; setDays(count)
+          setSnapshot({ ...next, identity: next.identity ?? verifiedIdentity }); setError(false); setStale(observed !== invalidation)
+        }
       } catch { if (current(epoch)) { setError(true); setStale(true) } }
       if (current(epoch)) setBusy(false)
     }
     const scheduler = createEventRefreshScheduler(load)
     const invalidate = (urgency: RefreshUrgency = "urgent") => {
       invalidation++; setStale(true)
-      if (untrack(visible)) scheduler.schedule("stats", urgency)
+      if (untrack(visible) && connected) scheduler.schedule("stats", urgency)
     }
     refresh = () => invalidate()
     // Terminal events are invalidation hints, not proof a task finished. Bursts
@@ -65,22 +100,23 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     })
     const revoke = () => {
       revision++; controller?.abort(); scheduler.cancel("stats"); restore = true
-      setSnapshot(undefined); setBusy(false); setStale(true)
+      setBusy(false); setStale(true)
     }
     let connectionStatus: string | undefined
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type !== "instance.eventStatus" || payload.instanceId !== id) return
       const key = `${payload.status}:${payload.generation}`
       if (key === connectionStatus) return
-      connectionStatus = key; revoke()
+      connectionStatus = key; connected = payload.status === "connected"; revoke()
       if (payload.status === "connected") invalidate()
     })
-    const reconnect = serverEvents.onOpen(() => { revoke(); invalidate() })
+    const reconnect = serverEvents.onOpen(() => { connected = true; revoke(); invalidate() })
+    const transport = serverEvents.onTransportStatus(status => { if (status === "disconnected") { connected = false; revoke() } })
     createEffect(() => {
       if (visible()) invalidate()
       else { revision++; controller?.abort(); scheduler.cancel("stats"); setBusy(false); setStale(true) }
     })
-    onCleanup(() => { disposed = true; controller?.abort(); scheduler.cancel("stats"); events(); status(); reconnect(); refresh = () => {} })
+    onCleanup(() => { disposed = true; controller?.abort(); scheduler.cancel("stats"); events(); status(); reconnect(); transport(); refresh = () => {} })
   })
   const number = (value: number) => new Intl.NumberFormat(locale()).format(value)
   const money = (value: number) => new Intl.NumberFormat(locale(), { style: "currency", currency: "USD", maximumFractionDigits: 4 }).format(value)
