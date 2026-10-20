@@ -240,4 +240,4 @@ This applies to the Tauri WebKitGTK build. Electron uses Chromium and can be use
 
 ---
 
-**Built with ♥ by [Neural Nomads](https://github.com/NeuralNomadsAI)** · [MIT License](LICENSE) · [Privacy policy](PRIVACY.md)
+**Built with ♥ by [Neural Nomads](https://github.com/NeuralNomadsAI)** · [MIT License](LICENSE) · [Privacy policy](PRIVACY.md) · [Code signing policy](CODE_SIGNING.md)
