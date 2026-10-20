@@ -420,7 +420,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   createEffect(on(() => props.revealActiveToken, () => { browsingRail = false }))
   createEffect(() => {
     props.revealActiveToken
-    const activeId = props.activeSegmentId
+    const activeId = activeVisibleId()
     const index = activeId ? segmentIndexById().get(activeId) : undefined
     const handle = virtualizerHandle()
     // Wait for the exact extent to reach layout, but never queue a reveal past
@@ -473,10 +473,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         }
       }
 
-      // A marker follows its tool type (the one its icon shows); the active
-      // marker and pending permissions stay visible, as with hidden tools before.
-      const hidden = segment.type === "tool" && !hasActivePermission && props.activeSegmentId !== segment.id
-        && Boolean(props.isToolHidden?.(segment.toolName ?? ""))
+      // A marker follows its tool type (the one its icon shows); pending permissions stay visible.
+      const hidden = segment.type === "tool" && !hasActivePermission && Boolean(props.isToolHidden?.(segment.toolName ?? ""))
 
       result.set(segment.id, {
         hasActivePermission,
@@ -496,6 +494,20 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
 
   const visibleSegments = createMemo(() => props.segments.filter(segment => !segmentStateFor(segment.id).hidden))
   const segmentIndexById = createMemo(() => new Map(visibleSegments().map((segment, index) => [segment.id, index])))
+  // The transcript reports a message's first marker, often a tool marker. When
+  // that marker is hidden, the message's first visible marker stands in for it.
+  const messageBySegmentId = createMemo(() => new Map(props.segments.map(segment => [segment.id, segment.messageId])))
+  const firstVisibleByMessage = createMemo(() => {
+    const result = new Map<string, string>()
+    for (const segment of visibleSegments()) if (!result.has(segment.messageId)) result.set(segment.messageId, segment.id)
+    return result
+  })
+  const activeVisibleId = createMemo(() => {
+    const id = props.activeSegmentId
+    if (!id || segmentIndexById().has(id)) return id ?? null
+    const messageId = messageBySegmentId().get(id)
+    return messageId === undefined ? null : firstVisibleByMessage().get(messageId) ?? null
+  })
   const segmentSpacerHeights = createMemo(() => {
     const states = segmentStates()
     const result = new Map<string, number>()
@@ -558,7 +570,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
       >
         <TimelineVirtualList register={setVirtualizerHandle} onVisibleItems={setVisiblePreviewSegments} items={visibleSegments()} scrollElement={scrollElement()} gap={segment => segmentSpacerHeights().get(segment.id) ?? 0}>
           {(segment) => {
-            const isActive = () => props.activeSegmentId === segment.id
+            const isActive = () => activeVisibleId() === segment.id
             const isSearchMatch = () => props.searchMatchedSegmentIds?.().has(segment.id) ?? false
             const isActiveSearchMatch = () => props.activeSearchSegmentId?.() === segment.id
             const state = () => segmentStateFor(segment.id)
