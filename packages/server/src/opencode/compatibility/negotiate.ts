@@ -65,6 +65,12 @@ export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch
   if (modern && !body(`${session}/environment`, "variables", "put")) {
     throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "session_environment")
   }
+  // The pinned client reducer consumes 2.1's replay shape: `native`, never `state`/`recent`.
+  const fields = (name: string) => object(object(document.components?.schemas?.[name]).properties)
+  const text = fields("Session.Message.Assistant.Text"), compaction = fields("Session.Message.Compaction.Completed")
+  if (modern && !("native" in text && !("state" in text) && "metadata" in compaction && !("recent" in compaction))) {
+    throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "native_contract")
+  }
   const profile = modern ? "modern" : "legacy"
   const identity = runtimeIdentity(endpoint)
   if (identity?.contract) {

@@ -1,6 +1,6 @@
 import type {
   ModelRef,
-  SessionMessageProviderState,
+  SessionMessageNative,
   SessionStructuredError,
   SessionMessageInfo,
 } from "@opencode/client"
@@ -25,7 +25,7 @@ interface ToolMessagePart extends PartBase { type: "tool"; tool: string; state?:
 interface CompactionMessagePart extends PartBase {
   type: "compaction"
   model?: ModelRef
-  providerState?: SessionMessageProviderState
+  native?: SessionMessageNative
 }
 interface StepStartMessagePart extends PartBase { type: "step-start" }
 interface StepFinishMessagePart extends PartBase { type: "step-finish" }

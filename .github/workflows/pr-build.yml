@@ -585,7 +585,9 @@ jobs:
           $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
           $seeds = @(
             @{ scope = '@opencode'; version = '2.0.3'; command = 'opencode' },
-            @{ scope = '@opencode-ai'; version = '0.0.0-beta-19271'; command = 'opencode2' }
+            @{ scope = '@opencode-ai'; version = '0.0.0-beta-19271'; command = 'opencode2' },
+            # The last release before the 2.1 native replay contract: the usual upgrade path.
+            @{ scope = '@opencode'; version = '2.0.32'; command = 'opencode' }
           )
           $oldClis = foreach ($entry in $seeds) {
             $seed = Join-Path $env:RUNNER_TEMP "opencode-migration-seed-$($entry.version)"

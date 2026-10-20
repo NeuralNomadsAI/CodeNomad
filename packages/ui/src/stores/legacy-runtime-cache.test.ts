@@ -9,7 +9,7 @@ import { normalizeSessionMessage } from "./message-v2/normalizers"
 
 test("native pending HTTP data and enqueued SSE retain their distinct shapes through the stable reducer", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.0.27", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.1.0", pid: 1, discovery: "info" })
   const item = { id: "inbox", sessionID: "session", type: "user", payload: { text: "Pending" }, delivery: "queue", time: { created: 123 } }
   const api = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async () => Response.json({ data: [item] })) })
   let dispose!: () => void

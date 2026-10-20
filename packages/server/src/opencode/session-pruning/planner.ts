@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto"
+import { SessionLegacy } from "@opencode/schema/session-legacy"
 import { z } from "zod"
 import { canonicalContent } from "./revision"
 import type { PruneRequest } from "./contract"
@@ -9,8 +10,12 @@ export const assistantDataSchema = z.object({
   content: z.array(partSchema).max(100_001),
 }).passthrough()
 
+// Rows written before 2.1 keep their stored shape, which OpenCode upgrades before
+// projecting (`state`/`providerState` -> `native`). Hash that projection, as the
+// browser does, without rewriting stored parts.
 export function revision(content: unknown): string {
-  return createHash("sha256").update(canonicalContent(content)).digest("hex")
+  const projected = Array.isArray(content) ? SessionLegacy.message("assistant", { content }).content : content
+  return createHash("sha256").update(canonicalContent(projected)).digest("hex")
 }
 
 export function previewContent(data: unknown) {

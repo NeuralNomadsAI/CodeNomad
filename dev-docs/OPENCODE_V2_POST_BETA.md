@@ -9,13 +9,15 @@ policy. Current recommendation and dependency pins are defined by
 
 ## Current release contract
 
-The native plugin floor is now **2.0.27**, for the demonstrated stable Effect
-4.0.1/Schema boundary. The 2.0.26 fixture fails both with an embedded 4.0.1
-runtime and with the current schema code on the older host. Plugins now share
-the daemon's Effect/SDK, and setup reports `plugin_runtime` before client calls
-or provisioning. This applies to the next release/dev builds only: source
-changes never upgrade or restart an existing user's service. See
-[current qualification evidence](OPENCODE_V2_COMPATIBILITY.md).
+The floor is now **2.1.0**, for the native replay contract consumed by the
+pinned 2.1 client reducer: 2.0.x events carry the retired `state`/`recent`
+shapes, which break pruning identity under 2.1 pins and vice versa. Setup and
+admission report `native_contract` before client calls or provisioning; OpenCode
+2.1 reads conversations stored by earlier releases. The previous 2.0.27 floor
+(stable Effect 4.0.1/Schema plugin host, which 2.1.0 keeps) still governs the
+plugin build: plugins share the daemon's Effect/SDK. This applies to the next
+release/dev builds only: source changes never upgrade or restart an existing
+user's service. See [current qualification evidence](OPENCODE_V2_COMPATIBILITY.md).
 
 ## Original timestamp transition contract (historical)
 

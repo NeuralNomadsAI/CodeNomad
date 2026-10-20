@@ -45,7 +45,7 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
     const messages: SessionMessageInfo[] = Array.from({ length: 400 }, (_, index) => ({
       id: `m${String(index).padStart(3, "0")}`, type: "assistant", agent: "build",
       model: { providerID: "p", id: "model" }, time: { created: index + 1, completed: index + 2 },
-      content: [{ type: "text", text: `answer ${index}` }, { type: "reasoning", text: "remove", state: { opaque: `state-${index}` } }],
+      content: [{ type: "text", text: `answer ${index}` }, { type: "reasoning", text: "remove", native: { opaque: `state-${index}` } }],
     })) as SessionMessageInfo[]
     const latestIds = messages.slice(200).map(message => message.id)
     const olderIds = messages.slice(0, 200).map(message => message.id)

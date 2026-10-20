@@ -87,6 +87,34 @@ for (const [name, change] of [
   })
 }
 
+test("rows stored before 2.1 prune against the revision of their 2.1 projection and keep their stored shape", async () => {
+  // Pre-2.1 rows keep `state`/`providerState`/`providerResultState`; OpenCode 2.1
+  // projects them as `native` (tool call and result data merged, result wins).
+  const legacy = [
+    { type: "reasoning", text: "thinking", state: { signature: "sig" }, time: { created: 1, completed: 2 } },
+    { type: "tool", id: "call-1", providerState: { call: "a", shared: "call" }, providerResultState: { result: "b", shared: "result" },
+      state: { status: "completed", content: [{ type: "text", text: "logs" }] } },
+    { type: "text", text: "Keep the conclusion", state: { itemID: "item" } },
+  ]
+  const projection = [
+    { type: "reasoning", text: "thinking", native: { signature: "sig" }, time: { created: 1, completed: 2 } },
+    { type: "tool", id: "call-1", native: { call: "a", shared: "result", result: "b" },
+      state: { status: "completed", content: [{ type: "text", text: "logs" }] } },
+    { type: "text", text: "Keep the conclusion", native: { itemID: "item" } },
+  ]
+  const db = fixture()
+  try {
+    db.prepare("UPDATE session_message SET data=?").run(JSON.stringify({ ...data, providerState: { step: "x" }, content: legacy }))
+    const preview = previewContent(stored(db))
+    assert.equal(preview.status === "preview" && preview.revision, await contentRevision(projection))
+    const result = pruneIsolatedMessage(db, { ...input([0, 1]), revision: await contentRevision(projection) }, "/work")
+    assert.equal(result.status, "pruned")
+    assert.equal(result.status === "pruned" && result.revision, await contentRevision([projection[2]]))
+    // The surviving part and every other field keep their stored bytes; OpenCode's codecs read either shape.
+    assert.deepEqual(stored(db), { ...data, providerState: { step: "x" }, content: [legacy[2]] })
+  } finally { db.close() }
+})
+
 test("rejects stale revisions, text selections, out-of-range and wrong ownership", () => {
   const db = fixture()
   try {
