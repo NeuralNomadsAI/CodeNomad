@@ -196,7 +196,7 @@ test("Windows native SQL slash-separated session directories still bind the dock
   } finally { await f.dispose() }
 })
 
-test("the gate reads the durable message projection; an empty native event table (2.0.26 serve) still qualifies", async () => {
+test("the gate reads the durable message projection; an empty native event table (serve, 2.1.0 minimum) still qualifies", async () => {
   const f = await fixture()
   try {
     assert.equal((await f.submit()).statusCode, 204)

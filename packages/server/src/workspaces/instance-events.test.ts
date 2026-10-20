@@ -454,9 +454,9 @@ describe("InstanceEventBridge", () => {
   it("routes known locationless session events and invalidates the cache after deletion", async () => {
     const events = [
       { type: "session.text.delta", data: { sessionID: "known", delta: "one" } },
-      { type: "session.status", data: { sessionID: "known", status: { type: "busy" } } },
+      { type: "session.execution.started", data: { sessionID: "known" } },
       { type: "session.deleted", data: { sessionID: "known" } },
-      { type: "session.status", data: { sessionID: "known", status: { type: "idle" } } },
+      { type: "session.execution.succeeded", data: { sessionID: "known" } },
     ] as OpenCodeEvent[]
     const { manager, sessionGets } = locationlessManager(events, { known: "/repo-a" })
     const bus = new EventBus()
@@ -506,7 +506,7 @@ describe("InstanceEventBridge", () => {
 
   it("drops an unknown locationless session event", async () => {
     const events = [
-      { type: "session.status", data: { sessionID: "unknown", status: { type: "idle" } } },
+      { type: "session.execution.succeeded", data: { sessionID: "unknown" } },
       { type: "permission.asked", data: { id: "unknown", sessionID: "unknown" } },
       { type: "model.updated", data: {} },
     ] as OpenCodeEvent[]
@@ -645,7 +645,7 @@ describe("InstanceEventBridge", () => {
 
   it("keeps locationless session and permission events scoped to their owning workspace", async () => {
     const events = [
-      { type: "session.status", data: { sessionID: "foreign", status: { type: "idle" } } },
+      { type: "session.execution.succeeded", data: { sessionID: "foreign" } },
       { type: "permission.asked", data: { id: "permission", sessionID: "foreign" } },
     ] as OpenCodeEvent[]
     const workspaces = [{ id: "a", path: "/repo-a" }, { id: "b", path: "/repo-b" }]

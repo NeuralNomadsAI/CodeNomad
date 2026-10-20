@@ -1,6 +1,6 @@
 import { Service, type Endpoint } from "@opencode/client/service"
 import { contractProfile, runtimeIdentity } from "./runtime"
-import { assertSupportedOpenCode, UnsupportedOpenCodeError } from "../runtime-support"
+import { assertSupportedOpenCode } from "../runtime-support"
 import { negotiateRuntime } from "./negotiate"
 import { applyLocationContext, LOCATION_CONTEXT_HEADER } from "./location"
 
@@ -17,15 +17,13 @@ export function createRuntimeFetch(endpoint: Endpoint, fetcher: typeof fetch = g
 export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch = globalThis.fetch, lifetime = new AbortController().signal) {
   const identity = runtimeIdentity(endpoint)
   let profile = contractProfile(identity)
-  let negotiation: Promise<"modern" | "legacy"> | undefined
+  let negotiation: Promise<"modern"> | undefined
   const resolveProfile = async (signal?: AbortSignal) => {
     signal?.throwIfAborted()
     lifetime.throwIfAborted()
     if (identity) assertSupportedOpenCode(identity.version)
-    if (profile === "legacy") throw new UnsupportedOpenCodeError(identity?.version ?? "unknown", "canonical_api")
     if (profile !== "unknown") return profile
     negotiation ??= negotiateRuntime(endpoint, fetcher, lifetime).then(value => {
-      if (value !== "modern") throw new UnsupportedOpenCodeError(identity?.version ?? "unknown", "canonical_api")
       profile = value
       return value
     }).catch(error => { negotiation = undefined; throw error })
@@ -40,14 +38,6 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     for (const [name, value] of Object.entries(Service.headers(endpoint) ?? {})) headers.set(name, value)
     // Credentialed native requests must never follow a redirect to another host.
     const options: RequestInit = { method: request.method, headers, signal: AbortSignal.any([request.signal, lifetime]), redirect: "error" }
-    const originalPath = url.pathname
-    const serverInfo = request.method === "GET" && (originalPath === "/api/info" || originalPath === "/api/status")
-    if (serverInfo) {
-      // Discovery already selected one authenticated route. The current client
-      // uses info; an older renderer may still request status. Never probe here.
-      const discovery = identity?.discovery ?? "info"
-      url.pathname = `/api/${discovery}`
-    }
     if (headers.has(LOCATION_CONTEXT_HEADER)) {
       const text = request.body ? await request.text() : undefined
       let body: unknown = text ? JSON.parse(text) : undefined
@@ -63,8 +53,8 @@ export function createRuntimeTransport(endpoint: Endpoint, fetcher: typeof fetch
     if (!response.ok && !response.headers.get("content-type")?.includes("application/json")) {
       await response.body?.cancel()
       return Response.json({
-        _tag: "OpenCodeContractError", message: `OpenCode ${identity?.version ?? profile}: ${request.method} ${originalPath} returned HTTP ${response.status}`,
-        status: response.status, profile, method: request.method, path: originalPath,
+        _tag: "OpenCodeContractError", message: `OpenCode ${identity?.version ?? profile}: ${request.method} ${url.pathname} returned HTTP ${response.status}`,
+        status: response.status, profile, method: request.method, path: url.pathname,
       }, { status: response.status })
     }
     return response

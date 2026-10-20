@@ -741,6 +741,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": ".txt डाउनलोड गर्नुहोस्",
   "settings.info.diagnostics.reportBug": "बग रिपोर्ट गर्नुहोस्",
   "settings.info.diagnostics.copied": "निदान जानकारी क्लिपबोर्डमा प्रतिलिपि गरियो।",
-  "providerUsage.nativeCredentialApiUnavailable": "प्रयोग विवरणका लागि OpenCode {version} वा नयाँ संस्करण चाहिन्छ। OpenCode अद्यावधिक गर्नुहोस्, त्यसपछि सेटिङबाट यसको सेवा पुनः सुरु गर्नुहोस्।",
   "providerUsage.openaiTokenSharingUnsupported": "ChatGPT मा साइन इन गर्ने यस विधिका लागि OpenAI ले प्रयोग विवरण उपलब्ध गराउँदैन। कुराकानी जारी राख्न सकिन्छ।",
 } as const

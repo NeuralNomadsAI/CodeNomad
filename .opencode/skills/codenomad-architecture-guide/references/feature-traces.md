@@ -45,4 +45,4 @@ Do not replace mutation routes with OpenCode file/status calls; CodeNomad owns t
 - CodeNomad events: workspace/Git-adjacent policy/Yolo producers -> `EventBus`.
 - Browser transport: `GET /api/events` with heartbeat/pong via `/api/client-connections/pong`.
 - The native stream is volatile. On reconnect, refetch authoritative session/pending-request/file/config state rather than expecting replay.
-- Current invalidations use `filesystem.changed` and `config.updated`; session lifecycle/output uses `session.created`, `session.renamed`, `session.moved`, `session.status`, `session.idle`, `session.execution.*`, `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.
+- Current invalidations use `filesystem.changed` and `config.updated`; session lifecycle/output uses `session.created`, `session.renamed`, `session.moved`, `session.execution.*` (OpenCode never publishes the declared `session.status`/`session.idle`), `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.

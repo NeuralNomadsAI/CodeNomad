@@ -742,6 +742,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Скачать .txt",
   "settings.info.diagnostics.reportBug": "Сообщить об ошибке",
   "settings.info.diagnostics.copied": "Диагностическая информация скопирована в буфер обмена.",
-  "providerUsage.nativeCredentialApiUnavailable": "Для отображения использования нужен OpenCode {version} или новее. Обновите OpenCode, затем перезапустите его службу в настройках.",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI не предоставляет данные об использовании для этого способа входа в ChatGPT. Вы можете продолжать общение.",
 } as const

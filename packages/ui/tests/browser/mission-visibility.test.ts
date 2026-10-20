@@ -46,7 +46,7 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     await call(page, "restoration", false)
     assert.equal(await page.locator(".mission-control").count(), 1, "Missions is mounted, not unmounted to simulate hiding")
     assert.deepEqual(await call(page, "demanded"), [])
-    await call(page, "event", "session.status")
+    await call(page, "event", "session.execution.started")
     await page.waitForTimeout(120)
     assert.equal(requests, 0)
 
@@ -59,7 +59,7 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     assert.equal(requests, 1, "loading/ready state does not retrigger visibility demand")
     assert.deepEqual(await call(page, "demanded"), ["mission-visibility"])
     const status = page.waitForResponse(response => response.url().endsWith("/missions"))
-    await call(page, "event", "session.status")
+    await call(page, "event", "session.execution.started")
     await status
     await page.getByText("No missions yet", { exact: true }).waitFor()
     assert.equal(requests, 2)
@@ -68,7 +68,7 @@ test("actual mounted RightPanel suspends hidden Mission demand and refreshes nat
     assert.equal(requests, 2)
 
     // Cancel an already-scheduled invalidation on hide, then another hidden event.
-    await call(page, "event", "session.status")
+    await call(page, "event", "session.execution.started")
     await call(page, "activate", false)
     await call(page, "event", "session.execution.started")
     await page.waitForTimeout(120)
@@ -100,7 +100,7 @@ test("a visible Missions tab waits for session-list restoration, then revalidate
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).missionVisibility))
     await call(page, "activate", true)
-    await call(page, "event", "session.status")
+    await call(page, "event", "session.execution.started")
     await page.waitForTimeout(150)
     assert.equal(requests, 0, "no Missions read before the session list starts restoring")
     assert.deepEqual(await call(page, "demanded"), [])
@@ -141,7 +141,7 @@ test("continuous native activity of a large family is revalidated at a bounded r
     // A busy family: status events keep arriving, spaced beyond the debounce.
     const first = page.waitForResponse(response => response.url().endsWith("/missions"))
     for (let index = 0; index < 16; index++) {
-      await call(page, "event", "session.status")
+      await call(page, "event", "session.execution.started")
       await page.waitForTimeout(100)
     }
     await first

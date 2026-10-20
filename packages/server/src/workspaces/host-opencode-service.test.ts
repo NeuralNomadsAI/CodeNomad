@@ -109,33 +109,36 @@ describe("HostOpenCodeService", () => {
     })
 
     assert.equal((await service.discover())?.url, "http://127.0.0.1:4321/")
-    assert.equal(statusUrl, "http://127.0.0.1:4321/api/status")
+    assert.equal(statusUrl, "http://127.0.0.1:4321/api/info")
   })
 
-  it("falls back on status 404 to authenticated V2 health for discovery and startup", async () => {
+  it("identifies an outdated daemon through status, then V2 health, only after 404s", async () => {
     for (const operation of ["discover", "ensure"] as const) {
-      const requests: string[] = []
-      let cancelled = false
-      const service = createService([], {}, {
-        execFile: async (_file, args) => ({ stdout: args.at(-1) === "password" ? "password\n" : `${url}\n`, stderr: "" }),
-        fetch: async (input, init) => {
-          requests.push(String(input))
-          assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:password").toString("base64")}`)
-          if (requests.length === 1) return new Response(new ReadableStream({ cancel() { cancelled = true } }), { status: 404 })
-          return Response.json({ healthy: true, version: "2.0.0", pid: 123 })
-        },
-      })
-      assert.equal((await service[operation]())?.url, url)
-      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
-      assert.equal(cancelled, true)
+      for (const [route, probes] of [["status", ["info", "status"]], ["health", ["info", "status", "health"]]] as const) {
+        const requests: string[] = []
+        let cancelled = 0
+        const service = createService([], {}, {
+          execFile: async (_file, args) => ({ stdout: args.at(-1) === "password" ? "password\n" : `${url}\n`, stderr: "" }),
+          fetch: async (input, init) => {
+            requests.push(String(input))
+            assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:password").toString("base64")}`)
+            if (!String(input).endsWith(`/api/${route}`)) return new Response(new ReadableStream({ cancel() { cancelled++ } }), { status: 404 })
+            return Response.json(route === "health" ? { healthy: true, version: "2.0.0", pid: 123 } : { version: "2.0.3", pid: 123, urls: [url] })
+          },
+        })
+        const endpoint = await service[operation]()
+        assert.equal(endpoint?.url, url)
+        assert.equal(runtimeIdentity(endpoint!)?.discovery, route)
+        assert.deepEqual(requests, probes.map(probe => `${url}/api/${probe}`))
+        assert.equal(cancelled, probes.length - 1)
+      }
     }
   })
 
-  it("discovers server.info by route presence for any version on discovery and startup", async () => {
+  it("discovers server.info first, by route presence, for any version on discovery and startup", async () => {
     for (const operation of ["discover", "ensure"] as const) {
       for (const version of ["2.0.7", "future-release"]) {
         const requests: string[] = []
-        let cancelled = 0
         const service = createService([], {}, {
           execFile: async (_file, args) => ({ stdout: args.at(-1) === "password" ? "password\n" : `${url}\n`, stderr: "" }),
           fetch: async (input, init) => {
@@ -144,13 +147,13 @@ describe("HostOpenCodeService", () => {
             assert.equal(init?.redirect, "error")
             return String(input).endsWith("/api/info")
               ? Response.json({ version, pid: 123, urls: [url], paths: { tmp: "/tmp/opencode" } })
-              : new Response(new ReadableStream({ cancel() { cancelled++ } }), { status: 404 })
+              : new Response(null, { status: 404 })
           },
         })
         const endpoint = await service[operation]()
         assert.equal(runtimeIdentity(endpoint!)?.discovery, "info")
-        assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, `${url}/api/info`])
-        assert.equal(cancelled, 2)
+        // An admitted daemon costs one authenticated read, never older-route 404s.
+        assert.deepEqual(requests, [`${url}/api/info`])
       }
     }
   })
@@ -169,11 +172,13 @@ describe("HostOpenCodeService", () => {
       const service = createService([], {}, {
         fetch: async (input) => {
           requests.push(String(input))
-          return requests.length < 3 ? new Response(null, { status: 404 }) : response()
+          return requests.length === 1 ? response() : new Response(null, { status: 404 })
         },
       })
       await assert.rejects(service.ensure())
-      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, `${url}/api/info`])
+      // Only a missing info route falls back; older routes are absent here too.
+      assert.deepEqual(requests, response().status === 404
+        ? [`${url}/api/info`, `${url}/api/status`, `${url}/api/health`] : [`${url}/api/info`])
     }
     let now = 1000
     context.mock.method(Date, "now", () => now)
@@ -185,7 +190,7 @@ describe("HostOpenCodeService", () => {
       },
     })
     await assert.rejects(service.ensure(1500), /timed out/)
-    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
+    assert.deepEqual(requests, [`${url}/api/info`, `${url}/api/status`])
   })
 
   it("does not downgrade on authentication, server, transport or malformed status failures", async () => {
@@ -202,7 +207,7 @@ describe("HostOpenCodeService", () => {
         fetch: async (input) => { requests.push(String(input)); return response() },
       })
       await assert.rejects(service.ensure())
-      assert.deepEqual(requests, [`${url}/api/status`])
+      assert.deepEqual(requests, [`${url}/api/info`])
     }
   })
 
@@ -217,7 +222,7 @@ describe("HostOpenCodeService", () => {
       },
     })
     await assert.rejects(service.ensure(1500), /timed out/)
-    assert.deepEqual(requests, [`${url}/api/status`])
+    assert.deepEqual(requests, [`${url}/api/info`])
   })
 
   it("redacts startup environment values from failures and hashes identity", async () => {

@@ -39,8 +39,8 @@ describe("handleWorktreeReady", () => {
       "instance-1",
       {
         type: "worktree.ready",
-        directory: "/tmp/opencode/worktree/feature",
-        properties: { name: "feature", branch: "opencode/feature" },
+        location: { directory: "/tmp/opencode/worktree/feature" },
+        data: { name: "feature", branch: "opencode/feature" },
       },
       async (instanceId) => {
         calls.push(`worktrees:${instanceId}`)
@@ -65,8 +65,8 @@ describe("handleWorktreeReady", () => {
     }
     const event = {
       type: "worktree.ready" as const,
-      directory: "/tmp/opencode/worktree/feature",
-      properties: { name: "feature" },
+      location: { directory: "/tmp/opencode/worktree/feature" },
+      data: { name: "feature" },
     }
 
     const first = handleWorktreeReady("instance-concurrent", event, refreshWorktrees)
@@ -85,7 +85,7 @@ describe("handleWorktreeReady", () => {
   it("continues processing after an earlier refresh rejects", async () => {
     const event = {
       type: "worktree.ready" as const,
-      properties: { name: "feature" },
+      data: { name: "feature" },
     }
 
     await assert.rejects(

@@ -53,7 +53,7 @@ function fixture(name: string) {
     assert.equal(yield* sessionTag, service)
     return (yield* locationTag).project.id
   }) }
-  const host = new Proxy({ app: { version: "2.0.24" }, location, options: {}, storage }, {
+  const host = new Proxy({ app: { version: "2.1.0" }, location, options: {}, storage }, {
     get: (target, key) => Reflect.get(target, key) ?? unused,
   }) as unknown as Plugin.Context
   const entry = Plugin.define({
@@ -117,7 +117,7 @@ test("graph-supplied installed Effect/Promise composition retains one Location a
 
 test("native external-setup context sealing prevents acquisition before Promise setup", async () => {
   const f = fixture("sealed")
-  // Published v2.0.24 core/src/plugin.ts:69-73 replaces, rather than augments,
+  // Published core/src/plugin.ts:69-73 (v2.0.24 through v2.1.0) replaces, rather than augments,
   // the context with activation Scope + logging. Logging cannot grant services.
   await assert.rejects(Effect.runPromise(Effect.scoped(f.entry.effect(f.host).pipe(
     Effect.updateContext((context: Context.Context<Scope.Scope>) => Context.make(Scope.Scope, Context.get(context, Scope.Scope)).pipe(

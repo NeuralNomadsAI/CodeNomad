@@ -1,5 +1,4 @@
 import type { ServiceConnection } from "../workspaces/opencode-service"
-import { isCredentialApiMissing } from "./native-credentials"
 import type { ProviderUsageResponse } from "../api-types"
 import type { ProviderUsage } from "./types"
 import { codexCredential } from "./codex-credential"
@@ -50,12 +49,7 @@ export function createNativeCodexUsage() {
       if (selected?.type !== "credential" || selected.method !== "oauth" || selected.status?.status === "needs_auth") {
         throw new Error("Subscription OAuth unavailable")
       }
-      // Available in 2.0.20+. A missing endpoint is feature-local unavailability,
-      // not a reason to raise the global minimum, read SQLite or try auth.json.
-      const entries = await connection.client.credential.list({ signal }).catch(error => {
-        if (isCredentialApiMissing(error)) unavailableReason = "native-credential-api-unavailable"
-        throw error
-      })
+      const entries = await connection.client.credential.list({ signal })
       const entry = entries.find(entry => entry.id === selected.id && entry.integrationID === integrationID && entry.active)
       // OpenAI's direct ChatGPT grant cannot read Codex usage. Diagnose the
       // selected method without sending its token to the incompatible endpoint.

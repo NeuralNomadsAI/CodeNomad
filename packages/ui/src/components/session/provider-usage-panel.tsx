@@ -137,12 +137,9 @@ const ProviderUsagePanel: Component<ProviderUsagePanelProps> = (props) => {
                       ? "providerUsage.unsupported"
                       : !data().configured
                         ? "providerUsage.notConfigured"
-                        : data().unavailableReason === "native-credential-api-unavailable"
-                          ? "providerUsage.nativeCredentialApiUnavailable"
-                          : data().unavailableReason === "openai-token-sharing-unsupported"
-                            ? "providerUsage.openaiTokenSharingUnsupported"
-                            : "providerUsage.unavailable",
-                    { version: "2.0.20" },
+                        : data().unavailableReason === "openai-token-sharing-unsupported"
+                          ? "providerUsage.openaiTokenSharingUnsupported"
+                          : "providerUsage.unavailable",
                   )}
                 </div>
               }

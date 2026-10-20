@@ -314,15 +314,17 @@ describe("workspace manager shared service lifecycle", () => {
     releaseUpper()
   })
 
-  it("retains and validates native identity rather than authorizing an arbitrary owned-directory selector", async () => {
+  it("never authorizes a workspace selector, even one the runtime resolves, without a native request", async () => {
     const service = new ControlledSharedService()
     service.resolvedLocation = { directory: process.cwd(), workspaceID: "native-one" }
     const { manager } = createHarness(service)
     const { workspace } = await manager.create(process.cwd())
-    assert.equal(await manager.ownsLocation(workspace.id, service.resolvedLocation), true)
-    assert.equal(await manager.ownsLocation(workspace.id, { directory: process.cwd(), workspaceID: "native-two" }), false)
-    service.resolvedLocation = { directory: path.join(process.cwd(), "foreign"), workspaceID: "native-one" }
-    assert.equal(await manager.ownsLocation(workspace.id, { directory: process.cwd(), workspaceID: "native-one" }), false)
+    const calls = service.validationCalls.length
+    const client = { location: { get: async () => assert.fail("no native request") } } as unknown as OpenCodeClient
+    assert.equal(await manager.ownsLocation(workspace.id, service.resolvedLocation), false)
+    assert.equal(await manager.ownsLocation(workspace.id, service.resolvedLocation, client), false)
+    assert.equal(await manager.ownsLocation(workspace.id, { directory: process.cwd() }, client), true)
+    assert.equal(service.validationCalls.length, calls)
     await manager.delete(workspace.id)
     assert.equal(service.evictionCalls.length, 0)
   })
@@ -339,21 +341,6 @@ describe("workspace manager shared service lifecycle", () => {
     assert.ok(manager.get(second.workspace.id))
     await manager.delete(second.workspace.id)
     assert.equal(service.evictionCalls.length, 0)
-  })
-
-  it("uses the caller's pinned client for legacy location authorization", async () => {
-    const service = new ControlledSharedService()
-    const { manager } = createHarness(service)
-    const { workspace } = await manager.create(process.cwd())
-    const location = { directory: process.cwd(), workspaceID: "pinned-native" }
-    const calls = service.validationCalls.length
-    const client = { location: { get: async (_input: unknown, options: { headers: Record<string, string> }) => {
-      assert.deepEqual(JSON.parse(decodeURIComponent(options.headers["x-codenomad-location"])), location)
-      return location
-    } } } as unknown as OpenCodeClient
-    assert.equal(await manager.ownsLocation(workspace.id, location, client), true)
-    assert.equal(service.validationCalls.length, calls)
-    await manager.delete(workspace.id)
   })
 
   it("pins a bounded host CLI lifecycle with binary, platform, and startup environment identity", async () => {

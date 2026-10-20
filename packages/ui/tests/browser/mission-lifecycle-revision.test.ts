@@ -132,7 +132,7 @@ for (const code of [undefined, "request-conflict", "control-pending", "lost-ack"
       assert.equal(await pause(page).count(), 0); assert.equal(await check(page).count(), 1)
       assert.equal(await stop(page).isDisabled(), true); assert.equal(await retryOffered(page), true)
       const reread = page.waitForResponse(value => value.url().endsWith("/missions"))
-      await fixture(page, "event", "session.status"); await reread; await settled(page)
+      await fixture(page, "event", "session.execution.started"); await reread; await settled(page)
       assert.equal(calls.length, 1, "native invalidation reads never resend")
       await retry(page)
       await settled(page)

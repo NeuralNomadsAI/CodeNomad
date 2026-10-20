@@ -79,7 +79,7 @@ describe("WslOpenCodeService", () => {
       ["service", "get", "password"],
     ])
     assert.deepEqual(statusRequest, {
-      url: `${url}/api/status`,
+      url: `${url}/api/info`,
       authorization: `Basic ${Buffer.from("opencode:start-secret").toString("base64")}`,
     })
     assert.deepEqual(endpoint, {
@@ -144,11 +144,11 @@ describe("WslOpenCodeService", () => {
 
     await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
       fetch: async () => new Response(null, { status: 503 }),
-    }).service.discover(), /status check failed.*503/)
+    }).service.discover(), /info check failed.*503/)
 
     await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
       fetch: async () => Response.json({ version: "2.0.4", pid: 12 }),
-    }).service.discover(), /invalid status response/)
+    }).service.discover(), /invalid info response/)
   })
 
   it("falls back to authenticated Windows health for an older WSL V2 service", async () => {
@@ -157,32 +157,32 @@ describe("WslOpenCodeService", () => {
       fetch: async (input, init) => {
         requests.push(String(input))
         assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:secret").toString("base64")}`)
-        return requests.length === 1 ? new Response(null, { status: 404 })
+        return !String(input).endsWith("/api/health") ? new Response(null, { status: 404 })
           : Response.json({ healthy: true, version: "0.0.0-beta-19271", pid: 123 })
       },
     }).service.discover()
     assert.equal(endpoint?.url, url)
-    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`])
+    assert.deepEqual(requests, [`${url}/api/info`, `${url}/api/status`, `${url}/api/health`])
   })
 
-  it("falls back to authenticated Windows info for a current WSL V2 service", async () => {
+  it("identifies a current WSL V2 service through authenticated Windows info first", async () => {
     const requests: string[] = []
     const endpoint = await harness({ status: `${url}\n`, password: "secret\n" }, {
       fetch: async (input, init) => {
         requests.push(String(input))
         assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:secret").toString("base64")}`)
         assert.equal(init?.redirect, "error")
-        return requests.length < 3 ? new Response(null, { status: 404 })
-          : Response.json({ version: "2.0.7", pid: 123, urls: [url] })
+        return String(input).endsWith("/api/info") ? Response.json({ version: "2.0.7", pid: 123, urls: [url] })
+          : new Response(null, { status: 404 })
       },
     }).service.discover()
     assert.equal(endpoint?.url, url)
-    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, `${url}/api/info`])
+    assert.deepEqual(requests, [`${url}/api/info`])
   })
 
   it("rejects missing, unauthenticated, malformed and oversized fallback health responses", async () => {
     for (const [response, expected] of [
-      [() => new Response(null, { status: 404 }), /info check failed.*404/],
+      [() => new Response(null, { status: 404 }), /health check failed.*404/],
       [() => new Response(null, { status: 401 }), /authentication failed.*401/],
       [() => new Response(null, { status: 503 }), /health check failed.*503/],
       [() => new Response("invalid JSON"), /invalid health response/],
@@ -199,10 +199,10 @@ describe("WslOpenCodeService", () => {
       await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
         fetch: async (input) => {
           requests.push(String(input))
-          return requests.length === 1 ? new Response(null, { status: 404 }) : response()
+          return requests.length < 3 ? new Response(null, { status: 404 }) : response()
         },
       }).service.discover(), expected)
-      assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, ...(response().status === 404 ? [`${url}/api/info`] : [])])
+      assert.deepEqual(requests, [`${url}/api/info`, `${url}/api/status`, `${url}/api/health`])
     }
   })
 
@@ -219,7 +219,7 @@ describe("WslOpenCodeService", () => {
     ]) {
       await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
         fetch: async () => Response.json(status),
-      }).service.discover(), /invalid status response/)
+      }).service.discover(), /invalid info response/)
     }
   })
 
@@ -239,7 +239,7 @@ describe("WslOpenCodeService", () => {
     })
     await assert.rejects(harness({ status: `${url}\n`, password: "secret\n" }, {
       fetch: async () => new Response(oversized),
-    }).service.discover(), /invalid status response/)
+    }).service.discover(), /invalid info response/)
     assert.equal(cancelled, true)
   })
 

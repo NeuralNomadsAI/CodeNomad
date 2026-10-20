@@ -38,7 +38,7 @@ import { WorktreeInventory } from "./worktree-inventory"
 import { sessionEnvironment } from "./session-environment"
 import { resolveRepoRoot, sharesGitCommonDirectory } from "./git-worktrees"
 import { GitRequiredError, requireHostGit } from "./git-requirement"
-import { locationRequestOptions, readLocationRef, sameLocation } from "../opencode/compatibility/location"
+import { readLocationRef } from "../opencode/compatibility/location"
 import type { TemporaryFolderRegistry } from "./temporary-workspaces"
 
 const DEFAULT_LAUNCH_TIMEOUT_MS = 30_000
@@ -296,26 +296,18 @@ export class WorkspaceManager {
     return Boolean(hostDirectory && await this.ownsHostDirectory(record, hostDirectory, purpose))
   }
 
-  async ownsLocation(id: string, location: LocationRef, client?: OpenCodeClient, signal?: AbortSignal, purpose: "request" | "event" = "request"): Promise<boolean> {
+  // `_client` is retained for callers' pinned-connection signature; directory
+  // ownership needs no native request.
+  async ownsLocation(id: string, location: LocationRef, _client?: OpenCodeClient, signal?: AbortSignal, purpose: "request" | "event" = "request"): Promise<boolean> {
     signal?.throwIfAborted()
+    // OpenCode V2 identifies locations by directory; a retired workspace selector
+    // is never authorized, whatever directory it names.
+    if (location.workspaceID !== undefined) return false
     const record = this.workspaces.get(id)
     if (!record?.[WORKSPACE_STATE].published) return false
     const directory = await this.getServiceDirectoryForPath(id, location.directory, purpose)
     signal?.throwIfAborted()
-    if (!directory) return false
-    if (location.workspaceID === undefined) return true
-    // The directory fence alone cannot authorize a legacy native workspace.
-    // Resolve the pair with the selected runtime and require exact identity.
-    // Modern transports reject the context before making a native request.
-    try {
-      const requested = readLocationRef({ ...location, directory })
-      const resolved = readLocationRef(client
-        ? await client.location.get({ location: { directory } }, { ...locationRequestOptions(requested), signal })
-        : await this.sharedService.validateLocation(requested, { signal }, record[WORKSPACE_STATE].serviceOptions))
-      return sameLocation(requested, resolved)
-    } catch {
-      return false
-    }
+    return Boolean(directory)
   }
 
   async getServiceDirectoryForPath(id: string, directory: string, purpose: "request" | "event" = "request"): Promise<string | undefined> {

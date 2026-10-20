@@ -11,7 +11,7 @@ import type { Logger } from "../logger"
 const compact = (phase: "started" | "delta" | "ended" | "failed", sessionID = "unloaded", seq = 1): OpenCodeEvent => ({
   id: `event-${seq}`, created: seq, type: `session.compaction.${phase}`,
   ...(phase === "delta" ? {} : { durable: { aggregateID: sessionID, seq, version: 1 } }),
-  location: { directory: "/other-project" }, data: { sessionID, reason: "auto", recent: "recent", text: "summary" },
+  location: { directory: "/other-project" }, data: { sessionID, reason: "auto", text: "summary" },
 } as OpenCodeEvent)
 const deferred = <T>() => {
   let resolve!: (value: T) => void

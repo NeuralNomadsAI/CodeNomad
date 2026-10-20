@@ -93,7 +93,7 @@ function compact(h: ReturnType<typeof harness>, phase: "started" | "delta" | "en
     id: `event-${seq}`, created: seq, type: `session.compaction.${phase}`,
     ...(phase === "delta" ? {} : { durable: { aggregateID: sessionID, seq, version: 1 } }),
     location: { directory: h.directory },
-    data: { sessionID, reason: "auto", recent: "recent", text: "summary", error: { _tag: "UnknownError", message: "fixture" } },
+    data: { sessionID, reason: "auto", text: "summary", error: { _tag: "UnknownError", message: "fixture" } },
   } as any)
 }
 async function history(h: ReturnType<typeof harness>) {

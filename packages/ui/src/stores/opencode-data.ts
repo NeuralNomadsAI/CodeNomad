@@ -365,8 +365,6 @@ function eventAffectsMessages(event: OpenCodeEvent): boolean {
     case "session.execution.started":
     case "session.revert.staged":
     case "session.revert.cleared":
-    case "session.status":
-    case "session.idle":
     case "session.usage.updated":
     case "session.forked":
       return false

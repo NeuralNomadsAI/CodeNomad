@@ -125,7 +125,7 @@ test("uncertain row remount and native reconnect invalidations retain exact orig
     await remount(page); await settle(page)
     assert.equal(await retryCount(page), 1); assert.equal(await pause(page).count(), 0); assert.equal(await check(page).isEnabled(), true)
     const refreshed = page.waitForResponse(value => value.url().endsWith("/missions"))
-    await call(page, "event", "session.status"); await refreshed; await settle(page)
+    await call(page, "event", "session.execution.started"); await refreshed; await settle(page)
     await call(page, "activate", false); await call(page, "activate", true); await settle(page)
     assert.equal(calls.length, 1, "navigation and reconnect reads cannot dispatch")
     await retry(page); await settle(page)
@@ -252,7 +252,7 @@ test("authoritative operation replacement wins over a late rejected local intent
       id: "evt_replacement", missionID: current.id, requestID: "durable-replacement", expectedRevision: 9, action: "stop",
       targets: [{ sessionID: "ses_one", location: { directory: "/fixture" } }], pending: ["ses_one"] } }
     const snapshot = page.waitForResponse(value => value.url().endsWith("/missions"))
-    await call(page, "event", "session.status"); await snapshot; await tick(page)
+    await call(page, "event", "session.execution.started"); await snapshot; await tick(page)
     const before = reads, response = page.waitForResponse(value => value.url().endsWith("/control"))
     release(); await response; await tick(page)
     assert.equal(reads, before); assert.equal(await retryCount(page), 1)

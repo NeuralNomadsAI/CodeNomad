@@ -48,7 +48,7 @@ test("native channel selection reads only credential-matched service metadata, r
           : operation === "debug paths config" ? configDirectory : "selected", stderr: "" }
       },
       fetch: async input => {
-        assert.equal(String(input), `${alternateLoopback}/api/status`)
+        assert.equal(String(input), `${alternateLoopback}/api/info`)
         if (++probes === 1) throw refused()
         return Response.json({ version: "2.0.11", pid: 8, urls: [alternateLoopback] })
       },
@@ -105,13 +105,15 @@ test("stopped from the new CLI still authenticates old daemon on host and WSL, i
       requests.push(String(input))
       assert.equal(new Headers(init?.headers).get("authorization"), `Basic ${Buffer.from("opencode:selected").toString("base64")}`)
       assert.equal(init?.redirect, "error")
-      return String(input).endsWith("/api/status") ? new Response(null, { status: 404 }) : Response.json({ healthy: true, version: "2.0.3", pid: 7 })
+      // An old daemon serves only V2 health: info and status are both absent.
+      return String(input).endsWith("/api/health") ? Response.json({ healthy: true, version: "2.0.3", pid: 7 }) : new Response(null, { status: 404 })
     } })
     assert.equal(runtimeIdentity((await fixture.service.discover())!)?.version, "2.0.3")
     assert.equal(runtimeIdentity(await fixture.service.ensure())?.version, "2.0.3")
     assert.equal(fixture.starts(), 0)
     assert.equal(fixture.registrationReads(), 2)
-    assert.deepEqual(requests, [`${url}/api/status`, `${url}/api/health`, `${url}/api/status`, `${url}/api/health`])
+    const probes = [`${url}/api/info`, `${url}/api/status`, `${url}/api/health`]
+    assert.deepEqual(requests, [...probes, ...probes])
   }
 })
 

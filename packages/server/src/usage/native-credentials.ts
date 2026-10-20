@@ -1,7 +1,6 @@
-import { ClientError, type CredentialEntry } from "@opencode/client"
+import type { CredentialEntry } from "@opencode/client"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 import type { AuthEntry, AuthFile } from "./types"
-import { readOpenCodeAuth } from "./shared"
 
 // Server-only. The projection holds secrets: never log, cache or return it.
 export function projectCredentials(entries: readonly CredentialEntry[]): AuthFile {
@@ -29,22 +28,7 @@ export function projectCredential(entry: CredentialEntry): AuthEntry | null {
       ...(typeof accountId === "string" ? { accountId } : {}), ...scope }
 }
 
-/**
- * Each integration's selected credential, as the running OpenCode uses it.
- * Daemons before 2.0.20 lack `credential.list`; only then is the legacy
- * auth.json read, preserving the previous behaviour for them.
- */
+/** Each integration's selected credential, as the running OpenCode uses it. */
 export async function readUsageCredentials(connection: ServiceConnection, signal: AbortSignal): Promise<AuthFile> {
-  try {
-    return projectCredentials(await connection.client.credential.list({ signal }))
-  } catch (error) {
-    if (isCredentialApiMissing(error)) return readOpenCodeAuth()
-    throw error
-  }
-}
-
-export function isCredentialApiMissing(error: unknown): boolean {
-  return error instanceof ClientError && error.reason === "UnexpectedStatus"
-    && "cause" in error && typeof error.cause === "object" && error.cause !== null
-    && "status" in error.cause && error.cause.status === 404
+  return projectCredentials(await connection.client.credential.list({ signal }))
 }

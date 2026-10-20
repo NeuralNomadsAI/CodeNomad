@@ -251,7 +251,6 @@ const [disconnectedInstance, setDisconnectedInstance] = createSignal<Disconnecte
 
 const MAX_LOG_ENTRIES = 1000
 
-const pendingRehydrations = new Map<string, Promise<void>>()
 // Stop events whose instance cleanup waits for the tab to unmount.
 const pendingWorkspaceStops = new Map<string, symbol>()
 const initialHydrations = new Map<string, Promise<void>>()
@@ -365,14 +364,13 @@ function resumePendingDiscovery(): void {
 
 function observePendingCompaction(instanceId: string, event: Parameters<NonNullable<typeof sseManager.onInvalidation>>[1]): void {
   const starting = event.type === "session.compaction.started" || event.type === "session.compaction.delta"
-  if (!starting && event.type !== "session.compaction.ended" && event.type !== "session.compaction.failed" && event.type !== "session.idle") return
+  if (!starting && event.type !== "session.compaction.ended" && event.type !== "session.compaction.failed") return
   const client = instances().get(instanceId)?.client
   if (!client || !("sessionID" in event.data)) return
   const id = event.data.sessionID
   const entries = pendingCompactions.get(instanceId) ?? new Map<string, PendingCompaction>()
   const previous = entries.get(id)
   if (!starting && previous && (!previous.active || previous.client !== client)) return
-  if (event.type === "session.idle" && !previous && sessions().get(instanceId)?.get(id)?.status !== "compacting") return
   const sequence = "durable" in event ? event.durable.seq : undefined
   if (previous?.client === client && (sequence === undefined ? event.created <= previous.created
     : previous.sequence !== undefined && sequence <= previous.sequence)) return
@@ -1193,29 +1191,6 @@ function clearReloadableInstanceState(instanceId: string): void {
   // Recovery can be unavailable; only authoritative coverage or settlement
   // removes known interruptions, not a catalogue/location rehydration.
   markPendingRecovery(instanceId, true)
-}
-
-async function rehydrateInstance(instanceId: string, options?: { reason?: string }): Promise<void> {
-  if (pendingRehydrations.has(instanceId)) {
-    return pendingRehydrations.get(instanceId)
-  }
-
-  const promise = (async () => {
-    const instance = instances().get(instanceId)
-    if (!instance?.client) {
-      return
-    }
-
-    log.info("Rehydrating instance", { instanceId, reason: options?.reason })
-    clearReloadableInstanceState(instanceId)
-
-    await hydrateInstanceData(instanceId, { force: true })
-  })().finally(() => {
-    pendingRehydrations.delete(instanceId)
-  })
-
-  pendingRehydrations.set(instanceId, promise)
-  return promise
 }
 
 async function refreshWorkspaceList(): Promise<void> {
@@ -2348,30 +2323,6 @@ sseManager.onConnectionLost = (instanceId, reason) => {
     folder: instance.folder,
     reason,
   })
-}
-
-sseManager.onInstanceDisposed = (sourceInstanceId, event) => {
-  const directory = event?.properties?.directory
-  if (!directory) {
-    void rehydrateInstance(sourceInstanceId, { reason: "disposed" })
-    return
-  }
-
-  const matchingInstanceIds: string[] = []
-  for (const instance of instances().values()) {
-    if (instance.folder === directory) {
-      matchingInstanceIds.push(instance.id)
-    }
-  }
-
-  if (matchingInstanceIds.length === 0) {
-    void rehydrateInstance(sourceInstanceId, { reason: "disposed" })
-    return
-  }
-
-  for (const instanceId of matchingInstanceIds) {
-    void rehydrateInstance(instanceId, { reason: "disposed" })
-  }
 }
 
 async function acknowledgeDisconnectedInstance(): Promise<void> {

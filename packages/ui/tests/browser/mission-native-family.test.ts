@@ -570,8 +570,8 @@ test("real dispatcher refreshes bounded family observations on birth, fork, move
       { sessionId: "ses_fork", parentSessionId: "ses_actor", actorSessionId: "ses_actor", kind: "ordinary" }] })
     await emit({ ...base, type: "session.forked", durable: { ...base.durable, aggregateID: "ses_fork", version: 2 },
       data: { sessionID: "ses_fork", parentID: "ses_actor", boundary: { type: "through", messageID: "msg_boundary" } } })
-    await emit({ ...base, type: "session.compaction.started", data: { sessionID, reason: "manual", recent: "" } })
-    await emit({ ...base, type: "session.compaction.ended", data: { sessionID, reason: "manual", recent: "", text: "bounded" } })
+    await emit({ ...base, type: "session.compaction.started", data: { sessionID, reason: "manual" } })
+    await emit({ ...base, type: "session.compaction.ended", data: { sessionID, reason: "manual", text: "bounded" } })
     ctx.unknown()
     await emit({ ...base, type: "session.moved", data: { sessionID, projectID: "project", location: { directory: "/moved" } } })
     ctx.setFamily(observedFamily)

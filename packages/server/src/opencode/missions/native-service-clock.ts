@@ -35,7 +35,8 @@ export type RecurrenceClockPlacement = Readonly<{
 }>
 
 /** The native map hashes keys with the service's own effect copy, so this bundle's
- * MutableHashMap.get misses structurally equal refs (observed against 2.0.26).
+ * MutableHashMap.get misses structurally equal refs (observed against 2.0.26; the same
+ * Effect 4.0.1 host through 2.1.0).
  * Scan the native iterator by Location.Ref fields; native lookups keep using `ref`. */
 export function nativeLocationEntry(state: { _tag: string; map?: Iterable<readonly [Location.Ref, unknown]> } | undefined,
   ref: Location.Ref): Option.Option<unknown> {
@@ -148,8 +149,8 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
   const exactCtx = { storage: ctx.storage, location: ctx.location }
   const nativeClock = yield* Clock.Clock
   const job = yield* jobTag, locations = yield* mapTag, session = yield* sessionTag
-  // Process-global native services are absent from a borrowed Location graph (2.0.26 builds
-  // Locations over a shared global layer). Retain exactly these; Location services stay fresh.
+  // Process-global native services are absent from a borrowed Location graph (as of the 2.1.0
+  // minimum, native builds Locations over a shared global layer). Retain exactly these; Location services stay fresh.
   const database = yield* databaseTag, bus = yield* Effect.serviceOption(busTag)
   const borrow = (graph: Context.Context<never>) => {
     const withGlobals = graph.pipe(Context.add(databaseTag, database), Context.add(sessionTag, session), Context.add(jobTag, job))

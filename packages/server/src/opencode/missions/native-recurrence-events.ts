@@ -12,7 +12,7 @@ const locationTag = Context.Service<never, Location.Info>("@opencode/Location")
 
 /** Call only AFTER the native calendar transaction returns. Lookup the app-global
  * Bus in this commit's fresh graph, never an evicted origin's RPC registration.
- * Contract reviewed against core bus.ts/rpc.ts at upstream v2.0.24. */
+ * Contract reviewed against core bus.ts/rpc.ts from upstream v2.0.24 through v2.1.0. */
 export const emitNativeRecurrenceChanged = Effect.fn("missions.emitNativeRecurrenceChanged")(function* (
   placement: { directory: string; workspaceID?: string; projectID: string; projectCanonical: string }, scheduleID: string, revision: number,
 ) {

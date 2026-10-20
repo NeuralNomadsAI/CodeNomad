@@ -24,7 +24,7 @@ test("current and future supported releases preserve info, authentication and bo
   }
 })
 
-test("info translation is GET-only and does not probe alternate routes on failure", async () => {
+test("info and status routes are forwarded unchanged and never probe alternate routes on failure", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
   rememberRuntime(endpoint, { version: "2.1.0", pid: 123, discovery: "info" })
   const seen: string[] = []
@@ -35,8 +35,8 @@ test("info translation is GET-only and does not probe alternate routes on failur
   })
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch })
   await assert.rejects(client.server.info())
-  await fetch(`${endpoint.url}/api/status`, { method: "POST" })
-  assert.deepEqual(seen, ["GET /api/info", "POST /api/status"])
+  await fetch(`${endpoint.url}/api/status`)
+  assert.deepEqual(seen, ["GET /api/info", "GET /api/status"])
 })
 
 test("retired runtime contracts never dispatch even through the direct transport", async () => {

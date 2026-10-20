@@ -8,7 +8,7 @@ export type NativeChildOutcome = "started" | "succeeded" | "failed" | "interrupt
 export type NativeCallObservation =
   | { kind: "tool-called"; mode: NativeLaunchMode; source: NativeObservationSource }
   | { kind: "tool-ended"; mode: NativeLaunchMode; outcome: "returned" | "error"; source: NativeObservationSource }
-  // 2.0.22 execution events identify a session, not an invocation/job/inbox.
+  // Native execution events (through the 2.1.0 minimum) identify a session, not an invocation/job/inbox.
   | { kind: "child-uncorrelated"; outcome: NativeChildOutcome; source: NativeObservationSource }
 export type MissionNativeExecution = {
   binding: MissionNativeBinding

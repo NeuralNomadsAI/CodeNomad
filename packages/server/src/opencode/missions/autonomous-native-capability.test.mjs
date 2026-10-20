@@ -1,7 +1,7 @@
 // Investigative capability proof only. No product fallback or authority grant.
 // Run from repository root with node packages/server/src/opencode/missions/autonomous-native-capability.test.mjs [path/to/opencode.exe].
 import assert from "node:assert/strict"
-import { spawn } from "node:child_process"
+import { execFileSync, spawn } from "node:child_process"
 import { createServer } from "node:http"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -64,7 +64,9 @@ export default { id: "private.autonomous.capability", async setup(ctx) {
     headers: { authorization: `Basic ${Buffer.from(`opencode:${process.env.OPENCODE_SERVER_PASSWORD}`).toString("base64")}` } })
   const options = { signal: AbortSignal.timeout(10_000) }
   const info = await client.server.info(options)
-  assert.equal(info.version, "2.0.22", "Qualification is version-specific")
+  // Qualification is version-specific: the proof names the selected CLI's own runtime.
+  const reported = execFileSync(ASSIGNED_CLI, ["--version"], { cwd: root, env: environment, encoding: "utf8", windowsHide: true })
+  assert.equal(info.version, reported.trim().split(/\s+/).at(-1).replace(/^v/, ""), "Qualify exactly the selected runtime")
   const session = await client.session.create({ title: "Private capability proof", location: { directory: isolated.project } }, options)
   // Forces location/plugin activation without admitting a model request.
   await client.plugin.list({ location: { directory: isolated.project } }, options)
@@ -87,7 +89,7 @@ export default { id: "private.autonomous.capability", async setup(ctx) {
     productFallbackEnabled: false, actualDesktopCloseTest: false,
     limitation: "Plugin context has neither client nor session.environment; prior snapshot does not authorize fresh later send." }, null, 2))
   clearTimeout(watchdog)
-  console.log(`PASS private native 2.0.22 capability blocker proof: ${root}`)
+  console.log(`PASS private native ${info.version} capability blocker proof: ${root}`)
 } finally {
   if (child && child.exitCode === null) child.kill()
   if (closed) await closed

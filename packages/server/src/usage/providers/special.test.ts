@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import test from "node:test"
 
 import { specialProviders } from "./special"
-import { readOpenCodeAuth } from "../shared"
 
 test("fails closed without requesting quota for an expired Cursor access token", async () => {
   const previousAccess = process.env.CURSOR_ACCESS_TOKEN
@@ -18,7 +17,7 @@ test("fails closed without requesting quota for an expired Cursor access token",
   }
 
   try {
-    const usage = await specialProviders.find((provider) => provider.id === "cursor")!.fetchQuota(readOpenCodeAuth())
+    const usage = await specialProviders.find((provider) => provider.id === "cursor")!.fetchQuota({})
     assert.equal(usage.ok, false)
     assert.equal(usage.configured, true)
     assert.equal(usage.error, "Cursor access token expired. Provide a current CURSOR_ACCESS_TOKEN or CURSOR_TOKEN.")

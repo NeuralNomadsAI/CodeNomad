@@ -48,18 +48,14 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]): Pl
           })
         })
         try {
-          // Pre-2.0.4 runtimes name the source path `location` and retain `slash`.
-          // Publish both wire-compatible fields rather than guessing a beta version.
           const skill = {
             id: "codenomad-browser" as Skill.ID,
             name: "CodeNomad Browser" as Skill.Name,
             description: "Use the visible session-attached CodeNomad browser for web navigation, snapshots, form input, and screenshots.",
             path: fileURLToPath(import.meta.url) as Skill.Info["path"],
-            location: fileURLToPath(import.meta.url),
-            slash: false,
             content: instructions,
             autoinvoke: false,
-          } satisfies Skill.Info & { location: string; slash: boolean }
+          } satisfies Skill.Info
           const skills = await ctx.skill.transform((editor) => editor.add(skill))
           return async () => {
             await Promise.all([tools.dispose(), skills.dispose()])

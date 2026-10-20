@@ -1,9 +1,8 @@
 // Version-independent qualification of the SHIPPED Missions plugin against an
 // explicit isolated CLI (CI runs it on the technical minimum and latest). It
 // consumes only contracts the product itself uses: native plugin loading, the
-// model-visible mission tools through the ordinary prompt loop (no fixture
-// ctx.tool.list, which postdates 2.0.7), the one-time journal RPC and the
-// recurrence RPC. The supported contract must serve the native graph without
+// model-visible mission tools through the ordinary prompt loop (no fixture-only
+// ctx.tool.list harness), the one-time journal RPC and the recurrence RPC. The supported contract must serve the native graph without
 // creating schedules, sessions or journal changes; arbitrary RPC errors cannot
 // count as successful qualification.
 // Never discovers the shared service, user home, database or a real provider.

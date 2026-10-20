@@ -11,7 +11,7 @@ import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-famil
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
-// `@opencode/SessionExecution` is not exposed to plugin or Location contexts (2.0.26); the
+// `@opencode/SessionExecution` is not exposed to plugin or Location contexts (as of the 2.1.0 minimum); the
 // native Session service re-exports its `active` Effect as the set of running session IDs.
 const sessionTag = tag("@opencode/Session"), formTag = tag("@opencode/Form")
 const permissionTag = tag("@opencode/Permission"), shellTag = tag("@opencode/Shell")
@@ -22,7 +22,7 @@ const runningToolsSQL = `SELECT count(*) AS count FROM session_message, json_eac
   AND json_extract(part.value,'$.state.status') IN ('running','streaming')`
 // Native always projects each execution terminal into a durable `idle` message
 // (`outcome: succeeded | failed | interrupted`); the `event` log is only written
-// when Bus persistence is configured, which 2.0.26 `serve` leaves off.
+// when Bus persistence is configured, which `serve` leaves off (as of the 2.1.0 minimum).
 const failedTurnsSQL = `SELECT count(*) AS count FROM session_message
   WHERE session_id=? AND type='idle' AND json_extract(data,'$.outcome')='failed'`
 export type PassageSessionObservation = {

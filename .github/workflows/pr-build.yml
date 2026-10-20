@@ -185,16 +185,14 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-missions-native-family-control.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          # Only this fixture's own test-harness plugin drives tool executors
-          # through ctx.tool.list, which postdates 2.0.7; the product does not
-          # consume it, so the minimum is covered by the contract fixture above.
+          # The fixtures' own test-harness plugins drive tool executors through
+          # ctx.tool.list (available at the minimum); the product does not consume it.
+          node scripts/test-missions-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Parallel siblings, a recursive grandchild and coordinator readout.
+          node scripts/test-missions-native-trajectory.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           if ('${{ matrix.runtime }}' -eq 'latest') {
-            node scripts/test-missions-native.mjs $cli
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            # Parallel siblings, a recursive grandchild and coordinator readout
-            # (same ctx.tool.list harness constraint as above).
-            node scripts/test-missions-native-trajectory.mjs $cli
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
             # Missions Preferences' Location subagent-depth editor against the
             # native config schema and production JSONC document admission.
             node --import tsx scripts/test-subagent-depth-settings-native.mjs $cli

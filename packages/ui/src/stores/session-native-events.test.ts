@@ -138,7 +138,7 @@ describe("native session event reducer", () => {
       } as any)
       handleInstanceInvalidation(instanceId, {
         id: "compact", type: "session.compaction.started", created: 3,
-        data: { sessionID: sessionId, inputID: "compact", reason: "manual", recent: "" },
+        data: { sessionID: sessionId, inputID: "compact", reason: "manual" },
       } as any)
       handleInstanceInvalidation(instanceId, {
         id: "text-delta-1", type: "session.text.delta", created: 4,
@@ -174,7 +174,7 @@ describe("native session event reducer", () => {
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "firstsecond")
       handleInstanceInvalidation(instanceId, {
         id: "ended", type: "session.compaction.ended", created: 9,
-        data: { sessionID: sessionId, reason: "manual", text: "final", recent: "" },
+        data: { sessionID: sessionId, reason: "manual", text: "final" },
       } as any)
 
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "final")

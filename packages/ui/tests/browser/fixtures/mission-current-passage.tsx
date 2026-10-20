@@ -33,7 +33,7 @@ function Fixture() {
     (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: {
       type: "rpc.codenomad.missions.scheduleChanged", id: "native-settlement", created: 2, location: { directory: "/fixture" },
       data: { scheduleID: "rec_current", revision: 3 } } }])
-  }, invalidate: (type = "session.status") => {
+  }, invalidate: (type = "session.execution.started") => {
     (serverEvents as any).dispatchBatch([{ type: "instance.event", instanceId: "fixture", event: {
       type, id: "native-event", created: 1, location: { directory: "/fixture" }, data: {} } }])
   } } })

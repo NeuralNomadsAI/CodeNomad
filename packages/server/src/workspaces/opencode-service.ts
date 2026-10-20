@@ -8,7 +8,7 @@ import {
 import { Service, type Endpoint } from "@opencode/client/service"
 import { assertLoopbackServiceUrl } from "./service-state"
 import { createRuntimeTransport } from "../opencode/compatibility/transport"
-import { contractProfile, rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
+import { rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
 import { locationRequestOptions } from "../opencode/compatibility/location"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
 import { observePendingDiscovery, carryPendingCompactions } from "./pending-discovery"
@@ -101,10 +101,8 @@ export class OpenCodeSharedService {
     requestOptions?: RequestOptions,
     serviceOptions?: OpenCodeSharedServiceOptions,
   ): Promise<LocationGetOutput> {
-    const result = await this.withClient(serviceOptions, (client, connection) => {
-      if (location.workspaceID !== undefined && contractProfile(runtimeIdentity(connection.endpoint)) === "modern") {
-        throw new Error("OpenCode V2 locations are identified by directory")
-      }
+    const result = await this.withClient(serviceOptions, client => {
+      if (location.workspaceID !== undefined) throw new Error("OpenCode V2 locations are identified by directory")
       return client.location.get({ location: { directory: location.directory } }, {
         ...locationRequestOptions(location), ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}),
       })
@@ -148,7 +146,8 @@ export class OpenCodeSharedService {
 
   private connect(options?: OpenCodeSharedServiceOptions, deadlineAt?: number): Promise<ServiceConnection> {
     return this.connectService(options, deadlineAt).then(async connection => {
-      if (await connection.profile() !== "modern") throw new Error("Unsupported OpenCode runtime contract")
+      // Admits only the modern contract; refusal throws.
+      await connection.profile()
       const prepare = this.serviceOptions?.prepareDesktopPlugins
       if (!prepare) return connection
       connection.assertCurrent()

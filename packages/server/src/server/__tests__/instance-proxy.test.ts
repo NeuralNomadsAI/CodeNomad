@@ -181,7 +181,7 @@ describe("instance proxy location enforcement", () => {
     const compact = (phase: "started" | "ended", seq: number) => observePendingDiscovery(connection, {
       id: `compact-${seq}`, created: seq, type: `session.compaction.${phase}`,
       durable: { aggregateID: "unknown", seq, version: 1 },
-      data: { sessionID: "unknown", reason: "auto", recent: "r", text: "summary" },
+      data: { sessionID: "unknown", reason: "auto", text: "summary" },
     } as any)
     const owns = manager.ownsDirectory
     let ownership = 0

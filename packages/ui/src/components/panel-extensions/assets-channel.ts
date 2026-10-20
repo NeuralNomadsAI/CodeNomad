@@ -26,7 +26,7 @@ export function useAssetsChannel(props: {
   onCleanup(serverEvents.on("instance.event", payload => {
     if (payload.type !== "instance.event" || payload.instanceId !== props.instanceId) return
     const event = payload.event as { type?: string; data?: { sessionID?: string } }
-    if (event.data?.sessionID === props.sessionId() && ["session.tool.success", "session.tool.failed", "rpc.codenomad.session-pruning.pruned", "session.message.content.updated", "session.moved", "session.deleted",
+    if (event.data?.sessionID === props.sessionId() && ["session.tool.success", "session.tool.failed", "rpc.codenomad.session-pruning.pruned", "session.moved", "session.deleted",
       "session.revert.staged", "session.revert.cleared", "session.revert.committed", "session.compaction.ended"].includes(event.type ?? "")) invalidate()
   }))
   onCleanup(serverEvents.on("instance.eventStatus", event => {

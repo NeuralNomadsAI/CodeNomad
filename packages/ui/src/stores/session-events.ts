@@ -482,11 +482,11 @@ function handleSessionUpdate(
       retry: null,
       idleSince: null,
       version: info.version || "0",
-      projectID: (info as any).projectID ?? "",
+      projectID: info.projectID,
       metadata: info.metadata,
       cost: (info as any).cost ?? 0,
       tokens: (info as any).tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-      location: (info as any).location ?? { directory: instances().get(instanceId)?.folder ?? "" },
+      location: info.location,
       time: info.time
         ? { ...info.time }
         : {
@@ -618,15 +618,7 @@ function handleSessionError(instanceId: string, event: SessionExecutionFailed): 
   }
   log.error(`[SSE] Session error:`, error)
 
-  let message = tGlobal("sessionEvents.sessionError.unknown")
-
-  if (error) {
-    if ("data" in error && error.data && typeof error.data === "object" && "message" in error.data) {
-      message = error.data.message as string
-    } else if ("message" in error && typeof error.message === "string") {
-      message = error.message
-    }
-  }
+  const message = typeof error?.message === "string" ? error.message : tGlobal("sessionEvents.sessionError.unknown")
 
   showAlertDialog(tGlobal("sessionEvents.sessionError.message", { message }), {
     title: tGlobal("sessionEvents.sessionError.title"),

@@ -95,7 +95,7 @@ test("owned native quota response is normalized; credentials and upstream errors
   } finally { globalThis.fetch = previousFetch; await app.close() }
 })
 
-test("older native credential endpoint is feature-local unavailability, not a host fallback", async () => {
+test("a missing native credential endpoint is unavailability, not a host fallback", async () => {
   const { app, state } = harness()
   state.oldEndpoint = true
   const previousFetch = globalThis.fetch
@@ -105,7 +105,7 @@ test("older native credential endpoint is feature-local unavailability, not a ho
     assert.equal(response.statusCode, 200)
     assert.equal(response.json().supported, true)
     assert.equal(response.json().ok, false)
-    assert.equal(response.json().unavailableReason, "native-credential-api-unavailable")
+    assert.equal(response.json().unavailableReason, undefined)
     assert.deepEqual(response.json().windows, {})
   } finally { globalThis.fetch = previousFetch; await app.close() }
 })

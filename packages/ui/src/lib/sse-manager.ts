@@ -29,18 +29,11 @@ type InstanceStatusPayload = Extract<WorkspaceEventPayload, { type: "instance.ev
 
 export type NativeSessionEvent = V2Event
 
-interface ServerInstanceDisposedEvent {
-  type: "server.instance.disposed"
-  properties: {
-    directory: string
-  }
-}
-
 export interface WorktreeReadyEvent {
   type: "worktree.ready"
-  directory?: string
-  properties: {
-    name: string
+  location?: { directory: string }
+  data?: {
+    name?: string
     branch?: string
   }
 }
@@ -61,7 +54,6 @@ type SSEEvent =
   | PermissionAsked
   | PermissionReplied
   | TuiToastShow
-  | ServerInstanceDisposedEvent
   | WorktreeReadyEvent
   | V2Event
 
@@ -140,9 +132,6 @@ class SSEManager {
       case "permission.replied":
         this.onPermissionReplied?.(instanceId, event as PermissionReplied)
         break
-      case "server.instance.disposed":
-        this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
-        break
       case "worktree.ready":
         try {
           const result = this.onWorktreeReady?.(instanceId, event as WorktreeReadyEvent)
@@ -180,7 +169,6 @@ class SSEManager {
   onPermissionReplied?: (instanceId: string, event: PermissionReplied) => void
   onNativeSessionEvent?: (instanceId: string, event: NativeSessionEvent) => void
   onInvalidation?: (instanceId: string, event: V2Event) => void
-  onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
   onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 

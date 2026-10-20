@@ -121,7 +121,7 @@ test("revision drift during Stop confirmation sends nothing and asks to review a
     const dialog = page.getByRole("dialog"); await dialog.waitFor()
     current = { ...current, revision: 2 }
     const refreshed = page.waitForResponse(value => new URL(value.url()).pathname.endsWith("/missions"))
-    await visibility(page, "event", "session.status"); await refreshed
+    await visibility(page, "event", "session.execution.started"); await refreshed
     await page.waitForFunction(() => (window as any).missionVisibility.state().missions[0]?.revision === 2)
     await dialog.getByRole("button", { name: "Stop mission permanently", exact: true }).click()
     await alerts(page).getByText("Stop was not sent; review it and confirm again.", { exact: false }).waitFor()

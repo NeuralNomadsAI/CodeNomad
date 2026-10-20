@@ -742,6 +742,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "הורד .txt",
   "settings.info.diagnostics.reportBug": "דווח על באג",
   "settings.info.diagnostics.copied": "מידע האבחון הועתק ללוח.",
-  "providerUsage.nativeCredentialApiUnavailable": "נתוני השימוש דורשים OpenCode {version} או חדש יותר. יש לעדכן את OpenCode ואז להפעיל מחדש את השירות דרך ההגדרות.",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI לא מספקת נתוני שימוש בשיטת ההתחברות הזו של ChatGPT. אפשר להמשיך לשוחח.",
 } as const

@@ -30,7 +30,7 @@ function Fixture() {
     // Startup order: restoration has not begun, is running, then settles.
     restoration: (fetching: boolean) => setSessionListFetching(fetching, instance.id),
     event: (type: string) => (serverEvents as any).dispatchBatch([
-      { type: "instance.event", instanceId: instance.id, event: { type, data: { sessionID: "visibility-actor", status: { type: "busy" } } } },
+      { type: "instance.event", instanceId: instance.id, event: { type, data: { sessionID: "visibility-actor" } } },
     ]),
   }
   return <div style={{ width: "390px", height: "850px", display: active() ? "block" : "none" }}>

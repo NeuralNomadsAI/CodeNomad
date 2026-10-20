@@ -742,6 +742,5 @@ export const settingsMessages = {
   "settings.info.diagnostics.download": "Descargar .txt",
   "settings.info.diagnostics.reportBug": "Informar de un error",
   "settings.info.diagnostics.copied": "Información de diagnóstico copiada al portapapeles.",
-  "providerUsage.nativeCredentialApiUnavailable": "El uso requiere OpenCode {version} o posterior. Actualiza OpenCode y reinicia su servicio desde Configuración.",
   "providerUsage.openaiTokenSharingUnsupported": "OpenAI no proporciona datos de uso para este método de inicio de sesión de ChatGPT. Puedes seguir chateando.",
 } as const

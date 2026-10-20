@@ -6,7 +6,6 @@ import test from "node:test"
 
 import { clearProviderUsageCache, getProviderUsage, resolveUsageProvider, selectModelWindows } from "./service"
 import type { ProviderResult } from "./types"
-import { readOpenCodeAuth } from "./shared"
 
 const providerIds = [
   "codex",
@@ -151,47 +150,37 @@ test("returns a stable unsupported response without making a provider request", 
 })
 
 test("shows NeuralWatt allowance percentage instead of the key name", async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-neuralwatt-usage-"))
-  const previousAuthFile = process.env.OPENCODE_AUTH_FILE
   const previousFetch = globalThis.fetch
-  process.env.OPENCODE_AUTH_FILE = path.join(directory, "auth.json")
-  fs.writeFileSync(process.env.OPENCODE_AUTH_FILE, JSON.stringify({ neuralwatt: { key: "token" } }))
   globalThis.fetch = async () => Response.json({
     key: { name: "production", allowance: { spent_usd: 25, limit_usd: 100, period: "daily" } },
   })
   clearProviderUsageCache()
 
   try {
-    const response = await getProviderUsage("neuralwatt", { auth: readOpenCodeAuth() })
+    const response = await getProviderUsage("neuralwatt", { auth: { neuralwatt: { key: "token" } } })
     assert.equal(response.windows.daily?.usedPercent, 25)
     assert.equal(response.windows.daily?.valueLabel, undefined)
   } finally {
     clearProviderUsageCache()
     globalThis.fetch = previousFetch
-    if (previousAuthFile === undefined) delete process.env.OPENCODE_AUTH_FILE
-    else process.env.OPENCODE_AUTH_FILE = previousAuthFile
-    fs.rmSync(directory, { recursive: true, force: true })
   }
 })
 
 test("leaves expired Claude OAuth refresh to the owning OpenCode integration", async () => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-claude-usage-"))
-  const previousAuthFile = process.env.OPENCODE_AUTH_FILE
   const previousClaudeDir = process.env.CLAUDE_CONFIG_DIR
   const previousFetch = globalThis.fetch
   let calls = 0
   process.env.CLAUDE_CONFIG_DIR = directory
-  process.env.OPENCODE_AUTH_FILE = path.join(directory, "auth.json")
-  fs.writeFileSync(process.env.OPENCODE_AUTH_FILE, JSON.stringify({
-    anthropic: { type: "oauth", access: "expired", refresh: "owner-managed", expires: 1 },
-  }))
   globalThis.fetch = async () => {
     calls += 1
     return Response.json({})
   }
 
   try {
-    const response = await resolveUsageProvider("anthropic")!.fetchQuota(readOpenCodeAuth())
+    const response = await resolveUsageProvider("anthropic")!.fetchQuota({
+      anthropic: { type: "oauth", access: "expired", refresh: "owner-managed", expires: 1 },
+    })
     assert.equal(response.ok, false)
     assert.equal(response.error, "Claude session expired. Reconnect the Anthropic integration in OpenCode.")
     assert.equal(calls, 0)
@@ -199,22 +188,16 @@ test("leaves expired Claude OAuth refresh to the owning OpenCode integration", a
     globalThis.fetch = previousFetch
     if (previousClaudeDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
     else process.env.CLAUDE_CONFIG_DIR = previousClaudeDir
-    if (previousAuthFile === undefined) delete process.env.OPENCODE_AUTH_FILE
-    else process.env.OPENCODE_AUTH_FILE = previousAuthFile
     fs.rmSync(directory, { recursive: true, force: true })
   }
 })
 
 test("briefly backs off after a failed provider call", async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-usage-backoff-"))
-  const authFile = path.join(directory, "auth.json")
-  const previousAuthFile = process.env.OPENCODE_AUTH_FILE
+  const auth = { copilot: { type: "oauth", access: "token" } }
   const previousFetch = globalThis.fetch
   const previousNow = Date.now
   let now = 1_000
   let calls = 0
-  fs.writeFileSync(authFile, JSON.stringify({ copilot: { type: "oauth", access: "token" } }))
-  process.env.OPENCODE_AUTH_FILE = authFile
   Date.now = () => now
   globalThis.fetch = async () => {
     calls += 1
@@ -223,32 +206,25 @@ test("briefly backs off after a failed provider call", async () => {
   clearProviderUsageCache()
 
   try {
-    assert.equal((await getProviderUsage("copilot", { auth: readOpenCodeAuth() })).ok, false)
-    assert.equal((await getProviderUsage("copilot", { auth: readOpenCodeAuth() })).ok, false)
+    assert.equal((await getProviderUsage("copilot", { auth })).ok, false)
+    assert.equal((await getProviderUsage("copilot", { auth })).ok, false)
     assert.equal(calls, 1)
     now += 5_001
-    assert.equal((await getProviderUsage("copilot", { auth: readOpenCodeAuth() })).ok, false)
+    assert.equal((await getProviderUsage("copilot", { auth })).ok, false)
     assert.equal(calls, 2)
   } finally {
     clearProviderUsageCache()
     Date.now = previousNow
     globalThis.fetch = previousFetch
-    if (previousAuthFile === undefined) delete process.env.OPENCODE_AUTH_FILE
-    else process.env.OPENCODE_AUTH_FILE = previousAuthFile
-    fs.rmSync(directory, { recursive: true, force: true })
   }
 })
 
 test("deduplicates simultaneous canonical and alias provider requests", async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-usage-dedup-"))
-  const authFile = path.join(directory, "auth.json")
-  const previousAuthFile = process.env.OPENCODE_AUTH_FILE
+  const auth = { copilot: { type: "oauth", access: "token" } }
   const previousFetch = globalThis.fetch
   let calls = 0
   let release!: () => void
   const gate = new Promise<void>((resolve) => { release = resolve })
-  fs.writeFileSync(authFile, JSON.stringify({ copilot: { type: "oauth", access: "token" } }))
-  process.env.OPENCODE_AUTH_FILE = authFile
   globalThis.fetch = async () => {
     calls += 1
     await gate
@@ -257,8 +233,8 @@ test("deduplicates simultaneous canonical and alias provider requests", async ()
   clearProviderUsageCache()
 
   try {
-    const canonical = getProviderUsage("github-copilot", { auth: readOpenCodeAuth() })
-    const alias = getProviderUsage("copilot", { auth: readOpenCodeAuth() })
+    const canonical = getProviderUsage("github-copilot", { auth })
+    const alias = getProviderUsage("copilot", { auth })
     await Promise.resolve()
     assert.equal(calls, 1)
     release()
@@ -269,8 +245,5 @@ test("deduplicates simultaneous canonical and alias provider requests", async ()
     release()
     clearProviderUsageCache()
     globalThis.fetch = previousFetch
-    if (previousAuthFile === undefined) delete process.env.OPENCODE_AUTH_FILE
-    else process.env.OPENCODE_AUTH_FILE = previousAuthFile
-    fs.rmSync(directory, { recursive: true, force: true })
   }
 })

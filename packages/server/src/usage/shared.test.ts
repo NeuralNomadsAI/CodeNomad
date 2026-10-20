@@ -1,67 +1,22 @@
 import assert from "node:assert/strict"
-import fs from "node:fs"
-import os from "node:os"
-import path from "node:path"
 import test from "node:test"
 
-import { getCredential, getOAuthEntry, oauthTokenNeedsRefresh, readOpenCodeAuth, toTimestamp, toUsageWindow } from "./shared"
+import { getCredential, getOAuthEntry, oauthTokenNeedsRefresh, toTimestamp, toUsageWindow } from "./shared"
 
-test("reads the explicit OpenCode auth file without exposing credentials through the API", () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-usage-"))
-  const authFile = path.join(directory, "auth.json")
-  const previous = process.env.OPENCODE_AUTH_FILE
-  fs.writeFileSync(authFile, JSON.stringify({ openai: { type: "oauth", access: "secret-token" } }))
-  process.env.OPENCODE_AUTH_FILE = authFile
-
-  try {
-    assert.equal((readOpenCodeAuth().openai as Record<string, unknown>).access, "secret-token")
-    assert.equal(getCredential(readOpenCodeAuth(), ["openai"], ["access"]), "secret-token")
-  } finally {
-    if (previous === undefined) delete process.env.OPENCODE_AUTH_FILE
-    else process.env.OPENCODE_AUTH_FILE = previous
-    fs.rmSync(directory, { recursive: true, force: true })
-  }
-})
-
-test("does not fall through when the explicit OpenCode auth file is missing", () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-usage-explicit-"))
-  const previousAuthFile = process.env.OPENCODE_AUTH_FILE
-  const previousDataDir = process.env.OPENCODE_DATA_DIR
-  fs.writeFileSync(path.join(directory, "auth.json"), JSON.stringify({ openai: { access: "wrong-store" } }))
-  process.env.OPENCODE_AUTH_FILE = path.join(directory, "missing.json")
-  process.env.OPENCODE_DATA_DIR = directory
-
-  try {
-    assert.deepEqual(readOpenCodeAuth(), {})
-    assert.equal(getCredential(readOpenCodeAuth(), ["openai"], ["access"]), null)
-  } finally {
-    if (previousAuthFile === undefined) delete process.env.OPENCODE_AUTH_FILE
-    else process.env.OPENCODE_AUTH_FILE = previousAuthFile
-    if (previousDataDir === undefined) delete process.env.OPENCODE_DATA_DIR
-    else process.env.OPENCODE_DATA_DIR = previousDataDir
-    fs.rmSync(directory, { recursive: true, force: true })
-  }
+test("reads a projected credential field by alias", () => {
+  const auth = { openai: { type: "oauth", access: "secret-token" } }
+  assert.equal(getCredential(auth, ["openai"], ["access"]), "secret-token")
+  assert.equal(getCredential({}, ["openai"], ["access"]), null)
 })
 
 test("skips malformed aliases when reading credentials", () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-usage-alias-"))
-  const authFile = path.join(directory, "auth.json")
-  const previous = process.env.OPENCODE_AUTH_FILE
-  fs.writeFileSync(authFile, JSON.stringify({
+  const auth = {
     first: { type: "api", key: "api-key" },
     second: { type: "oauth", refresh: "refresh-only" },
     third: { type: "oauth", access: "oauth-access" },
-  }))
-  process.env.OPENCODE_AUTH_FILE = authFile
-
-  try {
-    assert.equal(getOAuthEntry(readOpenCodeAuth(), ["first", "second", "third"])?.access, "oauth-access")
-    assert.equal(getCredential(readOpenCodeAuth(), ["missing", "first"], ["key"]), "api-key")
-  } finally {
-    if (previous === undefined) delete process.env.OPENCODE_AUTH_FILE
-    else process.env.OPENCODE_AUTH_FILE = previous
-    fs.rmSync(directory, { recursive: true, force: true })
   }
+  assert.equal(getOAuthEntry(auth, ["first", "second", "third"])?.access, "oauth-access")
+  assert.equal(getCredential(auth, ["missing", "first"], ["key"]), "api-key")
 })
 
 test("normalizes percentages and timestamps", () => {

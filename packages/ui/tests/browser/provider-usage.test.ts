@@ -113,21 +113,6 @@ test("native account events and reconnect clear old quotas; hidden panels do not
   } finally { await page.close() }
 })
 
-test("missing credential API explains the running service requirement without generic authentication advice", async () => {
-  const page = await browser.newPage({ locale: "en-US" })
-  try {
-    const { requests, errors } = await prepare(page)
-    await waitRequests(requests, 1)
-    await requests[0].fulfill({ contentType: "application/json", body: JSON.stringify({
-      requestedProviderId: "openai", providerId: "codex", providerName: "Codex", supported: true,
-      configured: true, ok: false, fetchedAt: Date.now(), windows: {}, unavailableReason: "native-credential-api-unavailable",
-    }) })
-    await page.getByText("Usage requires OpenCode 2.0.20 or newer. Update OpenCode, then restart its service from Settings.", { exact: true }).waitFor()
-    assert.equal(await page.getByRole("progressbar").count(), 0)
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
-
 for (const [locale, message] of [
   ["en-US", "OpenAI does not provide usage for this ChatGPT sign-in method. You can still chat."],
   ["fr-FR", "OpenAI ne permet pas de consulter l'utilisation avec cette méthode de connexion ChatGPT. Les conversations restent disponibles."],

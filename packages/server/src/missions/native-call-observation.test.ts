@@ -46,7 +46,7 @@ function fixture(background = false, error = false) {
     counts: () => ({ checks, yielded }), breakRead: () => { broken = true } }
 }
 
-test("official 2.0.22 foreground durable events identify the exact tool and terminate without profile inference", async () => {
+test("official native (2.1.0 minimum) foreground durable events identify the exact tool and terminate without profile inference", async () => {
   const f = fixture(), result = await readNativeCallObservation(f.client, f.target, f.options())
   assert.equal(result.complete, true)
   assert.equal(result.profileObservation, "unknown", "parent assistant identity is not the child's resolved identity")

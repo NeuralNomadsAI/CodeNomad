@@ -48,19 +48,10 @@ export function getTechnicalGroupKind(part: ClientPart) {
 }
 
 export function reasoningHasRenderableContent(part: ClientPart): boolean {
-  const check = (segment: unknown): boolean => {
-    if (typeof segment === "string") return segment.trim().length > 0
-    if (!segment || typeof segment !== "object") return false
-    const value = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-    return (typeof value.text === "string" && value.text.trim().length > 0)
-      || (typeof value.value === "string" && value.value.trim().length > 0)
-      || (Array.isArray(value.content) && value.content.some(check))
-  }
-  return part.type === "reasoning" && (check(part.text) || (Array.isArray((part as any).content) && (part as any).content.some(check)))
+  return part.type === "reasoning" && part.text.trim().length > 0
 }
 
 export function isTechnicalGroupingVisiblePart(part: ClientPart): boolean {
-  if ((part as any)?.type === "patch") return false
   if (part.type === "reasoning") return reasoningHasRenderableContent(part)
   if (part.type === "text" || part.type === "file") return !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)
   return true

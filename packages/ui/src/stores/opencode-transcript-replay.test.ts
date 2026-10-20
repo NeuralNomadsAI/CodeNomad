@@ -221,7 +221,7 @@ test("admission metadata keeps synchronous data consumption and buffered compact
   const admission: OpenCodeDataEventAdmission = { deferred: false, publication: () => { publications++ } }
   try {
     const data = applyOpenCodeDataEvent(instanceId, "/fixture", make("session.compaction.started", {
-      inputID: "msg_compact", reason: "manual", recent: "",
+      inputID: "msg_compact", reason: "manual",
     }), undefined, undefined, false, admission)
     assert.equal(admission.deferred, false)
     assert.ok(data.session.message.get(sessionId, "msg_compact"), "ordinary calls still return their reduced data synchronously")
@@ -248,7 +248,7 @@ test("FIFO replay retains tool/text/compaction/inbox state across task turns and
     f.apply("session.tool.input.started", { ...base, id: "tool", name: "read" }, undefined, publication)
     f.apply("session.tool.input.delta", { ...base, id: "tool", delta: "{\"path\":\"a\"}" }, undefined, publication)
     f.apply("session.tool.called", { ...base, id: "tool", input: { path: "a" }, executed: false }, undefined, publication)
-    f.apply("session.compaction.started", { inputID: "msg_compact", reason: "manual", recent: "" }, undefined, publication)
+    f.apply("session.compaction.started", { inputID: "msg_compact", reason: "manual" }, undefined, publication)
     f.apply("session.compaction.delta", { text: "summary A" }, undefined, publication)
     f.apply("session.compaction.delta", { text: " + B" }, undefined, publication)
     f.apply("session.text.delta", { ...base, delta: "first" }, undefined, publication)
@@ -257,7 +257,7 @@ test("FIFO replay retains tool/text/compaction/inbox state across task turns and
     f.apply("session.text.delta", { ...base, delta: " second" }, undefined, publication)
     f.apply("session.tool.success", { ...base, id: "tool", content: [{ type: "text", text: "ok" }], metadata: {}, executed: false }, undefined, publication)
     f.apply("session.compaction.delta", { text: "obsolete buffered fragment" }, undefined, publication)
-    f.apply("session.compaction.ended", { reason: "manual", model, text: "summary final", recent: "", cost: 0, tokens }, undefined, publication)
+    f.apply("session.compaction.ended", { reason: "manual", model, text: "summary final", cost: 0, tokens }, undefined, publication)
     f.apply("session.step.ended", { ...base, finish: "stop", cost: 0, tokens }, undefined, publication)
     const settle = () => {
       const settled = f.make("session.execution.succeeded")

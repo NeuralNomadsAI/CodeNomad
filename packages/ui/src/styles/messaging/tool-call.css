@@ -335,9 +335,7 @@
   min-width: 0;
 }
 
-/* ToolState uses status="completed"; keep "success" as a legacy alias. */
-.tool-call-status-completed,
-.tool-call-status-success {
+.tool-call-status-completed {
   border-inline-start: none;
 }
 

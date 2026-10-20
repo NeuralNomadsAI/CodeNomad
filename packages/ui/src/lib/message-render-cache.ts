@@ -11,78 +11,22 @@ export interface MessageRenderCache {
 const renderCaches = new Map<string, MessageRenderCache>()
 
 export const REASONING_RENDER_CHARACTER_LIMIT = 10_000
-export const REASONING_RENDER_NODE_LIMIT = 1_000
 export const REASONING_TITLE_CHARACTER_LIMIT = 384
 
-interface TraversalCursor {
-  array: unknown[]
-  index: number
-}
-
-function isTraversalCursor(item: unknown): item is TraversalCursor {
-  if (!item || typeof item !== "object") return false
-  const cursor = item as Partial<TraversalCursor>
-  return Array.isArray(cursor.array) && typeof cursor.index === "number"
-}
-
-function extractReasoningSource(source: unknown, characterLimit: number, nodeLimit: number): string {
-  const pieces: string[] = []
-  const stack: unknown[] = [source]
-  const seen = new WeakSet<object>()
-  let characters = 0
-  let visited = 0
-
-  while (stack.length > 0 && characters < characterLimit && visited < nodeLimit) {
-    const item = stack.pop()
-    visited += 1
-
-    if (isTraversalCursor(item)) {
-      if (item.index >= item.array.length) continue
-      stack.push({ array: item.array, index: item.index + 1 }, item.array[item.index])
-      continue
-    }
-
-    if (typeof item === "string") {
-      const separatorLength = pieces.length > 0 ? 1 : 0
-      const available = characterLimit - characters - separatorLength
-      if (available <= 0) break
-      const candidate = item.slice(0, available)
-      if (/\S/.test(candidate)) {
-        pieces.push(candidate)
-        characters += candidate.length + separatorLength
-      }
-      if (candidate.length < item.length) break
-      continue
-    }
-
-    if (!item || typeof item !== "object" || seen.has(item)) continue
-    seen.add(item)
-
-    if (Array.isArray(item)) {
-      stack.push({ array: item, index: 0 })
-      continue
-    }
-
-    const segment = item as { text?: unknown; value?: unknown; content?: unknown }
-    stack.push(segment.content, segment.value, segment.text)
-  }
-
-  return pieces.join("\n")
-}
-
-function extractReasoningText(part: unknown, characterLimit: number, nodeLimit: number): string {
-  const reasoning = part as { text?: unknown; content?: unknown } | null
-  if (!reasoning || typeof reasoning !== "object") return ""
-  const text = extractReasoningSource(reasoning.text, characterLimit, nodeLimit)
-  return text || extractReasoningSource(reasoning.content, characterLimit, nodeLimit)
+// Native reasoning text is a string; rendering is bounded, copying is not.
+function extractReasoningText(part: unknown, characterLimit: number): string {
+  const text = (part as { text?: unknown } | null)?.text
+  if (typeof text !== "string") return ""
+  const bounded = text.slice(0, characterLimit)
+  return /\S/.test(bounded) ? bounded : ""
 }
 
 export function extractReasoningTextForRender(part: unknown): string {
-  return extractReasoningText(part, REASONING_RENDER_CHARACTER_LIMIT, REASONING_RENDER_NODE_LIMIT)
+  return extractReasoningText(part, REASONING_RENDER_CHARACTER_LIMIT)
 }
 
 export function extractReasoningTextForCopy(part: unknown): string {
-  return extractReasoningText(part, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY)
+  return extractReasoningText(part, Number.POSITIVE_INFINITY)
 }
 
 export function extractReasoningTitleForRender(text: string): string {

@@ -46,7 +46,7 @@ test("a claim cut by a service restart settles ended-without-report/interrupted;
   } finally { db.close(); await f.dispose() }
 })
 
-// Native 2.0.26 `serve` leaves the `event` table empty; each execution terminal is
+// Native `serve` (as of the 2.1.0 minimum) leaves the `event` table empty; each execution terminal is
 // projected into a durable `idle` message whose `outcome` carries the failure.
 async function idleFamily(finish?: "completed") {
   const f = await passageFixture(), db = new DatabaseSync(":memory:")
@@ -128,7 +128,7 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
       ["@opencode/storage/Database", { db: { $client: { unsafe: (sql: string, params: readonly unknown[]) => ({
         withoutTransform: asyncSQL ? Effect.promise(async () => db.prepare(sql).all(...params as []))
           : Effect.sync(() => db.prepare(sql).all(...params as [])) }) } } }],
-      // Native shape (2.0.26): Session.active is an Effect of running IDs; SessionExecution is not exposed.
+      // Native shape (as of the 2.1.0 minimum): Session.active is an Effect of running IDs; SessionExecution is not exposed.
       ["@opencode/Location", {}], ["@opencode/Session", { active: Effect.sync(() => new Set(running)) }],
       ["@opencode/Form", { list: () => Effect.succeed([]) }], ["@opencode/Permission", { list: () => Effect.succeed([]) }],
       ["@opencode/Shell", { list: () => Effect.succeed([]) }],

@@ -112,18 +112,6 @@ export function isHiddenSyntheticTextPart(part: ClientPart): boolean {
   return Boolean(part && part.type === "text" && part.synthetic)
 }
 
-function hasTextSegment(segment: string | { text?: string }): boolean {
-  if (typeof segment === "string") {
-    return segment.trim().length > 0
-  }
-
-  if (segment && typeof segment === "object" && segment.text) {
-    return typeof segment.text === "string" && segment.text.trim().length > 0
-  }
-
-  return false
-}
-
 export function partHasRenderableText(part: ClientPart): boolean {
   if (!part || typeof part !== "object") {
     return false
@@ -133,7 +121,7 @@ export function partHasRenderableText(part: ClientPart): boolean {
     return false
   }
 
-  if (part.type === "text" && hasTextSegment(part.text)) {
+  if (part.type === "text" && part.text.trim().length > 0) {
     return true
   }
 
@@ -146,7 +134,7 @@ export function partHasRenderableText(part: ClientPart): boolean {
     return true // Tool parts are always renderable
   }
 
-  if (part.type === "reasoning" && hasTextSegment(part.text)) {
+  if (part.type === "reasoning" && part.text.trim().length > 0) {
     return true
   }
 

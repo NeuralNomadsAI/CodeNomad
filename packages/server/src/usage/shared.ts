@@ -1,49 +1,7 @@
-import fs from "fs"
-import os from "os"
-import path from "path"
-
 import type { ProviderUsageWindow } from "../api-types"
 import type { AuthEntry, AuthFile, ProviderResult, ProviderUsage } from "./types"
 
 const REQUEST_TIMEOUT_MS = 15_000
-
-function authFileCandidates(): string[] {
-  if (process.env.OPENCODE_AUTH_FILE !== undefined) {
-    return process.env.OPENCODE_AUTH_FILE ? [process.env.OPENCODE_AUTH_FILE] : []
-  }
-  const home = os.homedir()
-  const candidates = [
-    process.env.OPENCODE_DATA_DIR ? path.join(process.env.OPENCODE_DATA_DIR, "auth.json") : undefined,
-    process.env.XDG_DATA_HOME ? path.join(process.env.XDG_DATA_HOME, "opencode", "auth.json") : undefined,
-    path.join(home, ".local", "share", "opencode", "auth.json"),
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "opencode", "Data", "auth.json") : undefined,
-    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode", "auth.json") : undefined,
-    path.join(home, "Library", "Application Support", "opencode", "auth.json"),
-  ]
-  return Array.from(new Set(candidates.filter((candidate): candidate is string => Boolean(candidate))))
-}
-
-function readAuthFile(file: string): AuthFile | null {
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"))
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as AuthFile : null
-  } catch {
-    return null
-  }
-}
-
-function readAuthCandidate(): { auth: AuthFile; file: string } | null {
-  for (const file of authFileCandidates()) {
-    const auth = readAuthFile(file)
-    if (auth) return { auth, file }
-  }
-  return null
-}
-
-// Legacy V1 store, read only when the daemon lacks the native credential API.
-export function readOpenCodeAuth(): AuthFile {
-  return readAuthCandidate()?.auth ?? {}
-}
 
 export function getAuthEntry(auth: AuthFile, aliases: readonly string[]): AuthEntry | null {
   for (const alias of aliases) {

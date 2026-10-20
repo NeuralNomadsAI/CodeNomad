@@ -153,7 +153,7 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
           || typeof delegation.input.prompt !== "string" || !delegation.input.prompt.includes(request.assignmentPrompt)))
           throw new Error("Human decision delegation is not this assignment")
         // The durable message projection is the native record of the answered call:
-        // `serve` (2.0.26) does not persist Bus events, so the event table stays empty.
+        // `serve` (as of the 2.1.0 minimum) does not persist Bus events, so the event table stays empty.
         const observed = yield* question(request.sessionID, request.messageID, request.toolCallID)
         const answers = matchHumanQuestion(form, observed.input, mark.answer)
         if (observed.state.status !== "completed" || !object(observed.state.metadata) || !same(observed.state.metadata.answers, answers)

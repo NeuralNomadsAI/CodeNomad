@@ -1,10 +1,7 @@
 import assert from "node:assert/strict"
 import fs from "node:fs"
-import os from "node:os"
-import path from "node:path"
 import test from "node:test"
 import { oauthProviders, parseCodexUsage } from "./oauth"
-import { readOpenCodeAuth } from "../shared"
 
 test("parses Codex rate limits, credits, and business spend limits", () => {
   const usage = parseCodexUsage({
@@ -44,26 +41,19 @@ test("unscoped Codex requests never read or fall back to host legacy/CLI credent
 })
 
 test("rejects empty and malformed Copilot usage payloads after OAuth alias fallback", async () => {
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-copilot-empty-"))
-  const authFile = path.join(directory, "auth.json")
-  const previousAuthFile = process.env.OPENCODE_AUTH_FILE
   const previousFetch = globalThis.fetch
-  fs.writeFileSync(authFile, JSON.stringify({ "github-copilot": { type: "api", key: "api-key" }, copilot: { type: "oauth", access: "copilot-access" } }))
-  process.env.OPENCODE_AUTH_FILE = authFile
+  const auth = { "github-copilot": { type: "api", key: "api-key" }, copilot: { type: "oauth", access: "copilot-access" } }
   try {
     for (const payload of [{}, { quota_snapshots: { chat: { entitlement: "invalid", remaining: 1 } } }]) {
       globalThis.fetch = async (_input, init) => {
         assert.equal(new Headers(init?.headers).get("authorization"), "token copilot-access")
         return Response.json(payload)
       }
-      const usage = await oauthProviders.find(provider => provider.id === "github-copilot")!.fetchQuota(readOpenCodeAuth())
+      const usage = await oauthProviders.find(provider => provider.id === "github-copilot")!.fetchQuota(auth)
       assert.equal(usage.ok, false)
       assert.match(usage.error ?? "", /no quota data/)
     }
   } finally {
     globalThis.fetch = previousFetch
-    if (previousAuthFile === undefined) delete process.env.OPENCODE_AUTH_FILE
-    else process.env.OPENCODE_AUTH_FILE = previousAuthFile
-    fs.rmSync(directory, { recursive: true, force: true })
   }
 })

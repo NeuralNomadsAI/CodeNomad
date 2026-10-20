@@ -244,13 +244,13 @@ describe("OpenCode data projection", () => {
       }
       data = applyOpenCodeDataEvent(instanceId, "/work", {
         id: "compact", type: "session.compaction.started", created: 401,
-        data: { sessionID: sessionId, inputID: "compact", reason: "manual", recent: "" },
+        data: { sessionID: sessionId, inputID: "compact", reason: "manual" },
       } as any)
       await new Promise<void>((resolve) => setImmediate(resolve))
 
       data = applyOpenCodeDataEvent(instanceId, "/work", {
         id: "compact-end", type: "session.compaction.ended", created: 402,
-        data: { sessionID: sessionId, reason: "manual", text: "summary", recent: "" },
+        data: { sessionID: sessionId, reason: "manual", text: "summary" },
       } as any)
 
       assert.equal(data.session.message.list(sessionId).length, 200)

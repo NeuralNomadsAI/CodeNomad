@@ -56,26 +56,21 @@ export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch
     && body(`${session}/fork`, "before") && body(`${session}/command`, "name")
     && body(`${session}/permission/{requestID}/reply`, "decision")
     && "time" in inbox && !("timeCreated" in inbox)
-  const legacy = has(`${session}/rename`, "post") && has("/api/form/request", "get")
-    && has(`${session}/form/{formID}/cancel`, "post") && has(`${session}/wait`, "post")
-    && body(`${session}/fork`, "boundary") && body(`${session}/command`, "command")
-    && body(`${session}/permission/{requestID}/reply`, "reply")
-    && "timeCreated" in inbox && !("time" in inbox)
-  if (modern === legacy) throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "canonical_api")
-  if (modern && !body(`${session}/environment`, "variables", "put")) {
+  // Retired (pre-2.0.4) and unrecognised contracts alike are refused.
+  if (!modern) throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "canonical_api")
+  if (!body(`${session}/environment`, "variables", "put")) {
     throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "session_environment")
   }
   // The pinned client reducer consumes 2.1's replay shape: `native`, never `state`/`recent`.
   const fields = (name: string) => object(object(document.components?.schemas?.[name]).properties)
   const text = fields("Session.Message.Assistant.Text"), compaction = fields("Session.Message.Compaction.Completed")
-  if (modern && !("native" in text && !("state" in text) && "metadata" in compaction && !("recent" in compaction))) {
+  if (!("native" in text && !("state" in text) && "metadata" in compaction && !("recent" in compaction))) {
     throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "native_contract")
   }
-  const profile = modern ? "modern" : "legacy"
   const identity = runtimeIdentity(endpoint)
   if (identity?.contract) {
-    identity.contract.profile = profile
+    identity.contract.profile = "modern"
     identity.contract.reload = has("/api/location/reload", "post")
   }
-  return profile
+  return "modern"
 }

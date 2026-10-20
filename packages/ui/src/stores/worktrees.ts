@@ -129,8 +129,8 @@ async function handleWorktreeReady(
 
   log.info("OpenCode worktree ready", {
     instanceId,
-    directory: event.directory,
-    name: event.properties?.name,
+    directory: event.location?.directory,
+    name: event.data?.name,
   })
 
   const previous = worktreeReadyRefreshes.get(instanceId)

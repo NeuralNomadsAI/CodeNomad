@@ -35,11 +35,9 @@ export function isMissionActivityEvent(event: { type: string }): boolean {
     || event.type === "session.compaction.ended"
     || event.type === "session.compaction.failed"
     || event.type === "session.execution.started"
-    || event.type === "session.status"
     || event.type === "session.execution.succeeded"
     || event.type === "session.execution.failed"
     || event.type === "session.execution.interrupted"
-    || event.type === "session.idle"
     || event.type.startsWith("session.inbox.")
     || event.type.startsWith("shell.")
     || event.type.startsWith("form.")

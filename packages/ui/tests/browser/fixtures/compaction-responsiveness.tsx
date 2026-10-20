@@ -52,7 +52,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
 
 const emit = (sessionID: string, type: string, data: any = {}) => {
   if (type === "session.compaction.started") nativeMessages.set(sessionID, [...(nativeMessages.get(sessionID) ?? []), { id: `compact-${sessionID}`,
-    type: "compaction", status: "running", reason: "manual", summary: "", recent: "", time: { created: sequence } }])
+    type: "compaction", status: "running", reason: "manual", summary: "", time: { created: sequence } }])
   if (type === "session.compaction.delta") nativeMessages.get(sessionID)!.at(-1).summary += data.text
   ;(sseManager as any).handleEvent(instanceId, {
     id: `event_${++sequence}`, type, created: sequence, location: { directory: "/fixture" }, data: { sessionID, ...data },
@@ -71,7 +71,7 @@ const text = (sessionID: string) => {
     active: text("active"), inactive: text("inactive"), ids: store.getSessionMessageIds(selected()),
     revision: getOpenCodeMessageRevision(instanceId, selected()) }),
   start: (sessionID = "active") => {
-    emit(sessionID, "session.compaction.started", { inputID: `compact-${sessionID}`, reason: "manual", recent: "" })
+    emit(sessionID, "session.compaction.started", { inputID: `compact-${sessionID}`, reason: "manual" })
   },
   burst: (sessionID: string, count = 128) => {
     const started = performance.now()
@@ -86,8 +86,8 @@ const text = (sessionID: string) => {
   },
   end: (sessionID: string, summary: string) => {
     nativeMessages.set(sessionID, [{ id: `compact-${sessionID}`, type: "compaction", status: "completed",
-      reason: "manual", summary, recent: "", model, time: { created: 1 } }])
-    emit(sessionID, "session.compaction.ended", { reason: "manual", text: summary, recent: "", model })
+      reason: "manual", summary, model, time: { created: 1 } }])
+    emit(sessionID, "session.compaction.ended", { reason: "manual", text: summary, model })
   },
   fail: (sessionID: string) => emit(sessionID, "session.compaction.failed", {
     inputID: `compact-${sessionID}`, reason: "manual", error: { type: "fixture", message: "cancelled" },

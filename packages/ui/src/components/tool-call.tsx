@@ -12,7 +12,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequest } from "../types/permission"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
-import { getCanonicalToolName, resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
+import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
@@ -32,8 +32,6 @@ import {
   getToolName,
   getToolTitleDetail,
   hasVisibleText,
-  isToolStateCompleted,
-  isToolStateRunning,
   limitToolTitleForRender,
   TOOL_OUTPUT_RENDER_CHARACTER_LIMIT,
   getDefaultToolAction,
@@ -732,37 +730,8 @@ export default function ToolCall(props: ToolCallProps) {
 
   const renderToolTitle = () => {
     const state = toolState()
-    const currentTool = toolName()
-
-    if (getCanonicalToolName(currentTool) !== "task") {
-      if (!state || state.status === "pending") return getRendererAction()
-
-      const stateTitle = typeof (state as { title?: string }).title === "string" ? (state as { title?: string }).title : undefined
-      if (stateTitle && stateTitle.length > 0) {
-        return stateTitle
-      }
-
-      const customTitle = renderer().getTitle?.(headerRendererContext)
-      if (customTitle) return customTitle
-
-      return getToolName(currentTool)
-    }
-
-    if (!state) return getRendererAction()
-    if (state.status === "pending") return getRendererAction()
-
-    const customTitle = renderer().getTitle?.(headerRendererContext)
-    if (customTitle) return customTitle
-
-    if (isToolStateRunning(state) && state.title) {
-      return state.title
-    }
-
-    if (isToolStateCompleted(state) && state.title) {
-      return state.title
-    }
-
-    return getToolName(currentTool)
+    if (!state || state.status === "pending") return getRendererAction()
+    return renderer().getTitle?.(headerRendererContext) || getToolName(toolName())
   }
 
   const toolTypeLabel = createMemo(() => toolName())

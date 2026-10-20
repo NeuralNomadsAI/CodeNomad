@@ -203,12 +203,6 @@ interface MessageContentItemProps {
   onContentRendered?: () => void
 }
 
-function isSupportedPartType(part: unknown): boolean {
-  const type = (part as any)?.type
-  // Ignore part types the UI does not support rendering yet.
-  return !(typeof type === "string" && type === "patch")
-}
-
 function isContentPartType(type: unknown): boolean {
   return type === "text" || type === "file" || type === "skill"
 }
@@ -230,7 +224,6 @@ function MessageContentItem(props: MessageContentItemProps) {
     for (const partId of props.partIds) {
       const part = current.parts[partId]?.data
       if (!part) continue
-      if (!isSupportedPartType(part)) continue
       if (!isContentPartType((part as any).type)) continue
       resolved.push(part)
     }
@@ -279,8 +272,6 @@ function MessageContentItem(props: MessageContentItemProps) {
       const partId = ids[idx]
       const part = current.parts[partId]?.data
       if (!part) continue
-      if (!isSupportedPartType(part)) continue
-
       if (!isContentPartType((part as any).type)) continue
         if (isVisibleContentPart(part)) {
           return false
@@ -1353,20 +1344,7 @@ function CompactionCard(props: CompactionCardProps) {
 }
 
 function getReasoningText(part: ClientPart) {
-  const stringify = (segment: unknown): string => {
-    if (typeof segment === "string") return segment
-    if (!segment || typeof segment !== "object") return ""
-    const value = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-    return [
-      typeof value.text === "string" ? value.text : "",
-      typeof value.value === "string" ? value.value : "",
-      Array.isArray(value.content) ? value.content.map(stringify).join("\n") : "",
-    ].filter((item) => item.trim()).join("\n")
-  }
-  const text = stringify((part as any).text)
-  if (text.trim()) return text
-  const content = (part as any).content
-  return Array.isArray(content) ? content.map(stringify).join("\n") : ""
+  return part.type === "reasoning" && part.text.trim() ? part.text : ""
 }
 
 function reasoningDurationTitle(t: I18nContextValue["t"], durationMs?: number) {

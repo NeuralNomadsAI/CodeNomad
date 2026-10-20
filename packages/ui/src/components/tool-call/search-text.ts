@@ -22,7 +22,6 @@ function appendBaseToolText(values: string[], context: ToolSearchTextContext) {
   appendString(values, context.toolName)
   appendString(values, metadata.title)
   appendString(values, metadata.description)
-  appendString(values, context.toolState && "title" in context.toolState ? (context.toolState as any).title : undefined)
 }
 
 function appendToolErrorText(values: string[], context: ToolSearchTextContext) {

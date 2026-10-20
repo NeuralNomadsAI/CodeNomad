@@ -226,7 +226,7 @@ export class RecurringDayFixture {
         this.jobs.delete(id)
         return record
       }), pendingBackground: Effect.sync(() => this.background) }
-    // Native 2.0.26 shape: a borrowed Location graph holds Location services only; Database,
+    // Native shape (as of the 2.1.0 minimum): a borrowed Location graph holds Location services only; Database,
     // Session, Job and Bus are process-global and appear only in plugin/RPC contexts.
     const locationGraph = Context.make(tag("@opencode/Location"), location).pipe(
       Context.add(tag("@opencode/Form"), { list: () => Effect.sync(() => [...this.forms.values()]),
@@ -414,7 +414,7 @@ export class RecurringDayFixture {
   }
   idle(id: string, failed = false) {
     this.db.prepare("UPDATE fixture_session SET active=0 WHERE id=?").run(id)
-    // Native 2.0.26 shape: no persisted terminal event, only the durable idle projection.
+    // Native shape (as of the 2.1.0 minimum): no persisted terminal event, only the durable idle projection.
     const info = Schema.decodeUnknownSync(SessionMessage.Info)({ id: `msg_idle_${++this.serial}`, type: "idle",
       outcome: failed ? "failed" : "succeeded", time: { created: this.now } })
     this.db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(info.id, id, "idle",

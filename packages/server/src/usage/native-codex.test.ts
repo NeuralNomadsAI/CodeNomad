@@ -142,7 +142,7 @@ test("warm snapshots and pending quotas cannot cross selected accounts or native
   } finally { release?.(); globalThis.fetch = previousFetch; await f.close() }
 })
 
-test("a missing native credential API exposes only the feature-local upgrade reason", async () => {
+test("a missing or failing native credential API is plain unavailability without details", async () => {
   const f = await fixture()
   try {
     const usage = createNativeCodexUsage()
@@ -151,7 +151,7 @@ test("a missing native credential API exposes only the feature-local upgrade rea
       const response = await usage(f.connection, scope, AbortSignal.timeout(2000))
       assert.equal(response?.ok, false)
       assert.deepEqual(response?.windows, {})
-      assert.equal(response?.unavailableReason, status === 404 ? "native-credential-api-unavailable" : undefined)
+      assert.equal(response?.unavailableReason, undefined)
       assert.equal(JSON.stringify(response).includes("secret"), false)
       assert.equal(JSON.stringify(response).includes("Private"), false)
     }

@@ -153,7 +153,8 @@ pruning = new DesktopPluginLifecycle("session-pruning")
   const before = await client.server.info()
   evidence.started = { endpoint: endpoint.url, pid: before.pid, version: before.version }
   console.log(`Authenticated isolated ${distro} service: ${endpoint.url}, PID ${before.pid}; ${root}`)
-  assert.equal(before.version, "2.0.11")
+  // The selected isolated CLI, not a fixed release label, names the expected daemon.
+  assert.equal(before.version, (await wsl(`${quote(cli)} --version`)).split(/\s+/).at(-1).replace(/^v/, ""))
   const connection = await shared.acquire()
   const assertCurrent = () => { signal.throwIfAborted(); connection.assertCurrent() }
   const paths = await resolveDesktopPluginPaths({ ...connection, assertCurrent }, { kind: "wsl", distro, binary: wrapper }, Math.min(deadlineAt, Date.now() + 15_000))

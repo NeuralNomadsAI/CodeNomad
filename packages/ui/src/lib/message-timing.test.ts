@@ -51,12 +51,6 @@ describe("message timing helpers", () => {
     assert.equal(duration, undefined)
   })
 
-  it("uses reasoning start/end times when OpenCode provides them on the part", () => {
-    const reasoningPart = { id: "reasoning-1", type: "reasoning", time: { start: 1_000, end: 4_500 } } as any
-    const duration = inferReasoningDurationMs([reasoningPart], reasoningPart)
-    assert.equal(duration, 3_500)
-  })
-
   it("uses OpenCode V2 created/completed reasoning times and ran/completed tool times", () => {
     const reasoningPart = { id: "reasoning-2", type: "reasoning", time: { created: 1_000, completed: 4_000 } } as any
     assert.equal(inferReasoningDurationMs([reasoningPart], reasoningPart), 3_000)
@@ -70,7 +64,7 @@ describe("message timing helpers", () => {
   })
 
   it("does not infer reasoning duration from message completion or fallback fields", () => {
-    const reasoningPart = { id: "reasoning-1", type: "reasoning", duration: 3_000, time: { created: 1_000, start: 2_000 } } as any
+    const reasoningPart = { id: "reasoning-1", type: "reasoning", duration: 3_000, time: { created: 1_000 } } as any
     const duration = inferReasoningDurationMs(
       [reasoningPart],
       reasoningPart,

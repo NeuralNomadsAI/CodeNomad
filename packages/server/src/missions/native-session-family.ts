@@ -26,7 +26,7 @@ export async function readNativeMissionFamilyTree(client: OpenCodeClient, root: 
     do {
       signal.throwIfAborted()
       options.assertCurrent?.()
-      // Native 2.0.21 emits next for EVERY nonempty page, not just a full
+      // Native (as of the 2.1.0 minimum) emits next for EVERY nonempty page, not just a full
       // page. Drain until the authoritative empty/end page, never infer it.
       if (++reads > 2 * (MAX_MISSION_DESCENDANTS + 1)) throw new Error("Incomplete child inventory")
       options.consumeRead?.()

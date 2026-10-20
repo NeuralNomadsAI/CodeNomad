@@ -287,11 +287,11 @@ it does not claim exhaustive coverage of every provider's OAuth implementation.
 | Permission-event rename | Removed; pre-2.0.4 event contract. |
 | Step timestamp fallback | Removed; absent through 2.0.6, native field available from 2.0.7. This establishes the technical minimum. |
 | Legacy live location/worktree/credential/Form serialization | Removed, including workspace selector injection and legacy-positive request/import/cursor branches. |
-| `catalog.updated` alias | Removed; current catalogs use resource-specific events. `session.message.content.updated` remains in the current durable event union and is retained. |
+| `catalog.updated` alias | Removed; current catalogs use resource-specific events. `session.message.content.updated` is replay-only (declared, never published live, as of the 2.1.0 minimum), so its live invalidation is removed too. |
 | Authentication, cancellation, origin and connection generations | Retained and regression-tested at the existing shared seam. |
-| Older discovery routes | Retained for authenticated diagnosis of an outdated running daemon, not functional live support. |
+| Older discovery routes | Retained for authenticated diagnosis of an outdated running daemon, not functional live support. Probed only after a 404 from `/api/info`, which every admitted daemon serves; the transport no longer rewrites `/api/status` requests. |
 | Historical location/context, import/cursor and pruning checks | Retained for internal identity and current directory authorization. Obsolete public selectors are rejected unconditionally. Original cursor bytes and independent import-history ownership are preserved. |
-| Legacy schema recognition | Retained to diagnose and reject a retired contract; no legacy serializer remains. |
+| Legacy schema recognition | Removed. A retired (pre-2.0.4) contract and an unrecognised one share the same `canonical_api` refusal; the legacy fixture remains a rejection input. |
 | Existing CodeNomad plugin-entry/presence migration | Retained for upgrades/concurrent backends, independently of OpenCode runtime support. |
 | Query-only pruning preview and TUI refresh synchronization | Retained: plugin 2.0.11 still lacks `session.message`, and publication races remain current. Stale beta-only comments were corrected. |
 

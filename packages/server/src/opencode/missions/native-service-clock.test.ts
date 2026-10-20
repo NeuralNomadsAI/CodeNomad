@@ -72,10 +72,10 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
       try { const value = await Effect.runPromise(callback().pipe(Effect.provide(graph))); db.exec("COMMIT"); return value }
       catch (error) { db.exec("ROLLBACK"); throw error }
     }) } }
-    // Native graphs carry a foreign Location class with an explicit `workspaceID: undefined` (2.0.26).
+    // Native graphs carry a foreign Location class with an explicit `workspaceID: undefined` (2.0.26 through the 2.1.0 minimum).
     const nativeLocation = { ...location, workspaceID: undefined } as unknown as Location.Info
     // A borrowed native Location graph has Location services only; Database, Session and Job
-    // are process-global and exist only in the Play-time plugin context (observed in 2.0.26).
+    // are process-global and exist only in the Play-time plugin context (observed in 2.0.26; unchanged at the 2.1.0 minimum).
     const borrowed = Context.make(locationTag, nativeLocation)
     const map = await Effect.runPromise(RcMap.make({ idleTimeToLive: Infinity, lookup: () => Effect.succeed(borrowed) })
       .pipe(Effect.provideService(Scope.Scope, scope)))

@@ -10,6 +10,7 @@ import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
 import { OpenCode } from "@opencode/client"
 import { build } from "esbuild"
+import { tsImport } from "tsx/esm/api"
 
 const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute isolated CLI executable")
@@ -29,7 +30,10 @@ Object.assign(env, {
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
 })
 const runtimeVersion = execFileSync(cli, ["--version"], { cwd: root, env, encoding: "utf8" }).trim().replace(/^opencode2? v/, "")
-assert.match(runtimeVersion, /^(2\.0\.(19|21|22|24|27|32)|2\.1\.0)$/, "This fixture qualifies only the requested runtimes")
+// Follows the technical minimum: any published release at or above it, patches included.
+const { MINIMUM_OPENCODE_VERSION, isBelowOpenCodeMinimum } = await tsImport("../packages/server/src/opencode/runtime-support.ts", import.meta.url)
+assert.ok(/^\d+\.\d+\.\d+$/.test(runtimeVersion) && !isBelowOpenCodeMinimum(runtimeVersion),
+  `This fixture qualifies published OpenCode ${MINIMUM_OPENCODE_VERSION} or newer, not ${runtimeVersion}`)
 await Promise.all(["config", "plugin", "pruning"].map(name => mkdir(path.join(root, name), { recursive: true })))
 const bundle = await build({
   entryPoints: [fileURLToPath(new URL("../packages/server/src/opencode/session-pruning/plugin.ts", import.meta.url))],

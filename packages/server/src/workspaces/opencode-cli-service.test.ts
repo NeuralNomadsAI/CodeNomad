@@ -4,7 +4,10 @@ import type { Endpoint } from "@opencode/client/service"
 import { OpenCodeCliService } from "./opencode-cli-service"
 import { runtimeIdentity } from "../opencode/compatibility/runtime"
 
-for (const kind of ["status", "health", "info"] as const) {
+// Admitted daemons answer info first; older routes are probed only after a 404.
+const probeOrder = ["info", "status", "health"] as const
+for (const kind of probeOrder) {
+  const probes = probeOrder.slice(0, probeOrder.indexOf(kind) + 1).map(route => `/api/${route}`)
   for (const observedAt of [1999, 2000, 2001]) {
     it(`checks the final ${kind} body at ${observedAt} against absolute expiry, not timer dispatch`, async context => {
       let now = 1000, count = 0, reached!: () => void, stream!: ReadableStreamDefaultController<Uint8Array>
@@ -17,7 +20,8 @@ for (const kind of ["status", "health", "info"] as const) {
       context.mock.method(Date, "now", () => now)
       context.mock.method(globalThis, "setTimeout", ((_callback: unknown, delay: number) => {
         const timer = { delay }; timers.add(timer); delays.push(delay)
-        if (++count === (kind === "status" ? 4 : kind === "health" ? 6 : 8)) reached()
+        // Two CLI commands, then one fetch and one 404 cancellation per earlier probe.
+        if (++count === 2 + 2 * probes.length) reached()
         return timer
       }) as unknown as typeof setTimeout)
       context.mock.method(globalThis, "clearTimeout", (timer: unknown) => { timers.delete(timer as object) })
@@ -53,7 +57,7 @@ for (const kind of ["status", "health", "info"] as const) {
           assert.equal(runtimeIdentity(observedEndpoint!), undefined)
         }
         assert.deepEqual(commands, ["service status", "service get password"])
-        assert.deepEqual(requests, ["/api/status", ...(kind !== "status" ? ["/api/health"] : []), ...(kind === "info" ? ["/api/info"] : [])])
+        assert.deepEqual(requests, probes)
         assert.equal(timers.size, 0)
         assert.ok(delays.every(delay => delay > 0 && delay < 1000))
         context.diagnostic(JSON.stringify({ observedAt, deadlineAt, kind, bodyBytes: Buffer.byteLength(body), commands, requests,
