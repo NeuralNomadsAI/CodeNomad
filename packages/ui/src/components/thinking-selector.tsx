@@ -6,6 +6,7 @@ import { ChevronDown } from "lucide-solid"
 import { getLogger } from "../lib/logger"
 import { getModelThinkingSelection, setModelThinkingSelection } from "../stores/preferences"
 import { useI18n } from "../lib/i18n"
+import { withHotkey } from "../lib/hotkeys"
 
 const log = getLogger("session")
 
@@ -93,7 +94,7 @@ export default function ThinkingSelector(props: ThinkingSelectorProps) {
       >
         <Combobox.Control class="relative w-full" data-thinking-selector-control>
           <Combobox.Input class="sr-only" data-thinking-selector aria-label={accessibleLabel()} />
-          <Combobox.Trigger class="selector-trigger" aria-label={accessibleLabel()} title={accessibleLabel()}>
+          <Combobox.Trigger class="selector-trigger" aria-label={accessibleLabel()} title={withHotkey(accessibleLabel(), "focus-variant")}>
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
                 <span class="session-sidebar-selector-prefix">{t("thinkingSelector.label", { variant: "" }).trim()}</span>{" "}

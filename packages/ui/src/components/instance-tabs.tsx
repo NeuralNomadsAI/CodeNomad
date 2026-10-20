@@ -15,7 +15,7 @@ import ToastHistoryPanel from "./toast-history-panel"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { renameProject } from "../stores/project-names"
 import { Plus, MonitorUp, Bell, Settings } from "lucide-solid"
-import { hotkeyLabel } from "../lib/hotkeys"
+import { withHotkey } from "../lib/hotkeys"
 import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
 import { canOpenRemoteWindows } from "../lib/runtime-env"
@@ -290,7 +290,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
             <button
               class="new-tab-button new-instance-button"
               {...newInstanceHandlers}
-              title={t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title") + (hotkeyLabel("new-instance") ? ` (${hotkeyLabel("new-instance")})` : "")}
+              title={withHotkey(t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title"), "new-instance")}
               aria-label={t("instanceTabs.new.ariaLabel")}
               aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
               aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}

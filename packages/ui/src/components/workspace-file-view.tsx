@@ -1,7 +1,7 @@
 import { Show, Suspense, createEffect, createSignal, lazy, on, onCleanup } from "solid-js"
 import { Save, WrapText, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { hotkeyLabel } from "../lib/hotkeys"
+import { withHotkey } from "../lib/hotkeys"
 import { useTheme } from "../lib/theme"
 import { serverApi } from "../lib/api-client"
 import { previewReads } from "../lib/background-read-queue"
@@ -89,7 +89,7 @@ export function WorkspaceFileView(props: { instanceId: string; target: FilePrevi
         <button class="file-viewer-toolbar-button" onClick={() => setSource(!source())}>{t(source() ? "instanceShell.filesShell.previewMarkdown" : "instanceShell.filesShell.showSource")}</button>
       </Show>
       <Show when={content()?.text !== undefined && (!markdown() || source())}>
-        <button class="files-header-icon-button" aria-label={t("instanceShell.rightPanel.actions.save")} title={t("instanceShell.rightPanel.actions.save") + (hotkeyLabel("file-save") ? ` (${hotkeyLabel("file-save")})` : "")} disabled={!editor.dirty() || editor.saving()} onClick={() => void editor.save()}><Save size={16} /></button>
+        <button class="files-header-icon-button" aria-label={t("instanceShell.rightPanel.actions.save")} title={withHotkey(t("instanceShell.rightPanel.actions.save"), "file-save")} disabled={!editor.dirty() || editor.saving()} onClick={() => void editor.save()}><Save size={16} /></button>
         <button class="files-header-icon-button icon-toggle" aria-label={t(wrap() ? "instanceShell.filesShell.disableWordWrap" : "instanceShell.filesShell.enableWordWrap")} aria-pressed={wrap()} onClick={() => setWrap(!wrap())}><WrapText size={16} /></button>
       </Show>
       <button class="files-header-icon-button" aria-label={t("gitPanel.backChat")} title={t("gitPanel.backChat")} onClick={props.onClose}><X size={16} /></button>

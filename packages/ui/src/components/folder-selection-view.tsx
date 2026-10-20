@@ -1,7 +1,7 @@
 import { Component, createSignal, Show, For, onMount, onCleanup, createEffect } from "solid-js"
 import { Folder, Clock, Trash2, FolderPlus, Settings, ChevronRight, MonitorUp, Star, X, Globe, Loader2, GitBranch, Pencil, Hourglass } from "lucide-solid"
 import { useConfig } from "../stores/preferences"
-import { isHotkeyRecording, matchesHotkey } from "../lib/hotkeys"
+import { isHotkeyRecording, matchesHotkey, withHotkey } from "../lib/hotkeys"
 import ProjectRenameDialog from "./project-rename-dialog"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
@@ -743,6 +743,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
                   <button
                     onClick={() => void handleBrowse()}
                     disabled={props.isLoading}
+                    title={withHotkey(t("folderSelection.browse.button"), "browse-folder")}
                     class="button-primary w-full flex items-center justify-center text-sm disabled:cursor-not-allowed"
                     onMouseEnter={() => setFocusMode("new")}
                   >

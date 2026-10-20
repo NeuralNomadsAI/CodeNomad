@@ -39,6 +39,7 @@ import { getLogger } from "../../lib/logger"
 import PromptInput from "../prompt-input"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
+import { hotkeyLabel, withHotkey } from "../../lib/hotkeys"
 import { getPermissionQueueLength } from "../../stores/instances"
 import { getFormQueue } from "../../stores/forms"
 import SessionSidebar from "./shell/SessionSidebar"
@@ -647,6 +648,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       key: "commands",
       checked: paletteOpen(),
       label: t("instanceShell.commandPalette.openAriaLabel"),
+      description: hotkeyLabel("open-command-palette") || undefined,
       icon: <CommandIcon class="w-4 h-4" aria-hidden="true" />,
       onSelect: handleCommandPaletteClick,
     }]
@@ -656,6 +658,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
         key: "search",
         checked: searchOpen(),
         label: t("instanceShell.chatSearch.openAriaLabel"),
+        description: hotkeyLabel("session-search") || undefined,
         icon: <Search class="w-4 h-4" aria-hidden="true" />,
         onSelect: handleChatSearchClick,
       },
@@ -1102,7 +1105,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           aria-controls={paletteWindowId()}
                           aria-haspopup="dialog"
                           aria-label={t("instanceShell.commandPalette.openAriaLabel")}
-                          title={t("instanceShell.commandPalette.openAriaLabel")}
+                          title={withHotkey(t("instanceShell.commandPalette.openAriaLabel"), "open-command-palette")}
                           size="small"
                         >
                           <CommandIcon class="w-5 h-5" aria-hidden="true" />
@@ -1116,7 +1119,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                             aria-controls={searchWindowId()}
                             aria-haspopup="dialog"
                             aria-label={t("instanceShell.chatSearch.openAriaLabel")}
-                            title={t("instanceShell.chatSearch.openAriaLabel")}
+                            title={withHotkey(t("instanceShell.chatSearch.openAriaLabel"), "session-search")}
                             size="small"
                           >
                             <Search class="w-5 h-5" aria-hidden="true" />

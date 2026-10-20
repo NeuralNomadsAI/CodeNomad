@@ -1,7 +1,7 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
-import { matchesHotkey } from "../lib/hotkeys"
+import { matchesHotkey, withHotkey } from "../lib/hotkeys"
 import DismissibleWindow from "./dismissible-window"
 import WindowCloseButton from "./window-close-button"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../stores/session-search"
@@ -1529,7 +1529,7 @@ export default function MessageSection(props: MessageSectionProps) {
                         onClick={() => moveSearchMatch(-1)}
                         disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.previousAriaLabel")}
-                        title={t("messageSection.search.previousAriaLabel")}
+                        title={withHotkey(t("messageSection.search.previousAriaLabel"), "search-prev-result")}
                       >
                         <ChevronUp class="w-4 h-4" aria-hidden="true" />
                       </button>
@@ -1539,7 +1539,7 @@ export default function MessageSection(props: MessageSectionProps) {
                         onClick={() => moveSearchMatch(1)}
                         disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.nextAriaLabel")}
-                        title={t("messageSection.search.nextAriaLabel")}
+                        title={withHotkey(t("messageSection.search.nextAriaLabel"), "search-next-result")}
                       >
                         <ChevronDown class="w-4 h-4" aria-hidden="true" />
                       </button>

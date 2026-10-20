@@ -6,7 +6,7 @@ import { FolderCheck, FolderOpen, Hourglass, Pencil, ShieldAlert, X } from "luci
 import { useI18n } from "../lib/i18n"
 import { useConfig } from "../stores/preferences"
 import { keepTemporaryInstance } from "../stores/temporary-instances"
-import { hotkeyLabel, matchesHotkey } from "../lib/hotkeys"
+import { withHotkey, matchesHotkey } from "../lib/hotkeys"
 import { getInstanceLabel } from "../lib/instance-label"
 
 interface InstanceTabProps {
@@ -109,6 +109,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
             role="button"
             tabIndex={0}
             aria-label={t("instanceTab.actions.close.ariaLabel")}
+            title={props.active ? withHotkey(t("instanceTab.actions.close.ariaLabel"), "close-instance") : t("instanceTab.actions.close.ariaLabel")}
           >
             <X class="w-3 h-3" />
           </span>
@@ -124,7 +125,7 @@ const InstanceTab: Component<InstanceTabProps> = (props) => {
           }}
         >
           <ContextMenu.Item class="action-overflow-item" onSelect={() => { renameSelected = true }}
-            title={t("instanceTab.actions.rename") + (hotkeyLabel("instance-rename") ? ` (${hotkeyLabel("instance-rename")})` : "")}>
+            title={withHotkey(t("instanceTab.actions.rename"), "instance-rename")}>
             <span class="action-overflow-item-icon" aria-hidden="true"><Pencil class="w-3.5 h-3.5" /></span>
             <span class="action-overflow-item-label">{t("instanceTab.actions.rename")}</span>
           </ContextMenu.Item>

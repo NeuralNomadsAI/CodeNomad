@@ -7,6 +7,7 @@ import IconButton from "@suid/material/IconButton"
 
 import SessionList from "../../session-list"
 import { getLogger } from "../../../lib/logger"
+import { withHotkey } from "../../../lib/hotkeys"
 import { shouldMountSessionList } from "../../session-list-visibility"
 
 const log = getLogger("session")
@@ -47,7 +48,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               size="small"
               color="inherit"
               aria-label={props.t("sessionList.actions.newSession.ariaLabel")}
-              title={props.t("sessionList.actions.newSession.title")}
+              title={withHotkey(props.t("sessionList.actions.newSession.title"), "session-new")}
               onClick={() => {
                 const result = props.onNewSession()
                 if (result instanceof Promise) {
@@ -73,7 +74,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
               size="small"
               color="inherit"
               aria-label={props.t("instanceShell.leftPanel.instanceInfo")}
-              title={props.t("instanceShell.leftPanel.instanceInfo")}
+              title={withHotkey(props.t("instanceShell.leftPanel.instanceInfo"), "switch-to-info")}
               aria-pressed={props.activeSessionId() === "info"}
               onClick={() => props.onSelectSession("info")}
             >

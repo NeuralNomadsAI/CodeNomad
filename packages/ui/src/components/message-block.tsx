@@ -17,7 +17,7 @@ import { messageStoreBus } from "../stores/message-v2/bus"
 import { ensureSessionAncestorsExpanded, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
 import { useI18n, type I18nContextValue } from "../lib/i18n"
-import { hotkeyLabel } from "../lib/hotkeys"
+import { withHotkey } from "../lib/hotkeys"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
 import { formatElapsedDuration, getPartEndedAt, getPartStartedAt, inferReasoningDurationMs } from "../lib/message-timing"
@@ -426,7 +426,7 @@ function ToolCallItem(props: ToolCallItemProps) {
                   void moveRunningWorkToBackground(props.instanceId, props.sessionId, t)
                 }}
                 aria-label={t("promptInput.background.title")}
-                title={t("promptInput.background.title") + (hotkeyLabel("session-background") ? ` (${hotkeyLabel("session-background")})` : "")}
+                title={withHotkey(t("promptInput.background.title"), "session-background")}
               >
                 <Layers3 class="w-3.5 h-3.5" aria-hidden="true" />
               </button>
@@ -1224,7 +1224,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
                 void moveRunningWorkToBackground(props.instanceId, props.sessionId, t)
               }}
               aria-label={t("promptInput.background.title")}
-              title={t("promptInput.background.title") + (hotkeyLabel("session-background") ? ` (${hotkeyLabel("session-background")})` : "")}
+              title={withHotkey(t("promptInput.background.title"), "session-background")}
             >
               <Layers3 class="w-3.5 h-3.5" aria-hidden="true" />
             </button>

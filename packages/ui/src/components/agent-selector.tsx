@@ -5,6 +5,7 @@ import { waitForInstanceInitialSessionHydration } from "../stores/instances"
 import { ChevronDown } from "lucide-solid"
 import { findAgentById, getSelectableAgentsForSession, type Agent } from "../types/session"
 import { useI18n } from "../lib/i18n"
+import { withHotkey } from "../lib/hotkeys"
 import { getLogger } from "../lib/logger"
 const log = getLogger("session")
 
@@ -100,7 +101,7 @@ export default function AgentSelector(props: AgentSelectorProps) {
       >
         <Combobox.Control class="relative w-full">
           <Combobox.Input class="sr-only" data-agent-selector aria-label={t("agentSelector.placeholder")} />
-          <Combobox.Trigger class="selector-trigger" aria-label={accessibleLabel()} title={accessibleLabel()}>
+          <Combobox.Trigger class="selector-trigger" aria-label={accessibleLabel()} title={withHotkey(accessibleLabel(), "open-agent-selector")}>
             <div class="flex-1 min-w-0">
               <div class="selector-trigger-label selector-trigger-label--stacked">
                 <span class="selector-trigger-primary selector-trigger-primary--align-left">

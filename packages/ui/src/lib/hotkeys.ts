@@ -14,6 +14,12 @@ export function hotkeyLabel(id: string): string {
   return effectiveHotkeyBindings(id).map(binding => formatHotkeyBinding(binding)).join(" / ")
 }
 
+/** Tooltip text: the label followed by its effective shortcut, if any. */
+export function withHotkey(label: string, id: string): string {
+  const shortcut = hotkeyLabel(id)
+  return shortcut ? `${label} (${shortcut})` : label
+}
+
 export function matchesHotkey(id: string, event: KeyboardEvent): boolean {
   return !isHotkeyRecording() && !event.defaultPrevented && !event.isComposing && event.keyCode !== 229
     && effectiveHotkeyBindings(id).some(binding => matchesHotkeyBinding(binding, event))

@@ -6,7 +6,7 @@ import { Markdown } from "../markdown"
 import { copyToClipboard } from "../../lib/clipboard"
 import { useI18n } from "../../lib/i18n"
 import type { PromptAsideController } from "./usePromptAside"
-import { hotkeyLabel, matchesHotkey } from "../../lib/hotkeys"
+import { withHotkey, matchesHotkey } from "../../lib/hotkeys"
 
 export default function PromptAsideWindow(props: {
   id: string
@@ -52,7 +52,7 @@ export default function PromptAsideWindow(props: {
           <div class="session-aside-actions">
             <Show when={aside.pending()} fallback={
               <button type="submit" class="window-action" disabled={!aside.question().trim()}
-                title={t("promptInput.btw.ask") + (hotkeyLabel("aside-send") ? ` (${hotkeyLabel("aside-send")})` : "")}>{t("promptInput.btw.ask")}</button>
+                title={withHotkey(t("promptInput.btw.ask"), "aside-send")}>{t("promptInput.btw.ask")}</button>
             }>
               <span role="status" class="session-aside-loading"><Loader2 class="animate-spin" size={14} />{t("promptInput.btw.loading")}</span>
               <button type="button" class="window-action" onClick={aside.cancel}>{t("promptInput.btw.cancel")}</button>

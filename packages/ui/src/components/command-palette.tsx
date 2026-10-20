@@ -2,7 +2,7 @@ import { Component, createSignal, For, Show, createEffect, createMemo, on } from
 import DismissibleWindow from "./dismissible-window"
 import WindowCloseButton from "./window-close-button"
 import { resolveResolvable, type Command } from "../lib/commands"
-import { hotkeyLabel } from "../lib/hotkeys"
+import { withHotkey } from "../lib/hotkeys"
 import { useI18n } from "../lib/i18n"
 
 interface CommandPaletteProps {
@@ -269,7 +269,7 @@ const CommandPalette: Component<CommandPaletteProps> = (props) => {
                               data-command-index={commandIndex}
                               onClick={() => handleCommandClick(command)}
                               disabled={disabled}
-                              title={resolveResolvable(command.label) + (command.shortcutId && hotkeyLabel(command.shortcutId) ? ` (${hotkeyLabel(command.shortcutId)})` : "")}
+                              title={command.shortcutId ? withHotkey(resolveResolvable(command.label), command.shortcutId) : resolveResolvable(command.label)}
                               class={`modal-item ${selectedCommandId() === command.id ? "modal-item-highlight" : ""}`}
                               onPointerMove={(event) => {
                                 if (event.movementX === 0 && event.movementY === 0) return

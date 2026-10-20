@@ -1,5 +1,5 @@
 import { Show } from "solid-js"
-import { hotkeyLabel } from "../lib/hotkeys"
+import { withHotkey } from "../lib/hotkeys"
 import ContextMeter from "./context-meter"
 import { useI18n } from "../lib/i18n"
 
@@ -54,7 +54,7 @@ export default function MessageListHeader(props: MessageListHeaderProps) {
             class="connection-status-button command-palette-button"
             onClick={props.onCommandPalette}
             aria-label={t("messageListHeader.commandPalette.ariaLabel")}
-            title={t("messageListHeader.commandPalette.ariaLabel") + (hotkeyLabel("open-command-palette") ? ` (${hotkeyLabel("open-command-palette")})` : "")}
+            title={withHotkey(t("messageListHeader.commandPalette.ariaLabel"), "open-command-palette")}
           >
             {t("messageListHeader.commandPalette.button")}
           </button>

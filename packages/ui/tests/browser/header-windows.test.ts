@@ -820,12 +820,21 @@ test("composer tooltips follow effective bindings without permanent key strips",
     const sendName = await send.getAttribute("aria-label"), stopName = await stop.getAttribute("aria-label")
     assert.equal(await page.locator(".prompt-input-overlay, .keyboard-hints, .kbd-hint").count(), 0)
     assert.equal(await composer.getAttribute("aria-describedby"), null)
+    // Icon buttons of shortcut actions name their default key in the tooltip only.
+    const header = page.locator(".session-header-expanded-actions:visible")
+    const search = header.getByRole("button", { name: "Search chat history", exact: true })
+    assert.equal(await header.getByRole("button", { name: "Open command palette", exact: true }).getAttribute("title"), "Open command palette (Ctrl+Shift+P)")
+    assert.equal(await search.getAttribute("title"), "Search chat history (Ctrl+F)")
+    for (const key of ["Ctrl+Shift+A", "Ctrl+Shift+M", "Ctrl+Shift+T"]) {
+      assert.equal(await page.locator(`.selector-trigger[title$=" (${key})"]:visible`).count(), 1, `composer selector names ${key}`)
+    }
     await page.evaluate(() => (window as any).fixture.setPreferences({ hotkeyOverrides: {
       "prompt-send": [{ key: "j", mod: true }], "session-abort": [{ key: "e", mod: true }],
       "session-search": [{ key: "g", mod: true }],
     } }))
     assert.equal(await send.getAttribute("title"), `${sendName} (Ctrl+J)`)
     assert.equal(await stop.getAttribute("title"), `${stopName} (Ctrl+E)`)
+    assert.equal(await search.getAttribute("title"), "Search chat history (Ctrl+G)")
     assert.equal(await send.getAttribute("aria-label"), sendName)
     assert.equal(await stop.getAttribute("aria-label"), stopName)
     await page.keyboard.press("Control+f")
