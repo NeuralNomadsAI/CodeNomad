@@ -114,7 +114,7 @@ describe("prompt submit shortcuts", () => {
   for (const submitOnEnter of [true, false]) {
     it(`reserves Enter for an open picker with submitOnEnter=${submitOnEnter}`, () => {
       const input = setup(submitOnEnter, true)
-      for (const modifiers of [{}, { shiftKey: true }, { ctrlKey: true }, { metaKey: true },
+      for (const modifiers of [{}, { shiftKey: true }, { altKey: true }, { ctrlKey: true }, { metaKey: true },
         { ctrlKey: true, shiftKey: true }, { metaKey: true, shiftKey: true }]) {
         const handled = input.press(modifiers)
         assert.equal(handled.prevented, true, "an empty or not-yet-mounted picker cannot insert a newline")
@@ -125,11 +125,15 @@ describe("prompt submit shortcuts", () => {
     })
   }
 
-  it("sends normally on Enter and uses alternate delivery on Mod+Shift+Enter", () => {
+  it("sends normally on Enter and uses alternate delivery on Alt+Enter and Mod+Shift+Enter", () => {
     const input = setup()
     input.press({})
+    input.press({ altKey: true })
     input.press({ ctrlKey: true, shiftKey: true })
-    assert.deepEqual(input.sends, [false, true])
+    assert.deepEqual(input.sends, [false, true, true])
+    // AltGr arrives as Ctrl+Alt and is not the alternate send.
+    input.press({ ctrlKey: true, altKey: true })
+    assert.deepEqual(input.sends, [false, true, true])
   })
 
   it("keeps Mod+Enter as a newline", () => {
@@ -139,10 +143,11 @@ describe("prompt submit shortcuts", () => {
     assert.deepEqual(input.sends, [])
   })
 
-  it("keeps Mod+Shift+Enter as alternate delivery when Enter inserts a newline", () => {
+  it("keeps Alt+Enter and Mod+Shift+Enter as alternate delivery when Enter inserts a newline", () => {
     const input = setup(false)
+    input.press({ altKey: true })
     input.press({ ctrlKey: true, shiftKey: true })
-    assert.deepEqual(input.sends, [true])
+    assert.deepEqual(input.sends, [true, true])
   })
 
   it("moves blocking session work to the background on Mod+B", () => {

@@ -83,7 +83,8 @@ const defaults: Record<string, HotkeyBinding[]> = {
   "focus-variant": [{ key: "t", mod: true, shift: true }],
   "session-search": [{ key: "f", mod: true }],
   "session-background": [{ key: "b", mod: true }],
-  "prompt-alternate-send": [{ key: "Enter", mod: true, shift: true }],
+  // Alt+Enter is shown; the original Ctrl/Cmd+Shift+Enter keeps working.
+  "prompt-alternate-send": [{ key: "Enter", alt: true }, { key: "Enter", mod: true, shift: true }],
   "prompt-history-prev": [{ key: "ArrowUp" }],
   "prompt-history-next": [{ key: "ArrowDown" }],
   "prompt-exit-shell": [{ key: "Escape" }],

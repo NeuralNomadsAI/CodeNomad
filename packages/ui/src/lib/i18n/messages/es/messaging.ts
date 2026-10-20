@@ -292,6 +292,7 @@ export const messagingMessages = {
   "promptInput.clear.title": "Borrar el texto del prompt",
   "promptInput.send.ariaLabel": "Enviar mensaje",
   "promptInput.send.queueAriaLabel": "Poner mensaje en cola",
+  "promptInput.send.nowLabel": "Enviar ahora",
   "promptQueue.title": "Cola de prompts ({count})",
   "promptQueue.delivery.queue": "En cola",
   "promptQueue.delivery.steer": "Intervención en curso",

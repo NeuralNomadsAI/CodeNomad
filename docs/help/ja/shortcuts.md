@@ -43,7 +43,7 @@
 | モデルバリアントを選ぶ | `Mod+Shift+T` |
 | ブロック中のツールをバックグラウンドへ移す（入力欄） | `Mod+B` |
 | 入力を送信 | `Enter` |
-| 別のフォローアップ動作で送信 | `Mod+Shift+Enter` |
+| 別のフォローアップ動作で送信 | `Alt+Enter` または `Mod+Shift+Enter` |
 | 改行を挿入 | `Shift+Enter` または `Mod+Enter` |
 | 前／次のプロンプト（入力欄） | `ArrowUp` / `ArrowDown` |
 | 入力欄のフォーカス解除／シェルモード終了 | 入力欄の文脈に応じて `Escape` |

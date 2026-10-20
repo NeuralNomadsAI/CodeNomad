@@ -289,6 +289,7 @@ export const messagingMessages = {
   "promptInput.clear.title": "נקה את טקסט הפרומפט",
   "promptInput.send.ariaLabel": "שלח הודעה",
   "promptInput.send.queueAriaLabel": "הוסף הודעה לתור",
+  "promptInput.send.nowLabel": "שלח עכשיו",
   "promptQueue.title": "תור הנחיות ({count})",
   "promptQueue.delivery.queue": "בתור",
   "promptQueue.delivery.steer": "מוזרק כעת",

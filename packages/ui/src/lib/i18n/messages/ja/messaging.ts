@@ -292,6 +292,7 @@ export const messagingMessages = {
   "promptInput.clear.title": "プロンプトのテキストをクリア",
   "promptInput.send.ariaLabel": "メッセージを送信",
   "promptInput.send.queueAriaLabel": "メッセージをキューに追加",
+  "promptInput.send.nowLabel": "今すぐ送信",
   "promptQueue.title": "プロンプトキュー（{count}）",
   "promptQueue.delivery.queue": "待機中",
   "promptQueue.delivery.steer": "割り込み中",

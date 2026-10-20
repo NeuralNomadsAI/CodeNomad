@@ -292,6 +292,7 @@ export const messagingMessages = {
   "promptInput.clear.title": "Effacer le texte du prompt",
   "promptInput.send.ariaLabel": "Envoyer le message",
   "promptInput.send.queueAriaLabel": "Mettre le message en file d'attente",
+  "promptInput.send.nowLabel": "Envoyer maintenant",
   "promptQueue.title": "File d'attente ({count})",
   "promptQueue.delivery.queue": "En attente",
   "promptQueue.delivery.steer": "Injection en cours",

@@ -43,7 +43,7 @@ Kaydetme başarısız olursa eski kısayolu kullanılabilir durumda tutun ve gö
 | Model çeşidini seçin | `Mod+Shift+T` |
 | Engelleyen araçları arka plana al (ileti düzenleyicisi) | `Mod+B` |
 | İstemi gönder | `Enter` |
-| Alternatif takip davranışıyla gönder | `Mod+Shift+Enter` |
+| Alternatif takip davranışıyla gönder | `Alt+Enter` veya `Mod+Shift+Enter` |
 | Yeni satır ekle | `Shift+Enter` veya `Mod+Enter` |
 | Önceki / sonraki istem (ileti düzenleyicisi) | `ArrowUp` / `ArrowDown` |
 | İstem odağını kaldır / Shell modundan çık | `Escape`, ileti düzenleyicisi bağlamına göre |

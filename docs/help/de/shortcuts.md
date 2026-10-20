@@ -43,7 +43,7 @@ Schlägt Speichern fehl, behalten Sie das alte Kürzel verfügbar und prüfen Si
 | Modellvariante wählen | `Mod+Shift+T` |
 | Blockierende Werkzeuge in Hintergrund verschieben (Eingabefeld) | `Mod+B` |
 | Eingabe senden | `Enter` |
-| Mit alternativem Folgeprompt-Verhalten senden | `Mod+Shift+Enter` |
+| Mit alternativem Folgeprompt-Verhalten senden | `Alt+Enter` oder `Mod+Shift+Enter` |
 | Neue Zeile einfügen | `Shift+Enter` oder `Mod+Enter` |
 | Vorheriger / nächster Prompt (Eingabefeld) | `ArrowUp` / `ArrowDown` |
 | Eingabefokus verlassen / Shell-Modus verlassen | `Escape`, je nach Eingabekontext |

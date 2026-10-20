@@ -43,7 +43,7 @@ If saving fails, keep the old shortcut available and retry after checking the di
 | Select model variant | `Mod+Shift+T` |
 | Move blocking tools to background (composer) | `Mod+B` |
 | Send prompt | `Enter` |
-| Send with alternate follow-up behavior | `Mod+Shift+Enter` |
+| Send with alternate follow-up behavior | `Alt+Enter` or `Mod+Shift+Enter` |
 | Insert new line | `Shift+Enter` or `Mod+Enter` |
 | Previous / next prompt (composer) | `ArrowUp` / `ArrowDown` |
 | Unfocus prompt / Exit shell mode | `Escape`, according to composer context |

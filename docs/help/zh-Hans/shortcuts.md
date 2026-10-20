@@ -43,7 +43,7 @@
 | 选择模型变体 | `Mod+Shift+T` |
 | 将阻塞工具转为后台（输入框） | `Mod+B` |
 | 发送输入 | `Enter` |
-| 使用另一种后续行为发送 | `Mod+Shift+Enter` |
+| 使用另一种后续行为发送 | `Alt+Enter` 或 `Mod+Shift+Enter` |
 | 插入换行 | `Shift+Enter` 或 `Mod+Enter` |
 | 上一条 / 下一条提示词（输入框） | `ArrowUp` / `ArrowDown` |
 | 取消输入框焦点 / 退出 Shell 模式 | `Escape`，取决于输入框上下文 |
