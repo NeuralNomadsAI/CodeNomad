@@ -45,10 +45,9 @@ export async function testSessionNavigationNative({ client, location, locationOp
     } while (cursor)
     assert.equal(count, native.messages.length)
     assert.equal(indexedTool?.toolName, nativeTool.name, "outline reads the representative name from native tool storage")
-    if (indexedText?.type === "assistant") {
-      assert.equal(indexedTool?.text, 0, "a native tool-only step has no visible text, hence no assistant marker")
-      assert.equal(indexedText?.text, 1, "outline counts native visible text parts")
-    }
+    assert.equal(indexedText?.type, "assistant", "the fixture's template is a native assistant step")
+    assert.equal(indexedTool?.text, 0, "a native tool-only step has no visible text, hence no assistant marker")
+    assert.equal(indexedText?.text, 1, "outline counts native visible text parts")
     const verified = await rpc("outline", { known: checkpoints })
     assert.equal(verified.status, "outline", JSON.stringify(verified))
     assert.equal(verified.entries.length, native.messages.length % 512, "unchanged saved ranges do not resend their structure")
