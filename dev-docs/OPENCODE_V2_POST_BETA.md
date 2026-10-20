@@ -69,8 +69,8 @@ CodeNomad installation is never a fallback. An explicit supported executable ret
 priority. Both setup and binary validation use the same discovery. The UI shows
 the effective path and source; “automatic” replaces the misleading “system PATH”
 label. Recovery puts diagnosis and installation before executable selection;
-Preferences keeps executable selection first, inline actions, collapsed version
-details/troubleshooting and logs last.
+Preferences shows the version card first (inline actions, collapsed version
+details/troubleshooting), then executable selection, and logs last.
 Official npm packages from the beta and 2.0.0 transition advertised different
 launcher targets: discovery checks their published `bin` map and real launcher
 target, choosing `opencode` when `opencode2` is only the retired `.cjs` alias.

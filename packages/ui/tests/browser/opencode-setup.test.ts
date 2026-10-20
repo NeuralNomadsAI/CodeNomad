@@ -358,6 +358,7 @@ test("settings show management first, executable selection next, disclosures col
     await cards.first().locator(".opencode-setup-panel").waitFor()
     await cards.nth(1).locator(".selector-input").waitFor()
     assert.equal(await cards.nth(1).locator(".settings-card-header").count(), 0)
+    await cards.nth(1).getByText("OpenCode Binary", { exact: true }).waitFor()
     assert.equal(await page.getByRole("heading", { name: "Runtime", exact: true }).count(), 0)
     assert.equal(await cards.last().getByRole("heading", { name: "OpenCode Log Level", exact: true }).count(), 1, "log levels stay below all runtime controls and disclosures")
     await cards.last().locator(".selector-trigger").waitFor()
