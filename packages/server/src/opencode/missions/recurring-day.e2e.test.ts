@@ -8,6 +8,37 @@ import { DAY, DUE, RecurringDayFixture } from "./recurring-day-fixture"
 // All model-produced business state goes through registered real mission_* tools.
 // The fixture never appends journal events, fabricates final reports or calls recurrence reserve/finish.
 
+test("Clock advance waits for the woken Job's admission and error publication, not timer ticks", async t => {
+  for (const fail of [false, true]) {
+    await t.test(fail ? "admission refusal" : "admission success", async () => {
+      const f = await RecurringDayFixture.open()
+      let release!: () => void
+      const held = new Promise<void>(resolve => { release = resolve })
+      let entered = false, returned = false
+      let advancing: Promise<void> | undefined
+      try {
+        await f.create(); await f.control("play")
+        if (fail) { f.crash = "before-message"; await f.advance(DUE); f.crash = "before-message" }
+        f.beforeAdmission = async () => { entered = true; await held }
+        advancing = f.advance(fail ? DUE + 3_600_000 : DUE).then(() => { returned = true })
+        await f.until(() => entered, "native admission reached")
+        // Drain the old fixed flush budget while the native callback is still held.
+        await f.flush(); await f.flush()
+        assert.equal(f.coordinators.length, 1)
+        assert.equal(f.starts.length, 0)
+        assert.equal(returned, false, "advance must not return between native create and admission")
+        release(); await advancing
+        assert.equal(f.starts.length, fail ? 0 : 1)
+        const settledTurn = await f.snapshot()
+        assert.equal(settledTurn.lastError?.code, fail ? "admission-failed" : undefined)
+        assert.equal(settledTurn.pending?.status, fail ? "uncertain" : "running")
+        // An active coordinator/Form is a valid parked Job, not an in-flight clock turn.
+        if (!fail) { f.pendingForm(); await f.advance(DUE + 3_600_000); assert((await f.snapshot()).pending) }
+      } finally { try { release(); await advancing } finally { await f.close() } }
+    })
+  }
+})
+
 test("A. Full day: paused create, due work, real tools, archive and a distinct next day", async t => {
   const f = await RecurringDayFixture.open(); t.after(() => f.close())
   const created = await f.create()

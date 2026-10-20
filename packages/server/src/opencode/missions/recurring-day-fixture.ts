@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { AsyncLocalStorage } from "node:async_hooks"
 import { execFileSync } from "node:child_process"
 import { createHash, createHmac } from "node:crypto"
 import { realpathSync } from "node:fs"
@@ -29,7 +30,8 @@ export const START = Date.parse("2026-10-08T00:00:00Z")
 export const DUE = START + (8 * 60 + 15) * 60_000
 type Handler = (input: unknown, context: unknown) => Effect.Effect<unknown, unknown>
 type NativeTool = { name: string; options?: { namespace?: string }; execute: Handler }
-type Job = { id: string; type: string; status: string; metadata?: Record<string, unknown>; run: Effect.Effect<string, unknown>; fiber?: Fiber.Fiber<string, unknown> }
+type Sleeper = { at: number; wake: () => void }
+type Job = { id: string; type: string; status: string; metadata?: Record<string, unknown>; run: Effect.Effect<string, unknown>; fiber?: Fiber.Fiber<string, unknown>; parked?: Sleeper }
 type SessionInfo = typeof Session.Info.Type
 type MessageInfo = typeof SessionMessage.Info.Type
 export type Schedule = {
@@ -61,6 +63,8 @@ export class RecurringDayFixture {
   failScheduleJobRead: (() => boolean) | undefined
   /** Fresh native first admissions (a re-admitted ID after pruning counts again). */
   admissions = 0
+  /** Controlled native I/O boundary; tests may hold admission after coordinator creation. */
+  beforeAdmission: (() => Promise<void>) | undefined
   readonly tools = new Map<string, NativeTool>()
   readonly calls: Array<{ name: string; sessionID: string }> = []
   readonly jobs = new Map<string, Job>()
@@ -71,7 +75,9 @@ export class RecurringDayFixture {
   readonly errors: unknown[] = []
   private handlers = new Map<string, Record<string, Handler>>()
   private hooks: Array<(event: unknown) => Effect.Effect<unknown, unknown>> = []
-  private sleepers = new Set<{ at: number; wake: () => void }>()
+  private sleepers = new Set<Sleeper>()
+  // Effect preserves Node async context across Job/race fibers, even when it replaces its service context.
+  private jobContext = new AsyncLocalStorage<Job>()
   private busListeners = new Set<(event: unknown) => Effect.Effect<void>>()
   private scope!: Scope.Closeable
   private graph!: Context.Context<never>
@@ -190,11 +196,15 @@ export class RecurringDayFixture {
         const entries = rows.slice(0, limit).map(row => ({ key: row.key.slice(this.key("").length), value: JSON.parse(row.value) }))
         return { entries, ...(rows.length > limit ? { next: entries.at(-1)!.key } : {}) }
       }) }
+    const admit = (input: Record<string, unknown>, type: "user" | "synthetic") => Effect.promise(async () => {
+      await this.beforeAdmission?.()
+      return this.admit(input, type)
+    })
     const native = {
       get: (id: string) => Effect.sync(() => this.session(id)),
       create: (input: Record<string, unknown>) => Effect.sync(() => this.createSession(input)),
-      prompt: (input: Record<string, unknown>) => Effect.sync(() => this.admit(input, "user")),
-      synthetic: (input: Record<string, unknown>) => Effect.sync(() => this.admit(input, "synthetic")),
+      prompt: (input: Record<string, unknown>) => admit(input, "user"),
+      synthetic: (input: Record<string, unknown>) => admit(input, "synthetic"),
       message: (input: { messageID: string }) => Effect.sync(() => this.message(input.messageID)),
       messages: (input: { sessionID: string }) => Effect.sync(() => this.messages(input.sessionID)),
       inbox: (id: string) => Effect.sync(() => this.db.prepare("SELECT payload FROM session_inbox WHERE session_id=?").all(id)
@@ -212,10 +222,10 @@ export class RecurringDayFixture {
         if (this.jobStartFailure === "absent") return Effect.die(new Error("Injected native Job start failure"))
         const old = this.jobs.get(input.id)
         if (old?.status === "running") return Effect.succeed(old)
-        const record = { ...input, status: "running" }
+        const record: Job = { ...input, status: "running", parked: undefined }
         this.jobs.set(input.id, record)
-        record.fiber = Effect.runForkWith(this.graph)(input.run.pipe(Effect.provideService(Clock.Clock, this.clock)))
-        void Effect.runPromise(Fiber.await(record.fiber)).then(exit => {
+        record.fiber = this.jobContext.run(record, () => Effect.runForkWith(this.graph)(input.run.pipe(Effect.provideService(Clock.Clock, this.clock))))
+        record.fiber.addObserver(exit => {
           record.status = Exit.isSuccess(exit) ? "completed" : "error"
           if (Exit.isFailure(exit)) this.errors.push(exit.cause)
         })
@@ -281,7 +291,10 @@ export class RecurringDayFixture {
     currentTimeNanosUnsafe: () => BigInt(this.now) * 1_000_000n, currentTimeNanos: Effect.sync(() => BigInt(this.now) * 1_000_000n),
     monotonicTimeNanosUnsafe: () => BigInt(this.now) * 1_000_000n, monotonicTimeNanos: Effect.sync(() => BigInt(this.now) * 1_000_000n),
     sleep: duration => Effect.callback<void>(resume => {
+      const job = this.jobContext.getStore()
+      assert(job, "virtual sleep must belong to a native fixture Job")
       const sleeper = { at: this.now + Duration.toMillis(duration), wake: () => {
+        job.parked = undefined
         // The journey spans 32+ hours; measure the requested per-virtual-day
         // ceiling, not its total duration. Keep the maximum monotonic for Pause.
         this.wakeTimes = this.wakeTimes.filter(at => at > this.now - DAY)
@@ -290,7 +303,11 @@ export class RecurringDayFixture {
         resume(Effect.void)
       } }
       this.sleepers.add(sleeper)
-      return Effect.sync(() => { this.sleepers.delete(sleeper) })
+      job.parked = sleeper
+      return Effect.sync(() => {
+        this.sleepers.delete(sleeper)
+        if (job.parked === sleeper) job.parked = undefined
+      })
     }),
   }
   async flush() { for (let n = 0; n < 4; n++) await new Promise<void>(resolve => setTimeout(resolve, 1)) }
@@ -300,26 +317,28 @@ export class RecurringDayFixture {
     const deadline = performance.now() + timeoutMs
     while (!await predicate()) {
       assert(performance.now() < deadline, message)
-      await this.flush()
+      await new Promise<void>(resolve => setImmediate(resolve))
     }
   }
-  /** Every running Job is parked in a virtual sleep, so no background write is in flight. */
+  /** Wait for each Job's next sleep or exit, not an unrelated/stale race sleeper.
+   * Native model/Form waits are session state; they do not keep a clock turn in flight. */
   async quiescent(message = "background Jobs settled") {
-    await this.until(() => [...this.jobs.values()].filter(job => job.status === "running").length <= this.sleepers.size, message)
+    await this.until(() => [...this.jobs.values()].every(job => job.status !== "running"
+      || job.parked !== undefined && this.sleepers.has(job.parked)), message)
   }
   async advance(to: number) {
     assert(to >= this.now)
-    await this.flush()
+    await this.quiescent()
     while (true) {
       const next = Math.min(...[...this.sleepers].map(s => s.at))
       if (next > to) break
       this.now = next
-      for (const sleeper of [...this.sleepers]) if (sleeper.at <= next) { this.sleepers.delete(sleeper); sleeper.wake() }
-      await this.flush()
+      for (const sleeper of [...this.sleepers]) if (sleeper.at <= next && this.sleepers.delete(sleeper)) sleeper.wake()
+      await this.quiescent()
       assert(this.wakeups < 3000, "virtual day runner is spinning")
     }
     this.now = to
-    await this.flush()
+    await this.quiescent()
   }
   private fail(point: NonNullable<RecurringDayFixture["crash"]>) {
     if (this.crash !== point) return
