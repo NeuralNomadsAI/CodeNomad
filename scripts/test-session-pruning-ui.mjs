@@ -170,6 +170,13 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
 
     const groupTarget = tools.at(-2)
     const group = page.locator(`.message-stream-block[data-message-id="${groupTarget.id}"] .message-exploration-group`).first()
+    // Visible per-step usage closes each message's group. Verify that boundary,
+    // then explicitly hide usage to exercise the cross-message cleanup below.
+    await group.getByText("Shell: 2", { exact: true }).waitFor()
+    assert.equal(await page.locator(`.tool-call[data-message-id="${selected.id}"]`).count(), 1)
+    assert.equal(await page.evaluate(() => window.fixture.preferences(false)), true)
+    await group.getByText("Shell: 3", { exact: true }).waitFor()
+    console.log("PASS: UI per-step usage splits groups; hiding usage joins groups across messages")
     // A collapsed group exposes a single trash action for every member.
     const toggle = group.locator(".message-technical-group-toggle").first()
     if (await toggle.getAttribute("aria-expanded") === "true") await toggle.click()

@@ -279,6 +279,12 @@ try {
   const messages = (await client.message.list({ sessionID: session.id, limit: 100, order: "asc" })).data
   const target = messages.find(message => message.type === "assistant" && message.content.some(part => part.type === "tool"))
   assert(target)
+  const reasoning = target.content.find(part => part.type === "reasoning")
+  assert.deepEqual(reasoning.native, { reasoningField: "reasoning_content" })
+  const reasoningEnded = event => event.type === "session.reasoning.ended" && event.data.assistantMessageID === target.id
+  await until(() => first.some(reasoningEnded))
+  assert.deepEqual(first.find(reasoningEnded).data.native, reasoning.native, "native SSE and HTTP retain identical provider replay metadata")
+  console.log("PASS: native reasoning replay metadata agrees between SSE and HTTP")
   const { testSessionHistoryNative } = await import("./test-session-history-native.mjs")
   await testSessionHistoryNative({ client, location, locationOptions, template: target })
   const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
