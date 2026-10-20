@@ -6,6 +6,7 @@ import type {
   ToolInputsVisibilityPreference,
   VisibilityPreference,
 } from "../../stores/preferences"
+import { OTHER_TOOL_NAME, resolveToolVisibility } from "../../components/tool-call/tool-presentation"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
 import { isLocalTauriHost } from "../runtime-env"
@@ -69,11 +70,7 @@ function setBooleanByToggle(getCurrent: () => boolean, toggle: () => void, next:
 }
 
 function getToolOutputVisibility(preferences: Preferences): VisibilityPreference {
-  const defaults = preferences.toolCallExpansionDefaults
-  if (defaults.tools.other) return defaults.tools.other
-  if (defaults.preset === "minimal" || defaults.preset === "balanced") return "collapsed"
-  if (defaults.preset === "detailed" || defaults.preset === "everything") return "expanded"
-  return preferences.toolOutputExpansion ?? "expanded"
+  return resolveToolVisibility(preferences, OTHER_TOOL_NAME)
 }
 
 export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorSetting[] {

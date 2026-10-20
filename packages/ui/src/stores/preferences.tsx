@@ -58,7 +58,7 @@ export type DiffViewMode = "split" | "unified"
 export type FollowUpBehavior = "steer" | "queue"
 export type ExpansionPreference = "expanded" | "collapsed"
 export type VisibilityPreference = "hidden" | ExpansionPreference
-export type ToolCallExpansionPreset = "minimal" | "balanced" | "detailed" | "everything"
+export type ToolCallExpansionPreset = "nothing" | "minimal" | "balanced" | "everything"
 export type ToolCallExpansionPresetSelection = ToolCallExpansionPreset | "custom"
 export type ToolInputsVisibilityPreference = VisibilityPreference
 export type ListeningMode = "local" | "all"
@@ -268,11 +268,15 @@ function normalizeVisibilityPreference(value: unknown, fallback: VisibilityPrefe
 }
 
 function normalizeToolCallExpansionPreset(value: unknown): ToolCallExpansionPresetSelection {
-  if (value === "minimal" || value === "balanced" || value === "detailed" || value === "everything" || value === "custom") {
+  if (value === "nothing" || value === "minimal" || value === "balanced" || value === "everything" || value === "custom") {
     return value
   }
   return defaultToolCallExpansionDefaults.preset
 }
+
+// The retired "Detailed" preset becomes Custom with its effective choices: it
+// expanded every tool except these, including tools added after it was saved.
+const retiredDetailedTools: Record<string, VisibilityPreference> = { other: "expanded", read: "collapsed", skill: "collapsed", invalid: "collapsed" }
 
 function normalizeToolCallExpansionTools(value: unknown): Record<string, VisibilityPreference> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {}
@@ -286,19 +290,23 @@ function normalizeToolCallExpansionTools(value: unknown): Record<string, Visibil
   return next
 }
 
-function normalizeToolCallExpansionDefaults(input: unknown, legacySettings: Partial<UiSettings>): ToolCallExpansionDefaults {
+export function normalizeToolCallExpansionDefaults(input: unknown, legacySettings: Partial<UiSettings>): ToolCallExpansionDefaults {
   const source = input && typeof input === "object" && !Array.isArray(input)
-    ? (input as Partial<ToolCallExpansionDefaults>)
+    ? (input as { [K in keyof ToolCallExpansionDefaults]?: unknown })
     : undefined
   const legacyThinking = normalizeExpansionPreference(
     legacySettings.thinkingBlocksExpansion,
     "collapsed",
   )
 
+  const tools = normalizeToolCallExpansionTools(source?.tools)
+  if (source?.preset === "detailed") {
+    return { preset: "custom", thinking: normalizeExpansionPreference(source.thinking, "expanded"), tools: { ...retiredDetailedTools, ...tools } }
+  }
   return {
     preset: normalizeToolCallExpansionPreset(source?.preset),
     thinking: normalizeExpansionPreference(source?.thinking, legacyThinking),
-    tools: normalizeToolCallExpansionTools(source?.tools),
+    tools,
   }
 }
 
@@ -325,7 +333,7 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   const sanitized = input ?? {}
   const toolCallExpansionDefaults = normalizeToolCallExpansionDefaults(sanitized.toolCallExpansionDefaults, sanitized)
   const usageMetricsFallback =
-    toolCallExpansionDefaults.preset === "minimal" || toolCallExpansionDefaults.preset === "balanced"
+    toolCallExpansionDefaults.preset === "nothing" || toolCallExpansionDefaults.preset === "minimal" || toolCallExpansionDefaults.preset === "balanced"
       ? "collapsed"
       : "expanded"
   return {

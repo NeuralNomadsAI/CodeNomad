@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import type { Preferences } from "../../stores/preferences"
-import { getCanonicalToolName, getConfigurableToolEntries, getToolRegistryEntry, OTHER_TOOL_NAME, resolveToolVisibility } from "./tool-presentation"
+import { getCanonicalToolName, getConfigurableToolEntries, getRegisteredToolEntries, getToolRegistryEntry, OTHER_TOOL_NAME, resolveToolVisibility } from "./tool-presentation"
 
 describe("tool presentation registry", () => {
   it("routes OpenCode 2.x tool names to their V1 registry entries", () => {
@@ -27,11 +27,17 @@ describe("tool presentation registry", () => {
     assert.equal(getToolRegistryEntry("nonexistent").tool, OTHER_TOOL_NAME)
   })
   it("uses Other presets for historical tools instead of their retired defaults", () => {
-    for (const preset of ["minimal", "balanced", "detailed", "everything"] as const) {
+    for (const preset of ["nothing", "minimal", "balanced", "everything"] as const) {
       const preferences = { toolCallExpansionDefaults: { preset, tools: {} } } as Preferences
       for (const tool of ["todowrite", "apply_patch", "todoread"]) {
         assert.equal(resolveToolVisibility(preferences, tool), resolveToolVisibility(preferences, "other"), `${preset}: ${tool}`)
       }
+    }
+  })
+  it("hides every registered, historical and unknown tool with Nothing", () => {
+    const preferences = { toolCallExpansionDefaults: { preset: "nothing", tools: {} } } as unknown as Preferences
+    for (const tool of [...getRegisteredToolEntries().map((entry) => entry.tool), "todoread", "nonexistent"]) {
+      assert.equal(resolveToolVisibility(preferences, tool), "hidden", tool)
     }
   })
 })

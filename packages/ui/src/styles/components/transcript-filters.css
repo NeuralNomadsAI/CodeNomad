@@ -22,6 +22,17 @@
   color: var(--text-secondary);
 }
 
+/* Preset choice under the title; its edges align with the rows' icons. */
+.transcript-filters-preset {
+  flex-shrink: 0;
+  padding: var(--space-sm) var(--space-sm) var(--space-xs);
+}
+
+.transcript-filters-preset select {
+  width: 100%;
+  min-width: 0;
+}
+
 .transcript-filters-list {
   flex: 0 1 auto;
   min-height: 0;
@@ -73,4 +84,6 @@
     min-width: var(--touch-target-size);
     min-height: var(--touch-target-size);
   }
+
+  .transcript-filters-preset select { min-height: var(--touch-target-size); }
 }

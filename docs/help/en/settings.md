@@ -40,7 +40,7 @@ Built-in layout is window layout, not a project mutation. Extension checkboxes a
 
 ## Transcript detail and composer size {#transcript-composer}
 
-1. Open **Chat** to choose transcript detail defaults. Presets are **Minimal**, **Balanced**, **Detailed** and **Everything**; individual changes produce **Custom**.
+1. Open **Chat** to choose transcript detail defaults. Presets are **Nothing**, **Minimal**, **Balanced** and **Everything**; individual changes produce **Custom**.
 2. Adjust thinking, tool inputs/outputs, diagnostics and token details, or use the conversation's **Message content** popup for the shared visibility controls.
 3. In **General**, adjust **Message timeline**, **Timeline tool calls**, **Diff view** and **Follow-up behavior** as needed.
 4. Resize the composer using its resize control; long drafts scroll inside the field.

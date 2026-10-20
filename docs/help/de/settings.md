@@ -40,7 +40,7 @@ Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskäst
 
 ## Verlaufsdetails und Eingabegröße {#transcript-composer}
 
-1. Öffnen Sie **Chat**, um Standarddetails des Verlaufs zu wählen. Vorgaben sind **Minimal**, **Balanced**, **Detailed** und **Everything**; Einzeländerungen erzeugen **Custom**.
+1. Öffnen Sie **Chat**, um Standarddetails des Verlaufs zu wählen. Vorgaben sind **Nichts**, **Minimal**, **Ausgewogen** und **Alles**; Einzeländerungen erzeugen **Benutzerdefiniert**.
 2. Passen Sie Denken, Werkzeugeingaben/-ausgaben, Diagnosen und Tokendetails an oder verwenden Sie das Popup **Nachrichteninhalt** der Unterhaltung für dieselben Sichtbarkeitsoptionen.
 3. Passen Sie unter **Allgemein** nach Bedarf **Nachrichten-Timeline**, **Timeline-Tool-Aufrufe**, **Diff-Ansicht** und **Folgeprompt-Verhalten** an.
 4. Ändern Sie die Größe des Eingabefelds über dessen Größensteuerung; lange Entwürfe scrollen im Feld.

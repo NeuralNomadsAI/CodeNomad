@@ -40,7 +40,7 @@ La disposition intégrée est propre à la fenêtre, pas une modification du pro
 
 ## Détail de transcription et taille de saisie {#transcript-composer}
 
-1. Ouvrez **Chat** pour choisir les niveaux de détail par défaut. Les préréglages sont **Minimal**, **Balanced**, **Detailed** et **Everything** ; les changements individuels produisent **Custom**.
+1. Ouvrez **Chat** pour choisir les niveaux de détail par défaut. Les préréglages sont **Rien**, **Minimal**, **Équilibré** et **Tout** ; les changements individuels produisent **Personnalisé**.
 2. Ajustez réflexion, entrées/sorties d’outils, diagnostics et détails des tokens, ou utilisez le menu **Contenu des messages** de la conversation pour les commandes de visibilité partagées.
 3. Dans **Général**, ajustez **Chronologie des messages**, **Appels d'outils dans la chronologie**, **Vue du diff** et **Comportement des messages de suivi** au besoin.
 4. Redimensionnez la zone de saisie avec sa commande ; les longs brouillons défilent dans le champ.

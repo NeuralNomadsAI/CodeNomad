@@ -8,9 +8,9 @@ import type {
 export const OTHER_TOOL_NAME = "other"
 
 export const THINKING_EXPANSION_PRESETS: Record<ToolCallExpansionPreset, ExpansionPreference> = {
+  nothing: "collapsed",
   minimal: "collapsed",
   balanced: "collapsed",
-  detailed: "expanded",
   everything: "expanded",
 }
 
@@ -26,8 +26,9 @@ export interface ToolRegistryEntry {
 const expanded = "expanded" satisfies ExpansionPreference
 const collapsed = "collapsed" satisfies ExpansionPreference
 
-function presets(values: Record<ToolCallExpansionPreset, VisibilityPreference>) {
-  return values
+// "Nothing" hides every tool.
+function presets(values: Omit<Record<ToolCallExpansionPreset, VisibilityPreference>, "nothing">): Record<ToolCallExpansionPreset, VisibilityPreference> {
+  return { nothing: "hidden", ...values }
 }
 
 export const TOOL_REGISTRY: ToolRegistryEntry[] = [
@@ -36,105 +37,105 @@ export const TOOL_REGISTRY: ToolRegistryEntry[] = [
     label: "shell",
     aliases: ["shell"],
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, everything: expanded }),
   },
   {
     tool: "read",
     label: "read",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: collapsed, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, everything: expanded }),
   },
   {
     tool: "write",
     label: "write",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, everything: expanded }),
   },
   {
     tool: "edit",
     label: "edit",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, everything: expanded }),
   },
   {
     tool: "patch",
     label: "patch",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, everything: expanded }),
   },
   {
     tool: "apply_patch",
     label: "apply_patch",
     configurable: false,
-    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, everything: expanded }),
   },
   {
     tool: "webfetch",
     label: "webfetch",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, everything: expanded }),
   },
   {
     tool: "websearch",
     label: "websearch",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, everything: expanded }),
   },
   {
     tool: "glob",
     label: "glob",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, everything: expanded }),
   },
   {
     tool: "grep",
     label: "grep",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, everything: expanded }),
   },
   {
     tool: "todowrite",
     label: "todowrite",
     configurable: false,
-    expansionPresets: presets({ minimal: expanded, balanced: expanded, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: expanded, balanced: expanded, everything: expanded }),
   },
   {
     tool: "task",
     label: "subagent",
     aliases: ["subagent"],
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, everything: expanded }),
   },
   {
     tool: "execute",
     label: "execute",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, everything: expanded }),
   },
   {
     tool: "skill",
     label: "skill",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: collapsed, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, everything: expanded }),
   },
   {
     tool: "question",
     label: "question",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: expanded, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: expanded, everything: expanded }),
   },
   {
     tool: "invalid",
     label: "invalid",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: collapsed, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, everything: expanded }),
   },
   {
     tool: OTHER_TOOL_NAME,
     label: "Other tools",
     labelKey: "settings.behavior.expansionDefaults.otherTools",
     configurable: true,
-    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, detailed: expanded, everything: expanded }),
+    expansionPresets: presets({ minimal: collapsed, balanced: collapsed, everything: expanded }),
   },
 ]
 

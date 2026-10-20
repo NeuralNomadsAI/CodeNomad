@@ -40,7 +40,7 @@ La disposición integrada es disposición de ventana, no una modificación del p
 
 ## Detalle de la transcripción y tamaño del editor {#transcript-composer}
 
-1. Abre **Chat** para elegir los valores de detalle de la transcripción. Los preajustes son **Minimal**, **Balanced**, **Detailed** y **Everything**; los cambios individuales producen **Custom**.
+1. Abre **Chat** para elegir los valores de detalle de la transcripción. Los preajustes son **Nada**, **Mínimo**, **Equilibrado** y **Todo**; los cambios individuales producen **Personalizado**.
 2. Ajusta razonamiento, entradas/salidas de herramientas, diagnósticos y detalles de tokens, o usa el popup **Contenido de los mensajes** de la conversación para los controles compartidos de visibilidad.
 3. En **General**, ajusta **Línea de tiempo de mensajes**, **Llamadas de herramientas en la línea de tiempo**, **Vista de diferencias** y **Comportamiento de seguimiento** según necesites.
 4. Cambia el tamaño del editor con su control; los borradores largos se desplazan dentro del campo.

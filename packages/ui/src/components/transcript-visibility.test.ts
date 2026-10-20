@@ -1,7 +1,14 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import type { Preferences } from "../stores/preferences"
-import { transcriptVisibility, transcriptVisibilityPatch, transcriptVisibilityRows } from "./transcript-visibility"
+import { normalizeToolCallExpansionDefaults, type Preferences } from "../stores/preferences"
+import {
+  TRANSCRIPT_PRESETS,
+  transcriptPreset,
+  transcriptPresetPatch,
+  transcriptVisibility,
+  transcriptVisibilityPatch,
+  transcriptVisibilityRows,
+} from "./transcript-visibility"
 
 const current = () => ({
   showThinkingBlocks: true,
@@ -83,6 +90,34 @@ describe("shared transcript visibility controls", () => {
     assert.deepEqual(transcriptVisibilityPatch(current(), row("usage"), "hidden"), {
       showUsageMetrics: false, usageMetricsExpansion: "collapsed",
     })
+  })
+  it("offers Nothing first and no Detailed preset", () => {
+    assert.deepEqual(TRANSCRIPT_PRESETS, ["nothing", "minimal", "balanced", "everything"])
+  })
+  it("recognizes each applied preset until one row changes", () => {
+    for (const preset of TRANSCRIPT_PRESETS) {
+      const applied = { ...current(), ...transcriptPresetPatch(preset) }
+      assert.equal(transcriptPreset(applied), preset)
+      for (const item of rows) {
+        const mode = transcriptVisibility(applied, item) === "hidden" ? "collapsed" : "hidden"
+        assert.equal(transcriptPreset({ ...applied, ...transcriptVisibilityPatch(applied, item, mode) }), "custom", `${preset}: ${item.key}`)
+      }
+    }
+  })
+  it("hides every message-content row with Nothing", () => {
+    const applied = { ...current(), ...transcriptPresetPatch("nothing") }
+    for (const item of rows) assert.equal(transcriptVisibility(applied, item), "hidden", item.key)
+  })
+  it("keeps a saved Detailed choice as Custom with the same effective tools", () => {
+    const saved = { preset: "detailed", thinking: "expanded", tools: { bash: "expanded", read: "collapsed", other: "expanded" } }
+    assert.deepEqual(normalizeToolCallExpansionDefaults(saved, {}), {
+      preset: "custom", thinking: "expanded", tools: { other: "expanded", read: "collapsed", skill: "collapsed", invalid: "collapsed", bash: "expanded" },
+    })
+    // Saves from before a tool existed keep Detailed's column for it.
+    const older = { ...current(), toolCallExpansionDefaults: normalizeToolCallExpansionDefaults({ preset: "detailed", tools: {} }, {}) }
+    assert.equal(transcriptVisibility(older, row("skill")), "collapsed")
+    assert.equal(transcriptVisibility(older, row("execute")), "expanded")
+    assert.equal(transcriptVisibility(older, row("thinking")), "expanded")
   })
   it("updates diagnostics and inputs independently", () => {
     assert.deepEqual(transcriptVisibilityPatch(current(), row("diagnostics"), "hidden"), { diagnosticsExpansion: "hidden" })
