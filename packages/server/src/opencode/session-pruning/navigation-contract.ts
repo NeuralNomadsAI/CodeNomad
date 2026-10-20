@@ -24,6 +24,8 @@ const messageType = z.enum(["user", "assistant", "system", "synthetic", "skill",
 export const outlineEntrySchema = z.object({
   id, seq: z.number().int().nonnegative(), type: messageType,
   tools: z.number().int().nonnegative(), reasoning: z.number().int().nonnegative(),
+  // Non-blank visible text parts; absent from older plugin copies, so unknown.
+  text: z.number().int().nonnegative().optional(),
   toolName: z.string().max(256).optional(),
 }).strict()
 export type OutlineEntry = z.infer<typeof outlineEntrySchema>

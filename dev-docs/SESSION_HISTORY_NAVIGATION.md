@@ -73,8 +73,12 @@ content-addressed leaves and no excerpts or message bodies. Limits are 16 indexe
 The optional data uses a separate budget from drafts, attachments and selections.
 Missing/corrupt index chunks discard only that index. Frozen normalized indexes
 and encoded leaves are memoized so draft/scroll captures do not rehash each entry.
-Indexes saved before representative tool names were added display immediately, then
-perform one complete checkpoint revalidation before being persisted again.
+Indexes saved before representative tool names or assistant text counts were added
+display immediately, then perform one complete checkpoint revalidation before being
+persisted again. The text count (non-blank text parts that are neither synthetic nor
+ignored) decides whether an assistant step gets its own marker: tool-only and
+reasoning-only steps are represented by their tool marker alone, like resident
+markers. An index from an older plugin copy has no count and keeps the marker.
 The `outline-index-v1` root extension fences older renderers rather than letting
 them discard session documents they cannot interpret. Hosts without partition
 support keep their existing monolithic snapshot without the optional indexes.

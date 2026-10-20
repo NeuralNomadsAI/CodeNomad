@@ -21,7 +21,10 @@ function projectSessionOutline(entries: readonly OutlineEntry[], resident: reado
     const localTools = local.filter(segment => segment.type === "tool")
     const tools = local.length ? localTools.length : entry?.tools ?? 0
     const toolName = localTools.find(segment => segment.toolName?.trim())?.toolName ?? entry?.toolName
-    const result: TimelineSegment[] = [{ id: `${id}:outline`, messageId: id, type, label, tooltip: text.slice(0, 220), totalChars: chars }]
+    // A tool-only or reasoning-only step has no text to preview or reach: its
+    // tools speak for it, like the resident markers. Unknown text keeps the marker.
+    const hasText = nativeType !== "assistant" || (local.length ? local.some(segment => segment.type !== "tool") : entry?.text !== 0)
+    const result: TimelineSegment[] = hasText ? [{ id: `${id}:outline`, messageId: id, type, label, tooltip: text.slice(0, 220), totalChars: chars }] : []
     if (tools) result.unshift({ id: `${id}:outline-tools`, messageId: id, type: "tool", label: t("messageTimeline.tool.fallbackLabel"),
       tooltip: local.filter(segment => segment.type === "tool").map(segment => segment.tooltip).join("\n").slice(0, 220), totalChars: tools * 100,
       toolName: toolName?.trim() || undefined, toolPartIds: local.flatMap(segment => segment.toolPartIds ?? []) })

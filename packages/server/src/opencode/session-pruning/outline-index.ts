@@ -38,7 +38,10 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
           WHEN json_type(value,'$.tool')='text' THEN json_extract(value,'$.tool') END,1,256)
         FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='tool'
         AND (json_type(value,'$.name')='text' OR json_type(value,'$.tool')='text') LIMIT 1),'') ELSE '' END AS tool_name,
-      CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='reasoning') ELSE 0 END AS reasoning
+      CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='reasoning') ELSE 0 END AS reasoning,
+      CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='text'
+        AND coalesce(json_extract(value,'$.synthetic'),0)=0 AND coalesce(json_extract(value,'$.ignored'),0)=0
+        AND length(trim(coalesce(json_extract(value,'$.text'),''),char(32,9,10,13)))>0) ELSE 0 END AS text
       FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
     const entries: OutlineEntry[] = [], checkpoints: Array<OutlineCheckpoint & { changed: boolean }> = []
     let examined = 0
@@ -74,7 +77,7 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
           signal.throwIfAborted()
           const tools = Number(row.tools)
           entries.push({ id: String(row.id), seq: Number(row.seq), type: row.type as OutlineEntry["type"],
-            tools, reasoning: Number(row.reasoning),
+            tools, reasoning: Number(row.reasoning), text: Number(row.text),
             ...(tools ? { toolName: boundedToolName(row.tool_name) } : {}) })
           if (entries.length % 128 === 0 || performance.now() - turnStarted >= 8) {
             await yieldTurn(undefined, { signal })

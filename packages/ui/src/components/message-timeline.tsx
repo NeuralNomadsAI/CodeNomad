@@ -446,8 +446,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", clearHoverPreview) })
   })
 
-  // Pre-computed set of messageIds that have at least one tool segment.
-  // Used by groupRole() inside <For> to avoid O(n) .some() per segment → O(1) .has().
+  // Messages with at least one tool segment, for the group spacing below.
   const messagesWithTools = createMemo(() => {
     const set = new Set<string>()
     for (const s of props.segments) {
@@ -577,14 +576,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
             const hasActivePermission = () => state().hasActivePermission
             const isHidden = () => state().hidden
 
-            // Group visual indicators: tools belong to the same message as their
-            // assistant.  Uses messageId for correctness (not positional adjacency).
-            const groupRole = (): "child" | "parent" | "none" => {
-              if (segment.type === "tool") return "child"
-              if (segment.type === "assistant" && messagesWithTools().has(segment.messageId)) return "parent"
-              return "none"
-            }
-
             const shortLabelContent = () => {
               if (segment.type === "tool") {
                 return <Dynamic component={getMessageContentIcon(segment.toolName)} class="message-timeline-icon" aria-hidden="true" />
@@ -603,7 +594,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
                 <button
                     type="button"
                     data-variant={segment.variant}
-                  class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""} ${groupRole() !== "none" ? `message-timeline-group-${groupRole()}` : ""}`}
+                  class={`message-timeline-segment message-timeline-${segment.type} ${hasActivePermission() ? "message-timeline-segment-permission" : ""} ${segment.type === "compaction" ? `message-timeline-compaction-${segment.variant ?? "manual"}` : ""} ${isActive() ? "message-timeline-segment-active" : ""} ${isHidden() ? "message-timeline-segment-hidden" : ""} ${isSearchMatch() ? "message-timeline-segment-search-match" : ""} ${isActiveSearchMatch() ? "message-timeline-segment-search-active" : ""}`}
                   aria-current={isActive() ? "true" : undefined}
                   aria-label={segment.tooltip || segment.label}
                    aria-describedby={hoveredSegment()?.id === segment.id && previewText() ? previewId : undefined}

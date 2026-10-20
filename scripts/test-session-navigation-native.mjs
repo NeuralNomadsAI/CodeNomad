@@ -30,7 +30,7 @@ export async function testSessionNavigationNative({ client, location, locationOp
     assert(prior.messages.some(message => message.id === around.messages[0].id), "prior window retains the viewport anchor")
     const following = await rpc("window", { target: around.newer })
     assert(following.messages.some(message => message.id === around.messages.at(-1).id), "next window retains the viewport anchor")
-    let cursor, count = 0, indexedTool
+    let cursor, count = 0, indexedTool, indexedText
     const checkpoints = []
     do {
       const outline = await rpc("outline", cursor ? { cursor } : {})
@@ -38,12 +38,17 @@ export async function testSessionNavigationNative({ client, location, locationOp
       assert.equal(outline.entries.length, Math.min(16384, native.messages.length - count), "structural index does not wait for excerpt pagination")
       assert(outline.entries.every(entry => !("preview" in entry)))
       indexedTool ??= outline.entries.find(entry => entry.id === id(6))
+      indexedText ??= outline.entries.find(entry => entry.id === id(7))
       checkpoints.push(...outline.checkpoints.map(({ changed, ...checkpoint }) => checkpoint))
       count += outline.entries.length
       cursor = outline.cursor
     } while (cursor)
     assert.equal(count, native.messages.length)
     assert.equal(indexedTool?.toolName, nativeTool.name, "outline reads the representative name from native tool storage")
+    if (indexedText?.type === "assistant") {
+      assert.equal(indexedTool?.text, 0, "a native tool-only step has no visible text, hence no assistant marker")
+      assert.equal(indexedText?.text, 1, "outline counts native visible text parts")
+    }
     const verified = await rpc("outline", { known: checkpoints })
     assert.equal(verified.status, "outline", JSON.stringify(verified))
     assert.equal(verified.entries.length, native.messages.length % 512, "unchanged saved ranges do not resend their structure")

@@ -29,6 +29,21 @@ test("outline tool groups retain a representative icon name without loading mess
     "marker identity caching must not retain an obsolete icon")
 })
 
+test("assistant markers exist only for steps with visible text, like resident markers", () => {
+  const project = createSessionOutlineProjection()
+  const step = (id: string, seq: number, text: number | undefined, tools = 1): OutlineEntry => ({
+    id, seq, type: "assistant", tools, reasoning: 1, ...(text === undefined ? {} : { text }), ...(tools ? { toolName: "read" } : {}),
+  })
+  const ids = (entries: OutlineEntry[], local: TimelineSegment[] = []) => project(entries, local, t).map(segment => segment.id)
+  assert.deepEqual(ids([step("tools-only", 1, 0)]), ["tools-only:outline-tools"], "a tool-only step keeps only its tool marker")
+  assert.deepEqual(ids([step("thinking", 1, 0, 0)]), [], "a reasoning-only step has no marker")
+  assert.deepEqual(ids([step("answer", 1, 1)]), ["answer:outline-tools", "answer:outline"])
+  assert.deepEqual(ids([step("older-plugin", 1, undefined)]), ["older-plugin:outline-tools", "older-plugin:outline"], "unknown text keeps the marker")
+  assert.deepEqual(ids([{ id: "shell", seq: 1, type: "shell", tools: 0, reasoning: 0, text: 0 }]), ["shell:outline"])
+  assert.deepEqual(ids([step("message", 1, 1)], [resident("read")[0]]), ["message:outline-tools"],
+    "a resident tool-only message wins over the index")
+})
+
 test("unchanged resident marker identities skip full-history projection and publication", () => {
   const project = createSessionOutlineProjection()
   let reads = 0

@@ -138,6 +138,15 @@ test("demand excerpts preserve Markdown, bound tool output and enforce ownership
     const unicodeIndex = await readSessionOutline(db, scope, undefined, signal())
     if (unicodeIndex.status !== "outline") assert.fail("Expected Unicode index")
     assert.equal(unicodeIndex.entries[2].toolName, "🔧".repeat(128), "tool metadata must satisfy its UTF-16 RPC bound")
+    assert.equal(index.entries[1].text, 1)
+    assert.equal(unicodeIndex.entries[2].text, 0, "a tool-only step has no visible text")
+    db.prepare("UPDATE session_message SET type='assistant', data=? WHERE id=?").run(JSON.stringify({ content: [
+      { type: "text", text: " \n\t" }, { type: "text", text: "hidden", synthetic: true }, { type: "text", text: "hidden", ignored: true },
+      { type: "reasoning", text: "thinking" },
+    ] }), id(2))
+    const textless = await readSessionOutline(db, scope, undefined, signal())
+    if (textless.status !== "outline") assert.fail("Expected textless index")
+    assert.equal(textless.entries[2].text, 0, "blank, synthetic, ignored and reasoning parts are not visible text")
     const previews = await readOutlinePreviews(db, scope, [id(1), "foreign"], signal())
     if (previews.status !== "previews") assert.fail("Expected previews")
     assert.equal(previews.entries.length, 1)
