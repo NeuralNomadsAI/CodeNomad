@@ -18,7 +18,7 @@ El ejecutable instalado y el servicio en ejecución pueden tener versiones disti
 | Clasificación | Requisito actual | Significado |
 | --- | --- | --- |
 | Mínima | OpenCode **2.1.0** | Formato nativo de transcripciones, datos de reproducción y compactación requerido; las conversaciones guardadas con versiones anteriores siguen siendo legibles tras actualizar. |
-| Recomendada | OpenCode **2.1.0** | Objetivo verificado, distinto del mínimo técnico. |
+| Recomendada | OpenCode **2.1.1** | Objetivo verificado, distinto del mínimo técnico. |
 | No verificada | Una versión más nueva o personalizada no validada por completo | No se rechaza simplemente por no estar probada; se comprueban los contratos API reales del servicio conectado. |
 
 También deben estar disponibles los contratos requeridos de sesiones, permisos, formularios, bandeja de entrada y entorno de sesión. La versión de un ejecutable no demuestra por sí sola que el servicio conectado los admita. Si la configuración inicial informa de un servicio en ejecución no compatible, selecciona/instala una CLI compatible y usa el reinicio explícito del servicio compartido cuando estés listo.

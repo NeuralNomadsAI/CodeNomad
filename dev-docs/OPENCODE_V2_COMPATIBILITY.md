@@ -8,14 +8,16 @@ API/behavior dependency; the latest publication and client/plugin pin are not
 sufficient reasons. Keep minimum requirements, recommended/tested versions and
 unverified versions distinct.
 
-CI records the resolved runtime version. Pin client/plugin dependencies together
-to the release target and qualify them before publishing CodeNomad. Retained
+CI records the resolved runtime version. Keep client/plugin dependencies pinned
+together and qualify those build pins against the minimum and target external
+runtimes before publishing CodeNomad. Retained
 compatibility code and historical-data handling do not imply support for older
 runtimes. Keep detailed results in the change's PR and CI logs, not in per-version
 reports. Update this reference in place.
 
-The current technical minimum and recommended/qualified target are both
-**2.1.0**: CodeNomad consumes the 2.1 native replay contract (`native` provider
+The technical minimum remains **2.1.0**; the recommended runtime target is
+**2.1.1**, qualified on Windows below with the unchanged **2.1.0 client/plugin
+pins**. CodeNomad consumes the 2.1 native replay contract (`native` provider
 data, `metadata.keepID`/`metadata.recent` compactions) through the pinned 2.1
 client reducer and codecs; 2.0.x daemons emit the retired shapes, and the 2.0.x
 reducer breaks pruning identity on 2.1 events (see the 2.1.0 qualification
@@ -679,6 +681,65 @@ transient `ERR_EMPTY_RESPONSE` retries on that port while another worktree's
 browser tests were active on the machine) and passes alone. This is Windows
 evidence only: Linux, macOS, WSL, packaged desktop, installers/updater and
 mobile remain separate gates.
+
+### 2.1.1 qualification (2026-10-21)
+
+OpenCode **2.1.1** was qualified against CodeNomad dev `6c793bae7` with Node
+**24.20.0**, the locked **2.1.0 client/plugin** dependencies, and an exact
+isolated 2.1.1 CLI. The technical minimum remains 2.1.0 and the recommendation
+advances to 2.1.1. Build dependencies and the independently installed runtime
+remain separate: no dependency or lockfile change was needed for this patch.
+
+- **Contract review:** authenticated OpenAPI is unchanged from 2.1.0: **119
+  paths, 144 operations**, no added/removed/changed operations or schemas.
+  Published client declarations, schema implementation/declarations and plugin
+  implementation/declarations are unchanged. The two changed protocol
+  declaration files reorder union members. Exact-tag comparison identifies
+  provider variant normalization, global `models-dev.refreshed` fanout and the
+  bundled model catalogue update; the reverse comparison's single release
+  commit changes version metadata only. Existing event routing and UI
+  invalidation already handle `models-dev.refreshed`.
+- **Native runtime checks:** plugin loading and host-owned runtime boundary,
+  automation, complete pruning/history/proxy/Location/worktree/relay suite,
+  rendered pruning UI, and the loaded-only pending snapshot with session/global
+  Forms, idle/cold coverage, permission and settlement all pass. The initial
+  pending-snapshot command accidentally invoked the historical Bun-only fixture
+  with CLI arguments; it failed its argument precondition before runtime use.
+  The correct CLI probe passes, and both attempts remain in the evidence ledger.
+- **Missions:** contract, family control, full journey and the parallel/recursive
+  trajectory pass, including Compare's blind verdict and Wayfinder's human
+  decision. All **11 recurring journeys**, Location subagent-depth settings,
+  permission receipts and compaction with a **2 MiB** corpus pass.
+- **Sessions and integrations:** environment, fork, aside, interrupt, native
+  terminal/retry lifecycle, blank cleanup, skills, provider usage/accounts and
+  selection, service usage, web search, plugin packages, output continuation and
+  Promise-tool errors pass.
+- **Historical data:** migrations from **2.0.3, beta-19271, 2.0.32 and 2.1.0**
+  to 2.1.1 pass, including export/reimport and replay checks. Git degraded/init
+  and temporary-workspace journeys pass.
+- **Builds and tests:** production server/UI and native plugin bundles,
+  server/root typechecks and the host-runtime bundle guard pass. Full server
+  suite: **2,442 passed / 2,449, 7 skipped, no failure/cancellation**. Broad UI:
+  **1,635/1,635**. Focused browser rendering: **125/125** across setup, models,
+  accounts/usage, Compare readers/defaults, transcript presets/timeline,
+  Preferences startup and token summaries. Unit concurrency was bounded to four
+  files and browser fixtures ran serially; all bounded runs completed normally.
+
+After the full runs, dev `64ff1a8fc` (#1052) was integrated. Its delta changes
+OpenCode Settings card order/header text and the matching browser assertions;
+the final build/typechecks, **38 admission/update tests**, **33 setup browser
+tests** and ten-locale help pass. Minimum-runtime control reruns on **2.1.0**
+pass plugin loading, the complete pruning/history/ownership/relay suite and
+Compare/Wayfinder trajectory. The isolated native upgrade **2.0.15 → 2.1.1**
+passes while the already-running test daemon retains its PID and 2.0.15 version.
+The separate first-install fixture passes at its explicit target, the retained
+**2.1.0 minimum**.
+
+This is Windows evidence. Cross-platform CI, packaged desktop/installer/updater
+journeys and real mobile devices retain their own acceptance gates. The broad
+browser suite was not rerun; the 125 focused browser tests are not that suite.
+The complete local ledger and logs are retained under
+`qualify-2.1.1/run-20261021-6c793bae7/`, alongside the earlier 2.1.0 evidence.
 
 ### Capability-checked loaded-only pending recovery
 

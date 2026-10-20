@@ -18,7 +18,7 @@ L’exécutable installé et le service actif peuvent avoir des versions différ
 | Classification | Exigence actuelle | Signification |
 | --- | --- | --- |
 | Minimum | OpenCode **2.1.0** | Format natif de transcription, de rejeu et de compaction requis ; les conversations enregistrées par les versions antérieures restent lisibles après la mise à jour. |
-| Recommandée | OpenCode **2.1.0** | Cible qualifiée, distincte du minimum technique. |
+| Recommandée | OpenCode **2.1.1** | Cible qualifiée, distincte du minimum technique. |
 | Non vérifiée | Version plus récente ou personnalisée non entièrement validée | Non rejetée simplement parce que non testée ; les contrats API réels du service connecté sont vérifiés. |
 
 Les contrats requis de session, permission, Form, boîte de réception et environnement de session doivent aussi être disponibles. Une version d’exécutable seule ne prouve pas que le service connecté les prend en charge. Si la configuration signale un service actif non pris en charge, sélectionnez/installez une CLI prise en charge et utilisez le redémarrage explicite du service partagé lorsque vous êtes prêt.
