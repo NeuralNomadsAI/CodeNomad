@@ -727,8 +727,11 @@ remain separate: no dependency or lockfile change was needed for this patch.
 
 After the full runs, dev `64ff1a8fc` (#1052) was integrated. Its delta changes
 OpenCode Settings card order/header text and the matching browser assertions;
-the final build/typechecks, **38 admission/update tests**, **33 setup browser
-tests** and ten-locale help pass. Minimum-runtime control reruns on **2.1.0**
+**38 admission/update tests**, **33 setup browser tests** and ten-locale help
+pass. Dev `534cd1886` (#1053), which gates preview offers on complete updater
+assets, was then merged: its **4 release-monitor tests** and the final combined
+production build/server typecheck pass; the root typecheck also passed after
+the Settings change. Minimum-runtime control reruns on **2.1.0**
 pass plugin loading, the complete pruning/history/ownership/relay suite and
 Compare/Wayfinder trajectory. The isolated native upgrade **2.0.15 → 2.1.1**
 passes while the already-running test daemon retains its PID and 2.0.15 version.
