@@ -6,7 +6,9 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 import { tGlobal } from "../lib/i18n/index.tsx"
 import { clearToastHistory, getToastHistory } from "../lib/notifications.tsx"
+import { storage, type OwnerBucket } from "../lib/storage.ts"
 import { addInstance, removeInstance } from "./instances.ts"
+import { preferences, updatePreferences } from "./preferences.tsx"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { destroyOpenCodeData } from "./opencode-data.ts"
 import { clearInstanceDeletedSessionAuthority, sessions, setSessions } from "./session-state.ts"
@@ -26,6 +28,19 @@ let active: Record<string, unknown> = {}
 const toasts: unknown[] = []
 const dismissed: string[] = []
 const originalToast = toast.custom, originalDismiss = toast.dismiss
+const originalStorage = {
+  loadConfigOwner: storage.loadConfigOwner, loadStateOwner: storage.loadStateOwner,
+  revalidateUiConfigOwner: storage.revalidateUiConfigOwner,
+  patchConfigOwner: storage.patchConfigOwner, patchStateOwner: storage.patchStateOwner,
+}
+let originalRouting = preferences().notificationRouting
+
+async function enableCompletionHistory() {
+  const routing = preferences().notificationRouting
+  assert.equal(await updatePreferences({
+    notificationRouting: { ...routing, sessionDone: { ...routing.sessionDone, history: true } },
+  }), true)
+}
 
 function emit(type: string, data: Record<string, unknown>) {
   const seq = ++sequence
@@ -67,7 +82,22 @@ async function settled(id: string) {
 }
 
 describe("V2 session lifecycle signals", () => {
-  beforeEach(() => {
+  beforeEach(async (context) => {
+    // Preferences are a singleton: load and write only fixture owner buckets,
+    // and await restoration before releasing the storage/network mocks.
+    originalRouting = preferences().notificationRouting
+    let config: OwnerBucket = {}
+    context.mock.method(globalThis, "fetch", async () => { throw new Error("Unexpected fixture network request") })
+    storage.loadConfigOwner = async () => ({})
+    storage.loadStateOwner = async () => ({})
+    storage.revalidateUiConfigOwner = async () => structuredClone(config)
+    storage.patchConfigOwner = async (owner, patch) => {
+      assert.equal(owner, "ui")
+      config = { ...config, settings: { ...config.settings, ...(patch as OwnerBucket).settings } }
+      return structuredClone(config)
+    }
+    storage.patchStateOwner = async () => { throw new Error("Unexpected fixture state write") }
+    assert.equal(await updatePreferences({}), true)
     sequence = 0
     active = {}
     toasts.length = 0
@@ -94,7 +124,7 @@ describe("V2 session lifecycle signals", () => {
     ] as any)))
   })
 
-  afterEach(() => {
+  afterEach(async () => {
     toast.custom = originalToast
     toast.dismiss = originalDismiss
     clearToastHistory()
@@ -104,9 +134,23 @@ describe("V2 session lifecycle signals", () => {
     clearInstanceDeletedSessionAuthority(instanceId)
     removeInstance(instanceId, { authoritative: false })
     sdkManager.destroyClientsForInstance(instanceId)
+    try {
+      assert.equal(await updatePreferences({ notificationRouting: originalRouting }), true)
+      assert.deepEqual(preferences().notificationRouting, originalRouting)
+    } finally {
+      Object.assign(storage, originalStorage)
+    }
+  })
+
+  it("keeps completed root executions out of history by default", async () => {
+    assert.equal(preferences().notificationRouting.sessionDone.history, false)
+    run("root", "msg_default", "succeeded")
+    await settled("root")
+    assert.equal(getToastHistory().length, 0)
   })
 
   it("notifies once when a root session's execution succeeds, never while it is still active", async () => {
+    await enableCompletionHistory()
     active = { root: {} }
     run("root", "msg_1", "succeeded")
     await new Promise((resolve) => setTimeout(resolve, 20))
@@ -126,12 +170,14 @@ describe("V2 session lifecycle signals", () => {
   })
 
   it("does not notify for subsessions", async () => {
+    await enableCompletionHistory()
     run("child", "msg_child", "succeeded")
     await settled("child")
     assert.equal(getToastHistory().length, 0)
   })
 
   it("notifies when a run fails or is stopped for inactivity, not when a person stops it", async () => {
+    await enableCompletionHistory()
     run("root", "msg_fail", "failed")
     await settled("root")
     assert.equal(doneNotifications().length, 1, "a failed run has ended without the user")
@@ -152,6 +198,7 @@ describe("V2 session lifecycle signals", () => {
   })
 
   it("stays silent for a root session that completes before its metadata is hydrated", async () => {
+    await enableCompletionHistory()
     let release!: () => void
     const hydrated = new Promise<void>((resolve) => { release = resolve })
     ;(sdkManager as any).clients.get(`${instanceId}:/workspaces/${instanceId}/instance`).session.get = async () => {
