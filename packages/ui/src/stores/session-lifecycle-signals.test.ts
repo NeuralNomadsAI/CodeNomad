@@ -144,9 +144,29 @@ describe("V2 session lifecycle signals", () => {
     run("root", "msg_idle", ["interrupted", "inactivity"])
     await settled("root")
     assert.equal(doneNotifications().length, 2, "OpenCode stopped an unattended run")
+
+    // A shutdown keeps the turn's claim: it resumes after restart rather than finishing.
+    run("root", "msg_shutdown", ["interrupted", "shutdown"])
+    await settled("root")
+    assert.equal(doneNotifications().length, 2, "a shutdown interruption is not a completion")
   })
 
-  it("surfaces native retry backoff as session retry status and a live toast until the next attempt", async () => {
+  it("stays silent for a root session that completes before its metadata is hydrated", async () => {
+    let release!: () => void
+    const hydrated = new Promise<void>((resolve) => { release = resolve })
+    ;(sdkManager as any).clients.get(`${instanceId}:/workspaces/${instanceId}/instance`).session.get = async () => {
+      await hydrated
+      return { id: "late", title: "Late work", version: "1", projectID: "project", location: { directory: "/work" }, time: { created: 1, updated: 1 } }
+    }
+    run("late", "msg_late", "succeeded")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    release()
+    await settled("late")
+    assert.equal(session("late")?.parentId, null, "hydration reveals a root session")
+    assert.equal(getToastHistory().length, 0, "an unhydrated session may be a subagent: never announce it")
+  })
+
+  it("shows native retry backoff as session retry status and a live toast that ends with its attempt", async () => {
     emit("session.execution.started", { sessionID: "root" })
     emit("session.step.started", { sessionID: "root", agent: "build", model, assistantMessageID: "msg_retry", started: 1 })
     const at = Date.now() + 5_000
@@ -155,17 +175,24 @@ describe("V2 session lifecycle signals", () => {
     assert.deepEqual(session("root")?.retry, { attempt: 2, message: "fixture retry", next: at })
     assert.equal(toasts.length, 1, "one transient retry toast")
 
-    // The next attempt starts streaming: the backoff is over.
-    emit("session.step.started", { sessionID: "root", agent: "build", model, assistantMessageID: "msg_retry", started: 2 })
+    // Another session's work leaves this session's countdown alone.
+    emit("session.step.started", { sessionID: "child", agent: "build", model, assistantMessageID: "msg_other", started: 2 })
+    assert.deepEqual(dismissed, [])
+
+    // The next attempt starts streaming: the backoff and its countdown are over.
+    emit("session.step.started", { sessionID: "root", agent: "build", model, assistantMessageID: "msg_retry", started: 3 })
     assert.equal(session("root")?.retry, null)
     assert.equal(session("root")?.status, "working")
+    assert.deepEqual(dismissed, ["toast-1"])
 
     emit("session.retry.scheduled", { sessionID: "root", assistantMessageID: "msg_retry", attempt: 3, at, error: retryError })
-    assert.equal(session("root")?.retry?.attempt, 3)
-    assert.equal(toasts.length, 2)
-    assert.deepEqual(dismissed, ["toast-1"], "each scheduled attempt replaces the live toast")
+    emit("session.retry.scheduled", { sessionID: "root", assistantMessageID: "msg_retry", attempt: 4, at, error: retryError })
+    assert.equal(session("root")?.retry?.attempt, 4)
+    assert.equal(toasts.length, 3)
+    assert.deepEqual(dismissed, ["toast-1", "toast-2"], "a newer attempt replaces the live toast")
     emit("session.execution.failed", { sessionID: "root", error: retryError })
     await settled("root")
     assert.equal(session("root")?.retry, null, "settlement clears retry state")
+    assert.deepEqual(dismissed, ["toast-1", "toast-2", "toast-3"], "and ends the countdown")
   })
 })

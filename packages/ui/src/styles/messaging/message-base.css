@@ -220,15 +220,6 @@
   margin-bottom: 1px;
 }
 
-.message-step-finish {
-  background-color: var(--message-assistant-bg);
-  border-inline-start: 1px solid var(--message-assistant-border);
-  border-block-start: none;
-  border-block-end: none;
-  margin: 0;
-  padding-top: 0;
-}
-
 .message-step-finish-flush {
   margin-top: -0.125rem;
 }
@@ -453,15 +444,6 @@
   padding-top: 0;
 }
 
-.message-step-reason {
-  @apply text-[11px] font-medium;
-  color: var(--text-muted);
-}
-
-.message-step-finish-spacer {
-  @apply mt-4;
-}
-
 .message-reasoning-card {
   --reasoning-border-color: var(--border-strong, var(--border-base));
   --message-action-right-inset: 0.75rem;
@@ -581,15 +563,6 @@
   gap: 0.5rem;
   white-space: nowrap;
   flex: 0 0 auto;
-}
-
-.message-step-meta-inline--measure {
-  position: fixed;
-  left: -9999px;
-  top: -9999px;
-  visibility: hidden;
-  pointer-events: none;
-  white-space: nowrap;
 }
 
 .message-reasoning-meta-row {

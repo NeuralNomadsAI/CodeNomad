@@ -4,23 +4,30 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "usage-fixture", configureServer(s) {
-      s.middlewares.use("/usage-fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/usage-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/usage-metrics.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/usage-fixture`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  try {
+    server = await createServer({
+      configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+      plugins: [shutdown.plugin, solid(), { name: "usage-metrics", configureServer(s) {
+        s.middlewares.use("/fixture", async (_req, res) => {
+          res.setHeader("Content-Type", "text/html")
+          res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/usage-metrics.tsx"></script></body></html>'))
+        })
+      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
+      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+    })
+    shutdown.own(server)
+    await server.listen()
+    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { try { await browser?.close() } finally { await server?.close() } })
 
 async function open(run: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, locale: "en-US" })
@@ -46,6 +53,14 @@ test("each completed V2 step shows its own compact token and cost line", async (
   assert.deepEqual(await chips(page, "msg_02"), ["Input 1K", "Output 34", "Cost $0.01"])
   assert.deepEqual(await chips(page, "msg_03"), ["Input 1K", "Output 12", "Cost $0.50"])
   assert.equal(await page.locator('[data-message-id="msg_02"] .message-step-usage-toggle').getAttribute("aria-expanded"), "false")
+  // The line keeps the former step-finish geometry: flush under its step, no
+  // block borders, and a message border only when it follows text, not tools.
+  const geometry = (messageId: string) => page.locator(`[data-message-id="${messageId}"] .message-step-finish`).evaluate(element => {
+    const style = getComputedStyle(element)
+    return [style.marginTop, style.marginBottom, style.paddingTop, style.borderTopWidth, style.borderBottomWidth, style.borderLeftWidth]
+  })
+  assert.deepEqual(await geometry("msg_03"), ["-2px", "0px", "0px", "0px", "0px", "1px"])
+  assert.deepEqual(await geometry("msg_02"), ["-2px", "0px", "0px", "0px", "0px", "0px"])
 
   await page.locator('[data-message-id="msg_03"] .message-step-usage-toggle').click()
   assert.deepEqual(await chips(page, "msg_03"), [

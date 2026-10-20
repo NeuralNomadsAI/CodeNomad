@@ -62,7 +62,9 @@ const pendingSessionFetches = new Map<string, {
   retry?: SessionRetryState | null
 }>()
 const nativeLifecycleGenerations = new Map<string, number>()
-let activeRetryToast: ToastHandle | null = null
+// The live backoff countdown of one session; it ends when that session's next
+// attempt starts or its run settles.
+let activeRetryToast: { key: string; handle: ToastHandle } | null = null
 const movedSessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
@@ -74,6 +76,12 @@ function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
 
 function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generation: number): boolean {
   return nativeLifecycleGenerations.get(`${instanceId}\0${sessionId}`) === generation
+}
+
+function dismissRetryToast(instanceId: string, sessionId: string): void {
+  if (activeRetryToast?.key !== `${instanceId}\0${sessionId}`) return
+  activeRetryToast.handle.dismiss()
+  activeRetryToast = null
 }
 
 function speakCompletedAssistantText(instanceId: string, sessionId: string): void {
@@ -125,6 +133,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       return
     case "session.compaction.started":
       advanceNativeLifecycle(instanceId, event.data.sessionID)
+      dismissRetryToast(instanceId, event.data.sessionID)
       ensureSessionStatus(instanceId, event.data.sessionID, "compacting", event.location?.directory)
       return
     case "session.compaction.failed":
@@ -168,6 +177,8 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     event.type.startsWith("session.tool.")
   ) {
     advanceNativeLifecycle(instanceId, sessionId)
+    // Ordinary work replaces the backoff: the next attempt has started.
+    dismissRetryToast(instanceId, sessionId)
     ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
   }
 }
@@ -229,6 +240,7 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
   const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) setSessionStatus(instanceId, sessionId, "idle", { force: true })
   else ensureSessionStatus(instanceId, sessionId, "idle", directory)
+  dismissRetryToast(instanceId, sessionId)
   if (failed) messageStoreBus.getOrCreate(instanceId).failPendingSends(sessionId)
   speakCompletedAssistantText(instanceId, sessionId)
 }
@@ -537,6 +549,7 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
   nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
+  dismissRetryToast(instanceId, sessionId)
   removeSessionRuntimeState(instanceId, sessionId)
 }
 
@@ -552,9 +565,9 @@ function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled):
       ? tGlobal("sessionList.status.retryingIn", { seconds: String(remainingSeconds) })
       : tGlobal("sessionList.status.retrying")
   const label = getSessionTitle(instanceId, sessionId)
-  activeRetryToast?.dismiss()
+  activeRetryToast?.handle.dismiss()
   // A live retry status replaced by the next attempt, not an event to keep.
-  activeRetryToast = showToastNotification({ category: "sessions", transient: true,
+  activeRetryToast = { key: `${instanceId}\0${sessionId}`, handle: showToastNotification({ category: "sessions", transient: true,
     title: label || getInstanceDisplayName(instanceId),
     message: tGlobal("sessionList.status.retryToast", {
       countdown,
@@ -563,7 +576,7 @@ function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled):
     }),
     variant: "error",
     duration: 7000,
-  })
+  }) }
 }
 
 function handleSessionCompacted(instanceId: string, event: SessionCompactionEnded): void {

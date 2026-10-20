@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { setTimeout as delay } from "node:timers/promises"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, invalidateOpenCodeSessionContent, projectOpenCodeMessages } from "./opencode-data"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, invalidateOpenCodeSessionContent, projectOpenCodeMessages } from "./opencode-data"
 import { getRootClient } from "./opencode-client"
 import { messageStoreBus } from "./message-v2/bus"
 import { sdkManager } from "../lib/sdk-manager"
@@ -20,25 +20,34 @@ test("the SDK projection cannot resurrect deleted parts on the next native event
   client.permission.list = async () => []
   client.session.form.list = async () => []
   client.message.list = async () => ({ data: [current], cursor: {} }) as any
-  let synced = false
-  const apply = (type: string, data: object) => applyOpenCodeDataEvent(instanceId, "/work", {
-    id: type, type, data, created: 1,
-  } as any, undefined, data => { projectOpenCodeMessages(instanceId, sessionID, data); synced = true })
+  let synced = false, sequence = 0
+  const event = (type: string, data: object) => ({ id: `evt_${type}_${++sequence}`, type, data, created: sequence } as any)
+  const apply = (type: string, data: object) => applyOpenCodeDataEvent(instanceId, "/work", event(type, data),
+    undefined, data => { projectOpenCodeMessages(instanceId, sessionID, data); synced = true })
+  const reasoningParts = () => Object.values(messageStoreBus.getOrCreate(instanceId).getMessage("m")!.parts)
+    .filter(part => part.data.type === "reasoning")
   try {
     apply("session.step.started", { sessionID, assistantMessageID: "m", agent: "build", model: { providerID: "p", id: "m" } })
     apply("session.reasoning.started", { sessionID, assistantMessageID: "m" })
     const old = apply("session.reasoning.delta", { sessionID, assistantMessageID: "m", ordinal: 0, delta: "remove" })
     assert(old.session.message.get(sessionID, "m")?.type === "assistant")
     invalidateOpenCodeSessionContent(instanceId, sessionID)
-    const pending = apply("session.idle", { sessionID })
+    // OpenCode V2 settles the run with a terminal execution event while repair is pending.
+    const pending = apply("session.execution.succeeded", { sessionID })
     assert.notEqual(pending, old)
     assert.deepEqual(pending.session.message.list(sessionID), [])
     for (let i = 0; i < 100 && !synced; i++) await delay(10)
     assert(synced, "authoritative resync completed")
-    const next = apply("session.idle", { sessionID })
+    // The production order: reduce, project the page, then let settlement retire the reducer.
+    const settled = event("session.execution.succeeded", { sessionID })
+    const next = applyOpenCodeDataEvent(instanceId, "/work", settled)
     projectOpenCodeMessages(instanceId, sessionID, next)
-    const parts = Object.values(messageStoreBus.getOrCreate(instanceId).getMessage("m")!.parts)
-    assert(parts.every(part => part.data.type !== "reasoning"))
+    finishOpenCodeDataEvent(instanceId, settled)
+    assert.deepEqual(reasoningParts(), [])
+    const fresh = apply("session.step.started", { sessionID, assistantMessageID: "m2", agent: "build", model: { providerID: "p", id: "m" } })
+    assert.notEqual(fresh, next, "settlement retires the reconciled reducer")
+    projectOpenCodeMessages(instanceId, sessionID, fresh)
+    assert.deepEqual(reasoningParts(), [], "the next run's reducer cannot resurrect pruned parts")
   } finally {
     destroyOpenCodeData(instanceId)
     sdkManager.destroyClientsForInstance(instanceId)

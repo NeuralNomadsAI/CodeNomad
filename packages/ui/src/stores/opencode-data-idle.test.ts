@@ -202,7 +202,24 @@ test("a settled session keeps its reducer while prompts stay parked in its inbox
     assert.deepEqual(settled.session.pending.list(sessionId).map((item) => item.id), ["parked"])
     assert.equal(f.emit("permission.replied", { requestID: "missing" }), settled)
     f.emit("session.inbox.cancelled", { inboxID: "parked" })
-    f.emit(SETTLED)
     assert.notEqual(f.emit("permission.replied", { requestID: "missing" }), settled, "released once nothing is parked")
+  } finally { f.cleanup() }
+})
+
+test("a settled session keeps its reducer until a user shell started before settlement ends", () => {
+  const f = fixture("settled-running-shell")
+  try {
+    const shell = { id: "shell-1", command: "sleep 5", status: "running", metadata: {} }
+    f.emit("session.shell.started", { shell })
+    f.finalStep()
+    const settled = f.emit(SETTLED)
+    assert.equal(f.emit("permission.replied", { requestID: "missing" }), settled)
+    // A fresh reducer ignores session.shell.ended for a shell it never saw.
+    const ended = f.emit("session.shell.ended", { shell: { ...shell, status: "exited", exit: 0 }, output: { output: "done" } })
+    assert.equal(ended, settled, "the shell settles in the reducer that created its message")
+    const row = ended.session.message.list(sessionId).find((message) => message.type === "shell")
+    assert.equal(row?.type === "shell" ? row.status : undefined, "exited")
+    assert.equal(f.store.getMessage(row!.id)?.status, "complete", "the projected row leaves the running state")
+    assert.notEqual(f.emit("permission.replied", { requestID: "missing" }), settled, "released once the shell ended")
   } finally { f.cleanup() }
 })
