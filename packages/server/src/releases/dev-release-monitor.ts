@@ -24,7 +24,13 @@ export interface GithubReleaseListItem {
   created_at?: string
   prerelease?: boolean
   draft?: boolean
+  assets?: Array<{ name?: string }>
 }
+
+/** Release publication creates the GitHub release before its builds; the
+ * complete updater manifest is uploaded only after every platform build. */
+const UPDATER_MANIFEST = "latest.json"
+const isReady = (release: GithubReleaseListItem) => release.assets?.some((asset) => asset?.name === UPDATER_MANIFEST) === true
 
 export interface PreviewReleaseMonitor {
   refresh(): void
@@ -45,8 +51,9 @@ const publishedOf = (release: GithubReleaseListItem) => Date.parse(release.publi
 
 /** Preview builds reuse the last stable version plus a `-dev-*` (or legacy
  * `-dev-v2-*`) label, so SemVer alone ranks newer previews below their base
- * release. Offer the newest published release of any kind, newer by
- * publication than the installed release when it is known. The installed
+ * release. Offer the newest published release of any kind whose builds are all
+ * uploaded (its `latest.json` exists, as the desktop updater requires), newer
+ * by publication than the installed release when it is known. The installed
  * release may be older than the fetched page; `lookupInstalled` then fetches
  * it by tag. Only builds GitHub does not know fall back to version order. */
 export async function findPreviewRelease(
@@ -55,7 +62,7 @@ export async function findPreviewRelease(
   lookupInstalled: (tag: string) => Promise<GithubReleaseListItem | null> = async () => null,
 ): Promise<GithubReleaseListItem | null> {
   const releases = list.filter((release) => release && release.draft !== true && stripTagPrefix(tagOf(release)))
-  const latest = releases.reduce<GithubReleaseListItem | null>((best, release) =>
+  const latest = releases.filter(isReady).reduce<GithubReleaseListItem | null>((best, release) =>
     !best || publishedOf(release) > publishedOf(best) ? release : best, null)
   if (!latest) return null
   const current = stripTagPrefix(currentVersion)

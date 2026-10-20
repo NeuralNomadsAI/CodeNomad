@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { findPreviewRelease, resolveUpdateFeed, type GithubReleaseListItem } from "./dev-release-monitor"
 
+// Published releases carry their complete updater manifest unless a test says otherwise.
 const release = (tag: string, publishedAt: string, extra: Partial<GithubReleaseListItem> = {}): GithubReleaseListItem =>
-  ({ tag_name: tag, published_at: publishedAt, prerelease: tag.includes("-dev"), ...extra })
+  ({ tag_name: tag, published_at: publishedAt, prerelease: tag.includes("-dev"), assets: [{ name: "latest.json" }], ...extra })
 
 // Mirrors the real GitHub ordering: list order is by creation, not version.
 const list = [
@@ -33,6 +34,20 @@ test("preview offers the newest published non-draft release regardless of dev-v2
   // Unknown local builds fall back to version order.
   assert.equal(await findPreviewRelease(list, "0.21.0-dev-local"), null)
   assert.equal(await findPreviewRelease([], "0.20.1"), null)
+})
+
+test("a release is offered only once all its builds published the updater manifest", async () => {
+  const building = release("v0.20.1-dev-20261011-bbbbbbbb", "2026-10-11T07:00:00Z", { assets: [{ name: "CodeNomad-Tauri-windows-x64-0.20.1-dev-20261011-bbbbbbbb.exe" }] })
+  const created = release("v0.20.1-dev-20261012-cccccccc", "2026-10-12T07:00:00Z", { assets: [] })
+  const page = [created, building, ...list]
+  // Newer releases still building do not hide the newest ready one.
+  assert.equal((await findPreviewRelease(page, "0.20.1-dev-20261008-027f5094"))?.tag_name, "v0.20.1-dev-20261009-43165435")
+  assert.equal(await findPreviewRelease(page, "0.20.1-dev-20261009-43165435"), null)
+  // Once the manifest is uploaded, the release is offered.
+  const ready = { ...created, assets: [{ name: "latest.json" }] }
+  assert.equal((await findPreviewRelease([ready, building, ...list], "0.20.1-dev-20261009-43165435"))?.tag_name, ready.tag_name)
+  // An installed release without a manifest is still recognised for publication order.
+  assert.equal(await findPreviewRelease(page, "0.20.1-dev-20261011-bbbbbbbb"), null)
 })
 
 test("an installed release missing from the fetched page is looked up by tag before falling back to version order", async () => {
