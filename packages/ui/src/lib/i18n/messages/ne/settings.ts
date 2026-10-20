@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.usage.cached": "पछिल्लो सुरक्षित तथ्याङ्क · अद्यावधिकको प्रतीक्षामा",
   "settings.native.openFailed": "प्राथमिकताहरू तिनको विन्डोमा खोल्न सकिएन। CodeNomad एप पुनः सुरु गर्नुहोस् वा अद्यावधिक गर्नुहोस्, त्यसपछि फेरि प्रयास गर्नुहोस्।",
   "settings.accounts.current": "सक्रिय खाता",
   "settings.usage.title": "तथ्याङ्क",

@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.usage.cached": "上次保存的统计数据 · 等待刷新",
   "settings.native.openFailed": "无法在设置窗口中打开偏好设置。请重启或更新 CodeNomad 应用后重试。",
   "settings.accounts.current": "活动账户",
   "settings.usage.title": "统计",

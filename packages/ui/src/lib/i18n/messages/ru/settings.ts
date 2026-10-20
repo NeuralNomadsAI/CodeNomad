@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.usage.cached": "Последняя сохранённая статистика · ожидание обновления",
   "settings.native.openFailed": "Не удалось открыть настройки в их окне. Перезапустите или обновите приложение CodeNomad и повторите попытку.",
   "settings.accounts.current": "Активный аккаунт",
   "settings.usage.title": "Статистика",

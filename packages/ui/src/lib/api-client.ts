@@ -402,8 +402,11 @@ export const serverApi = {
   getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
   },
-  getServiceUsage(instanceId: string, query: { from: number; to: number; timezone: string }): Promise<import("../../../server/src/api-types").ServiceUsageSnapshot> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone })}`)
+  getCachedServiceUsage(instanceId: string, timezone: string, days?: number, signal?: AbortSignal): Promise<{ days: number; snapshot?: import("../../../server/src/api-types").ServiceUsageSnapshot }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/cache?${new URLSearchParams({ timezone, ...(days ? { days: String(days) } : {}) })}`, { signal })
+  },
+  getServiceUsage(instanceId: string, query: { from: number; to: number; timezone: string }, signal?: AbortSignal): Promise<import("../../../server/src/api-types").ServiceUsageSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone })}`, { signal })
   },
   setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })

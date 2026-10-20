@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.usage.cached": "הנתונים הסטטיסטיים האחרונים שנשמרו · ממתין לרענון",
   "settings.native.openFailed": "לא ניתן היה לפתוח את ההעדפות בחלון שלהן. הפעילו מחדש או עדכנו את אפליקציית CodeNomad ונסו שוב.",
   "settings.accounts.current": "חשבון פעיל",
   "settings.usage.title": "סטטיסטיקות",

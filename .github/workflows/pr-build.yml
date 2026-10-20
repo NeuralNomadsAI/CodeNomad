@@ -470,6 +470,9 @@ jobs:
       - name: Test server
         run: node --import tsx --test "packages/server/src/**/*.test.ts"
 
+      - name: Test Stats restoration and connection fences explicitly
+        run: node --import tsx --test packages/server/src/opencode/service-usage.test.ts
+
       - name: Install Chromium for UI rendering regressions
         run: npx playwright install --with-deps chromium
 

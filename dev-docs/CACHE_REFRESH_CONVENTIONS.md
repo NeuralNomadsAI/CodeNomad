@@ -28,6 +28,7 @@ where their authority, lifetime or runtime differs.
 | Timeline previews | At most 512 bounded Markdown excerpts. Visible-nearby batches of 12, hovered ID first; obsolete demand cancels. Thirty-second age prompts on-demand revalidation only. Generation, mutation and undo fence reuse. No transcript-window loads or geometry changes. | `packages/ui/src/stores/timeline-previews.ts` |
 | Providers/models | Retained signals; shared in-flight catalogue load; dirty-bit trailing refresh; instance, location and request-generation checks. No completed-result TTL inside `fetchProviders` itself. | `packages/ui/src/stores/session-api.ts` |
 | Provider Usage | Panel-local snapshot; same-location `provider.updated` revalidates in place with one in-flight read and coalesced trailing demand. Window-label keys preserve quota DOM across responses. Duplicate transport statuses and instance/status/native-generation snapshots are no-ops, not reconnects. A changed native generation still fences quotas even if the disconnect was missed. Credential/integration/config events, native `server.connected`, real connection transitions and source changes clear the snapshot immediately and fence old responses/trailing demand. Failures revoke quotas rather than retain a possibly different account. Hidden panels do not read; no global browser quota cache. | `components/session/provider-usage-panel.tsx`, `provider-usage-state.ts` |
+| Stats | Backend-owned `state.ui.serviceUsage` saves eight validated display snapshots (1 MiB aggregate), period and timezone. Authenticated native discovery root/execution host/channel fingerprint plus exact opened folder, not workspace UUID, isolate reuse. Preferences only reads this cache; it never writes the opener's client state. Cached totals/charts render before native revalidation, explicitly stale; failures retain them. Only a mounted, visible Stats section reads. Hiding/disposal cancels queued demand and fences in-flight publication; activation reads once. Terminal hints use the existing five-second activity cooldown and one trailing refresh; deletion/pruning, explicit refresh, period changes and reconnect retain their demand semantics. No polling or transcript reads. | server `opencode/service-usage-cache.ts`, `service-usage.ts`; UI `settings/usage-settings-section.tsx` |
 | Session model selection | Native selection events invalidate rather than overwrite the displayed selection, because SSE echoes can lag successful HTTP writes. Coalesced authoritative reads share the session admission queue with prompts and explicit selections; client/generation and captured-selection checks fence late responses. Catalog merges preserve pending optimistic choices; successful writes publish a fresh model object so pre-confirmation snapshots lose authority. Read failures retain display state until the next event or reconnect refresh. | `stores/session-model-reconciliation.ts`, `stores/session-action-queue.ts`, `stores/session-generation-recovery.ts` |
 | OpenCode setup | Shared in-flight status read plus coalesced trailing refresh for focus/visibility/reconnect demand. Executable changes and explicit actions fence old responses. Failed reads retain version/path diagnostics but revoke the connected claim and stale reload/restart controls; Continue checks again before retrying the pending workspace. Activation requires a successful pre-action status read. | UI `stores/opencode-setup.ts`, `components/settings/opencode-setup-panel.tsx` |
 | Filesystem invalidations | Host directory observations and native filesystem events coalesce before cache publication: 100 ms quiet-case delay, then at most once per five seconds in continuous activity, with no idle timer. Explicit mutations/recovery invalidate immediately. Workspace versions target the browsing root and listed directory; only changed visible directories reread. Hidden/collapsed caches stay stale until demand. Bounded metadata falls back conservatively to full invalidation. | `filesystem-events.ts`, `useWorkspaceTree.ts`, server `workspaces/file-watches.ts` |
@@ -50,6 +51,37 @@ or the cost of mandatory authoritative scans. The event relay isolates these wai
 by entity and recipient; it never substitutes stale display data for authorization.
 An isolated native fixture covers warm-cache create/remove visibility; browser
 fixtures cover menu updates, focus, old responses and refresh bursts.
+
+### Stats restoration and remaining native cost
+
+Stats uses the existing backend `SettingsService` UI state owner, not an extra file,
+localStorage, or the native per-main-window restoration graph. The same owner is
+available to Electron/Tauri Preferences recreation and browser/remote clients.
+Each backend/profile owns its own document. Only an opaque SHA-256 fingerprint
+is stored: native global discovery root (from authenticated `config.get`), host or
+WSL distro, authenticated service channel, and exact backend opened folder. No
+credentials, native paths, PID, transient port (when authenticated), or workspace
+UUID are serialized. Changing the authenticated service channel deliberately
+misses the cache; snapshots never authorize a Location or mutation. Period and
+timezone stay separate, and corrupt/oversized entries are optional display misses.
+
+The isolated browser test recreates both the renderer and SettingsService, changes
+the workspace UUID, and delays `session.stats` by 2 s: observed cold display
+2,120 ms, restored totals/charts 81 ms, followed by replacement from the current
+read. A separate hidden-start regression fails on the original component (one
+Stats call while hidden, expected zero). These are fixture observations, not a
+claim about the user's service or upstream speed.
+
+Reviewed OpenCode 2.1.0 source (`packages/server/src/handlers/session.ts:71-90`,
+`packages/core/src/session/stats.ts:85-190,282-315`) invokes aggregation on every
+GET, without a completed-result cache. It queries all matching message rows in
+31-day windows, extracts JSON usage fields and folds them in memory. Even with
+`tools: "none"`, it enumerates service session IDs and queries compaction usage
+events in batches of 500. Identical no-change GETs repeat that work; this is full
+range re-aggregation, not evidence about SQLite's physical query plan. The
+isolated native fixture's four synthetic sessions took 18.72/16.42/14.62 ms for
+three identical reads. Large-history latency remains upstream work; no server
+aggregation optimization or native database change is included here.
 
 ### Event relay ordering and recovery
 

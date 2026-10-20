@@ -1,6 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { startProductFixture } from "./fixtures/product-fixture-server"
+import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import path from "node:path"
+import os from "node:os"
+import { SettingsService } from "../../../server/src/settings/service"
+import { resolveConfigLocation } from "../../../server/src/config/location"
+import { ServiceUsage } from "../../../server/src/opencode/service-usage"
 
 test("service-wide usage dashboard declares scope, bounds requests, fences stale connection reads and stops when disposed", async () => {
   const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 380, height: 1000 }, locale: "en-US" })
@@ -21,7 +27,8 @@ test("service-wide usage dashboard declares scope, bounds requests, fences stale
     await page.getByRole("button", { name: "Refresh", exact: true }).click()
     await page.getByRole("alert").waitFor()
     assert.equal(await page.locator(".usage-metrics").count(), 1)
-    await page.evaluate(() => { (window as any).fixture.defer(); (window as any).fixture.refresh() })
+    await page.evaluate(() => { (window as any).fixture.defer(); (window as any).fixture.refresh("session.deleted") })
+    await page.waitForFunction(() => (window as any).fixture.queries.length === 4)
     await page.evaluate(() => (window as any).fixture.setInstanceId("other"))
     const steps = page.locator(".usage-metrics > div").filter({ has: page.getByText("Steps", { exact: true }) }).locator("dd")
     await page.waitForFunction(() => [...document.querySelectorAll(".usage-metrics dt")].find(el => el.textContent === "Steps")?.nextElementSibling?.textContent === "7")
@@ -35,7 +42,25 @@ test("service-wide usage dashboard declares scope, bounds requests, fences stale
   } finally { await page.close(); await fixture.close() }
 })
 
-test("every settled native execution refreshes the dashboard", async () => {
+test("a mounted but hidden Preferences document does not read Stats until activation", async () => {
+  const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage()
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(`${fixture.url}?hidden`)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.clock.install(); await page.clock.runFor(100)
+    assert.equal(await page.evaluate(() => (window as any).fixture.queries.length), 0)
+    await page.evaluate(() => { for (let i = 0; i < 30; i++) (window as any).fixture.refresh("session.execution.interrupted") })
+    await page.clock.runFor(6000)
+    assert.equal(await page.evaluate(() => (window as any).fixture.queries.length), 0)
+    await page.evaluate(() => (window as any).fixture.documentHidden(false))
+    await page.clock.runFor(100)
+    await page.locator(".usage-metrics").waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.queries.length), 1)
+  } finally { await page.close(); await fixture.close() }
+})
+
+test("hidden Stats never read; native hints coalesce and hidden in-flight work cannot launch trailing scans", async () => {
   const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 760, height: 1000 }, locale: "en-US" })
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
@@ -44,14 +69,43 @@ test("every settled native execution refreshes the dashboard", async () => {
     await page.locator(".usage-metrics").waitFor()
     const queries = () => page.evaluate(() => (window as any).fixture.queries.length as number)
     const initial = await queries()
-    // OpenCode V2 settles runs with session.execution.*; it never publishes session.idle.
-    for (const [index, type] of ["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].entries()) {
-      await page.evaluate(type => (window as any).fixture.refresh(type), type)
-      await page.waitForFunction(count => (window as any).fixture.queries.length === count, initial + index + 1)
-    }
+    await page.clock.install()
+    await page.evaluate(() => { for (let i = 0; i < 100; i++) (window as any).fixture.refresh() })
+    await page.clock.runFor(100)
+    assert.equal(await queries(), initial, "activity hints wait for the shared cooldown")
+    await page.evaluate(() => { (window as any).fixture.documentHidden(true); for (let i = 0; i < 100; i++) (window as any).fixture.refresh() })
+    await page.clock.runFor(6000)
+    assert.equal(await queries(), initial, "hidden cancels queued reads")
+    await page.evaluate(() => (window as any).fixture.documentHidden(false))
+    await page.clock.runFor(100)
+    assert.equal(await queries(), initial + 1, "activation revalidates exactly once")
+    await page.evaluate(() => { (window as any).fixture.defer(); (window as any).fixture.refresh("session.deleted") })
+    await page.clock.runFor(100)
+    assert.equal(await queries(), initial + 2)
+    await page.evaluate(() => { for (let i = 0; i < 100; i++) (window as any).fixture.refresh(); (window as any).fixture.documentHidden(true); (window as any).fixture.release() })
+    await page.clock.runFor(6000)
+    assert.equal(await queries(), initial + 2, "settlement while hidden does not reschedule")
+    await page.evaluate(() => (window as any).fixture.documentHidden(false))
+    await page.clock.runFor(100)
+    assert.equal(await queries(), initial + 3)
+    await page.evaluate(() => { for (let i = 0; i < 100; i++) (window as any).fixture.refresh() })
+    await page.clock.runFor(5100)
+    assert.equal(await queries(), initial + 4, "one read for a visible burst, not one per terminal event")
     await page.evaluate(() => (window as any).fixture.refresh("session.text.delta"))
-    await page.waitForTimeout(100)
-    assert.equal(await queries(), initial + 3, "streaming deltas never refresh durable statistics")
+    await page.clock.runFor(6000)
+    assert.equal(await queries(), initial + 4, "streaming deltas never refresh durable statistics")
+    await page.evaluate(() => (window as any).fixture.connection("connected", 1))
+    await page.clock.runFor(100)
+    assert.equal(await queries(), initial + 5)
+    await page.evaluate(() => { for (let i = 0; i < 30; i++) (window as any).fixture.connection("connected", 1) })
+    await page.clock.runFor(6000)
+    assert.equal(await queries(), initial + 5, "duplicate connection snapshots are not reconnects")
+    await page.evaluate(() => { (window as any).fixture.documentHidden(true); (window as any).fixture.connection("connected", 2) })
+    await page.clock.runFor(6000)
+    assert.equal(await queries(), initial + 5, "hidden reconnect waits for visible demand")
+    await page.evaluate(() => (window as any).fixture.documentHidden(false))
+    await page.clock.runFor(100)
+    assert.equal(await queries(), initial + 6)
     assert.deepEqual(errors, [])
   } finally { await page.close(); await fixture.close() }
 })
@@ -67,4 +121,72 @@ test("Stats is reachable in the real preferences screen", async () => {
     if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE, fullPage: true })
     assert.deepEqual(errors, [])
   } finally { await page.close(); await fixture.close() }
+})
+
+test("a new Preferences renderer/backend restores totals and charts before a two-second native read, retains errors and its period", async () => {
+  const parent = path.join(os.tmpdir(), "opencode"); await mkdir(parent, { recursive: true })
+  const root = await mkdtemp(path.join(parent, "stats-browser-state-"))
+  const fixture = await startProductFixture("service-usage")
+  const logger: any = { child() { return this }, warn() {}, info() {}, debug() {} }
+  let steps = 42, fail = false, calls = 0
+  const record = { path: "/fixture/project" }
+  const connection = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "fixture-only" } }, assertCurrent() {}, client: {
+    config: { get: async () => [{ type: "directory", path: "/fixture/discovery" }] },
+    session: { stats: async (query: any) => {
+      calls++; const value = steps
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      if (fail) { fail = false; throw new Error("fixture native failure") }
+      const tokens = { input: 12345, output: 987, reasoning: 100, cache: { read: 6789, write: 456 } }
+      return { range: { from: query.from, to: query.to }, sessions: 3, subagents: 2, prompts: 10, steps: value,
+        tokens, cost: 1.2345, tools: { mode: "none" }, activeDays: 2, streak: 2,
+        models: [{ model: { providerID: "fixture", id: "synthetic" }, tokens, steps: value, cost: 1.2345 }],
+        activity: [{ date: "2026-10-19", steps: value }] }
+    } },
+  } }
+  const manager: any = { get: () => record, getSharedServiceConnection: async () => connection,
+    getServicePathStyle: () => "posix", getServiceWslDistro: () => undefined }
+  const reopen = () => new ServiceUsage(manager, new SettingsService(resolveConfigLocation(path.join(root, "config.yaml")), undefined, logger))
+  let service = reopen()
+  const pageFor = async (instance: string) => {
+    const page = await fixture.browser.newPage({ locale: "en-US" })
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    await page.route("**/api/workspaces/*/service-usage**", async route => {
+      const url = new URL(route.request().url()), id = url.pathname.split("/")[3]
+      try {
+        const result = url.pathname.endsWith("/cache")
+          ? await service.cached(id, url.searchParams.get("timezone")!, url.searchParams.has("days") ? Number(url.searchParams.get("days")) : undefined)
+          : await service.read(id, { from: Number(url.searchParams.get("from")), to: Number(url.searchParams.get("to")), timezone: url.searchParams.get("timezone")! })
+        await route.fulfill({ contentType: "application/json", body: JSON.stringify(result) })
+      } catch { await route.fulfill({ status: 503, contentType: "application/json", body: "{}" }) }
+    })
+    await page.goto(`${fixture.url}?backend&instance=${instance}`)
+    return page
+  }
+  try {
+    const cold = await pageFor("old-workspace-uuid")
+    await cold.locator(".usage-metrics").waitFor()
+    const coldMs = await cold.evaluate(() => (window as any).fixture.metricsAt - (window as any).fixture.mountedAt)
+    assert.ok(coldMs >= 2000)
+    await cold.getByLabel("Period", { exact: true }).selectOption("7")
+    await cold.getByRole("button", { name: "Refresh", exact: true }).waitFor({ state: "visible" })
+    await cold.waitForFunction(() => (document.querySelector(".usage-toolbar button") as HTMLButtonElement)?.disabled === false && (window as any).fixture.queries.length === 2)
+    await cold.close()
+    service = reopen(); steps = 99 // New backend/settings and JS window; no renderer Map survives.
+    const warm = await pageFor("new-workspace-uuid")
+    await warm.locator(".usage-metrics").waitFor()
+    const warmMs = await warm.evaluate(() => (window as any).fixture.metricsAt - (window as any).fixture.mountedAt)
+    assert.ok(warmMs < 1000, `restored display took ${warmMs}ms`)
+    assert.equal(await warm.getByLabel("Period", { exact: true }).inputValue(), "7")
+    const total = warm.locator(".usage-metrics > div").filter({ has: warm.getByText("Steps", { exact: true }) }).locator("dd")
+    assert.equal(await total.innerText(), "42")
+    assert.equal(await warm.locator("meter").count(), 1)
+    await warm.getByText("Previous saved statistics · awaiting refresh", { exact: true }).waitFor()
+    await warm.waitForFunction(() => [...document.querySelectorAll(".usage-metrics dt")].find(el => el.textContent === "Steps")?.nextElementSibling?.textContent === "99")
+    fail = true
+    await warm.getByRole("button", { name: "Refresh", exact: true }).click()
+    await warm.getByRole("alert").waitFor()
+    assert.equal(await total.innerText(), "99")
+    console.log(`Stats isolated delayed-read latency: cold=${Math.round(coldMs)}ms, restored=${Math.round(warmMs)}ms; native delay=2000ms; calls=${calls}`)
+    await warm.close()
+  } finally { await fixture.close(); await rm(root, { recursive: true, force: true }) }
 })

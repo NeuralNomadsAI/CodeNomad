@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.usage.cached": "前回保存した統計 · 更新待ち",
   "settings.native.openFailed": "設定ウィンドウを開けませんでした。CodeNomad アプリを再起動または更新してから、もう一度お試しください。",
   "settings.accounts.current": "有効なアカウント",
   "settings.usage.title": "統計",

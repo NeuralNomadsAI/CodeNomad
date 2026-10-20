@@ -41,5 +41,13 @@ await withProductRuntime(process.argv[2], async ({ root }) => {
   assert.equal(result.stats.models.length, 1); assert.equal(result.stats.models[0].model.providerID, "fixture")
   assert.deepEqual(result.stats.tools, { mode: "none" })
   assert.equal(result.stats.activity.reduce((sum, row) => sum + row.steps, 0), 4)
+  const query = { from, to: Date.now() + 1000, timezone: "UTC" }, timings = []
+  for (let index = 0; index < 3; index++) {
+    const start = performance.now()
+    const unchanged = await usage.read("fixture", query)
+    timings.push(Math.round((performance.now() - start) * 100) / 100)
+    assert.equal(unchanged.stats.steps, 4)
+  }
+  console.log(`Native Stats repeated identical service reads (4 synthetic sessions, tools:none), ms: ${JSON.stringify(timings)}`)
   console.log("PASS explicitly authorized service-wide usage including independent clone, durable tokens/models/activity and tools:none")
 })

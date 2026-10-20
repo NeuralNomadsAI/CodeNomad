@@ -1,4 +1,5 @@
 export const settingsMessages = {
+  "settings.usage.cached": "Son kaydedilen istatistikler · yenileme bekleniyor",
   "settings.native.openFailed": "Tercihler kendi penceresinde açılamadı. CodeNomad uygulamasını yeniden başlatın veya güncelleyin, ardından tekrar deneyin.",
   "settings.accounts.current": "Etkin hesap",
   "settings.usage.title": "İstatistikler",
