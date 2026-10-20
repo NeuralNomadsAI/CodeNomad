@@ -3,15 +3,32 @@ import { describe, it } from "node:test"
 import { defaultNotificationRouting, normalizeNotificationRouting, notificationTargets } from "./notification-routing"
 
 describe("notification routing", () => {
-  it("keeps the history (and badge) for attention and events, not routine feedback", () => {
+  it("keeps session states out of history by default without changing their system route", () => {
     const routing = normalizeNotificationRouting(undefined)
-    assert.deepEqual(routing.needsInput, { screen: false, history: true, system: true })
-    assert.deepEqual(routing.sessionDone, { screen: false, history: true, system: true })
+    for (const category of ["needsInput", "sessionDone", "sessions"] as const) {
+      assert.equal(routing[category].history, false)
+      assert.equal(notificationTargets(undefined, category, "info").history, false)
+    }
+    assert.deepEqual(routing.needsInput, { screen: false, history: false, system: true })
+    assert.deepEqual(routing.sessionDone, { screen: false, history: false, system: true })
     assert.deepEqual(routing.updates, { screen: true, history: true, system: true })
     assert.deepEqual(routing.projects, { screen: true, history: true, system: false }, "a tab closed elsewhere leaves a trace")
     for (const routine of ["copy", "settings", "sessions"] as const) {
       assert.deepEqual(routing[routine], { screen: true, history: false, system: false }, routine)
     }
+  })
+
+  it("preserves explicit session history choices and defaults omitted history to off", () => {
+    const routing = normalizeNotificationRouting({
+      needsInput: { history: true }, sessionDone: { history: false }, sessions: { history: true },
+    })
+    assert.equal(routing.needsInput.history, true)
+    assert.equal(routing.sessionDone.history, false)
+    assert.equal(routing.sessions.history, true)
+    assert.equal(notificationTargets(routing, "needsInput", "info").history, true)
+    const partial = normalizeNotificationRouting({ needsInput: { system: false }, sessionDone: { screen: true } })
+    assert.equal(partial.needsInput.history, false)
+    assert.equal(partial.sessionDone.history, false)
   })
 
   it("keeps saved choices, fills missing destinations and drops unknown entries without mutating input", () => {

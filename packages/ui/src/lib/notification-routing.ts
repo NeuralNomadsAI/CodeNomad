@@ -17,10 +17,10 @@ export type NotificationRouting = Record<NotificationCategory, NotificationRoute
 
 const route = (screen: boolean, history: boolean, system: boolean): NotificationRoute => ({ screen, history, system })
 
-/** Defaults keep the history (and badge) for what needs attention, not routine feedback. */
+/** Session states can change again: keep them out of history (and the badge) by default. */
 export const defaultNotificationRouting: NotificationRouting = {
-  needsInput: route(false, true, true),
-  sessionDone: route(false, true, true),
+  needsInput: route(false, false, true),
+  sessionDone: route(false, false, true),
   updates: route(true, true, true),
   files: route(true, true, false),
   projects: route(true, true, false),
