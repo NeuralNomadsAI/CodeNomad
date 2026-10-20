@@ -1495,7 +1495,7 @@ describe("session request authority", () => {
   })
 
   for (const mutation of ["cancel", "revert"] as const) {
-    it(`rejects pre-${mutation} history after idle disposes the reducer`, async () => {
+    it(`rejects pre-${mutation} history after settlement disposes the reducer`, async () => {
       const instanceId = `stale-${mutation}-idle-page`, sessionId = "session"
       const { client, cleanup } = setup(instanceId)
       const stale = deferred<any>()
@@ -1514,10 +1514,10 @@ describe("session request authority", () => {
           ? { id: "mutation", type: "session.inbox.cancelled", created: 2, data: { sessionID: sessionId, inboxID: "deleted" } } as any
           : { id: "mutation", type: "session.revert.committed", created: 2, data: { sessionID: sessionId, to: "deleted" } } as any)
         const revision = getOpenCodeMutationRevision(instanceId, sessionId)
-        const idle = { id: "idle", type: "session.idle", created: 3, data: { sessionID: sessionId } } as any
-        const data = applyOpenCodeDataEvent(instanceId, "/work", idle)
+        const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 3, data: { sessionID: sessionId } } as any
+        const data = applyOpenCodeDataEvent(instanceId, "/work", settled)
         projectOpenCodeMessages(instanceId, sessionId, data)
-        finishOpenCodeDataEvent(instanceId, idle)
+        finishOpenCodeDataEvent(instanceId, settled)
         assert.equal(getOpenCodeMutationRevision(instanceId, sessionId), revision)
         const next = applyOpenCodeDataEvent(instanceId, "/work", {
           id: "next", type: "permission.replied", created: 4, data: { sessionID: sessionId, requestID: "missing" },
@@ -1526,7 +1526,8 @@ describe("session request authority", () => {
         stale.resolve({ data: [apiMessage("deleted")], cursor: { next: "newer" } })
         assert.equal(await request, false)
         const store = messageStoreBus.getOrCreate(instanceId)
-        assert.deepEqual(store.getSessionMessageIds(sessionId), ["latest"])
+        // The settlement's native idle record is projected; the pre-mutation page is not.
+        assert.deepEqual(store.getSessionMessageIds(sessionId), ["latest", "msg_settled"])
         assert.equal(store.getMessage("deleted"), undefined)
         assert.equal(await loadOldestMessageWindow(instanceId, sessionId), true)
         assert.deepEqual(store.getSessionMessageIds(sessionId), ["survivor"])

@@ -8,6 +8,7 @@ import { MESSAGE_WINDOW_PAGE_SIZE } from "./message-v2/message-window"
 import { messageStoreBus } from "./message-v2/bus"
 import { sseManager } from "../lib/sse-manager"
 import { getLogger } from "../lib/logger"
+import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
 
 const log = getLogger("session")
@@ -711,7 +712,7 @@ export function applyOpenCodeDataEvent(
   const entry = transcript?.entry ?? primary
   if (transcript && typeof sessionId === "string") {
     if (event.type === "session.compaction.started") unobservedCompactions.delete(messageRevisionKey(instanceId, sessionId))
-    // A new execution must not inherit a preceding idle event's deferred cleanup.
+    // A new execution must not inherit a preceding settlement's deferred cleanup.
     if (event.type === "session.execution.started" || eventMayAppendMessage(event)) transcript.retireWhenDrained = false
   }
   if (transcript && typeof sessionId === "string") {
@@ -840,6 +841,9 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
   if (!transcript.retireWhenDrained || !isTranscriptCurrent(instanceId, sessionId, transcript)
     || transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync
     || transcript.retryTimer || transcript.queue.length) return
+  // Prompts parked across the settlement (e.g. after an interruption) are listed
+  // from this reducer's inbox; a fresh reducer would not know them.
+  if (transcript.entry.data.session.pending.list(sessionId).length) return
   destroyOpenCodeData(instanceId, sessionId)
 }
 
@@ -847,7 +851,7 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
   const sessionId = eventSessionId(event)
   if (sessionId === undefined) return
   if (event.type === "session.deleted") destroyOpenCodeData(instanceId, sessionId)
-  if (event.type !== "session.idle") return
+  if (!isExecutionTerminalEvent(event)) return
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
   if (!transcript) return
   // The caller has projected the synchronous page. Queued terminal updates and

@@ -6,11 +6,9 @@ import type {
   SessionCreated,
   SessionDeleted,
   SessionExecutionFailed,
-  SessionIdle,
   SessionRevertCleared,
   SessionRevertCommitted,
   SessionRevertStaged,
-  SessionStatusUpdated,
   TuiToastShow,
   V2Event,
 } from "@opencode/client"
@@ -57,11 +55,9 @@ type SSEEvent =
   | SessionDeleted
   | SessionCompactionEnded
   | SessionExecutionFailed
-  | SessionIdle
   | SessionRevertStaged
   | SessionRevertCleared
   | SessionRevertCommitted
-  | SessionStatusUpdated
   | PermissionAsked
   | PermissionReplied
   | TuiToastShow
@@ -138,12 +134,6 @@ class SSEManager {
       case "tui.toast.show":
         this.onTuiToast?.(instanceId, event as TuiToastShow)
         break
-      case "session.idle":
-        this.onSessionIdle?.(instanceId, event as SessionIdle)
-        break
-      case "session.status":
-        this.onSessionStatus?.(instanceId, event as SessionStatusUpdated)
-        break
       case "permission.asked":
         this.onPermissionUpdated?.(instanceId, event as PermissionAsked)
         break
@@ -186,8 +176,6 @@ class SSEManager {
   onSessionCompacted?: (instanceId: string, event: SessionCompactionEnded) => void
   onSessionError?: (instanceId: string, event: SessionExecutionFailed) => void
   onTuiToast?: (instanceId: string, event: TuiToastShow) => void
-  onSessionIdle?: (instanceId: string, event: SessionIdle) => void
-  onSessionStatus?: (instanceId: string, event: SessionStatusUpdated) => void
   onPermissionUpdated?: (instanceId: string, event: PermissionAsked) => void
   onPermissionReplied?: (instanceId: string, event: PermissionReplied) => void
   onNativeSessionEvent?: (instanceId: string, event: NativeSessionEvent) => void

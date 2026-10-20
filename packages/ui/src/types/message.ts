@@ -27,9 +27,6 @@ interface CompactionMessagePart extends PartBase {
   model?: ModelRef
   providerState?: SessionMessageProviderState
 }
-interface StepStartMessagePart extends PartBase { type: "step-start" }
-interface StepFinishMessagePart extends PartBase { type: "step-finish" }
-
 export type NormalizedMessagePart =
   | TextMessagePart
   | SystemMessagePart
@@ -38,8 +35,6 @@ export type NormalizedMessagePart =
   | SkillMessagePart
   | ToolMessagePart
   | CompactionMessagePart
-  | StepStartMessagePart
-  | StepFinishMessagePart
 
 export interface RenderCache {
   /** Source the HTML was rendered from, for caches that compare it (Markdown keys on its version instead). */

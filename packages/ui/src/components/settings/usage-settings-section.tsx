@@ -3,6 +3,7 @@ import type { ServiceUsageSnapshot } from "../../../../server/src/api-types"
 import { useI18n } from "../../lib/i18n"
 import { serverApi } from "../../lib/api-client"
 import { serverEvents } from "../../lib/server-events"
+import { isExecutionTerminalEvent } from "../../lib/native-execution-events"
 import { activeInstanceId } from "../../stores/instances"
 import { getCachedServiceUsage, setCachedServiceUsage } from "../../stores/service-usage-cache"
 
@@ -42,7 +43,8 @@ export function UsageSettingsSection(props: { instanceId?: string }) {
     // Native stats are durable aggregates: refresh at settled session changes,
     // never per token/delta and never by loading transcript messages.
     const events = serverEvents.on("instance.event", payload => {
-      if (payload.type === "instance.event" && payload.instanceId === id && ["session.idle", "session.deleted", "rpc.codenomad.session-pruning.pruned"].includes(payload.event.type)) refresh()
+      if (payload.type !== "instance.event" || payload.instanceId !== id) return
+      if (isExecutionTerminalEvent(payload.event) || ["session.deleted", "rpc.codenomad.session-pruning.pruned"].includes(payload.event.type)) refresh()
     })
     const status = serverEvents.on("instance.eventStatus", payload => {
       if (payload.type === "instance.eventStatus" && payload.instanceId === id && payload.status === "connected") refresh()

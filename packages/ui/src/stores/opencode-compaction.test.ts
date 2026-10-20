@@ -88,15 +88,15 @@ for (const boundary of ["failed", "delete", "reconnect", "prune", "revert", "dis
   })
 }
 
-test("idle flushes pending compaction before retiring its reducer", ctx => {
+test("settlement flushes pending compaction before retiring its reducer", ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("compaction-idle")
   try {
     f.start()
     f.delta("last text")
-    f.emit("session.idle")
+    f.emit("session.execution.succeeded")
     assert.equal(f.summary(), "last text")
-    finishOpenCodeDataEvent("compaction-idle", { type: "session.idle", data: { sessionID: "s" } } as any)
+    finishOpenCodeDataEvent("compaction-idle", { type: "session.execution.succeeded", data: { sessionID: "s" } } as any)
     ctx.mock.timers.tick(500)
     assert.equal(f.projections(), 1)
   } finally { f.cleanup() }

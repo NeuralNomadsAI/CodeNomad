@@ -61,15 +61,14 @@ export function reasoningHasRenderableContent(part: ClientPart): boolean {
 
 export function isTechnicalGroupingVisiblePart(part: ClientPart): boolean {
   if ((part as any)?.type === "patch") return false
-  if (part.type === "step-start" || part.type === "step-finish") return false
   if (part.type === "reasoning") return reasoningHasRenderableContent(part)
   if (part.type === "text" || part.type === "file") return !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)
   return true
 }
 
-export function isVisibleStepFinish(part: ClientPart, messageInfo: MessageInfo | undefined, usageVisible: boolean): boolean {
-  if (part.type !== "step-finish" || !usageVisible) return false
-  return Boolean((part as any).tokens ?? (messageInfo?.role === "assistant" ? messageInfo.tokens : undefined))
+/** Each native assistant message is one model step; its settlement records the step's usage. */
+export function hasVisibleUsage(messageInfo: MessageInfo | undefined, usageVisible: boolean): boolean {
+  return usageVisible && messageInfo?.role === "assistant" && Boolean(messageInfo.tokens)
 }
 
 export function technicalPartKey(messageId: string, partId: string) {

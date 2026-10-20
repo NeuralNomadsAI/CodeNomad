@@ -1150,9 +1150,9 @@ describe("OpenCode data projection", () => {
       applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.step.started", {
         agent: "build", model: { providerID: "provider", id: "model" },
       }))
-      const idle = event("idle", "session.idle")
-      applyOpenCodeDataEvent(instanceId, "/work", idle)
-      finishOpenCodeDataEvent(instanceId, idle)
+      const settled = event("settled", "session.execution.succeeded")
+      applyOpenCodeDataEvent(instanceId, "/work", settled)
+      finishOpenCodeDataEvent(instanceId, settled)
       applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.text.started"))
       const data = applyOpenCodeDataEvent(instanceId, "/work", event("active", "session.text.delta", { ordinal: 0, delta: "kept" }))
       projectOpenCodeMessages(instanceId, "active", data)

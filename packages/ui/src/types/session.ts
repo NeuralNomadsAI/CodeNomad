@@ -4,7 +4,7 @@ import type {
   ModelInfo as SDKModel,
   ProviderInfo as SDKProvider,
   SessionInfo as SDKSession,
-  SessionStatus as SDKSessionStatus,
+  SessionRetryScheduled,
 } from "@opencode/client"
 import type { GenerationRecoveryState } from "../stores/session-generation-recovery"
 
@@ -41,25 +41,9 @@ export function getIdleSinceForStatusTransition(
   return previousIdleSince ?? null
 }
 
-export function mapSdkSessionStatus(status: SDKSessionStatus | null | undefined): SessionStatus {
-  if (!status || status.type === "idle") {
-    return "idle"
-  }
-
-  // "busy" and "retry" both mean there's active work.
-  return "working"
-}
-
-export function mapSdkSessionRetry(status: SDKSessionStatus | null | undefined): SessionRetryState | null {
-  if (!status || status.type !== "retry") {
-    return null
-  }
-
-  return {
-    attempt: typeof status.attempt === "number" ? status.attempt : 1,
-    message: typeof status.message === "string" ? status.message : "",
-    next: typeof status.next === "number" ? status.next : Date.now(),
-  }
+/** Native provider backoff: the attempt that will run at `at` after `error`. */
+export function mapNativeSessionRetry(data: SessionRetryScheduled["data"]): SessionRetryState {
+  return { attempt: data.attempt, message: data.error.message, next: data.at }
 }
 
 // Our client-specific Session interface extending SDK Session

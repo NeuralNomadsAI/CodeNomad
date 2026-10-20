@@ -44,7 +44,7 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../s
 import type { SessionInboxUser } from "@opencode/client"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { getTechnicalCleanupParts, getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
+import { getTechnicalCleanupParts, getTechnicalGroupKind, hasVisibleUsage, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
 
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
@@ -220,9 +220,6 @@ export default function MessageSection(props: MessageSectionProps) {
       const messageInfo = resolvedStore.getMessageInfo(messageId)
       const display = buildRecordDisplayData(props.instanceId, record)
       const projected = display.orderedParts.map((part) => {
-        if (part.type === "step-finish") {
-          return isVisibleStepFinish(part, messageInfo, usageMetricsVisibility() !== "hidden") ? [null] : []
-        }
         if (!isTechnicalGroupingVisiblePart(part)) return []
         const partId = typeof part.id === "string" ? part.id : ""
         const kind = getTechnicalGroupKind(part)
@@ -244,6 +241,8 @@ export default function MessageSection(props: MessageSectionProps) {
       })
       // Technical groups never span omitted parts; the gap renders between them.
       if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
+      // Nor a step's usage line, which closes its message.
+      if (hasVisibleUsage(messageInfo, usageMetricsVisibility() !== "hidden")) projected.push([null])
       return projected.flat()
     })
     return projectTranscriptTechnicalGroups(items)

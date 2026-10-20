@@ -35,6 +35,27 @@ test("service-wide usage dashboard declares scope, bounds requests, fences stale
   } finally { await page.close(); await fixture.close() }
 })
 
+test("every settled native execution refreshes the dashboard", async () => {
+  const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 760, height: 1000 }, locale: "en-US" })
+  const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(fixture.url)
+    await page.locator(".usage-metrics").waitFor()
+    const queries = () => page.evaluate(() => (window as any).fixture.queries.length as number)
+    const initial = await queries()
+    // OpenCode V2 settles runs with session.execution.*; it never publishes session.idle.
+    for (const [index, type] of ["session.execution.succeeded", "session.execution.failed", "session.execution.interrupted"].entries()) {
+      await page.evaluate(type => (window as any).fixture.refresh(type), type)
+      await page.waitForFunction(count => (window as any).fixture.queries.length === count, initial + index + 1)
+    }
+    await page.evaluate(() => (window as any).fixture.refresh("session.text.delta"))
+    await page.waitForTimeout(100)
+    assert.equal(await queries(), initial + 3, "streaming deltas never refresh durable statistics")
+    assert.deepEqual(errors, [])
+  } finally { await page.close(); await fixture.close() }
+})
+
 test("Stats is reachable in the real preferences screen", async () => {
   const fixture = await startProductFixture("service-usage"), page = await fixture.browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
   const errors: string[] = []; page.on("pageerror", error => errors.push(error.message))

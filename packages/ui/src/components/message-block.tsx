@@ -14,7 +14,6 @@ import {
 } from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
-import { formatTokenTotal } from "../lib/formatters"
 import { ensureSessionAncestorsExpanded, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
 import { useI18n, type I18nContextValue } from "../lib/i18n"
@@ -49,11 +48,11 @@ import { showAlertDialog } from "../stores/alerts"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, segmentExplorationItems, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
+import { groupTechnicalParts, hasVisibleUsage, isTechnicalGroupingVisiblePart, segmentExplorationItems, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
+import { MessageUsage, NO_STEP_BORDER } from "./message-usage"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
-const NO_STEP_BORDER = "none"
 const BACKGROUNDABLE_TOOLS = new Set(["bash", "shell", "task", "subagent"])
 
 const LazyToolCall = lazy(() => import("./tool-call"))
@@ -449,11 +448,10 @@ function ToolCallItem(props: ToolCallItemProps) {
   )
 }
 
-interface StepDisplayItem {
-  type: "step-start" | "step-finish"
+interface UsageDisplayItem {
+  type: "usage"
   key: string
-  part: ClientPart
-  messageInfo?: MessageInfo
+  messageInfo: MessageInfo
   accentColor?: string
 }
 
@@ -496,7 +494,7 @@ type CompactionDisplayItem = {
 
 type SystemDisplayItem = { type: "system"; key: string; part: Extract<ClientPart, { type: "system" }> }
 type HiddenPartsDisplayItem = { type: "hidden-parts"; key: string; messageId: string; count: number; start: number }
-type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem | HiddenPartsDisplayItem
+type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | UsageDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem | HiddenPartsDisplayItem
 
 interface MessageDisplayBlock {
   messageId: string
@@ -674,9 +672,6 @@ export default function MessageBlock(props: MessageBlockProps) {
     }
 
     const isDisplayPart = (part: ClientPart) => {
-      if (part.type === "step-finish") {
-        return isVisibleStepFinish(part, info, props.usageMetricsVisibility() !== "hidden")
-      }
       if (!isTechnicalGroupingVisiblePart(part)) return false
       if (part.type !== "tool" || !props.technicalGroupForPart || props.toolVisibility(part.tool) !== "hidden") return true
       return Boolean(
@@ -790,22 +785,6 @@ export default function MessageBlock(props: MessageBlockProps) {
         return
       }
 
-      if (part.type === "step-start") {
-        flushContent()
-        return
-      }
-
-      if (part.type === "step-finish") {
-        flushContent()
-        if (props.usageMetricsVisibility() !== "hidden") {
-          const key = `${current.id}:${part.id ?? partIndex}:${part.type}`
-          const accentColor = lastAccentColor || defaultAccentColor
-          items.push({ type: part.type, key, part, messageInfo: info, accentColor })
-          lastAccentColor = accentColor
-        }
-        return
-      }
-
       pendingParts.push(part)
     })
 
@@ -819,6 +798,11 @@ export default function MessageBlock(props: MessageBlockProps) {
         pendingParts.push(placeholder)
         flushContent()
       }
+    }
+
+    // A native assistant message is one model step; its settled usage closes it.
+    if (hasVisibleUsage(info, props.usageMetricsVisibility() !== "hidden")) {
+      items.push({ type: "usage", key: `${current.id}:usage`, messageInfo: info!, accentColor: lastAccentColor || defaultAccentColor })
     }
 
     const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.hiddenCount > 0 }
@@ -1022,27 +1006,11 @@ export default function MessageBlock(props: MessageBlockProps) {
                     />
                   </Show>
                 </Match>
-                <Match when={item().type === "step-start"}>
-                  <StepCard
-                    kind="start"
-                    part={(item() as StepDisplayItem).part}
-                    messageInfo={(item() as StepDisplayItem).messageInfo}
-                    showAgentMeta
-                    instanceId={props.instanceId}
-                    sessionId={props.sessionId}
-                    messageId={props.messageId}
-                  />
-                </Match>
-                <Match when={item().type === "step-finish"}>
-                  <StepCard
-                    kind="finish"
-                    part={(item() as StepDisplayItem).part}
-                    messageInfo={(item() as StepDisplayItem).messageInfo}
+                <Match when={item().type === "usage"}>
+                  <MessageUsage
+                    messageInfo={(item() as UsageDisplayItem).messageInfo}
                     usageVisibility={props.usageMetricsVisibility()}
-                    borderColor={(item() as StepDisplayItem).accentColor}
-                    instanceId={props.instanceId}
-                    sessionId={props.sessionId}
-                    messageId={props.messageId}
+                    borderColor={(item() as UsageDisplayItem).accentColor}
                     onContentRendered={props.onContentRendered}
                   />
                 </Match>
@@ -1316,19 +1284,6 @@ function ExplorationGroup(props: ExplorationGroupProps) {
   )
 }
 
-interface StepCardProps {
-  kind: "start" | "finish"
-  part: ClientPart
-  messageInfo?: MessageInfo
-  showAgentMeta?: boolean
-  usageVisibility?: VisibilityPreference
-  borderColor?: string
-  instanceId?: string
-  sessionId?: string
-  messageId?: string
-  onContentRendered?: () => void
-}
-
 interface CompactionCardProps {
   part: ClientPart
   messageInfo?: MessageInfo
@@ -1395,171 +1350,6 @@ function CompactionCard(props: CompactionCardProps) {
       </Show>
     </div>
   )
-}
-
-function StepCard(props: StepCardProps) {
-  const { t, locale } = useI18n()
-  const [usageExpandedOverride, setUsageExpandedOverride] = createSignal<boolean | null>(null)
-  const usageExpanded = () => usageExpandedOverride() ?? props.usageVisibility === "expanded"
-  let usagePartId = (props.part as { id?: string }).id
-  createEffect(() => {
-    const nextPartId = (props.part as { id?: string }).id
-    if (nextPartId === usagePartId) return
-    usagePartId = nextPartId
-    setUsageExpandedOverride(null)
-  })
-  const timestamp = () => {
-    const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
-    const date = new Date(value)
-    return date.toLocaleString(locale(), {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-  }
-
-  const agentIdentifier = () => {
-    if (!props.showAgentMeta) return ""
-    const info = props.messageInfo
-    if (!info || info.role !== "assistant") return ""
-    return info.mode || ""
-  }
-
-  const modelIdentifier = () => {
-    if (!props.showAgentMeta) return ""
-    const info = props.messageInfo
-    if (!info || info.role !== "assistant") return ""
-    const modelID = info.modelID || ""
-    const providerID = info.providerID || ""
-    if (modelID && providerID) return `${providerID}/${modelID}`
-    return modelID
-  }
-
-  const usageStats = () => {
-    if (props.kind !== "finish" || props.usageVisibility === "hidden") {
-      return null
-    }
-    const info = props.messageInfo
-    const part = props.part as any
-
-    // step-finish parts have tokens embedded; also check messageInfo
-    const partTokens = part?.tokens
-    const infoTokens = info && info.role === "assistant" ? info.tokens : undefined
-    const tokens = partTokens ?? infoTokens
-    if (!tokens) {
-      return null
-    }
-
-    return {
-      input: tokens.input ?? 0,
-      output: tokens.output ?? 0,
-      reasoning: tokens.reasoning ?? 0,
-      cacheRead: tokens.cache?.read ?? 0,
-      cacheWrite: tokens.cache?.write ?? 0,
-      cost: (part?.cost ?? (info && info.role === "assistant" ? info.cost : 0)) ?? 0,
-    }
-  }
-
-  const finishStyle = () => {
-    if (props.borderColor === NO_STEP_BORDER) {
-      return {
-        "border-inline-start": "none",
-      }
-    }
-    return props.borderColor ? { "border-left-color": props.borderColor } : undefined
-  }
-  let didReportUsageStats = false
-
-  createEffect(() => {
-    if (didReportUsageStats) return
-    if (props.kind !== "finish" || !usageStats()) return
-    didReportUsageStats = true
-    props.onContentRendered?.()
-  })
-
-
-  const usageEntries = (usage: NonNullable<ReturnType<typeof usageStats>>) => [
-      { label: t("messageBlock.usage.input"), value: usage.input, formatter: formatTokenTotal },
-      { label: t("messageBlock.usage.output"), value: usage.output, formatter: formatTokenTotal },
-      ...(usageExpanded()
-        ? [
-            { label: t("messageBlock.usage.reasoning"), value: usage.reasoning, formatter: formatTokenTotal },
-            { label: t("messageBlock.usage.cacheRead"), value: usage.cacheRead, formatter: formatTokenTotal },
-            { label: t("messageBlock.usage.cacheWrite"), value: usage.cacheWrite, formatter: formatTokenTotal },
-          ]
-        : []),
-      { label: t("messageBlock.usage.cost"), value: usage.cost, formatter: formatCostValue },
-    ]
-
-  const renderUsageChips = (usage: NonNullable<ReturnType<typeof usageStats>>) => {
-    const entries = usageEntries(usage)
-
-    return (
-      <div class="message-step-usage">
-        <For each={entries}>
-          {(entry) => (
-            <span class="message-step-usage-chip" data-label={entry.label}>
-              {entry.formatter(entry.value)}
-            </span>
-          )}
-        </For>
-      </div>
-    )
-  }
-
-  if (props.kind === "finish") {
-    const usage = usageStats()
-    if (!usage) {
-      return null
-    }
-    return (
-      <div
-        class="delete-hover-scope message-step-card message-step-finish message-step-finish-flush relative"
-        style={finishStyle()}
-      >
-        <button
-          type="button"
-          class="message-step-usage-toggle"
-          aria-expanded={usageExpanded()}
-          aria-label={`${t(usageExpanded() ? "messageBlock.usage.collapseAriaLabel" : "messageBlock.usage.expandAriaLabel")}. ${usageEntries(usage).map((entry) => `${entry.label}: ${entry.formatter(entry.value)}`).join(", ")}`}
-          onClick={() => setUsageExpandedOverride((current) => !(current ?? props.usageVisibility === "expanded"))}
-        >
-          <ChevronRight class="message-step-usage-disclosure disclosure-chevron" aria-hidden="true" />
-          {renderUsageChips(usage)}
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div class={`message-step-card message-step-start relative`}>
-      <div class="message-step-heading">
-        <div class="message-step-title">
-          <div class="message-step-title-left">
-            <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
-              <span class="message-step-meta-inline">
-                {[
-                  agentIdentifier(),
-                  modelIdentifier(),
-                ].filter(Boolean).join(" • ")}
-              </span>
-            </Show>
-          </div>
-          <span class="message-step-right">
-            <span class="message-step-time">{timestamp()}</span>
-          </span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function formatCostValue(value: number) {
-  if (!value) return "$0.00"
-  if (value < 0.01) return `$${value.toPrecision(2)}`
-  return `$${value.toFixed(2)}`
 }
 
 function getReasoningText(part: ClientPart) {

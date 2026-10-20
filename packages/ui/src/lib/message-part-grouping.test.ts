@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { getTechnicalCleanupParts, groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, segmentExplorationItems, technicalPartKey, type TechnicalCleanupTranscriptItem } from "./message-part-grouping.ts"
-import type { ClientPart } from "../types/message.ts"
+import { getTechnicalCleanupParts, groupTechnicalParts, hasVisibleUsage, projectTranscriptTechnicalGroups, segmentExplorationItems, technicalPartKey, type TechnicalCleanupTranscriptItem } from "./message-part-grouping.ts"
+import type { ClientPart, MessageInfo } from "../types/message.ts"
 
 const part = (id: string, type: ClientPart["type"], tool?: string) => ({ id, type, ...(tool ? { tool } : {}) }) as ClientPart
 
@@ -121,13 +121,12 @@ describe("message technical part grouping", () => {
     ])
   })
 
-  it("ignores invisible step lifecycle parts", () => {
-    const start = part("start", "step-start")
-    const finish = part("finish", "step-finish")
-    assert.equal(isTechnicalGroupingVisiblePart(start), false)
-    assert.equal(isTechnicalGroupingVisiblePart(finish), false)
-    assert.equal(isVisibleStepFinish(finish, undefined, true), false)
-    assert.equal(isVisibleStepFinish({ ...finish, tokens: { input: 1 } } as ClientPart, undefined, true), true)
-    assert.equal(isVisibleStepFinish({ ...finish, tokens: { input: 1 } } as ClientPart, undefined, false), false)
+  it("shows usage only for settled assistant steps while the preference is visible", () => {
+    const info = (role: MessageInfo["role"], tokens?: MessageInfo["tokens"]) => ({ id: "m", sessionID: "s", role, time: { created: 1 }, tokens }) as MessageInfo
+    assert.equal(hasVisibleUsage(undefined, true), false)
+    assert.equal(hasVisibleUsage(info("assistant"), true), false, "a running step has no usage yet")
+    assert.equal(hasVisibleUsage(info("assistant", { input: 1 }), true), true)
+    assert.equal(hasVisibleUsage(info("assistant", { input: 1 }), false), false)
+    assert.equal(hasVisibleUsage(info("user", { input: 1 }), true), false)
   })
 })

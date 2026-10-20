@@ -115,8 +115,6 @@ import {
   handleSessionCompacted,
   handleSessionDeleted,
   handleSessionError,
-  handleSessionIdle,
-  handleSessionStatus,
   handleSessionUpdate,
   handleTuiToast,
 } from "./session-events"
@@ -126,8 +124,6 @@ sseManager.onSessionUpdate = handleSessionUpdate
 sseManager.onSessionCompacted = handleSessionCompacted
 sseManager.onSessionDeleted = handleSessionDeleted
 sseManager.onSessionError = handleSessionError
-sseManager.onSessionIdle = handleSessionIdle
-sseManager.onSessionStatus = handleSessionStatus
 sseManager.onTuiToast = handleTuiToast
 sseManager.onPermissionUpdated = handlePermissionUpdated
 sseManager.onPermissionReplied = handlePermissionReplied

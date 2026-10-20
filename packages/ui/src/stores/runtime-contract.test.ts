@@ -5,7 +5,7 @@ import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
-import { handleNativeSessionEvent, handleSessionIdle, handleSessionStatus } from "./session-events.ts"
+import { handleNativeSessionEvent } from "./session-events.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { setActiveSession, setSessions } from "./session-state.ts"
 
@@ -29,7 +29,8 @@ test("the native reducer preserves canonical precise start times and durable ide
   }
 })
 
-for (const following of ["none", "idle", "status-idle", "new-execution"] as const) {
+// OpenCode V2 never publishes the deprecated session.idle; a stray one stays inert.
+for (const following of ["none", "legacy-idle", "new-execution"] as const) {
 test(`settled tools reach the visible store with following ${following}`, async () => {
   const instanceId = `runtime-tool-settlement-${following}`, sessionId = "s"
   const statuses = sseManager.getStatuses
@@ -68,8 +69,7 @@ test(`settled tools reach the visible store with following ${following}`, async 
     emit("session.tool.called", { ...base, id: "tool", input: { path: "fixture" } }, 3)
     assert.equal(state()?.status, "running")
     emit("session.execution.succeeded", { sessionID: sessionId }, 5)
-    if (following === "idle") handleSessionIdle(instanceId, { type: "session.idle", data: { sessionID: sessionId }, created: 6 } as any)
-    if (following === "status-idle") handleSessionStatus(instanceId, { type: "session.status", data: { sessionID: sessionId, status: { type: "idle" } }, created: 6 } as any)
+    if (following === "legacy-idle") emit("session.idle", { sessionID: sessionId }, 6)
     if (following === "new-execution") emit("session.execution.started", { sessionID: sessionId }, 6)
     release({})
     if (following === "new-execution") {

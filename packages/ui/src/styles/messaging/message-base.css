@@ -220,12 +220,6 @@
   margin-bottom: 1px;
 }
 
-.message-step-start {
-  background-color: var(--message-assistant-bg);
-  border-inline-start: 1px solid var(--message-assistant-border);
-  margin-top: 0;
-}
-
 .message-step-finish {
   background-color: var(--message-assistant-bg);
   border-inline-start: 1px solid var(--message-assistant-border);
@@ -271,11 +265,6 @@
   font-weight: var(--font-weight-medium);
   line-height: 1;
   margin-inline-end: 0.35rem;
-}
-
-.message-step-heading {
-  @apply flex flex-wrap items-center gap-2 text-xs;
-  color: var(--text-muted);
 }
 
 .message-queued-badge {
@@ -456,11 +445,6 @@
   color: var(--color-danger);
 }
 
-.message-step-start {
-  background-color: var(--message-assistant-bg);
-  border-inline-start: 1px solid var(--message-assistant-border);
-}
-
 .message-step-finish {
   background-color: var(--message-assistant-bg);
   border-inline-start: 1px solid var(--message-assistant-border);
@@ -468,51 +452,6 @@
   border-block-end: none;
   padding-top: 0;
 }
-
-.message-step-heading {
-  @apply flex flex-wrap items-center gap-2 text-xs;
-  color: var(--text-muted);
-}
-
-.message-step-title {
-  font-weight: var(--font-weight-semibold);
-  color: var(--text-primary);
-  @apply flex items-center justify-between w-full;
-}
-
-.message-step-title-left {
-  @apply flex items-center gap-2 text-[var(--text-muted)];
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.message-step-title-left span:last-child {
-  @apply font-medium text-[11px];
-}
-
-.message-step-time {
-  @apply text-[11px] text-[var(--text-muted)] font-normal ms-auto;
-}
-
-.message-step-right {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.25rem;
-  margin-inline-start: auto;
-}
-
-.message-step-right .message-step-time {
-  margin-inline-start: 0;
-}
-
-.message-step-meta-inline {
-  @apply inline-flex items-center text-[11px] font-medium;
-  color: var(--message-assistant-border);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 
 .message-step-reason {
   @apply text-[11px] font-medium;

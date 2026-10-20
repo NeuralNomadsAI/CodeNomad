@@ -33,4 +33,4 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
     : <main style={{ width: "min(760px, 100%)" }}><UsageSettingsSection instanceId={instanceId()} /></main>}
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = { queries, setInstanceId, setVisible, fail: () => { fail = true }, defer: () => { defer = true }, release: () => release?.(),
-  refresh: () => (serverEvents as any).dispatch({ type: "instance.event", instanceId: "usage", event: { type: "session.idle", data: {} } }) }
+  refresh: (type = "session.execution.succeeded") => (serverEvents as any).dispatch({ type: "instance.event", instanceId: "usage", event: { type, data: { sessionID: "s" } } }) }

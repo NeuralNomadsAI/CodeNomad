@@ -235,7 +235,7 @@ test("admission metadata keeps synchronous data consumption and buffered compact
   } finally { destroyOpenCodeData(instanceId); sdkManager.destroyClientsForInstance(instanceId) }
 })
 
-test("FIFO replay retains tool/text/compaction/inbox state across task turns and final idle publication", async ctx => {
+test("FIFO replay retains tool/text/compaction/inbox state across task turns and final settlement publication", async ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("replay-mixed")
   costClock(ctx, f.data())
@@ -259,9 +259,12 @@ test("FIFO replay retains tool/text/compaction/inbox state across task turns and
     f.apply("session.compaction.delta", { text: "obsolete buffered fragment" }, undefined, publication)
     f.apply("session.compaction.ended", { reason: "manual", model, text: "summary final", recent: "", cost: 0, tokens }, undefined, publication)
     f.apply("session.step.ended", { ...base, finish: "stop", cost: 0, tokens }, undefined, publication)
-    const idle = f.make("session.idle")
-    applyOpenCodeDataEvent(f.instanceId, "/fixture", idle, undefined, undefined, false, { deferred: false, publication })
-    finishOpenCodeDataEvent(f.instanceId, idle)
+    const settle = () => {
+      const settled = f.make("session.execution.succeeded")
+      applyOpenCodeDataEvent(f.instanceId, "/fixture", settled, undefined, undefined, false, { deferred: false, publication })
+      finishOpenCodeDataEvent(f.instanceId, settled)
+    }
+    settle()
     await microtasks()
     await finish(ctx, () => Boolean((f.data().session.message.get(sessionId, "msg_live") as any)?.time.completed))
     // One trailing task may contain idle itself; run it before testing retirement.
@@ -275,7 +278,11 @@ test("FIFO replay retains tool/text/compaction/inbox state across task turns and
     assert.ok(published > 1)
     const old = f.data()
     f.apply("session.execution.started")
-    assert.notStrictEqual(f.data(), old, "idle retires only after its final queued publication")
+    assert.strictEqual(f.data(), old, "the composer lists the parked prompt from this reducer")
+    f.apply("session.inbox.cancelled", { inboxID: "msg_pending" })
+    settle()
+    f.apply("session.execution.started")
+    assert.notStrictEqual(f.data(), old, "settlement retires the reducer once nothing is parked")
   } finally { f.cleanup() }
 })
 
