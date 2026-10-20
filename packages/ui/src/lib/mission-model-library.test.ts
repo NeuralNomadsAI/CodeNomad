@@ -18,6 +18,7 @@ const templateRoles = {
   debug: ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
   wayfinder: ["cartographer", "research", "prototype", "grilling", "decision"],
   delivery: ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"],
+  compare: ["model-a", "model-b", "comparator"],
 } as const
 
 describe("strict reusable Mission model records", () => {
@@ -68,7 +69,7 @@ describe("strict reusable Mission model records", () => {
   })
 
   it("accepts every exact playbook role with independent parsed native profile selections", () => {
-    for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
+    for (const template of ["custom", "debug", "wayfinder", "delivery", "compare"] as const) {
       const input = model(1, {
         template, profiles: { coordinator: structuredClone(execution), roles: Object.fromEntries(templateRoles[template].map(role => [role, structuredClone(execution)])) },
       })
@@ -83,7 +84,7 @@ describe("strict reusable Mission model records", () => {
   })
 
   it("rejects other-playbook roles, unknown profile fields and invalid nested selectors", () => {
-    for (const [template, foreignRole] of [["custom", "research"], ["debug", "decision"], ["wayfinder", "specialist"]] as const) {
+    for (const [template, foreignRole] of [["custom", "research"], ["debug", "decision"], ["wayfinder", "specialist"], ["compare", "specialist"]] as const) {
       assert.throws(() => parseMissionModel(model(1, { template, profiles: { roles: { [foreignRole]: execution } } })))
     }
     for (const profiles of [

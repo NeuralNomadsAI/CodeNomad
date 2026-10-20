@@ -90,7 +90,7 @@ import {
   type FormAnswer,
   type FormWithLocation,
 } from "./forms"
-import { invalidateFilesystemCaches } from "../lib/filesystem-events"
+import { invalidateFilesystemCaches, queueFilesystemInvalidation } from "../lib/filesystem-events"
 import { detachInstanceTabMembership, openInstanceTabIds, requestInstanceTabClose } from "./app-tab-membership"
 import { waitForLatestWorkspaceLoadResult } from "./workspace-load-readiness"
 import { clearInstanceAttachments } from "./attachments"
@@ -2331,7 +2331,8 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
   }
   finishOpenCodeDataEvent(instanceId, event)
   const targets = getInstanceRefreshTargets(event.type)
-  if (targets.length) void refreshVolatileInstanceState(instanceId, targets)
+  if (event.type === "filesystem.changed") queueFilesystemInvalidation(instanceId)
+  else if (targets.length) void refreshVolatileInstanceState(instanceId, targets)
 }
 
 sseManager.onInvalidation = handleInstanceInvalidation

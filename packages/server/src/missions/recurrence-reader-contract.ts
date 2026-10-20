@@ -7,14 +7,15 @@ export const recurrenceReadInput = z.object({ scheduleID: recurrenceIDSchema, pa
   section: z.number().int().min(0).max(RECURRENCE_READER_MAX_SECTIONS - 1).default(0),
   page: z.number().int().min(0).max(63).default(0), revision: z.number().int().positive().safe().optional(),
 }).strict()
-const labels = ["summary", "objective", "notes", "evidence", "next", "brief", "artifact", "achieved", "ongoing", "obstacles"] as const
+const labels = ["summary", "objective", "notes", "evidence", "next", "brief", "artifact", "achieved", "ongoing", "obstacles", "comparison"] as const
+const comparison = z.object({ verdict: z.enum(["a", "b", "equivalent", "inconclusive"]), models: z.tuple([z.string().max(500), z.string().max(500)]) }).strict()
 export const recurrenceReadPage = z.object({ version: z.literal(1), projectID: z.string().min(1).max(240),
   scheduleID: recurrenceIDSchema, passageID: recurrenceIDSchema, missionID: z.string().min(1).max(240),
   conversationID: z.string().min(1).max(240), revision: z.number().int().positive().safe(),
   section: z.number().int().nonnegative().max(RECURRENCE_READER_MAX_SECTIONS - 1),
   sectionCount: z.number().int().positive().max(RECURRENCE_READER_MAX_SECTIONS),
   sections: z.array(z.object({ index: z.number().int().nonnegative().max(RECURRENCE_READER_MAX_SECTIONS - 1),
-    label: z.enum(labels), title: z.string().max(240), raw: z.boolean() }).strict()).min(1).max(RECURRENCE_READER_SECTIONS),
+    label: z.enum(labels), title: z.string().max(240), raw: z.boolean(), comparison: comparison.optional() }).strict()).min(1).max(RECURRENCE_READER_SECTIONS),
   page: z.number().int().nonnegative().max(63), pageCount: z.number().int().positive().max(64),
   sourceText: z.string().max(9_001), markdownText: z.string().max(9_116).nullable(),
 }).strict()
@@ -36,6 +37,8 @@ export const recurrencePassageReadWire = {
     section: { ...counter, maximum: RECURRENCE_READER_MAX_SECTIONS - 1 }, sectionCount: { ...counter, minimum: 1, maximum: RECURRENCE_READER_MAX_SECTIONS },
     sections: { type: "array", minItems: 1, maxItems: RECURRENCE_READER_SECTIONS, items: { type: "object", properties: {
       index: { ...counter, maximum: RECURRENCE_READER_MAX_SECTIONS - 1 }, label: { type: "string", enum: labels }, title: { type: "string", maxLength: 240 }, raw: { type: "boolean" },
+      comparison: { type: "object", properties: { verdict: { enum: ["a", "b", "equivalent", "inconclusive"] },
+        models: { type: "array", items: { type: "string", maxLength: 500 }, minItems: 2, maxItems: 2 } }, required: ["verdict", "models"], additionalProperties: false },
     }, required: ["index", "label", "title", "raw"], additionalProperties: false } },
     page: { ...counter, maximum: 63 }, pageCount: { ...counter, minimum: 1, maximum: 64 }, sourceText: { type: "string", maxLength: 9001 }, markdownText: { type: ["string", "null"], maxLength: 9116 },
   }, required: ["version", "projectID", "projectCanonical", "location", "scheduleID", "passageID", "missionID", "conversationID", "revision", "section", "sectionCount", "sections", "page", "pageCount", "sourceText", "markdownText"], additionalProperties: false },

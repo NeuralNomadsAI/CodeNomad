@@ -8,6 +8,7 @@ import { missionTaskStatusKey } from "./mission-native-execution-model"
 import { MissionReaderSection } from "./mission-reader"
 import { missionExcerpt, missionReports, missionTaskHistory, missionTaskReport } from "./mission-progress-model"
 import type { MissionPassageSection } from "./mission-passage-section"
+import { MissionComparisonReport } from "./mission-comparison-report"
 
 /** Read-only task facts; dependency navigation changes only this window's reader target. */
 export function MissionTaskReader(props: {
@@ -63,6 +64,7 @@ export function MissionTaskReader(props: {
         return <Show when={section().text}><MissionReaderSection label={label} text={section().text}
           identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} source={reportSource(label, report())} /></Show>
       }}</For>
+      <MissionComparisonReport artifact={report().artifact} profiles={props.mission.profiles} identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} />
     </>}</Show>
     <div class="mission-task-dependencies">
       <For each={props.task.blockedBy}>{key => link(key, "missions.control.task.blockedBy")}</For>
@@ -88,6 +90,7 @@ export function MissionTaskReader(props: {
                 return <Show when={section().text}><MissionReaderSection label={label} text={section().text}
                   identity={`${props.identity}:history:${id}`} instanceId={props.instanceId} source={reportSource(label, report())} /></Show>
               }}</For>
+              <MissionComparisonReport artifact={report().artifact} profiles={props.mission.profiles} identity={`${props.identity}:history:${id}`} instanceId={props.instanceId} />
               <details><summary>{t("missions.control.task.details")}</summary>
                 <MissionReportNotification report={report()} />
                 <Show when={report().artifact !== undefined}><MissionReaderSection label="missions.control.artifact"

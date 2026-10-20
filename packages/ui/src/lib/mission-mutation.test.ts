@@ -16,6 +16,8 @@ test("Mission mutation classification distinguishes held creation, capacity, sco
   assert.equal(key(409, "revision-conflict"), "missions.control.mutation.conflict")
   assert.equal(key(409, "request-conflict"), "missions.control.mutation.requestConflict")
   assert.equal(key(403, undefined), "missions.control.mutation.forbidden")
+  for (const code of ["compare-models-required", "compare-models-identical"] as const)
+    assert.equal(key(400, code), `missions.compare.${code}`)
   for (const error of [new MissionMutationError(409, "create"), new HttpResponseError("private detail", 409, null),
     new MissionMutationError(503, "create", "creation-uncertain"), new Error("private credentials")]) {
     assert.equal(missionMutationErrorKey(error), "missions.control.mutation.error")
@@ -57,11 +59,12 @@ test("recurring create releases only refusals the route proves preceded the nati
   assert.equal(await classify(409, { code: "creation-conflict" }), "missions.control.creation.scopeConflict")
   assert.equal(await classify(503, { code: "recurrence-capacity" }), "missions.recurrence.capacity")
   assert.equal(await classify(400, { code: "recurrence-input-capacity" }), "missions.recurrence.invalid")
+  for (const code of ["compare-models-required", "compare-models-identical"]) assert.equal(await classify(400, { code }), `missions.compare.${code}`)
   for (const forbidden of [401, 403, 404]) assert.equal(await classify(forbidden), "missions.control.mutation.forbidden")
   // Everything that may follow a committed paused schedule stays held.
   for (const [held, heldBody] of [[503, {}], [409, {}], [409, { code: "creation-uncertain" }], [500, {}], [502, {}],
     [403, { code: "creation-uncertain" }], [0, {}]] as const) assert.equal(await classify(held, heldBody), undefined, `${held}`)
-  assert.equal(calls, 16, "classification never resends")
+  assert.equal(calls, 18, "classification never resends")
 })
 
 test("lost fetch and undecodable create acknowledgements surface as non-definitive without a second request", async t => {
@@ -85,7 +88,7 @@ test("only allowlisted codes survive, and edit cannot manufacture a creation hol
   }
   assert.equal(missionMutationCode({ code: "creation-uncertain", error: "private text" }, "create"), "creation-uncertain")
   assert.equal(missionMutationCode({ code: "creation-uncertain" }, "edit"), undefined)
-  for (const code of ["creation-unavailable", "creation-worktree-deleting", "mission-limit"]) {
+  for (const code of ["creation-unavailable", "creation-worktree-deleting", "mission-limit", "compare-models-required", "compare-models-identical"]) {
     assert.equal(missionMutationCode({ code }, "create"), code)
     assert.equal(missionMutationCode({ code }, "edit"), undefined)
   }

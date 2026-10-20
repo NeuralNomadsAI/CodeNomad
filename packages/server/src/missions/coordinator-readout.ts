@@ -28,7 +28,7 @@ export function coordinatorReadout(snapshot: MissionSnapshot, mission: MissionMa
   }
   let artifact
   try { artifact = validateMissionReportArtifact({ template: mission.template, role: task.role,
-    outcome: input.outcome, artifact: input.artifact }) }
+    outcome: input.outcome, artifact: input.artifact, tasks: mission.tasks }) }
   catch (error) { throw new MissionControlError(error instanceof Error ? error.message : "Mission report contract failed", "invalid-report-contract") }
   if (task.report) {
     const previous = task.report

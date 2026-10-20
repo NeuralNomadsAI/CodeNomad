@@ -38,6 +38,8 @@ let child, stopped, manager, plugin, removeBridge, output = "", failure, mission
 let stage = "isolated setup", nativeToolBefore, rootAfterLaunch = false, rootReleased = false
 let capture
 let decision = false, decisionStep = 0, assignment, journalBefore, humanAnswered = false
+let compare = false, compareStep = 0, compareCalls = [], comparison
+const compareAssignments = new Map(), runModels = new Set()
 const journal = () => {
   const db = new DatabaseSync(path.join(root, "fixture.db"), { readOnly: true })
   try { return db.prepare("SELECT key,value FROM kv WHERE key LIKE '%codenomad-missions/v2/%' ORDER BY key").all() } finally { db.close() }
@@ -57,11 +59,36 @@ const provider = createServer(async (request, response) => {
     assert(requests.length < 100, "Provider request budget")
     let answer = "Private fixture title"
     if (kind === "primary") {
-      if (decision) {
-        const result = id => {
+      const result = id => {
           const content = body.messages.findLast(message => message.role === "tool" && message.tool_call_id === id)?.content
           return typeof content === "string" ? content : content?.map(part => part.text ?? "").join("")
+      }
+      if (compare) {
+        if (sessionID !== coordinator) {
+          const role = text.includes("Role: Model A (model-a)") ? "model-a" : text.includes("Role: Model B (model-b)") ? "model-b" : "comparator"
+          assert.equal(body.model, role === "comparator" ? "fixture" : role)
+          if (role !== "comparator") runModels.add(body.model)
+          answer = role === "comparator" ? JSON.stringify(comparison) : "RUN_OUTPUT: 4"
+        } else {
+          const previous = compareCalls[compareStep - 1], returned = previous && result(previous.id)
+          if (previous?.reject) {
+            assert.match(returned, /byte-identical/)
+            assert.deepEqual(journal(), journalBefore, "Unequal-brief refusal leaves the journal unchanged")
+          } else if (previous?.tool === "mission_delegate") compareAssignments.set(previous.input.taskKey, JSON.parse(returned))
+          else if (previous?.tool === "mission_report") assert.equal(JSON.parse(returned).disposition, previous.input.final ? "finished" : "reported")
+          else if (previous?.tool === "subagent") {
+            if (previous.id === "launch_judge") compareCalls[compareStep].input.artifact = JSON.parse(returned.match(/\{"version":1[^\n]+\}/)[0])
+            else assert.match(returned, /RUN_OUTPUT: 4/)
+          }
+          answer = compareCalls[compareStep++] ?? "Done"
+          assert(compareStep <= compareCalls.length + 1)
+          if (answer.reject) journalBefore = journal()
+          if (answer.tool === "subagent") {
+            answer.input.prompt = compareAssignments.get(answer.taskKey).assignmentPrompt
+            if (answer.taskKey === "judge") assert(!/fixture\/model-[ab]/.test(answer.input.prompt), "Judge prompt hides model identities")
+          }
         }
+      } else if (decision) {
         if (sessionID !== coordinator) {
           if (result("ask")) { await until(() => humanAnswered); answer = "The human chose Module" }
           else answer = call("question", { questions: [{ question: "Choose the seam?", header: "Seam", options: [{ label: "Module", description: "Own the boundary" }] }] }, "ask")
@@ -198,7 +225,7 @@ try {
     agents: { trajectory_child: { mode: "all", description: "Private bounded recursive fixture", steps: 12,
       permissions: [{ action: "subagent", resource: "*", effect: "allow" }] } },
     providers: { fixture: { package: "@opencode/ai/providers/openai-compatible", settings: { apiKey: "fixture", baseURL: `http://127.0.0.1:${provider.address().port}/v1` },
-      models: { fixture: {} } } }, plugins: [fixturePlugin] })
+      models: { fixture: {}, "model-a": {}, "model-b": {} } } }, plugins: [fixturePlugin] })
   child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env: process.env, windowsHide: true })
   stopped = new Promise(resolve => child.once("close", resolve))
   child.once("error", error => { failure = error })
@@ -335,6 +362,39 @@ try {
   assert.equal(report.artifact.provenance.sessionID, form.sessionID); assert.equal(report.artifact.provenance.formID, form.id)
   receipt.decision.report = report
   gate("Wayfinder refuses without journal mutation then discovers the native child's authenticated UI answer without an artifact")
+  stage = "two-model comparison"; decision = false; compare = true
+  const selection = id => ({ agent: "trajectory_child", model: { providerID: "fixture", id } })
+  const profiles = { coordinator: selection("fixture"), roles: { "model-a": selection("model-a"), "model-b": selection("model-b") } }
+  const beforeRefusal = journal()
+  await assert.rejects(rpc.create({ requestID: "compare-identical", objective: "Compare", template: "compare", prepared: true,
+    profiles: { ...profiles, roles: { ...profiles.roles, "model-b": profiles.roles["model-a"] } } }, options()),
+    error => error?.message?.includes("compare-models-identical"))
+  assert.deepEqual(journal(), beforeRefusal)
+  const made = await rpc.create({ requestID: "compare-create", objective: "Compare fixture/model-a with fixture/model-b", template: "compare", profiles, prepared: true }, options())
+  coordinator = made.mission.coordinatorSessionId
+  const content = "4\n", evidence = [{ kind: "file", path: "output.txt", sha256: createHash("sha256").update(content).digest("hex") }]
+  await writeFile(path.join(project, "output.txt"), content)
+  comparison = { version: 1, kind: "comparison", runRefs: ["run-x", "run-y"], verdict: "equivalent",
+    results: [{ criterion: "correctness", a: 10, b: 10, observation: "Both returned 4", evidence }] }
+  const brief = "Task: answer 2 + 2. Input: 2 + 2. Criterion correctness: exact answer 4."
+  const declareRun = (taskKey, role, text = brief) => call("mission_delegate", { taskKey, role, title: "Run", brief: text }, `declare_${taskKey}`)
+  const launch = (taskKey, model, id) => ({ ...call("subagent", { agent: "trajectory_child", model: `fixture/${model}`, description: "Private model run" }, id), taskKey })
+  const reportRun = taskKey => call("mission_report", { taskKey, outcome: "completed", summary: "Actual native return: 4" }, `report_${taskKey}`)
+  compareCalls = [declareRun("run-x", "model-a"), { ...declareRun("run-y", "model-b", brief + "\n"), id: "reject_unequal", reject: true }, declareRun("run-y", "model-b"),
+    launch("run-x", "model-a", "launch_x"), reportRun("run-x"), launch("run-y", "model-b", "launch_y"), reportRun("run-y"),
+    call("mission_delegate", { taskKey: "judge", role: "comparator", title: "Judge", brief: `${brief}\nX: 4\nY: 4`, blockedBy: ["run-x", "run-y"] }, "declare_judge"),
+    launch("judge", "fixture", "launch_judge"), call("mission_report", { taskKey: "judge", outcome: "completed", summary: "Blind verdict" }, "report_judge"),
+    call("mission_report", { outcome: "completed", final: true, summary: "Equivalent models on this task" }, "compare_final")]
+  const comparePlay = await bridge.inject({ method: "POST", url: `${missionURL}/${made.mission.id}/control`,
+    payload: { requestId: "compare-start", expectedRevision: made.mission.revision, action: "start" } })
+  assert.equal(comparePlay.statusCode, 200, comparePlay.body)
+  await until(() => compareStep === compareCalls.length + 1)
+  await client.session.wait({ sessionID: coordinator }, { signal: AbortSignal.timeout(20_000) })
+  const compared = (await rpc.snapshot({}, options())).missions.find(value => value.id === made.mission.id)
+  assert.equal(compared.status, "completed"); assert.equal(runModels.size, 2)
+  assert.deepEqual(compared.tasks.find(task => task.role === "comparator").report.artifact, comparison)
+  receipt.compare = { status: compared.status, verdict: comparison.verdict, models: [...runModels] }
+  gate("two different models run identical briefs; unchanged-journal refusals precede the mandatory blind verdict")
   receipt.status = "passed"; receipt.passCount = gates.length
   receipt.nativeToolResults = toolParts.map(({ id, name, state }) => ({ id, name, status: state.status }))
   receipt.providerPrimaryRequests = requests.filter(value => value.kind === "primary").length

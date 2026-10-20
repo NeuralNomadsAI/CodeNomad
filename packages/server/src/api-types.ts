@@ -332,6 +332,8 @@ export interface FileSystemEntry {
   /** Absolute path when available (unrestricted and multi-root listings). */
   absolutePath?: string
   type: "file" | "directory"
+  /** Opaque physical identity for detecting directory replacement, not content edits. */
+  directoryIdentity?: string
   size?: number
   /** ISO timestamp of last modification when available. */
   modifiedAt?: string
@@ -753,6 +755,7 @@ export type WorkspaceEventType =
   | "workspace.stopped"
   | "workspace.log"
   | "workspace.worktreesChanged"
+  | "workspace.filesChanged"
   | "workspace.temporaryChanged"
   | "sidecar.updated"
   | "sidecar.removed"
@@ -783,6 +786,9 @@ export interface PermissionReceiptPage {
   next?: string
 }
 
+/** A listed directory, relative to its authorized browsing root (not a changed-file list). */
+export interface WorkspaceDirectoryChange { directory: string; path: string }
+
 export type WorkspaceEventPayload =
   | { type: "workspace.created"; workspace: WorkspaceDescriptor }
   | { type: "workspace.started"; workspace: WorkspaceDescriptor }
@@ -790,6 +796,7 @@ export type WorkspaceEventPayload =
   | { type: "workspace.stopped"; workspaceId: string; reason?: "deleted" | "stopped" }
   | { type: "workspace.log"; entry: WorkspaceLogEntry }
   | { type: "workspace.worktreesChanged"; workspaceId: string }
+  | { type: "workspace.filesChanged"; workspaceId: string; changes: WorkspaceDirectoryChange[] }
   /** Every folder still registered as temporary, after a create, keep or discard. */
   | { type: "workspace.temporaryChanged"; folders: string[] }
   | { type: "sidecar.updated"; sidecar: SideCar }

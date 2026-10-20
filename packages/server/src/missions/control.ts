@@ -35,7 +35,7 @@ import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
 import { missionIsRunning, type MissionLifecycleInput } from "./lifecycle-model"
 import { normalizeTaskDeclaration, taskContractReferenceSchema, validateTaskActorChoice, validateTaskAdmissionGraph, validateMissionTaskMode, type TaskContractReference } from "./task-declaration"
-import { parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
+import { compareModelError, freezeCompareProfiles, parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
 import { hasUnsettledNativeExecution } from "./native-call-observation"
 import { parseMissionTaskMode, sameExecutionMode, type MissionTaskMode } from "./task-execution-mode"
 import { coordinatorReadout } from "./coordinator-readout"
@@ -203,6 +203,12 @@ export class MissionControl {
     return this.mutate(() => this.createCurrent(request))
   }
 
+  private compareCreationProfiles(template: MissionMap["template"], profiles?: MissionProfiles, coordinatorModel?: NativeMissionSession["model"]): MissionProfiles | undefined {
+    const error = template === "compare" && compareModelError(profiles)
+    if (error) throw new MissionControlError(error, "invalid-execution")
+    return freezeCompareProfiles(template, profiles, coordinatorModel)
+  }
+
   private async createCurrent(input: MissionCreateInput): Promise<{ mission: MissionMap }> {
     input = structuredClone(input)
     input.taskMode = parseMissionTaskMode(input.taskMode)
@@ -213,6 +219,7 @@ export class MissionControl {
     }
     try { input.profiles = parseMissionProfiles(input.profiles); validateMissionProfiles(input.template, input.profiles) }
     catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
+    input.profiles = this.compareCreationProfiles(input.template, input.profiles)
     const missionID = `msn_${stableToken(`${this.options.project.id}\0${input.requestID}`, 24)}`
     const eventID = this.eventID(missionID, "created")
     const existingEvent = await this.journal.event(missionID, eventID)
@@ -390,6 +397,8 @@ export class MissionControl {
     const roleProfiles = mission.profiles?.roles
     input = { ...input, addTasks: input.addTasks.map(task => task.execution === undefined && roleProfiles?.[task.role] !== undefined
       ? { ...task, execution: structuredClone(roleProfiles[task.role]) } : task) }
+    // Compare's model-only frozen profiles use the same task codec as journal replay.
+    if (mission.template === "compare") input = normalizeRevisionDependencies(input)
     const eventID = this.eventID(mission.id, `revised-${input.requestID}`)
     const previous = await this.journal.event(mission.id, eventID)
     if (previous) {
@@ -450,11 +459,11 @@ export class MissionControl {
     const addInputs = new Map(input.addTasks.map((task) => [task.taskKey, task]))
     if (addInputs.size !== input.addTasks.length) throw new MissionControlError("Added task keys must be unique", "invalid-revision")
     const policyTasks: Array<Pick<MissionMap["tasks"][number],
-      "key" | "role" | "status" | "blockedBy" | "actorSessionId" | "replacedByTaskKey" | "executionMode">> = [
+      "key" | "role" | "status" | "blockedBy" | "actorSessionId" | "replacedByTaskKey" | "executionMode" | "brief">> = [
       ...mission.tasks.filter(task => !retired.has(task.key)).map(task => ({ ...task,
         blockedBy: input.dependencyUpdates.find(update => update.taskKey === task.key)?.blockedBy ?? task.blockedBy })),
       ...input.addTasks.map(task => ({ key: task.taskKey, role: task.role, status: "ready" as const,
-        blockedBy: task.blockedBy, actorSessionId: undefined, replacedByTaskKey: undefined, executionMode: task.executionMode })),
+        blockedBy: task.blockedBy, brief: task.brief, actorSessionId: undefined, replacedByTaskKey: undefined, executionMode: task.executionMode })),
     ]
     for (const item of input.addTasks) {
       validateMissionTaskMode(mission, item.executionMode)
@@ -471,6 +480,7 @@ export class MissionControl {
         validateMissionDelegationPolicy({
           template: mission.template,
           role: item.role,
+          brief: item.brief, execution: item.execution, profiles: mission.profiles, taskKey: item.taskKey,
           targetSessionID: item.role === "resolver" && item.executionMode?.kind !== "native"
             ? resolveDebuggingImplementerSessionID(policyTasks, item.blockedBy)
             : undefined,
@@ -584,6 +594,7 @@ export class MissionControl {
         validateTaskActorChoice(mission, input)
         try {
           validateMissionDelegationPolicy({ template: mission.template, role: input.role, blockedBy: input.blockedBy,
+            brief: input.brief, execution: input.execution, profiles: mission.profiles, taskKey: input.taskKey,
             tasks: mission.tasks, executionMode: input.executionMode, phase: "declaration" })
           await this.options.validateExecution?.({ ...input, delivery: "queue" }, sessionID)
         } catch (error) {
@@ -624,6 +635,8 @@ export class MissionControl {
       catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
       const missionID = `msn_${stableToken(`${this.options.project.id}\0${sessionID}\0${operationID}`, 24)}`
       const replay = snapshot.missions.find((mission) => mission.id === missionID)
+      input.start.profiles = this.compareCreationProfiles(input.start.template, input.start.profiles,
+        replay ? replay.profiles?.roles?.comparator?.model : caller.model)
       if (replay) {
         if (replay.template !== input.start.template || replay.objective !== input.start.objective
           || replay.notes !== input.start.notes || !sameMissionProfiles(replay.profiles, input.start.profiles)
@@ -693,6 +706,7 @@ export class MissionControl {
     const source = this.membership(await this.snapshot(), sessionID)
     if (!source || source.status !== "active") throw new MissionControlError("No active mission is associated with this session", "mission-not-found")
     this.assertCoordinator(source, sessionID)
+    input = { ...input, profiles: this.compareCreationProfiles(input.template, input.profiles) }
     if (!this.options.transport?.prepare) throw new MissionControlError(BACKEND_ACTION_UNAVAILABLE, "prepare-unavailable")
     // Scoped to this coordinator and mission: another coordinator's requestID never replays into it.
     const requestID = `prepare_${stableToken(`${source.id}\0${sessionID}\0${input.requestID}`, 24)}`
@@ -797,6 +811,7 @@ export class MissionControl {
       validateMissionDelegationPolicy({
         template: mission.template,
         role: input.role,
+        brief: input.brief, execution: input.execution, profiles: mission.profiles, taskKey: input.taskKey,
         targetSessionID: input.targetSessionID,
         blockedBy,
         tasks: mission.tasks,
@@ -1062,7 +1077,8 @@ export class MissionControl {
       const previous = mission.reports.find(report => report.taskKey === task.key && sameNativeCall(report.nativeCall, native.call))
       if (previous) {
         let artifact
-        try { artifact = validateMissionReportArtifact({ template: mission.template, role: task.role, outcome: input.outcome, artifact: input.artifact }) }
+        try { artifact = validateMissionReportArtifact({ template: mission.template, role: task.role, outcome: input.outcome,
+          artifact: input.artifact, tasks: mission.tasks }) }
         catch (error) { throw new MissionControlError(error instanceof Error ? error.message : "Mission report contract failed", "invalid-report-contract") }
         if (previous.outcome !== input.outcome || previous.summary !== input.summary
           || !isDeepStrictEqual(previous.evidence, input.evidence) || !isDeepStrictEqual(previous.next, input.next)
@@ -1097,6 +1113,7 @@ export class MissionControl {
         role: task.role,
         outcome: input.outcome,
         artifact: input.artifact,
+        tasks: mission.tasks,
       })
     } catch (error) {
       throw new MissionControlError(error instanceof Error ? error.message : "Mission report contract failed", "invalid-report-contract")

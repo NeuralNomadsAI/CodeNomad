@@ -3,8 +3,10 @@ import { Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
-import { focusConversationStream } from "./focus-conversation"
+import { findConversationStream, focusConversationStream } from "./focus-conversation"
+import { shouldTypeIntoComposer } from "./prompt-input/type-to-focus"
 import { hotkeyLabel } from "../lib/hotkeys"
+import { keyboardRegistry } from "../lib/keyboard-registry"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
@@ -339,44 +341,10 @@ export default function PromptInput(props: PromptInputProps) {
     if (props.disabled) return
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing || e.keyCode === 229) return
-      const activeElement = document.activeElement as HTMLElement | null
-      const targetElement = e.target instanceof HTMLElement ? e.target : null
-
-      const isEditableElement = (element: HTMLElement | null) =>
-        element?.tagName === "INPUT" ||
-        element?.tagName === "TEXTAREA" ||
-        element?.tagName === "SELECT" ||
-        Boolean(element?.isContentEditable)
-
-      const isInteractiveElement = (element: HTMLElement | null) =>
-        Boolean(
-          element?.closest(
-            'button, a[href], summary, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [tabindex]:not([tabindex="-1"])',
-          ),
-        )
-
-      if (
-        isEditableElement(activeElement) ||
-        isEditableElement(targetElement) ||
-        isInteractiveElement(activeElement) ||
-        isInteractiveElement(targetElement)
-      ) {
-        return
-      }
-
-      const isModifierKey = e.ctrlKey || e.metaKey || e.altKey
-      if (isModifierKey) return
-
-      const isSpecialKey =
-        e.key === "Tab" ||
-        e.key === "Enter" ||
-        e.key === " " ||
-        e.key === "Spacebar" ||
-        e.key.startsWith("Arrow") ||
-        e.key === "Backspace" ||
-        e.key === "Delete"
-      if (isSpecialKey) return
+      const conversation = findConversationStream(wrapperRef?.closest(".session-view"))
+      if (!shouldTypeIntoComposer(e, document.activeElement, conversation)) return
+      // A shortcut bound to a plain key keeps it rather than becoming draft text.
+      if (keyboardRegistry.findMatch(e)) return
 
       const textarea = textareaRef
       if (!textarea || textarea.disabled) return
@@ -391,9 +359,8 @@ export default function PromptInput(props: PromptInputProps) {
         return
       }
 
-      if (e.key.length === 1) {
-        textarea.focus()
-      }
+      // Focus moves during keydown, so the browser inserts this character.
+      textarea.focus()
     }
 
     document.addEventListener("keydown", handleGlobalKeyDown)

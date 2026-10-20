@@ -207,6 +207,41 @@ insertion into the composer remain available.
 
 ## Backend boundaries
 
+Workspace listings register a non-recursive host watch through
+`workspaces/file-watches.ts` before reading the directory. OpenCode's native
+filesystem events are not a subscription to every browsed folder, so they are
+not the sole invalidation source. Actual host changes are coalesced into the
+existing SSE stream as `workspace.filesChanged` (workspace ID and changed listing
+directories, not one event per file). Shared `lib/filesystem-events.ts` merges
+passive observations before publishing cache versions: a quiet-case delay of
+100 ms, then at most one publication every **five seconds** during continuous
+activity, including native `filesystem.changed` events. The timer exists only
+while observations are pending. Explicit mutations and recovery still invalidate
+immediately. This path does not require an initialized OpenCode client.
+
+The Workspace tree compares versions per browsing root and listed directory;
+an observation in another worktree or an unchanged sibling does not cause a
+scan. Only stale visible directories reread, using the existing background read
+budget and one coalesced follow-up when already busy. Hidden/collapsed views
+retain their snapshots until ordinary demand. There is no periodic scan or
+polling. Version metadata is bounded, conservatively falling back to full
+invalidation if its root/directory budget is exceeded, and disposed with the
+workspace. Explicit Refresh still rereads all visible directories.
+Watches are restricted to the authorized listing root's physical tree (never an
+outward symlink), bounded to the 256 most recently listed directories per backend,
+and closed on workspace removal/shutdown. Directory replacement rebinds its
+inode identity; errors remain best effort and a later listing can retry setup.
+Native OpenCode invalidations and explicit Refresh retain their existing paths.
+
+Directory entries carry an opaque device/inode identity, distinct from their
+modification time. When a parent listing discovers a removed or replaced child,
+the tree drops only that child's cached subtree, cancels its old pending reads,
+and reloads still-expanded paths so their observations bind to the replacement.
+Ordinary parent content/mtime changes never turn into subtree scans. Observations
+retain the logical listed path separately from the physical safety boundary;
+multiple internal junctions/symlinks of one physical directory notify each alias,
+not just its canonical target.
+
 - `/api/workspaces/:id/files/preview` accepts a relative `path` and the browsed
   `directory`, validates it through the manager's existing worktree ownership,
   and uses the bounded filesystem content reader (5 MiB, base64). This also works
@@ -234,6 +269,16 @@ insertion into the composer remain available.
   object IDs rather than reading another repository. Binary diffs use a fallback.
 
 ## Validation
+
+- `workspaces/file-watches.test.ts`: real host file operations, replacement,
+  physical containment, bounded handles and disposal/admission fencing.
+- `tests/browser/workspace-file-refresh.test.ts`: real filesystem changes through
+  the watcher, shared event bus and SSE into the real Workspace tree; create,
+  rename, unlink and nested files appear without F5, while idle/hidden/collapsed
+  views do not generate scans.
+- `lib/filesystem-events.test.ts` and `useWorkspaceTree.test.ts`: continuous
+  observation bursts cannot repeatedly invalidate caches; multi-worktree batches
+  reread only changed visible directories, while explicit writes remain immediate.
 
 - `server/routes/files-history.test.ts`: real temporary root/linked repositories,
   route ownership, file bounds, history/diff and directory-only reading.

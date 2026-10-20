@@ -53,8 +53,8 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       location: { get: async ({ location }: any) => ({ ...location, project }) },
       plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
       agent: { list: async () => ({ data: [{ id: "agent", mode: "primary" }, { id: "child", mode: "subagent" }] }) },
-      model: { list: async () => ({ data: [{ providerID: "provider", id: "model", enabled: true,
-        capabilities: { tools: true }, variants: [] }] }) },
+      model: { list: async () => ({ data: ["model", "other"].map(id => ({ providerID: "provider", id, enabled: true,
+        capabilities: { tools: true }, variants: [] })) }) },
       session: { get: async ({ sessionID }: any) => ({ id: sessionID, projectID: project.id,
         location: { directory: watchedDirectory } }) },
       rpc: () => ({ recurrenceRead: async ({ id }: any) => {
@@ -246,10 +246,11 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       assert.equal((await post({ ...payload, requestID: "wsl_schedule" })).statusCode, 200)
       assert.equal(writes, 3, "WSL duplicate is an exact read, not another native write")
     })
-    for (const template of ["debug", "wayfinder", "delivery"] as const) await t.test(`recurring ${template} freezes its exact role selections`, async () => {
+    for (const template of ["debug", "wayfinder", "delivery", "compare"] as const) await t.test(`recurring ${template} freezes its exact role selections`, async () => {
       const profiles = { coordinator: profile, roles: Object.fromEntries(missionProfileRoles[template]
-        .map(role => [role, { ...profile, agent: "child" }])) }
-      const recurring = { ...payload, requestID: `recurring_${template}`, template, profiles }
+        .map(role => [role, { ...profile, agent: "child", model: { ...profile.model, id: role === "model-b" ? "other" : "model" } }])) }
+      const recurring = { ...payload, requestID: `recurring_${template}`, template, profiles: template === "compare"
+        ? { ...profiles, roles: { ...profiles.roles, comparator: { agent: "child" } } } : profiles }
       const response = await post(recurring)
       assert.equal(response.statusCode, 200)
       assert.equal(response.json().schedule.state, "paused")
@@ -280,8 +281,9 @@ test("authenticated recurrence CREATE shares project identity, rejects foreign/c
       }
     })
     await t.test("exact 16384-character start payload is accepted; 16385 is rejected before native write", async () => {
-      for (const template of ["custom", "debug", "wayfinder", "delivery"] as const) {
-        const profiles = { coordinator: profile, roles: Object.fromEntries(missionProfileRoles[template].map(role => [role, { ...profile, agent: "child" }])) }
+      for (const template of ["custom", "debug", "wayfinder", "delivery", "compare"] as const) {
+        const profiles = { coordinator: profile, roles: Object.fromEntries(missionProfileRoles[template].map(role =>
+          [role, { ...profile, agent: "child", model: { ...profile.model, id: role === "model-b" ? "other" : "model" } }])) }
         const full = { ...payload, template, profiles, requestID: `boundary_${template}`, instructions: "x".repeat(MISSION_LIFECYCLE_TEXT_LIMIT) }
         const before = writes
         assert.equal((await post({ ...full, instructions: full.instructions + "x" })).statusCode, 400)

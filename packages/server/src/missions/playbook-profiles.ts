@@ -14,6 +14,7 @@ export const missionProfileRoles = {
   debug: ["review-standards", "review-spec", "validator", "diagnostician", "implementer", "resolver"],
   wayfinder: ["cartographer", "research", "prototype", "grilling", "decision"],
   delivery: ["business-analyst", "technical-architect", "tech-lead", "developer", "qa-engineer", "ui-ux-designer"],
+  compare: ["model-a", "model-b", "comparator"],
 } as const satisfies Record<MissionTemplateId, readonly string[]>
 const allowedRoles: readonly string[] = [...new Set(Object.values(missionProfileRoles).flat())]
 const hasOwn = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
@@ -74,6 +75,40 @@ export const missionProfilesInputSchema = z.unknown().transform((input, context)
 export function validateMissionProfiles(template: MissionTemplateId, profiles?: MissionProfiles): void {
   const roles: readonly string[] = missionProfileRoles[template]
   if (Object.keys(profiles?.roles ?? {}).some(role => !roles.includes(role))) throw new Error("Mission profile role does not belong to this playbook")
+}
+
+export function sameCompareModel(a?: MissionExecution["model"], b?: MissionExecution["model"]): boolean {
+  return Boolean(a && b && a.providerID === b.providerID && a.id === b.id)
+}
+
+export function compareModelError(profiles?: MissionProfiles): "compare-models-required" | "compare-models-identical" | undefined {
+  const a = profiles?.roles?.["model-a"]?.model, b = profiles?.roles?.["model-b"]?.model
+  if (!a || !b) return "compare-models-required"
+  if (sameCompareModel(a, b)) return "compare-models-identical"
+}
+
+export function missionRoleProfile(template: MissionTemplateId, profiles: MissionProfiles | undefined, role: string): MissionExecution | undefined {
+  const own = profiles?.roles?.[role]
+  if (template !== "compare" || role !== "comparator") return own
+  return own || profiles?.coordinator?.model ? { ...own, model: own?.model ?? profiles?.coordinator?.model } : undefined
+}
+
+/** Freeze only at creation/payload construction, never against a later actor model.
+ * With no known coordinator model, leave both on the same native default. */
+export function freezeCompareProfiles(template: MissionTemplateId, profiles: MissionProfiles | undefined,
+  coordinatorModel?: MissionExecution["model"]): MissionProfiles | undefined {
+  if (template !== "compare") return profiles
+  const judge = missionRoleProfile(template, profiles, "comparator")
+  const model = judge?.model ?? (coordinatorModel?.variant === "default"
+    ? { providerID: coordinatorModel.providerID, id: coordinatorModel.id } : coordinatorModel)
+  return model ? { ...profiles, roles: { ...profiles?.roles, comparator: { ...judge, model: structuredClone(model) } } } : profiles
+}
+
+export function compareModelNames(profiles?: MissionProfiles): [string, string] {
+  return ["model-a", "model-b"].map(role => {
+    const model = profiles?.roles?.[role]?.model
+    return model ? `${model.providerID}/${model.id}` : role
+  }) as [string, string]
 }
 
 /** Exact logical retry identity, independent of object/key insertion order. */
