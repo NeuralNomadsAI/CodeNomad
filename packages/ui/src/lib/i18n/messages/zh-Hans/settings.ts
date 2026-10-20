@@ -419,8 +419,6 @@ export const settingsMessages = {
   "settings.section.remote.subtitle": "查看此服务器如何暴露到网络，以及安全访问凭据。",
   "settings.section.opencode.title": "OpenCode",
   "settings.section.opencode.subtitle": "选择新实例使用的 OpenCode 可执行文件和环境。",
-  "settings.opencode.runtime.title": "运行时",
-  "settings.opencode.runtime.subtitle": "配置新实例启动时使用的 OpenCode 可执行文件。",
   "settings.opencode.logLevel.title": "OpenCode 日志级别",
   "settings.opencode.logLevel.subtitle": "设置启动新的 OpenCode 实例时使用的日志级别。",
   "settings.opencode.logLevel.selector.title": "日志详细程度",

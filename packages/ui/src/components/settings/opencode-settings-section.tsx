@@ -23,8 +23,8 @@ export const OpenCodeSettingsSection: Component = () => {
 
   return (
     <div class="settings-section-stack">
-      <OpenCodeExecutableCard />
       <OpenCodeUpdateCard />
+      <OpenCodeExecutableCard />
 
       <div class="settings-card">
         <div class="settings-card-header">

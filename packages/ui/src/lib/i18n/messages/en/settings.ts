@@ -420,8 +420,6 @@ export const settingsMessages = {
   "settings.section.remote.subtitle": "Review how this server is exposed on your network and secure access credentials.",
   "settings.section.opencode.title": "OpenCode",
   "settings.section.opencode.subtitle": "Choose the OpenCode binary and environment used for new instances.",
-  "settings.opencode.runtime.title": "Runtime",
-  "settings.opencode.runtime.subtitle": "Configure which OpenCode binary new instances launch with.",
   "settings.opencode.logLevel.title": "OpenCode Log Level",
   "settings.opencode.logLevel.subtitle": "Control the log verbosity used when launching new OpenCode instances.",
   "settings.opencode.logLevel.selector.title": "Default log level",

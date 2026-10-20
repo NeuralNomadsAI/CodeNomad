@@ -419,8 +419,6 @@ export const settingsMessages = {
   "settings.section.remote.subtitle": "Überprüfen Sie, wie dieser Server in Ihrem Netzwerk freigegeben ist, und sichern Sie die Zugangsdaten.",
   "settings.section.opencode.title": "OpenCode",
   "settings.section.opencode.subtitle": "Wählen Sie die OpenCode-Binärdatei und Umgebung für neue Instanzen.",
-  "settings.opencode.runtime.title": "Laufzeit",
-  "settings.opencode.runtime.subtitle": "Konfigurieren Sie, mit welcher OpenCode-Binärdatei neue Instanzen starten.",
   "settings.opencode.logLevel.title": "OpenCode Log-Level",
   "settings.opencode.logLevel.subtitle": "Steuern Sie die Ausführlichkeit der Protokolle beim Starten neuer OpenCode-Instanzen.",
   "settings.opencode.logLevel.selector.title": "Standard-Log-Level",

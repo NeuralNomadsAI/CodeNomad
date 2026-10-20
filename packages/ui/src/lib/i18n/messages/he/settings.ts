@@ -419,8 +419,6 @@ export const settingsMessages = {
   "settings.section.remote.subtitle": "בדוק כיצד שרת זה חשוף ברשת שלך ואבטח אישורי גישה.",
   "settings.section.opencode.title": "OpenCode",
   "settings.section.opencode.subtitle": "בחר את הקובץ הבינארי של OpenCode והסביבה לשימוש במופעים חדשים.",
-  "settings.opencode.runtime.title": "סביבת ריצה",
-  "settings.opencode.runtime.subtitle": "הגדר עם איזה קובץ בינארי של OpenCode מופעים חדשים יופעלו.",
   "settings.opencode.logLevel.title": "רמת הלוגים של OpenCode",
   "settings.opencode.logLevel.subtitle": "הגדר את רמת הלוגים שבה ייעשה שימוש בעת הפעלת מופעי OpenCode חדשים.",
   "settings.opencode.logLevel.selector.title": "פירוט לוגים",

@@ -419,8 +419,6 @@ export const settingsMessages = {
   "settings.section.remote.subtitle": "Проверьте, как этот сервер доступен в сети, и защитите учётные данные доступа.",
   "settings.section.opencode.title": "OpenCode",
   "settings.section.opencode.subtitle": "Выберите бинарник OpenCode и окружение для новых экземпляров.",
-  "settings.opencode.runtime.title": "Среда выполнения",
-  "settings.opencode.runtime.subtitle": "Настройте, с каким бинарником OpenCode будут запускаться новые экземпляры.",
   "settings.opencode.logLevel.title": "Уровень логирования OpenCode",
   "settings.opencode.logLevel.subtitle": "Задайте уровень логирования, используемый при запуске новых экземпляров OpenCode.",
   "settings.opencode.logLevel.selector.title": "Подробность логов",

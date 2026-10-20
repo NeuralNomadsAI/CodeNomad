@@ -318,7 +318,7 @@ test("activation failure after installation retains the installed version and re
   } finally { await page.close() }
 })
 
-test("settings keep executable selection and management inline, disclosures collapsed and logs last", async () => {
+test("settings show management first, executable selection next, disclosures collapsed and logs last", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -354,7 +354,11 @@ test("settings keep executable selection and management inline, disclosures coll
     assert.equal(await page.locator("details").count(), 2)
     assert.equal(await page.locator("details[open]").count(), 0)
     const cards = page.locator("main .settings-section-stack > .settings-card")
-    await cards.first().locator(".selector-input").waitFor()
+    // Version and service management first, then the executable selector without a separate Runtime header.
+    await cards.first().locator(".opencode-setup-panel").waitFor()
+    await cards.nth(1).locator(".selector-input").waitFor()
+    assert.equal(await cards.nth(1).locator(".settings-card-header").count(), 0)
+    assert.equal(await page.getByRole("heading", { name: "Runtime", exact: true }).count(), 0)
     assert.equal(await cards.last().getByRole("heading", { name: "OpenCode Log Level", exact: true }).count(), 1, "log levels stay below all runtime controls and disclosures")
     await cards.last().locator(".selector-trigger").waitFor()
     if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-settings-summary.png"), fullPage: true })

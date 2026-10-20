@@ -411,8 +411,6 @@ export const settingsMessages = {
   "settings.section.remote.subtitle": "Bu sunucunun ağınızda nasıl sunulduğunu inceleyin ve erişim kimlik bilgilerini güvence altına alın.",
   "settings.section.opencode.title": "OpenCode",
   "settings.section.opencode.subtitle": "Yeni instance'lar için kullanılacak OpenCode binary'sini ve ortamını seçin.",
-  "settings.opencode.runtime.title": "Runtime",
-  "settings.opencode.runtime.subtitle": "Yeni instance'ların hangi OpenCode binary'siyle başlayacağını yapılandırın.",
   "settings.opencode.logLevel.title": "OpenCode Log Seviyesi",
   "settings.opencode.logLevel.subtitle": "Yeni OpenCode instance'ları başlatılırken kullanılacak log ayrıntı düzeyini kontrol edin.",
   "settings.opencode.logLevel.selector.title": "Varsayılan log seviyesi",

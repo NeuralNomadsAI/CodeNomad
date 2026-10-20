@@ -419,8 +419,6 @@ export const settingsMessages = {
   "settings.section.remote.subtitle": "यो सर्भर तपाईंको नेटवर्कमा कसरी देखिन्छ र पहुँच प्रमाणहरू समीक्षा गर्नुहोस्।",
   "settings.section.opencode.title": "OpenCode",
   "settings.section.opencode.subtitle": "नयाँ उदाहरणहरूको लागि OpenCode बाइनरी र वातावरण छनौट गर्नुहोस्।",
-  "settings.opencode.runtime.title": "रनटाइम (Runtime)",
-  "settings.opencode.runtime.subtitle": "नयाँ उदाहरणहरू कुन OpenCode बाइनरीबाट सुरु हुन्छन् कन्फिगर गर्नुहोस्।",
   "settings.opencode.logLevel.title": "OpenCode लग स्तर",
   "settings.opencode.logLevel.subtitle": "नयाँ OpenCode उदाहरणहरू सुरु गर्दा लग विवरण नियन्त्रण गर्नुहोस्।",
   "settings.opencode.logLevel.selector.title": "पूर्वनिर्धारित लग स्तर",

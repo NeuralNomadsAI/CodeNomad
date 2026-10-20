@@ -419,8 +419,6 @@ export const settingsMessages = {
   "settings.section.remote.subtitle": "このサーバーがネットワーク上でどのように公開されているかと、アクセス認証情報を確認します。",
   "settings.section.opencode.title": "OpenCode",
   "settings.section.opencode.subtitle": "新しいインスタンスで使う OpenCode バイナリと環境を選択します。",
-  "settings.opencode.runtime.title": "ランタイム",
-  "settings.opencode.runtime.subtitle": "新しいインスタンスの起動に使う OpenCode バイナリを設定します。",
   "settings.opencode.logLevel.title": "OpenCode のログレベル",
   "settings.opencode.logLevel.subtitle": "新しい OpenCode インスタンスの起動時に使うログレベルを設定します。",
   "settings.opencode.logLevel.selector.title": "ログ出力の詳細度",

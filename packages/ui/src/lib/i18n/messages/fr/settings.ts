@@ -419,8 +419,6 @@ export const settingsMessages = {
   "settings.section.remote.subtitle": "Vérifiez comment ce serveur est exposé sur votre réseau et sécurisez les identifiants d'accès.",
   "settings.section.opencode.title": "OpenCode",
   "settings.section.opencode.subtitle": "Choisissez le binaire OpenCode et l'environnement utilisés pour les nouvelles instances.",
-  "settings.opencode.runtime.title": "Environnement d'exécution",
-  "settings.opencode.runtime.subtitle": "Configurez le binaire OpenCode avec lequel les nouvelles instances démarrent.",
   "settings.opencode.logLevel.title": "Niveau de logs OpenCode",
   "settings.opencode.logLevel.subtitle": "Definir le niveau de logs utilise au lancement des nouvelles instances OpenCode.",
   "settings.opencode.logLevel.selector.title": "Verbosite des logs",
