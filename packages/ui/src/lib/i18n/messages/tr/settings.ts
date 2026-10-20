@@ -512,7 +512,7 @@ export const settingsMessages = {
   "settings.appearance.behavior.title": "Etkileşim",
   "settings.appearance.behavior.subtitle": "Mesaj, araç, tanılama ve kullanım ayrıntılarını birlikte yönetin.",
   "settings.behavior.expansionPresets.ariaLabel": "Transkript ayrıntı hazır ayarları",
-  "settings.behavior.expansionPreset.nothing.title": "Hiçbiri",
+  "settings.behavior.expansionPreset.nothing.title": "Hiçbir şey",
   "settings.behavior.expansionPreset.nothing.description": "Tüm araçları ve ayrıntıları gizler; yalnızca mesajlar kalır.",
   "settings.behavior.expansionPreset.minimal.title": "Minimal",
   "settings.behavior.expansionPreset.minimal.description": "Oluşturulan ayrıntıların çoğunu gerekene kadar gizli tutar.",

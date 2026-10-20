@@ -301,7 +301,7 @@ export function normalizeToolCallExpansionDefaults(input: unknown, legacySetting
 
   const tools = normalizeToolCallExpansionTools(source?.tools)
   if (source?.preset === "detailed") {
-    return { preset: "custom", thinking: normalizeExpansionPreference(source.thinking, "expanded"), tools: { ...retiredDetailedTools, ...tools } }
+    return { preset: "custom", thinking: normalizeExpansionPreference(source.thinking, legacyThinking), tools: { ...retiredDetailedTools, ...tools } }
   }
   return {
     preset: normalizeToolCallExpansionPreset(source?.preset),

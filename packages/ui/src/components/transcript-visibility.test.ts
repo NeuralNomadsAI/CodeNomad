@@ -117,7 +117,8 @@ describe("shared transcript visibility controls", () => {
     const older = { ...current(), toolCallExpansionDefaults: normalizeToolCallExpansionDefaults({ preset: "detailed", tools: {} }, {}) }
     assert.equal(transcriptVisibility(older, row("skill")), "collapsed")
     assert.equal(transcriptVisibility(older, row("execute")), "expanded")
-    assert.equal(transcriptVisibility(older, row("thinking")), "expanded")
+    // A missing thinking choice keeps the same legacy fallback as before.
+    assert.equal(older.toolCallExpansionDefaults.thinking, "collapsed")
   })
   it("updates diagnostics and inputs independently", () => {
     assert.deepEqual(transcriptVisibilityPatch(current(), row("diagnostics"), "hidden"), { diagnosticsExpansion: "hidden" })
