@@ -16,7 +16,7 @@ Project tabs, selected conversations and layout belong to a window. OpenCode ses
 
 Restore can reopen workspace/SideCar tabs and active sessions, unsent text, scroll positions, panels, window placement and zoom. It is per-window client state, not a copy of the native conversation database. Clearing it removes saved tabs, drafts and layout; it does not delete CodeNomad configuration or OpenCode conversations. Save any important unsent draft elsewhere first.
 
-The Preferences window does not own a separate restore state: Startup targets the window that opened it. When that window has closed, or is unknown because Preferences reopened at launch, Startup follows the most recently used window instead; a change prepared for another window is never applied, the controls first show the new window's value. To configure a specific window, open Preferences from it. Project-scoped settings likewise use the opener's Location; they stay unavailable without one.
+The Preferences window does not own a separate restore state: Startup targets the window that opened it. When that window has closed, or is unknown because Preferences reopened at launch, Startup follows the most recently used window instead; a change prepared for another window is never applied, and the controls first show the new window's value. To configure a specific window, open Preferences from it. Project-scoped settings likewise use the opener's Location; they stay unavailable without one.
 
 Browser and remote settings are embedded rather than a second native Preferences owner. A native Preferences opening error is reported; it is not a reason to assume a hidden embedded settings screen was opened instead.
 
