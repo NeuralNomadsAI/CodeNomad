@@ -4,12 +4,15 @@
  * messages, summary compactions reference `metadata.keepID` (older kept text in
  * `metadata.recent`) and provider windows live in `native.messages`. 2.0.x
  * daemons emit the retired `state`/`providerState`/`resultState`/`recent` shapes.
+ * OpenCode 2.1.2 also fixes Code Mode jobs violating JavaScript run-to-completion:
+ * 2.1.0/2.1.1 lose shared updates and resume async callers before the first await.
+ * Reproduced by scripts/test-codemode-jobs-native.mjs against isolated daemons.
  * OpenCode 2.1 reads data stored by older releases. See
  * dev-docs/OPENCODE_V2_COMPATIBILITY.md for the demonstrated boundary.
  */
-export const MINIMUM_OPENCODE_VERSION = "2.1.0"
+export const MINIMUM_OPENCODE_VERSION = "2.1.2"
 /** Qualification target, independent of the technically required minimum. */
-export const RECOMMENDED_OPENCODE_VERSION = "2.1.1"
+export const RECOMMENDED_OPENCODE_VERSION = "2.1.2"
 export const OPENCODE_UPDATE_REQUIRED = "opencode_update_required"
 
 export function isBelowOpenCodeMinimum(version: string): boolean {
@@ -33,7 +36,7 @@ export class UnsupportedOpenCodeError extends Error {
   readonly minimumVersion = MINIMUM_OPENCODE_VERSION
   constructor(readonly actualVersion: string, readonly reason: OpenCodeIncompatibility = "native_contract") {
     super(`${OPENCODE_UPDATE_REQUIRED}: OpenCode ${actualVersion}; ${reason === "native_contract"
-      ? `requires the native replay and compaction contract (native, metadata.keepID) introduced in ${MINIMUM_OPENCODE_VERSION}`
+      ? `requires the 2.1 native replay and compaction contract (native, metadata.keepID) and Code Mode job ordering fixed in ${MINIMUM_OPENCODE_VERSION}`
       : reason === "session_environment" ? "requires PUT /api/session/{sessionID}/environment with variables"
         : "does not expose the canonical session, permission, Form and inbox API contract"}`)
     this.name = "UnsupportedOpenCodeError"

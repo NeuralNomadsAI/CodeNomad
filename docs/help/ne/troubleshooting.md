@@ -42,7 +42,7 @@ owned worktree वा conversation placement verify गर्न नसके �
 ## OpenCode runtime र WSL {#opencode-runtime}
 
 1. **प्राथमिकताहरू → OpenCode** खोली selected executable, installed version र running service status जाँच्नुहोस्।
-2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.1.0**; recommended/qualified: **2.1.0**।
+2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.1.2**; recommended/qualified: **2.1.2**।
 3. installed CLI running service भन्दा फरक भए shared service restart गर्ने कि स्पष्ट निर्णय गर्नुहोस्।
 
 **OpenCode सेवा पुनः सुरु गर्नुहोस्** **समस्या समाधान** अन्तर्गत उपलब्ध छ र पुष्टि चाहिन्छ। हरेक connected client को सक्रिय काम interrupt गर्छ, तर session history राख्छ। configuration reload छुट्टै हो: process राख्छ तर loaded Location पुनर्निर्माण र pending question/permission रद्द गर्छ। कुनै हानिरहित refresh होइन।

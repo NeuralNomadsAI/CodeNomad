@@ -15,9 +15,14 @@ compatibility code and historical-data handling do not imply support for older
 runtimes. Keep detailed results in the change's PR and CI logs, not in per-version
 reports. Update this reference in place.
 
-The technical minimum remains **2.1.0**; the recommended runtime target is
-**2.1.1**, qualified on Windows below with the unchanged **2.1.0 client/plugin
-pins**. CodeNomad consumes the 2.1 native replay contract (`native` provider
+The technical minimum and recommended runtime target are **2.1.2**, qualified
+on Windows below with the unchanged **2.1.0 client/plugin pins**. Native Code Mode
+on 2.1.0/2.1.1 violates JavaScript run-to-completion: the same isolated `execute`
+call loses shared updates and resumes an async caller before its first await.
+2.1.2 fixes both (upstream #54276); `scripts/test-codemode-jobs-native.mjs`
+preserves the red/green regression. This is a demonstrated execution defect,
+not a new API-shape requirement or a build-pin change.
+CodeNomad also consumes the 2.1 native replay contract (`native` provider
 data, `metadata.keepID`/`metadata.recent` compactions) through the pinned 2.1
 client reducer and codecs; 2.0.x daemons emit the retired shapes, and the 2.0.x
 reducer breaks pruning identity on 2.1 events (see the 2.1.0 qualification
@@ -744,6 +749,56 @@ browser suite was not rerun; the 125 focused browser tests are not that suite.
 The complete local ledger and logs are retained under
 `qualify-2.1.1/run-20261021-6c793bae7/`, alongside the earlier 2.1.0 evidence.
 
+### 2.1.2 qualification (2026-10-21)
+
+Qualified on Windows against dev `f5dd76d79` with Node **24.20.0**, unchanged
+locked **2.1.0 client/plugin** dependencies and the exact isolated 2.1.2 CLI.
+The minimum and recommendation advance to **2.1.2** with explicit maintainer
+approval after the native Code Mode red/green proof below, not because the
+latest package or an optional schema field changed.
+
+- **Demonstrated minimum:** upstream **#54276** fixes JavaScript jobs that
+  Effect preemption could interleave before their completion. The real native
+  `execute` tool returns `{total:1853,beforeAwait:145,count:1000}` on **2.1.0 and
+  2.1.1**, versus the required `{total:2000,beforeAwait:1000,count:1000}` on
+  **2.1.2**, with the same 2.1.0 client and synthetic provider. Red/green repeats
+  agree. `scripts/test-codemode-jobs-native.mjs` retains this regression; CI runs
+  it against the minimum and latest on each compatibility platform. No OpenCode
+  source modification or real provider/account was involved.
+- **Contract review:** authenticated OpenAPI retains **119 paths / 144
+  operations**, with no changed operation. Only `Config.InfoEncoded` and
+  `Session.StructuredError` schemas change. `experimental.location_idle_timeout`,
+  `provider.free-limit` and optional `retryAfterMs` are additions, not reasons
+  for the floor. Promise HTTP reads with clients **2.1.0 and 2.1.2** preserve
+  `retryAfterMs` and exact content used for pruning identity. Removed private
+  interrupt options are not consumed by CodeNomad. Upstream **#57416/#57476**
+  also retain Locations with active sessions/background Jobs.
+- **Native runtime:** plugin host/bundle boundary, automation, complete pruning
+  and rendered deletion UI, loaded-only pending snapshot, four Missions suites
+  including Compare/Wayfinder, all **11 recurring journeys**, subagent depth,
+  **2 MiB** compaction and permission receipts pass.
+- **Sessions/integrations:** environment, fork, aside, interrupt, lifecycle/retry,
+  blank cleanup, skills, usage/accounts/selection, service usage, web search,
+  plugin packages, output continuation and Promise-tool failure all pass.
+- **History:** migrations from **2.0.3, beta-19271, 2.0.32, 2.1.0 and 2.1.1**
+  to 2.1.2 pass, alongside Git degraded/init and temporary-workspace journeys.
+- **Baseline builds/tests:** production server/UI/plugins, server/root
+  typechecks and bundle guard pass. Full server: **2,449 passed, 7 skipped,
+  zero failures/cancellations**; UI: **1,637/1,637**; focused browser:
+  **125/125**, plus rendered native pruning. These counts precede the floor edit;
+  post-edit admission/setup/installation validation is recorded in the PR.
+- **Post-floor checks:** production build, server/root typechecks, **1,637 UI
+  units**, **33 setup browser tests**, all ten help locales (**9 checks**),
+  **79 admission/update/transport/reconnect/pending tests**, full native pruning
+  and Compare/Wayfinder trajectory pass. Fresh 2.1.2 installation/repair and
+  native **2.0.15 → 2.1.2** upgrade pass; the running fixture daemon keeps its
+  PID and old version until a separate explicit restart. Installer unit
+  fixtures target supported releases without relaxing their assertions.
+
+Evidence is retained under `qualify-2.1.2/run-20261021-f5dd76d79/`, including
+the deliberate failing controls. This is Windows qualification, not packaged
+desktop, Linux/macOS/WSL, updater or real-mobile acceptance.
+
 ### Capability-checked loaded-only pending recovery
 
 The bundled pruning entry also registers the fixed read-only
@@ -752,7 +807,7 @@ lifecycle. Registration requires the actual native RPC capability, not a runtime
 or Effect version allowlist. Each read validates the native graph/queue contracts
 below and fails non-authoritatively if they are absent or incompatible. Tested
 versions are evidence, not permission to block an untested version. The global
-minimum is **2.0.27** after the demonstrated Effect/Schema transition above. Existing pruning/history
+minimum follows the demonstrated boundaries in the current qualification policy above. Existing pruning/history
 methods retain their own support and write checks.
 
 The reader uses private native LocationServiceMap, Location, Form and Permission

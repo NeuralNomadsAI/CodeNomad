@@ -9,8 +9,10 @@ policy. Current recommendation and dependency pins are defined by
 
 ## Current release contract
 
-The floor is now **2.1.0**, for the native replay contract consumed by the
-pinned 2.1 client reducer: 2.0.x events carry the retired `state`/`recent`
+The floor is now **2.1.2**, for Code Mode's JavaScript job-ordering fix
+(upstream #54276), reproduced against 2.1.0/2.1.1 by
+`scripts/test-codemode-jobs-native.mjs`. The replay boundary still dates from
+**2.1.0**, consumed by the pinned 2.1 client reducer: 2.0.x events carry the retired `state`/`recent`
 shapes, which break pruning identity under 2.1 pins and vice versa. Setup and
 admission report `native_contract` before client calls or provisioning; OpenCode
 2.1 reads conversations stored by earlier releases. The previous 2.0.27 floor

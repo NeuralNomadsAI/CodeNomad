@@ -104,7 +104,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version}, bu CodeNomad sürümüyle tam olarak doğrulanmadı. Bu durum tek başına bağlanmayı engellemez.",
   "settings.opencode.setup.error": "Seçilen çalıştırılabilir dosya doğrulanamadı.",
   "settings.opencode.setup.minimum": "En düşük sürüm",
-  "settings.opencode.setup.minimumReason": "Bu CodeNomad sürümü, yerel döküm, yeniden oynatma verisi ve sıkıştırma biçimi için OpenCode {version} veya üzerini gerektirir. Önceki sürümlerle kaydedilen konuşmalar OpenCode güncellendikten sonra da okunabilir.",
+  "settings.opencode.setup.minimumReason": "Bu CodeNomad sürümü, Code Mode içindeki JavaScript görevlerinin doğru yürütme sırası ve 2.1'in yerel yeniden oynatma ve sıkıştırma biçimi için OpenCode {version} veya üzerini gerektirir. Önceki sürümlerle kaydedilen konuşmalar OpenCode güncellendikten sonra da okunabilir.",
   "settings.opencode.setup.canonical_api": "Çalışan hizmet, bu CodeNomad sürümünün gerektirdiği oturum, izin, form ve gelen kutusu API'sini sunmuyor.",
   "settings.opencode.setup.session_environment": "Çalışan hizmet, istem veya komut göndermeden önce gerekli olan oturum ortamını değiştirme işlemini desteklemiyor.",
   "settings.opencode.setup.daemon": "Çalışan hizmet",

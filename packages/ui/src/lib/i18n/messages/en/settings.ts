@@ -104,7 +104,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} has not been fully validated with this CodeNomad release. This alone does not prevent connecting.",
   "settings.opencode.setup.error": "The selected executable could not be verified.",
   "settings.opencode.setup.minimum": "Minimum version",
-  "settings.opencode.setup.minimumReason": "This CodeNomad release requires OpenCode {version} or later for its native transcript, replay and compaction format. Conversations saved by earlier versions stay readable after updating OpenCode.",
+  "settings.opencode.setup.minimumReason": "This CodeNomad release requires OpenCode {version} or later for correct JavaScript job ordering in Code Mode, alongside the 2.1 native replay and compaction format. Conversations saved by earlier versions stay readable after updating OpenCode.",
   "settings.opencode.setup.canonical_api": "The running service does not expose the session, permission, Form and inbox API required by this CodeNomad release.",
   "settings.opencode.setup.session_environment": "The running service cannot replace the session environment required before sending prompts or commands.",
   "settings.opencode.setup.daemon": "Running service",

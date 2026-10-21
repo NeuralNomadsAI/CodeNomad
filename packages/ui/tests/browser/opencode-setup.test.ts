@@ -137,7 +137,7 @@ test("missing installation and incompatible daemon expose different actions; res
 test("closing required-update screen leaves recovery clickable above a pending folder overlay", async () => {
   const page = await browser.newPage()
   await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.32",
-    latestVersion: "2.1.0", minimumVersion: "2.1.0", recommendedVersion: "2.1.0", incompatibilityReason: "native_contract", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
+    latestVersion: "2.1.2", minimumVersion: "2.1.2", recommendedVersion: "2.1.2", incompatibilityReason: "native_contract", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.getByRole("dialog").waitFor()
@@ -153,7 +153,7 @@ test("closing required-update screen leaves recovery clickable above a pending f
     assert.equal(await page.getByText("2.0.32", { exact: true }).count(), 1)
     assert.equal(await page.locator("details[open]").count(), 0)
     await page.getByText("Version details", { exact: true }).click()
-    await page.getByText(/requires OpenCode 2\.1\.0 or later for its native transcript, replay and compaction format/).waitFor()
+    await page.getByText(/requires OpenCode 2\.1\.2 or later for correct JavaScript job ordering in Code Mode/).waitFor()
     assert.equal(await page.getByText("settings.opencode.setup.native_contract", { exact: true }).count(), 0)
   } catch (error) { console.error(await page.locator("body").innerText()); throw error }
   finally { await page.close() }

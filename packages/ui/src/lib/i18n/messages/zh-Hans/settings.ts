@@ -104,7 +104,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} 尚未与此 CodeNomad 版本进行完整验证。仅凭这一点不会阻止连接。",
   "settings.opencode.setup.error": "无法验证所选可执行文件。",
   "settings.opencode.setup.minimum": "最低版本",
-  "settings.opencode.setup.minimumReason": "此 CodeNomad 版本需要 OpenCode {version} 或更高版本提供的原生对话记录、重放数据和压缩格式。旧版本保存的对话在更新 OpenCode 后仍可读取。",
+  "settings.opencode.setup.minimumReason": "此 CodeNomad 版本需要 OpenCode {version} 或更高版本，以确保 Code Mode 中 JavaScript 任务的正确执行顺序，并支持 2.1 的原生重放和压缩格式。旧版本保存的对话在更新 OpenCode 后仍可读取。",
   "settings.opencode.setup.canonical_api": "运行中的服务未提供此 CodeNomad 版本所需的会话、权限、表单和收件队列 API。",
   "settings.opencode.setup.session_environment": "运行中的服务无法替换会话环境，而发送提示或命令前需要执行此操作。",
   "settings.opencode.setup.daemon": "运行中的服务",

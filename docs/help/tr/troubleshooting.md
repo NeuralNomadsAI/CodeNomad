@@ -42,7 +42,7 @@ Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa,
 ## OpenCode çalışma zamanı ve WSL {#opencode-runtime}
 
 1. **Preferences → OpenCode** öğesini açın ve seçilen yürütülebilir dosyayı, yüklü sürümü ve çalışan hizmet durumunu kontrol edin.
-2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.1.0**; önerilen/doğrulanan: **2.1.0**.
+2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.1.2**; önerilen/doğrulanan: **2.1.2**.
 3. Kurulu CLI, çalışan hizmetten farklıysa, paylaşılan hizmetin yeniden başlatılıp başlatılmayacağına açıkça karar verin.
 
 **OpenCode hizmetini yeniden başlat**, **Sorun giderme** altında mevcuttur ve onay gerektirir. Bağlı her istemcideki aktif çalışmayı kesintiye uğratır ancak oturum geçmişini korur. Yapılandırmanın yeniden yüklenmesi ayrı bir eylemdir: süreci korur ancak yüklenen Konumları yeniden oluşturur ve bekleyen soruları/izinleri iptal eder. Zararsız bir yenileme de değildir.

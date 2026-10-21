@@ -104,7 +104,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} не прошёл полную проверку с этим выпуском CodeNomad. Само по себе это не препятствует подключению.",
   "settings.opencode.setup.error": "Не удалось проверить выбранный исполняемый файл.",
   "settings.opencode.setup.minimum": "Минимальная версия",
-  "settings.opencode.setup.minimumReason": "Этому выпуску CodeNomad требуется OpenCode {version} или новее с нативным форматом расшифровок, данных воспроизведения и сжатия. Беседы, сохранённые более ранними версиями, остаются доступными после обновления OpenCode.",
+  "settings.opencode.setup.minimumReason": "Этому выпуску CodeNomad требуется OpenCode {version} или новее для правильного порядка выполнения задач JavaScript в Code Mode и нативного формата воспроизведения и сжатия версии 2.1. Беседы, сохранённые более ранними версиями, остаются доступными после обновления OpenCode.",
   "settings.opencode.setup.canonical_api": "Работающая служба не предоставляет API сеансов, разрешений, форм и очереди ввода, необходимый этому выпуску CodeNomad.",
   "settings.opencode.setup.session_environment": "Работающая служба не может заменить окружение сеанса, что необходимо перед отправкой запросов или команд.",
   "settings.opencode.setup.daemon": "Работающая служба",

@@ -613,6 +613,8 @@ jobs:
               node scripts/test-opencode-history-migration.mjs $oldCli $cli
               if ($LASTEXITCODE) { exit $LASTEXITCODE }
             }
+            node scripts/test-codemode-jobs-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
             node scripts/test-git-degraded-native.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
