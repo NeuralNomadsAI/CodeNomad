@@ -78,7 +78,16 @@ export async function listNativeWorktrees(context: NativeWorktreeContext, option
     const registeredDirectory = await realpath(host)
     const annotation = annotations.get(registeredDirectory)
     if (!annotation) return
-    const checkout = await readCheckoutIdentity(host)
+    const checkout = await readCheckoutIdentity(host).catch(error => {
+      // `git worktree remove` deletes the checkout's `.git` before the rest of
+      // its folder (minutes for a large tree), and an interrupted removal can
+      // leave the folder behind. A registration whose Git layout is gone is no
+      // longer a checkout: omit it like a vanished directory rather than fail
+      // the inventory, and with it every conversation's ownership.
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined
+      throw error
+    })
+    if (!checkout) return
     if (!await sameDirectory(local.common, checkout.common)) return
     if (!await sameDirectory(checkout.root ?? mainHost, registeredDirectory)) throw new Error("Native worktree entry is not a checkout root")
     await verifyCheckoutRoot(host)
