@@ -31,7 +31,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 
-async function fixture(mixed = false, pausePreviews = false, holdMessages = false, deep = false) {
+async function fixture(mixed = false, pausePreviews = false, holdMessages = false, deep = false, hiddenTimeline = false) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
   const databaseDirectory = await mkdtemp(path.join(os.tmpdir(), "codenomad-outline-browser-"))
   const databasePath = path.join(databaseDirectory, "history.sqlite")
@@ -100,11 +100,11 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
     }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(response) }).catch(() => {})
   })
-  await page.goto(url + `?${mixed ? "mixed&" : ""}${deep ? "deep&" : ""}${holdMessages ? "holdMessages" : ""}`)
+  await page.goto(url + `?${mixed ? "mixed&" : ""}${deep ? "deep&" : ""}${hiddenTimeline ? "hiddenTimeline&" : ""}${holdMessages ? "holdMessages" : ""}`)
   await page.waitForFunction(() => Boolean((window as any).fixture))
   // The deep fixture's tool rows contribute extra segments.
   if (deep) await page.waitForFunction(() => Number(document.querySelector(".message-timeline")?.getAttribute("data-segment-count")) >= 1500)
-  else await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
+  else if (!hiddenTimeline) await page.locator('.message-timeline[data-segment-count="1500"]').waitFor()
   if (!holdMessages) await page.waitForFunction(() => (window as any).fixture.snapshot().ids.length === 200)
   return { page, windows, errors, outlines, outlineReplies, previewRequests, resumeOutline,
     holdIndex: () => { indexGate = new Promise<void>(resolve => { releaseIndex = resolve }); return () => { releaseIndex?.(); indexGate = undefined } },
@@ -1249,6 +1249,86 @@ test("keyboard scrolling owns the timeline without paging the transcript", async
     await rail.press('End')
     await f.page.waitForTimeout(400)
     assert(await rail.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop < 2))
+    assert.equal(f.windows.length, 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("Shift+Up/Down jump between user messages across history windows, never from the composer", async () => {
+  const f = await fixture(true)
+  try {
+    // Mixed transcript: every fifth message is a user message; 1300 opens the resident window.
+    await clickTimeline(f.page, 1300)
+    await assertPassageAtTop(f.page, 1300)
+    await f.page.locator(".message-stream").focus()
+    await f.page.keyboard.press("Shift+ArrowDown")
+    await assertPassageAtTop(f.page, 1305)
+    await f.page.keyboard.press("Shift+ArrowUp")
+    await assertPassageAtTop(f.page, 1300)
+    await f.page.keyboard.press("Shift+ArrowUp")
+    await assertPassageAtTop(f.page, 1295)
+    assert.ok(f.windows.some(target => target.messageID === navigationMessageId(1295)), `pages the window around it: ${JSON.stringify(f.windows)}`)
+
+    const composer = f.page.locator("textarea.prompt-input").first()
+    await composer.fill("first line\nsecond line")
+    await composer.press("End")
+    await composer.evaluate(element => element.addEventListener("keydown", event => { (window as any).jumpKeyPrevented = event.defaultPrevented }, { once: true }))
+    const windows = f.windows.length
+    await composer.press("Shift+ArrowUp")
+    assert.equal(await f.page.evaluate(() => (window as any).jumpKeyPrevented), false, "the composer keeps Shift+ArrowUp")
+    assert.ok(await composer.evaluate((element: HTMLTextAreaElement) => element.selectionStart < element.selectionEnd), "and selects text with it")
+    await assertPassageAtTop(f.page, 1295)
+    assert.equal(f.windows.length, windows)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("with the timeline hidden, a user message jump beyond the resident window waits for the index it requests", async () => {
+  const f = await fixture(true, false, false, false, true)
+  try {
+    assert.equal(f.outlines.length, 0, "a hidden timeline requests no index")
+    const release = f.holdIndex()
+    await f.page.locator(".message-stream").focus()
+    // Resident jumps climb to 1300, the window's first user message, while the index is held.
+    for (let press = 0; press < 60 && Math.abs(await rowOffset(f.page, 1300) ?? Infinity) > 2; press++) {
+      await f.page.keyboard.press("Shift+ArrowUp")
+      await waitFrames(f.page, 4)
+    }
+    await assertPassageAtTop(f.page, 1300)
+    assert.ok(f.outlines.length > 0, "the first jump requests the index")
+    await f.page.keyboard.press("Shift+ArrowUp")
+    await assertPassageAtTop(f.page, 1300)
+    assert.equal(f.windows.length, 0, "nothing resident precedes the first user message")
+    release()
+    await assertPassageAtTop(f.page, 1295)
+    assert.ok(f.windows.some(target => target.messageID === navigationMessageId(1295)), JSON.stringify(f.windows))
+    assert.equal(await f.page.locator(".message-timeline").count(), 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("repeated user message jumps advance through prompts the list cannot raise to its top", async () => {
+  // Every message is a user message, and the reader starts at the end.
+  const f = await fixture()
+  try {
+    const active = () => f.page.evaluate(() => document.querySelector('.message-timeline-segment[aria-current="true"]')?.getAttribute("data-message-id"))
+    const waitActive = (index: number) => f.page.waitForFunction(id =>
+      document.querySelector('.message-timeline-segment[aria-current="true"]')?.getAttribute("data-message-id") === id, navigationMessageId(index), { timeout: 5000 })
+    await f.page.locator(".message-stream").focus()
+    const before = await active()
+    await f.page.keyboard.press("Shift+ArrowDown")
+    await f.page.waitForFunction(id => {
+      const current = document.querySelector('.message-timeline-segment[aria-current="true"]')?.getAttribute("data-message-id")
+      return current && current !== id
+    }, before)
+    const first = Number((await active())!.slice(4))
+    assert.ok(first < 1497, `the first jump lands near the end: ${first}`)
+    await f.page.keyboard.press("Shift+ArrowDown")
+    await waitActive(first + 1)
+    await f.page.keyboard.press("Shift+ArrowDown")
+    await waitActive(first + 2)
+    await f.page.keyboard.press("Shift+ArrowUp")
+    await waitActive(first + 1)
     assert.equal(f.windows.length, 0)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }

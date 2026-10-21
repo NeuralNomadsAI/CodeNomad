@@ -6,7 +6,7 @@
 2. Tapez un nom d’action. La palette inclut les actions de l’application et les commandes personnalisées de la Location actuelle ; leur disponibilité dépend de la vue active.
 3. Exécutez **Ouvrir l’aide** pour ouvrir ce guide dans la langue actuelle de l’interface, dans un contexte de navigateur externe. Le menu natif **Aide → Aide de CodeNomad** ouvre le même guide.
 
-L’aide laisse la vue et le brouillon intacts. Si l’ouverture échoue, visitez directement [Aide CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Une commande découvrable n’a pas nécessairement un raccourci personnalisable : le gestionnaire couvre un catalogue fixe de 72 actions du moteur de rendu, pas toutes les actions de palette ou de menu natif. Il inclut des commandes de palette comme **Compacter la session**, **Annuler le dernier message** ou **Ouvrir l’aide**, qui commencent sans raccourci (**Aucun raccourci**) ; les actions de dossier de projet, de terminal et d’éditeur ne s’exécutent que dans les fenêtres de bureau locales.
+L’aide laisse la vue et le brouillon intacts. Si l’ouverture échoue, visitez directement [Aide CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Une commande découvrable n’a pas nécessairement un raccourci personnalisable : le gestionnaire couvre un catalogue fixe de 74 actions du moteur de rendu, pas toutes les actions de palette ou de menu natif. Il inclut des commandes de palette comme **Compacter la session**, **Annuler le dernier message** ou **Ouvrir l’aide**, qui commencent sans raccourci (**Aucun raccourci**) ; les actions de dossier de projet, de terminal et d’éditeur ne s’exécutent que dans les fenêtres de bureau locales.
 
 ## Enregistrer, désactiver et réinitialiser {#customize}
 
@@ -37,6 +37,7 @@ Si l’enregistrement échoue, gardez l’ancien raccourci disponible et réessa
 | Onglet de session 1–9 | `Mod+Shift+1` à `Mod+Shift+9` |
 | Infos de l’instance | `Mod+Shift+L` |
 | Rechercher dans l’historique de session | `Mod+F` |
+| Message utilisateur précédent / suivant (conversation, hors champs de saisie) | `Shift+ArrowUp` / `Shift+ArrowDown` |
 | Résultat suivant / précédent (recherche focalisée) | `Enter` / `Shift+Enter` |
 | Focaliser / Effacer la saisie | `Mod+P` / `Mod+K` |
 | Ouvrir le sélecteur de modèle / d’agent | `Mod+Shift+M` / `Mod+Shift+A` |

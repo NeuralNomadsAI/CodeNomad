@@ -33,6 +33,8 @@ export const hotkeyMessages = {
   "hotkeys.action.session-tab": "セッションタブ {index}",
   "hotkeys.action.browse-folder": "フォルダーを参照",
   "hotkeys.action.session-search": "セッション履歴を検索",
+  "hotkeys.action.user-message-prev": "前のユーザーメッセージへ移動",
+  "hotkeys.action.user-message-next": "次のユーザーメッセージへ移動",
   "hotkeys.action.search-next-result": "次の検索結果",
   "hotkeys.action.search-prev-result": "前の検索結果",
   "hotkeys.action.session-background": "ブロック中のツールをバックグラウンドに移動",

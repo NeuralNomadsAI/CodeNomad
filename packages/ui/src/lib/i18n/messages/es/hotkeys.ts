@@ -33,6 +33,8 @@ export const hotkeyMessages = {
   "hotkeys.action.session-tab": "Pestaña de sesión {index}",
   "hotkeys.action.browse-folder": "Buscar una carpeta",
   "hotkeys.action.session-search": "Buscar en el historial de la sesión",
+  "hotkeys.action.user-message-prev": "Ir al mensaje de usuario anterior",
+  "hotkeys.action.user-message-next": "Ir al siguiente mensaje de usuario",
   "hotkeys.action.search-next-result": "Resultado siguiente",
   "hotkeys.action.search-prev-result": "Resultado anterior",
   "hotkeys.action.session-background": "Mover herramientas bloqueantes al segundo plano",

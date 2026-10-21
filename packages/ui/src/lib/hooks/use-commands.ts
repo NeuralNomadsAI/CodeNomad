@@ -27,6 +27,7 @@ import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type Wo
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
 import { compactSession, executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion, stageSessionRevert } from "../../stores/session-actions"
 import { beginSessionCleanup } from "../../stores/session-cleanup-progress"
+import { requestUserMessageJump } from "../../components/user-message-navigation"
 
 const log = getLogger("actions")
 
@@ -308,6 +309,26 @@ export function useCommands(options: UseCommandsOptions) {
         }
       },
     })
+
+    for (const [id, direction, key] of [["user-message-prev", "previous", "previousUserMessage"], ["user-message-next", "next", "nextUserMessage"]] as const) {
+      commandRegistry.register({
+        id,
+        label: () => tGlobal(`commands.${key}.label`),
+        description: () => tGlobal(`commands.${key}.description`),
+        category: "Session",
+        keywords: () => splitKeywords(`commands.${key}.keywords`),
+        shortcutId: id,
+        disabled: () => {
+          const sessionId = activeSessionIdForInstance()
+          return !activeInstance() || !sessionId || sessionId === "info"
+        },
+        action: () => {
+          const instance = activeInstance()
+          const sessionId = activeSessionIdForInstance()
+          if (instance && sessionId && sessionId !== "info") requestUserMessageJump({ instanceId: instance.id, sessionId, direction })
+        },
+      })
+    }
 
     commandRegistry.register({
       id: "compact",

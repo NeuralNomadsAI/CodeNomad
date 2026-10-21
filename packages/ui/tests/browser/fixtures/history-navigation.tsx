@@ -17,6 +17,7 @@ import { historyWindowCursor } from "../../../src/stores/history-window"
 import { createSessionOutline, captureSessionOutlineIndexes, seedSessionOutlineIndexes } from "../../../src/stores/session-outline"
 import { encodeClientSnapshotV2, decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
 import { navigationMessage, navigationMessageId, mixedNavigationMessage, deepNavigationMessage } from "./history-navigation-data"
+import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
 const instanceId = "navigation", sessionId = "s", count = 1500
@@ -85,6 +86,7 @@ if (savedIndexes) {
   const tab = decoded?.session?.tabs[0]
   if (tab?.kind === "workspace") seedSessionOutlineIndexes(instanceId, tab.outlineIndexes)
 }
+if (location.search.includes("hiddenTimeline")) await applyUiSettings({ locale: "en", showMessageTimeline: false })
 const [visible, setVisible] = createSignal(true)
 const store = messageStoreBus.getOrCreate(instanceId)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}>

@@ -68,6 +68,13 @@ export const commandMessages = {
   "commands.previousSession.description": "Cambiar a la pestaña de sesión anterior",
   "commands.previousSession.keywords": "cambiar, navegar",
 
+  "commands.previousUserMessage.label": "Mensaje de usuario anterior",
+  "commands.previousUserMessage.description": "Ir al mensaje anterior que enviaste en esta conversación",
+  "commands.previousUserMessage.keywords": "saltar, ir, prompt, navegar, mensaje de usuario",
+  "commands.nextUserMessage.label": "Siguiente mensaje de usuario",
+  "commands.nextUserMessage.description": "Ir al siguiente mensaje que enviaste en esta conversación",
+  "commands.nextUserMessage.keywords": "saltar, ir, prompt, navegar, mensaje de usuario",
+
   "commands.compactSession.label": "Compactar sesión",
   "commands.compactSession.description": "Resumir y compactar la sesión actual",
   "commands.compactSession.keywords": "resumir, comprimir",

@@ -32,6 +32,7 @@ import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
+import { JUMP_USER_MESSAGE_EVENT, findUserMessageJumpTarget, keyAllowsUserMessageJump, type JumpUserMessageDetail, type UserMessageJumpDirection } from "./user-message-navigation"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
 import type { SearchRevealRequest } from "./search-highlights"
@@ -366,8 +367,10 @@ export default function MessageSection(props: MessageSectionProps) {
       return segments
     })
   })
+  // Jumping between user messages needs the same structural index, timeline shown or not.
+  const [outlineDemanded, setOutlineDemanded] = createSignal(false)
   const outline = createSessionOutline({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
-    active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && showMessageTimelinePreference() })
+    active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && (showMessageTimelinePreference() || outlineDemanded()) })
   const projectSessionOutline = createSessionOutlineProjection()
   const timelineSegments = createMemo(() => {
     const boundary = sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID
@@ -799,11 +802,20 @@ export default function MessageSection(props: MessageSectionProps) {
     else if (match === previous || !messageIds().includes(match.messageId)) navigateToMessage(match.messageId, match.id)
   }
 
+  // The list cannot raise a message near the end to its top, so the last jump's
+  // target, while loading or shown, stays the reference until another navigation
+  // or a scroll gesture.
+  let userMessageJumpTarget: string | null = null
+  // A jump that finds nothing resident waits for the index it requested.
+  let deferredUserMessageJump: UserMessageJumpDirection | null = null
+
   /**
    * Places a message at the top, first paging in its history window when it is
    * not resident. A search navigation then reveals its occurrence once.
    */
   function navigateToMessage(messageId: string, searchMatchId?: string) {
+    userMessageJumpTarget = null
+    deferredUserMessageJump = null
     if (messageIds().includes(messageId)) placeResidentMessage(messageId, searchMatchId)
     else void pageWindow("around", api => placeMessage(api, messageId, searchMatchId), messageId)
   }
@@ -827,6 +839,35 @@ export default function MessageSection(props: MessageSectionProps) {
   function claimSearchReveal() {
     const reveal = untrack(searchReveal)
     if (reveal) reveal.claimed = true
+  }
+
+  function jumpToUserMessage(direction: UserMessageJumpDirection) {
+    const api = listApi()
+    if (!api || !isActive()) return
+    setOutlineDemanded(true)
+    const pending = userMessageJumpTarget
+    const current = pending && (navigation().kind === "paging" || isMessageRowShown(pending))
+      ? pending
+      : api.captureScrollSnapshot()?.anchorKey ?? listState()?.activeKey() ?? null
+    const segments = timelineSegments()
+    const target = findUserMessageJumpTarget({ markers: segments, resident: visibleMessageIds(), current, direction })
+    if (!target) {
+      if (current !== pending) userMessageJumpTarget = null
+      deferredUserMessageJump = props.onLoadMessageAnchor && outline.entries().length === 0 ? direction : null
+      return
+    }
+    const segment = segments.find(segment => segment.messageId === target && segment.type === "user")
+    if (segment) setActiveSegmentId(segment.id)
+    navigateToMessage(target)
+    userMessageJumpTarget = target
+  }
+
+  function isMessageRowShown(messageId: string) {
+    const scroller = streamElement()
+    const row = scroller?.querySelector(`[data-virtual-follow-key="${CSS.escape(messageId)}"]`)
+    if (!scroller || !row) return false
+    const view = scroller.getBoundingClientRect(), rect = row.getBoundingClientRect()
+    return rect.bottom > view.top && rect.top < view.bottom
   }
 
   function isSelectionWithinStream(range: Range | null) {
@@ -1220,6 +1261,39 @@ export default function MessageSection(props: MessageSectionProps) {
     onCleanup(() => window.removeEventListener(OPEN_SESSION_SEARCH_EVENT, handleOpenSearch))
   })
 
+  createEffect(() => {
+    if (typeof document === "undefined") return
+    // Capture: the stream reads arrow keys as a scroll gesture, which would
+    // supersede the jump it is about to receive.
+    const handleJumpKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !isActive()) return
+      const direction = matchesHotkey("user-message-prev", event) ? "previous"
+        : matchesHotkey("user-message-next", event) ? "next" : null
+      if (!direction || !keyAllowsUserMessageJump(event)) return
+      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      event.preventDefault()
+      if (!event.repeat) jumpToUserMessage(direction)
+    }
+    const handleJumpRequest = (event: Event) => {
+      const detail = (event as CustomEvent<JumpUserMessageDetail>).detail
+      if (detail?.instanceId === props.instanceId && detail.sessionId === props.sessionId) jumpToUserMessage(detail.direction)
+    }
+    document.addEventListener("keydown", handleJumpKey, true)
+    window.addEventListener(JUMP_USER_MESSAGE_EVENT, handleJumpRequest)
+    onCleanup(() => {
+      document.removeEventListener("keydown", handleJumpKey, true)
+      window.removeEventListener(JUMP_USER_MESSAGE_EVENT, handleJumpRequest)
+    })
+  })
+
+  createEffect(on(() => outline.entries().length > 0, (indexed) => {
+    const direction = deferredUserMessageJump
+    if (!indexed || !direction) return
+    deferredUserMessageJump = null
+    jumpToUserMessage(direction)
+  }, { defer: true }))
+  createEffect(() => { if (outline.error()) deferredUserMessageJump = null })
+
   onCleanup(() => {
     setIsSearchOpen(false)
     timelineSegmentCache.clear()
@@ -1283,6 +1357,8 @@ export default function MessageSection(props: MessageSectionProps) {
           onScrollIntent={(direction) => {
             setRevealActiveToken(value => value + 1)
             claimSearchReveal()
+            userMessageJumpTarget = null
+            deferredUserMessageJump = null
             // An opposite directional gesture supersedes pending history paging
             // before it can position; taps and the requesting gesture do not.
             const nav = navigation()

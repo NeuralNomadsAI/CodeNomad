@@ -68,6 +68,13 @@ export const commandMessages = {
   "commands.previousSession.description": "前のセッションタブへ切り替え",
   "commands.previousSession.keywords": "切り替え, 移動, switch, navigate",
 
+  "commands.previousUserMessage.label": "前のユーザーメッセージ",
+  "commands.previousUserMessage.description": "この会話で送信した前のメッセージへ移動",
+  "commands.previousUserMessage.keywords": "移動, ジャンプ, プロンプト, jump, prompt, navigate",
+  "commands.nextUserMessage.label": "次のユーザーメッセージ",
+  "commands.nextUserMessage.description": "この会話で送信した次のメッセージへ移動",
+  "commands.nextUserMessage.keywords": "移動, ジャンプ, プロンプト, jump, prompt, navigate",
+
   "commands.compactSession.label": "セッションをコンパクト化",
   "commands.compactSession.description": "現在のセッションを要約して圧縮",
   "commands.compactSession.keywords": "要約, 圧縮, summarize, compress",

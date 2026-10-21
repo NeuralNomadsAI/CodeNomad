@@ -33,6 +33,8 @@ export const hotkeyMessages = {
   "hotkeys.action.session-tab": "Вкладка сеанса {index}",
   "hotkeys.action.browse-folder": "Выбрать папку",
   "hotkeys.action.session-search": "Поиск по истории сеанса",
+  "hotkeys.action.user-message-prev": "К предыдущему сообщению пользователя",
+  "hotkeys.action.user-message-next": "К следующему сообщению пользователя",
   "hotkeys.action.search-next-result": "Следующий результат поиска",
   "hotkeys.action.search-prev-result": "Предыдущий результат поиска",
   "hotkeys.action.session-background": "Перенести блокирующие инструменты в фон",

@@ -33,6 +33,8 @@ export const hotkeyMessages = {
   "hotkeys.action.session-tab": "सत्र ट्याब {index}",
   "hotkeys.action.browse-folder": "फोल्डर खोज्नुहोस्",
   "hotkeys.action.session-search": "सत्र इतिहास खोज्नुहोस्",
+  "hotkeys.action.user-message-prev": "अघिल्लो प्रयोगकर्ता सन्देशमा जानुहोस्",
+  "hotkeys.action.user-message-next": "अर्को प्रयोगकर्ता सन्देशमा जानुहोस्",
   "hotkeys.action.search-next-result": "अर्को खोज नतिजा",
   "hotkeys.action.search-prev-result": "अघिल्लो खोज नतिजा",
   "hotkeys.action.session-background": "अवरुद्ध गर्ने उपकरणहरू पृष्ठभूमिमा सार्नुहोस्",

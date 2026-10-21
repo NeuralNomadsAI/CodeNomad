@@ -33,6 +33,8 @@ export const hotkeyMessages = {
   "hotkeys.action.session-tab": "לשונית שיחה {index}",
   "hotkeys.action.browse-folder": "בחירת תיקייה",
   "hotkeys.action.session-search": "חיפוש בהיסטוריית השיחה",
+  "hotkeys.action.user-message-prev": "מעבר להודעת המשתמש הקודמת",
+  "hotkeys.action.user-message-next": "מעבר להודעת המשתמש הבאה",
   "hotkeys.action.search-next-result": "תוצאת החיפוש הבאה",
   "hotkeys.action.search-prev-result": "תוצאת החיפוש הקודמת",
   "hotkeys.action.session-background": "העברת כלים חוסמים לרקע",

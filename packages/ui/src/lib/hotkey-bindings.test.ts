@@ -23,7 +23,7 @@ describe("hotkey catalog and effective bindings", () => {
   })
 
   it("includes bound and initially unbound actions without app registration or duplicate aliases", () => {
-    assert.equal(hotkeyDefinitions.length, 72)
+    assert.equal(hotkeyDefinitions.length, 74)
     assert.equal(new Set(hotkeyDefinitions.map(item => item.id)).size, hotkeyDefinitions.length)
     for (const { id, labelKey } of hotkeyDefinitions) {
       assert.ok(labelKey)

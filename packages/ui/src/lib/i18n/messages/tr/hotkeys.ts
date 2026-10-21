@@ -33,6 +33,8 @@ export const hotkeyMessages = {
   "hotkeys.action.session-tab": "Oturum sekmesi {index}",
   "hotkeys.action.browse-folder": "Klasör seç",
   "hotkeys.action.session-search": "Oturum geçmişinde ara",
+  "hotkeys.action.user-message-prev": "Önceki kullanıcı mesajına git",
+  "hotkeys.action.user-message-next": "Sonraki kullanıcı mesajına git",
   "hotkeys.action.search-next-result": "Sonraki arama sonucu",
   "hotkeys.action.search-prev-result": "Önceki arama sonucu",
   "hotkeys.action.session-background": "Engelleyen araçları arka plana taşı",

@@ -1,6 +1,6 @@
 # Custom keyboard shortcuts
 
-Settings → Keyboard shortcuts manages the 72 renderer actions in
+Settings → Keyboard shortcuts manages the 74 renderer actions in
 `packages/ui/src/lib/hotkey-definitions.ts`, without mounting the app first.
 The 23 initially unbound palette commands appear with “No shortcut” and reuse
 their existing translated names. Existing aliases (such as `new-session` →
@@ -22,6 +22,18 @@ footers. Manager controls keep square, token-based styling.
 keyboard registry and calls the palette's real action, respecting its disabled
 state, active project/session, modal and selector guards. Key repeat does not
 repeat these commands. Global commands also work on the home view.
+
+Jump to previous/next user message (`user-message-prev`/`-next`, default
+Shift+↑/↓) is handled by the active conversation's `MessageSection` in the
+capture phase, before the transcript reads arrow keys as a scroll gesture;
+the palette commands reach it through `JUMP_USER_MESSAGE_EVENT`. Text fields,
+arrow-key widgets, IME composition and modal dialogs keep the keystroke, and
+key repeat does not repeat the jump. Targets come from the timeline's markers,
+including indexed history beyond the resident window: the jump requests that
+index even while the timeline is hidden, and a jump that finds nothing
+resident before it arrives runs once it does. The last target remains the
+reference while it is loading or shown, because the list cannot raise a
+message near the end to its top; a scroll gesture or other navigation ends it.
 
 Digit-row and bracket shortcuts share one physical identity for recording,
 dispatch and conflicts (`Digit1` → `1`, `BracketLeft` → `[`), including AZERTY

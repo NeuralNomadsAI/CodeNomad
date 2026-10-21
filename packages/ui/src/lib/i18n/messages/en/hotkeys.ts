@@ -33,6 +33,8 @@ export const hotkeyMessages = {
   "hotkeys.action.session-tab": "Session tab {index}",
   "hotkeys.action.browse-folder": "Browse for a folder",
   "hotkeys.action.session-search": "Search session history",
+  "hotkeys.action.user-message-prev": "Jump to previous user message",
+  "hotkeys.action.user-message-next": "Jump to next user message",
   "hotkeys.action.search-next-result": "Next search result",
   "hotkeys.action.search-prev-result": "Previous search result",
   "hotkeys.action.session-background": "Move blocking tools to background",

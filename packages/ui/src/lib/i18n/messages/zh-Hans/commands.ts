@@ -68,6 +68,13 @@ export const commandMessages = {
   "commands.previousSession.description": "切换到上一个会话标签页",
   "commands.previousSession.keywords": "switch, navigate, 切换, 导航",
 
+  "commands.previousUserMessage.label": "上一条用户消息",
+  "commands.previousUserMessage.description": "跳到你在此对话中发送的上一条消息",
+  "commands.previousUserMessage.keywords": "jump, prompt, navigate, 跳转, 导航, 用户消息",
+  "commands.nextUserMessage.label": "下一条用户消息",
+  "commands.nextUserMessage.description": "跳到你在此对话中发送的下一条消息",
+  "commands.nextUserMessage.keywords": "jump, prompt, navigate, 跳转, 导航, 用户消息",
+
   "commands.compactSession.label": "压缩会话",
   "commands.compactSession.description": "总结并压缩当前会话",
   "commands.compactSession.keywords": "summarize, compress, 总结, 压缩",

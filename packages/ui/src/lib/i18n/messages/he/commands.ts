@@ -68,6 +68,13 @@ export const commandMessages = {
   "commands.previousSession.description": "עבור לסשן הקודם",
   "commands.previousSession.keywords": "החלף, נווט",
 
+  "commands.previousUserMessage.label": "הודעת משתמש קודמת",
+  "commands.previousUserMessage.description": "מעבר להודעה הקודמת ששלחת בשיחה זו",
+  "commands.previousUserMessage.keywords": "קפוץ, נווט, הנחיה, הודעת משתמש",
+  "commands.nextUserMessage.label": "הודעת משתמש הבאה",
+  "commands.nextUserMessage.description": "מעבר להודעה הבאה ששלחת בשיחה זו",
+  "commands.nextUserMessage.keywords": "קפוץ, נווט, הנחיה, הודעת משתמש",
+
   "commands.compactSession.label": "סכם סשן",
   "commands.compactSession.description": "סכם ודחוס את הסשן הנוכחי",
   "commands.compactSession.keywords": "סיכום, דחיסה",

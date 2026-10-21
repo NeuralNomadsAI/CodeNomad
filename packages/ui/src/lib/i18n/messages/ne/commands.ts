@@ -68,6 +68,13 @@ export const commandMessages = {
   "commands.previousSession.description": "अघिल्लो सत्र ट्याबमा फर्कनुहोस्",
   "commands.previousSession.keywords": "परिवर्तन, नेभिगेट",
 
+  "commands.previousUserMessage.label": "अघिल्लो प्रयोगकर्ता सन्देश",
+  "commands.previousUserMessage.description": "यो वार्तालापमा तपाईंले पठाएको अघिल्लो सन्देशमा जानुहोस्",
+  "commands.previousUserMessage.keywords": "जानुहोस्, नेभिगेट, प्रम्प्ट, प्रयोगकर्ता सन्देश",
+  "commands.nextUserMessage.label": "अर्को प्रयोगकर्ता सन्देश",
+  "commands.nextUserMessage.description": "यो वार्तालापमा तपाईंले पठाएको अर्को सन्देशमा जानुहोस्",
+  "commands.nextUserMessage.keywords": "जानुहोस्, नेभिगेट, प्रम्प्ट, प्रयोगकर्ता सन्देश",
+
   "commands.compactSession.label": "सत्र संक्षिप्त गर्नुहोस्",
   "commands.compactSession.description": "हालको सत्रलाई संक्षेप र संक्षिप्त गर्नुहोस्",
   "commands.compactSession.keywords": "संक्षेप, संक्षिप्त",

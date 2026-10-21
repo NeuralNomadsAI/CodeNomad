@@ -68,6 +68,13 @@ export const commandMessages = {
   "commands.previousSession.description": "Переключиться на предыдущую вкладку сессии",
   "commands.previousSession.keywords": "переключить, навигация",
 
+  "commands.previousUserMessage.label": "Предыдущее сообщение пользователя",
+  "commands.previousUserMessage.description": "Перейти к предыдущему сообщению, которое вы отправили в этом разговоре",
+  "commands.previousUserMessage.keywords": "перейти, навигация, запрос, сообщение пользователя",
+  "commands.nextUserMessage.label": "Следующее сообщение пользователя",
+  "commands.nextUserMessage.description": "Перейти к следующему сообщению, которое вы отправили в этом разговоре",
+  "commands.nextUserMessage.keywords": "перейти, навигация, запрос, сообщение пользователя",
+
   "commands.compactSession.label": "Компактировать сессию",
   "commands.compactSession.description": "Суммировать и компактировать текущую сессию",
   "commands.compactSession.keywords": "суммировать, сжать",

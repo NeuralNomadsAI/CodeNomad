@@ -6,7 +6,7 @@
 2. Geben Sie einen Aktionsnamen ein. Die Palette enthält Anwendungsaktionen und benutzerdefinierte Befehle der aktuellen Location; Verfügbarkeit hängt von der aktiven Ansicht ab.
 3. Führen Sie **Hilfe öffnen** aus, um diese Anleitung in der aktuellen Oberflächensprache in einem externen Browserkontext zu öffnen. Natives **Hilfe → CodeNomad-Hilfe** öffnet dieselbe Anleitung.
 
-Hilfe lässt Anwendungsansicht und Entwurf unangetastet. Scheitert das Öffnen, besuchen Sie [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) direkt. Ein auffindbarer Befehl hat nicht zwangsläufig ein anpassbares Tastenkürzel: Die Verwaltung umfasst einen festen Katalog von 72 Renderer-Aktionen, nicht jede Palette- oder native Menüaktion. Er enthält Palettenbefehle wie **Sitzung komprimieren**, **Letzte Nachricht rückgängig machen** oder **Hilfe öffnen**, die mit **Kein Tastenkürzel** beginnen; Aktionen für Projektordner, Terminal und Editor laufen nur in lokalen Desktop-Fenstern.
+Hilfe lässt Anwendungsansicht und Entwurf unangetastet. Scheitert das Öffnen, besuchen Sie [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) direkt. Ein auffindbarer Befehl hat nicht zwangsläufig ein anpassbares Tastenkürzel: Die Verwaltung umfasst einen festen Katalog von 74 Renderer-Aktionen, nicht jede Palette- oder native Menüaktion. Er enthält Palettenbefehle wie **Sitzung komprimieren**, **Letzte Nachricht rückgängig machen** oder **Hilfe öffnen**, die mit **Kein Tastenkürzel** beginnen; Aktionen für Projektordner, Terminal und Editor laufen nur in lokalen Desktop-Fenstern.
 
 ## Aufzeichnen, deaktivieren und zurücksetzen {#customize}
 
@@ -37,6 +37,7 @@ Schlägt Speichern fehl, behalten Sie das alte Kürzel verfügbar und prüfen Si
 | Sitzungs-Tab 1–9 | `Mod+Shift+1` bis `Mod+Shift+9` |
 | Instanz-Info | `Mod+Shift+L` |
 | Sitzungsverlauf durchsuchen | `Mod+F` |
+| Vorherige / nächste Benutzernachricht (Unterhaltung, außerhalb von Textfeldern) | `Shift+ArrowUp` / `Shift+ArrowDown` |
 | Nächstes / vorheriges Suchergebnis (Suche fokussiert) | `Enter` / `Shift+Enter` |
 | Eingabe fokussieren / leeren | `Mod+P` / `Mod+K` |
 | Modell- / Agentenauswahl öffnen | `Mod+Shift+M` / `Mod+Shift+A` |

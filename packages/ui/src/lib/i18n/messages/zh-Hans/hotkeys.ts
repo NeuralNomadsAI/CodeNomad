@@ -33,6 +33,8 @@ export const hotkeyMessages = {
   "hotkeys.action.session-tab": "会话标签页 {index}",
   "hotkeys.action.browse-folder": "浏览文件夹",
   "hotkeys.action.session-search": "搜索会话历史",
+  "hotkeys.action.user-message-prev": "跳到上一条用户消息",
+  "hotkeys.action.user-message-next": "跳到下一条用户消息",
   "hotkeys.action.search-next-result": "下一个搜索结果",
   "hotkeys.action.search-prev-result": "上一个搜索结果",
   "hotkeys.action.session-background": "将阻塞工具移至后台",
