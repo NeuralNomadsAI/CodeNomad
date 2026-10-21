@@ -12,7 +12,7 @@ import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
 import {
   boundedTranscript, eventAffectsMessages, eventMayAppendMessage, eventSessionId,
-  isActiveTranscriptMessage, MAX_TRANSCRIPT_MESSAGES,
+  MAX_TRANSCRIPT_MESSAGES,
 } from "./opencode-data-events"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
 
@@ -456,11 +456,13 @@ async function resyncAuthoritativeTranscript(
     transcript.onResynced?.(fresh.data)
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== fresh) return
     if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
-    if (transcript.retireWhenDrained
-      && fresh.data.session.message.list(sessionId).some(isActiveTranscriptMessage)) {
-      // The authoritative snapshot recovered an execution whose start event
-      // was never admitted (e.g. it fell inside a disconnect window); live
-      // activity outranks a settlement carried across the resync.
+    if (transcript.retireWhenDrained && fresh.data.session.status(sessionId) === "running") {
+      // Native session activity is the evidence that an execution newer than
+      // the carried settlement is live (its start event was never admitted,
+      // e.g. it fell inside a disconnect window); it outranks the settlement.
+      // Unfinished history in the page — an old running shell or an assistant
+      // a failure left incomplete — only delays retirement, exactly as
+      // isUnsettledAtSettlement already does.
       transcript.retireWhenDrained = false
     }
     resumeRotationAfterResync(instanceId, sessionId, transcript)

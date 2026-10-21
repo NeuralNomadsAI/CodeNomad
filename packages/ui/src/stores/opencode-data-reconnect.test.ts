@@ -7,7 +7,7 @@ import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import {
-  applyOpenCodeDataEvent, destroyOpenCodeData, invalidateOpenCodeSessionContent,
+  applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, invalidateOpenCodeSessionContent,
   type OpenCodeDataEventAdmission,
 } from "./opencode-data.ts"
 import { setActiveSession, setSessions } from "./session-state.ts"
@@ -48,12 +48,13 @@ interface ControlledList {
 function fixture(instanceId: string, dispatcher = false) {
   const make = eventFactory()
   let rawSequence = 0
+  let activeSessions: Record<string, unknown> = {}
   const nativeSession = {
     id: sessionId, title: "Reconnect", projectID: "prj_fixture", location: { directory: "/fixture" },
     time: { created: 1, updated: 1 }, cost: 0, tokens,
   }
   const client: any = {
-    session: { active: async () => ({}), get: async () => nativeSession,
+    session: { active: async () => activeSessions, get: async () => nativeSession,
       inbox: { list: async () => [] }, form: { list: async () => [] } },
     permission: { list: async () => [] },
     message: { list: async () => ({ data: [], cursor: {} }) },
@@ -106,15 +107,21 @@ function fixture(instanceId: string, dispatcher = false) {
   return {
     instanceId, make, apply, client, store, data: () => data,
     controlledList, authoritativePage, authoritativeText,
+    /** Mark the session as natively running for the resync's activity read. */
+    setActiveRunning: (running: boolean) => {
+      activeSessions = running ? { [sessionId]: { since: 1 } } : {}
+    },
     dispatch: (type: string, payload: Record<string, unknown> = {}) => handleInstanceInvalidation(instanceId, make(type, payload)),
     /** Apply an event without manifest validation (payloads the schema pins
-     * to full runtime shapes, e.g. shell info). */
+     * to full runtime shapes, e.g. shell info), with the production finish. */
     raw: (type: string, payload: Record<string, unknown> = {}) => {
       const event = {
         id: `evt_raw_${rawSequence++}`, type, created: 9000 + rawSequence,
         location: { directory: "/fixture" }, data: { sessionID: sessionId, ...payload },
       } as OpenCodeEvent
-      return applyOpenCodeDataEvent(instanceId, "/fixture", event)
+      const result = applyOpenCodeDataEvent(instanceId, "/fixture", event)
+      finishOpenCodeDataEvent(instanceId, event)
+      return result
     },
     start: (publication?: Publication) => apply("session.step.started", {
       assistantMessageID: "msg_live", agent: "build", model, started: 500,
@@ -340,6 +347,9 @@ test("a recovered active execution outranks the carried settlement", async ctx =
     // deferred on live work.
     f.raw("session.shell.started", { shell })
     f.dispatch("session.execution.succeeded")
+    // The daemon reports the session running: the evidence for an execution
+    // newer than the carried settlement.
+    f.setActiveRunning(true)
 
     f.dispatch("server.connected", { daemon: "daemon-a" })
     await microtasks()
@@ -365,6 +375,90 @@ test("a recovered active execution outranks the carried settlement", async ctx =
       await microtasks()
     }
     assert.equal(f.storeGapText(), "running after gap more", "live deltas keep streaming after the recovery")
+  } finally { f.cleanup() }
+})
+
+test("an old running shell delays carried retirement instead of cancelling it", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("reconnect-old-shell-retires", true)
+  const shell = { id: "sh_old", command: "sleep 5", status: "running", cwd: "/fixture", metadata: {} }
+  try {
+    f.start()
+    f.dispatch("session.reasoning.started", live)
+    await converge(ctx, () => typeof f.storeText() === "string")
+    f.raw("session.shell.started", { shell })
+    f.dispatch("session.execution.succeeded")
+
+    // The reconnect snapshot still contains the pre-settlement running shell,
+    // but the daemon reports the session idle: unfinished history must delay
+    // retirement, not cancel it.
+    f.setActiveRunning(false)
+    f.dispatch("server.connected", { daemon: "daemon-a" })
+    await microtasks()
+    const control = f.controlledList(() => [
+      {
+        id: "msg_live", type: "assistant", agent: "build", model,
+        content: [{ type: "reasoning", text: "before" }], time: { created: 500, completed: 501 },
+      },
+      { id: "sh_old", type: "shell", shellID: "sh_old", command: "sleep 5", status: "running", time: { created: 502 } },
+    ])
+    for (let index = 0; index < 200 && !control.calls; index++) {
+      ctx.mock.timers.tick(1000)
+      await microtasks()
+    }
+    control.settle()
+    // Let the resync chain complete before any polling event can defer it.
+    for (let drain = 0; drain < 5; drain++) { ctx.mock.timers.tick(0); await microtasks() }
+
+    // The shell finishes: the deferred retirement completes and the reducer
+    // is released.
+    f.raw("session.shell.ended", { shell: { ...shell, status: "exited", exit: 0 }, output: { output: "done" } })
+    let released = false
+    for (let index = 0; index < 200 && !released; index++) {
+      f.apply("session.usage.updated", { cost: 0, tokens })
+      released = (f.data().session.message.list(sessionId) as unknown[]).length === 0
+      ctx.mock.timers.tick(0)
+      await microtasks()
+    }
+    assert.ok(released, "an idle session with only old unfinished work still retires after the shell ends")
+  } finally { f.cleanup() }
+})
+
+test("an incomplete assistant after a failed execution does not cancel deferred retirement", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("reconnect-failed-assistant-retires", true)
+  try {
+    f.start()
+    f.dispatch("session.reasoning.started", live)
+    await converge(ctx, () => typeof f.storeText() === "string")
+    // The reconnect arms its reconciliation first; the failure settles while
+    // that work is pending, so the deferred retirement survives to the resync.
+    f.setActiveRunning(false)
+    f.dispatch("server.connected", { daemon: "daemon-a" })
+    await microtasks()
+    f.dispatch("session.execution.failed", { error: { type: "fixture", message: "failed" } })
+
+    const control = f.controlledList(() => [
+      {
+        id: "msg_live", type: "assistant", agent: "build", model,
+        content: [{ type: "reasoning", text: "partial" }], time: { created: 500 },
+      },
+    ])
+    for (let index = 0; index < 200 && !control.calls; index++) {
+      ctx.mock.timers.tick(1000)
+      await microtasks()
+    }
+    control.settle()
+    // Let the resync chain complete before any polling event can defer it.
+    for (let drain = 0; drain < 5; drain++) { ctx.mock.timers.tick(0); await microtasks() }
+    let released = false
+    for (let index = 0; index < 200 && !released; index++) {
+      f.apply("session.usage.updated", { cost: 0, tokens })
+      released = (f.data().session.message.list(sessionId) as unknown[]).length === 0
+      ctx.mock.timers.tick(0)
+      await microtasks()
+    }
+    assert.ok(released, "an idle session whose page holds an incomplete assistant still retires")
   } finally { f.cleanup() }
 })
 
