@@ -18,7 +18,8 @@ const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<s
 
 const worktreeRequests = new Map<string, Promise<void>>()
 const pendingWorktreeRefreshes = new Set<string>()
-const freshWorktreeRefreshes = new Set<string>()
+const freshWorktreeRequests = new Map<string, Promise<void>>()
+const worktreeReads = new Map<string, Promise<void>>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
 const unreconciledFamilyMoves = new Map<string, { instanceId: string; directories: string[]; settled: boolean; request: Promise<void> }>()
@@ -28,71 +29,82 @@ const defaultDirectories = new Map<string, string>()
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
 async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh = false): Promise<void> {
-  if (fresh) freshWorktreeRefreshes.add(instanceId)
-  const existing = worktreeRequests.get(instanceId)
+  const requests = fresh ? freshWorktreeRequests : worktreeRequests
+  const existing = requests.get(instanceId)
   if (existing) {
-    if (!initial) pendingWorktreeRefreshes.add(instanceId)
+    if (!initial && !fresh) pendingWorktreeRefreshes.add(instanceId)
     return existing
   }
-  const load = async (initialRead: boolean, freshRead: boolean) => {
-    try {
-      const response = await prioritizedRead(
-        () => activeInstanceId() === instanceId,
-        new AbortController().signal,
-        () => serverApi.fetchWorktrees(instanceId, freshRead),
-      )
-      if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
-      else defaultDirectories.delete(instanceId)
-      setWorktreesByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, response.worktrees ?? [])
-        return next
-      })
+  const load = (initialRead: boolean) => {
+    // Display and required-fresh callers have independent outcomes, but every
+    // read/publication shares one lane. An older cached response cannot land last.
+    const previous = worktreeReads.get(instanceId)
+    const read = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+      try {
+        const response = await prioritizedRead(
+          () => activeInstanceId() === instanceId,
+          new AbortController().signal,
+          () => serverApi.fetchWorktrees(instanceId, fresh),
+        )
+        if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
+        else defaultDirectories.delete(instanceId)
+        setWorktreesByInstance((prev) => {
+          const next = new Map(prev)
+          next.set(instanceId, response.worktrees ?? [])
+          return next
+        })
 
-      setGitRepoStatusByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
-        return next
-      })
-    } catch (error) {
-      log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
-      if (!initialRead || freshRead) throw error
+        setGitRepoStatusByInstance((prev) => {
+          const next = new Map(prev)
+          next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
+          return next
+        })
+      } catch (error) {
+        log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
+        if (!initialRead || fresh) throw error
+        // A fresh read may have published while this initial display read waited.
+        if (worktreesByInstance().has(instanceId)) return
 
-      setWorktreesByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, [])
-        return next
-      })
+        setWorktreesByInstance((prev) => {
+          const next = new Map(prev)
+          next.set(instanceId, [])
+          return next
+        })
 
-      // Preserve any previous value; if unknown, keep it unknown.
-      setGitRepoStatusByInstance((prev) => {
-        if (prev.has(instanceId)) return prev
-        const next = new Map(prev)
-        next.set(instanceId, null)
-        return next
-      })
-    }
+        // Preserve any previous value; if unknown, keep it unknown.
+        setGitRepoStatusByInstance((prev) => {
+          if (prev.has(instanceId)) return prev
+          const next = new Map(prev)
+          next.set(instanceId, null)
+          return next
+        })
+      }
+    })
+    worktreeReads.set(instanceId, read)
+    return read.finally(() => {
+      if (worktreeReads.get(instanceId) === read) worktreeReads.delete(instanceId)
+    })
   }
   // Like the provider/model catalogue, retain one in-flight read and one dirty
-  // bit. A burst requests one trailing read, not an unbounded HTTP queue.
+  // bit for display demand. Concurrent fresh callers share only their fresh read;
+  // its failure must neither satisfy fresh recovery nor discard display demand.
   const task = Promise.resolve().then(async () => {
     let initialRead = initial
     do {
-      pendingWorktreeRefreshes.delete(instanceId)
-      const freshRead = freshWorktreeRefreshes.delete(instanceId)
+      if (!fresh) pendingWorktreeRefreshes.delete(instanceId)
       try {
-        await load(initialRead, freshRead)
+        await load(initialRead)
       } catch (error) {
-        if (freshRead || !pendingWorktreeRefreshes.has(instanceId)) throw error
+        if (fresh || !pendingWorktreeRefreshes.has(instanceId)) throw error
       }
       initialRead = false
-    } while (pendingWorktreeRefreshes.has(instanceId))
+    } while (!fresh && pendingWorktreeRefreshes.has(instanceId))
   })
 
-  worktreeRequests.set(instanceId, task)
+  requests.set(instanceId, task)
   await task.finally(() => {
-    if (worktreeRequests.get(instanceId) === task) {
-      worktreeRequests.delete(instanceId)
+    if (requests.get(instanceId) === task) {
+      requests.delete(instanceId)
     }
   })
 }
@@ -120,7 +132,7 @@ serverEvents.on("workspace.worktreesChanged", (event) => {
   const id = event.workspaceId
   // Refresh consumers that already requested this inventory. Queue behind an
   // older HTTP response so it cannot overwrite the completed background scan.
-  if (!worktreesByInstance().has(id) && !worktreeRequests.has(id)) return
+  if (!worktreesByInstance().has(id) && !worktreeRequests.has(id) && !freshWorktreeRequests.has(id)) return
   void reloadWorktrees(id).catch(error => log.warn("Failed to receive refreshed worktrees", { instanceId: id, error }))
 })
 
