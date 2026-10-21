@@ -442,7 +442,8 @@ function ToolCallItem(props: ToolCallItemProps) {
 interface UsageDisplayItem {
   type: "usage"
   key: string
-  messageInfo: MessageInfo
+  /** Absent while the slot waits for the step to settle (or Tokens are hidden). */
+  messageInfo?: MessageInfo
   accentColor?: string
 }
 
@@ -796,12 +797,14 @@ export default function MessageBlock(props: MessageBlockProps) {
 
     // One usage line after every agent message, summed since the previous one,
     // right after its text and before tools this step calls, so the line never
-    // splits those tools from the next steps' technical group.
-    const usageLine = props.usageLine?.()
-    if (usageLine) {
-      const lastContent = items.map((item) => item.type).lastIndexOf("content")
-      items.splice(lastContent < 0 ? items.length : lastContent + 1, 0,
-        { type: "usage", key: `${current.id}:usage`, messageInfo: usageLine.info, accentColor: defaultAccentColor })
+    // splits those tools from the next steps' technical group. The slot exists as
+    // soon as the text does: items render by position (<Index>), so a line that
+    // appears at settlement or with the Tokens filter never shifts or remounts
+    // the tools after it.
+    const lastContent = current.role === "assistant" ? items.map((item) => item.type).lastIndexOf("content") : -1
+    if (lastContent >= 0) {
+      items.splice(lastContent + 1, 0,
+        { type: "usage", key: `${current.id}:usage`, messageInfo: props.usageLine?.()?.info, accentColor: defaultAccentColor })
     }
 
     const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.hiddenCount > 0 }
@@ -1006,12 +1009,16 @@ export default function MessageBlock(props: MessageBlockProps) {
                   </Show>
                 </Match>
                 <Match when={item().type === "usage"}>
-                  <MessageUsage
-                    messageInfo={(item() as UsageDisplayItem).messageInfo}
-                    usageVisibility={props.usageMetricsVisibility()}
-                    borderColor={(item() as UsageDisplayItem).accentColor}
-                    onContentRendered={props.onContentRendered}
-                  />
+                  <Show when={(item() as UsageDisplayItem).messageInfo}>
+                    {(messageInfo) => (
+                      <MessageUsage
+                        messageInfo={messageInfo()}
+                        usageVisibility={props.usageMetricsVisibility()}
+                        borderColor={(item() as UsageDisplayItem).accentColor}
+                        onContentRendered={props.onContentRendered}
+                      />
+                    )}
+                  </Show>
                 </Match>
                 <Match when={item().type === "system"}>
                   <SystemMessage part={(item() as SystemDisplayItem).part} visibility={props.systemMessagesVisibility?.() ?? "hidden"}

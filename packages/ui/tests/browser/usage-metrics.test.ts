@@ -146,6 +146,28 @@ test("message token headers ellipsize at narrow widths and disclose content with
   }
 }))
 
+test("a settling text-then-tool step gains its line without remounting or collapsing its tool", async () => open(async page => {
+  await usageLines(page).first().waitFor()
+  await page.evaluate(() => (window as any).fixture.startToolStep())
+  const tool = page.locator('[data-message-id="msg_live_tool"] .tool-call-message[data-part-id="call_live_tool"]')
+  const toggle = tool.locator(".tool-call-header-toggle")
+  await toggle.waitFor()
+  const expanded = await toggle.getAttribute("aria-expanded")
+  await toggle.click()
+  assert.notEqual(await toggle.getAttribute("aria-expanded"), expanded)
+  await tool.evaluate(element => { (element as HTMLElement).dataset.remountProbe = "kept" })
+  assert.equal(await page.locator('[data-message-id="msg_live_tool"] .message-step-usage-toggle').count(), 0, "no line before the step settles")
+  await page.evaluate(() => (window as any).fixture.endToolStep())
+  await page.locator('[data-message-id="msg_live_tool"] .message-step-usage-toggle').waitFor()
+  assert.deepEqual(await chips(page, "msg_live_tool"), ["Input 500", "Output 7", "Cost $0.00"])
+  assert.equal(await tool.evaluate(element => (element as HTMLElement).dataset.remountProbe), "kept", "the tool row is the same element")
+  assert.notEqual(await toggle.getAttribute("aria-expanded"), expanded, "the user's expansion survives settlement")
+  assert.equal(await page.locator('.message-stream-block[data-message-id="msg_live_tool"]').evaluate(block => {
+    const usage = block.querySelector(".message-step-finish"), toolRow = block.querySelector(".tool-call-message")
+    return Boolean(usage && toolRow && usage.compareDocumentPosition(toolRow) & Node.DOCUMENT_POSITION_FOLLOWING)
+  }), true, "the line sits under the text, before the tool")
+}))
+
 test("a live step gains its usage line when native step settlement reports it", async () => open(async page => {
   await usageLines(page).first().waitFor()
   await page.evaluate(() => (window as any).fixture.startStep())

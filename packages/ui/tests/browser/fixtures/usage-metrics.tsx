@@ -83,4 +83,16 @@ const emit = (type: string, data: Record<string, unknown>) => (sseManager as any
     emit("session.text.ended", { assistantMessageID: "msg_live", text: "Live answer" })
     emit("session.step.ended", { assistantMessageID: "msg_live", finish: "stop", rawFinish: "stop", cost: 0, tokens: usage(4200, 99) })
   },
+  // A live step that writes text and then calls a tool, which settles after the tool ran.
+  startToolStep: () => {
+    emit("session.execution.started", {})
+    emit("session.step.started", { assistantMessageID: "msg_live_tool", agent: "build", model, started: 30 })
+    emit("session.text.started", { assistantMessageID: "msg_live_tool" })
+    emit("session.text.delta", { assistantMessageID: "msg_live_tool", ordinal: 0, delta: "Checking the build" })
+    emit("session.text.ended", { assistantMessageID: "msg_live_tool", text: "Checking the build" })
+    emit("session.tool.input.started", { assistantMessageID: "msg_live_tool", id: "call_live_tool", name: "custom_check" })
+    emit("session.tool.called", { assistantMessageID: "msg_live_tool", id: "call_live_tool", input: { target: "build" } })
+    emit("session.tool.success", { assistantMessageID: "msg_live_tool", id: "call_live_tool", content: [{ type: "text", text: "build ok" }], metadata: {} })
+  },
+  endToolStep: () => emit("session.step.ended", { assistantMessageID: "msg_live_tool", finish: "tool-calls", rawFinish: "tool-calls", cost: 0, tokens: usage(500, 7) }),
 }
