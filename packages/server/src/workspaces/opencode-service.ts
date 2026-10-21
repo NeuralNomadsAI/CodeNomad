@@ -185,8 +185,9 @@ export class OpenCodeSharedService {
     const generation = this.generation
     // Only a different discovered daemon replaces a working connection. A recheck
     // that fails (a slow CLI or status probe past the caller's deadline) or finds
-    // no service is inconclusive: the connection's own failed requests and ended
-    // streams retire it. Keep it and retry at the next interval.
+    // no service is inconclusive: failed location validation, proxy transport or
+    // authentication failures and upstream event-stream EOF/errors retire the
+    // connection. Keep it and retry at the next interval.
     const keepCurrent = () => {
       this.connectionValidatedAt = this.now()
       return current
