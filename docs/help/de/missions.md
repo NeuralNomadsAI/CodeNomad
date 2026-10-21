@@ -10,7 +10,7 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 4. Klappen Sie **Optionen** für **Playbook**, **Notizen**, **Agenten und Modelle**, **Aufgabensitzungen**, gespeicherte Aufträge und optional verfolgte Unterhaltungen auf. Mit **Zwei Modelle vergleichen** erscheinen die Auswahlfelder **Modell A** und **Modell B** im Hauptformular.
 5. Wählen Sie **Erstellen**. Wählen Sie den neuen Eintrag und verwenden Sie bei Bereitschaft die separate ▶-Aktion: **Mission starten** für einmalige Arbeit oder **Zeitplan {id} starten** für einen täglichen Zeitplan.
 
-**Erstellen startet niemals Arbeit.** Eine einmalige Mission ist vorbereitet; ein täglicher Zeitplan pausiert. Weder Erstellen noch das Speichern eines Auftrags aktiviert einen Timer. Die Erstellung gilt für das ausgewählte Projekt/die Location und friert angeforderte Profile sowie die Aufgabensitzungsrichtlinie ein. Validierung steht neben dem betroffenen Feld; eine Verweigerung mit dem Hinweis, dass nichts gesendet wurde, lässt den Entwurf zur Korrektur verfügbar. Ein Koordinator kann auch eine separate Mission für Sie vorbereiten, etwa eine Folgemission: Sie erscheint in der Liste als **Vorbereitet** und startet wie jede Mission nur über ihre ▶-Aktion.
+**Erstellen startet niemals Arbeit.** Eine einmalige Mission ist vorbereitet; ein täglicher Zeitplan pausiert. Weder Erstellen noch das Speichern eines Auftrags aktiviert einen Timer. Die Erstellung gilt für das ausgewählte Projekt/die Location und friert angeforderte Profile sowie die Aufgabensitzungsrichtlinie ein. Validierung steht neben dem betroffenen Feld; eine Verweigerung mit dem Hinweis, dass nichts gesendet wurde, lässt den Entwurf zur Korrektur verfügbar. Der Koordinator einer einmaligen Mission kann auch eine separate Mission für Sie vorbereiten, etwa eine Folgemission: Sie erscheint in der Liste als **Vorbereitet** und startet wie jede Mission nur über ihre ▶-Aktion.
 
 ### Playbooks {#playbooks}
 
@@ -43,7 +43,7 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 | Erledigt | Ein Aufgabenergebnis wurde erfasst; prüfen Sie dessen Belege und verbleibende native Arbeit. |
 | Fehlgeschlagen / Zurückgezogen | Die Aufgabe ist fehlgeschlagen, oder der Koordinator hat sie ersetzt oder aufgegeben. |
 
-Der Graph enthält abgeschlossene und zurückgezogene Arbeit. Eine Aufgabe zurückzuziehen stoppt nicht von selbst deren Unterhaltung; der Koordinator kann die eigenen Unterhaltungen einer zurückgezogenen Aufgabe separat stoppen, ohne andere Aufgaben zu berühren. **In Arbeit** ist der Lebenszykluszustand der Mission, kein Beweis, dass der Koordinator gerade läuft. Vollständiger Text gehört in die zentrale Leseansicht, nicht die Aufgabenliste des Panels; **Technische Details** klappt Kennungen und angeforderte Ausführungsinformationen ein.
+Der Graph enthält abgeschlossene und zurückgezogene Arbeit. Eine Aufgabe zurückzuziehen stoppt nicht von selbst deren Unterhaltung. In einer einmaligen Mission kann der Koordinator die Unterhaltungen einer zurückgezogenen Aufgabe, die er als nativen Subagenten gestartet hat, separat stoppen, ohne andere Aufgaben zu berühren. **In Arbeit** ist der Lebenszykluszustand der Mission, kein Beweis, dass der Koordinator gerade läuft. Vollständiger Text gehört in die zentrale Leseansicht, nicht die Aufgabenliste des Panels; **Technische Details** klappt Kennungen und angeforderte Ausführungsinformationen ein.
 
 ### Lageberichte und Aktualisierungsanfragen {#briefings}
 

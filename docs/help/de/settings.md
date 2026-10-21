@@ -32,7 +32,7 @@ Werden Farben schwer lesbar, wählen Sie eine integrierte Palette oder setzen di
 
 ## Panels und Statusabschnitte {#panels-status}
 
-1. Verwenden Sie **Linke Seitenleiste** und **Rechte Seitenleiste** an den äußeren Kopfecken oder deren Menüpunkte unter **View** zum Ein-/Ausblenden.
+1. Verwenden Sie **Linke Seitenleiste** und **Rechte Seitenleiste** an den äußeren Kopfecken oder deren Menüpunkte unter **Ansicht** zum Ein-/Ausblenden.
 2. Öffnen Sie **Rechtes Panel anpassen** im rechten Panel. Wählen Sie integrierte Tabs und Statusabschnitte per Kontrollkästchen; mindestens ein Statusabschnitt bleibt sichtbar.
 3. Ziehen Sie rechte Panel-Tabs zum Umordnen. **Zurücksetzen** stellt integrierte Layoutauswahlen wieder her.
 
@@ -44,7 +44,7 @@ Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskäst
 
 1. Öffnen Sie **Chat**, um Standarddetails des Verlaufs zu wählen. Vorgaben sind **Nichts**, **Minimal**, **Ausgewogen** und **Alles**; Einzeländerungen erzeugen **Benutzerdefiniert**.
 2. Legen Sie für Denken, Diagnosen, Werkzeugeingaben, Tokens, Systemnachrichten und jeden Werkzeugtyp den **Standardzustand** jeder Zeile fest (**Ausgeblendet**, **Eingeklappt** oder **Erweitert**), oder verwenden Sie das Popup **Nachrichteninhalt** der Unterhaltung, das diese Auswahl teilt.
-3. Aktivieren Sie unter **Allgemein** nach Bedarf **Nachrichten-Timeline anzeigen**, **Diffs von Tool-Aufrufen geteilt anzeigen** und **Gesendete Prompts in die Warteschlange stellen** (Prompts, die während der Arbeit einer Sitzung gesendet werden, einreihen statt sie einzuschieben).
+3. Aktivieren Sie unter **Allgemein** nach Bedarf **Nachrichten-Zeitleiste anzeigen**, **Diffs von Tool-Aufrufen geteilt anzeigen** und **Gesendete Prompts in die Warteschlange stellen** (Prompts, die während der Arbeit einer Sitzung gesendet werden, einreihen statt sie einzuschieben).
 4. Ändern Sie die Größe des Eingabefelds über dessen Größensteuerung; lange Entwürfe scrollen im Feld.
 
 Timeline-Werkzeugmarkierungen folgen **Nachrichteninhalt**: Ein dort ausgeblendeter Werkzeugtyp blendet auch seine Markierungen aus, außer einer mit offener Berechtigung, und **Nichts** blendet sie alle aus. Sichtbarkeits- und Aufklappeinstellungen ändern nur die Darstellung. Sie entfernen keine gespeicherten Werkzeuge/Denkprozesse und komprimieren keinen Modellkontext. Destruktive Vorgänge siehe [Verlauf und Bereinigung](history.md).

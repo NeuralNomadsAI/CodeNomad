@@ -10,7 +10,7 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 4. **Rehber**, **Notlar**, **Ajanlar ve modeller**, **Görev oturumları**, kayıtlı özetler ve isteğe bağlı takip edilen konuşmalar için **Seçenekler** bölümünü genişletin. **İki modeli karşılaştır** seçildiğinde **Model A** ve **Model B** seçicileri ana formda görünür.
 5. **Oluştur** eylemini seçin. Yeni kaydı seçip hazır olduğunuzda ayrı ▶ eylemini kullanın: tek seferlik işler için **Görevi başlat**, günlük zamanlama için **{id} zamanlamasını başlat**.
 
-**Oluşturmak hiçbir zaman işi başlatmaz.** Tek seferlik görev hazırlanır; günlük zamanlama duraklatılmış durumdadır. Ne oluşturma ne de özeti kaydetme bir zamanlayıcıyı devreye alır. Oluşturma seçili proje/Location kapsamındadır ve istenen profillerle görev oturumu ilkesini sabitler. Doğrulama mesajları ilgili alanın yanındadır; hiçbir şey gönderilmediğini belirten bir ret durumunda taslak düzeltilebilmesi için korunur. Bir koordinatör sizin için takip işi gibi ayrı bir görev de hazırlayabilir: bu görev listede **Hazır** olarak görünür ve diğer her görev gibi yalnızca ▶ eylemiyle başlar.
+**Oluşturmak hiçbir zaman işi başlatmaz.** Tek seferlik görev hazırlanır; günlük zamanlama duraklatılmış durumdadır. Ne oluşturma ne de özeti kaydetme bir zamanlayıcıyı devreye alır. Oluşturma seçili proje/Location kapsamındadır ve istenen profillerle görev oturumu ilkesini sabitler. Doğrulama mesajları ilgili alanın yanındadır; hiçbir şey gönderilmediğini belirten bir ret durumunda taslak düzeltilebilmesi için korunur. Tek seferlik bir görevin koordinatörü sizin için takip işi gibi ayrı bir görev de hazırlayabilir: bu görev listede **Hazır** olarak görünür ve diğer her görev gibi yalnızca ▶ eylemiyle başlar.
 
 ### İş akışı rehberleri {#playbooks}
 
@@ -43,7 +43,7 @@ Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı gar
 | Tamamlandı | Bir görev sonucu kaydedilmiştir; kanıtlarını ve OpenCode'da kalan işleri inceleyin. |
 | Başarısız / Geri çekildi | Görev başarısız oldu ya da koordinatör onu değiştirdi veya bıraktı. |
 
-Grafik tamamlanan ve plandan çıkarılan işleri de içerir. Bir görevi plandan çıkarmak konuşmasını kendiliğinden durdurmaz; koordinatör, diğer görevlere dokunmadan plandan çıkarılan bir görevin kendi konuşmalarını ayrıca durdurabilir. **Sürüyor**, görevin yaşam döngüsü durumudur; koordinatörün o anda çalıştığının kanıtı değildir. Ayrıntılı metin paneldeki görev listesinde değil, merkezi okuyucudadır; **Teknik ayrıntılar** altında kimlikler ve istenen yürütme bilgileri kapalı tutulur.
+Grafik tamamlanan ve plandan çıkarılan işleri de içerir. Bir görevi plandan çıkarmak konuşmasını kendiliğinden durdurmaz. Tek seferlik bir görevde koordinatör, OpenCode alt ajanı olarak başlattığı ve plandan çıkarılan bir görevin konuşmalarını diğer görevlere dokunmadan ayrıca durdurabilir. **Sürüyor**, görevin yaşam döngüsü durumudur; koordinatörün o anda çalıştığının kanıtı değildir. Ayrıntılı metin paneldeki görev listesinde değil, merkezi okuyucudadır; **Teknik ayrıntılar** altında kimlikler ve istenen yürütme bilgileri kapalı tutulur.
 
 ### Durum özetleri ve güncelleme istekleri {#briefings}
 

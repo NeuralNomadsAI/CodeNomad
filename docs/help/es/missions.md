@@ -10,7 +10,7 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
 5. Elige **Crear**. Selecciona la entrada nueva y usa su acción ▶ independiente cuando esté lista: **Iniciar misión** para trabajo puntual o **Iniciar programación {id}** para una programación diaria.
 
-**Crear nunca inicia el trabajo.** Una misión puntual queda preparada; una programación diaria queda pausada. Ni la creación ni guardar una descripción activan un temporizador. La creación tiene el ámbito del proyecto/Location seleccionado y fija los perfiles solicitados y la política de sesiones de tareas. La validación aparece junto al campo afectado; un rechazo que indique que no se envió nada deja el borrador disponible para corregirlo. Un coordinador también puede preparar una misión independiente para ti, como un seguimiento: aparece en la lista como **Preparada** y, como cualquier misión, solo se inicia desde su acción ▶.
+**Crear nunca inicia el trabajo.** Una misión puntual queda preparada; una programación diaria queda pausada. Ni la creación ni guardar una descripción activan un temporizador. La creación tiene el ámbito del proyecto/Location seleccionado y fija los perfiles solicitados y la política de sesiones de tareas. La validación aparece junto al campo afectado; un rechazo que indique que no se envió nada deja el borrador disponible para corregirlo. El coordinador de una misión puntual también puede preparar una misión independiente para ti, como un seguimiento: aparece en la lista como **Preparada** y, como cualquier misión, solo se inicia desde su acción ▶.
 
 ### Guiones {#playbooks}
 
@@ -43,7 +43,7 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 | Completada | Se registró un resultado de tarea; inspecciona sus evidencias y cualquier trabajo nativo restante. |
 | Fallida / Retirada | La tarea falló, o el coordinador la sustituyó o la abandonó. |
 
-El gráfico incluye trabajo completado y retirado. Retirar una tarea no detiene por sí solo su conversación; el coordinador puede detener por separado las conversaciones propias de una tarea retirada, sin tocar las demás tareas. **En curso** es el estado del ciclo de vida de la misión, no demuestra que su coordinador esté ejecutándose. El texto completo pertenece al lector central, no a la lista de tareas del panel; **Detalles técnicos** pliega los identificadores y la información de ejecución solicitada.
+El gráfico incluye trabajo completado y retirado. Retirar una tarea no detiene por sí solo su conversación. En una misión puntual, el coordinador puede detener por separado las conversaciones de una tarea retirada que lanzó como subagente nativo, sin tocar las demás tareas. **En curso** es el estado del ciclo de vida de la misión, no demuestra que su coordinador esté ejecutándose. El texto completo pertenece al lector central, no a la lista de tareas del panel; **Detalles técnicos** pliega los identificadores y la información de ejecución solicitada.
 
 ### Informes de situación y solicitudes de actualización {#briefings}
 

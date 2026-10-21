@@ -10,7 +10,7 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 4. Développez **Options** pour **Scénario**, **Notes**, **Agents et modèles**, **Sessions des tâches**, les consignes enregistrées et les conversations suivies facultatives. Avec **Comparer deux modèles**, les sélecteurs **Modèle A** et **Modèle B** apparaissent dans le formulaire principal.
 5. Choisissez **Créer**. Sélectionnez la nouvelle entrée, puis utilisez son action ▶ distincte lorsque vous êtes prêt : **Démarrer la mission** pour un travail ponctuel, ou **Démarrer le programme {id}** pour un programme quotidien.
 
-**Créer ne démarre jamais le travail.** Une mission ponctuelle est préparée ; un programme quotidien est en pause. Ni la création ni l’enregistrement d’une consigne n’arment un minuteur. La création est limitée au projet/à la Location sélectionné et fige les profils demandés ainsi que la politique des sessions de tâches. La validation se trouve près du champ concerné ; un refus indiquant que rien n’a été envoyé laisse le brouillon disponible pour correction. Un coordinateur peut aussi préparer pour vous une mission distincte, par exemple une suite : elle apparaît dans la liste comme **Préparée** et, comme toute mission, ne démarre que par son action ▶.
+**Créer ne démarre jamais le travail.** Une mission ponctuelle est préparée ; un programme quotidien est en pause. Ni la création ni l’enregistrement d’une consigne n’arment un minuteur. La création est limitée au projet/à la Location sélectionné et fige les profils demandés ainsi que la politique des sessions de tâches. La validation se trouve près du champ concerné ; un refus indiquant que rien n’a été envoyé laisse le brouillon disponible pour correction. Le coordinateur d’une mission ponctuelle peut aussi préparer pour vous une mission distincte, par exemple une suite : elle apparaît dans la liste comme **Préparée** et, comme toute mission, ne démarre que par son action ▶.
 
 ### Scénarios {#playbooks}
 
@@ -43,7 +43,7 @@ Le scénario guide la coordination ; il ne contourne pas les autorisations nativ
 | Terminée | Un résultat de tâche a été enregistré ; vérifiez ses preuves et le travail natif restant. |
 | Échec / Retirée | La tâche a échoué, ou le coordinateur l’a remplacée ou abandonnée. |
 
-Le graphe inclut les travaux terminés et retirés. Retirer une tâche n’arrête pas en soi sa conversation ; le coordinateur peut arrêter séparément les conversations propres à une tâche retirée, sans toucher aux autres tâches. **En cours** est l’état du cycle de vie de la mission, pas une preuve que son coordinateur travaille actuellement. Les textes complets se lisent dans le lecteur central, pas dans la liste des tâches ; **Détails techniques** replie les identifiants et les informations d’exécution demandées.
+Le graphe inclut les travaux terminés et retirés. Retirer une tâche n’arrête pas en soi sa conversation. Dans une mission ponctuelle, le coordinateur peut arrêter séparément les conversations d’une tâche retirée qu’il a lancée comme sous-agent natif, sans toucher aux autres tâches. **En cours** est l’état du cycle de vie de la mission, pas une preuve que son coordinateur travaille actuellement. Les textes complets se lisent dans le lecteur central, pas dans la liste des tâches ; **Détails techniques** replie les identifiants et les informations d’exécution demandées.
 
 ### Points de situation et demandes de mise à jour {#briefings}
 

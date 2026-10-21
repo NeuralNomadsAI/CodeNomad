@@ -10,7 +10,7 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
 5. Choose **Create**. Select the new entry, then use its separate ▶ action when ready: **Start mission** for one-time work, or **Play schedule {id}** for a daily schedule.
 
-**Create never starts work.** A one-time mission is prepared; a daily schedule is paused. Neither creation nor saving a brief arms a timer. Creation is scoped to the selected project/Location and freezes the requested profiles and task-session policy. Validation is beside the affected field; a refusal that says nothing was sent leaves the draft available for correction. A coordinator can also prepare a separate mission for you, such as a follow-up: it appears in the list as **Prepared** and, like any mission, starts only from its ▶ action.
+**Create never starts work.** A one-time mission is prepared; a daily schedule is paused. Neither creation nor saving a brief arms a timer. Creation is scoped to the selected project/Location and freezes the requested profiles and task-session policy. Validation is beside the affected field; a refusal that says nothing was sent leaves the draft available for correction. The coordinator of a one-time mission can also prepare a separate mission for you, such as a follow-up: it appears in the list as **Prepared** and, like any mission, starts only from its ▶ action.
 
 ### Playbooks {#playbooks}
 
@@ -43,7 +43,7 @@ The playbook guides coordination; it does not bypass native permissions or guara
 | Done | A task result was recorded; inspect its evidence and any remaining native work. |
 | Failed / Retired | The task failed, or the coordinator replaced or abandoned it. |
 
-The graph includes completed and retired work. Retiring a task does not itself stop its conversation; the coordinator can stop a retired task's own conversations separately, without touching other tasks. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
+The graph includes completed and retired work. Retiring a task does not itself stop its conversation. In a one-time mission, the coordinator can separately stop the conversations of a retired task it launched as a native subagent, without touching other tasks. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
 
 ### Briefings and update requests {#briefings}
 
