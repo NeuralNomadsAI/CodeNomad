@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 
-import type { MissionListResponse, MissionMap, MissionSnapshot } from "../../missions/model"
+import type { MissionListResponse, MissionMap, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
@@ -29,6 +29,9 @@ interface MissionRouteDeps {
   auth?: Pick<AuthManager, "isAuthEnabled" | "getSessionFromRequest">
   bridgeToken?: string
   remoteDevices?: Pick<RemoteControlManager, "isDeviceAuthorized">
+  /** Whether this backend publishes the local bridge Missions dispatch through,
+   * and therefore provisions the plugin. Omitted means it does. */
+  missionsHost?: () => boolean
 }
 
 const MissionParamsSchema = z.object({ id: z.string().trim().min(1).max(200) })
@@ -54,6 +57,9 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
 
     const ownedLocation = deps.workspaceManager.getServiceLocation(parsed.data.id)
     if (!ownedLocation) { lifetime.dispose(); return unavailable("workspace-unavailable") }
+    // Without its bridge this backend never provisions the plugin: reconnecting or
+    // reloading OpenCode cannot help, so say so before reading the inventory.
+    if (deps.missionsHost && !deps.missionsHost()) { lifetime.dispose(); return unavailable("host-unavailable") }
     const workspace = deps.workspaceManager.get(parsed.data.id)
     const displayCapture = captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, parsed.data.id, [ownedLocation.directory])
     const location = { directory: ownedLocation.directory }
@@ -69,6 +75,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       const plugin = inventory.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
       // Local V2 plugins currently advertise `server` but do not set `features.rpc`
       // after registration. The reviewed typed call below is the RPC capability check.
+      if (plugin?.state.status === "failed") return unavailable("plugin-failed")
       if (!plugin || plugin.state.status !== "active") {
         return unavailable("plugin-unavailable")
       }
@@ -193,7 +200,7 @@ function mutationError(reply: import("fastify").FastifyReply, error: unknown) {
   reply.code(503).send({ error: "Mission plugin unavailable" })
 }
 
-function unavailable(reason: "plugin-unavailable" | "workspace-unavailable"): MissionListResponse {
+function unavailable(reason: MissionUnavailableReason): MissionListResponse {
   return { available: false, reason, missions: [] }
 }
 

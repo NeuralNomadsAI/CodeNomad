@@ -150,6 +150,8 @@ test("mission discovery waits for cold ownership validation and still rejects co
   try {
     const owner = await listen(async body => {
       if (body.mode === "browser-claim") {
+        // A backend without native browsers claims sessions only for this purpose.
+        assert.equal(body.purpose, "mission")
         if (cold) await new Promise(resolve => setTimeout(resolve, 5_200))
         return { result: { available: true } }
       }

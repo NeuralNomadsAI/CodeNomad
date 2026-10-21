@@ -116,6 +116,10 @@ interface HttpServerDeps {
   nativeParent: NativeParent
   automationBridgeToken: string
   panelExtensions?: PanelExtensionStore
+  /** Shared by every listener of one backend; a fresh one serves a lone server. */
+  worktreeDeletionFence?: WorktreeDeletionFence
+  /** See `registerMissionRoutes`. */
+  missionsHost?: () => boolean
 }
 
 interface HttpServerStartResult {
@@ -313,7 +317,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     reply.code(404).send({ message: "UI bundle missing" })
   })
 
-  const worktreeDeletionFence = new WorktreeDeletionFence()
+  const worktreeDeletionFence = deps.worktreeDeletionFence ?? new WorktreeDeletionFence()
   registerWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerTemporaryWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, eventBus: deps.eventBus })
   const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
@@ -366,7 +370,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
-    auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager })
+    auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,
+    missionsHost: deps.missionsHost })
   registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,
     settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
   registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence,

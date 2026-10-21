@@ -525,12 +525,14 @@ async function probeBrowserBridges(
   sessionID: string,
   mode: "browser-claim" | "browser-probe",
   timeoutMs = PROBE_TIMEOUT_MS,
+  purpose?: "mission",
 ): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
-        return (await callBridge(registration, { mode, sessionID }, timeoutMs)).status === 200 ? registration : undefined
+        return (await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)).status === 200
+          ? registration : undefined
       } catch {
         return undefined
       }
@@ -544,7 +546,8 @@ async function probeBrowserBridges(
 
 export async function sendMissionInput(sessionID: string,
   kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
-  const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS)
+  // `purpose` lets a backend without native browsers claim the session for dispatch only.
+  const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission")
   if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
   const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
   if (response.status !== 200) {

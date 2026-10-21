@@ -10,7 +10,7 @@ test("a slow unrelated workspace cannot hide an already verified automation owne
   const unrelated = new Promise<void>(resolve => { unblock = resolve })
   t.after(async () => { unblock(); await app.close() })
   registerAutomationPluginRoute(app, {
-    authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture", nativeParent: {}, developerCdp: {},
+    authManager: { isLoopbackRequest: () => true }, bridgeToken: "fixture", nativeParent: { available: true }, developerCdp: {},
     workspaceManager: {
       getSharedServiceClient: async () => ({ session: { get: async () => ({ location: { directory: "/repo" } }) } }),
       list: () => [{ id: "slow-unrelated" }, { id: "owner" }],
@@ -140,6 +140,7 @@ test("browser works with an unavailable developer target and unrelated inventory
     authManager: { isLoopbackRequest: () => true },
     bridgeToken: "secret",
     nativeParent: {
+      available: true,
       request: async (method: string, params: any) => {
         nativeCalls.push({ method, params })
         if (method === "browser.page.begin") return { generation: "preview-document", url: "https://example.com/" }
@@ -189,5 +190,39 @@ test("browser works with an unavailable developer target and unrelated inventory
   const developer = await request({ mode: "developer-execute", sessionID: "session-1", command: { action: "inspect" } })
   assert.equal(developer.statusCode, 404)
   assert.match(developer.json().error, /Native automation has no active/)
+  await app.close()
+})
+
+test("a backend without a desktop host claims owned sessions for Mission dispatch only", async () => {
+  const app = Fastify({ logger: false })
+  const nativeCalls: string[] = []
+  registerAutomationPluginRoute(app, {
+    authManager: { isLoopbackRequest: () => true },
+    bridgeToken: "secret",
+    // The real NativeParent of a standalone server: unavailable, every request refused.
+    nativeParent: { available: false, request: async (method: string) => {
+      nativeCalls.push(method)
+      throw new Error("Native control is unavailable in this host")
+    } },
+    developerCdp: {},
+    workspaceManager: {
+      getSharedServiceClient: async () => ({ session: { get: async ({ sessionID }: { sessionID: string }) =>
+        ({ location: { directory: sessionID === "foreign" ? "/foreign" : "/repo" } }) } }),
+      list: () => [{ id: "workspace-1" }],
+      ownsLocation: async (_id: string, location: { directory: string }) => location.directory === "/repo",
+    },
+  } as never)
+  const request = (body: Record<string, unknown>) => app.inject({ method: "POST", url: AUTOMATION_BRIDGE_PATH,
+    headers: { "x-codenomad-automation-token": "secret" }, payload: body })
+
+  assert.equal((await request({ mode: "browser-claim", sessionID: "owned", purpose: "mission" })).statusCode, 200)
+  const browser = await request({ mode: "browser-claim", sessionID: "owned" })
+  assert.equal(browser.statusCode, 404, "the browser tools cannot pick an owner that opens no page")
+  assert.match(browser.json().error, /Browser automation is unavailable/)
+  assert.equal((await request({ mode: "browser-claim", sessionID: "foreign", purpose: "mission" })).statusCode, 404,
+    "ownership is still required for dispatch")
+  assert.equal((await request({ mode: "browser-probe", sessionID: "owned" })).statusCode, 404)
+  assert.equal((await request({ mode: "developer-probe", sessionID: "owned" })).statusCode, 404)
+  assert.deepEqual(nativeCalls, ["browser.probe", "developer.status"], "native requests fail closed without a host")
   await app.close()
 })

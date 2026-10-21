@@ -168,19 +168,35 @@ test("does not accept a client-controlled directory or expose generic RPC", asyn
 })
 
 test("returns an optional capability response for missing, failed, or unreachable plugins", async () => {
-  for (const options of [
-    { plugin: "missing" as const },
-    { plugin: "failed" as const },
-    { rpcError: { type: "rpc.not_found", message: "missing" } },
-  ]) {
+  for (const [options, reason] of [
+    [{ plugin: "missing" as const }, "plugin-unavailable"],
+    [{ plugin: "failed" as const }, "plugin-failed"],
+    [{ rpcError: { type: "rpc.not_found", message: "missing" } }, "plugin-unavailable"],
+  ] as const) {
     const fake = manager(options)
     const app = Fastify({ logger: false })
     registerMissionRoutes(app, { workspaceManager: fake.value })
     const response = await app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions" })
     assert.equal(response.statusCode, 200)
-    assert.deepEqual(response.json(), { available: false, reason: "plugin-unavailable", missions: [] })
+    assert.deepEqual(response.json(), { available: false, reason, missions: [] })
     await app.close()
   }
+})
+
+test("a backend without its local bridge reports that it hosts no Missions before reading OpenCode", async () => {
+  const fake = manager()
+  const app = Fastify({ logger: false })
+  let published = false
+  registerMissionRoutes(app, { workspaceManager: fake.value, missionsHost: () => published })
+  const response = await app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions" })
+  assert.equal(response.statusCode, 200)
+  assert.deepEqual(response.json(), { available: false, reason: "host-unavailable", missions: [] })
+  assert.deepEqual(fake.calls, [], "neither the inventory nor the plugin is read")
+  // An unknown workspace stays a 404 rather than a host answer.
+  assert.equal((await app.inject({ method: "GET", url: "/api/workspaces/foreign/missions" })).statusCode, 404)
+  published = true
+  assert.equal((await app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions" })).json().available, true)
+  await app.close()
 })
 
 test("rejects unknown workspaces before touching OpenCode", async () => {

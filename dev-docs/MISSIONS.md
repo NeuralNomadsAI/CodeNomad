@@ -489,9 +489,19 @@ identities preserve selection and reader gestures across refresh/remount.
 
 ## Distribution and environment
 
-Desktop backends provision the content-addressed Missions bundle through
-`DesktopPluginLifecycle`, using the authenticated daemon's `config.get` discovery
-root. Backend leases live outside that watched root. Tools, context hooks and typed
+Every backend that publishes its loopback bridge provisions the content-addressed
+Missions bundle through `DesktopPluginLifecycle`, using the authenticated daemon's
+`config.get` discovery root: desktop hosts and the standalone server alike. The
+standalone server starts a private HTTP listener on a random 127.0.0.1 port for that
+bridge (never announced, even when only HTTPS is requested), and all of a backend's
+listeners share one `WorktreeDeletionFence` and its creation/recurrence holds, so a
+deletion through HTTPS drains admissions made through the bridge. Window and browser
+automation remain desktop-only: without a desktop host, `browser-claim` answers only
+for `purpose: "mission"`. When the bridge cannot be published (for example an
+HTTP-only listener on a non-loopback address), the Missions snapshot route reports
+`host-unavailable` without reading OpenCode; a plugin OpenCode has not loaded is
+`plugin-unavailable` and one it failed to load is `plugin-failed`.
+Backend leases live outside that watched root. Tools, context hooks and typed
 RPC initially register through backend presence. `retainMissionWork` preserves
 registered Missions while active/unsettled work, receipts or uncertain storage
 remain, including after lease loss. This retains native work, but does not replace
@@ -504,7 +514,7 @@ Before either kind of admission, the backend also refreshes its owned `codenomad
 
 The bridge accepts up to 250,000 assembled text characters within its 512 KiB JSON body limit. This accommodates the maximum objective, brief, title and dependencies after XML escaping (up to 5×), including JSON control-character escaping on the wire. HTTP regression coverage exercises maximum accepted contracts for all playbooks.
 
-This transport reuses desktop bridge discovery, not browser automation or its visible-window operations. Automation still has its independent execution-time session/window fences. Environment and model state are session-scoped, not atomic per-inbox-item snapshots; see [SESSION_ENVIRONMENT.md](SESSION_ENVIRONMENT.md).
+This transport reuses the automation bridge discovery, not browser automation or its visible-window operations. Automation still has its independent execution-time session/window fences. Environment and model state are session-scoped, not atomic per-inbox-item snapshots; see [SESSION_ENVIRONMENT.md](SESSION_ENVIRONMENT.md).
 
 ## Safety limits
 

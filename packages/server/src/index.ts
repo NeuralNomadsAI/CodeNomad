@@ -51,6 +51,7 @@ import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAuto
 import { RemoteDeviceRegistry } from "./remote-control/devices"
 import { RemoteControlManager } from "./remote-control/manager"
 import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
+import { WorktreeDeletionFence } from "./workspaces/worktree-session-evacuation"
 
 const require = createRequire(import.meta.url)
 
@@ -397,6 +398,12 @@ async function main() {
   const nativeParent = new NativeParent()
   const automationLifecycle = new DesktopPluginLifecycle("automation")
   const missionsLifecycle = new DesktopPluginLifecycle("missions")
+  // Missions dispatch through the loopback bridge of the owning backend, desktop or
+  // standalone; window/browser automation needs a desktop host. Settles once
+  // publication has been attempted, so early connections never skip Missions.
+  let missionBridge: "pending" | "published" | "failed" = "pending"
+  let settleMissionBridge!: (published: boolean) => void
+  const missionBridgeSettled = new Promise<boolean>(resolve => { settleMissionBridge = resolve })
   const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = async (launch, connection, deadlineAt) => {
     let paths
     try { paths = await resolveDesktopPluginPaths(connection, launch, deadlineAt) }
@@ -405,10 +412,11 @@ async function main() {
       return false
     }
     try {
+      const missions = await missionBridgeSettled
       await prepareDesktopPluginPresence(paths, connection.assertCurrent, {
         pruning: pruningLifecycle,
         automation: nativeParent.available ? automationLifecycle : undefined,
-        missions: nativeParent.available ? missionsLifecycle : undefined,
+        missions: missions ? missionsLifecycle : undefined,
       })
       return true
     } catch (error) {
@@ -539,10 +547,11 @@ async function main() {
   const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
 
   const httpsBindPort = httpsPortExplicit ? options.httpsPort : 0
-  const httpBindPort = httpPortExplicit ? options.httpPort : 0
+  // An HTTP listener nobody asked for is private: any free loopback port.
+  const httpBindPort = options.http && httpPortExplicit ? options.httpPort : 0
 
   // Listener binding rules:
-  // - Native desktop HTTP and dual-listener HTTP stay on loopback.
+  // - Native desktop HTTP, dual-listener HTTP and the private HTTP listener stay on loopback.
   // - HTTPS and non-native HTTP-only modes respect --host.
   const httpsBindHost = options.host
   const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
@@ -551,12 +560,17 @@ async function main() {
   const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
     eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
   })
+  // Every listener admits the same worktrees: one fence (and its mission holds),
+  // so a deletion through HTTPS drains a mission admitted through the bridge.
+  const worktreeDeletionFence = new WorktreeDeletionFence()
+  const missionsHost = () => missionBridge !== "failed"
 
-  const httpServer = options.http || nativeParent.available
-    ? createHttpServer({
+  // HTTP always starts: besides an explicit --http it carries the loopback bridge
+  // that the bundled plugins call (desktop automation, Missions dispatch).
+  const httpServer = createHttpServer({
         bindHost: httpBindHost,
         bindPort: httpBindPort,
-        defaultPort: options.httpPort,
+        defaultPort: options.http ? options.httpPort : 0,
         protocol: "http",
         workspaceManager,
         settings,
@@ -579,8 +593,9 @@ async function main() {
         logger,
         nativeParent,
         automationBridgeToken: automationBridge.token,
+        worktreeDeletionFence,
+        missionsHost,
       })
-    : null
 
   const httpsServer = options.https
     ? createHttpServer({
@@ -610,16 +625,19 @@ async function main() {
         logger,
         nativeParent,
         automationBridgeToken: automationBridge.token,
+        worktreeDeletionFence,
+        missionsHost,
       })
     : null
 
-  if (httpServer) servers.push(httpServer)
+  servers.push(httpServer)
   if (httpsServer) servers.push(httpsServer)
-  const routingApp = servers[0]?.instance
-  remoteControlRouter = routingApp ? (request, response) => routingApp.routing(request, response) : null
+  // Remote Control enters the application users reach: a private listener is not it.
+  const routingApp = (options.http || nativeParent.available || !httpsServer ? httpServer : httpsServer).instance
+  remoteControlRouter = (request, response) => routingApp.routing(request, response)
 
   const [httpStart, httpsStart] = await Promise.all([
-    httpServer ? httpServer.start() : Promise.resolve(null),
+    httpServer.start(),
     httpsServer ? httpsServer.start() : Promise.resolve(null),
   ])
 
@@ -629,7 +647,7 @@ async function main() {
     throw new Error("No listeners started")
   }
 
-  const httpListener = httpStart ? { protocol: "http" as const, bindHost: httpBindHost, port: httpStart.port } : null
+  const httpListener = visibleHttpStart ? { protocol: "http" as const, bindHost: httpBindHost, port: visibleHttpStart.port } : null
   const httpsListener = httpsStart ? { protocol: "https" as const, bindHost: httpsBindHost, port: httpsStart.port } : null
   const remoteListener = resolvePreferredRemoteListener({ httpStart: httpListener, httpsStart: httpsListener })
 
@@ -667,17 +685,18 @@ async function main() {
   serverMeta.listeningMode = isWildcardHost(serverMeta.host) || !isLoopbackHost(serverMeta.host) ? "all" : "local"
 
   let removeAutomationBridge: (() => Promise<void>) | undefined
-  if (nativeParent.available) {
-    try {
-      if (!httpStart) throw new Error("Native automation HTTP listener did not start")
-      const automationUrl = resolveAutomationBridgeUrl({ protocol: "http", bindHost: httpBindHost, port: httpStart.port })
-      removeAutomationBridge = await publishAutomationBridge({
-        ...automationBridge,
-        url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,
-      })
-    } catch (error) {
-      logger.warn({ err: error }, "Failed to publish the native automation bridge")
-    }
+  try {
+    const automationUrl = resolveAutomationBridgeUrl({ protocol: "http", bindHost: httpBindHost, port: httpStart.port })
+    removeAutomationBridge = await publishAutomationBridge({
+      ...automationBridge,
+      url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,
+    })
+    missionBridge = "published"
+  } catch (error) {
+    missionBridge = "failed"
+    logger.warn({ err: error }, "Failed to publish the local automation bridge; Missions are unavailable")
+  } finally {
+    settleMissionBridge(missionBridge === "published")
   }
 
   if (serverMeta.remotePort && remoteUrl) {

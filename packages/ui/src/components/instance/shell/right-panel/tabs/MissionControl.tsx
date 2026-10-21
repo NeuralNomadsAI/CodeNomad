@@ -2,6 +2,7 @@ import { Match, Show, Switch, batch, createComputed, createEffect, createMemo, c
 import { AlertTriangle, Flag, Loader2, RefreshCw, Settings } from "lucide-solid"
 
 import type { MissionMap } from "../../../../../../../server/src/api-types"
+import type { MissionUnavailableReason } from "../../../../../../../server/src/missions/model"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
 import { activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
 import { getOpenCodeInstanceGeneration } from "../../../../../stores/opencode-data"
@@ -34,6 +35,15 @@ interface MissionControlProps {
   isActive?: () => boolean
   onRevealConversation?: (restoreChat?: boolean) => void
   t: (key: string, vars?: Record<string, any>) => string
+}
+
+// Each cause names what can fix it: reconnecting CodeNomad cannot load a plugin
+// OpenCode has not loaded, nor provide a bridge this backend never published.
+const UNAVAILABLE_DETAIL: Record<MissionUnavailableReason, string> = {
+  "host-unavailable": "missions.control.unavailable.host",
+  "plugin-unavailable": "missions.control.unavailable.plugin",
+  "plugin-failed": "missions.control.unavailable.pluginFailed",
+  "workspace-unavailable": "missions.control.unavailable.workspace",
 }
 
 const MissionControl: Component<MissionControlProps> = (props) => {
@@ -346,9 +356,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           <StateMessage
             icon={<AlertTriangle class="h-5 w-5" />}
             title={props.t("missions.control.unavailable.title")}
-            detail={props.t(state().reason === "workspace-unavailable"
-              ? "missions.control.unavailable.workspace"
-              : "missions.control.unavailable.plugin")}
+            detail={props.t(UNAVAILABLE_DETAIL[state().reason ?? "plugin-unavailable"])}
           />
         </Match>
         <Match when={state().status === "error" && missions().length === 0}>

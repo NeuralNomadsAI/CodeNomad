@@ -223,9 +223,15 @@ export interface MissionListAvailableResponse extends MissionSnapshot {
   activity: MissionActivityProjection
 }
 
+/** Why Missions cannot be read: this backend has no local bridge to run them
+ * (`host-unavailable`), OpenCode has not loaded the plugin or it does not answer
+ * (`plugin-unavailable`), the plugin failed to load (`plugin-failed`), or the
+ * workspace connection is not ready (`workspace-unavailable`). */
+export type MissionUnavailableReason = "host-unavailable" | "plugin-unavailable" | "plugin-failed" | "workspace-unavailable"
+
 export interface MissionListUnavailableResponse {
   available: false
-  reason: "plugin-unavailable" | "workspace-unavailable"
+  reason: MissionUnavailableReason
   missions: []
 }
 

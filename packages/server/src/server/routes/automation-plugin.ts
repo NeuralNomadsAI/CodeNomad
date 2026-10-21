@@ -64,7 +64,7 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     const lifetime = requestAdmission(request, reply)
     try {
     if (!isAutomationPluginRequest(request, deps)) return reply.code(401).send({ error: "Unauthorized automation bridge" })
-    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown } | undefined
+    const body = request.body as { mode?: unknown; sessionID?: unknown; command?: unknown; purpose?: unknown } | undefined
     if (body?.mode === "human-answer-verify") {
       if (!deps.settings) return reply.code(503).send({ error: "Human answer admission unavailable" })
       try { return reply.send({ result: await verifyMissionHumanAnswer(body.command,
@@ -109,8 +109,8 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
     if (body.mode === "mission-input") {
       if (!deps.worktreeDeletionFence) return reply.code(503).send({ error: "Mission dispatch unavailable" })
       try {
-        // Desktop-only, journal-keyed creation capability. Durable admission
-        // does not use this bridge or gain a new native API fallback.
+        // Journal-keyed creation capability of the owning backend. Durable
+        // admission does not use this bridge or gain a new native API fallback.
         const fence = deps.worktreeDeletionFence
         const result = commandKind === "create-root"
           ? await createManagedMissionRoot(deps.workspaceManager, fence, body.sessionID, body.command, signal)
@@ -130,7 +130,15 @@ export function registerAutomationPluginRoute(app: FastifyInstance, deps: Automa
       }
     }
 
-    if (body.mode === "browser-claim") return reply.send({ result: { available: true } })
+    if (body.mode === "browser-claim") {
+      // Without a desktop host this backend owns sessions only for Mission
+      // dispatch; claiming browsers too would hand the browser tools an owner
+      // that cannot open a page, or make a desktop owner ambiguous.
+      if (!deps.nativeParent.available && body.purpose !== "mission") {
+        return reply.code(404).send({ error: "Browser automation is unavailable in this host" })
+      }
+      return reply.send({ result: { available: true } })
+    }
     if (body.mode === "browser-probe") {
       try {
         const result = await deps.nativeParent.request<{ available: boolean }>("browser.probe", { sessionID: body.sessionID })

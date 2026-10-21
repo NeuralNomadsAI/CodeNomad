@@ -1,7 +1,7 @@
 import { createSignal } from "solid-js"
 
 import type { MissionActivityProjection, MissionListResponse, MissionMap } from "../../../server/src/api-types"
-import type { MissionCleanup } from "../../../server/src/missions/model"
+import type { MissionCleanup, MissionUnavailableReason } from "../../../server/src/missions/model"
 
 export type MissionLoadStatus = "idle" | "loading" | "ready" | "unavailable" | "error"
 
@@ -9,7 +9,7 @@ export interface MissionViewState {
   status: MissionLoadStatus
   projectID?: string
   missions: MissionMap[]
-  reason?: "plugin-unavailable" | "workspace-unavailable"
+  reason?: MissionUnavailableReason
   error?: string
   generatedAt?: number
   discardedEvents?: number
