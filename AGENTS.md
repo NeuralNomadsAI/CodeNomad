@@ -1,6 +1,6 @@
 # AGENT NOTES
 
-Rules here apply everywhere. Before changing code in an area listed under [Area conventions](#area-conventions), read that area's document; its rules bind like this file.
+Rules here apply everywhere. Before changing code in an area listed under [Area conventions](#area-conventions), read that area's document; its rules bind like this file. `dev-docs/INDEX.md` lists every document.
 
 ## Styling Guidelines
 - Reuse the existing token & utility layers before introducing new CSS variables or custom properties. Extend `src/styles/tokens.css` / `src/styles/utilities.css` if a shared pattern is needed.
@@ -30,6 +30,7 @@ Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 - **Transcript** (message rendering, Message content and presets, token lines, tool renderers, `stores/message-v2/`, `stores/opencode-data.ts`, `lib/native-execution-events.ts`): `dev-docs/TRANSCRIPT.md`; long-text bounds `dev-docs/TEXT_DISPLAY_BOUNDS.md`.
 - **Timeline, transcript scrolling and history search** (`virtual-follow-list.tsx`, `timeline-*`, `stores/timeline-previews.ts`, history search): `dev-docs/SESSION_HISTORY_NAVIGATION.md`, `dev-docs/SESSION_HISTORY_QUERIES.md`.
 - **Shell, panels, tabs, session sidebar and native menus** (`instance/shell/`, `tab-scroll.tsx`, session list, `lib/native/menu-labels*`): `dev-docs/UI_SHELL.md`.
+- **Session state and recovery** (`stores/session-state.ts`, `stores/session-generation-recovery.ts`): `dev-docs/SESSION_RECOVERY.md`.
 - **Dialogs, utility windows, icon toggles, surfaces and scrollbars** (`alert-dialog.tsx`, `dismissible-window.tsx`, auth recovery, `styles/utilities.css`, `index.css`): `dev-docs/UI_CONVENTIONS.md`.
 - **Settings and Preferences** (settings rows/actions, Preferences window and project context, Providers/Web search, Stats, notifications, bug report): `dev-docs/SETTINGS.md`; provider accounts and usage `dev-docs/PROVIDER_ACCOUNTS.md`; hotkeys `dev-docs/HOTKEYS.md`; palettes `dev-docs/PALETTE_SOURCES.md`; plugin controls `dev-docs/PLUGIN_CONTROLS.md`; right-panel customization and panel extensions `dev-docs/PANEL_EXTENSIONS.md`.
 - **Projects and tabs** (closing tabs, temporary workspaces, new-instance launcher, Git-unavailable mode): `dev-docs/PROJECTS.md`.
