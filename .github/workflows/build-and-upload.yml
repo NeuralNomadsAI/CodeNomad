@@ -68,7 +68,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -240,7 +240,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -291,7 +291,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -540,7 +540,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -639,7 +639,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -737,7 +737,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -851,7 +851,7 @@ jobs:
           ref: ${{ inputs.ref || github.ref }}
 
       - name: Setup Node
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
@@ -1049,7 +1049,7 @@ jobs:
       - uses: actions/checkout@v7.0.1
         with:
           ref: ${{ inputs.ref || github.ref }}
-      - uses: actions/setup-node@v7.1.0
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
       - uses: actions/download-artifact@v8.0.2
@@ -1080,7 +1080,7 @@ jobs:
           platforms: linux/arm64
 
       - name: Setup Node
-        uses: actions/setup-node@v7.1.0
+        uses: actions/setup-node@v7
         with:
           node-version-file: .node-version
           cache: npm
