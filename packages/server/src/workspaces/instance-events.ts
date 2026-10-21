@@ -1,8 +1,11 @@
+import { createHash } from "node:crypto"
 import { isSessionNotFoundError, type LocationRef, type OpenCodeEvent } from "@opencode/client"
 import { readLocationRef } from "../opencode/compatibility/location"
+import { runtimeIdentity } from "../opencode/compatibility/runtime"
 import { EventBus } from "../events/bus"
 import { Logger } from "../logger"
 import { WorkspaceManager } from "./manager"
+import { nativeEventConnections, type ServiceConnection } from "./opencode-service"
 import { InstanceStreamStatus } from "../api-types"
 import { InstanceEventQueue } from "./instance-event-queue"
 
@@ -45,6 +48,22 @@ interface EventRoute {
   bytes: number
   recipients: Array<{ id: string; epoch: number }>
   receivedAt: number
+}
+
+/** Digest of the daemon a server.connected belongs to, over the same fields
+ * connection validation compares (url, runtime version and pid, auth). Clients
+ * gate reconnect continuity on it; credentials never cross the wire — only
+ * this one-way digest does. */
+function daemonSourceEnvelope(event: OpenCodeEvent, connection: ServiceConnection): OpenCodeEvent {
+  const identity = runtimeIdentity(connection.endpoint)
+  const digest = createHash("sha256").update(JSON.stringify([
+    connection.endpoint.url,
+    identity?.version ?? null,
+    identity?.pid ?? null,
+    connection.endpoint.auth?.username ?? null,
+    connection.endpoint.auth?.password ?? null,
+  ])).digest("hex")
+  return { ...event, data: { ...event.data, daemon: digest } } as OpenCodeEvent
 }
 
 export class InstanceEventBridge {
@@ -153,6 +172,10 @@ export class InstanceEventBridge {
 
   private async publishEvent(event: OpenCodeEvent, route: EventRoute) {
     if (!route.current()) return
+    if (event.type === "server.connected") {
+      const connection = nativeEventConnections.get(event)
+      if (connection) event = daemonSourceEnvelope(event, connection)
+    }
     const sessionId = this.sessionId(event)
     const ptyId = this.ptyId(event)
     const shellId = this.shellId(event)

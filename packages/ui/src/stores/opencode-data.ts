@@ -77,6 +77,9 @@ const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
 const RECONNECT_RESYNC_DELAY_MS = 1000
 const entries = new Map<string, DataEntry>()
 const transcriptEntries = new Map<string, TranscriptEntry>()
+/** Last observed daemon identity digest per instance; a reconnect seeds
+ * continuity only when the daemon source is verified unchanged. */
+const daemonSources = new Map<string, string>()
 const mutationRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
 const messageRevisions = new Map<string, number>()
 const fullDataRevisions = new Map<string, number>()
@@ -466,17 +469,20 @@ function scheduleTrailingResync(instanceId: string, sessionId: string, transcrip
  * disconnect window missed. */
 function reconnectOpenCodeData(instanceId: string): void {
   const prefix = `${instanceId}\0`
-  const live: Array<{ sessionId: string; directory: string; messages: SessionMessageInfo[] }> = []
+  const live: Array<{ sessionId: string; directory: string; messages: SessionMessageInfo[]; onResynced?: (data: Data) => void }> = []
   for (const [key, transcript] of transcriptEntries) {
     if (!key.startsWith(prefix)) continue
     const sessionId = key.substring(prefix.length)
     const messages = transcript.entry.data.session.message.list(sessionId)
-    if (messages.length) live.push({ sessionId, directory: transcript.directory, messages })
+    if (messages.length) live.push({ sessionId, directory: transcript.directory, messages, onResynced: transcript.onResynced })
   }
   destroyOpenCodeData(instanceId)
-  for (const { sessionId, directory, messages } of live) {
+  for (const { sessionId, directory, messages, onResynced } of live) {
     const transcript = ensureTranscript(instanceId, sessionId, directory)
     transcript.reconnectResync = true
+    // Without a later admitted event, nothing re-registers the publication
+    // callback; carry it so a quiet snapshot still reaches the display.
+    transcript.onResynced = onResynced
     void transcript.entry.syncMessages(sessionId, boundedTranscript(messages), () => true)
       .then(() => {
         scheduleTrailingResync(instanceId, sessionId, transcript)
@@ -488,6 +494,12 @@ function reconnectOpenCodeData(instanceId: string): void {
         scheduleAuthoritativeResync(instanceId, sessionId, transcript)
       })
   }
+}
+
+/** A finished resync that leaves queued arrivals (they could not rotate while
+ * the fresh read owned the transcript) restarts rotation to drain them. */
+function resumeRotationAfterResync(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  if (transcript.queue.length) startTranscriptRotation(instanceId, sessionId, transcript)
 }
 
 function isResyncCurrent(
@@ -533,6 +545,7 @@ async function resyncAuthoritativeTranscript(
       transcript.freshEntry = undefined
       if (transcript.reconnectResync) scheduleTrailingResync(instanceId, sessionId, transcript)
       else scheduleAuthoritativeResync(instanceId, sessionId, transcript)
+      resumeRotationAfterResync(instanceId, sessionId, transcript)
       return
     }
 
@@ -549,6 +562,7 @@ async function resyncAuthoritativeTranscript(
     transcript.onResynced?.(fresh.data)
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== fresh) return
     if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
+    resumeRotationAfterResync(instanceId, sessionId, transcript)
     retireDrainedTranscript(instanceId, sessionId, transcript)
   } catch {
     if (!isResyncCurrent(instanceId, sessionId, transcript, generation, fresh)) return
@@ -557,6 +571,7 @@ async function resyncAuthoritativeTranscript(
     transcript.retryCount += 1
     if (transcript.reconnectResync) scheduleTrailingResync(instanceId, sessionId, transcript)
     else scheduleAuthoritativeResync(instanceId, sessionId, transcript, retryDelay(transcript))
+    resumeRotationAfterResync(instanceId, sessionId, transcript)
   } finally {
     if (!swapped) fresh.dispose()
   }
@@ -697,6 +712,11 @@ function eventSessionId(event: OpenCodeEvent): string | undefined {
   if (event.type === "form.created") return event.data.form.sessionID
 }
 
+function daemonSourceOf(event: OpenCodeEvent): string | undefined {
+  const daemon = (event as { data?: { daemon?: unknown } }).data?.daemon
+  return typeof daemon === "string" && daemon.length > 0 ? daemon : undefined
+}
+
 function invalidateTranscript(transcript: TranscriptEntry): void {
   clearTranscriptRetry(transcript)
   transcript.resyncGeneration += 1
@@ -720,7 +740,15 @@ export function applyOpenCodeDataEvent(
   admission?: OpenCodeDataEventAdmission,
 ): Data {
   if (admission) admission.deferred = false
-  if (event.type === "server.connected") reconnectOpenCodeData(instanceId)
+  if (event.type === "server.connected") {
+    // Seed continuity only across a verified same-daemon reconnect; a replaced
+    // daemon (url, pid, version or auth changed, hashed by the relay) and an
+    // unattributed stream keep the hard reset.
+    const source = daemonSourceOf(event)
+    if (source !== undefined && daemonSources.get(instanceId) === source) reconnectOpenCodeData(instanceId)
+    else destroyOpenCodeData(instanceId)
+    if (source !== undefined) daemonSources.set(instanceId, source)
+  }
   const primary = ensureData(instanceId, directory)
   // This native reducer owns transcript/inbox projection only. CodeNomad's
   // stores already reconcile catalogues, Shells and connection state. Even
@@ -802,6 +830,7 @@ export function applyOpenCodeDataEvent(
       return entry.data
     }
     if (transcript.rotating
+      || transcript.queue.length > 0
       || (eventMayAppendMessage(event, transcript.entry.data.session.message.list(sessionId)
         .filter((message) => message.type === "compaction" && message.status === "running").length)
         && transcript.entry.data.session.message.list(sessionId).length >= MAX_TRANSCRIPT_MESSAGES)) {
@@ -955,6 +984,9 @@ export function destroyOpenCodeData(instanceId: string, sessionId?: string): voi
   for (const key of unobservedCompactions) {
     if (key.startsWith(`${instanceId}\0`)) unobservedCompactions.delete(key)
   }
+  // The reconnect handler re-verifies and re-records the source after its own
+  // reset; every other destroy (instance removal, client replacement) forgets it.
+  daemonSources.delete(instanceId)
   instanceGenerations.set(instanceId, ++nextInstanceGeneration)
   entries.get(instanceId)?.dispose()
   entries.delete(instanceId)

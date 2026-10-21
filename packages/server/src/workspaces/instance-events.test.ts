@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 import type { LocationRef, OpenCodeEvent } from "@opencode/client"
 import { EventBus } from "../events/bus"
 import type { Logger } from "../logger"
+import { nativeEventConnections } from "./opencode-service"
 import { InstanceEventBridge } from "./instance-events"
 import type { WorkspaceManager } from "./manager"
 
@@ -748,6 +749,52 @@ describe("InstanceEventBridge", () => {
       assert.equal(sessionGets(), 0)
       assert.deepEqual(received.map((event) => event.event.type), events.flatMap((event) => [event.type, event.type]))
       assert.deepEqual(received.map((event) => event.instanceId), events.flatMap(() => ["a", "b"]))
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("relays server.connected with a stable daemon identity digest per connection", async () => {
+    const runtimeKey = Symbol.for("codenomad.opencode.runtime")
+    const connectionFor = (pid: number) => ({
+      endpoint: Object.assign(
+        { url: "http://127.0.0.1:4010", auth: { username: "u", password: "p" } },
+        { [runtimeKey]: Object.freeze({ version: "2.1.2", pid, contract: {} }) },
+      ),
+    })
+    const first = serverConnected()
+    const sameEndpoint = serverConnected()
+    const replaced = serverConnected()
+    const unattributed = serverConnected()
+    const attributed = new Map<OpenCodeEvent, unknown>([
+      [first, connectionFor(4242)],
+      [sameEndpoint, connectionFor(4242)],
+      [replaced, connectionFor(9001)],
+    ])
+    const manager = {
+      list: () => [{ id: "a", path: "/repo-a" }],
+      ownsDirectory: async () => true,
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        for (const event of [first, sameEndpoint, replaced, unattributed]) {
+          const connection = attributed.get(event)
+          if (connection) nativeEventConnections.set(event, connection as any)
+          yield event
+        }
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => { if (event.event.type === "server.connected") received.push(event.event) })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 4)
+      assert.equal(typeof received[0].data.daemon, "string", "attributed connects carry a digest")
+      assert.equal(received[0].data.daemon, received[1].data.daemon, "the same endpoint keeps one digest")
+      assert.notEqual(received[1].data.daemon, received[2].data.daemon, "a replaced daemon changes the digest")
+      assert.equal(received[3].data.daemon, undefined, "an unattributed stream relays no identity")
+      assert.ok(!JSON.stringify(received).includes("password"), "credentials never appear in the clear")
     } finally {
       bridge.shutdown()
     }

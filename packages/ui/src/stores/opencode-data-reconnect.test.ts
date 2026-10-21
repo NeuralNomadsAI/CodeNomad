@@ -66,6 +66,9 @@ function fixture(instanceId: string, dispatcher = false) {
     data = applyOpenCodeDataEvent(instanceId, "/fixture", make(type, payload), callback, resynced, false, admission)
     return admission
   }
+  // The attributed initial connect records the daemon identity the later
+  // reconnects are verified against.
+  apply("server.connected", { daemon: "daemon-a" })
   for (let index = 0; index < 200; index++) {
     const assistantMessageID = `msg_${String(index).padStart(3, "0")}`
     apply("session.step.started", { assistantMessageID, agent: "build", model, started: index })
@@ -110,6 +113,11 @@ function fixture(instanceId: string, dispatcher = false) {
     storeText: () => {
       const record = store.getMessage("msg_live")
       const part = record?.parts["msg_live-reasoning-0"]
+      return part ? String((part.data as any).text ?? "") : undefined
+    },
+    storeTwoText: () => {
+      const record = store.getMessage("msg_two")
+      const part = record?.parts["msg_two-reasoning-0"]
       return part ? String((part.data as any).text ?? "") : undefined
     },
     sdkText: () => (data.session.message.get(sessionId, "msg_live") as any)?.content?.[0]?.text as string | undefined,
@@ -218,8 +226,9 @@ test("a mid-stream reconnect keeps live deltas displaying and reconciles once qu
     f.dispatch("session.reasoning.delta", { ...live, delta: "before " })
     await converge(ctx, () => f.storeText() === "before ")
 
-    // A shared-stream reconnect announces itself as server.connected.
-    f.dispatch("server.connected")
+    // A shared-stream reconnect announces itself as server.connected from the
+    // same daemon the initial connect recorded.
+    f.dispatch("server.connected", { daemon: "daemon-a" })
     // The seeded page lands within the reconnect event's own task; the next
     // native event always arrives in a later task.
     await microtasks()
@@ -242,5 +251,89 @@ test("a mid-stream reconnect keeps live deltas displaying and reconciles once qu
       control.settle()
     }
     assert.equal(f.storeText(), f.authoritativeText(), "the quiet reconnect resync republishes the authoritative page")
+  } finally { f.cleanup() }
+})
+
+test("arrivals during a pending reconnect read are ordered and drained when it settles", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("reconnect-pending-read", true)
+  try {
+    f.start()
+    f.dispatch("session.reasoning.started", live)
+    await converge(ctx, () => typeof f.storeText() === "string")
+    f.dispatch("session.reasoning.delta", { ...live, delta: "before " })
+    await converge(ctx, () => f.storeText() === "before ")
+
+    f.dispatch("server.connected", { daemon: "daemon-a" })
+    await microtasks()
+    const control = f.controlledList(f.authoritativePage)
+    // The trailing read starts in a quiet window and is held in flight.
+    ctx.mock.timers.tick(1000)
+    await converge(ctx, () => control.calls === 1 && control.pending())
+
+    // A new step arrives while the read is pending. On a full page its start
+    // queues; its followers must queue behind it, not run ahead of the message.
+    f.dispatch("session.step.started", { assistantMessageID: "msg_two", agent: "build", model, started: 600 })
+    f.dispatch("session.reasoning.started", { assistantMessageID: "msg_two", ordinal: 0 })
+    f.dispatch("session.reasoning.delta", { assistantMessageID: "msg_two", ordinal: 0, delta: "step two " })
+
+    // The read loses the revision race; once it settles, the queued rotation
+    // must drain in order so the new step reaches the display.
+    control.settle()
+    for (let index = 0; index < 200 && f.storeTwoText() !== "step two "; index++) {
+      ctx.mock.timers.tick(0)
+      await microtasks()
+    }
+    assert.equal(f.storeTwoText(), "step two ", "queued arrivals drain once the reconnect read settles")
+    assert.equal(f.storeText(), "before ", "the seeded page keeps serving the earlier message")
+  } finally { f.cleanup() }
+})
+
+test("a quiet reconnect snapshot publishes without any further event", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("reconnect-quiet-publish", true)
+  try {
+    f.start()
+    f.dispatch("session.reasoning.started", live)
+    await converge(ctx, () => typeof f.storeText() === "string")
+    f.dispatch("session.reasoning.delta", { ...live, delta: "before " })
+    await converge(ctx, () => f.storeText() === "before ")
+
+    f.dispatch("server.connected", { daemon: "daemon-a" })
+    await microtasks()
+    const control = f.controlledList(f.authoritativePage)
+    // No event follows the reconnect: the carried publication callback alone
+    // must bring the authoritative snapshot to the display.
+    for (let index = 0; index < 200 && f.storeText() !== f.authoritativeText(); index++) {
+      ctx.mock.timers.tick(1000)
+      await microtasks()
+      control.settle()
+    }
+    assert.equal(f.storeText(), f.authoritativeText(), "the resync publishes without a subsequent event")
+  } finally { f.cleanup() }
+})
+
+test("a replaced daemon keeps the hard reset instead of seeding continuity", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("reconnect-replaced-daemon", true)
+  try {
+    f.start()
+    f.dispatch("session.reasoning.started", live)
+    await converge(ctx, () => typeof f.storeText() === "string")
+    f.dispatch("session.reasoning.delta", { ...live, delta: "before " })
+    await converge(ctx, () => f.storeText() === "before ")
+
+    // A different daemon identity (url/pid/version/auth changed) must not seed
+    // the new reducer with the previous daemon's content.
+    f.dispatch("server.connected", { daemon: "daemon-b" })
+    await microtasks()
+    f.apply("session.reasoning.delta", { ...live, delta: "after " })
+    await microtasks()
+    ctx.mock.timers.tick(1000)
+    await microtasks()
+    assert.equal(f.storeText(), "before ", "deltas after a replaced daemon do not continue the old projection")
+    // The fresh reducer starts empty: the delta was admitted nowhere, and no
+    // reconnect reconciliation was scheduled for another daemon's session.
+    assert.equal((f.data().session.message.list(sessionId) as any[]).length, 0)
   } finally { f.cleanup() }
 })
