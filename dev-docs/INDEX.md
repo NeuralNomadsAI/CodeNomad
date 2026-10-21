@@ -2,12 +2,12 @@
 
 Start with [README](../README.md) for installation and usage, then
 [architecture](architecture.md) for ownership boundaries and code locations.
-[AGENTS.md](../AGENTS.md) defines the rules that apply everywhere (styling, i18n, contribution) and indexes the area documents whose **Agent conventions** sections hold each area's binding contracts.
+[AGENTS.md](../AGENTS.md) defines the rules that apply everywhere (styling, i18n, contribution) and indexes the area documents whose rules bind each area.
 
 ## Runtime and ownership
 
 - [OpenCode compatibility](OPENCODE_V2_COMPATIBILITY.md): qualification policy, consumed contracts and integration limits.
-- [Stable-runtime transition](OPENCODE_V2_POST_BETA.md): technical minimum, installation/recovery, retired adapters and migration evidence.
+- [Runtime setup and recovery](OPENCODE_V2_POST_BETA.md): admission, installation/upgrade and service maintenance.
 - [Worktree/session placement](WORKTREE_SESSION_PLACEMENT.md): native location identity and authorized conversation movement.
 - [Session environment](SESSION_ENVIRONMENT.md): server-only execution-host snapshots and fail-closed per-send synchronization.
 - [Cache refresh conventions](CACHE_REFRESH_CONVENTIONS.md): display snapshots, invalidation and authoritative mutation reads.
@@ -39,6 +39,7 @@ Start with [README](../README.md) for installation and usage, then
 
 - [Missions](MISSIONS.md): one-time Mission maps, native admission, Wayfinder/Debugging/Product delivery playbooks and validation.
 - [Recurring Missions](MISSIONS_RECURRING_SIMPLE.md): simple native schedule contract; [qualification](MISSIONS_RECURRING_SIMPLE_QUALIFICATION.md) records the isolated native runs.
+- [Autonomy requirement](MISSIONS_AUTONOMOUS_PLUGIN_REQUIREMENTS.md): the user's 2026-10-07 decision that recurring Missions run in the OpenCode service without CodeNomad.
 
 ## Desktop automation and validation
 

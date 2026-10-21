@@ -1,46 +1,24 @@
 # Provider accounts: direct selection and opt-in rotation
 
-Implemented UX and bounded backend behavior for #793. The browser sandbox uses
-real Settings and account components with synthetic credentials and quota data;
-preview percentages are not native measurements. Production auto-selection is
-opt-in per integration and supports subscription accounts with quota windows
-(see "Supported integrations"); pay-as-you-go keys, balances and credits never
-rotate.
-
 ## Visible accounts
 
-- Show an Active account dropdown below the provider name, styled like the
-  native Web search default selector. Opening its menu lists saved accounts;
-  choosing an option activates it. No Accounts disclosure or checkbox rows.
-- Keep a text Manage models button on the provider header. Add/rename/remove
-  icons beside the dropdown target its provider/account. Add opens the exact
-  same native Connect flow with the provider preselected; it is not a second
-  connection mechanism.
-- Keep all account actions visible without hover. Separate the provider header
-  from account controls with a faint rule, using a softer account label and
-  aligned dropdown/actions. At narrow card widths, place the label above the
-  dropdown while retaining the actions beside it.
-- Use native labels as-is, including a login/email if supplied. Explicit aliases
-  must not be overwritten by a refresh. Environment connections are read-only.
-- Preserve rename drafts across native refreshes, account switches and failed
-  writes. Selection remains service-wide, not session-specific.
+Choosing a dropdown option activates that account service-wide, not per session;
+the account label is softer than the provider name. Add opens the native Connect
+flow with the provider preselected, not a second connection mechanism. Refreshes
+never overwrite explicit aliases; rename drafts survive refreshes, account
+switches and failed writes.
 
 ## Login-derived names
 
-The pinned 2.0.22 `ConnectionCredentialInfo` exposes ID, label, method and optional
-auth status, not a login. Native labels are preferred; only the native fallback
-`default` is enriched with a sanitized Codex OAuth email when available. The
-server-only `usage/codex-credential.ts` reads native credential exports and uses
-the same selected-token identity rules as the existing quota adapter. It returns
-only the bounded display email through the owned account settings route, never
-tokens, account IDs, claims or credential values. Claims are display hints, not
-authorization. No credential is automatically renamed; explicit aliases survive.
-
-Other providers and API keys retain their native labels; OpenCode Console and
-Anthropic OAuth `default` labels are enriched the same way from a sanitized
-native metadata email. An upstream sanitized identity field is preferable for
-extending provider coverage. Display metadata is fetched only while Settings is
-mounted; it is not persisted as a catalog.
+Native `ConnectionCredentialInfo` carries no login, so only the native fallback
+label `default` is enriched: Codex OAuth through the server-only
+`usage/codex-credential.ts` (native credential exports, same selected-token
+identity rules as the quota adapter), OpenCode Console and Anthropic OAuth from a
+sanitized native metadata email. The owned account settings route returns only
+the bounded display email, never tokens, account IDs, claims or credential
+values; claims are display hints, not authorization. No credential is renamed
+automatically. Display metadata is fetched only while Settings is mounted and is
+never persisted as a catalog.
 
 ## Supported integrations
 
@@ -56,23 +34,21 @@ exchanges tokens.
 | `openai` (ChatGPT/Codex) | Codex browser/device OAuth | `usage/native-codex.ts` strict selection parser | rejected |
 | `opencode-go` | Go API key | `usage/opencode-go-quota.ts` | accepted unless marked |
 | `opencode` (Console, `opencode-go` provider only) | OAuth `device`, service-account key | same, with `x-org-id` | accepted unless marked |
-| `anthropic` (Claude Pro/Max) | OpenCode Anthropic OAuth only | Usage tab Claude reader | accepted unless marked |
+| `anthropic` (Claude Pro/Max) | OpenCode Anthropic OAuth only, never Claude Code's `claude-code` login (not even as fallback) | Usage tab Claude reader | accepted unless marked |
 | `github-copilot` | OAuth (github.com only) | Usage tab Copilot reader (premium requests) | rejected |
 | `zai-coding-plan`, `zhipuai-coding-plan` | plan key | Usage tab token-limit reader (MCP tool allowance ignored) | rejected |
 | `kimi-for-coding` | plan key | Usage tab Kimi reader | rejected |
 | `minimax-coding-plan`, `minimax-cn-coding-plan` | plan key | Usage tab MiniMax reader | rejected |
 
-OpenAI's `chatgpt-token-sharing` grant cannot read Codex usage; [OpenAI confirmed
-the limitation](https://github.com/openai/sign-in-with-chatgpt-devkit/issues/3#issuecomment-5936080960).
-Usage reports `openai-token-sharing-unsupported` for that selected native login,
-with localized explanatory text. This diagnoses the missing quota display;
-it does not restore quota access or qualify that login for automatic selection.
+OpenAI's `chatgpt-token-sharing` grant cannot read Codex usage ([confirmed by
+OpenAI](https://github.com/openai/sign-in-with-chatgpt-devkit/issues/3#issuecomment-5936080960)):
+Usage shows the localized `openai-token-sharing-unsupported` explanation for that
+login, which neither restores quota access nor qualifies it for automatic selection.
 
 Pay-as-you-go integrations (`zai`, `minimax`, OpenRouter, DeepInfra, Kilo,
 ZenMux, DeepSeek, credit providers), the Console's Zen provider and readers that
 need unrelated environment cookies/tokens (Cursor, Ollama, the Go web scrape)
-are not registered. Claude Code's own login (`claude-code`) is never a rotation
-credential and never a fallback for `anthropic`.
+are not registered.
 
 Usage-backed adapters reuse the Usage tab readers with a one-entry projection
 (`usage/native-credentials.ts` `projectCredential`) and a small selection view
@@ -102,11 +78,9 @@ else as unknown. Console OAuth usage with `x-org-id` is unverified upstream.
   `providerAccounts.autoSelect.<integrationID>` config owner (the historical
   `openai` key is unchanged). Settings asks the server for every integration
   with saved credentials; the control is visible only when the server reports
-  two eligible accounts. Native credential export support (2.0.20+) is needed;
-  this feature does not raise the global technical minimum. Selection is native
-  and service-wide, not session-specific. Environment, external and
-  pay-as-you-go connections are never automatic fallback candidates. The route
-  refuses writes for unregistered integrations or unsupported catalogs.
+  two eligible accounts. Environment, external and pay-as-you-go connections are
+  never automatic fallback candidates. The route refuses writes for unregistered
+  integrations or unsupported catalogs.
 - The only switch condition is a full current account: a quota read at 100% of
   an applicable window, or a reactive mark (below) when its read is not
   "available". Choose the next usable account of the same integration in stable
@@ -125,6 +99,30 @@ else as unknown. Console OAuth usage with `x-org-id` is unverified upstream.
   window, missing/past resets, duplicate durations, out-of-range percentages and
   contradictory availability flags before any normalization can omit or clamp
   them.
+- Persist only the opt-in policy; redact failures and never expose tokens through
+  the account catalog, browser, logs or persisted display cache.
+- Apply decisions before the next prompt/custom-command admission,
+  independent of an open Settings window. Shell, `/btw`,
+  tools, autonomous native steps and already queued requests are not replayed
+  or intercepted. Serialize decisions across this backend's workspaces, freshly verify
+  connection/ownership/deletion fences and current credential before activation.
+  A local manual mutation or policy change racing a quota read wins, including
+  away-and-back selection; stale responses cannot switch it. Native selection,
+  credential fingerprints, session model/location and ownership are reread before
+  activation. An ambiguous activation failure blocks that send with a redacted
+  error, without retrying another candidate or the prompt.
+- In-flight OpenCode steps may retain a previously acquired account; seamless
+  mid-generation failover needs a proven upstream contract, not a UI promise.
+- Native activation has no compare-and-set contract: a TUI/other backend can
+  still change selection after the last read. The local serialization fence does
+  not claim distributed locking or atomic selection against external clients.
+- Validation: server policy/ownership/admission regressions, real Chromium
+  controls and `scripts/test-provider-account-selection-native.mjs` against an
+  isolated CLI/database, with synthetic OAuth and injected quota responses.
+  The native fixture covers concurrency, exhaustion, alias preservation and a
+  fresh read of persisted YAML. Adapter, Go parser, reactive-mark and per-integration
+  rotation regressions (`provider-accounts/*.test.ts`, `usage/opencode-go-quota.test.ts`)
+  use fake daemons and stubbed fetch. No real credentials or remote generation.
 
 ## Reactive quota marks
 
@@ -149,43 +147,15 @@ credential ID. Go's `metadata.limitName` sets the lifetime: `5 hour` marks last
 5 hours; weekly, monthly and unknown limits are rechecked after 24 hours, since
 OpenCode keeps no reset time. A manual account change clears all marks. Failure
 details are never logged: native errors may contain request bodies.
-- Persist only the opt-in policy. Keep native
-  exports on the server stack, redact failures, and never expose tokens through
-  the account catalog, browser, logs or persisted display cache.
-- Apply decisions before the next prompt/custom-command admission,
-  independent of an open Settings window. Shell, `/btw`,
-  tools, autonomous native steps and already queued requests are not replayed
-  or intercepted. Serialize decisions across this backend's workspaces, freshly verify
-  connection/ownership/deletion fences and current credential before activation.
-  A local manual mutation or policy change racing a quota read wins, including
-  away-and-back selection; stale responses cannot switch it. Native selection,
-  credential fingerprints, session model/location and ownership are reread before
-  activation. An ambiguous activation failure blocks that send with a redacted
-  error, without retrying another candidate or the prompt.
-- Do not automatically replay a failed prompt, custom command or tool operation.
-  In-flight OpenCode steps may retain a previously acquired account; seamless
-  mid-generation failover needs a proven upstream contract, not a UI promise.
-- Native activation has no compare-and-set contract: a TUI/other backend can
-  still change selection after the last read. The local serialization fence does
-  not claim distributed locking or atomic selection against external clients.
-- Validation: server policy/ownership/admission regressions, real Chromium
-  controls and `scripts/test-provider-account-selection-native.mjs` against an
-  isolated 2.0.22 CLI/database, with synthetic OAuth and injected quota responses.
-  The native fixture covers concurrency, exhaustion, alias preservation and a
-  fresh read of persisted YAML. Adapter, Go parser, reactive-mark and per-integration
-  rotation regressions (`provider-accounts/*.test.ts`, `usage/opencode-go-quota.test.ts`)
-  use fake daemons and stubbed fetch. No real credentials or remote generation.
 
 ## Preview variants
 
-`/preview` is manual; `/preview?auto` starts with simulated rotation enabled;
-`/preview?single` omits the option. `?light` renders the light palette.
-The separate preview toolbar's Simulate 100% button exhausts the current mock
-account. Production controls do not contain a simulation action.
+`tests/browser/fixtures/provider-accounts-preview.tsx` renders the real Settings
+components with synthetic credentials/quotas: `/preview` (manual), `?auto`
+(simulated rotation), `?single` (no option), `?light`; its toolbar's Simulate 100%
+exhausts the current mock account. Production has no simulation action.
 
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Provider accounts use a native dropdown like Web search defaults, without an Accounts disclosure or selectable account rows. Provider headers keep the name and text Manage models button on one row; a faint separator distinguishes the account controls below. Account actions are always visible, not hover-revealed. The `provider-account` container stacks the label above the dropdown/actions at narrow card widths. Native account ordering supplies the current account; rename/remove drafts stay keyed by credential. Environment connections are read-only. The browser never reads credential secrets. Native labels win; only `default` may display a sanitized login email from the owned server adapter. Opt-in rotation is per integration (`providerAccounts.autoSelect.<integrationID>`) through the selection-adapter registry in `provider-accounts/adapters.ts`, for subscription accounts with quota windows only: Codex, OpenCode Go (Go key and Console sign-in, Go provider only), Claude Pro/Max (OpenCode Anthropic OAuth, never the Claude Code login), GitHub Copilot and key-based coding plans; pay-as-you-go keys/credits stay manual. It runs before prompt/command admission, reading each explicit credential's fresh quota (reusing Usage readers) without activating candidates or refreshing tokens, with local manual-change fences and no mutation/prompt replay; the only switch condition is a full current account. Native `provider.quota` failures add bounded in-memory per-connection marks (`quota-observer.ts`); reactive adapters (Go, Console, Claude) accept unknown-but-unmarked candidates, others need "available". Go's usage endpoint and Console OAuth usage are unverified upstream. Account styling lives in `styles/components/provider-accounts.css`, backend policy in `provider-accounts/`, with limitations and isolated validation in `dev-docs/PROVIDER_ACCOUNTS_UX_PLAN.md`. Browser preview percentages remain simulated.
+- Provider accounts use a native dropdown like Web search defaults, without an Accounts disclosure or selectable account rows. Provider headers keep the name and text Manage models button on one row; a faint separator distinguishes the account controls below. Account actions are always visible, not hover-revealed. The `provider-account` container stacks the label above the dropdown/actions at narrow card widths. Native account ordering supplies the current account; rename/remove drafts stay keyed by credential. Environment connections are read-only. The browser never reads credential secrets. Native labels win; only `default` may display a sanitized login email from the owned server adapter. Opt-in rotation is per integration (`providerAccounts.autoSelect.<integrationID>`) through the selection-adapter registry in `provider-accounts/adapters.ts`, for subscription accounts with quota windows only: Codex, OpenCode Go (Go key and Console sign-in, Go provider only), Claude Pro/Max (OpenCode Anthropic OAuth, never the Claude Code login), GitHub Copilot and key-based coding plans; pay-as-you-go keys/credits stay manual. It runs before prompt/command admission, reading each explicit credential's fresh quota (reusing Usage readers) without activating candidates or refreshing tokens, with local manual-change fences and no mutation/prompt replay; the only switch condition is a full current account. Native `provider.quota` failures add bounded in-memory per-connection marks (`quota-observer.ts`); reactive adapters (Go, Console, Claude) accept unknown-but-unmarked candidates, others need "available". Account styling lives in `styles/components/provider-accounts.css`, backend policy in `provider-accounts/`. Browser preview percentages remain simulated.
 - Provider usage providers receive credentials explicitly: the route projects each integration's active native `credential.list` entry through `usage/native-credentials.ts` (never host auth.json; a missing endpoint is unavailability) and caches snapshots per provider credential identity. Codex keeps its selected-connection adapter. Claude quotas follow the session's login (`usage/claude-credential.ts`): `anthropic`/`claude` use only OpenCode's Anthropic OAuth, opencode-claude's `claude-code` only the Claude Code login the route resolves on the daemon host (session environment, WSL path translation, Claude Code's token/Keychain/file order) and injects as the `claude-code` entry, so it joins the cache identity; never cross-fall back between them. Never exchange refresh tokens or embed OAuth client secrets; Google stays unsupported for that reason. Model-scoped limits add `window:Model` rows beside the plan windows.

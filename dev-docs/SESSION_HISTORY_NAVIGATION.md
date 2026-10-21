@@ -36,7 +36,7 @@ challenge as history queries. They do not expose generic RPC or SQL access.
   oversized windows fail explicitly instead of silently omitting content.
 - Ownership includes directory, project and legacy workspace identity. Staged
   undo hides the same message-ID tail as the transcript. Missing/deleted targets
-  return `anchor_missing`; the broker rechecks location, project, revert and workspace
+  return `anchor_missing` (distinct from ownership/revert conflicts); the broker rechecks location, project, revert and workspace
   ownership before publishing either result.
 
 ## UI navigation
@@ -73,12 +73,9 @@ content-addressed leaves and no excerpts or message bodies. Limits are 16 indexe
 The optional data uses a separate budget from drafts, attachments and selections.
 Missing/corrupt index chunks discard only that index. Frozen normalized indexes
 and encoded leaves are memoized so draft/scroll captures do not rehash each entry.
-Indexes saved before representative tool names or assistant text counts were added
-display immediately, then perform one complete checkpoint revalidation before being
-persisted again. The text count (non-blank text parts that are neither synthetic nor
-ignored) decides whether an assistant step gets its own marker: tool-only and
-reasoning-only steps are represented by their tool marker alone, like resident
-markers. An index from an older plugin copy has no count and keeps the marker.
+Indexes saved before representative tool names or text counts existed display
+immediately, then revalidate every checkpoint once before being persisted again.
+The text count covers non-blank text parts that are neither synthetic nor ignored.
 The `outline-index-v1` root extension fences older renderers rather than letting
 them discard session documents they cannot interpret. Hosts without partition
 support keep their existing monolithic snapshot without the optional indexes.
@@ -115,9 +112,7 @@ also account for off-window messages, not just the local scroll offset.
 
 ### Transcript scroll ownership and trace
 
-`VirtualFollowList.writeScroll(reason, op)` is the only list-owned transcript position write.
-Reasons come from the closed `SCROLL_REASONS` list in `virtual-scroll-trace.ts`; the
-same call opens the programmatic window and records synchronous targets. Every write
+`VirtualFollowList.writeScroll(reason, op)` opens the programmatic window and records synchronous targets. Every write
 is a DOM write: the list never issues Virtua's imperative operations
 (`scrollTo`/`scrollBy`/`scrollToIndex`). In Virtua (0.51 to 0.53) such an operation reapplies
 its fixed target on every item or viewport measurement until 150 ms after the last
@@ -184,8 +179,7 @@ following bottom. Its element is created once: a remount moves it into the new
 row 0 rather than recreating it. The move drops focus inside it; the row observer
 restores it after Virtua's measurement, before paint, since a remount without a
 carried size cache (a disjoint window: older page, first/latest, jumps) hides the
-header until measured. Virtua disables its container's hit testing while scrolling; the header,
-like the rows, restores it in `styles/messaging/virtual-follow-list.css`.
+header until measured.
 
 The place is kept from roll to roll while nothing else moves the reader by more
 than 2 px, so Virtua's rounded compensations (a fraction of a pixel per roll, more
@@ -307,21 +301,17 @@ Browser checks load the complete stylesheet and cover overflow, hover, keyboard
 focus, RTL and 125% zoom, mixed text/tool/idle records, actual native thumb dragging,
 and viewport anchor stability during streaming and distant jumps.
 
-Hover and keyboard-focus previews render bounded Markdown (formatting, lists,
-links and code) with escaped raw HTML and no syntax-highlighting work. They never
-mount a message/tool card or load a transcript window. Visible-nearby excerpts load
-in small batches, prioritizing hover; moving elsewhere cancels obsolete work.
-An unloaded/empty excerpt shows no popup. Resident selected content can supply the
-preview directly. A separate 512-excerpt cache retains results across view switches;
-entries older than 30 seconds revalidate on demand, without timers/polling. The
-opaque preview surface wraps text and stays inside the viewport;
-Escape, rail scrolling, and viewport resizing dismiss it.
+Hover/focus previews escape raw HTML and do no syntax highlighting; moving
+elsewhere cancels obsolete excerpt work. An unloaded/empty excerpt shows no popup; resident
+selected content can supply it directly. A separate 512-excerpt cache survives
+view switches; entries older than 30 seconds revalidate on demand, without
+timers/polling. The opaque surface wraps text and stays inside the viewport;
+Escape, rail scrolling and viewport resizing dismiss it.
 
-An absent/hidden native anchor returns `anchor_missing`, separately from ownership
-or revert conflicts. Automatic restoration recovers once through the latest visible
-page and replaces its saved anchor/cursor only on success. Explicit navigation still
-reports the missing destination. Active-view initial reads cancel on hiding;
-the lightweight structural index loads independently of transcript hydration.
+Automatic restoration of a missing anchor recovers once through the latest
+visible page and replaces its saved anchor/cursor only on success; explicit
+navigation still reports the missing destination. Active-view initial reads
+cancel on hiding.
 
 Outline scans retain accepted pages and their sequence-horizon cursor when a view
 is hidden or unmounted. Up to 16 structural snapshots (200,000 entries across the
@@ -332,8 +322,6 @@ performs no index read. Message changes observed on activation/status transition
 refresh the last 32 indexed rows and new arrivals, preserving the prefix and last
 completed display. Destructive edits/reconnect/undo invalidate the full index.
 A status transition during an incomplete scan cannot discard its progress.
-There is no excerpt-loading countdown: structural geometry and preview availability
-are independent. Cache retention is in renderer memory, not persisted across restart.
 
 ## Validation
 
@@ -341,18 +329,15 @@ are independent. Cache retention is in renderer memory, not persisted across res
   cancellation, payload limits, staged undo and ownership/mutation races.
 - `history-navigation.test.ts` exercises the real SessionView, transcript store,
   native event dispatcher and SQL readers on a 1,500-message Chromium fixture.
-- `test-session-navigation-native.mjs`, included in the isolated pruning fixture,
-  checks a 1,501-message session against real OpenCode 2.0.5 on Windows.
-- These fixtures do not validate an installed Electron/Tauri application, WSL,
-  Linux or macOS.
+- `test-session-navigation-native.mjs`, run by the isolated pruning fixture, checks
+  a 1,501-message session against a real Windows daemon; no fixture validates an
+  installed Electron/Tauri app, WSL, Linux or macOS.
 
 ## Agent conventions
-
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
 
 - Timeline tool markers follow Message content: a marker is hidden when the tool type it shows (its icon, the outline's representative tool for indexed history) is hidden there, except markers with an active permission. The transcript reports a message's first marker as active, often a tool: when that marker is hidden, the message's first visible marker takes the highlight and the reveal (`activeVisibleId`); a hidden tool marker never reappears just because it is active. There is no separate timeline-tools preference, View menu item, palette command or shortcut; Nothing hides every tool marker. Covered by `tests/browser/timeline-tool-filters.test.ts`.
 - Session timeline placement spans the transcript and composer via the session-owned mount; keep its rail layout in `styles/messaging/session-timeline-rail.css`. Hide the rail and force conversation-header actions into their overflow menu below 420 CSS px of the `session-center` container on all platforms. Keep that width-only force separate from measured header density so trial layouts can expand again above the breakpoint; filters anchor and return focus to the visible menu. Docked drawers reserve a minimum conversation width of 390 CSS px before overlaying. The composer worktree selector becomes a compact arrow-only cell below 460 CSS px of that conversation container (not the remaining composer width); keep its accessible label and styles in `styles/components/prompt-context-controls.css`. Timeline visibility must not depend on measured header density, changing status controls or viewport height; preserve the saved visibility preference.
 - Timeline geometry uses the cached structural index independently of transcript/excerpt loading. Aggregate tool markers retain the outline's representative tool name so their icon does not fall back to `other`; preserve that metadata through projection and persisted-index revalidation. Each V2 step is its own assistant message: an assistant marker exists only for a step with visible text (the outline's `text` count, or resident segments), so tool-only and reasoning-only steps never add an empty assistant marker after their tools; an unknown count keeps the marker. Hover/focus previews render bounded Markdown, prefetch visible-nearby excerpts and prioritize the hovered marker through `stores/timeline-previews.ts`; never mount whole message/tool cards or fetch transcript windows for hover. Keep the viewport-bounded surface in `styles/messaging/timeline-preview.css`.
 - Transcript rows and the header row (`.virtual-follow-list-before`) retain pointer hit testing during virtualizer scrolling (`styles/messaging/virtual-follow-list.css`), so nested code/tool scrollers, message and history controls receive gestures at their visible target.
-- The transcript header (`renderBeforeItems`) is Virtua's row 0, ahead of the retired prefix: Virtua compensates its resizes like any row's, so never add list-side header corrections. Keep its index translation inside `virtual-follow-list.tsx`; it is never an anchor, a message or a `renderItem` call. See `dev-docs/SESSION_HISTORY_NAVIGATION.md`.
-- Every list-owned transcript position write goes through `VirtualFollowList.writeScroll` with a reason from the closed `SCROLL_REASONS` list (`components/virtual-scroll-trace.ts`); never add a direct `scrollTop`/Virtua write beside it. User-gesture routing (wheel re-emission and middle-button autoscroll) also writes the transcript outside it; search reveals inside nested scrollers are the explicitly traced external exception (`search-reveal`); their transcript step goes through the list's `alignElement`. Diagnose jumps with the `scroll` logger namespace (`dev-docs/SESSION_HISTORY_NAVIGATION.md`).
+- The transcript header (`renderBeforeItems`) is Virtua's row 0, ahead of the retired prefix: Virtua compensates its resizes like any row's, so never add list-side header corrections. Keep its index translation inside `virtual-follow-list.tsx`; it is never an anchor, a message or a `renderItem` call.
+- Every list-owned transcript position write goes through `VirtualFollowList.writeScroll` with a reason from the closed `SCROLL_REASONS` list (`components/virtual-scroll-trace.ts`); never add a direct `scrollTop`/Virtua write beside it. User-gesture routing (wheel re-emission and middle-button autoscroll) also writes the transcript outside it; search reveals inside nested scrollers are the explicitly traced external exception (`search-reveal`); their transcript step goes through the list's `alignElement`. Diagnose jumps with the `scroll` logger namespace.

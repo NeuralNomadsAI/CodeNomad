@@ -1,11 +1,10 @@
 # Pruning safety boundary
 
-This is an internal storage contract, not a public OpenCode lock API. The
-source audit used upstream `f91c6d8b25`; the executable tests independently target
-the published `0.0.0-beta-19419`. Version strings alone do not certify a modified
-binary. Runtime version labels do not enable or disable pruning: actual storage,
-identity and claim checks decide each request. We do not support custom Core
-patches or arbitrary direct SQL writers.
+This is an internal storage contract, not a public OpenCode lock API; the source
+audit used upstream `f91c6d8b25`. Runtime version labels never enable or disable
+pruning: actual storage, identity and claim checks decide each request, and a
+version string does not certify an unmodified binary. Custom Core patches and
+arbitrary direct SQL writers are unsupported.
 
 ## Native ownership
 
@@ -55,7 +54,7 @@ observe the committed history. Titles and already-written summaries are not scru
    Update only `$.content`, with CAS against the exact stored row data.
 5. Insert a content-free receipt in the same transaction; commit or roll back both.
    Identical requests cannot accidentally delete the next block after indices shift.
-   Receipt retention is intentional; automatic GC/expiry is not part of this patch.
+   Receipt retention is intentional; there is no GC/expiry.
 6. Emit the custom event after commit. A failed notification cannot undo the write.
    The caller re-reads via the native API; reconnect reconciles authoritative data.
 
@@ -78,4 +77,4 @@ Use the supported single shared daemon; other clients may connect to it normally
   or automatic backup restore is performed by this plugin.
 
 SQLite integrity, application replay, UI cache state and provider payload correctness
-are distinct checks. Do not swap the earlier `pruned.db` experiment into a real daemon.
+are distinct checks. Never point a real daemon at an offline-pruned database copy.

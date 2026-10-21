@@ -1,14 +1,12 @@
 # Desktop versions, update feeds and data profiles
 
-Three notions used to be one value (the "channel"). They are now independent.
+Three independent notions:
 
 | Notion | What it is | Who chooses it | What it affects |
 |---|---|---|---|
 | Installed version | The build you run, e.g. `0.20.1` or `0.20.1-dev-20261008-…` | The installer | Nothing else. It never selects data. |
 | Update feed | Which releases are offered: `stable` or `preview` | The user, in Settings → Info → Updates (`server.updateFeed`) | Update offers only. Until chosen, `-dev-*` builds default to preview, others to stable. |
 | Data profile | Which desktop state is used: windows, tabs, drafts, WebView/Chromium storage, singleton and CodeNomad backend | Developers, explicitly, with `CODENOMAD_PROFILE` | Desktop data only. |
-
-On the preview feed, offers follow publication order (preview builds carry the previous release number, so SemVer would rank them below their base release). When the installed release is older than the first page of fetched releases, the server looks it up by tag before falling back to version order, and Settings → Info never substitutes a SemVer-ranked stable release on that feed.
 
 OpenCode sessions and messages live in the shared OpenCode daemon and are the same in every profile. Server configuration (`CLI_CONFIG`, default `~/.config/codenomad/config.yaml`) is also independent of the profile; a non-default config file still gets its own scope, as before.
 
@@ -39,7 +37,7 @@ The host passes `CODENOMAD_DESKTOP_PROFILE=<name>` to its backend for non-defaul
 
 ## One-time transition
 
-Before this change, packaged builds picked `dev` or `dev-v2` from their version label, so installing `0.20.1` over `0.20.1-dev-…` silently switched to an empty profile. On a packaged launch without `CODENOMAD_PROFILE`/alias and without a remembered choice, the host:
+On a packaged launch without `CODENOMAD_PROFILE`/alias and without a remembered choice, the host:
 
 1. Looks, read-only and size-bounded, at the default profile and the `dev` and `dev-v2` scopes for the same config identity, using the regular client-state parsers. A store counts only when a restore-enabled window has a workspace tab (more than the session partition, or a `workspace`-kind tab in a legacy monolithic snapshot; sidecar-only tabs never count). Legacy default files count only while the current shared file is missing.
 2. None → default profile. One → that profile. Several → a native question, once, listing the candidates with their last-used dates (most recent first). Quit/dismissal remembers nothing.
@@ -79,7 +77,7 @@ The default profile's folders are parents of other roots, so they are never remo
 
 **Contract.** Two host operations (Electron IPC `data-profiles:listOthers` / `data-profiles:deleteOthers`, Tauri commands `data_profiles_list_others` / `data_profiles_delete_others`, granted to local windows and Preferences only). The renderer sends only IDs from a listing (`default`, `scope:<scope>`, `orphan:<hash>`); the host re-enumerates, re-validates and rechecks activity before deleting and never accepts paths. Operations are serialized per host process. Implementation: Electron `data-profile-cleanup.ts`, Tauri `data_profile_cleanup.rs`, UI `components/settings/other-profiles-settings-row.tsx` over `lib/native/data-profiles.ts`.
 
-Known limits: macOS WebKit storage of the Tauri app is shared and kept (see above); the Tauri singleton itself is not file-based; a Tauri instance is detected through the running marker it creates while starting, and its WebView2 locks. A profile opened between the last check and a removal is caught only by the operating system's file locks.
+Known limits: the Tauri singleton itself is not file-based; a Tauri instance is detected through the running marker it creates while starting, and its WebView2 locks. A profile opened between the last check and a removal is caught only by the operating system's file locks.
 
 ## Validation
 
@@ -88,9 +86,3 @@ Known limits: macOS WebKit storage of the Tauri app is shared and kept (see abov
 - UI: `tests/browser/server-info.test.ts` (Data profile row), `tests/browser/other-profiles.test.ts` (other profiles row in Preferences and inline).
 
 The real native dialogs (Electron relaunch flow, rfd on Windows/macOS/Linux) are not covered by automated tests. Profile deletion is tested against temporary roots, not against a running second host; Chromium singleton files are simulated at the location derived from main.ts ordering, not captured from a live instance.
-
-## Agent conventions
-
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Desktop data profiles are explicit developer isolation, never derived from the installed version or update feed. Electron `data-profile.ts`/`profile-transition.ts` and Tauri `data_profile.rs`/`profile_transition.rs` resolve `CODENOMAD_PROFILE`, then the deprecated `CODENOMAD_UPDATE_CHANNEL` alias (historical per-host normalization and scope hashes preserved), then unpackaged `dev`, before any singleton, WebView/userData or client-state path is fixed. Packaged launches without one use a remembered choice or a one-time read-only transition (default/`dev`/`dev-v2` with restorable state; ask natively only when several qualify; remember the name, never a path, outside every profile; never move or delete data). Deleting other saved profiles is a separate explicit action in the Startup card (`settings/other-profiles-settings-row.tsx`, shown only when others exist): Electron `data-profile-cleanup.ts` and Tauri `data_profile_cleanup.rs` list on demand and delete only listing IDs, re-enumerated host-side, as link-free direct children of known roots; never recurse into a parent root (the default profile deletes only its enumerated children), skip profiles in use by either host (Chromium's singleton lives in the profile folder itself), keep and disclose Tauri's shared macOS WebKit store, and report what remains. A remembered named profile whose scope folder is gone reruns the transition. Keep grammar and scopes in the shared `data-profile-vectors.json` on both hosts. See `dev-docs/DESKTOP_DATA_PROFILES.md`.

@@ -1,22 +1,16 @@
 # Profile environment at send time
 
-The profile's existing `server.environmentVariables` setting is applied before
-every native `session.prompt`, `session.command`, and `session.shell` request
-sent through CodeNomad. The server awaits `session.environment({ sessionID,
-variables })` before forwarding the original request. Electron, Tauri and web
-clients use the same server path.
-
-Opening, reading or creating a conversation does not set its environment. Saving
-settings does not walk existing sessions. Every conversation receives the current
-profile settings on its next send, including resumed conversations and forks
-that the user subsequently prompts. There is no polling, per-session settings
-store, applied-version cache, plugin or daemon restart.
+The profile's `server.environmentVariables` apply on each conversation's next
+send through CodeNomad (prompt, command, shell; Electron, Tauri and web share the
+server path), including resumed conversations and later-prompted forks: the
+server awaits `session.environment({ sessionID, variables })` before forwarding.
+No polling, per-session settings store, applied-version cache, plugin or daemon
+restart.
 
 ## Implementation
 
-- The guarded instance proxy applies the environment only after ownership checks
-  and acquisition of the worktree mutation fence. Both writes use the acquired
-  connection; a stale connection or disconnected request prevents forwarding.
+- Both writes use the connection acquired after ownership and worktree-fence
+  admission; a stale connection or disconnected request prevents forwarding.
 - `WorkspaceManager.getSessionEnvironment` reads current settings for each send.
 - Bundled Missions also applies this snapshot before its assignment prompts and
   report synthetics, through the authenticated desktop bridge's narrow mission
@@ -31,16 +25,10 @@ store, applied-version cache, plugin or daemon restart.
   into Linux. Configured paths must be meaningful inside the selected distro.
 - Clearing an override restores the execution host's inherited value (or removes
   the key when absent there), rather than retaining the previous session value.
-- Internal server authentication variables and OpenCode storage ownership
-  variables are omitted. Full snapshots never pass through the browser. Native
-  request errors are not logged or reflected, since they can include these values.
-- A failed or unsupported environment call fails the send with a localized error;
-  it does not silently send using stale values or retry the mutation. Existing UI
-  send failure/draft handling remains responsible for restoring the user's input.
-
-For host execution the additional work is an in-memory merge and one local API
-request per send. WSL additionally launches the environment reader. No performance
-claim is made without measurement.
+- Internal server authentication and OpenCode storage ownership variables are
+  omitted. A failed or unsupported environment call fails the send with a
+  localized error (never stale values or a retry); existing UI send-failure
+  handling restores the draft.
 
 ## Scope
 
@@ -61,11 +49,6 @@ isolation is added by this change.
 
 ## Validation
 
-Unit/HTTP integration tests cover full snapshots, Windows key casing, WSL host
-selection, credential exclusion, per-send updates/removal, prompt/command/shell
-ordering, read-only behavior, denied sessions, failure redaction, stale connection
-fencing, worktree deletion and disconnect cancellation.
-
 Run the real native regression against an explicitly selected CLI:
 
 ```text
@@ -80,6 +63,4 @@ installation path. No provider call or existing conversation is used.
 
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Profile environment variables are applied server-side before each native session prompt, custom command or session shell request, after ownership and worktree-mutation admission. Build a complete execution-host snapshot with `workspaces/session-environment.ts`; never send the profile environment through the browser or skip the per-send write using a cache. Reads and settings edits do not mutate native sessions. Keep native environment failures fail-closed and redact SDK request bodies. See `dev-docs/SESSION_ENVIRONMENT.md`.
+- Profile environment variables are applied server-side before each native session prompt, custom command or session shell request, after ownership and worktree-mutation admission. Build a complete execution-host snapshot with `workspaces/session-environment.ts`; never send the profile environment through the browser or skip the per-send write using a cache. Reads and settings edits do not mutate native sessions. Keep native environment failures fail-closed and redact SDK request bodies.

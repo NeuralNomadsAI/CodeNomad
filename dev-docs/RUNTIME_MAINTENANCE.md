@@ -23,16 +23,12 @@
   with installation scripts disabled. This is separate from the application's
   dependency audit and is not a byte-for-byte scan of installed desktop files.
   The JSON advisory report is retained as an Actions artifact for seven days.
-- Version lag and advisory counts require applicability review; neither
-  automatically replaces npm, changes packaging, fixes dependencies, merges a
-  PR, or publishes a release. A Node update may naturally include a newer npm
-  from the official archive; separately replacing npm remains a manual change.
-- Failed metadata/audit requests fail the maintenance job rather than claiming
-  a clean result. Available updates and vulnerability results emit warnings and
-  a job summary, without becoming an unrelated PR build gate.
+- Version lag and advisory counts need applicability review. A Node update may
+  bring a newer npm from the official archive; replacing npm separately is manual.
+- Failed metadata/audit requests fail the job; updates and advisories only emit
+  warnings and a job summary, never an unrelated PR build gate.
 
-After merging this configuration into the default branch, allow GitHub Actions
-to create pull requests in repository settings if that policy is disabled.
+Repository settings must allow GitHub Actions to create pull requests.
 The audit job has read-only repository permissions. A separate trusted proposal
 job requests `contents: write` and `pull-requests: write`; no personal token or
 automatic approval is configured.
@@ -40,6 +36,4 @@ Run `npm run check:runtime` locally for the same read-only assessment.
 
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Bundled runtime maintenance keeps `.node-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only: never independently replace bundled npm, auto-fix dependencies, merge or publish from that check. Audit failure is not a clean assessment; application runtime changes require reviewed builds/releases. See `dev-docs/RUNTIME_MAINTENANCE.md`.
+- Bundled runtime maintenance keeps `.node-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only: never independently replace bundled npm, auto-fix dependencies, merge or publish from that check. Audit failure is not a clean assessment; application runtime changes require reviewed builds/releases.

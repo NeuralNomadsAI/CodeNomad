@@ -30,11 +30,10 @@ message, without paths, values or error causes. Failed reads return no snapshot,
 so callers cannot apply `session.environment` or send prompt/synthetic input.
 Native authority, connection and ownership fences still apply around the awaits.
 
-The existing `session-environment.ts` constructs the **full** snapshot: host
-`process.env` plus overrides (case-insensitive keys on Windows), or the selected
-WSL distro's bounded `env -0` result plus overrides. Internal authentication and
-native storage variables remain excluded. Restarting the authority can change its
-base process environment; this does not claim a live global OS environment read.
+The full snapshot is built by `session-environment.ts` (SESSION_ENVIRONMENT.md),
+always excluding internal authentication and native storage variables; restarting the
+authority can change its base process environment, and this is not a live global OS
+environment read.
 
 Validation (isolated temporary files; no daemon/application/user-config mutations):
 

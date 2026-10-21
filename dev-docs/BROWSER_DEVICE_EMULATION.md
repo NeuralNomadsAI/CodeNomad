@@ -23,17 +23,6 @@ These generic profiles do not emulate Gecko/Waterfox, Safari, mobile OS text set
 keyboard occlusion or browser/system bars. They are a reproducible Android/Chromium
 layout reference, not a pixel-identical representation of every phone.
 
-The composer keeps selectors and actions on one row at every width, truncating
-labels rather than wrapping. Dense toolbar/footer touch targets use 32 px; timeline
-markers use 24 px height. Below 460 CSS px of conversation width, the worktree
-selector becomes a 32 px arrow-only cell while retaining its accessible label.
-The timeline is hidden below 420 CSS px of conversation
-width on every platform, independently of header density, status controls or
-viewport height. The saved visibility preference is preserved. Conversation-header
-actions, including filters, are forced into the overflow menu at the same 420 px
-breakpoint, or earlier if their measured layout needs it. Docked side panels reserve
-390 CSS px for the conversation before becoming overlays.
-
 Main local and remote desktop windows use a 390 × 600 CSS px content minimum.
 Native logical minimums scale with application zoom (312 px wide at 80%, 390 at
 100%, 488 at 125%, 585 at 150%), without multiplying monitor DPI twice. Restoring
@@ -45,6 +34,8 @@ including subsequent reloads. Remote session partitions remain independent.
 Zooming in grows an undersized normal window; zooming out relaxes constraints but
 does not shrink a larger window. Extreme zoom minimums are capped to the monitor's
 work area. Preferences and browser preview guests keep their separate dimensions.
+Electron handles outer-frame offsets in `window-state.ts`, Tauri in
+`window_constraints.rs`; native logical dimensions round up.
 Tauri defers native minimum setters while maximized, fullscreen or minimized to
 preserve window state and normal placement. A per-window registration coalesces
 move/resize/DPI updates off native callbacks, with a 500 ms read-only environment
@@ -67,19 +58,3 @@ downloaded the locked Tauri source; CI runs this on all three desktop platforms.
 Tests cover 360, 390 and 430 px widths
 plus 320 px, landscape, mouse/touch media, draft preservation, native profile/reset
 behavior and the real viewport menu's native/fallback boundaries.
-
-Composer sizing also follows the visible conversation height (including the
-visual viewport when a software keyboard opens). The minimum is 8% of that
-height, with a 44 px floor. Width and draft length do not change the limits.
-Long drafts scroll inside the field. Manual sizing is saved as a proportion
-of the available height, bounded to 8–60%: the field itself scales when the
-window or visual viewport changes. The 44 px floor never overwrites that
-proportion. Legacy pixel heights convert on the first valid measurement.
-Pointer and keyboard
-resizing share the same minimum and maximum.
-
-## Agent conventions
-
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Browser preview retains its six original fixed templates (responsive, desktop, tablet portrait/landscape, mobile portrait/landscape), without a separate rotation button. Mobile templates automatically use native Android/Chromium touch emulation; iframe fallback changes dimensions only. Profiles share `packages/ui/src/lib/native/browser-emulation.json`; only owned native guests may receive device overrides, and returning to dimensions clears them before reloading. Main local/remote desktop content minimums are 390 × 600 CSS pixels: multiply by application zoom, not monitor DPI, and round up native logical dimensions. Restore uses the saved zoom; keyboard/wheel/menu changes update constraints without shrinking larger windows, with monitor-work-area caps at extreme zoom. Electron handles outer-frame offsets in `window-state.ts`; Tauri uses `window_constraints.rs`. Preferences and native preview children retain their separate sizing contracts.

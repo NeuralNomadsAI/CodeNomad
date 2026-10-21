@@ -1,8 +1,8 @@
 # OpenCode V2 plugin activation controls
 
-CodeNomad exposes **activation controls**, not a package manager. The surface
-does not install, remove, update, or edit plugin options. Those operations stay
-in OpenCode configuration and the OpenCode CLI.
+CodeNomad exposes **activation controls** plus native package check/update
+(`stores/plugin-package-actions.ts`), not a package manager: it does not install,
+remove or edit plugin options, which stay in OpenCode configuration and the CLI.
 
 ## V2 contract
 
@@ -11,10 +11,9 @@ an ID, `plugin.id` later re-enables it, `*` matches all plugins, and `prefix.*`
 matches an ID prefix. Source declarations remain in place when an activation
 rule is added.
 
-The runtime exposes `plugin.list`, `plugin.check`, and `plugin.update`, but no
-symmetric enable/disable operation. The pinned client's `config.update` only
-supports its declared preference fields. CodeNomad therefore does not proxy an
-upstream write. It performs one narrow, authenticated configuration mutation.
+The runtime's `plugin.list`/`plugin.check`/`plugin.update` have no enable/disable
+counterpart and the pinned client's `config.update` accepts only its declared
+preference fields, so activation is one narrow, authenticated configuration mutation.
 
 ## Authority and precedence
 
@@ -48,12 +47,10 @@ destination escapes the active location through a symlink/junction; it must not
 edit an ancestor/shared file to implement a location-local override. Missing
 fallback documents are created only by an explicit mutation, not display reads.
 
-Global rules can be overridden by later project rules. The UI presents one
-compact row per user/configured plugin with separate **Global** and **Project**
-switches; each gesture therefore names its write scope directly. Built-in
-OpenCode entries remain in the authoritative snapshot but are not presented as
-user activation controls. An exact disabled ID remains available even when it
-is absent from `plugin.list`, so it can be re-enabled. A plugin hidden only by a
+Global rules can be overridden by later project rules. Built-in OpenCode entries
+remain in the authoritative snapshot but are not presented as user activation
+controls. An exact disabled ID remains available even when it is absent from
+`plugin.list`, so it can be re-enabled. A plugin hidden only by a
 broad wildcard cannot be named safely unless the runtime or an exact configured
 rule reveals its ID. OpenCode's reserved `opencode.*` identity is retained on
 disabled synthesized controls so builtins do not become visible merely because
@@ -68,31 +65,23 @@ operations when they re-enable an already resolved plugin, matching OpenCode's
 native supervisor. Relative and `file://` local declarations are correlated with
 the resolved runtime entrypoint before that ordered replay.
 
-Display snapshots are keyed by workspace instance and worktree directory, not
-by session workspace identifiers. Changing sessions inside one worktree reuses
-the same snapshot. The UI requests the first snapshot only while the Plugins
-surface is visible and expanded. Location-scoped plugin events mark only their
-worktree stale; an event for an unknown directory matches nothing immediately,
-while a canonical event arriving before its WSL alias is learned is retained
-and fences only the snapshot that later adopts that canonical identity.
-If host and canonical reads already have separate in-flight records, merging
-them retains the canonical invalidation generation and coalesced refresh demand.
-An older alias response cannot publish over that event; the orphaned read is
-aborted and one reconciliation read supplies the shared snapshot.
-Configuration events mark the instance's worktrees stale
-because the event does not identify whether the global document changed.
-Hidden surfaces retain their last snapshot without starting background
-OpenCode reads, then refresh on the next visible demand. Scoped demand handles
-follow canonical aliases and are released on deactivation/disposal. A queued
-follow-up starts only while at least one visible consumer remains; otherwise
-its stale state is retained for reopening. Renderer-to-backend SSE reconnection
-invalidates every cached instance/worktree even when the backend's native
-OpenCode subscription stayed connected. A successful Global
-mutation likewise marks sibling worktree snapshots stale without refreshing
-them in the background. Generic instance metadata hydration does not fetch
-`plugin.list`; only a visible activation surface requests plugin inventory.
-`plugin.updated` refreshes agents, providers, and commands without forcing a
-generic metadata round-trip.
+Display snapshots are never keyed by session workspace identifiers: changing
+sessions inside one worktree reuses its snapshot, and the first read waits until
+the Plugins surface is visible and expanded. Location-scoped plugin events mark
+only their worktree stale; an unknown directory matches nothing, while a canonical
+event arriving before its WSL alias is learned is retained and fences only the
+snapshot that later adopts that identity. Merging separate host and canonical
+in-flight records keeps the canonical invalidation generation and coalesced
+demand; the older alias response cannot publish over the event, its read is
+aborted and one reconciliation read supplies the shared snapshot. Configuration
+events (which do not identify the changed document) and renderer-to-backend SSE
+reconnection (even when the native subscription stayed connected) mark every
+worktree of the instance stale, a successful Global mutation its siblings. Stale
+and hidden snapshots are kept without background OpenCode reads; a queued
+follow-up starts only while a visible consumer remains, and scoped demand handles
+follow canonical aliases until deactivation/disposal. Generic metadata hydration
+never fetches `plugin.list`; `plugin.updated` refreshes agents, providers and
+commands without a generic metadata round-trip.
 
 ## Mutation guarantees
 
@@ -118,14 +107,12 @@ operation:
    inert; locks self-heal after 30 s.
 
 WSL performs bounded inspect/read/create/chmod/sync/rename operations inside the
-selected distro. Existing native modes such as `0600` are retained rather than
-being inferred from the Windows UNC projection. Shell helpers prefer portable
-fallbacks (`realpath`, `sync`, `sha256sum`/`shasum`) and Ubuntu remains the
-tested distro for minimal busybox images. A WSL toggle costs four `wsl.exe`
-spawns on the happy path (`inspectMany`, `load`, `prepare`, `commit`; cleanup
-runs only when the commit fails), each paying full process cold-start since
-there is no pooling — expect roughly 2–8 s of filesystem time before daemon
-RPCs on slow hosts.
+selected distro, retaining native modes such as `0600` rather than inferring them
+from the UNC projection. Shell helpers prefer portable fallbacks (`realpath`,
+`sync`, `sha256sum`/`shasum`); Ubuntu remains the tested distro for minimal busybox
+images. A toggle costs four unpooled `wsl.exe` cold starts (`inspectMany`, `load`,
+`prepare`, `commit`; cleanup only after a failed commit): roughly 2–8 s of
+filesystem time before daemon RPCs on slow hosts.
 
 The server keeps no display cache by design: every read and mutation reissues
 `config.get` + `plugin.list` (plus one `location.get` for session-scoped
@@ -168,25 +155,9 @@ runtime state catches up.
 
 ## Runtime qualification
 
-The feature uses only `config.get` and `plugin.list`, which are already consumed
-through CodeNomad's connection-scoped compatibility transport.
-
-The server, UI, and bundled plugin currently pin `2.0.16` together. Its
-declarations provide the location-scoped reads, ordered `ConfigEntry.plugins`,
-and plugin source/state metadata used here. CodeNomad's demonstrated technical
-minimum is `2.0.7`, while `2.0.16` is the separately recommended and tested
-target. These activation controls add no higher version requirement. The
-activation write remains a local JSONC rule; no runtime-specific mutation
-endpoint is used.
-
-Historical beta and stable contract-family results remain recorded in
-`OPENCODE_V2_COMPATIBILITY.md` as compatibility-adapter evidence, not as a
-separate support promise for this feature. Runtime admission follows
-`opencode/runtime-support.ts` and the evidence policy in that document. There is
-no release-number-only gate:
-unknown runtimes must first pass the existing authenticated OpenAPI contract
-recognition. Read or discovery failures leave controls unavailable and never
-fall back to guessed paths.
+Activation adds no version requirement beyond `opencode/runtime-support.ts`; its
+write is a local JSONC rule, not a runtime mutation endpoint. Read or discovery
+failures leave controls unavailable and never fall back to guessed paths.
 
 ## Validation
 
@@ -208,8 +179,6 @@ fall back to guessed paths.
 
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- V2 plugin activation controls use the shared rounded SUID switch geometry in `styles/components/switches.css`. Present Global and Project as separate per-plugin columns so every mutation has an explicit scope. Cache display snapshots by instance and worktree directory, and refresh them only while the plugin surface is visible.
+- Present Global and Project as separate per-plugin columns so every mutation has an explicit scope. Cache display snapshots by instance and worktree directory, and refresh them only while the plugin surface is visible.
 - Keep the Plugins surface minimal: plugin names, a compact package check/update icon when applicable, and Global/Project switches. Activating the icon opens a menu that names the exact package operation (check or update with its native target) instead of firing blindly; put source/status/target details and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary. The compact Refresh icon occupies the name-column header and spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and menu chrome is shared with `action-overflow-menu`.
 - Plugin packages that fail before exporting an ID remain visible by their native target with check/update actions and failure details in the name tooltip. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds.

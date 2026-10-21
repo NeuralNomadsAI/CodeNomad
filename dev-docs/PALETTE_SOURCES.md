@@ -1,11 +1,7 @@
 # Soft palette sources and adaptation
 
-CodeNomad's soft collection uses its own localized names and semantic roles.
-Appearance mode and the two saved palettes are independent. The picker is flat
-and filters by fixed mode; Auto exposes both slots for editing. Classic retains
-the dev canvas/panel/tool relationship, and all families use the muted surface
-for message/tool cards with base-canvas inset output. Earlier review notes that
-mention grouped palettes or panel-colored assistant cards are superseded.
+CodeNomad's soft collection uses its own localized names and semantic roles. The
+picker is flat and filters by fixed mode; Auto exposes both slots for editing.
 These are adaptations, not exact editor-theme ports. No Zed syntax definitions,
 theme loader, extension code, or complete theme JSON is shipped.
 
@@ -19,11 +15,9 @@ theme loader, extension code, or complete theme JSON is shipped.
 | Sage / Sauge | `sage-light` | `sage` | Everforest Soft's gray-green structure |
 
 The first three light IDs stay stable so saved selections and overrides remain
-addressable. Existing Classic, Basalt, Fjord, Lichen, Velvet and Ember retain
-their declared surface colors from `dev`. Their message surfaces are no longer
-collapsed onto the composer background. Participant identity colors are shared
-within each appearance, and selection uses a neutral surface tint rather than
-borrowing a participant color. Custom colors are never silently recolored.
+addressable. Classic (with its canvas/panel/tool relationship), Basalt, Fjord,
+Lichen, Velvet and Ember keep their declared surface colors. Custom colors are
+never silently recolored.
 
 The soft light canvases are darker than the original editor whites. Dark
 canvases use mid-dark grays instead of near-black. Text is adjusted for at least
@@ -75,7 +69,5 @@ SOFTWARE.
 
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Soft palette families live in `packages/ui/src/lib/soft-color-schemes.ts`, with references in `dev-docs/PALETTE_SOURCES.md`. Keep selection independent of participant identity, and keep transcript/composer surfaces distinct. Run `palette-quality.test.ts` and inspect real rendered captures when changing palette colors or their token mapping.
+- Soft palette families live in `packages/ui/src/lib/soft-color-schemes.ts`. Participant identity colors are shared within each appearance; selection uses a neutral surface tint, never a participant color; transcript/composer surfaces stay distinct. Run `palette-quality.test.ts` and inspect real rendered captures when changing palette colors or their token mapping.
 - Palette settings follow the resolved appearance in Auto mode. Keep the picker, square swatches and trailing actions on one line while they fit at their natural width, measured by `settings/palette-strip-fit.ts` rather than a breakpoint because the actions change with edits; otherwise the swatch strip moves below the picker and its actions (`data-stacked`) and wraps onto further lines instead of scrolling. Swatch names use tooltips and accessible input labels. Swatch styles live in `styles/components/theme-scheme-swatches.css`.

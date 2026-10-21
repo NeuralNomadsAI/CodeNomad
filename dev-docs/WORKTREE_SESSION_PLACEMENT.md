@@ -9,10 +9,8 @@
   not run `git switch`, move the checkout, copy uncommitted files, merge branches,
   or create another conversation. Moving within the local repository keeps the
   conversation visible in its CodeNomad project.
-- Creation and session movement are separate operations. The existing selector's
-  create action performs both and is labelled "Create and use worktree".
-  Agent creation alone must not be confused with a request to continue the session
-  there. Explicit instructions to preserve the current session location prevail.
+- Creation and session movement are separate; the selector's create action does
+  both and is labelled "Create and use worktree".
 - Preserve the CodeNomad default parent `<local main checkout>/.codenomad/worktrees`
   for new worktrees. This is a storage convention, not the definition of workspace
   membership: externally located registered worktrees remain valid. Resolve the
@@ -25,21 +23,19 @@
   revision; uncommitted changes stay in the original worktree.
 - Honor Git's ordinary refusal to check out a branch already used in another
   worktree. Support and identify detached worktrees, including multiple checkouts
-  at the same commit. A mutable branch name is a label, not physical identity.
+  at the same commit.
 - Worktree removal preserves branch refs and conversation history, observes Git's
   dirty/locked/main-worktree constraints, and preserves CodeNomad's session-family
   evacuation and resource fencing. Closing a conversation does not remove Git data.
 - UI and agent equivalence must be demonstrated for directory, starting revision,
   branch/detached state, native session location, local project visibility and Git
-  panel target. Native `session_move` alone does not provide CodeNomad's family
-  transaction. An agent's shell command also does not inherit UI policy by itself.
+  panel target. An agent's shell command does not inherit UI policy by itself.
 
 Implementation:
 
-- `workspaces/native-worktrees.ts` owns the local catalogue and native create/remove
-  policy. It calls OpenCode `worktree.refresh/list/create/remove`. There is no second
-  production `git worktree list/add/remove` implementation. Git reads annotate HEAD
-  and branch and compare the physical common directory to exclude independent clones.
+- `workspaces/native-worktrees.ts` calls OpenCode `worktree.refresh/list/create/remove`;
+  there is no second production `git worktree list/add/remove` implementation, and
+  Git reads only annotate HEAD and branch.
 - Opaque directory-derived identifiers remain stable when branches change; labels
   are separate. Main checkouts cannot be deleted. Nested workspace paths are mirrored
   over the same checkout roots, retaining host/service namespace separation for WSL.
@@ -48,18 +44,15 @@ Implementation:
   Git `switch -c` (or `switch` for an existing branch) establishes the requested branch
   without force/reset. Failed branch attachment removes only the newly created clean
   worktree through the native API; a cleanup failure is reported with the original error.
-- The catalogue supplies the same default parent to the agent instruction. Creation
-  alone and a request to continue the conversation there are distinguished. The UI
-  follows creation with the existing verified family transaction, using the returned
-  identifier rather than guessing it from the branch name.
+- The UI follows creation with the existing verified family transaction, using the
+  returned identifier rather than guessing it from the branch name.
 - Native worktree events invalidate ownership and UI state. Opening the selector also
   discovers external Git changes. Native session moves refresh the catalogue before
   list reconciliation. Search traverses every local worktree's native cursor chain.
-- `scripts/test-native-worktree-management.mjs` runs through the isolated native
-  contract fixture (and its CI callers), covering selected HEAD, default parent,
+- `scripts/test-native-worktree-management.mjs` (run by `test-opencode-location-native.mjs`,
+  isolated: no shared daemon or user database) covers selected HEAD, default parent,
   named branches, externally-created checkouts, independent clones, branch rename,
-  nested workspaces, dirty removal and checked-out branch refusal. It passes against
-  real OpenCode 2.0.1 and 2.0.4; no shared daemon or user database is used.
+  nested workspaces, dirty removal and checked-out branch refusal.
 
 References: [Git worktree](https://git-scm.com/docs/git-worktree) and
 [OpenCode V2 worktree configuration](https://opencode.ai/v2/docs/config/#worktrees).
@@ -83,8 +76,6 @@ The CodeNomad tab is anchored to `Instance.folder` (`WorkspaceRecord.path` on th
 server). Native `location.get().project.directory` describes the local checkout,
 and `project.canonical` describes its canonical repository root. Neither should
 be confused with `SessionInfo.location.directory`, the session's working directory.
-The native project ID can span independent local clones; matching it alone does
-not establish membership in the opened CodeNomad workspace.
 
 The UI uses the native project inventory to discover candidates, then projects
 families using the opened folder and the server's registered worktree paths,
@@ -158,8 +149,6 @@ conversation, compare `session.get`, the actual directory-scoped list and the
 authorized workspace spelling before changing UI state.
 
 ## Agent conventions
-
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
 
 - Event ownership uses registered-only native worktree snapshots, isolated from display/request discovery scans (`ownsDirectory` / `ownsLocation` with the `event` purpose). Never run native strategy refresh from routing or join its pending inventory. Keep physical Git identity, nested-folder/WSL projection, native registration, invalidation and disposal checks shared with ordinary ownership; ordinary requests and explicit worktree discovery retain refresh semantics. Regression: `instance-event-ownership.test.ts` and the isolated native worktree fixture.
 - Worktree discovery/create/remove use `workspaces/native-worktrees.ts` and the native OpenCode worktree API. CodeNomad supplies the `.codenomad/worktrees` default, named-branch policy and verified family transactions. Git common-directory identity scopes the native inventory to the opened local repository; opaque worktree identifiers are separate from mutable branch labels. Validate through `scripts/test-opencode-location-native.mjs` with an isolated CLI and `tests/browser/worktrees.test.ts` for selector gestures.

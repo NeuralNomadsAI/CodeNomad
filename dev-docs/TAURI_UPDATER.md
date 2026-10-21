@@ -35,10 +35,8 @@ read: the full releases list, which contains every offered release). The
 native fallback and About link cannot read the saved feed and derive it from
 the installed build label.
 
-A notification announces any published release, while native checks only offer
-releases whose manifest is already published. When a notification's check finds
-nothing installable, it opens that notification's release page rather than
-reporting the application as current.
+When a notification's check finds nothing installable, it opens that
+notification's release page rather than reporting the application as current.
 
 Supported installed formats:
 
@@ -148,24 +146,18 @@ the Linux deb is the Electron build. The Windows NSIS installer is published
 directly as the download and updater payload, without a ZIP wrapper.
 The CLI minimum is 2.11.5, the first release that records the app version in
 updater signatures' trusted comments; `requireSignedVersion` and publication's
-signed-version gate depend on it. Packaging alone needs 2.10.0: 2.9.4 searches
-for an old unmangled bundle symbol, while the pinned Rust library uses
-`__TAURI_BUNDLE_TYPE_VAR_UNK`. Newer CLIs patch that token and restore the
-original binary between package formats.
+signed-version gate depend on it.
 
 Linux desktop resources omit msgpackr's musl-only native modules. The official
 bundled Node runtime is glibc-based; linuxdeploy otherwise runs `ldd` over the
-unusable musl ELF and aborts. This failure was reproduced on Ubuntu 24.04 with
-verbose output, independently of the earlier generic CI failure.
-For local rebuilds after a failed packaging run, remove the generated
+unusable musl ELF and aborts. For local rebuilds after a failed packaging run, remove the generated
 `target/release/bundle/appimage` and `target/release/bundle/appimage_deb` staging
 directories: the latter can retain removed resources between bundle attempts.
 
 Verification extracts via an absolute artifact path, checks `AppRun` and
 `usr/bin/codenomad-tauri`, smoke-tests bundled Node/server/UI resources, resolves
 ELF dependencies against bundled library directories and reports the binary's
-glibc floor. Extraction mode does not prove the cause of a bundling failure:
-Tauri 2.9.4 already invokes linuxdeploy in extraction mode itself.
+glibc floor.
 
 ## Validation
 
@@ -200,53 +192,6 @@ These automated checks do not replace signed install/relaunch trials. Track actu
 Windows, Linux and macOS artifact trials separately in the PR; macOS guest access
 and Apple Silicon hardware are required for their respective real-device evidence.
 
-### Isolated Linux trial (2026-09-26)
-
-Ubuntu 24.04.4 x64 / GNOME Wayland produced and ran the AppImage with bundled
-Node 24.20.0. Extraction, server dependency imports, UI resources and ELF closure
-checks passed; the application binary's measured glibc floor is 2.39. An unsigned
-build reached the OpenCode setup UI and quit through its native menu, stopping
-only its own CodeNomad backend.
-
-Two loopback-only builds used the public test key and an isolated HOME/config
-profile. Through the native Get Updates menu and rendered Install and restart
-action, a modified download was rejected without replacing the installed image.
-A fresh check against the valid signed AppImage then updated 0.20.1 to 0.20.2:
-the About dialog showed 0.20.2 after relaunch, the native process changed from
-38556 to 43069, and the old backend (38749) stopped before the new backend (43200)
-started with the same isolated config path. The installed and served payloads
-both hashed to `db256808279d2edccc7de4b3c2d25f7532c4443e1d18e2a164b6626cf928dba7`.
-This establishes package replacement and profile identity across restart; it does
-not establish restoration of an active conversation or multi-window drafts.
-
-### Isolated Windows trial (2026-09-26)
-
-CLI 2.11.5 built both signed NSIS packages and successfully patched their bundle
-markers. The test-only product installed under `%LOCALAPPDATA%/CodeNomadUpdaterTrial`,
-with its own `CLI_CONFIG` and `updater-trial` identity channel. A missing manifest
-reported a recoverable check error. After the native Help / Get Updates action,
-an explicitly accepted altered download reported failure, left process 46008
-running and preserved the initial executable digest
-`abd32c17fdc7aa729f9203dd88a7235cc00a6b5c64e357ef0ed32c47f7e8510b`.
-
-A fresh check and explicit rendered install action downloaded the valid signed
-installer, stopped the old application/backend launcher and relaunched process
-45980 with launcher 22152. The native About dialog and NSIS registration both
-reported 0.20.2. The updated executable digest was
-`de79957e58afa1cbd3ccb855dc9b1de064cf0e3a271524559043ade720ff425b`.
-Native scope `updater-trial-1b6b044d8285f85b` was retained across the restart.
-Trial versions were native config overlays; the unchanged bundled server/UI and
-PE metadata still reported their base 0.20.0. Actual releases set package versions
-through the normal release workflow before compilation.
-
-The final native suite passed 189 tests. The stale-notification fix discovered in
-this trial subsequently passed four updater browser tests and the UI typecheck;
-it was not present in these two already-built installer payloads. The complete
-history-navigation suite had passed before that independent store-only change.
-
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Tauri updates use `desktop_updater.rs` and the all-window shutdown coordinator. Only verified downloads can become a pending installer, with restart admission atomic with shutdown. Unsigned builds and Debian packages use the release-page fallback. Native checks follow the saved update feed like server notifications (`update_releases.rs`: stable = newer final releases; preview = newest publication, dev or release); renderers never supply URLs. Keep updater/process plugin commands unavailable to renderers; grant only the guarded application commands to local webviews, and target native menu events at one webview. Publication verifies all four platform receipts, including the signed version, before uploading each release's `latest.json`; only `tauri build` steps see the private key. The vendored updater's Windows exit callback runs only after successful installer launch; see `dev-docs/TAURI_UPDATER.md` and `packages/tauri-app/vendor/README.md`.
-- The update feed (`server.updateFeed`: `stable`/`preview`, chosen in Settings → Info → Updates) only selects offered releases. It is read on every refresh in `releases/dev-release-monitor.ts`, never from `CODENOMAD_UPDATE_CHANNEL`, and must not touch desktop data scopes, singletons, backends or OpenCode state. Preview offers use publication order (dev builds carry the previous release number) and, like the native updater, consider only releases whose complete `latest.json` exists: release creation precedes the builds, and the manifest is uploaded after every platform build, so a notification is never shown before the release is installable. The native Tauri updater follows the same feed (`update_releases.rs`); Electron, remote, unsigned and unsupported installations open the release page.
+- The update feed (`server.updateFeed`: `stable`/`preview`, chosen in Settings → Info → Updates) only selects offered releases. It is read on every refresh in `releases/dev-release-monitor.ts`, never from `CODENOMAD_UPDATE_CHANNEL`, and must not touch desktop data scopes, singletons, backends or OpenCode state. Preview offers use publication order (dev builds carry the previous release number) and, like the native updater, consider only releases whose complete `latest.json` exists: release creation precedes the builds, and the manifest is uploaded after every platform build, so a notification is never shown before the release is installable. When the installed release is older than the fetched page, the server looks it up by tag before falling back to version order, and Settings → Info never substitutes a SemVer-ranked stable release on the preview feed. The native Tauri updater follows the same feed (`update_releases.rs`); Electron, remote, unsigned and unsupported installations open the release page.

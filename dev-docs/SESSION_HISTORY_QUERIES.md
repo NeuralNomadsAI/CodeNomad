@@ -5,7 +5,8 @@
 The existing non-modal transcript search window (Ctrl/Cmd+F or the header toggle)
 can query the entire session or workspace. It displays paginated excerpts and
 page-local progress from that search alone. The command palette's existing remove-tools-and-
-reasoning command plans against the same stored history.
+reasoning command plans against the same stored history. Navigation:
+[SESSION_HISTORY_NAVIGATION.md](SESSION_HISTORY_NAVIGATION.md).
 
 Both paths use the bundled `codenomad-session-pruning` plugin's authenticated RPC,
 with two fixed CodeNomad routes:
@@ -44,12 +45,11 @@ There is no new index, trigger, FTS table or persistent transcript copy.
 
 Cursors bind scope and query; the broker also binds the authorized directory
 inventory. A rowid horizon excludes new rows appended during each location scan.
-The search window never starts a separate statistics traversal. Opening it with
-an empty query performs no history scan. Progress uses the search responses:
-visible results and messages scanned for the current result page, updated as
-batches arrive and reset on pagination or a new search. These are explicitly
-page-local counts, not workspace totals. The technical-content switch changes
-the search only; it does not trigger a tools/reasoning count.
+The search window never starts a separate statistics traversal, and an empty
+query scans nothing. Its progress (visible results and messages scanned for the
+current page) updates as batches arrive and resets on pagination or a new search.
+The technical-content switch changes only the search, never triggering a
+tools/reasoning count.
 The separate stats RPC remains available for explicit callers; message-only
 stats read metadata without decoding JSON.
 A traversal is not one long database transaction: concurrent edits/deletes/moves
@@ -62,17 +62,13 @@ skill/shell/compaction text. Attachments and opaque continuation state are not
 searched. With the technical-content switch off, SQLite projects only readable
 text into JavaScript, retaining original part positions. It still reads/parses the
 stored JSON, but does not materialize tool output, images or provider state in JS.
-Search still reports oversized/malformed messages as skipped.
 The UI combines scan batches until it has at least 32 results or reaches the end,
 displaying partial results as they arrive. It retains one bounded result page
 (at most 63 hits, to retain the final transport batch without losing its cursor).
 The next-results action advances to the next page, not the next 32 scanned rows.
 Ownership checks are shared by identical locations only within each broker request
 and revalidated on subsequent requests. Closing the window,
-changing query/scope or leaving the session cancels obsolete UI work. Current-session
-results navigate to a bounded transcript window around the selected message.
-Other-session results fetch only that native message into a separate preview.
-Resident matches scroll to their existing row without a network read.
+changing query/scope or leaving the session cancels obsolete UI work. Resident matches scroll to their existing row without a network read.
 
 Workspace results group consecutive hits by session. Each group names its
 conversation and the worktree (label, normally its branch) that currently holds
@@ -120,29 +116,15 @@ asserts that searches/counts and selected previews never page the transcript.
 
 `scripts/test-session-history-native.mjs` runs only inside the isolated pruning
 fixture: 241 imported synthetic messages, counts, search, cleanup and exact batch
-replays against a real daemon. A second session verifies all 242 text-only workspace
-matches across both sessions. The updated fixture passed on Windows with OpenCode
-2.0.22. The parent fixture also checks active-generation
-refusal and pre-compaction discovery. Never point this fixture at a user's DB or
-shared daemon. Native Windows, browser rendering and other platforms are separate
-validation claims; none implies the others.
+replays against a real daemon; a second session verifies all 242 text-only
+workspace matches. The parent fixture also checks active-generation refusal and
+pre-compaction discovery. Never point it at a user's DB or shared daemon; native
+Windows, browser rendering and other platforms are separate validation claims.
 
-`node scripts/benchmark-session-history.mjs [baseline-ref]` compares the working
-tree with a Git revision (HEAD by default), using only a synthetic in-memory
-database. Against `9597853e` on Windows, 128 tool-heavy messages
-showed message-only counts around 145 → 1 ms and text search around 140 → 128 ms;
-JSON materialized by text search dropped from 144,660,480 bytes to 9,600 bytes.
-These are local scan measurements, excluding broker/RPC overhead, not an end-to-end
-latency claim. Larger metadata/search batches additionally reduce RPC round trips.
-
-## Navigation extension
-
-The global timeline and current-session search now use direct bounded anchor
-windows. See [SESSION_HISTORY_NAVIGATION.md](SESSION_HISTORY_NAVIGATION.md) for
-the read contract, navigation/restore fences and scrollbar geometry.
+`node scripts/benchmark-session-history.mjs [baseline-ref]` compares local scan
+cost (synthetic in-memory database, excluding broker/RPC) with a Git revision,
+HEAD by default.
 
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Full-history search/counts use the bundled pruning plugin's bounded queries, outside the transcript store. Current-session results and the global timeline navigate through bounded anchor windows; other-session previews fetch one native message only. Search/results/progress styles live in `styles/components/history-search.css`. Workspace results group by session with its title and current worktree badge via `components/history-search-results.tsx`; unloaded labels and "Open in session" live in `stores/history-search-sessions.ts` (bounded display reads, targeted hydration, transcript anchor). Never show raw native IDs in results. See `dev-docs/SESSION_HISTORY_QUERIES.md` for scope, snapshot and cleanup semantics.
+- Full-history search/counts use the bundled pruning plugin's bounded queries, outside the transcript store. Current-session results and the global timeline navigate through bounded anchor windows; other-session previews fetch one native message only. Search/results/progress styles live in `styles/components/history-search.css`. Workspace results group by session with its title and current worktree badge via `components/history-search-results.tsx`; unloaded labels and "Open in session" live in `stores/history-search-sessions.ts` (bounded display reads, targeted hydration, transcript anchor). Never show raw native IDs in results.

@@ -7,12 +7,8 @@ downloaded package and confirm installation. No manual ZIP download, CodeNomad
 rebuild or shared OpenCode service restart is involved. Manual ZIP installation
 remains available for offline/unlisted packages.
 
-Extensions is a collapsed-by-default disclosure below a separator in customization.
-It expands to one compact searchable list, deduplicated by addon ID, with install,
-version-change and removal icons, ZIP/refresh actions, metadata on hover/focus,
-and explicit trust/removal confirmations. There are no separate list modes or
-floating manager window. Collapse, popup dismissal, project changes and leaving
-the view dispose the manager; no automatic mutation replay.
+Extensions list rows carry install, version-change and removal icons beside
+ZIP/refresh actions; disposal never replays a mutation.
 
 The official index lives in
 [`NeuralNomadsAI/CodeNomad-Extensions`](https://github.com/NeuralNomadsAI/CodeNomad-Extensions).
@@ -78,20 +74,15 @@ duplicate ZIP entries, encrypted entries and invalid UTF-8 are rejected. Limits:
 ## Installation and updates
 
 Inspection shows the manifest and SHA-256 of the exact ZIP bytes before install.
-The user acknowledges trust; installation starts **disabled**. A single activation
-control, the addon's checkbox in **Customize right panel**, enables it for every
-opened project on this CodeNomad backend/profile. Disabled installed addons remain
-listed there. The Extensions manager has no activation control. Legacy per-window
-addon hide flags are ignored rather than retaining a second gate; Reset changes
-built-in layout only and never grants or revokes addon consent.
-Installation and activation live under the selected profile's `panel-extensions/`,
-not inside a repository or the OpenCode discovery/database directories. In remote
-access, installation affects that **server profile**, not the viewer's device.
-Profiles/channels remain separate; a ZIP can be installed in each desired profile.
-There is no folder-specific installation or activation. Legacy global grants remain
-enabled; legacy folder-only grants remain disabled rather than broadening consent.
-Installed packages are preserved. Reads do not rewrite storage; the next explicit
-mutation drops obsolete folder grants.
+The user acknowledges trust; installation starts **disabled** until the addon's
+**Customize right panel** checkbox enables it for every project on this
+backend/profile; legacy per-window hide flags are ignored. State lives under the
+selected profile's `panel-extensions/`, never in a repository or OpenCode
+discovery/database directories; in remote access it belongs to the **server
+profile**, not the viewer's device, and each profile/channel installs separately.
+Legacy global grants stay enabled, folder-only grants stay disabled and installed
+packages are preserved; reads never rewrite storage, the next explicit mutation
+drops obsolete folder grants.
 
 To update, download and inspect a new release ZIP and install it over the same ID.
 Compare the displayed digest with the publisher's checksum through a trusted
@@ -133,8 +124,8 @@ old ports cannot initialize a different session or a reloaded/navigated document
 ### API 2 assets
 
 Use `apiVersion: 2` and the two permissions above. Inspection shows the additional
-current-session asset permission before the trust checkbox. Code replacement still
-revokes activation. The injected context advertises that package's API version.
+current-session asset permission before the trust checkbox. The injected context
+advertises that package's API version.
 API 2 also receives `context.colors` (`background`, `surface`, `text`, `muted`,
 `border`, `focus`) from the current host palette. Palette changes republish context.
 `background` matches the native panel sections (`--surface-secondary`); `surface`
@@ -174,22 +165,16 @@ Before host bitmap decoding, PNG/JPEG/GIF/static-WebP headers must admit at most
 8,192 pixels per axis and 4,194,304 source pixels (summed across GIF frames).
 Malformed/ambiguous headers, animated WebP and AVIF have no host thumbnail;
 their metadata and demand-only full preview remain available to the addon.
-The addon keeps one page, lazily requests two visible thumbnails at a time and
-revokes object URLs as images leave the viewport or the page/session changes.
-Click opens a keyboard-dismissable image/text lightbox. Binary or inaccessible
-attachments keep their metadata with an explicit unavailable preview. It does not
-change transcript image visibility or claim to fix transcript scrolling.
 
 ### Sandbox
 
-Author code is never imported into the main renderer. It runs in an iframe with
-`sandbox="allow-scripts"`: no same-origin, forms, popup, download or top-navigation
-grant. A host-inserted CSP precedes author bytes and disallows network APIs,
+Author code runs in an iframe with `sandbox="allow-scripts"`: no same-origin,
+forms, popup, download or top-navigation grant. A host-inserted CSP precedes author bytes and disallows network APIs,
 external scripts/styles/images, nested frames, base URLs, objects and form targets.
 Only inline scripts/styles and data/blob image assets are allowed. Windows Tauri
 may inject native bridge objects into subframes; their presence is not permission.
 The frame's opaque origin, CSP and native transport restrictions must prevent
-their use. No app-native capabilities are passed through the extension API.
+their use.
 
 This is **not** a process/CPU isolation guarantee or an offline/safe-code guarantee.
 A hostile approved author can hang its renderer and can try self-navigation;
@@ -211,17 +196,11 @@ Publish a GitHub Release with:
 5. Security reports handled by the extension author; never request credentials,
    weaken the sandbox, depend on application internals or auto-run commands.
 
-From the package folder, Python's standard library is enough:
-
-```sh
-python -m zipfile -c example.session-1.0.0.zip manifest.json panel.html
-python -m zipfile -l example.session-1.0.0.zip
-```
-
-Publish this built asset, **not** GitHub's repository source ZIP (which has a parent
-directory and other files). Author-owned repositories remain supported. Submit a
-catalogue PR to the official repository with the full manifest, plain-text
-description, exact tag/ZIP filename and SHA-256; see its `CONTRIBUTING.md`.
+Build the ZIP and its `.sha256` file with the commands in
+`examples/panel-extension/README.md` and publish that asset, **not** GitHub's
+source ZIP (parent directory, extra files). Submit a catalogue PR to the official
+repository with the full manifest, plain-text description, exact tag/ZIP filename
+and SHA-256; see its `CONTRIBUTING.md`.
 
 ## Online catalogue and download boundary
 
@@ -236,7 +215,7 @@ Selecting an entry reads a fresh index and downloads that **exact** tagged asset
 The hash and full ZIP manifest must match the catalogue. Confirmation repeats the
 fresh index/download verification: withdrawal, changed digest/metadata, corrupt
 bytes, a changed installed target or missing consent cannot silently install a
-different package. Updates remain explicit version changes, never automatic.
+different package.
 
 Index schema 1 is `{ schemaVersion: 1, extensions: [...] }`. Each entry has
 `manifest`, `description`, `digest` and `release: { tag, asset }`; unknown fields
@@ -253,8 +232,7 @@ cookie, directory, session content or provider secret is sent upstream.
 
 The reviewed index is the integrity source, not a cryptographic author signature.
 Removing an index entry blocks future online installation, not installed copies
-or explicit local ZIP installation. A compromised approved author/index is not
-made safe by a checksum: user trust, minimal permissions and isolation still apply.
+or explicit local ZIP installation.
 
 ## Checks
 
@@ -279,8 +257,6 @@ for online browse/search/consent, offline fallback, incompatibility and lifecycl
 
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
 - Right-panel customization keeps Extensions below a separator in a native disclosure, collapsed on each popup opening. Expanding mounts one compact searchable list combining installed and online addons, deduplicated by ID; collapse, dismissal and inactive/instance changes dispose its requests and confirmations. Do not restore separate list modes or a floating extension window. The existing per-addon checkbox above the disclosure is the sole profile-wide activation control, including disabled installed addons; never add a manager switch or a second per-window visibility gate. Reset changes built-in layout only, not addon consent. Keep metadata on hover/focus and technical consent details folded; retain explicit trust and digest-bound replacement/removal. Installation and activation are profile-wide only; do not restore per-folder scopes without a demonstrated need. Legacy folder grants never become general consent.
-- External panel extensions use `components/panel-extensions/` and `styles/panels/panel-extensions.css`. The official online catalogue is in `NeuralNomadsAI/CodeNomad-Extensions`; metadata discovery never downloads author code. Inspect/install revalidate the exact index/manifest/digest and use bounded credential-free HTTPS GitHub release downloads, never client-provided URLs. Never import author JavaScript into the main renderer or expose native/OpenCode bridges. ZIPs contain only a manifest and a self-contained HTML panel; install/replacement revokes activation. API versions belong to the public extension contract, not internal Solid modules. See `dev-docs/PANEL_EXTENSIONS.md` for distribution, consent, scope and sandbox limits.
+- External panel extensions use `components/panel-extensions/` and `styles/panels/panel-extensions.css`. The official online catalogue is in `NeuralNomadsAI/CodeNomad-Extensions`; metadata discovery never downloads author code. Inspect/install revalidate the exact index/manifest/digest and use bounded credential-free HTTPS GitHub release downloads, never client-provided URLs. Never import author JavaScript into the main renderer or expose native/OpenCode bridges. ZIPs contain only a manifest and a self-contained HTML panel; install/replacement revokes activation. API versions belong to the public extension contract, not internal Solid modules.
 - Extension API 1 stays context-only; API 2 requires explicit `session.assets.read` consent. `assets-channel.ts` derives session authority from the current mounted host, never author selectors, and exposes only bounded asset pages/exact digest-bound embedded reads. Use the presence-owned history bundle's fixed `assets`/`assetRead` methods, not transcript stores, generic RPC, remote downloads or filesystem fallbacks. Recheck consent and Location ownership after IO; revoke old-port/session/reconnect results. Gallery HTML belongs in the independent catalogue repository, not the application renderer.

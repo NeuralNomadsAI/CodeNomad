@@ -14,7 +14,7 @@ to the official V2 docs for native configuration details.
 - `docs/help/<locale>/<page>.md`: one H1 supplies the title and navigation label.
   Locales are `en`, `fr`, `de`, `es`, `he`, `ja`, `ne`, `ru`, `tr`, `zh-Hans`.
 - `docs/help/i18n/<locale>.json`: translated site chrome and section labels.
-  Keep the same keys in every language. Page titles belong in Markdown, not here.
+  Keep the same non-empty keys in every language. Page titles belong in Markdown, not here.
 - `docs/help/help.css`: square, responsive chrome, light/dark palettes and
   logical properties for Hebrew RTL. No application styles/runtime are imported.
 
@@ -39,8 +39,9 @@ HTML headings or images: Markdown supplies the metadata needed for validation.
 
 Inter-page Markdown links become same-locale HTML links with their anchors
 intact. HTTPS links stay unchanged. Relative repository-reference links outside
-the guide become GitHub links; relative images are copied once into shared
-`assets/media/`, not fetched from remote hosts. Use paths relative to the source
+the guide become GitHub links; relative images (whose real path must stay inside
+the repository) are copied once into shared `assets/media/`, not fetched from
+remote hosts. Use paths relative to the source
 page, including the locale directory.
 
 ## Translation workflow
@@ -117,9 +118,7 @@ code/key chords isolate LTR, and selected rows follow the app's 40%/50% accent-i
 ## Application entry points
 
 Electron and both Tauri Help-menu branches put **CodeNomad Help** first, before
-the existing update/About items. Native menu labels follow the UI locale once a
-window reports them (English until then). The hosts
-send `open-help` to the primary renderer; its existing palette-command dispatch
+the existing update/About items. The hosts send `open-help` to the primary renderer; its existing palette-command dispatch
 executes the localized **Open help** command and uses the current UI locale.
 Browser and remote users can run the same command from the palette.
 
@@ -145,9 +144,7 @@ labelled Clear button retains its 44px touch target.
 ## Publish on GitHub Pages
 
 Pages is enabled with **GitHub Actions** as the source at
-**https://neuralnomadsai.github.io/CodeNomad/**. README continues to link here;
-the root detects the browser language, while application entry points choose
-the UI locale directly.
+**https://neuralnomadsai.github.io/CodeNomad/**.
 
 `.github/workflows/help-pages.yml` checks and builds help on pull requests, but
 deploys only `dev` pushes/manual runs from `dev`. The build job is read-only;
@@ -155,16 +152,3 @@ deployment uses `pages: write` and `id-token: write`. Help sources, screenshots,
 images, help scripts, shared URL module, manifests/lockfile and `.node-version`
 trigger the workflow. No extra hosting secret is needed.
 The full multilingual check intentionally blocks publishing incomplete translations.
-
-The site follows `dev`, not a versioned archive. Update the guide alongside
-user-visible behavior changes, in the same PR. `.github/workflows/help-update-reminder.yml`
-comments (without blocking) on a PR that changes English UI messages but no help
-page, and removes its comment once the help changes. Documentation hosting remains separate from
-desktop updater work.
-
-## Agent conventions
-
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Public help uses `docs/help/<locale>/*.md` for the ten app locales, `site.json` for the eight sections/25 approved pages and `i18n/*.json` for complete non-empty chrome. Preserve ordered explicit ASCII (level, id) heading pairs across translations; H1 is the single title without an id. Absent translations build with a visible English fallback but fail `npm run test:help` (use `-- --locale en` while translating); heading drift is always fatal. Rebuilds remove only recorded owned output files. Images require repository real-path containment. `help.css` owns square, responsive, logical-property chrome with CSS-exclusive desktop navigation/outline and collapsed narrow disclosures, local table/code scrolling and LTR inline commands. Only the root redirect and first-party `help-search.js` introduce JavaScript; search reads the current locale's generated anchor-validated index, remains hidden without JS, preserves IME/browser find, and uses localized states and 44px touch controls. Native Help and the palette use `lib/help-url.ts` (reject malformed tags) and the external opener with failure feedback, never renderer navigation. GitHub Pages publishes `dist/help`; see `dev-docs/USER_HELP.md`.
-Tauri remote help opening stays in the owned native new-window/navigation policy: only credential-free HTTPS URLs under `https://neuralnomadsai.github.io/CodeNomad/` on port 443 reach the system browser; no remote opener IPC/native capability or native guest. Electron's host external opener reports asynchronous failures visibly, without replay. Public search hides the native cancel affordance and keeps one labelled 44px Clear control.

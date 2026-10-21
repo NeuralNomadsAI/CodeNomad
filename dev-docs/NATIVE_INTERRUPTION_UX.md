@@ -1,64 +1,36 @@
 # Native interruption UX
 
-Questions (native Forms) and permissions have one response surface: `InterruptionDock`,
-immediately above the composer. The shell owns the component and slots it into the
-active session or the no-session composer. Navigating sessions moves the surface;
-it does not recreate its request editors. The composer remains mounted, retaining
-its draft. The panel is non-modal and height-bounded. Request content scrolls
-independently; reply, cancel and permission actions remain in a fixed footer
-outside that scrolling content. Its square shared window chrome uses the existing
-accent/surface tokens for the header, icon and leading border.
-The leading question/permission icon is the same for local and external requests.
-Collapsed unrelated-conversation requests additionally show the shared red status
-badge, including its shield and localized text, at the trailing end of the header.
-Clicking that badge expands the selected request in place, like the project badge.
+The shell slots `InterruptionDock` into the active session or the no-session
+composer; navigating sessions moves it without recreating request editors, and
+the composer stays mounted with its draft. The dock is non-modal; accent tokens
+also colour its icon and leading border. Clicking the collapsed external-request
+badge expands the selected request in place, like the project badge.
 
-An expanded request takes priority over a manually enlarged composer. The composer
-temporarily uses its minimum field height and disables resizing without overwriting
-the saved height or draft; collapse or settlement restores the preference. The dock
-does not flex-shrink into an unusable header. The shell bounds the conversation to
-the visual viewport while a request is expanded, including Android keyboard resize
-and pan. Request fields scroll within the dock while its actions remain reachable.
-For keyboard heights too short to fit the whole stack, a measured minimum reserves
-the header, footer and one usable input. The session stack then scrolls as a whole
-instead of clipping controls; field scrolling can chain into that outer scroller.
+For keyboard heights too short for the whole stack, a measured minimum reserves
+the header, footer and one usable input; the session stack then scrolls as a
+whole instead of clipping controls, and field scrolling can chain into it.
 
 ## Ownership and navigation
 
 - Native pending queues remain authoritative. No transcript scan decides whether
   a request can be answered. Requests without a tool source use the same panel.
-- The open conversation and its recursive descendants are the local context.
-  Requests from elsewhere remain answerable in place, but first appear as compact
-  previews labeled “Other conversation” with their source conversation prominently
-  named. Explicit expansion reveals the editor without navigating away. An arrival
-  never replaces the request being edited, and settlement does not automatically
-  expand another external request. Hidden/inert keyed editors preserve drafts.
-- Provenance remains visible when expanded: external conversation, subagent with
-  parent conversation, or sessionless project request. The label and strong title
-  carry the distinction independently of color. A “View conversation” action
-  explicitly navigates to a session-owned request's actual source.
+- External previews are labelled “Other conversation”; the label and strong title
+  carry provenance independently of colour.
 - Global Forms have no owning conversation. Their compact preview uses a distinct
   project-request label, supports in-place expansion and never invents a source link.
-- The instance badge opens the dock in place. Session-row selection with pending requests
-  targets that session's request through the `interruptionFocus` UI intent.
-- The panel shows the request kind and source session. Previous/next controls and
-  the position/count appear only when multiple requests are pending. Navigation is
-  bounded: the first/last request disables the corresponding arrow without wrapping.
-- Selection stays pinned to the current request kind/id through queue refreshes and
-  newly arriving requests, including a permission inserted ahead of a question.
-  Compact external previews leave the composer height untouched; only an expanded
-  editor temporarily compacts it.
-  Explicit navigation or settlement can change the selection. Editors stay keyed
-  by request kind/id, preserving partial answers and rejection reasons through native
-  object replacement, queue navigation and session navigation.
+- Session-row selection with pending requests targets that session's request
+  through `interruptionFocus`.
+- The dock shows the request kind and source session; with several requests the
+  position/count and arrows appear, disabling at the first/last request without
+  wrapping. Selection stays pinned even when a permission arrives ahead of a
+  question; only explicit navigation or settlement changes it. Keyed editors keep
+  partial answers and rejection reasons through native object replacement.
 - Collapse only hides the panel body. It never cancels or refuses a request.
 - Deferred session-activation focus must recheck the current input and modal owner
   when it runs, and expire when the pane deactivates or unmounts. An answer field
   focused during navigation retains keyboard input instead of yielding to the composer.
-- Pending questions appear only in the dock. There are no “View in discussion” or
-  “Answer in dock” links and no interruption-specific transcript reveal state.
-- Only the panel submits replies. Transcript tools no longer register document-wide
-  permission shortcuts or independently render response forms.
+- Only the dock submits replies; transcript tools register no permission shortcuts,
+  render no response forms and keep no interruption reveal state.
 - Replies/cancellations continue through the existing native stores, retaining
   mutation error handling, pending-request reconciliation and global location headers.
   A failed request remains editable. No mutation is replayed automatically.
@@ -70,12 +42,8 @@ instead of clipping controls; field scrolling can chain into that outer scroller
 The `question` renderer displays question/answer pairs from native tool input and
 `metadata.answers`. It works for live tool completion and rehydrated history; it
 does not invent a local assistant/user message or persist a parallel transcript.
-Pending questions are not duplicated in transcript tool cards. Native completed
-answers remain readable there; native errors continue to use the tool error renderer.
-
-Question receipts retain the question, selected answers and matching option
-descriptions. Other proposed choices are available through a native disclosure;
-free-text answers stay verbatim. Native answers remain the authority.
+Native completed answers remain readable there and are the authority; native
+errors use the tool error renderer.
 
 Arbitrary Forms are not necessarily conversation artifacts. A provider/auth Form
 does not acquire a synthetic transcript receipt.
@@ -93,7 +61,6 @@ or a cascade. Yolo decisions are identified as automatic. A failed or ambiguous
 reply never becomes a fabricated decision and is never replayed automatically.
 Decisions lost before capture was available, or while CodeNomad was offline,
 cannot be reconstructed from a tool's success/error or from saved permission rules.
-These annotations are not part of native full-history search, copy or export.
 
 Permission snapshots and receipts live under the CodeNomad profile's
 `permission-receipts` directory, in atomic per-request files. The namespace uses
@@ -116,9 +83,8 @@ draft retention, stable selection, bounded navigation, failure/retry, in-flight
 submission, remote settlement, source-less permissions, global Forms and narrow-screen
 geometry with reachable footer actions.
 
-`permission-fallback-diff.test.ts` now targets the panel, retaining full-source
-access, changed-diff and late-copy regressions. No shared daemon or user database
-is used by these tests.
+`permission-fallback-diff.test.ts` keeps the dock's full-source access,
+changed-diff and late-copy regressions. Neither uses a shared daemon or user DB.
 
 `permissions/receipts.test.ts` exercises disk reload, all decisions, native versus
 manual/Yolo provenance, cascades, ownership, deletion and mutation failure paths.
@@ -139,9 +105,7 @@ global Forms and late-arriving ancestry on desktop and mobile.
 
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Native questions and permissions are answered in the shell-owned `InterruptionDock`, slotted above the composer. Pending questions appear only in the dock; the transcript retains native completed question results. Badges target the dock via `interruptionFocus`; omit transcript-source and answer-in-dock links. Keep selection stable by request kind/id across queue refreshes, with bounded previous/next navigation hidden for a single request. Preserve request drafts across refreshes and session navigation. Keep its square, height-bounded chrome in `styles/components/interruption-dock.css`, with a token-based accent header and fixed action footer outside the scrolling request content. See `dev-docs/NATIVE_INTERRUPTION_UX.md`.
+- Native questions and permissions are answered in the shell-owned `InterruptionDock`, slotted above the composer. Pending questions appear only in the dock; the transcript retains native completed question results. Badges target the dock via `interruptionFocus`; omit transcript-source and answer-in-dock links. Keep selection stable by request kind/id across queue refreshes, with bounded previous/next navigation hidden for a single request. Preserve request drafts across refreshes and session navigation. Keep its square, height-bounded chrome in `styles/components/interruption-dock.css`, with a token-based accent header and fixed action footer outside the scrolling request content.
 - Keep disclosure chevrons leading without changing their directions, and retain the normal question/permission icon for every source. Collapsed unrelated-conversation requests show the full shared red `session-permission` badge (shield and localized request-status text) at the trailing end of the header, separate from the request icon.
 - Requests from the open conversation and its recursive descendants can expand normally. Other conversations first appear as a compact, explicitly expandable preview; answering stays in place. Keep persistent textual provenance prominent (other conversation, subagent with parent, or sessionless project request), with an explicit View conversation action for session-owned requests. Arrival never replaces the request being edited or navigates sessions. Newly selected external requests after settlement remain compact until explicitly opened. Hidden/inert keyed editors retain drafts, and only an expanded editor compacts the composer. Project badges open the dock in place rather than silently navigating to another conversation.
 - Durable permission decisions render through `components/permission-receipts.tsx` outside native tool visibility, with bounded mounted-row reads and a paginated session disclosure for unanchored receipts. Virtualized rows remount continuously: `stores/permission-receipt-cache.ts` retains each row's completed snapshot (no re-read on remount) and shares in-flight reads among mounted rows on the dedicated one-slot `receiptReads` lane; a read no mounted row awaits is cancelled. Receipt-change events (mounted or not) and reconnects invalidate; pagination writes are fenced by the invalidation generation. Keep receipts out of native message/copy/search/speech projections; styles live in `styles/messaging/permission-receipts.css`.

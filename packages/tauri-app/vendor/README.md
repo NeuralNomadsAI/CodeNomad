@@ -17,19 +17,17 @@ procedure. Tao 0.34.6 holds `KEY_EVENT_BUILDERS`, `LAYOUT_CACHE` or the IME wind
 state across peeking, causing same-thread mutex deadlocks. The upstream fix moves
 the peeks before those locks and passes the results into the handlers.
 
-The recorded CodeNomad dump matches this exact path. Do not
-replace non-reentrant mutexes with recursive locks or silently drop nested input.
+The recorded CodeNomad dump matches this exact path. Preserve the provenance
+above; never pump messages under these input mutexes, replace non-reentrant
+mutexes with recursive locks or silently drop nested input.
 
-The Windows native regression uses a hidden Tao window and cross-thread sent
-focus messages. Its bounded watchdog fails against the original published crate
-and passes with this backport. It never opens CodeNomad profiles or OpenCode.
+The Windows native regression (`node scripts/test-tauri-input-deadlock.mjs
+--baseline`) uses a hidden Tao window and cross-thread sent focus messages. Its
+bounded watchdog fails against the original published crate and passes with
+this backport. It never opens CodeNomad profiles or OpenCode.
 The runner additionally instruments a temporary crate copy at the IME callback
 boundary and proves that moving only the IME peek back under its mutex fails.
 No instrumentation or mutation is applied to this checked-in crate.
-
-Remove this override when the supported Tauri dependency range can resolve a
-published Tao release containing the fix; run the same regression first. Merely
-bumping within the unfixed 0.34.x/0.35.x release lines is insufficient.
 
 ## macOS read-only zoom detection
 
@@ -49,9 +47,6 @@ session. The isolated native fixture checks that getters generate no geometry
 events, including reads during geometry capture, and exercises maximize/restore,
 fixed-size and decorated windows. Its original-crate negative control reproduces
 the feedback loop.
-
-Remove the override only after the resolved dependencies cover the input,
-read-only zoom and runner lifetime fixes and their native regressions pass.
 
 [tao#1215]: https://github.com/tauri-apps/tao/pull/1215
 [tao#1182]: https://github.com/tauri-apps/tao/pull/1182
@@ -81,14 +76,22 @@ Wry runtime's safe public handle API on eight workers. The negative control
 reverts only the counter in a temporary crate copy and stops at its first native
 fault; a CI runner that never reproduces the timing-dependent race only warns
 (local runs still fail). The corrected build must finish every run and tear down
-cleanly. It uses no
-CodeNomad profile, page, backend or OpenCode service. Individual negative-control
-processes can survive a race that leaks instead of freeing early.
+cleanly. It uses no CodeNomad profile, page, backend or OpenCode service.
+Individual negative-control processes can survive a race that leaks instead of
+freeing early.
 
-Keep this correction until the resolved Tauri runtime no longer races Tao's
-reference count (or the resolved Tao implementation safely handles that traffic).
-Qualify removal with the same regression and the existing Windows input tests.
-Captured crash evidence is recorded in `dev-docs/TAURI_WINDOWS_RUNNER_REFCOUNT.md`.
+Captured failure (Windows 0.20.1-dev-20261017, 2026-10-18): `STATUS_HEAP_CORRUPTION`
+(0xc0000374) in `ntdll!RtlFreeHeap` via a non-atomic `dec` refcount release from
+the native event callback. The fixture performs 800,000 clones/drops; the
+negative control runs up to fifty processes; in CI a fault-free negative series
+only warns (naming the CPU), and corrected runs on that runner are no timing
+evidence. Also run the input regression: its backport shares `event_loop.rs`.
+
+Remove the tao override only when the resolved dependencies contain the input
+fix (a bump within the unfixed 0.34.x/0.35.x lines is insufficient) and the
+read-only zoom getter, and the resolved Tauri runtime no longer races Tao's
+runner reference count (or Tao handles that traffic safely). Qualify removal
+with the input, macOS zoom and runner-refcount regressions.
 
 ## Updater Windows launch handoff
 
@@ -109,8 +112,4 @@ same success-only handoff; rerun the regression and signed installer trial first
 
 ## Agent conventions
 
-These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
-
-- Tauri's Tao Windows input backport lives in `packages/tauri-app/vendor/`; preserve upstream provenance and avoid message pumping under input mutexes. Run `node scripts/test-tauri-input-deadlock.mjs --baseline` on Windows when changing it. See `packages/tauri-app/vendor/README.md` for provenance and override removal criteria.
-- The pinned Tauri runtime clones native handles on worker threads, including Tao's Windows event-loop target. Its internal runner counter must remain atomic; this does not authorize off-main-thread access to the runner state or make Tao's target Send/Sync. Run `node scripts/test-tauri-runner-refcount.mjs --baseline` after changes to this compatibility fix. The isolated regression uses the actual Wry runtime without an application profile or OpenCode; see `dev-docs/TAURI_WINDOWS_RUNNER_REFCOUNT.md` and the vendor provenance (the referenced upstream proposal was not merged).
-- Tao's macOS zoom getter must remain read-only: synchronous temporary style-mask changes on borderless windows generate geometry-event feedback and can starve startup navigation. Keep the exact upstream tao#1182 backport beside the Windows fix, with its provenance in `packages/tauri-app/vendor/README.md`. Run `node scripts/test-tauri-macos-window.mjs --baseline` in a graphical macOS session and retain the ARM64 CI regression. Do not disable window persistence or change the application chrome as a workaround.
+- Tao's macOS zoom getter must remain read-only: synchronous temporary style-mask changes on borderless windows generate geometry-event feedback and can starve startup navigation. Keep the exact upstream tao#1182 backport beside the Windows fix. Run `node scripts/test-tauri-macos-window.mjs --baseline` in a graphical macOS session and retain the ARM64 CI regression. Do not disable window persistence or change the application chrome as a workaround.
