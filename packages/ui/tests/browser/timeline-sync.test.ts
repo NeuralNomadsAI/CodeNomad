@@ -4,7 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Page } from "playwright"
-import { createSessionStore, openTimelineSession, settleTranscript, startTimelineSyncServer } from "./timeline-sync-session"
+import { collectTranscriptMarkers, createSessionStore, openTimelineSession, settleTranscript, startTimelineSyncServer } from "./timeline-sync-session"
 
 // Real SessionView over 320 native records, the oldest 120 outside the resident
 // window, with the step shapes found in real sessions: thinking, a reply, then
@@ -42,11 +42,39 @@ function expectedMarkers(index: number, everything: boolean): string[] {
   return kinds.filter(kind => everything || (kind !== "reasoning" && kind !== "system")).map(kind => `${id(index)}:${kind}`)
 }
 
-let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string
+// Each transcript row boundary the visibility filters can move: text and
+// thinking around tools of every visibility, grouped tools around a shell call,
+// system context and compaction.
+const step = (index: number, parts: Array<[string, string]>) => assistant(index, parts.map(([type, value], part) => type === "tool"
+  ? { ...tool(id(index), value), id: `${id(index)}-${value}-${part}` } : { type, text: prose(value, 1) }))
+const visibilityMessages = [
+  { id: id(0), type: "user", time: { created: 1 }, text: prose("Question", 1) },
+  step(1, [["text", "Before"], ["tool", "bash"], ["reasoning", "Midway"], ["tool", "read"], ["text", "After"]]),
+  step(2, [["reasoning", "First"], ["tool", "fixture_alpha"], ["reasoning", "Second"], ["text", "Reply"]]),
+  step(3, [["text", "Lead"], ["tool", "fixture_alpha"], ["text", "Tail"]]),
+  step(4, [["reasoning", "Plan"], ["tool", "read"], ["tool", "bash"], ["tool", "read"], ["text", "Found"]]),
+  { id: id(5), type: "system", text: prose("Context", 1), description: "Context", time: { created: 6 } },
+  step(6, [["tool", "glob"], ["reasoning", "Look"], ["text", "Say"], ["reasoning", "More"], ["tool", "grep"]]),
+  { id: id(7), type: "compaction", reason: "auto", status: "completed", summary: prose("Summary", 1), time: { created: 8 } },
+  { id: id(8), type: "user", time: { created: 9 }, text: prose("Again", 1) },
+  step(9, [["reasoning", "Think"], ["text", "Answer"], ["tool", "fixture_alpha"], ["text", "Then"], ["tool", "fixture_beta"]]),
+]
+// One indexed step whose 1,001 tools exceed the transcript's part display window.
+const WIDE_TOOLS = 1001
+const wideMessages = Array.from({ length: 260 }, (_, index) => index === 1
+  ? assistant(1, [...Array.from({ length: WIDE_TOOLS }, (_, n) => ({ ...tool(id(1), "fixture_alpha", 1), id: `${id(1)}-t${n}` })),
+    { type: "text", text: prose("Done", 1) }])
+  : index % 2 ? assistant(index, [{ type: "text", text: prose(`Note ${index}`, 2) }]) : { id: id(index), type: "user", time: { created: index + 1 }, text: prose(`Ask ${index}`, 1) })
+
+let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-timeline-sync-"))
   store = path.join(directory, "session.sqlite")
   createSessionStore(store, Array.from({ length: COUNT }, (_, index) => message(index)))
+  visibilityStore = path.join(directory, "visibility.sqlite")
+  createSessionStore(visibilityStore, visibilityMessages)
+  wideStore = path.join(directory, "wide.sqlite")
+  createSessionStore(wideStore, wideMessages)
   server = await startTimelineSyncServer({ instrument: true })
 })
 after(async () => { await server?.close(); if (directory) await rm(directory, { recursive: true, force: true }) })
@@ -56,9 +84,9 @@ const markers = (page: Page): Promise<Marker[]> => page.evaluate(() => (globalTh
   .map(({ id, messageId, type, partIds, toolPartIds }: Marker) => ({ id, messageId, type, partIds, toolPartIds })))
 const active = (page: Page): Promise<string | null> => page.evaluate(() => (globalThis as any).__timeline.active())
 
-async function withSession(preset: string, run: (page: Page) => Promise<void>) {
+async function withSession(preset: string, run: (page: Page) => Promise<void>, sessionStore = store) {
   const page = await server.browser.newPage({ viewport: { width: 1280, height: 800 } })
-  const session = await openTimelineSession(page, server.url, store, preset)
+  const session = await openTimelineSession(page, server.url, sessionStore, preset)
   try {
     await run(page)
     assert.deepEqual(session.state.errors, [])
@@ -122,19 +150,79 @@ test("scrolling activates the marker of the block at the reading line", { timeou
   for (const distance of [-900, -2600, 700, -1500, 333, -4100]) {
     await page.mouse.wheel(0, distance)
     await settleTranscript(page, 400)
-    const reading = await page.evaluate(() => {
-      const stream = document.querySelector<HTMLElement>(".message-stream")!
-      const line = stream.getBoundingClientRect().top + 4
-      const block = [...stream.querySelectorAll<HTMLElement>('.message-item-base[data-message-content-start-part-id], .tool-call-message[data-part-id], .message-technical-group-toggle, .message-reasoning-card[data-part-id], .message-compaction-card, [data-message-kind="system"]')]
-        .filter(element => element.getBoundingClientRect().height > 0 && element.getBoundingClientRect().bottom > line)
-        .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0]
-      return { messageId: block.closest<HTMLElement>("[data-virtual-follow-key]")!.dataset.virtualFollowKey,
-        part: block.dataset.messageContentStartPartId ?? block.dataset.partId ?? block.closest<HTMLElement>("[data-group-part-ids]")?.dataset.groupPartIds?.split(" ")[0] }
-    })
-    const current = await active(page)
-    const marker = (await markers(page)).find(candidate => candidate.id === current)
-    assert.ok(marker, "a marker is active")
-    assert.equal(marker.messageId, reading.messageId, `scrolled ${distance}px`)
-    if (reading.part) assert.ok([...marker.partIds ?? [], ...marker.toolPartIds ?? []].includes(reading.part), `${marker.id} stands for ${reading.part}`)
+    await assertReadingLineActive(page, `scrolled ${distance}px`)
   }
+}))
+
+/** The active marker stands for the block at the transcript's reading line. */
+async function assertReadingLineActive(page: Page, context: string) {
+  const reading = await page.evaluate(() => {
+    const stream = document.querySelector<HTMLElement>(".message-stream")!
+    const line = stream.getBoundingClientRect().top + 4
+    const block = [...stream.querySelectorAll<HTMLElement>('.message-item-base[data-message-content-start-part-id], .tool-call-message[data-part-id], .message-technical-group-toggle, .message-reasoning-card[data-part-id], .message-compaction-card, [data-message-kind="system"]')]
+      .filter(element => element.getBoundingClientRect().height > 0 && element.getBoundingClientRect().bottom > line)
+      .sort((a, b) => a.getBoundingClientRect().top - b.getBoundingClientRect().top)[0]
+    return { messageId: block.closest<HTMLElement>("[data-virtual-follow-key]")!.dataset.virtualFollowKey,
+      part: block.dataset.messageContentStartPartId ?? block.dataset.partId ?? block.closest<HTMLElement>("[data-group-part-ids]")?.dataset.groupPartIds?.split(" ")[0] }
+  })
+  const current = await active(page)
+  const marker = (await markers(page)).find(candidate => candidate.id === current)
+  assert.ok(marker, `a marker is active (${context})`)
+  assert.equal(marker.messageId, reading.messageId, context)
+  if (reading.part) assert.ok([...marker.partIds ?? [], ...marker.toolPartIds ?? []].includes(reading.part), `${marker.id} stands for ${reading.part} (${context})`)
+}
+
+// Every preset, then each thinking, tool and system visibility over Everything.
+const visibilityCombinations: Array<{ preset: string; rows?: Record<string, string> }> = [
+  ...["nothing", "minimal", "balanced", "everything"].map(preset => ({ preset })),
+  ...["hidden", "collapsed", "expanded"].flatMap(thinking => [{}, { bash: "hidden", other: "hidden" },
+    { bash: "hidden", read: "hidden", glob: "hidden", grep: "hidden", other: "hidden" }].flatMap(tools => ["hidden", "expanded"].map(system => ({
+    preset: "everything", rows: { thinking, system, ...tools } })))),
+]
+test("under every visibility, the rail has one marker per transcript row, in order", { timeout: 300_000 }, () => withSession("everything", async (page) => {
+  const messageOf = new Map(visibilityMessages.map(message => [message.id, message]))
+  for (const combination of visibilityCombinations) {
+    await page.evaluate(async ({ preset, rows }) => {
+      await (window as any).fixture.setPreset(preset)
+      if (rows) await (window as any).fixture.setVisibility(rows)
+    }, combination)
+    await settleTranscript(page, 300)
+    const { byMessage } = await collectTranscriptMarkers(page, messageOf)
+    const rows = visibilityMessages.flatMap(message => (byMessage.get(message.id) ?? []).map(item => `${message.id}:${item.kind}`))
+    assert.ok(rows.length > 0)
+    assert.deepEqual((await markers(page)).map(marker => `${marker.messageId}:${marker.type}`), rows, JSON.stringify(combination))
+  }
+}, visibilityStore))
+
+// The last tool is displayed after the omitted parts; tool 500 is among them.
+for (const ordinal of [WIDE_TOOLS - 1, 500]) test(`a step beyond the part display window keeps tool ${ordinal}'s marker identity and target`, { timeout: 120_000 }, async () => {
+  const wide = id(1)
+  await withSession("balanced", async (page) => {
+    const indexed = (await markers(page)).find(marker => marker.id === `${wide}:tool:${ordinal}`)
+    assert.ok(indexed && !indexed.toolPartIds, `indexed tool ${ordinal} has a marker before its step loads`)
+    await clickMarker(page, indexed)
+    await settleTranscript(page, 600)
+    assert.equal(await active(page), indexed.id, `tool ${ordinal} stays the active marker once its step loads`)
+    assert.equal(await page.locator('.message-timeline-segment[aria-current="true"]').getAttribute("data-segment-id"), indexed.id)
+    const placed = (await markers(page)).find(candidate => candidate.id === indexed.id)!
+    assert.deepEqual(placed.toolPartIds, [`${wide}-t${ordinal}`], `the marker targets native tool ${ordinal}`)
+    const offset = await blockOffset(page, placed)
+    assert.ok(offset !== null && Math.abs(offset) <= 2, `native tool ${ordinal} is at the reading position (${offset})`)
+  }, wideStore)
+})
+
+test("a send after a marker jump returns the active marker to the reading line", { timeout: 90_000 }, () => withSession("everything", async (page) => {
+  const marker = (await markers(page)).find(candidate => candidate.messageId === id(259) && candidate.type === "assistant")!
+  await clickMarker(page, marker)
+  assert.equal(await active(page), marker.id)
+  await page.locator(".prompt-input-container textarea").first().fill("Sent after a jump")
+  await page.locator(".send-button").click()
+  await page.waitForFunction(() => (window as any).fixture.prompts().length === 1)
+  await settleTranscript(page, 600)
+  assert.ok(await page.evaluate(() => {
+    const stream = document.querySelector<HTMLElement>(".message-stream")!
+    return stream.scrollTop + stream.clientHeight >= stream.scrollHeight - 2
+  }), "the send pins the latest bottom")
+  assert.notEqual(await active(page), marker.id, "the marker selected before the send is released")
+  await assertReadingLineActive(page, "after the send")
 }))

@@ -8,7 +8,7 @@ import { pruningDatabasePath } from "./database-path"
 import { readLocationRef, sameLocation } from "./location"
 import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneBatchResultSchema } from "./history-contract"
 import { queryBoundHistory, pruneBoundBatch } from "./history-service"
-import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema } from "./navigation-contract"
+import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineLayoutResultSchema, outlineResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema } from "./navigation-contract"
 import { readOutlinePreviews } from "./outline-preview"
 import { readNavigationWindow, readSessionOutline } from "./navigation-store"
 import { withHistoryDatabase } from "./history-database"
@@ -21,6 +21,8 @@ export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: 
   pruneBatch: { input: pruneBatchSchema, output: pruneBatchResultSchema },
   window: { input: navigationWindowInputSchema, output: navigationWindowResultSchema },
   outline: { input: outlineInputSchema, output: outlineResultSchema },
+  // Versioned rather than extending `outline`, whose older callers reject new keys.
+  outlineLayout: { input: outlineInputSchema, output: outlineLayoutResultSchema },
   outlinePreview: { input: outlinePreviewInputSchema, output: outlinePreviewResultSchema },
   assets: { input: assetsInputSchema, output: assetsResultSchema },
   assetRead: { input: assetReadInputSchema, output: assetReadResultSchema },
@@ -39,6 +41,8 @@ export default Plugin.define({
         (db, scope) => readNavigationWindow(db, scope, input.target, call.signal)),
       outline: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readSessionOutline(db, scope, input.cursor, call.signal, input.after, input.known)),
+      outlineLayout: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
+        (db, scope) => readSessionOutline(db, scope, input.cursor, call.signal, input.after, input.known, true)),
       outlinePreview: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readOutlinePreviews(db, scope, input.messageIDs, call.signal)),
       history: (input, call) => queryBoundHistory(ctx, input, call.signal),

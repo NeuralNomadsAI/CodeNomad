@@ -1,12 +1,19 @@
 import type { FastifyInstance } from "fastify"
 import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
-import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema } from "../../opencode/session-pruning/navigation-contract"
+import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineLayoutResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema } from "../../opencode/session-pruning/navigation-contract"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../../opencode/compatibility/location"
 import type { HistoryRouteDeps } from "./session-history"
 
+// The native SDK throws the declared RPC error body as the error's own fields.
+function isMethodNotFound(error: unknown) {
+  const body = error as { _tag?: unknown; type?: unknown } | null
+  return body?._tag === "RpcError" && body.type === "rpc.method_not_found"
+}
+
 export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Pick<HistoryRouteDeps, "workspaceManager">) {
   const inputs = { window: navigationWindowInputSchema, outline: outlineInputSchema, outlinePreview: outlinePreviewInputSchema }
-  const outputs = { window: navigationWindowResultSchema, outline: outlineResultSchema, outlinePreview: outlinePreviewResultSchema }
+  // The legacy outline (a plugin copy without `outlineLayout`) is a layout outline without layouts.
+  const outputs = { window: navigationWindowResultSchema, outline: outlineLayoutResultSchema, outlinePreview: outlinePreviewResultSchema }
   for (const method of ["window", "outline", "outlinePreview"] as const) {
     app.post<{ Params: { id: string } }>(`/api/workspaces/:id/session-history/${method}`, { bodyLimit: method === "outline" ? 96 * 1024 : 8192 }, async (request, reply) => {
       const parsed = inputs[method].safeParse(request.body)
@@ -22,9 +29,15 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Pick
       const abort = () => { if (!reply.raw.writableEnded) controller.abort() }
       reply.raw.once("close", abort)
       try {
-        const response = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method,
+        const signal = AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)])
+        const call = (rpcMethod: string) => client.rpc.call({ rpcID: PRUNING_RPC_ID, method: rpcMethod,
           input: JSON.parse(JSON.stringify(parsed.data)), location: { directory: location.directory } },
-        { ...locationRequestOptions(location), signal: AbortSignal.any([controller.signal, AbortSignal.timeout(15_000)]) })
+        { ...locationRequestOptions(location), signal })
+        // The outline asks for layouts through the versioned method; a plugin
+        // copy that predates it answers the legacy one.
+        const response = method === "outline"
+          ? await call("outlineLayout").catch((error: unknown) => { if (isMethodNotFound(error)) return call("outline"); throw error })
+          : await call(method)
         const output = outputs[method].parse(response.output)
         const current = await client.session.get({ sessionID: parsed.data.sessionID })
         if (!sameLocation(location, readLocationRef(current.location)) || current.projectID !== session.projectID

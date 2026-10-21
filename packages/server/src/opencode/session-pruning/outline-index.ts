@@ -12,22 +12,28 @@ function boundedToolName(value: unknown): string {
 }
 
 const VISIBLE_TEXT = "length(trim(coalesce(json_extract(value,'$.text'),''),char(32,9,10,13)))>0"
+const LAYOUT_HEAD = 32, LAYOUT_TAIL = 31
 // `key || kind` pairs: aggregate order is unspecified, so the part index orders them.
-function boundedLayout(value: unknown): string {
-  if (typeof value !== "string" || !value) return ""
+// A longer layout keeps its ends and counts the text and thinking runs between them.
+function boundedLayout(value: unknown): Pick<OutlineEntry, "layout" | "omitted"> {
+  if (typeof value !== "string" || !value) return { layout: "" }
   let layout = ""
   for (const [, kind] of value.split(",").map(item => [Number.parseInt(item, 10), item.at(-1)!] as const).sort((a, b) => a[0] - b[0])) {
     if (kind === "X" || layout.at(-1) !== kind) layout += kind
-    if (layout.length === 64) break
   }
-  return layout
+  if (layout.length <= LAYOUT_HEAD + LAYOUT_TAIL + 1) return { layout }
+  const middle = layout.slice(LAYOUT_HEAD, -LAYOUT_TAIL)
+  return { layout: `${layout.slice(0, LAYOUT_HEAD)}-${layout.slice(-LAYOUT_TAIL)}`,
+    omitted: { reasoning: middle.replace(/[^R]/g, "").length, text: middle.replace(/[^T]/g, "").length } }
 }
 
 // Checkpoint boundaries survive deletion: removing an early row must not shift
 // every later chunk. Only changed chunks need technical-part JSON projection.
+// Layouts are opt-in (the versioned `outlineLayout` method): `outline` keeps
+// the entry shape older backends validate strictly.
 export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
   cursor: { after: number; through: number } | undefined, signal: AbortSignal, startAfter = -1,
-  known: OutlineCheckpoint[] = []): Promise<OutlineResult> {
+  known: OutlineCheckpoint[] = [], layouts = false): Promise<OutlineResult> {
   signal.throwIfAborted()
   if (known.some((item, index) => item.through <= item.after || (index && item.after !== known[index - 1].through))) {
     return { status: "blocked", reason: "conflict" }
@@ -53,13 +59,13 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
       CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='reasoning') ELSE 0 END AS reasoning,
       CASE WHEN type='assistant' THEN (SELECT count(*) FROM json_each(data,'$.content') WHERE json_extract(value,'$.type')='text'
         AND coalesce(json_extract(value,'$.synthetic'),0)=0 AND coalesce(json_extract(value,'$.ignored'),0)=0
-        AND ${VISIBLE_TEXT}) ELSE 0 END AS text,
+        AND ${VISIBLE_TEXT}) ELSE 0 END AS text${layouts ? `,
       CASE WHEN type='assistant' THEN (SELECT group_concat(key || kind) FROM (SELECT key, CASE
           WHEN json_extract(value,'$.type')='tool' THEN 'X'
           WHEN json_extract(value,'$.type')='reasoning' AND ${VISIBLE_TEXT} THEN 'R'
           WHEN json_extract(value,'$.type')='text' AND coalesce(json_extract(value,'$.synthetic'),0)=0
             AND coalesce(json_extract(value,'$.ignored'),0)=0 AND ${VISIBLE_TEXT} THEN 'T' END AS kind
-        FROM json_each(data,'$.content')) WHERE kind IS NOT NULL) END AS layout
+        FROM json_each(data,'$.content')) WHERE kind IS NOT NULL) END AS layout` : ""}
       FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
     const entries: OutlineEntry[] = [], checkpoints: Array<OutlineCheckpoint & { changed: boolean }> = []
     let examined = 0
@@ -97,7 +103,7 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
           entries.push({ id: String(row.id), seq: Number(row.seq), type: row.type as OutlineEntry["type"],
             tools, reasoning: Number(row.reasoning), text: Number(row.text),
             ...(tools ? { toolName: boundedToolName(row.tool_name) } : {}),
-            ...(row.type === "assistant" ? { layout: boundedLayout(row.layout) } : {}) })
+            ...(layouts && row.type === "assistant" ? boundedLayout(row.layout) : {}) })
           if (entries.length % 128 === 0 || performance.now() - turnStarted >= 8) {
             await yieldTurn(undefined, { signal })
             turnStarted = performance.now()

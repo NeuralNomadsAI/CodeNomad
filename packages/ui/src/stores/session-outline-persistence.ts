@@ -39,12 +39,16 @@ export function normalizePersistedOutline(value: unknown): PersistedOutline | un
       || typeof entry.type !== "string" || !types.has(entry.type) || !integer(entry.tools) || !integer(entry.reasoning)
       || (entry.text !== undefined && !integer(entry.text))
       || (entry.toolName !== undefined && (typeof entry.toolName !== "string" || entry.toolName.length > 256))
-      || (entry.layout !== undefined && (typeof entry.layout !== "string" || !/^[RTX]{0,64}$/.test(entry.layout)))) return
+      || (entry.layout !== undefined && (typeof entry.layout !== "string" || !/^(?:[RTX]{0,64}|[RTX]{32}-[RTX]{31})$/.test(entry.layout)))
+      // Omitted runs accompany exactly the layouts bounded around them.
+      || (entry.omitted === undefined ? String(entry.layout).includes("-")
+        : !record(entry.omitted) || !integer(entry.omitted.reasoning) || !integer(entry.omitted.text) || !String(entry.layout).includes("-"))) return
     ids.add(entry.id); seq = entry.seq
     entries.push(Object.freeze({ id: entry.id, seq, type: entry.type as OutlineEntry["type"], tools: entry.tools, reasoning: entry.reasoning,
       ...(entry.text === undefined ? {} : { text: entry.text }),
       ...(entry.toolName === undefined ? {} : { toolName: entry.toolName }),
-      ...(entry.layout === undefined ? {} : { layout: entry.layout }) }))
+      ...(entry.layout === undefined ? {} : { layout: entry.layout }),
+      ...(record(entry.omitted) ? { omitted: Object.freeze({ reasoning: Number(entry.omitted.reasoning), text: Number(entry.omitted.text) }) } : {}) }))
   }
   for (const checkpoint of value.checkpoints) {
     if (!record(checkpoint) || checkpoint.after !== through || !integer(checkpoint.through) || checkpoint.through <= through

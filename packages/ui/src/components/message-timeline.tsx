@@ -3,16 +3,13 @@ import TimelineVirtualList, { type TimelineListHandle } from "./timeline-virtual
 import { Dynamic, Portal } from "solid-js/web"
 import { messageStoreBus } from "../stores/message-v2/bus"
 import type { ClientPart } from "../types/message"
-import { isHiddenSyntheticTextPart } from "../types/message"
-import type { MessageRecord } from "../stores/message-v2/types"
 import { buildRecordDisplayData } from "../stores/message-v2/record-display-cache"
-import { getPartCharCount } from "../lib/token-utils"
 import { User as UserIcon, Bot as BotIcon, FoldVertical } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { getMessageContentIcon } from "./message-content-icons"
 import { Markdown } from "./markdown"
 import { createTimelinePreviews } from "../stores/timeline-previews"
-import { timelineSegmentId, timelineSegmentLabel, type TimelineSegment, type TimelineSegmentType } from "./message-timeline-projection"
+import { collectTextFromPart, foldTimelineSegments, getToolTitle, type TimelineSegment, type TimelineSegmentType } from "./message-timeline-projection"
 
 export type { TimelineSegment, TimelineSegmentType }
 
@@ -30,214 +27,11 @@ interface MessageTimelineProps {
   revealActiveToken?: number
 }
 
-const MAX_TOOLTIP_LENGTH = 220
-
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
-
-interface PendingSegment {
-  type: "user" | "assistant" | "reasoning"
-  texts: string[]
-  partIds: string[]
-  totalChars: number
-}
 
 interface TimelineSegmentState {
   hasActivePermission: boolean
   hidden: boolean
-}
-
-function truncateText(value: string): string {
-  if (value.length <= MAX_TOOLTIP_LENGTH) {
-    return value
-  }
-  return `${value.slice(0, MAX_TOOLTIP_LENGTH - 1).trimEnd()}…`
-}
-
-function collectReasoningText(part: ClientPart): string {
-  const stringifySegment = (segment: unknown): string => {
-    if (typeof segment === "string") {
-      return segment
-    }
-    if (segment && typeof segment === "object") {
-      const obj = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-      const parts: string[] = []
-      if (typeof obj.text === "string") {
-        parts.push(obj.text)
-      }
-      if (typeof obj.value === "string") {
-        parts.push(obj.value)
-      }
-      if (Array.isArray(obj.content)) {
-        parts.push(obj.content.map((entry) => stringifySegment(entry)).join("\n"))
-      }
-      return parts.filter(Boolean).join("\n")
-    }
-    return ""
-  }
-
-  if (typeof (part as any)?.text === "string") {
-    return (part as any).text
-  }
-  if (Array.isArray((part as any)?.content)) {
-    return (part as any).content.map((entry: unknown) => stringifySegment(entry)).join("\n")
-  }
-  return ""
-}
-
-function collectTextFromPart(part: ClientPart, t: (key: string, params?: Record<string, unknown>) => string): string {
-  if (!part) return ""
-  if (isHiddenSyntheticTextPart(part)) return ""
-  if (typeof (part as any).text === "string") {
-    return (part as any).text as string
-  }
-  if (part.type === "reasoning") {
-    return collectReasoningText(part)
-  }
-  if (Array.isArray((part as any)?.content)) {
-    return ((part as any).content as unknown[])
-      .map((entry) => (typeof entry === "string" ? entry : ""))
-      .filter(Boolean)
-      .join("\n")
-  }
-  if (part.type === "file") {
-    const filename = (part as any)?.filename
-    return typeof filename === "string" && filename.length > 0
-      ? t("messageTimeline.text.filePrefix", { filename })
-      : t("messageTimeline.text.attachment")
-  }
-  return ""
-}
-
-function getToolTitle(part: ToolCallPart, t: (key: string, params?: Record<string, unknown>) => string): string {
-  const metadata = (((part as unknown as { state?: { metadata?: unknown } })?.state?.metadata) || {}) as { title?: unknown }
-  const title = typeof metadata.title === "string" && metadata.title.length > 0 ? metadata.title : undefined
-  if (title) return title
-  if (typeof part.tool === "string" && part.tool.length > 0) {
-    return part.tool
-  }
-  return t("messageTimeline.tool.fallbackLabel")
-}
-
-function getToolTypeLabel(part: ToolCallPart, t: (key: string, params?: Record<string, unknown>) => string): string {
-  if (typeof part.tool === "string" && part.tool.trim().length > 0) {
-    return part.tool.trim().slice(0, 4)
-  }
-  return t("messageTimeline.tool.fallbackLabel").slice(0, 4)
-}
-
-function formatTextsTooltip(texts: string[], fallback: string): string {
-  const combined = texts
-    .map((text) => text.trim())
-    .filter((text) => text.length > 0)
-    .join("\n\n")
-  if (combined.length > 0) {
-    return truncateText(combined)
-  }
-  return fallback
-}
-
-function formatToolTooltip(
-  titles: string[],
-  t: (key: string, params?: Record<string, unknown>) => string,
-): string {
-  if (titles.length === 0) {
-    return t("messageTimeline.tool.fallbackLabel")
-  }
-  return truncateText(`${t("messageTimeline.tool.fallbackLabel")}: ${titles.join(", ")}`)
-}
-
-export function buildTimelineSegments(
-  instanceId: string,
-  record: MessageRecord,
-  t: (key: string, params?: Record<string, unknown>) => string,
-): TimelineSegment[] {
-  if (!record) return []
-  const { orderedParts, hiddenCount, gapIndex } = buildRecordDisplayData(instanceId, record)
-  if (!orderedParts || orderedParts.length === 0) {
-    return []
-  }
-
-  // One marker per transcript block, in its order: each text or thinking run
-  // (a content row or reasoning card), each tool, compaction and system part.
-  const result: TimelineSegment[] = []
-  const ordinals = new Map<TimelineSegmentType, number>()
-  const push = (type: TimelineSegmentType, segment: Omit<TimelineSegment, "id" | "messageId" | "type">) => {
-    const ordinal = ordinals.get(type) ?? 0
-    ordinals.set(type, ordinal + 1)
-    result.push({ id: timelineSegmentId(record.id, type, ordinal), messageId: record.id, type, ...segment })
-  }
-  let pending: PendingSegment | null = null
-  const flushPending = () => {
-    if (!pending) return
-    const { type, texts, partIds, totalChars } = pending
-    pending = null
-    const fallback = type === "user" ? t("messageTimeline.tooltip.userFallback")
-      : type === "reasoning" ? t("messageBlock.reasoning.thoughtsFallback") : t("messageTimeline.tooltip.assistantFallback")
-    push(type, { label: timelineSegmentLabel(type, t), tooltip: formatTextsTooltip(texts, fallback), partIds, totalChars })
-  }
-  const appendRun = (type: PendingSegment["type"], text: string, part: ClientPart) => {
-    if (pending?.type !== type) {
-      flushPending()
-      pending = { type, texts: [], partIds: [], totalChars: 0 }
-    }
-    pending!.texts.push(text)
-    if (typeof part.id === "string" && part.id.length > 0) pending!.partIds.push(part.id)
-    pending!.totalChars += getPartCharCount(part)
-  }
-  const contentType = record.role === "user" ? "user" : "assistant"
-
-  orderedParts.forEach((part, index) => {
-    // Omitted parts render as a placeholder between the runs around them.
-    if (hiddenCount > 0 && index === gapIndex) flushPending()
-    if (!part || typeof part !== "object") return
-    const partId = typeof part.id === "string" ? part.id : ""
-
-    if (part.type === "tool") {
-      flushPending()
-      const toolPart = part as ToolCallPart
-      push("tool", {
-        label: getToolTypeLabel(toolPart, t) || timelineSegmentLabel("tool", t),
-        tooltip: formatToolTooltip([getToolTitle(toolPart, t)], t),
-        toolName: typeof toolPart.tool === "string" ? toolPart.tool.trim() : "",
-        toolPartIds: partId ? [partId] : undefined,
-        totalChars: getPartCharCount(part),
-      })
-      return
-    }
-
-    if (part.type === "compaction") {
-      flushPending()
-      const isAuto = Boolean((part as any)?.auto)
-      push("compaction", {
-        label: timelineSegmentLabel("compaction", t),
-        tooltip: isAuto ? t("messageTimeline.tooltip.compaction.auto") : t("messageTimeline.tooltip.compaction.manual"),
-        variant: isAuto ? "auto" : "manual",
-        partId,
-        totalChars: 0,
-      })
-      return
-    }
-
-    if (part.type === "system") {
-      flushPending()
-      push("system", { label: timelineSegmentLabel("system", t), tooltip: truncateText(part.description?.trim() || part.text.trim() || timelineSegmentLabel("system", t)),
-        partId, totalChars: getPartCharCount(part) })
-      return
-    }
-
-    if (part.type === "reasoning") {
-      const text = collectReasoningText(part)
-      if (text.trim().length > 0) appendRun("reasoning", text, part)
-      return
-    }
-
-    const text = collectTextFromPart(part, t)
-    if (text.trim().length > 0) appendRun(contentType, text, part)
-  })
-
-  flushPending()
-
-  return result
 }
 
 const MessageTimeline: Component<MessageTimelineProps> = (props) => {
@@ -424,24 +218,12 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     }
   }
 
-  // The transcript joins the text around hidden tools into one row; so does the rail.
-  const visibleSegments = createMemo(() => {
-    const result: TimelineSegment[] = []
-    let hiddenToolsOnly = false
-    for (const segment of props.segments) {
-      const previous = result.at(-1)
-      if (segmentStateFor(segment.id).hidden) {
-        hiddenToolsOnly = segment.type === "tool" && previous?.messageId === segment.messageId && (hiddenToolsOnly || previous.type === "assistant")
-        continue
-      }
-      if (!(hiddenToolsOnly && segment.type === "assistant" && previous?.type === "assistant" && previous.messageId === segment.messageId)) result.push(segment)
-      hiddenToolsOnly = false
-    }
-    return result
-  })
+  // The rail keeps the transcript's row boundaries under the same visibility.
+  const fold = createMemo(() => foldTimelineSegments(props.segments, segment => segmentStateFor(segment.id).hidden))
+  const visibleSegments = () => fold().visible
   const segmentIndexById = createMemo(() => new Map(visibleSegments().map((segment, index) => [segment.id, index])))
-  // An active marker whose content is hidden is represented by its message's
-  // first visible marker.
+  // A folded marker is represented by its row's marker; one whose content is
+  // hidden, by its message's first visible marker.
   const messageBySegmentId = createMemo(() => new Map(props.segments.map(segment => [segment.id, segment.messageId])))
   const firstVisibleByMessage = createMemo(() => {
     const result = new Map<string, string>()
@@ -449,8 +231,10 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     return result
   })
   const activeVisibleId = createMemo(() => {
-    const id = props.activeSegmentId
-    if (!id || segmentIndexById().has(id)) return id ?? null
+    const requested = props.activeSegmentId
+    if (!requested) return null
+    const id = fold().representative.get(requested) ?? requested
+    if (segmentIndexById().has(id)) return id
     const messageId = messageBySegmentId().get(id)
     return messageId === undefined ? null : firstVisibleByMessage().get(messageId) ?? null
   })

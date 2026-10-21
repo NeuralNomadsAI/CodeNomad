@@ -2,11 +2,14 @@ import { isHiddenSyntheticTextPart, partHasRenderableText, type ClientPart, type
 
 export type TechnicalGroupKind = "reasoning" | "exploration" | "shell"
 
-export type TechnicalPartGroup =
-  | { kind: "part"; part: ClientPart }
-  | { kind: "reasoning"; parts: ClientPart[]; groupId?: string }
-  | { kind: "exploration"; parts: ClientPart[]; groupId?: string }
-  | { kind: "shell"; parts: ClientPart[]; groupId?: string }
+/** A displayed part's transcript row kind: text runs share content rows, tools/system/compaction stand alone. */
+export type TranscriptRowKind = TechnicalGroupKind | "content" | "part"
+
+/** One transcript row: a content row, a technical group, a standalone part or (`null`) the omitted-parts gap. */
+export type TranscriptRow<T> =
+  | { [K in "content" | TechnicalGroupKind]: { kind: K; items: T[]; groupId?: string } }["content" | TechnicalGroupKind]
+  | { kind: "part"; item: T }
+  | null
 
 export interface TranscriptTechnicalPart {
   messageId: string
@@ -39,12 +42,19 @@ export type ExplorationSegment<T> =
   | { kind: "group"; items: T[] }
   | { kind: "pending"; item: T }
 
-export function getTechnicalGroupKind(part: ClientPart) {
-  if (part.type === "reasoning") return "reasoning" as const
-  if (part.type !== "tool") return
-  const tool = part.tool.toLowerCase()
+export function toolGroupKind(name: string) {
+  const tool = name.toLowerCase()
   if (["read", "glob", "grep"].includes(tool)) return "exploration" as const
   if (tool === "bash" || tool === "shell") return "shell" as const
+}
+
+export function getTechnicalGroupKind(part: ClientPart) {
+  if (part.type === "reasoning") return "reasoning" as const
+  if (part.type === "tool") return toolGroupKind(part.tool)
+}
+
+export function transcriptPartKind(part: ClientPart): TranscriptRowKind {
+  return getTechnicalGroupKind(part) ?? (part.type === "tool" || part.type === "system" || part.type === "compaction" ? "part" : "content")
 }
 
 export function reasoningHasRenderableContent(part: ClientPart): boolean {
@@ -81,20 +91,26 @@ export function technicalPartKey(messageId: string, partId: string) {
   return `${messageId}:${partId}`
 }
 
-export function groupTechnicalParts(parts: ClientPart[], getGroupId?: (part: ClientPart) => string | undefined): TechnicalPartGroup[] {
-  return parts.reduce<TechnicalPartGroup[]>((groups, part) => {
-    const kind = getTechnicalGroupKind(part)
-    const groupId = kind ? getGroupId?.(part) : undefined
-    const previous = groups.at(-1)
-    if (!kind) {
-      groups.push({ kind: "part", part })
-    } else if (previous?.kind === kind && previous.groupId === groupId) {
-      previous.parts.push(part)
-    } else {
-      groups.push({ kind, parts: [part], groupId })
+/**
+ * The transcript's row boundaries over a message's displayed items, shared by
+ * its blocks and the timeline rail: consecutive content items form one row,
+ * consecutive technical items of one kind (and group) one group; `null`, the
+ * omitted-parts gap, ends every row.
+ */
+export function groupTranscriptRows<T>(items: Array<T | null>, classify: (item: T) => { kind: TranscriptRowKind; groupId?: string }): TranscriptRow<T>[] {
+  const rows: TranscriptRow<T>[] = []
+  for (const item of items) {
+    if (item === null) {
+      rows.push(null)
+      continue
     }
-    return groups
-  }, [])
+    const { kind, groupId } = classify(item)
+    const previous = rows.at(-1)
+    if (kind === "part") rows.push({ kind, item })
+    else if (previous && previous.kind !== "part" && previous.kind === kind && previous.groupId === groupId) previous.items.push(item)
+    else rows.push({ kind, items: [item], groupId })
+  }
+  return rows
 }
 
 export function projectTranscriptTechnicalGroups(items: Array<TranscriptTechnicalPart | null>) {

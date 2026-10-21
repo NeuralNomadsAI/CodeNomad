@@ -10,8 +10,8 @@ import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
 import PermissionReceipts from "./permission-receipts"
 import { getMessageAnchorId } from "./message-anchors"
-import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
-import { getTimelineRecordSignature } from "./message-timeline-projection"
+import MessageTimeline, { type TimelineSegment } from "./message-timeline"
+import { buildTimelineSegments, getTimelineRecordSignature, timelineRunStart } from "./message-timeline-projection"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
@@ -22,7 +22,7 @@ import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ScrollSnapshot } from "../stores/message-v2/types"
 import { partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts } from "../stores/message-v2/record-display-cache"
+import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts, isRecordPartDisplayed, MESSAGE_PART_REVEAL_STEP, revealHiddenRecordParts } from "../stores/message-v2/record-display-cache"
 import { isDuplicateRunFailure } from "../stores/message-v2/run-failure"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches } from "../stores/session-history"
@@ -393,8 +393,13 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     return result
   })
+  // As in the transcript, a hidden tool awaiting a permission or form stays shown.
+  const isPendingToolSegment = (segment: TimelineSegment) => (segment.toolPartIds ?? []).some((partId) => {
+    const part = store().getMessage(segment.messageId)?.parts[partId]?.data
+    return Boolean((part?.type === "tool" && part.pendingPermission?.active) || pendingFormToolTargets().has(technicalPartKey(segment.messageId, partId)))
+  })
   const isTimelineSegmentHidden = (segment: TimelineSegment) => segment.type === "tool"
-    ? resolveToolVisibility(preferences(), segment.toolName ?? "") === "hidden"
+    ? resolveToolVisibility(preferences(), segment.toolName ?? "") === "hidden" && !isPendingToolSegment(segment)
     : segment.type === "reasoning" ? !preferences().showThinkingBlocks
       : segment.type === "system" && preferences().systemMessagesVisibility === "hidden"
   const hasTimelineSegments = () => timelineSegments().length > 0
@@ -568,7 +573,10 @@ export default function MessageSection(props: MessageSectionProps) {
   // rebuilt on every count/streaming change; only a new token is a send.
   const sendIntentToken = createMemo(() => props.explicitBottomPinIntent?.token)
   createEffect(on(sendIntentToken, (token) => {
-    if (token !== undefined) cancelWindowNavigation(true)
+    if (token === undefined) return
+    cancelWindowNavigation(true)
+    // The marker of the latest bottom the send pins replaces one selected before.
+    releaseActiveSegment()
   }, { defer: true }))
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
@@ -707,6 +715,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const restoreSessionId = props.sessionId
     const restoring: RestoringNavigation = { kind: "restoring", sessionId: restoreSessionId, loading: null }
     setNavigation(restoring)
+    releaseActiveSegment()
     const isCurrentRestore = () => navigation() === restoring && isActive() && api === listApi()
     const finish = (applied: boolean) => {
       if (!isCurrentRestore()) return
@@ -860,6 +869,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function placeMessage(api: VirtualFollowListApi, messageId: string, searchMatchId?: string, segmentId?: string) {
+    if (segmentId) revealTimelineSegment(messageId, segmentId)
     // A selected marker's own block (a later tool, a reply after its thinking)
     // is held at the top once its row renders, even when the row remounts.
     api.scrollToKey(messageId, segmentId ? () => {
@@ -868,6 +878,23 @@ export default function MessageSection(props: MessageSectionProps) {
     } : undefined)
     if (searchMatchId) setSearchReveal({ matchId: searchMatchId, claimed: false })
     else claimSearchReveal()
+  }
+
+  /** An indexed marker may start among the parts its loaded message omits: reveal them first. */
+  function revealTimelineSegment(messageId: string, segmentId: string) {
+    const record = store().getMessage(messageId)
+    if (!record || untrack(timelineSegmentsByMessage).get(messageId)?.some(segment => segment.id === segmentId)) return
+    const start = timelineRunStart(record, segmentId, t)
+    if (start === undefined) return
+    for (let step = 0; step <= record.partIds.length / MESSAGE_PART_REVEAL_STEP && !isRecordPartDisplayed(props.instanceId, record, start); step++) {
+      revealHiddenRecordParts(props.instanceId, messageId)
+    }
+  }
+
+  /** The block at the reading line, not a marker selected before, is active again. */
+  function releaseActiveSegment() {
+    readerOwnsActiveSegment = true
+    scheduleReadingLineSegment()
   }
 
   function scheduleReadingLineSegment() {
@@ -1409,8 +1436,7 @@ export default function MessageSection(props: MessageSectionProps) {
             claimSearchReveal()
             forgetUserMessageJump()
             // The reader now owns the position, and with it the active marker.
-            readerOwnsActiveSegment = true
-            scheduleReadingLineSegment()
+            releaseActiveSegment()
             // An opposite directional gesture supersedes pending history paging
             // before it can position; taps and the requesting gesture do not.
             const nav = navigation()
@@ -1418,8 +1444,8 @@ export default function MessageSection(props: MessageSectionProps) {
             if (nav.kind === "paging" && (nav.around || (direction && nav.gesture && direction !== nav.gesture))) cancelWindowNavigation(visibleMessageIds().length > 0)
           }}
           onUserReachedBottom={() => { void pageWindow("newer", (api) => api.scrollToTop({ immediate: true })) }}
-          onJumpTop={() => { void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
-          onJumpBottom={() => { void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
+          onJumpTop={() => { releaseActiveSegment(); void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
+          onJumpBottom={() => { releaseActiveSegment(); void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
           onMouseUp={() => handleStreamMouseUp()}
           onScrollElementChange={(element) => {
             setStreamElement(element)

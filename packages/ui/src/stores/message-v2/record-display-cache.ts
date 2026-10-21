@@ -82,6 +82,12 @@ export function getRecordDisplayPartIds(instanceId: string, record: MessageRecor
   ]
 }
 
+/** Whether `record.partIds[index]` renders in the message's current display window. */
+export function isRecordPartDisplayed(instanceId: string, record: MessageRecord, index: number): boolean {
+  const { headCount, hiddenCount } = getDisplayWindow(instanceId, record)
+  return hiddenCount === 0 || index < headCount || index >= headCount + hiddenCount
+}
+
 export function revealHiddenRecordParts(instanceId: string, messageId: string) {
   const key = makeCacheKey(instanceId, messageId)
   setRevealedParts(key, (current) => (current ?? 0) + MESSAGE_PART_REVEAL_STEP)

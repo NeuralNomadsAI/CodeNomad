@@ -63,6 +63,14 @@ test("index normalization bounds optional storage, rejects invalid ordering and 
   assert.equal(hasCompleteOutlineMetadata(unordered), false, "indexes saved before part layouts refresh once too")
   assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, layout: "RTQ" })) }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, layout: "X".repeat(65) })) }), undefined)
+  const bounded = (fields: Record<string, unknown>) => normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, ...fields })) })
+  const long = `R${"X".repeat(31)}-${"X".repeat(30)}T`
+  assert.deepEqual(bounded({ layout: long, omitted: { reasoning: 2, text: 1 } })?.entries.map(entry => entry.omitted), [{ reasoning: 2, text: 1 }, { reasoning: 2, text: 1 }],
+    "a bounded layout keeps the counts of the runs it omits")
+  assert.equal(bounded({ layout: long }), undefined, "a bounded layout without its omitted runs would drop visible markers")
+  assert.equal(bounded({ omitted: { reasoning: 1, text: 0 } }), undefined)
+  assert.equal(bounded({ layout: long, omitted: { reasoning: -1, text: 0 } }), undefined)
+  assert.equal(bounded({ layout: `${"X".repeat(31)}-${"X".repeat(31)}`, omitted: { reasoning: 0, text: 0 } }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, text: -1 })) }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, entries: [valid.entries[1], valid.entries[0]] }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, checkpoints: [{ after: 0, through: 1, digest: "a".repeat(64) }] }), undefined)

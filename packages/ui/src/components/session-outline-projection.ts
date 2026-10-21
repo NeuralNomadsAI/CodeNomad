@@ -4,16 +4,49 @@ import { timelineSegmentId, timelineSegmentLabel, type TimelineSegment, type Tim
 type Translate = (key: string, params?: Record<string, unknown>) => string
 const kindTypes: Record<string, TimelineSegmentType> = { U: "user", C: "compaction", S: "system", R: "reasoning", T: "assistant", X: "tool" }
 
+const toolCount = (kinds: string) => kinds.replace(/[^X]/g, "").length
+
+/**
+ * The runs a bounded layout omits between `before` and `after`, in an order
+ * the transcript could show: no two thinking or two text runs touch, as they
+ * would share one row. Excess runs of one kind take a slot each between tools,
+ * the balanced rest alternates within one slot.
+ */
+function omittedKinds(reasoning: number, text: number, tools: number, before = "", after = ""): string {
+  const slots = Array.from({ length: tools + 1 }, () => "")
+  const excess = reasoning > text ? "R" : "T", other = excess === "R" ? "T" : "R"
+  let extra = Math.abs(reasoning - text)
+  for (let slot = 0; slot < slots.length && extra > 0; slot++) {
+    if ((slot === 0 && before === excess) || (slot === tools && after === excess)) continue
+    slots[slot] = excess
+    extra--
+  }
+  // Counts stay exact even for an arrangement the native order cannot have.
+  if (extra > 0) slots[tools] += excess.repeat(extra)
+  const pairs = Math.min(reasoning, text)
+  const host = slots.findIndex(slot => slot === excess)
+  if (host >= 0) slots[host] = excess + (other + excess).repeat(pairs)
+  else if (pairs) {
+    const startsWithText = before === "R" || (tools === 0 && after === "T")
+    slots[0] = (startsWithText ? "TR" : "RT").repeat(pairs)
+  }
+  return slots.join("X")
+}
+
 /** The markers the transcript will show for an indexed message, in its part order. */
 function outlineSegments(entry: OutlineEntry, t: Translate): TimelineSegment[] {
   let kinds = entry.type === "user" ? "U" : entry.type === "compaction" ? "C" : entry.type === "system" ? "S" : ""
   if (entry.type === "assistant") {
-    // The layout lists the first 64 kinds; later tools follow it. An index from
-    // an older plugin copy has none: steps usually think, answer, then call
-    // tools, and unknown text keeps its marker.
-    kinds = entry.layout !== undefined
-      ? entry.layout + "X".repeat(Math.max(0, entry.tools - entry.layout.replace(/[^X]/g, "").length))
-      : `${entry.reasoning ? "R" : ""}${entry.text !== 0 ? "T" : ""}${"X".repeat(entry.tools)}`
+    // A long layout keeps its ends around the omitted runs' counts. An index
+    // without layouts (an older plugin copy) has counts only: steps usually
+    // think, answer, then call tools, and unknown text keeps its marker.
+    const [head, tail] = entry.layout?.split("-") ?? []
+    kinds = tail !== undefined
+      ? head + omittedKinds(entry.omitted?.reasoning ?? 0, entry.omitted?.text ?? 0,
+        Math.max(0, entry.tools - toolCount(head) - toolCount(tail)), head.at(-1), tail[0]) + tail
+      : head !== undefined
+        ? head + "X".repeat(Math.max(0, entry.tools - toolCount(head)))
+        : `${entry.reasoning ? "R" : ""}${entry.text !== 0 ? "T" : ""}${"X".repeat(entry.tools)}`
   }
   const ordinals = new Map<TimelineSegmentType, number>()
   return [...kinds].map(kind => {
@@ -75,7 +108,7 @@ export function createSessionOutlineProjection() {
       const cached = previous.get(segment.id)
       return cached && cached.type === segment.type && cached.label === segment.label
         && cached.tooltip === segment.tooltip && cached.totalChars === segment.totalChars
-        && cached.toolName === segment.toolName
+        && cached.toolName === segment.toolName && cached.omittedBefore === segment.omittedBefore
         && cached.toolPartIds?.length === segment.toolPartIds?.length
         && (segment.toolPartIds ?? []).every((id, index) => id === cached.toolPartIds?.[index])
         && cached.partIds?.length === segment.partIds?.length

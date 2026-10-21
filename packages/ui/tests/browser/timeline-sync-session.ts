@@ -82,7 +82,8 @@ export async function openTimelineSession(page: Page, url: string, path: string,
     try {
       const response = method === "window" ? await readNavigationWindow(reader, scope, input.target, new AbortController().signal)
         : method === "outlinePreview" ? await readOutlinePreviews(reader, scope, input.messageIDs, new AbortController().signal)
-          : await readSessionOutline(reader, scope, input.cursor, new AbortController().signal, input.after, input.known)
+          // As the backend's versioned outline call, with layouts.
+          : await readSessionOutline(reader, scope, input.cursor, new AbortController().signal, input.after, input.known, true)
       if (method === "outline" && (response as any).cursor === null) state.outlineDone = true
       if (method === "window") state.windows++
       await route.fulfill({ contentType: "application/json", body: JSON.stringify(response) }).catch(() => {})
@@ -113,4 +114,86 @@ export async function settleTranscript(page: Page, minMs = 300) {
     }
     requestAnimationFrame(tick)
   }))
+}
+
+// Transcript items in DOM order, collected across the virtualized resident window.
+async function collectTranscript(page: Page) {
+  const items = new Map<string, any>()
+  const pass = () => page.evaluate(() => {
+    const stream = document.querySelector<HTMLElement>(".message-stream")!
+    const view = stream.getBoundingClientRect()
+    const out: any[] = []
+    for (const row of stream.querySelectorAll<HTMLElement>("[data-virtual-follow-key]")) {
+      const messageId = row.dataset.virtualFollowKey!
+      let order = 0
+      for (const el of row.querySelectorAll<HTMLElement>('.message-item-base, .tool-call-message[data-part-id], .message-exploration-group[data-group-part-ids], .message-reasoning-card[data-part-id], .message-reasoning-group[data-group-part-ids], [data-message-kind="system"], .message-compaction-card, .message-hidden-parts')) {
+        const rect = el.getBoundingClientRect()
+        const kind = el.classList.contains("message-item-base") ? (el.dataset.messageRole === "user" ? "user" : "content")
+          : el.classList.contains("tool-call-message") ? "tool" : el.classList.contains("message-exploration-group") ? "group"
+            : el.classList.contains("message-reasoning-card") ? "reasoning" : el.classList.contains("message-reasoning-group") ? "reasoning-group"
+              : el.dataset.messageKind === "system" ? "system" : el.classList.contains("message-compaction-card") ? "compaction" : "hidden-parts"
+        const key = kind === "content" || kind === "user" ? `${messageId}|${kind}|${el.dataset.messageContentStartPartId}`
+          : kind === "tool" || kind === "reasoning" ? `${messageId}|${kind}|${el.dataset.partId}`
+            : kind === "group" || kind === "reasoning-group" ? `${messageId}|${kind}|${el.dataset.groupPartIds}` : `${messageId}|${kind}|${order}`
+        out.push({ key, messageId, kind, order: order++, start: el.dataset.messageContentStartPartId, partId: el.dataset.partId,
+          groupPartIds: el.dataset.groupPartIds?.split(" "), height: rect.height, grouped: kind === "reasoning" && Boolean(el.closest(".message-reasoning-group")), renderedTools: kind === "group" ? [...el.querySelectorAll<HTMLElement>(".tool-call-message[data-part-id]")].map(t => t.dataset.partId) : undefined,
+          hasError: kind === "content" ? Boolean(el.querySelector(".message-error, [data-message-error], .message-item-error")) : undefined,
+          textLength: kind === "content" ? (el.querySelector(".message-item-content, .message-text, .markdown-body")?.textContent ?? "").trim().length : undefined })
+      }
+    }
+    return { out, top: stream.scrollTop, height: stream.clientHeight, scrollHeight: stream.scrollHeight }
+  })
+  // A wheel gesture leaves bottom-following; programmatic offsets then read the
+  // window without paging once its intent has expired.
+  const box = (await page.locator(".message-stream").boundingBox())!
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
+  await page.mouse.wheel(0, -120)
+  await page.waitForTimeout(800)
+  await page.evaluate(() => { document.querySelector<HTMLElement>(".message-stream")!.scrollTop = 0 })
+  await settleTranscript(page, 50)
+  for (let guard = 0; guard < 4000; guard++) {
+    const result = await pass()
+    for (const item of result.out) items.set(item.key, item)
+    if (result.top + result.height >= result.scrollHeight - 1) break
+    await page.evaluate(step => { const s = document.querySelector<HTMLElement>(".message-stream")!; s.scrollTop += step }, Math.max(200, result.height * 0.85))
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+  }
+  return [...items.values()]
+}
+
+export type TranscriptMarker = { kind: string; partId?: string }
+
+/**
+ * The rendered transcript's marked blocks per message, in part order: each
+ * content row, tool (a collapsed group's tools included), thinking card or
+ * group, system and compaction block. `messageOf` maps ids to native records.
+ */
+export async function collectTranscriptMarkers(page: Page, messageOf: Map<string, any>) {
+  const dom = await collectTranscript(page)
+  const byMessage = new Map<string, TranscriptMarker[]>()
+  let errorRows = 0
+  for (const item of dom) {
+    const list = byMessage.get(item.messageId) ?? []
+    const message = messageOf.get(item.messageId)
+    if (item.kind === "user") list.push({ kind: "user" })
+    else if (item.kind === "content") {
+      const index = Number(item.start?.split("-").at(-1))
+      const part = message?.content?.[index]
+      if (item.start?.endsWith("-error") || !part || part.type !== "text" || !String(part.text ?? "").trim()) { errorRows++; continue }
+      list.push({ kind: "assistant", partId: item.start })
+    } else if (item.kind === "tool") list.push({ kind: "tool", partId: item.partId })
+    else if (item.kind === "group") { for (const id of item.groupPartIds ?? []) if (!item.renderedTools?.includes(id)) list.push({ kind: "tool", partId: id }) }
+    // A thinking run is one card, or one group whatever it shows.
+    else if (item.kind === "reasoning") { if (!item.grouped) list.push({ kind: "reasoning", partId: item.partId }) }
+    else if (item.kind === "reasoning-group") list.push({ kind: "reasoning", partId: item.groupPartIds?.[0] })
+    else if (item.kind === "system" || item.kind === "compaction") list.push({ kind: item.kind })
+    byMessage.set(item.messageId, list)
+  }
+  // DOM collection orders a group's collapsed tools at the group; restore part order.
+  for (const [messageId, list] of byMessage) {
+    const message = messageOf.get(messageId)
+    const order = new Map<string, number>((message?.content ?? []).map((p: any, i: number) => [p.type === "tool" ? p.id : `${messageId}-${p.type}-${i}`, i]))
+    list.sort((a, b) => (a.partId && b.partId && order.has(a.partId) && order.has(b.partId)) ? order.get(a.partId)! - order.get(b.partId)! : 0)
+  }
+  return { dom, byMessage, errorRows }
 }

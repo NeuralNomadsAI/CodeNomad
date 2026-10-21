@@ -94,7 +94,8 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
     const read = method === "window"
       ? readNavigationWindow(reader, scope, input.target, new AbortController().signal)
       : method === "outlinePreview" ? readOutlinePreviews(reader, scope, input.messageIDs, new AbortController().signal)
-        : readSessionOutline(reader, scope, input.cursor, new AbortController().signal, input.after, input.known)
+        // As the backend's versioned outline call, with layouts.
+        : readSessionOutline(reader, scope, input.cursor, new AbortController().signal, input.after, input.known, true)
     reads.add(read)
     const response = await read.finally(() => { reads.delete(read); reader.close() })
     if (method === "outline") { outlineReplies.push(response); await indexGate }

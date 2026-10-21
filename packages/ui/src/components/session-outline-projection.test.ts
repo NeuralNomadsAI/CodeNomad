@@ -52,6 +52,28 @@ test("indexed messages get the markers the transcript shows for them, in part or
   assert.deepEqual(ids(["shell", "synthetic", "idle", "agent-switched"].map((type, seq) => ({ id: type, seq, type: type as OutlineEntry["type"], tools: 0, reasoning: 0 }))), [])
 })
 
+test("a layout bounded around omitted runs keeps every marker, the trailing reply and thinking included", () => {
+  const project = createSessionOutlineProjection()
+  const markers = (entry: OutlineEntry) => project([entry], [], [], t)
+  // As the plugin bounds a step of 64 tools then a reply: 32 kinds, then the last 31.
+  const reply = markers({ id: "long", seq: 1, type: "assistant", tools: 64, reasoning: 0, text: 1, toolName: "read",
+    layout: `${"X".repeat(32)}-${"X".repeat(30)}T`, omitted: { reasoning: 0, text: 0 } })
+  assert.equal(reply.length, 65)
+  assert.deepEqual(reply.at(-1)?.id, "long:assistant:0", "the reply after the 64 tools keeps its marker")
+  assert.equal(reply.filter(segment => segment.type === "tool").length, 64)
+  // Thinking before each of 40 tools, then a reply: nine thinking runs are omitted.
+  const thoughtful = markers({ id: "steps", seq: 1, type: "assistant", tools: 40, reasoning: 40, text: 1, toolName: "read",
+    layout: `${"RX".repeat(16)}-${"RX".repeat(15)}T`, omitted: { reasoning: 9, text: 0 } })
+  assert.deepEqual(thoughtful.map(segment => segment.type[0]).join(""), `${"rt".repeat(40)}a`)
+  // Interleaved thinking, replies and tools: counts stay exact and no two runs of a kind touch.
+  const mixed = markers({ id: "mixed", seq: 1, type: "assistant", tools: 30, reasoning: 30, text: 30, toolName: "read",
+    layout: `${"RTX".repeat(10)}RT-X${"RTX".repeat(10)}`, omitted: { reasoning: 9, text: 9 } })
+  for (const type of ["reasoning", "assistant", "tool"]) assert.equal(mixed.filter(segment => segment.type === type).length, 30, type)
+  assert.ok(mixed.every((segment, index) => segment.type === "tool" || segment.type !== mixed[index + 1]?.type),
+    "adjacent thinking or text runs would share one transcript row")
+  assert.equal(new Set(mixed.map(segment => segment.id)).size, 90)
+})
+
 test("resident messages keep their exact markers at their native position", () => {
   const project = createSessionOutlineProjection()
   const entries = [user("a", 1), step("b", 2, "TX"), user("c", 3), step("d", 4, "TX"), user("e", 5)]

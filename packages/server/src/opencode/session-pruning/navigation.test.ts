@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DatabaseSync } from "node:sqlite"
+import { z } from "zod"
+import { outlineResultSchema } from "./navigation-contract"
 import { readNavigationWindow, readSessionOutline } from "./navigation-store"
 import { readOutlinePreviews } from "./outline-preview"
 
@@ -168,10 +170,39 @@ test("assistant layouts list visible reasoning and text runs and each tool in co
       { type: "tool", name: "read" }, { type: "tool", name: "grep" }])
     step(1, [{ type: "tool", name: "read" }, { type: "reasoning", text: " " }, { type: "text", text: "after" }, { type: "reasoning", text: "e" },
       { type: "text", text: "x", synthetic: true }, { type: "text", text: "y", ignored: true }, { type: "text", text: "\n" }, { type: "tool", name: "shell" }])
-    step(2, Array.from({ length: 70 }, (_, index) => ({ type: "tool", name: `tool${index}` })))
-    const outline = await readSessionOutline(db, scope, undefined, signal())
+    step(2, [...Array.from({ length: 64 }, (_, index) => ({ type: "tool", name: `tool${index}` })), { type: "text", text: "reply" }])
+    step(3, [...Array.from({ length: 40 }, (_, index) => [{ type: "reasoning", text: `step ${index}` }, { type: "tool", name: "read" }]).flat(),
+      { type: "text", text: "done" }])
+    const outline = await readSessionOutline(db, scope, undefined, signal(), -1, [], true)
     if (outline.status !== "outline") assert.fail("Expected index")
-    assert.deepEqual(outline.entries.map(entry => entry.layout), ["RTXX", "XTRX", "X".repeat(64), undefined])
+    assert.deepEqual(outline.entries.map(entry => entry.layout), ["RTXX", "XTRX", `${"X".repeat(32)}-${"X".repeat(30)}T`, `${"RX".repeat(16)}-${"RX".repeat(15)}T`])
+    assert.deepEqual(outline.entries.map(entry => entry.omitted), [undefined, undefined, { reasoning: 0, text: 0 }, { reasoning: 9, text: 0 }],
+      "a layout over 64 kinds keeps its ends and counts the runs between them")
+    const { outlineLayoutResultSchema } = await import("./navigation-contract")
+    assert.equal(outlineLayoutResultSchema.safeParse(outline).success, true)
+  } finally { db.close() }
+})
+
+// The `outline` entry shape an older CodeNomad backend validates strictly.
+const legacyOutlineSchema = z.object({ status: z.literal("outline"), entries: z.array(z.object({
+  id: z.string(), seq: z.number(), type: z.string(), tools: z.number(), reasoning: z.number(), text: z.number().optional(), toolName: z.string().optional(),
+}).strict()), total: z.number(), cursor: z.unknown(), checkpoints: z.array(z.unknown()) }).strict()
+
+test("layouts are opt-in: the default outline keeps the entry shape older backends accept", async () => {
+  const db = fixture(2)
+  try {
+    db.prepare("UPDATE session_message SET type='assistant', data=? WHERE id=?").run(JSON.stringify({ content: [
+      { type: "reasoning", text: "a" }, { type: "text", text: "b" }, { type: "tool", name: "read" }] }), id(1))
+    const legacy = await readSessionOutline(db, scope, undefined, signal())
+    assert.equal(legacyOutlineSchema.safeParse(legacy).success, true, "an older backend parses the default outline")
+    assert.equal(outlineResultSchema.safeParse(legacy).success, true)
+    assert(legacy.status === "outline" && legacy.entries.every(entry => !("layout" in entry) && !("omitted" in entry)))
+    const layouts = await readSessionOutline(db, scope, undefined, signal(), -1, [], true)
+    assert(layouts.status === "outline" && layouts.entries[1].layout === "RTX")
+    assert.equal(legacyOutlineSchema.safeParse(layouts).success, false, "layouts would be rejected as unrecognized keys")
+    assert.equal(outlineResultSchema.safeParse(layouts).success, false, "the `outline` method's output stays the legacy shape")
+    const { outlineLayoutResultSchema } = await import("./navigation-contract")
+    assert.equal(outlineLayoutResultSchema.safeParse(layouts).success, true)
   } finally { db.close() }
 })
 

@@ -1,14 +1,18 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { getTechnicalCleanupParts, groupTechnicalParts, isResponseTextPart, projectTranscriptTechnicalGroups, segmentExplorationItems, sumMessageUsage, technicalPartKey, type TechnicalCleanupTranscriptItem } from "./message-part-grouping.ts"
+import { getTechnicalCleanupParts, groupTranscriptRows, isResponseTextPart, projectTranscriptTechnicalGroups, segmentExplorationItems, sumMessageUsage, technicalPartKey, transcriptPartKind, type TechnicalCleanupTranscriptItem, type TranscriptRow } from "./message-part-grouping.ts"
 import type { ClientPart, MessageInfo } from "../types/message.ts"
 
 const part = (id: string, type: ClientPart["type"], tool?: string) => ({ id, type, ...(tool ? { tool } : {}) }) as ClientPart
+const groupParts = (parts: Array<ClientPart | null>, getGroupId?: (part: ClientPart) => string | undefined) =>
+  groupTranscriptRows(parts, (value) => ({ kind: transcriptPartKind(value), groupId: getGroupId?.(value) }))
+const rowIds = (rows: TranscriptRow<ClientPart>[]) => rows.map((row) => !row ? null
+  : row.kind === "part" ? [row.kind, row.item.id] : [row.kind, row.items.map((item) => item.id)])
 
 describe("message technical part grouping", () => {
   it("matches the TUI reasoning and exploration boundaries", () => {
-    const groups = groupTechnicalParts([
+    const groups = groupParts([
       part("r1", "reasoning"),
       part("r2", "reasoning"),
       part("read", "tool", "Read"),
@@ -19,15 +23,24 @@ describe("message technical part grouping", () => {
       part("r3", "reasoning"),
     ])
 
-    assert.deepEqual(groups.map((group) => group.kind === "part"
-      ? [group.kind, group.part.id]
-      : [group.kind, group.parts.map((item) => item.id)]), [
+    assert.deepEqual(rowIds(groups), [
       ["reasoning", ["r1", "r2"]],
       ["exploration", ["read", "grep"]],
       ["shell", ["bash"]],
       ["exploration", ["glob"]],
-      ["part", "text"],
+      ["content", ["text"]],
       ["reasoning", ["r3"]],
+    ])
+  })
+
+  it("joins consecutive content into one row; tools, system, compaction and the omitted gap end rows", () => {
+    assert.deepEqual(rowIds(groupParts([
+      part("t1", "text"), part("file", "file"), part("edit", "tool", "edit"), part("t2", "text"),
+      part("system", "system"), part("t3", "text"), null, part("t4", "text"), part("t5", "text"),
+      part("compaction", "compaction"), part("r1", "reasoning"), null, part("r2", "reasoning"),
+    ])), [
+      ["content", ["t1", "file"]], ["part", "edit"], ["content", ["t2"]], ["part", "system"], ["content", ["t3"]],
+      null, ["content", ["t4", "t5"]], ["part", "compaction"], ["reasoning", ["r1"]], null, ["reasoning", ["r2"]],
     ])
   })
 
@@ -74,26 +87,24 @@ describe("message technical part grouping", () => {
     ])
     assert.equal(projection.byPartKey.get("assistant-3:grep"), projection.groups[1])
     assert.deepEqual(
-      groupTechnicalParts([read, grep], (value) => projection.byPartKey.get(technicalPartKey(
+      groupParts([read, grep], (value) => projection.byPartKey.get(technicalPartKey(
         value === read ? "assistant-2" : "assistant-3",
         value.id!,
-      ))?.id).map((group) => group.kind),
+      ))?.id).map((group) => group?.kind),
       ["exploration"],
     )
-    assert.equal(groupTechnicalParts([read, glob], (value) => value.id).length, 2)
+    assert.equal(groupParts([read, glob], (value) => value.id).length, 2)
   })
 
   it("groups consecutive shell tools until another kind", () => {
-    const groups = groupTechnicalParts([
+    const groups = groupParts([
       part("bash-1", "tool", "bash"),
       part("shell-2", "tool", "shell"),
       part("read", "tool", "read"),
       part("bash-3", "tool", "bash"),
     ])
 
-    assert.deepEqual(groups.map((group) => group.kind === "part"
-      ? [group.kind, group.part.id]
-      : [group.kind, group.parts.map((item) => item.id)]), [
+    assert.deepEqual(rowIds(groups), [
       ["shell", ["bash-1", "shell-2"]],
       ["exploration", ["read"]],
       ["shell", ["bash-3"]],

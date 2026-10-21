@@ -48,7 +48,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { groupTechnicalParts, isTechnicalGroupingVisiblePart, segmentExplorationItems, sumMessageUsage, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
+import { groupTranscriptRows, isTechnicalGroupingVisiblePart, segmentExplorationItems, transcriptPartKind, sumMessageUsage, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
 import { MessageUsage } from "./message-usage"
 
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
@@ -619,24 +619,19 @@ export default function MessageBlock(props: MessageBlockProps) {
     const items: MessageBlockItem[] = []
     const blockContentKeys: string[] = []
     const blockToolKeys: string[] = []
-    let pendingParts: ClientPart[] = []
     let agentMetaAttached = current.role !== "assistant"
 
-    const flushContent = () => {
-      if (pendingParts.length === 0) return
-      const startPartId = typeof (pendingParts[0] as any)?.id === "string" ? ((pendingParts[0] as any).id as string) : ""
-      if (!startPartId) {
-        pendingParts = []
-        return
-      }
+    const pushContent = (parts: ClientPart[]) => {
+      const startPartId = typeof (parts[0] as any)?.id === "string" ? ((parts[0] as any).id as string) : ""
+      if (!startPartId) return
 
-      if (!agentMetaAttached && pendingParts.some((part) => partHasRenderableText(part))) {
+      if (!agentMetaAttached && parts.some((part) => partHasRenderableText(part))) {
         agentMetaAttached = true
       }
 
       const segmentKey = `${current.id}:content:${startPartId}`
       let cached = sessionCache.messageItems.get(segmentKey)
-      const partIds = pendingParts.flatMap((part) => typeof part.id === "string" ? [part.id] : [])
+      const partIds = parts.flatMap((part) => typeof part.id === "string" ? [part.id] : [])
       // Index rows observe item identity, not mutations to this plain cached
       // object. Publish changed selections so appended/tail parts reach the row.
       if (!cached || cached.partIds.length !== partIds.length || cached.partIds.some((id, index) => id !== partIds[index])) {
@@ -652,7 +647,6 @@ export default function MessageBlock(props: MessageBlockProps) {
 
       items.push(cached)
       blockContentKeys.push(segmentKey)
-      pendingParts = []
     }
 
     const toolItem = (part: ToolCallPart) => {
@@ -677,27 +671,31 @@ export default function MessageBlock(props: MessageBlockProps) {
         || (part.id && pendingFormToolTargets().has(technicalPartKey(current.id, part.id)))
       )
     }
-    const groupParts = (parts: ClientPart[]) => groupTechnicalParts(parts.filter(isDisplayPart), (part) => {
+    const shown = (parts: ClientPart[]) => parts.filter(isDisplayPart)
+    // `null` marks omitted parts; no row spans them.
+    const rows = groupTranscriptRows(displayData.hiddenCount > 0
+      ? [...shown(orderedParts.slice(0, displayData.gapIndex)), null, ...shown(orderedParts.slice(displayData.gapIndex))]
+      : shown(orderedParts), (part) => {
+      const kind = transcriptPartKind(part)
+      if (kind === "content" || kind === "part") return { kind }
       const partId = typeof part.id === "string" ? part.id : ""
-      return partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined
+      return { kind, groupId: partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined }
     })
-    // `null` marks omitted parts; grouping each side separately keeps groups from spanning them.
-    const groupedParts = displayData.hiddenCount > 0
-      ? [...groupParts(orderedParts.slice(0, displayData.gapIndex)), null, ...groupParts(orderedParts.slice(displayData.gapIndex))]
-      : groupParts(orderedParts)
 
-    groupedParts.forEach((group, groupIndex) => {
+    rows.forEach((group, groupIndex) => {
       if (!group) {
-        flushContent()
         items.push({
           type: "hidden-parts", key: `${current.id}:hidden-parts`, messageId: current.id,
           count: displayData.hiddenCount, start: displayData.hiddenStart,
         })
         return
       }
+      if (group.kind === "content") {
+        pushContent(group.items)
+        return
+      }
       if (group.kind === "exploration" || group.kind === "shell") {
-        flushContent()
-        const tools = group.parts.flatMap((part) => {
+        const tools = group.items.flatMap((part) => {
           const item = toolItem(part as ToolCallPart)
           return item ? [item] : []
         })
@@ -708,7 +706,7 @@ export default function MessageBlock(props: MessageBlockProps) {
             kind: group.kind,
             key: `${tools[0].key}:${group.kind}`,
             tools,
-            completed: technicalGroup?.completed ?? (groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error"),
+            completed: technicalGroup?.completed ?? (groupIndex < rows.length - 1 || current.status === "complete" || current.status === "error"),
             technicalGroup,
           })
         }
@@ -716,9 +714,8 @@ export default function MessageBlock(props: MessageBlockProps) {
       }
 
       if (group.kind === "reasoning") {
-        flushContent()
         if (props.showThinking()) {
-          const reasoningParts = group.parts.flatMap((part) => {
+          const reasoningParts = group.items.flatMap((part) => {
             const partId = part.id ?? ""
             return partId ? [{
               part,
@@ -736,7 +733,7 @@ export default function MessageBlock(props: MessageBlockProps) {
               type: "reasoning",
               key: `${current.id}:${reasoningParts[0].partId}:reasoning`,
               parts: reasoningParts,
-              completed: technicalGroup?.completed ?? (groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error"),
+              completed: technicalGroup?.completed ?? (groupIndex < rows.length - 1 || current.status === "complete" || current.status === "error"),
               showAgentMeta,
               defaultExpanded: props.thinkingDefaultExpanded(),
               technicalGroup,
@@ -746,24 +743,21 @@ export default function MessageBlock(props: MessageBlockProps) {
         return
       }
 
-      const part = group.part
+      const part = group.item
       const partIndex = orderedParts.indexOf(part)
       if (part.type === "system") {
-        flushContent()
         if (props.systemMessagesVisibility?.() && props.systemMessagesVisibility() !== "hidden") {
           items.push({ type: "system", key: `${current.id}:system`, part })
         }
         return
       }
       if (part.type === "tool") {
-        flushContent()
         const item = toolItem(part as ToolCallPart)
         if (item) items.push(item)
         return
       }
 
       if (part.type === "compaction") {
-        flushContent()
         const partId = part.id ?? ""
         const key = `${current.id}:${partId || partIndex}:compaction`
         items.push({
@@ -775,22 +769,14 @@ export default function MessageBlock(props: MessageBlockProps) {
           messageId: current.id,
           partId,
         })
-        return
       }
-
-      pendingParts.push(part)
     })
-
-    flushContent()
 
     // Error-only records (a failed step or a run that failed outside model steps)
     // have no renderable part; keep one content row so their error is shown.
     if (blockContentKeys.length === 0 && info?.role === "assistant" && info.error) {
       const placeholder = orderedParts.find((part) => typeof part.id === "string" && part.type === "text")
-      if (placeholder) {
-        pendingParts.push(placeholder)
-        flushContent()
-      }
+      if (placeholder) pushContent([placeholder])
     }
 
     const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.hiddenCount > 0 }

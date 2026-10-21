@@ -1,7 +1,7 @@
 import { render } from "solid-js/web"
 import SessionView from "../../../src/components/session/session-view"
-import { ConfigProvider, preferences, updatePreferences, type ToolCallExpansionPreset } from "../../../src/stores/preferences"
-import { transcriptPresetPatch } from "../../../src/components/transcript-visibility"
+import { ConfigProvider, preferences, updatePreferences, type ToolCallExpansionPreset, type VisibilityPreference } from "../../../src/stores/preferences"
+import { transcriptPresetPatch, transcriptVisibilityPatch, type TranscriptVisibilityRow } from "../../../src/components/transcript-visibility"
 import { resolveToolVisibility } from "../../../src/components/tool-call/tool-presentation"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -22,11 +22,12 @@ let config = { settings: { locale: "en", showMessageTimeline: true, ...transcrip
 serverApi.fetchConfigOwner = async () => config as any
 serverApi.patchConfigOwner = async (_owner, patch: any) => (config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }) as any
 serverApi.fetchStateOwner = async () => ({} as any)
+const prompts: string[] = []
 const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async () => ({ id: sessionId, title: "Timeline sync", location: { directory: "/fixture" }, time: { created: 1, updated: 1 } }),
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
-    switchAgent: async () => ({}), switchModel: async () => ({}), prompt: async () => ({}),
+    switchAgent: async () => ({}), switchModel: async () => ({}), prompt: async ({ id }: any) => { prompts.push(id); return {} },
   },
   model: { default: async () => ({ data: model }) },
   message: { list: async (input: any = {}) => (await fetch("/fixture-native/list", { method: "POST", body: JSON.stringify(input) })).json() },
@@ -51,4 +52,13 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   toolHidden: (name: string) => resolveToolVisibility(preferences(), name) === "hidden",
   showThinking: () => preferences().showThinkingBlocks,
   systemVisibility: () => preferences().systemMessagesVisibility,
+  prompts: () => prompts,
+  setPreset: (value: ToolCallExpansionPreset) => updatePreferences(transcriptPresetPatch(value)),
+  /** Sets Message content rows (`thinking`, `system` or a tool) as its popup does. */
+  setVisibility: async (rows: Record<string, VisibilityPreference>) => {
+    for (const [key, mode] of Object.entries(rows)) {
+      const row = (key === "thinking" || key === "system" ? { kind: key, key, label: "" } : { kind: "tool", key, label: "" }) as TranscriptVisibilityRow
+      await updatePreferences(transcriptVisibilityPatch(preferences(), row, mode))
+    }
+  },
 }
