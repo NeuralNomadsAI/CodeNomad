@@ -29,6 +29,8 @@ import {
   ensureWorktreesLoaded,
   getWorktrees,
   reloadWorktrees,
+  getPendingWorktreeLocations,
+  clearPendingWorktreeMoves,
 } from "./worktrees"
 import { getRootClient } from "./opencode-client"
 import { refreshSessionRuntimeStatus } from "./session-api"
@@ -732,11 +734,12 @@ function releaseInstanceResources(instanceId: string) {
   sseManager.seedStatus(instanceId, "disconnected")
 }
 
-function getPendingRequestLocations(instanceId: string, rootDirectory?: string, includeHistorical = true) {
+function getPendingRequestLocations(instanceId: string, rootDirectory?: string, includeHistorical = true, includeInventory = true) {
   const instanceSessions = sessions().get(instanceId)
   return buildV2RequestLocations(rootDirectory, [
     getActiveCatalogLocation(instanceId),
-    ...getWorktrees(instanceId),
+    ...getPendingWorktreeLocations(instanceId),
+    ...(includeInventory ? getWorktrees(instanceId) : []),
     ...Array.from(instanceSessions?.values() ?? [])
       .filter((session) => includeHistorical || session.status !== "idle" || session.pendingPermission || session.pendingForm)
       .map((session) => session.location),
@@ -770,11 +773,13 @@ function pendingSnapshotResults<T>(
   })
 }
 
-async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => boolean): Promise<RecoverySnapshot> {
+async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => boolean, reconcileInventory = true, retryDirectories?: string[]): Promise<RecoverySnapshot> {
   const requiredDirectories = () => new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false)
     .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
   const required = requiredDirectories()
-  const directories = [...new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder)
+  const liveRequired = new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder, false, false)
+    .flatMap((location) => location.directory ? [normalizeWorkspacePath(location.directory)] : []))
+  const directories = retryDirectories ?? [...new Set(getPendingRequestLocations(instanceId, instances().get(instanceId)?.folder)
     .flatMap((location) => location.directory ? [location.directory] : []))]
   const snapshot: Extract<RecoverySnapshot, { supported: true }> = { supported: true, directories: [] }
   for (let offset = 0; offset < directories.length;) {
@@ -829,6 +834,26 @@ async function readPendingRequestSnapshot(instanceId: string, isCurrent: () => b
         const { issue, detail } = batchIssue(error)
         snapshot.directories.push(...batch.map((directory) => ({ directory, status: "error" as const, reason: issue, detail })))
       }
+    }
+  }
+  // A display descriptor can outlive an external Git worktree removal (or its
+  // inventory-change event). Reconcile only inventory-only failures, once. This
+  // does not prove queue absence: the new optional hint still needs the broker's
+  // filesystem/ownership proof. Selected, active and known-request paths stay required.
+  const staleInventory = snapshot.directories.filter(entry => entry.status === "error"
+    && (entry.reason === "missing" || entry.reason === "not-owned")
+    && required.has(normalizeWorkspacePath(entry.directory)) && !liveRequired.has(normalizeWorkspacePath(entry.directory)))
+  if (reconcileInventory && staleInventory.length) {
+    if (!isCurrent()) throw pendingRequestSyncSuperseded
+    if (deferPendingDiscovery(instanceId)) throw pendingDiscoveryDeferred
+    try { await reloadWorktrees(instanceId, true) }
+    catch (error) { log.warn("Failed to reconcile pending recovery worktrees", { instanceId, error }) }
+    if (!isCurrent()) throw pendingRequestSyncSuperseded
+    const currentRequired = requiredDirectories()
+    const retryDirectories = staleInventory.filter(entry => !currentRequired.has(normalizeWorkspacePath(entry.directory))).map(entry => entry.directory)
+    if (retryDirectories.length) {
+      const retry = await readPendingRequestSnapshot(instanceId, isCurrent, false, retryDirectories)
+      if (retry.supported) snapshot.directories = [...snapshot.directories.filter(entry => !retryDirectories.includes(entry.directory)), ...retry.directories]
     }
   }
   return snapshot
@@ -1471,6 +1496,7 @@ function removeInstance(id: string, options: { authoritative?: boolean } = {}) {
   locallyRequestedWorkspaceCloses.delete(id)
   deferredPendingDiscovery.delete(id)
   pendingCompactions.delete(id)
+  clearPendingWorktreeMoves(id)
   const removedInstance = instances().get(id)
   const removedOccurrence = removedInstance
     ? Array.from(instances().values())

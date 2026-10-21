@@ -8,6 +8,7 @@ import { registerUserPath } from "./user-path"
 import { withInstallationLock } from "./installation-lock"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
+import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
 
 const validV2 = () => ({ valid: true, version: "2.1.2" })
 
@@ -57,7 +58,7 @@ test("normal global-user npm install publishes terminal command and retries PATH
     execute: async (_file: string, args: string[]) => {
       installs++
       if (args[0] === "upgrade") {
-        assert.deepEqual(args, ["upgrade", "2.1.1", "--method", "npm"])
+        assert.deepEqual(args, ["upgrade", "2.1.3", "--method", "npm"])
         await npmFixture(prefix, args[1]!)
         return
       }
@@ -74,22 +75,22 @@ test("normal global-user npm install publishes terminal command and retries PATH
     },
   }
   try {
-    await assert.rejects(installSharedOpenCode("2.1.0", options), /PATH write failed/)
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.0", "installation survives PATH failure")
+    await assert.rejects(installSharedOpenCode(minimum, options), /PATH write failed/)
+    assert.equal((await options.probe(npmExecutable(prefix))).version, minimum, "installation survives PATH failure")
     assert.equal((resolveDefaultInstallation(options)).source, "user", "repair remains discoverable")
-    assert.equal(await installSharedOpenCode("2.1.0", options), npmExecutable(prefix))
+    assert.equal(await installSharedOpenCode(minimum, options), npmExecutable(prefix))
     assert.equal(installs, 1)
     assert.equal(resolveDefaultInstallation(options).path, findPathOpenCode(options))
     assert.equal(resolveDefaultInstallation(options).source, "path")
-    await installSharedOpenCode("2.1.1", options)
+    await installSharedOpenCode("2.1.3", options)
     assert.equal(installs, 2)
-    await installSharedOpenCode("2.1.0", options)
+    await installSharedOpenCode(minimum, options)
     assert.equal(installs, 2, "never downgrade a newer common installation")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.1")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.3")
     await rm(findPathOpenCode(options)!)
-    await installSharedOpenCode("2.1.0", options)
+    await installSharedOpenCode(minimum, options)
     assert.equal(installs, 3, "missing command is repaired at the newer installed version")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.1")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.3")
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
@@ -214,7 +215,7 @@ test("non-npm PATH executables are reused without allowing npm to shadow them", 
     const options = { home, env: { PATH: home }, npm: "fixture-npm.js", probeForeign: validV2 }
     assert.equal(resolveDefaultInstallation(options).path, binary)
     assert.equal(sharedInstallPrefix(options), undefined)
-    await assert.rejects(installSharedOpenCode("2.1.0", options), /not a writable npm installation/)
+    await assert.rejects(installSharedOpenCode(minimum, options), /not a writable npm installation/)
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 

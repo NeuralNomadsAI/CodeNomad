@@ -45,7 +45,7 @@ The Electron Debian installation configures Chromium's sandbox. Do not disable t
 
 | Requirement | Where it must be available | Current requirement |
 | --- | --- | --- |
-| OpenCode CLI | Selected execution host, including the selected WSL distribution where applicable | Minimum **2.1.0**; **2.1.1** is the recommended/qualified target. Newer or custom versions undergo contract validation rather than an untested-version ban. |
+| OpenCode CLI | Selected execution host, including the selected WSL distribution where applicable | Minimum **2.1.2**; **2.1.2** is the recommended/qualified target. Newer or custom versions undergo contract validation rather than an untested-version ban. |
 | Git | CodeNomad backend account's `PATH` | Required for repository identity, Git operations and worktrees. |
 | Node.js/npm | Standalone-server and source-build host | Node.js 24 LTS; reproducible source builds use `.node-version` (**24.20.0**). Bundled with desktop runtime/installation resources. |
 | Workspace folder | Backend-accessible disk | An explicitly opened physical folder, not a device-local folder inferred by a remote browser. |

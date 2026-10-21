@@ -8,7 +8,7 @@ Aynı kullanıcı arayüzü [çoklu proje sekmeleri ve çalışma ağaçları](p
 
 1. Node.js 24 LTS ve npm'yi yükleyin; havuzun sabitlenmiş derleme çalışma zamanı 24.20.0'dır. Masaüstü paketleri Node/npm'yi içerir.
 2. Git'i **arka uç sürecinin PATH** değişkenine ekleyin. Yalnızca WSL içindeki Git, Windows arka ucu için yeterli değildir.
-3. OpenCode'u yükleyin veya seçin: gerekli minimum değer **2.1.0**'dir ve **2.1.1** önerilen yeterlilik hedefidir. Daha yeni veya özel derlemeler, test edilmiş sürüm izin verilenler listesine değil, uyumluluk denetimlerine tabi tutulur. Bkz. [OpenCode kurulumu](opencode.md).
+3. OpenCode'u yükleyin veya seçin: gerekli minimum değer **2.1.2**'dir ve **2.1.2** önerilen yeterlilik hedefidir. Daha yeni veya özel derlemeler, test edilmiş sürüm izin verilenler listesine değil, uyumluluk denetimlerine tabi tutulur. Bkz. [OpenCode kurulumu](opencode.md).
 4. Sunucunun başlatılacağı klasörü seçin veya `--workspace-root`'yi açıkça iletin.
 
 Git olmadan, konuşmalar yalnızca açıkça açılan fiziksel klasörde kullanılabilir durumda kalır; Git ve çalışma ağacı işlemleri başarısız oluyor. Git'i yükleyin ve PATH değişikliğinden sonra arka ucu yeniden başlatın. Çalışma alanı kökü, aracının yürütülmesini değil, açmayı/göz atmayı sınırlar: bkz. [Güvenlik](security.md).

@@ -6,8 +6,8 @@ import { createRuntimeFetch } from "./transport"
 import { modernContractFixture } from "./contract-fixture"
 
 test("current and future supported releases preserve info, authentication and bounded negotiation", async () => {
-  const reviewed = ["2.1.0"]
-  for (const version of [...reviewed, "2.1.1", "2.1.100", "3.0.0", "2.2.0-dev.1", "custom-build"]) {
+  const reviewed = ["2.1.2"]
+  for (const version of [...reviewed, "2.1.3", "2.1.100", "3.0.0", "2.2.0-dev.1", "custom-build"]) {
     const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "opencode", password: "fixture" } }
     rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
     const seen: string[] = []
@@ -26,7 +26,7 @@ test("current and future supported releases preserve info, authentication and bo
 
 test("info and status routes are forwarded unchanged and never probe alternate routes on failure", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.1.0", pid: 123, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.1.2", pid: 123, discovery: "info" })
   const seen: string[] = []
   const fetch = createRuntimeFetch(endpoint, async (input, init) => {
     const path = new URL(String(input)).pathname
@@ -40,7 +40,7 @@ test("info and status routes are forwarded unchanged and never probe alternate r
 })
 
 test("retired runtime contracts never dispatch even through the direct transport", async () => {
-  for (const version of ["2.0.0", "2.0.7", "2.0.26", "2.0.27", "2.0.32", "0.0.0-beta-19271"]) {
+  for (const version of ["2.0.0", "2.0.7", "2.0.26", "2.0.27", "2.0.32", "2.1.0", "2.1.1", "0.0.0-beta-19271"]) {
     const endpoint = { url: "http://127.0.0.1:4321" }
     rememberRuntime(endpoint, { version, pid: 1, discovery: "health" })
     const fetch = createRuntimeFetch(endpoint, async () => { assert.fail("unsupported runtime must not receive calls") })
@@ -50,7 +50,7 @@ test("retired runtime contracts never dispatch even through the direct transport
 
 test("canonical mutations and inbox timestamps are forwarded unchanged", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.1.0", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.1.2", pid: 1, discovery: "info" })
   const calls: Array<{ path: string; method: string; body: unknown }> = []
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async (input, init) => {
     const request = new Request(input, init)
@@ -71,7 +71,7 @@ test("canonical mutations and inbox timestamps are forwarded unchanged", async (
 
 test("errors never retry mutations; native error envelopes, abort and origin fencing survive", async () => {
   const endpoint = { url: "http://127.0.0.1:4321" }
-  rememberRuntime(endpoint, { version: "2.1.0", pid: 2, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.1.2", pid: 2, discovery: "info" })
   let calls = 0
   for (const status of [400, 401, 404, 500]) {
     const envelope = { _tag: "NativeError", message: "fixture" }

@@ -2,11 +2,54 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { serverApi } from "../lib/api-client.ts"
-import { ensureWorktreesLoaded, getWorktrees, handleWorktreeReady, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees.ts"
+import { captureWorktreeMoveReconciliation, clearPendingWorktreeMoves, getPendingWorktreeLocations, getPendingWorktreeSlug, ensureWorktreesLoaded, getWorktrees, handleWorktreeReady, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees.ts"
 import type { Session } from "../types/session.ts"
 import { sessions, setSessions } from "./session-state.ts"
 
 describe("handleWorktreeReady", () => {
+  it("rejects a failed fresh read even when a cached trailing demand succeeds", async () => {
+    const id = "fresh-failure-cached-trailing", original = serverApi.fetchWorktrees
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const calls: boolean[] = []
+    serverApi.fetchWorktrees = async (_id, fresh = false) => {
+      calls.push(fresh)
+      if (fresh) { await gate; throw new Error("fresh validation failed") }
+      return { worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] }
+    }
+    try {
+      const fresh = reloadWorktrees(id, true)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      const cached = reloadWorktrees(id)
+      const rejected = assert.rejects(fresh, /fresh validation failed/)
+      const trailingRejected = assert.rejects(cached, /fresh validation failed/)
+      release()
+      await Promise.all([rejected, trailingRejected])
+      assert.deepEqual(calls, [true], "failed fresh demand must terminate, not poll through cached retries")
+      await reloadWorktrees(id)
+      assert.deepEqual(calls, [true, false], "a later explicit display request remains usable")
+    } finally { release(); serverApi.fetchWorktrees = original }
+  })
+  it("preserves a fresh recovery demand behind an in-flight cached display read", async () => {
+    const original = serverApi.fetchWorktrees
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const calls: boolean[] = []
+    serverApi.fetchWorktrees = async (_id, fresh = false) => {
+      calls.push(fresh)
+      if (calls.length === 1) await gate
+      return { worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] }
+    }
+    try {
+      const cached = reloadWorktrees("fresh-pending-recovery")
+      await new Promise<void>(resolve => setImmediate(resolve))
+      const fresh = reloadWorktrees("fresh-pending-recovery", true)
+      const again = reloadWorktrees("fresh-pending-recovery", true)
+      release()
+      await Promise.all([cached, fresh, again])
+      assert.deepEqual(calls, [false, true], "coalesce fresh demand without downgrading it to display cache")
+    } finally { release(); serverApi.fetchWorktrees = original }
+  })
   it("reports a failed trailing reload and retains the successful initial snapshot", async () => {
     const original = serverApi.fetchWorktrees
     let release!: () => void
@@ -162,6 +205,43 @@ describe("handleWorktreeReady", () => {
 })
 
 describe("session family worktree moves", () => {
+  it("an older reconciliation cannot release a queued newer target or its unknown source locations", async () => {
+    const id = "queued-move-reconciliation", original = serverApi.fetchWorktrees
+    let release!: () => void, started!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const reading = new Promise<void>(resolve => { started = resolve })
+    let oldRead: (() => void) | undefined
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: ["root", "a", "b"].map(slug => ({
+      slug, directory: slug === "root" ? "/repo" : `/repo-${slug}`, kind: slug === "root" ? "root" as const : "worktree" as const,
+    })) })
+    setSessions(previous => new Map(previous).set(id, new Map([["s", { id: "s", parentId: null, location: { directory: "/repo" } } as Session]])))
+    try {
+      await reloadWorktrees(id)
+      const first = setWorktreeSlugForParentSession(id, "s", "a", {
+        moveFamily: async () => {}, refreshSessions: async () => {
+          oldRead = captureWorktreeMoveReconciliation(id)
+          started(); await gate
+          oldRead()
+        },
+      })
+      await reading
+      const second = setWorktreeSlugForParentSession(id, "s", "b", {
+        moveFamily: async () => {
+          assert.equal(getPendingWorktreeSlug(id, "s"), "b")
+          oldRead!()
+          assert.deepEqual(new Set(getPendingWorktreeLocations(id).map(location => location.directory)), new Set(["/repo", "/repo-a", "/repo-b"]))
+        }, refreshSessions: async () => { throw new Error("read unavailable") },
+      })
+      await new Promise<void>(resolve => setImmediate(resolve))
+      release()
+      await first; await second
+      assert.equal(getPendingWorktreeSlug(id, "s"), undefined, "selector busy state ends with its latest task, not with directory authority")
+      assert.equal(getPendingWorktreeLocations(id).length, 3)
+      captureWorktreeMoveReconciliation(id)()
+      assert.equal(getPendingWorktreeSlug(id, "s"), undefined)
+    } finally { release(); clearPendingWorktreeMoves(id); serverApi.fetchWorktrees = original }
+  })
+
   it("moves a descendant's family root and refreshes authoritatively", async () => {
     const instanceId = "family-move"
     const originalFetchWorktrees = serverApi.fetchWorktrees
@@ -191,6 +271,7 @@ describe("session family worktree moves", () => {
             [root.id, { ...root, location: { directory: "/repo-feature" } }],
             [child.id, { ...child, location: { directory: "/repo-feature" } }],
           ])))
+          captureWorktreeMoveReconciliation(instanceId)()
         },
       })
       assert.deepEqual(calls, ["move:root:feature", "refresh"])
@@ -198,6 +279,7 @@ describe("session family worktree moves", () => {
       assert.equal(child.location.directory, "/repo")
       assert.equal(sessions().get(instanceId)?.get(root.id)?.location.directory, "/repo-feature")
       assert.equal(sessions().get(instanceId)?.get(child.id)?.location.directory, "/repo-feature")
+      assert.equal(getPendingWorktreeSlug(instanceId, child.id), undefined)
 
       await setWorktreeSlugForParentSession(instanceId, child.id, "root", {
         moveFamily: async () => { calls.push("move:root") },
@@ -205,6 +287,7 @@ describe("session family worktree moves", () => {
       })
       assert.equal(calls.at(-1), "move:root")
     } finally {
+      clearPendingWorktreeMoves(instanceId)
       serverApi.fetchWorktrees = originalFetchWorktrees
       setSessions((prev) => { const next = new Map(prev); next.delete(instanceId); return next })
     }

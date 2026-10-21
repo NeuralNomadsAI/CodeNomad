@@ -33,7 +33,7 @@ where their authority, lifetime or runtime differs.
 | OpenCode setup | Shared in-flight status read plus coalesced trailing refresh for focus/visibility/reconnect demand. Executable changes and explicit actions fence old responses. Failed reads retain version/path diagnostics but revoke the connected claim and stale reload/restart controls; Continue checks again before retrying the pending workspace. Activation requires a successful pre-action status read. | UI `stores/opencode-setup.ts`, `components/settings/opencode-setup-panel.tsx` |
 | Filesystem invalidations | Host directory observations and native filesystem events coalesce before cache publication: 100 ms quiet-case delay, then at most once per five seconds in continuous activity, with no idle timer. Explicit mutations/recovery invalidate immediately. Workspace versions target the browsing root and listed directory; only changed visible directories reread. Hidden/collapsed caches stay stale until demand. Bounded metadata falls back conservatively to full invalidation. | `filesystem-events.ts`, `useWorkspaceTree.ts`, server `workspaces/file-watches.ts` |
 | Git changes | Shared filesystem cache invalidations debounce locally for 100 ms; one passive refresh plus a pending follow-up; hidden project/panel marked stale. Queued reads cancel on deactivation/disposal and request versions fence late status/diff results. Reads share the secondary HTTP budget. Server shares concurrent status requests, not completed results, and runs status/diff process creation in the Git worker. | `useGitChanges.ts`, `filesystem-events.ts`, server `workspaces/git-status.ts` |
-| Worktree display | Last successful server snapshot; demand-driven refresh after 10 s or invalidation; one scan per workspace; obsolete scans discarded and followed by validation; UI requests coalesced. | server `workspaces/worktree-inventory.ts`, UI `stores/worktrees.ts` |
+| Worktree display | Last successful server snapshot; demand-driven refresh after 10 s or invalidation; one scan per workspace; obsolete scans discarded and followed by validation; UI requests coalesced. Pending recovery can explicitly request `?fresh=true` once after a missing/not-owned inventory-only candidate. Fresh demand survives an in-flight cached read. | server `workspaces/worktree-inventory.ts`, UI `stores/worktrees.ts` |
 | Worktree authority | Validated reads await stale-inventory revalidation; family transactions force scans. Ownership misses can bypass a warm inventory once per directory-cache lifetime. Create/remove requires a validated next display read. | server `workspaces/worktree-directory.ts`, `manager.ts` |
 | Git ownership preflight | Common-directory reads resolve the enclosing checkout's administrative files (`.git`, `commondir`, `HEAD`/`objects`) on every call, without a Git process; concurrent reads share one pending read per directory. Environment overrides, paths inside `.git` and invalid layouts defer to Git, whose commands run with two process slots in a lazy worker, keeping Windows process creation off the HTTP/SSE thread. Completed/failed reads are removed immediately; a matching identity still requires native inventory validation. | server `workspaces/git-common-directory.ts`, `git-process.ts`, `git-worktrees.ts` |
 | Native event relay | Consume the shared SDK stream before slow I/O; resolve locations FIFO per session/PTY/Shell, then deliver FIFO per entity and recipient. Ownership promises/2 s results are shared by recipient and full native location; another recipient never delays successful delivery. | server `workspaces/instance-events.ts`, `instance-event-queue.ts` |
@@ -51,6 +51,31 @@ or the cost of mandatory authoritative scans. The event relay isolates these wai
 by entity and recipient; it never substitutes stale display data for authorization.
 An isolated native fixture covers warm-cache create/remove visibility; browser
 fixtures cover menu updates, focus, old responses and refresh bursts.
+
+Pending recovery must not promote stale display descriptors indefinitely. After a
+missing/not-owned result for a directory required **only** by the displayed inventory,
+it requests one fresh inventory and retries loaded-only recovery only if that directory
+is no longer required. Root, selected catalogue, active sessions and known request
+placements remain required; failed/unchanged refreshes retain the incomplete result.
+An optional historical hint still needs the broker's existing fresh filesystem and
+ownership evidence, including post-native-I/O revalidation. Exclusion never supplies
+empty queue coverage, clears a draft, deletes history or changes a session's location.
+This adds no timer or ordinary Form/permission-list fallback. Existing notification
+history is not retroactively removed when recovery later succeeds.
+
+A failed or partial session-family move is different from idle history. Source and
+target directory authority survives failed native reconciliation and inventory
+removal. Selector busy/target state is independent and clears when its latest move
+task settles, even if directory recovery remains uncertain. `worktrees.ts` captures
+the exact locations before the single mutation; `session-api.ts` releases them only
+after a complete owned project inventory and fresh activity, from a read begun after
+the mutation returned. Authoritative absence from that same scope counts too:
+deleted, moved-away or stale resident member IDs cannot pin the hold forever.
+Missing/changing project metadata, directory-only/partial inventories, failed activity
+and superseded reads cannot release a newer move's hold. Known requests and active
+placements remain independently required. This does not change native move/rollback
+behavior or replay an uncertain move. A failed fresh inventory request rejects even
+if a cached trailing read was queued; it never loops through cached retries.
 
 ### Stats restoration and remaining native cost
 

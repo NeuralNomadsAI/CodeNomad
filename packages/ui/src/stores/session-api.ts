@@ -7,7 +7,7 @@ import type { Message } from "../types/message"
 import type { Instance } from "../types/instance"
 import { forkAfterMessage } from "./session-fork"
 import { historyWindowCursor, historyWindowTarget, readHistoryWindow, MissingHistoryAnchorError } from "./history-window"
-import { ensureWorktreesLoaded, getDirectoryOnlyWorktree, getGitRepoStatus, getWorktrees } from "./worktrees"
+import { captureWorktreeMoveReconciliation, ensureWorktreesLoaded, getDirectoryOnlyWorktree, getGitRepoStatus, getWorktrees } from "./worktrees"
 import { selectWorkspaceSessionFamilies } from "./workspace-session-scope"
 import { isSessionNotFoundError, type LocationRef, type SessionInfo as SDKSession, type SessionMessagesResponse } from "@opencode/client"
 
@@ -592,6 +592,8 @@ async function fetchSessions(instanceId: string, options?: {
   }
 
   const requestId = beginSessionListRequest(instanceId)
+  const worktreeMoveProject = getInstanceMetadata(instanceId)?.project?.id
+  const reconcileWorktreeMoves = captureWorktreeMoveReconciliation(instanceId)
   const client = instance.client
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const isCurrent = () => isLatestSessionListRequest(instanceId, requestId)
@@ -829,6 +831,8 @@ async function fetchSessions(instanceId: string, options?: {
         return next
       })
       reconcilePendingSessionIndicators(instanceId)
+      if (inventoryComplete && worktreeMoveProject && worktreeMoveProject !== "global" && getInstanceMetadata(instanceId)?.project?.id === worktreeMoveProject
+        && !getDirectoryOnlyWorktree(instanceId)) reconcileWorktreeMoves()
     })
     if (options?.strictStatus) await statusUpdate
 

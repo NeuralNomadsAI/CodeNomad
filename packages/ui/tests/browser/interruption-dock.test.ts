@@ -117,6 +117,45 @@ test("ordinary question answers settle through the ordinary reply; the human hea
 const recoveryWarnings = (page: Page) => page.evaluate(() => (window as any).fixture.notifications()
   .filter((item: { title?: string }) => /questions and permissions not fully recovered/.test(item.title ?? "")).length)
 
+test("removed idle worktree inventory heals before warning while real-event questions keep their draft", async () => {
+  const { page, errors } = await fixture()
+  const deleted = "/fixture/.codenomad/worktrees/deleted-history"
+  const inventoryReads: boolean[] = [], pendingReads: boolean[] = []
+  try {
+    await page.route("**/api/workspaces/interruptions/worktrees*", async route => {
+      const fresh = new URL(route.request().url()).searchParams.get("fresh") === "true"
+      inventoryReads.push(fresh)
+      await route.fulfill({ json: { worktrees: [
+        { slug: "root", directory: "/fixture", kind: "root" },
+        ...(!fresh ? [{ slug: "deleted", directory: deleted, kind: "worktree" }] : []),
+      ] } })
+    })
+    await page.route("**/api/workspaces/interruptions/pending-requests*", async route => {
+      const query = new URL(route.request().url()).searchParams
+      const optional = query.getAll("optionalDirectories").includes(deleted)
+      pendingReads.push(optional)
+      const queues = await page.evaluate(() => (window as any).fixture.recoveryState())
+      await route.fulfill({ json: { supported: true, directories: query.getAll("directories").map(directory => directory === deleted
+        ? optional ? { directory, status: "excluded" } : { directory, status: "error", reason: "missing" }
+        : { directory, status: "ok", locations: [{ location: { directory }, forms: queues.forms, permissions: queues.permissions }] }) } })
+    })
+    await page.evaluate(directory => (window as any).fixture.prepareRemovedWorktreeHistory(directory), deleted)
+    await page.evaluate(() => (window as any).fixture.ask())
+    await answer(page).fill("Keep my draft while inventory heals")
+    await page.evaluate(() => (window as any).fixture.recoverCurrent())
+    await page.evaluate(() => (window as any).fixture.recoverCurrent())
+    assert.deepEqual(inventoryReads, [false, true])
+    assert.deepEqual(pendingReads, [false, true, true])
+    assert.equal(await recoveryWarnings(page), 0)
+    assert.equal(await answer(page).inputValue(), "Keep my draft while inventory heals")
+    const result = await page.evaluate(() => (window as any).fixture.recoveryState())
+    assert.equal(result.historicalDirectory, deleted)
+    assert.deepEqual(result.forms.map((entry: { id: string }) => entry.id), ["question"])
+    assert.deepEqual(result.worktrees.map((entry: { slug: string }) => entry.slug), ["root"])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("persistently incomplete recovery uses existing notifications once until recovery, without banners or icons, and preserves drafts", async () => {
   const { page, errors } = await fixture(393)
   try {

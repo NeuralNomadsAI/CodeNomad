@@ -18,25 +18,28 @@ const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<s
 
 const worktreeRequests = new Map<string, Promise<void>>()
 const pendingWorktreeRefreshes = new Set<string>()
+const freshWorktreeRefreshes = new Set<string>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
+const unreconciledFamilyMoves = new Map<string, { instanceId: string; directories: string[]; settled: boolean; request: Promise<void> }>()
 const [pendingFamilyMoveSlugs, setPendingFamilyMoveSlugs] = createSignal(new Map<string, string>())
 const defaultDirectories = new Map<string, string>()
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
-async function queueWorktreeRequest(instanceId: string, initial: boolean): Promise<void> {
+async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh = false): Promise<void> {
+  if (fresh) freshWorktreeRefreshes.add(instanceId)
   const existing = worktreeRequests.get(instanceId)
   if (existing) {
     if (!initial) pendingWorktreeRefreshes.add(instanceId)
     return existing
   }
-  const load = async (initialRead: boolean) => {
+  const load = async (initialRead: boolean, freshRead: boolean) => {
     try {
       const response = await prioritizedRead(
         () => activeInstanceId() === instanceId,
         new AbortController().signal,
-        () => serverApi.fetchWorktrees(instanceId),
+        () => serverApi.fetchWorktrees(instanceId, freshRead),
       )
       if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
       else defaultDirectories.delete(instanceId)
@@ -53,7 +56,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
       })
     } catch (error) {
       log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
-      if (!initialRead) throw error
+      if (!initialRead || freshRead) throw error
 
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
@@ -76,10 +79,11 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean): Promi
     let initialRead = initial
     do {
       pendingWorktreeRefreshes.delete(instanceId)
+      const freshRead = freshWorktreeRefreshes.delete(instanceId)
       try {
-        await load(initialRead)
+        await load(initialRead, freshRead)
       } catch (error) {
-        if (!pendingWorktreeRefreshes.has(instanceId)) throw error
+        if (freshRead || !pendingWorktreeRefreshes.has(instanceId)) throw error
       }
       initialRead = false
     } while (pendingWorktreeRefreshes.has(instanceId))
@@ -106,9 +110,9 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
   await queueWorktreeRequest(instanceId, true)
 }
 
-async function reloadWorktrees(instanceId: string): Promise<void> {
+async function reloadWorktrees(instanceId: string, fresh = false): Promise<void> {
   if (!instanceId) return
-  await queueWorktreeRequest(instanceId, false)
+  await queueWorktreeRequest(instanceId, false, fresh)
 }
 
 serverEvents.on("workspace.worktreesChanged", (event) => {
@@ -247,6 +251,36 @@ export function getPendingWorktreeSlug(instanceId: string, sessionId: string): s
   return pendingFamilyMoveSlugs().get(`${instanceId}:${getParentSessionId(instanceId, sessionId)}`)
 }
 
+export function getPendingWorktreeLocations(instanceId: string): Array<{ directory: string }> {
+  return [...unreconciledFamilyMoves.values()].filter(move => move.instanceId === instanceId)
+    .flatMap(move => move.directories.map(directory => ({ directory })))
+}
+
+export function clearPendingWorktreeMoves(instanceId: string): void {
+  const keys = [...unreconciledFamilyMoves].filter(([, move]) => move.instanceId === instanceId).map(([key]) => key)
+  for (const key of keys) unreconciledFamilyMoves.delete(key)
+  setPendingFamilyMoveSlugs(previous => {
+    const next = new Map(previous)
+    for (const key of keys) next.delete(key)
+    return next
+  })
+}
+
+/** Only a complete owned project inventory plus fresh activity can release an
+ * uncertain move's locations. Capture before I/O so an older read cannot settle
+ * a newer or still-running move. Absence from that scope is authoritative too;
+ * deleted or moved-away member IDs must not pin these directories forever.
+ * This never retries a mutation and does not own selector busy state. */
+export function captureWorktreeMoveReconciliation(instanceId: string) {
+  const captured = [...unreconciledFamilyMoves].filter(([, move]) => move.instanceId === instanceId && move.settled)
+  return () => {
+    for (const [key, move] of captured) {
+      if (unreconciledFamilyMoves.get(key) !== move || (familyMoveRequests.has(key) && familyMoveRequests.get(key) !== move.request)) continue
+      unreconciledFamilyMoves.delete(key)
+    }
+  }
+}
+
 async function setWorktreeSlugForParentSession(
   instanceId: string,
   parentSessionId: string,
@@ -275,13 +309,19 @@ async function setWorktreeSlugForParentSession(
     serverApi.moveSessionFamily(id, sessionId, { worktreeSlug }))
   const refreshSessions = options.refreshSessions ?? ((id: string) =>
     import("./session-api").then(({ fetchSessions }) => fetchSessions(id, { reset: true, strictStatus: true })))
-  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+  const task: Promise<void> = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+    const family = [...(sessions().get(instanceId)?.values() ?? [])].filter(session => getParentSessionId(instanceId, session.id) === rootSessionId)
+    const prior = unreconciledFamilyMoves.get(key)
+    const recovery = { instanceId,
+      directories: [...new Set([targetDirectory, ...family.map(session => session.location.directory), ...(prior?.directories ?? [])])], settled: false, request: task }
+    unreconciledFamilyMoves.set(key, recovery)
     let moveError: unknown
     try {
       await moveFamily(instanceId, rootSessionId, normalizedSlug)
     } catch (error) {
       moveError = error
     }
+    recovery.settled = true
     try {
       await refreshSessions(instanceId)
     } catch {
