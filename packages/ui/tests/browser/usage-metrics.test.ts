@@ -80,10 +80,16 @@ test("every agent message shows one token and cost line adding up its cleanup se
   assert.deepEqual(await chips(page, "msg_03"), [
     "Input 3K", "Output 54", "Reasoning 15", "Cache Read 2K", "Cache Write 48", "Cost $0.76",
   ])
-  assert.equal(await page.locator('[data-message-id="msg_03"] .message-step-usage-toggle').getAttribute("aria-expanded"), "true")
-  assert.equal(await page.locator('[data-message-id="msg_03"] .message-step-usage-toggle .message-step-usage-chip').count(), 0)
-  assert.equal(await page.locator('[data-message-id="msg_03"] .message-step-usage-content .message-step-usage-chip').count(), 6)
-  assert.equal(await page.locator('[data-message-id="msg_03"] .message-step-usage-toggle').textContent(), "Tokens")
+  const expandedToggle = page.locator('[data-message-id="msg_03"] .message-step-usage-toggle')
+  assert.equal(await expandedToggle.getAttribute("aria-expanded"), "true")
+  assert.equal(await expandedToggle.locator(".message-step-usage-chip").count(), 6, "the expanded chips replace the summary on the same row")
+  assert.equal(await page.locator('[data-message-id="msg_03"] .message-step-usage-content').count(), 0)
+  assert.equal(await expandedToggle.locator(".message-step-usage-summary").count(), 0)
+  assert.match(await expandedToggle.getAttribute("aria-label") ?? "", /Collapse token metrics\. Input: 3200, Output: 54, Reasoning: 15, Cache Read: 2400, Cache Write: 48, Cost: \$0\.76/)
+  assert.equal(await expandedToggle.evaluate(element => {
+    const chips = [...element.querySelectorAll(".message-step-usage-chip")]
+    return new Set(chips.map(chip => Math.round(chip.getBoundingClientRect().top))).size
+  }), 1, "while width allows, the expanded metrics stay on one line beside the chevron")
 }))
 
 test("the Tokens filter hides, collapses and expands every usage line", async () => open(async page => {
@@ -94,13 +100,13 @@ test("the Tokens filter hides, collapses and expands every usage line", async ()
   await page.waitForFunction(() => document.querySelectorAll(".message-step-usage-chip").length === 12)
   await row.getByRole("button", { name: "Hide Tokens", exact: true }).click()
   await page.waitForFunction(() => !document.querySelector(".message-step-usage-toggle"))
-  assert.equal(await page.locator(".message-step-usage-chip, .message-step-usage-content").count(), 0)
+  assert.equal(await page.locator(".message-step-usage-chip, .message-step-usage-summary").count(), 0)
   await page.getByText("There are three files", { exact: true }).waitFor()
   await row.getByRole("button", { name: "Show Tokens", exact: true }).click()
   await page.waitForFunction(() => document.querySelectorAll(".message-step-usage-toggle").length === 2)
 }))
 
-test("message token headers ellipsize at narrow widths and disclose content without duplicates using Enter/Space, including RTL", async () => open(async page => {
+test("message token rows ellipsize collapsed and wrap expanded chips on the same row using Enter/Space, including RTL", async () => open(async page => {
   const message = page.locator('.message-stream-block[data-message-id="msg_03"]')
   const toggle = message.locator(".message-step-usage-toggle")
   for (const [name, width, direction] of [["desktop", 900, "ltr"], ["narrow", 220, "ltr"], ["narrow-rtl", 220, "rtl"]] as const) {
@@ -131,18 +137,37 @@ test("message token headers ellipsize at narrow widths and disclose content with
     await toggle.focus()
     await page.keyboard.press("Enter")
     assert.equal(await toggle.getAttribute("aria-expanded"), "true")
-    assert.equal(await toggle.locator(".message-step-usage-chip, .message-step-usage-summary").count(), 0)
-    assert.equal(await toggle.textContent(), "Tokens")
-    const content = message.locator(".message-step-usage-content")
-    assert.equal(await content.getAttribute("id"), await toggle.getAttribute("aria-controls"))
+    assert.equal(await toggle.getAttribute("aria-controls"), null)
+    assert.equal(await toggle.locator(".message-step-usage-summary, .message-step-usage-content").count(), 0)
     assert.deepEqual(await chips(page, "msg_03"), ["Input 3K", "Output 54", "Reasoning 15", "Cache Read 2K", "Cache Write 48", "Cost $0.76"])
-    assert.equal(await content.locator(".message-step-usage-chip").count(), 6)
-    assert.equal(await content.evaluate(element => element.scrollWidth > element.clientWidth), false)
+    assert.equal(await toggle.locator(".message-step-usage-chip").count(), 6)
+    assert.equal(await message.locator(".message-step-usage-content").count(), 0)
+    // Expanded chips keep the chevron's single row while width allows and wrap
+    // in place — never ellipsized, never overflowing the row — when it does not.
+    const expanded = await toggle.evaluate(element => {
+      const chips = [...element.querySelectorAll(".message-step-usage-chip")]
+      const bounds = element.getBoundingClientRect()
+      const chevron = element.querySelector(".disclosure-chevron")!.getBoundingClientRect()
+      const firstChip = chips[0]!.getBoundingClientRect()
+      return {
+        rows: new Set(chips.map(chip => Math.round(chip.getBoundingClientRect().top))).size,
+        overflow: chips.some(chip => {
+          const box = chip.getBoundingClientRect()
+          return box.right > bounds.right + 0.5 || box.left < bounds.left - 0.5
+        }),
+        chevronRow: Math.abs((chevron.top + chevron.height / 2) - (firstChip.top + firstChip.height / 2)) < 2,
+      }
+    })
+    assert.equal(expanded.overflow, false, JSON.stringify(expanded))
+    assert.equal(expanded.chevronRow, true, "the chevron stays level with the first chip row")
+    if (width === 220) assert.ok(expanded.rows > 1, `expected the expanded chips to wrap at ${width}px: ${JSON.stringify(expanded)}`)
+    else assert.equal(expanded.rows, 1, JSON.stringify(expanded))
     await message.screenshot({ path: `${captures}/${name}-expanded.png` })
     await page.keyboard.press("Space")
     assert.equal(await toggle.getAttribute("aria-expanded"), "false")
     assert.equal(await toggle.evaluate(element => element === document.activeElement), true)
-    assert.equal(await content.count(), 0)
+    assert.equal(await toggle.locator(".message-step-usage-chip").count(), 3)
+    assert.equal(await toggle.locator(".message-step-usage-summary").count(), 1)
   }
 }))
 

@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createMemo, createSignal, createUniqueId } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
 import { ChevronRight } from "lucide-solid"
 import type { MessageInfo } from "../types/message"
 import type { VisibilityPreference } from "../stores/preferences"
@@ -18,7 +18,6 @@ export function MessageUsage(props: MessageUsageProps) {
   const { t } = useI18n()
   const [expandedOverride, setExpandedOverride] = createSignal<boolean | null>(null)
   const expanded = () => expandedOverride() ?? props.usageVisibility === "expanded"
-  const contentId = createUniqueId()
   const usage = () => {
     const tokens = props.messageInfo.tokens ?? {}
     return {
@@ -44,7 +43,9 @@ export function MessageUsage(props: MessageUsageProps) {
     ]
   })
   const summaryEntries = () => [entries()[0], entries()[1], entries()[5]]
-  const summaryLabel = () => summaryEntries().map(entry => `${entry.label}: ${entry.full}`).join(", ")
+  const labelList = (metrics: ReturnType<typeof entries>) => metrics.map(entry => `${entry.label}: ${entry.full}`).join(", ")
+  const summaryLabel = () => labelList(summaryEntries())
+  const fullLabel = () => labelList(entries())
   const renderEntries = (metrics: ReturnType<typeof entries>) => (
     <For each={metrics}>
       {(entry) => <span class="message-step-usage-chip" data-label={entry.label} title={`${entry.label}: ${entry.full}`}>{entry.value}</span>}
@@ -66,18 +67,17 @@ export function MessageUsage(props: MessageUsageProps) {
           type="button"
           class="message-step-usage-toggle"
           aria-expanded={expanded()}
-          aria-controls={expanded() ? contentId : undefined}
-          aria-label={expanded() ? t("messageBlock.usage.collapseAriaLabel") : `${t("messageBlock.usage.expandAriaLabel")}. ${summaryLabel()}`}
+          aria-label={expanded() ? `${t("messageBlock.usage.collapseAriaLabel")}. ${fullLabel()}` : `${t("messageBlock.usage.expandAriaLabel")}. ${summaryLabel()}`}
           onClick={() => setExpandedOverride(!expanded())}
         >
           <ChevronRight class="message-step-usage-disclosure disclosure-chevron" aria-hidden="true" />
-          <Show when={!expanded()} fallback={<span class="message-step-usage-label">{t("settings.behavior.usageMetrics.title")}</span>}>
-            <span class="message-step-usage message-step-usage-summary" title={summaryLabel()}>{renderEntries(summaryEntries())}</span>
+          <Show
+            when={!expanded()}
+            fallback={<span class="message-step-usage" title={fullLabel()}>{renderEntries(entries())}</span>}
+          >
+            <span class="message-step-usage-summary" title={summaryLabel()}>{renderEntries(summaryEntries())}</span>
           </Show>
         </button>
-        <Show when={expanded()}>
-          <div id={contentId} class="message-step-usage message-step-usage-content">{renderEntries(entries())}</div>
-        </Show>
       </div>
     </Show>
   )

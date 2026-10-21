@@ -1,3 +1,6 @@
+/* The expanded metric row: starts on the chevron's line and wraps onto
+   further lines when narrow — expansion exists to read every value, so the
+   chips are never ellipsized. */
 .message-step-usage {
   @apply flex flex-wrap items-center gap-1 text-[10px] text-[var(--text-muted)];
 }
@@ -8,10 +11,7 @@
   text-align: start;
 }
 
-.message-step-usage-label {
-  @apply text-[10px] text-[var(--text-muted)];
-}
-
+/* The collapsed metric row: one line, ellipsized summary chips. */
 .message-step-usage-summary {
   display: block;
   min-width: 0;
@@ -24,13 +24,13 @@
   margin-inline-start: var(--space-xs);
 }
 
-.message-step-usage-content {
-  margin-block-start: var(--space-xs);
-  margin-inline-start: 1rem;
-}
-
 .message-step-usage-disclosure {
   @apply shrink-0;
+  /* Stay level with the first chip row when the expanded row wraps:
+     chips are 22px tall, the chevron 12px, so half the difference
+     recentres it (the toggle itself centres against the whole block). */
+  align-self: flex-start;
+  margin-block-start: 5px;
   width: 0.75rem;
   height: 0.75rem;
   color: var(--text-muted);
