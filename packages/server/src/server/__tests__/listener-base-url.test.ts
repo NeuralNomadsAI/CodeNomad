@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "../listener-base-url"
+import { acceptsIpv4Loopback, resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "../listener-base-url"
 
 describe("resolvePreferredRemoteListener", () => {
   it("keeps the effective bind host paired with the preferred listener", () => {
@@ -90,8 +90,21 @@ describe("resolveAutomationBridgeUrl", () => {
     assert.equal(resolveAutomationBridgeUrl({ protocol: "http", bindHost: "0.0.0.0", port: 3210 }), "http://127.0.0.1:3210")
   })
 
-  it("rejects HTTPS and non-loopback listeners", () => {
-    assert.throws(() => resolveAutomationBridgeUrl({ protocol: "https", bindHost: "127.0.0.1", port: 3210 }), /loopback HTTP/)
-    assert.throws(() => resolveAutomationBridgeUrl({ protocol: "http", bindHost: "192.168.1.2", port: 3210 }), /loopback HTTP/)
+  it("rejects HTTPS, non-loopback and IPv6 listeners that 127.0.0.1 cannot reach", () => {
+    assert.equal(resolveAutomationBridgeUrl({ protocol: "http", bindHost: "127.0.0.1", port: 3210 }), "http://127.0.0.1:3210")
+    for (const listener of [
+      { protocol: "https" as const, bindHost: "127.0.0.1" },
+      { protocol: "http" as const, bindHost: "192.168.1.2" },
+      // Registrations only name 127.0.0.1: an IPv6 binding (even dual-stack) or a
+      // name that may resolve to ::1 is not proven to answer there.
+      { protocol: "http" as const, bindHost: "::1" },
+      { protocol: "http" as const, bindHost: "::" },
+      { protocol: "http" as const, bindHost: "localhost" },
+      { protocol: "http" as const, bindHost: "127.0.0.2" },
+    ]) {
+      assert.throws(() => resolveAutomationBridgeUrl({ ...listener, port: 3210 }), /reachable on 127\.0\.0\.1/, listener.bindHost)
+      if (listener.protocol === "http") assert.equal(acceptsIpv4Loopback(listener.bindHost), false, listener.bindHost)
+    }
+    assert.equal(acceptsIpv4Loopback("0.0.0.0"), true)
   })
 })

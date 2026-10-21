@@ -28,7 +28,7 @@ import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { nativeServiceStarter } from "./workspaces/native-service-start"
-import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
+import { acceptsIpv4Loopback, resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
 import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
 import { resolveUpdateFeed, startPreviewReleaseMonitor } from "./releases/dev-release-monitor"
 import { readDesktopProfile } from "./desktop-profile"
@@ -565,80 +565,80 @@ async function main() {
   const worktreeDeletionFence = new WorktreeDeletionFence()
   const missionsHost = () => missionBridge !== "failed"
 
+  // The same application behind every listener of this backend.
+  const listenerDeps = {
+    workspaceManager,
+    settings,
+    fileSystemBrowser,
+    eventBus,
+    serverMeta,
+    instanceStore,
+    speechService,
+    sidecarManager,
+    previewManager,
+    authManager,
+    clientConnectionManager,
+    remoteProxySessionManager,
+    remoteControlManager,
+    yoloManager,
+    permissionReceipts,
+    panelExtensions,
+    uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
+    logger,
+    nativeParent,
+    automationBridgeToken: automationBridge.token,
+    worktreeDeletionFence,
+    missionsHost,
+  }
+
   // HTTP always starts: besides an explicit --http it carries the loopback bridge
   // that the bundled plugins call (desktop automation, Missions dispatch).
   const httpServer = createHttpServer({
-        bindHost: httpBindHost,
-        bindPort: httpBindPort,
-        defaultPort: options.http ? options.httpPort : 0,
-        protocol: "http",
-        workspaceManager,
-        settings,
-        fileSystemBrowser,
-        eventBus,
-        serverMeta,
-        instanceStore,
-        speechService,
-        sidecarManager,
-        previewManager,
-        authManager,
-        clientConnectionManager,
-        remoteProxySessionManager,
-        remoteControlManager,
-        yoloManager,
-        permissionReceipts,
-        panelExtensions,
-        uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
-        uiDevServerUrl: uiResolution.uiDevServerUrl,
-        logger,
-        nativeParent,
-        automationBridgeToken: automationBridge.token,
-        worktreeDeletionFence,
-        missionsHost,
-      })
+    ...listenerDeps,
+    bindHost: httpBindHost,
+    bindPort: httpBindPort,
+    defaultPort: options.http ? options.httpPort : 0,
+    protocol: "http",
+    uiDevServerUrl: uiResolution.uiDevServerUrl,
+  })
 
   const httpsServer = options.https
     ? createHttpServer({
+        ...listenerDeps,
         bindHost: httpsBindHost,
         bindPort: httpsBindPort,
         defaultPort: options.httpsPort,
         protocol: "https",
         httpsOptions: tlsResolution?.httpsOptions,
-        workspaceManager,
-        settings,
-        fileSystemBrowser,
-        eventBus,
-        serverMeta,
-        instanceStore,
-        speechService,
-        sidecarManager,
-        previewManager,
-        authManager,
-        clientConnectionManager,
-        remoteProxySessionManager,
-        remoteControlManager,
-        yoloManager,
-        permissionReceipts,
-        panelExtensions,
-        uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
-        logger,
-        nativeParent,
-        automationBridgeToken: automationBridge.token,
-        worktreeDeletionFence,
-        missionsHost,
       })
     : null
 
+  // Bridge registrations name http://127.0.0.1 only. A requested HTTP-only listener
+  // on another address (IPv6 such as ::1, or a LAN interface) cannot serve them, so
+  // the bridge then gets its own private, unannounced IPv4 loopback listener.
+  const bridgeServer = acceptsIpv4Loopback(httpBindHost)
+    ? httpServer
+    : createHttpServer({
+        ...listenerDeps,
+        bindHost: "127.0.0.1",
+        bindPort: 0,
+        defaultPort: 0,
+        protocol: "http",
+        uiDevServerUrl: uiResolution.uiDevServerUrl,
+      })
+
   servers.push(httpServer)
   if (httpsServer) servers.push(httpsServer)
+  if (bridgeServer !== httpServer) servers.push(bridgeServer)
   // Remote Control enters the application users reach: a private listener is not it.
   const routingApp = (options.http || nativeParent.available || !httpsServer ? httpServer : httpsServer).instance
   remoteControlRouter = (request, response) => routingApp.routing(request, response)
 
-  const [httpStart, httpsStart] = await Promise.all([
+  const [httpStart, httpsStart, bridgeStart] = await Promise.all([
     httpServer.start(),
     httpsServer ? httpsServer.start() : Promise.resolve(null),
+    bridgeServer === httpServer ? Promise.resolve(null) : bridgeServer.start(),
   ])
 
   const visibleHttpStart = options.http ? httpStart : null
@@ -686,7 +686,9 @@ async function main() {
 
   let removeAutomationBridge: (() => Promise<void>) | undefined
   try {
-    const automationUrl = resolveAutomationBridgeUrl({ protocol: "http", bindHost: httpBindHost, port: httpStart.port })
+    const automationUrl = resolveAutomationBridgeUrl(bridgeStart
+      ? { protocol: "http", bindHost: "127.0.0.1", port: bridgeStart.port }
+      : { protocol: "http", bindHost: httpBindHost, port: httpStart.port })
     removeAutomationBridge = await publishAutomationBridge({
       ...automationBridge,
       url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,

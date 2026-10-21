@@ -41,9 +41,17 @@ export function resolvePluginBaseUrl(input: ResolvePluginBaseUrlInput): string {
   return `${fallbackListener.protocol}://${formatHostForUrl(fallbackListener.bindHost)}:${fallbackListener.port}`
 }
 
+/** Whether a listener bound to this host answers http://127.0.0.1, the only
+ * address bridge registrations accept: IPv4 loopback or the IPv4 wildcard. An
+ * IPv6 (even ::1 or a dual-stack ::), `localhost` or LAN binding is not proven to. */
+export function acceptsIpv4Loopback(bindHost: string): boolean {
+  const host = normalizeNetworkHost(bindHost)
+  return host === "127.0.0.1" || host === "0.0.0.0"
+}
+
 export function resolveAutomationBridgeUrl(listener: StartedListenerBaseUrlInput): string {
-  if (listener.protocol !== "http" || !acceptsLoopback(listener.bindHost)) {
-    throw new Error("The local automation bridge requires a loopback HTTP listener")
+  if (listener.protocol !== "http" || !acceptsIpv4Loopback(listener.bindHost)) {
+    throw new Error("The local automation bridge requires an HTTP listener reachable on 127.0.0.1")
   }
   return `http://127.0.0.1:${listener.port}`
 }

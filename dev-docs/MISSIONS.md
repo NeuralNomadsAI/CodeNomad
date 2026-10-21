@@ -491,14 +491,16 @@ identities preserve selection and reader gestures across refresh/remount.
 
 Every backend that publishes its loopback bridge provisions the content-addressed
 Missions bundle through `DesktopPluginLifecycle`, using the authenticated daemon's
-`config.get` discovery root: desktop hosts and the standalone server alike. The
-standalone server starts a private HTTP listener on a random 127.0.0.1 port for that
-bridge (never announced, even when only HTTPS is requested), and all of a backend's
+`config.get` discovery root: desktop hosts and the standalone server alike. Bridge
+registrations only name `http://127.0.0.1`, so the bridge uses the HTTP listener only
+when it is bound to 127.0.0.1 or 0.0.0.0; otherwise (HTTP not requested, or an
+HTTP-only listener on IPv6 such as `::1`, `localhost` or a LAN address) it gets a
+private, never-announced listener on a random 127.0.0.1 port. All of a backend's
 listeners share one `WorktreeDeletionFence` and its creation/recurrence holds, so a
 deletion through HTTPS drains admissions made through the bridge. Window and browser
 automation remain desktop-only: without a desktop host, `browser-claim` answers only
-for `purpose: "mission"`. When the bridge cannot be published (for example an
-HTTP-only listener on a non-loopback address), the Missions snapshot route reports
+for `purpose: "mission"`. When the bridge cannot be published (for example its
+registry directory is not writable), the Missions snapshot route reports
 `host-unavailable` without reading OpenCode; a plugin OpenCode has not loaded is
 `plugin-unavailable` and one it failed to load is `plugin-failed`.
 Backend leases live outside that watched root. Tools, context hooks and typed
