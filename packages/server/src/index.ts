@@ -47,6 +47,7 @@ import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
+import { provisionDesktopPlugins } from "./opencode/desktop-plugin-provisioning"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
 import { RemoteDeviceRegistry } from "./remote-control/devices"
 import { RemoteControlManager } from "./remote-control/manager"
@@ -404,26 +405,20 @@ async function main() {
   let missionBridge: "pending" | "published" | "failed" = "pending"
   let settleMissionBridge!: (published: boolean) => void
   const missionBridgeSettled = new Promise<boolean>(resolve => { settleMissionBridge = resolve })
-  const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = async (launch, connection, deadlineAt) => {
-    let paths
-    try { paths = await resolveDesktopPluginPaths(connection, launch, deadlineAt) }
-    catch (error) {
-      logger.error({ err: error }, "Cannot provision bundled plugins without the connected daemon's discovery directory")
-      return false
-    }
-    try {
-      const missions = await missionBridgeSettled
-      await prepareDesktopPluginPresence(paths, connection.assertCurrent, {
-        pruning: pruningLifecycle,
-        automation: nativeParent.available ? automationLifecycle : undefined,
-        missions: missions ? missionsLifecycle : undefined,
-      })
-      return true
-    } catch (error) {
-      logger.error({ err: error }, "Failed to provision bundled desktop plugins for the current connection")
-      return false
-    }
-  }
+  const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = (launch, connection, deadlineAt) =>
+    provisionDesktopPlugins({
+      connection,
+      logger,
+      resolvePaths: () => resolveDesktopPluginPaths(connection, launch, deadlineAt),
+      install: async paths => {
+        const missions = await missionBridgeSettled
+        await prepareDesktopPluginPresence(paths, connection.assertCurrent, {
+          pruning: pruningLifecycle,
+          automation: nativeParent.available ? automationLifecycle : undefined,
+          missions: missions ? missionsLifecycle : undefined,
+        })
+      },
+    })
   const temporaryFolders = await TemporaryFolderRegistry.open(
     path.join(configDir, "temporary-workspaces"),
     path.join(configDir, "temporary-workspaces.json"),
