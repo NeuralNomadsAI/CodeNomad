@@ -370,8 +370,12 @@ jobs:
             set_deb_version "$probe" "0.0.0+dev.20000101.000000.deadbeef"
             check_deb_fields "$probe" "0.0.0+dev.20000101.000000.deadbeef"
             # Same files, modes and owners (the archive root's own mode aside).
-            diff <(dpkg-deb --contents "$artifact" | awk '$6 != "./" {print $1, $2, $6}') \
-              <(dpkg-deb --contents "$probe" | awk '$6 != "./" {print $1, $2, $6}')
+            # Compare numeric IDs: electron-builder's archive may store only IDs
+            # (0/0) while dpkg-deb --root-owner-group also stores names (root/root).
+            deb_listing() {
+              dpkg-deb --fsys-tarfile "$1" | tar -tv --numeric-owner | awk '$6 != "./" {print $1, $2, $6}' | sort
+            }
+            diff <(deb_listing "$artifact") <(deb_listing "$probe")
             diff <(dpkg-deb --ctrl-tarfile "$artifact" | tar -t | sort) <(dpkg-deb --ctrl-tarfile "$probe" | tar -t | sort)
             rm -f "$probe"
           fi
