@@ -9,14 +9,14 @@ import { useI18n } from "../lib/i18n"
 export const NO_STEP_BORDER = "none"
 
 interface MessageUsageProps {
-  /** A settled native assistant step: one model call with its own usage. */
+  /** The agent response's usage, summed over the steps of its cleanup scope (projectUsageLines). */
   messageInfo: MessageInfo
   usageVisibility: VisibilityPreference
   borderColor?: string
   onContentRendered?: () => void
 }
 
-/** The compact token and cost line closing one assistant step. */
+/** The compact token and cost line closing one agent response. */
 export function MessageUsage(props: MessageUsageProps) {
   const { t } = useI18n()
   const [expandedOverride, setExpandedOverride] = createSignal<boolean | null>(null)

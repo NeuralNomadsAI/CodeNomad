@@ -146,6 +146,9 @@ describe("message technical part grouping", () => {
       "an open turn shows nothing until its response settles")
     assert.deepEqual(lines([step("read", 20), end("next-prompt"), step("answer", 40, true)]), { answer: [40, 1, 2, 40] },
       "a prompt drops the previous turn's unanswered steps")
+    const failed = step("partial-answer", 30, true)
+    failed.info!.error = { name: "MessageAbortedError", type: "aborted", message: "Interrupted" } as MessageInfo["error"]
+    assert.deepEqual(lines([end("prompt"), step("read", 20), failed, end("idle")]), {}, "a failed step shows no line, even after some text")
   })
 
   it("closes a usage line only on a step whose last cleanup item is response text", () => {
@@ -154,5 +157,8 @@ describe("message technical part grouping", () => {
     assert.equal(endsWithResponseText([part("read", "tool", "read"), text("t", "There are three files")]), true)
     assert.equal(endsWithResponseText([part("read", "tool", "read"), text("error", "")]), false, "an error placeholder is no response")
     assert.equal(endsWithResponseText([part("r", "reasoning")]), false)
+    assert.equal(endsWithResponseText([text("t", "Answer"), part("r", "reasoning")]), false, "reasoning after the text passes usage on, as cleanup does")
+    assert.equal(endsWithResponseText([text("t", "Answer"), { id: "s", type: "text", text: "hidden", synthetic: true } as ClientPart]), true,
+      "trailing synthetic text is not a cleanup item")
   })
 })

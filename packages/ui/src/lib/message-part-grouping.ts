@@ -72,8 +72,12 @@ export interface UsageStep { messageId: string; endsTurn?: boolean; info?: Messa
 
 /** Whether a step's last cleanup item (tool, reasoning or response text) is response text. */
 export function endsWithResponseText(parts: readonly ClientPart[]): boolean {
-  const last = parts.filter((part) => part.type === "tool" || part.type === "reasoning" || isResponseTextPart(part)).at(-1)
-  return Boolean(last && isResponseTextPart(last))
+  for (let index = parts.length - 1; index >= 0; index--) {
+    const part = parts[index]
+    if (isResponseTextPart(part)) return true
+    if (part.type === "tool" || part.type === "reasoning") return false
+  }
+  return false
 }
 export interface UsageLine {
   /** The summed usage, shown with the response's own message metadata. */
@@ -87,7 +91,7 @@ export interface UsageLine {
  * itself and every settled step since the previous such step or prompt. A step
  * whose response text is followed by tools passes its usage on to the next
  * response, so no usage line splits a technical group. A turn ending without a
- * response shows none.
+ * response, or whose last step failed, shows none.
  */
 export function projectUsageLines(steps: readonly UsageStep[]): Map<string, UsageLine> {
   const lines = new Map<string, UsageLine>()
@@ -99,7 +103,7 @@ export function projectUsageLines(steps: readonly UsageStep[]): Map<string, Usag
     }
     if (!hasVisibleUsage(step.info, true)) continue
     pending.push(step.info!)
-    if (step.endsWithResponse) {
+    if (step.endsWithResponse && !step.info!.error) {
       lines.set(step.messageId, sumUsage(pending))
       pending = []
     }
