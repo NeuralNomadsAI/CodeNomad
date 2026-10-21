@@ -50,29 +50,21 @@ interface EventRoute {
   receivedAt: number
 }
 
-/** Opaque per-source identity tokens, issued randomly and held server-side.
- * One token maps to one daemon source (the same url, runtime version/pid and
- * auth tuple connection validation compares — the tuple itself never leaves
- * the process). Subscribers see only the token: it is stable across verified
- * same-source reconnects, changes when the source is replaced, and nothing a
- * client could recompute or correlate across backends derives from it. */
-const daemonSourceTokens = new Map<string, string>()
-
-function daemonSourceEnvelope(event: OpenCodeEvent, connection: ServiceConnection): OpenCodeEvent {
+/** Opaque per-source identity, issued randomly and held by the relay. The
+ * token covers the same fields connection validation compares (url, runtime
+ * version/pid, auth) — the tuple itself never leaves the process. Subscribers
+ * see only the token: it is stable across same-source reconnects, rotates on
+ * replacement, and nothing a client could recompute or correlate across
+ * backends derives from it. */
+function daemonSourceKey(connection: ServiceConnection): string {
   const identity = runtimeIdentity(connection.endpoint)
-  const sourceKey = JSON.stringify([
+  return JSON.stringify([
     connection.endpoint.url,
     identity?.version ?? null,
     identity?.pid ?? null,
     connection.endpoint.auth?.username ?? null,
     connection.endpoint.auth?.password ?? null,
   ])
-  let token = daemonSourceTokens.get(sourceKey)
-  if (token === undefined) {
-    token = randomBytes(16).toString("hex")
-    daemonSourceTokens.set(sourceKey, token)
-  }
-  return { ...event, data: { ...event.data, daemon: token } } as OpenCodeEvent
 }
 
 export class InstanceEventBridge {
@@ -80,6 +72,11 @@ export class InstanceEventBridge {
   private status: InstanceStreamStatus = "connecting"
   private generation = 0
   private task?: Promise<void>
+  /** The attributed source of the current shared stream and its opaque token.
+   * Exactly one entry: a reconnect of the same source keeps its token, a
+   * replacement drops the superseded source's credential-bearing key with it,
+   * and relay disposal releases both. */
+  private daemonSource?: { key: string; token: string }
   private readonly locationOwners = new Map<string, { expiresAt: number; owns: Promise<boolean> }>()
   private ownershipRevision = 0
   private lastSlowWarning = -Infinity
@@ -115,6 +112,8 @@ export class InstanceEventBridge {
 
   shutdown() {
     this.controller.abort()
+    // Release the current source's credential-bearing key and its token.
+    this.daemonSource = undefined
     const bus = this.options.eventBus
     bus.off("workspace.started", this.onWorkspaceStarted)
     bus.off("workspace.stopped", this.onWorkspaceStopped)
@@ -183,7 +182,13 @@ export class InstanceEventBridge {
     if (!route.current()) return
     if (event.type === "server.connected") {
       const connection = nativeEventConnections.get(event)
-      if (connection) event = daemonSourceEnvelope(event, connection)
+      if (connection) {
+        const key = daemonSourceKey(connection)
+        if (this.daemonSource?.key !== key) {
+          this.daemonSource = { key, token: randomBytes(16).toString("hex") }
+        }
+        event = { ...event, data: { ...event.data, daemon: this.daemonSource.token } } as OpenCodeEvent
+      }
     }
     const sessionId = this.sessionId(event)
     const ptyId = this.ptyId(event)

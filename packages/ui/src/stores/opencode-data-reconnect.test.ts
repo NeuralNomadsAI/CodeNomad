@@ -47,6 +47,7 @@ interface ControlledList {
 
 function fixture(instanceId: string, dispatcher = false) {
   const make = eventFactory()
+  let rawSequence = 0
   const nativeSession = {
     id: sessionId, title: "Reconnect", projectID: "prj_fixture", location: { directory: "/fixture" },
     time: { created: 1, updated: 1 }, cost: 0, tokens,
@@ -106,6 +107,15 @@ function fixture(instanceId: string, dispatcher = false) {
     instanceId, make, apply, client, store, data: () => data,
     controlledList, authoritativePage, authoritativeText,
     dispatch: (type: string, payload: Record<string, unknown> = {}) => handleInstanceInvalidation(instanceId, make(type, payload)),
+    /** Apply an event without manifest validation (payloads the schema pins
+     * to full runtime shapes, e.g. shell info). */
+    raw: (type: string, payload: Record<string, unknown> = {}) => {
+      const event = {
+        id: `evt_raw_${rawSequence++}`, type, created: 9000 + rawSequence,
+        location: { directory: "/fixture" }, data: { sessionID: sessionId, ...payload },
+      } as OpenCodeEvent
+      return applyOpenCodeDataEvent(instanceId, "/fixture", event)
+    },
     start: (publication?: Publication) => apply("session.step.started", {
       assistantMessageID: "msg_live", agent: "build", model, started: 500,
     }, undefined, publication),
@@ -118,6 +128,11 @@ function fixture(instanceId: string, dispatcher = false) {
     storeTwoText: () => {
       const record = store.getMessage("msg_two")
       const part = record?.parts["msg_two-reasoning-0"]
+      return part ? String((part.data as any).text ?? "") : undefined
+    },
+    storeGapText: () => {
+      const record = store.getMessage("msg_gap")
+      const part = record?.parts["msg_gap-text-0"]
       return part ? String((part.data as any).text ?? "") : undefined
     },
     sdkText: () => (data.session.message.get(sessionId, "msg_live") as any)?.content?.[0]?.text as string | undefined,
@@ -310,6 +325,46 @@ test("a quiet reconnect snapshot publishes without any further event", async ctx
       control.settle()
     }
     assert.equal(f.storeText(), f.authoritativeText(), "the resync publishes without a subsequent event")
+  } finally { f.cleanup() }
+})
+
+test("a recovered active execution outranks the carried settlement", async ctx => {
+  ctx.mock.timers.enable({ apis: ["setTimeout"] })
+  const f = fixture("reconnect-recovered-activity", true)
+  const shell = { id: "sh_reconnect", command: "sleep 5", status: "running", cwd: "/fixture", metadata: {} }
+  try {
+    f.start()
+    f.dispatch("session.reasoning.started", live)
+    await converge(ctx, () => typeof f.storeText() === "string")
+    // A settlement arrives while a user shell is still running: retirement is
+    // deferred on live work.
+    f.raw("session.shell.started", { shell })
+    f.dispatch("session.execution.succeeded")
+
+    f.dispatch("server.connected", { daemon: "daemon-a" })
+    await microtasks()
+    // The disconnect window swallowed a new execution's start; the quiet
+    // reconciliation reports it as an active assistant row.
+    const control = f.controlledList(() => [{
+      id: "msg_gap", type: "assistant", agent: "build", model,
+      content: [{ type: "text", text: "running after gap" }],
+      time: { created: 900 },
+    }])
+    for (let index = 0; index < 200 && f.storeGapText() !== "running after gap"; index++) {
+      ctx.mock.timers.tick(1000)
+      await microtasks()
+      control.settle()
+    }
+    assert.equal(f.storeGapText(), "running after gap", "the snapshot publishes the recovered execution")
+
+    // Its stream continues after the reconciliation: the recovered activity
+    // must have cancelled the carried deferred retirement.
+    f.dispatch("session.text.delta", { assistantMessageID: "msg_gap", ordinal: 0, delta: " more" })
+    for (let index = 0; index < 200 && f.storeGapText() !== "running after gap more"; index++) {
+      ctx.mock.timers.tick(0)
+      await microtasks()
+    }
+    assert.equal(f.storeGapText(), "running after gap more", "live deltas keep streaming after the recovery")
   } finally { f.cleanup() }
 })
 

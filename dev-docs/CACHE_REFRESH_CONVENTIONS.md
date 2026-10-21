@@ -93,10 +93,12 @@ Beyond the relay rule in [OPENCODE_COMPATIBILITY.md](OPENCODE_COMPATIBILITY.md)
 order includes move/delete, unrelated sessions have no global order, other
 scoped events keep FIFO per complete native location and global notifications
 have their own lane. `server.connected` is relayed with a `daemon` field: an
-opaque token held by the relay, issued randomly per daemon source and stable
-across verified same-source reconnects (changed on replacement, absent from an
-unattributed stream); the UI gates reconnect transcript continuity on a
-matching token and keeps a hard reset otherwise. Ownership
+opaque token held only for the current source by the relay, issued randomly
+per source, stable across verified same-source reconnects, rotated when the
+source is replaced (the superseded credential-bearing key is dropped with it)
+and released when the relay disposes; it is absent from an unattributed
+stream. The UI gates reconnect transcript continuity on a matching token and
+keeps a hard reset otherwise. Ownership
 promises/2 s
 results are shared per recipient and full location. Ingestion-time worktree
 invalidation and local inventory changes fence pending ownership checks;

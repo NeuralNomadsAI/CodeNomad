@@ -848,4 +848,81 @@ describe("InstanceEventBridge", () => {
       bridge.shutdown()
     }
   })
+
+  it("drops a superseded source's token and never revives it", async () => {
+    const runtimeKey = Symbol.for("codenomad.opencode.runtime")
+    const connectionFor = (pid: number) => ({
+      endpoint: Object.assign(
+        { url: "http://127.0.0.1:4012" },
+        { [runtimeKey]: Object.freeze({ version: "2.1.2", pid, contract: {} }) },
+      ),
+    })
+    const before = serverConnected()
+    const replacement = serverConnected()
+    const returned = serverConnected()
+    nativeEventConnections.set(before, connectionFor(1111) as any)
+    nativeEventConnections.set(replacement, connectionFor(2222) as any)
+    nativeEventConnections.set(returned, connectionFor(1111) as any)
+    const manager = {
+      list: () => [{ id: "a", path: "/repo-a" }],
+      ownsDirectory: async () => true,
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        for (const event of [before, replacement, returned]) yield event
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => { if (event.event.type === "server.connected") received.push(event.event) })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 3)
+      assert.notEqual(received[0].data.daemon, received[1].data.daemon, "the replacement rotates the token")
+      assert.notEqual(received[2].data.daemon, received[0].data.daemon,
+        "a source dropped by a replacement never revives its token")
+      assert.notEqual(received[2].data.daemon, received[1].data.daemon)
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("a disposed relay's tokens are not reused by a new relay", async () => {
+    const runtimeKey = Symbol.for("codenomad.opencode.runtime")
+    const connection = {
+      endpoint: Object.assign(
+        { url: "http://127.0.0.1:4013" },
+        { [runtimeKey]: Object.freeze({ version: "2.1.2", pid: 3333, contract: {} }) },
+      ),
+    }
+    const attributedStream = () => {
+      const event = serverConnected()
+      nativeEventConnections.set(event, connection as any)
+      return event
+    }
+    const managerFor = () => ({
+      list: () => [{ id: "a", path: "/repo-a" }],
+      ownsDirectory: async () => true,
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        yield attributedStream()
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    }) as unknown as WorkspaceManager
+    const readOne = async () => {
+      const bus = new EventBus()
+      const received: any[] = []
+      bus.on("instance.event", (event) => { if (event.event.type === "server.connected") received.push(event.event) })
+      const bridge = new InstanceEventBridge({ workspaceManager: managerFor(), eventBus: bus, logger })
+      try {
+        bus.publish({ type: "workspace.started", workspace: { id: "a", path: "/repo-a" } as any })
+        await waitFor(() => received.length === 1)
+        return received[0].data.daemon
+      } finally {
+        bridge.shutdown()
+      }
+    }
+    const first = await readOne()
+    const second = await readOne()
+    assert.notEqual(first, second, "relay disposal releases its tokens; a new relay starts fresh")
+  })
 })

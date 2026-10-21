@@ -12,7 +12,7 @@ import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
 import {
   boundedTranscript, eventAffectsMessages, eventMayAppendMessage, eventSessionId,
-  MAX_TRANSCRIPT_MESSAGES,
+  isActiveTranscriptMessage, MAX_TRANSCRIPT_MESSAGES,
 } from "./opencode-data-events"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
 
@@ -456,6 +456,13 @@ async function resyncAuthoritativeTranscript(
     transcript.onResynced?.(fresh.data)
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== fresh) return
     if (transcript.entry === fresh && !transcript.needsAuthoritativeResync) transcript.preserveNativePageOnResync = false
+    if (transcript.retireWhenDrained
+      && fresh.data.session.message.list(sessionId).some(isActiveTranscriptMessage)) {
+      // The authoritative snapshot recovered an execution whose start event
+      // was never admitted (e.g. it fell inside a disconnect window); live
+      // activity outranks a settlement carried across the resync.
+      transcript.retireWhenDrained = false
+    }
     resumeRotationAfterResync(instanceId, sessionId, transcript)
     retireDrainedTranscript(instanceId, sessionId, transcript)
   } catch {
