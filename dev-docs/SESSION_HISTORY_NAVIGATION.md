@@ -101,7 +101,7 @@ The timeline uses the same standard native scrollbar as the transcript, with one
 ordinary gutter. Marker rectangles give up width to it; fixed-size icons and
 vertical geometry never scale with available width. `timeline-virtual-list.tsx`
 measures the marker height and gap primitives, computes exact offsets (including
-group spacing), and mounts only the visible range. Hidden tools are excluded from
+the uniform gaps between markers), and mounts only the visible range. Hidden tools are excluded from
 the layout. Browsing offscreen rows cannot change the scrollbar extent.
 
 Manual rail browsing suppresses active-marker reveals until an explicit transcript

@@ -8,7 +8,7 @@ export interface TimelineListHandle {
 
 /** Timeline markers have known geometry, unlike transcript messages. Measure
  * the two CSS primitives once and give the native scrollbar the exact extent,
- * including offscreen group gaps. No estimated or zero-height hidden rows. */
+ * including offscreen gaps. No estimated or zero-height hidden rows. */
 export default function TimelineVirtualList<T>(props: {
   items: T[]
   gap: (item: T) => number
