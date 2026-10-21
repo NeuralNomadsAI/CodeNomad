@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { createHash } from "node:crypto"
 import { describe, it } from "node:test"
 import type { LocationRef, OpenCodeEvent } from "@opencode/client"
 import { EventBus } from "../events/bus"
@@ -6,7 +7,6 @@ import type { Logger } from "../logger"
 import { nativeEventConnections } from "./opencode-service"
 import { InstanceEventBridge } from "./instance-events"
 import type { WorkspaceManager } from "./manager"
-
 const logger = {
   debug() {},
   warn() {},
@@ -790,11 +790,60 @@ describe("InstanceEventBridge", () => {
     try {
       bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
       await waitFor(() => received.length === 4)
-      assert.equal(typeof received[0].data.daemon, "string", "attributed connects carry a digest")
-      assert.equal(received[0].data.daemon, received[1].data.daemon, "the same endpoint keeps one digest")
-      assert.notEqual(received[1].data.daemon, received[2].data.daemon, "a replaced daemon changes the digest")
+      assert.equal(typeof received[0].data.daemon, "string", "attributed connects carry a token")
+      assert.equal(received[0].data.daemon, received[1].data.daemon, "the same endpoint keeps one token")
+      assert.notEqual(received[1].data.daemon, received[2].data.daemon, "a replaced daemon changes the token")
       assert.equal(received[3].data.daemon, undefined, "an unattributed stream relays no identity")
       assert.ok(!JSON.stringify(received).includes("password"), "credentials never appear in the clear")
+      // The relayed identity must not be a digest a subscriber can recompute
+      // from known fields: that would be an offline verifier for the password.
+      const verifiable = createHash("sha256").update(JSON.stringify([
+        "http://127.0.0.1:4010", "2.1.2", 4242, "u", "p",
+      ])).digest("hex")
+      assert.notEqual(received[0].data.daemon, verifiable, "the token is server-held, not a recomputable digest")
+      for (const digest of [received[0].data.daemon, received[2].data.daemon]) {
+        assert.equal(digest.length, 32, "the token is an opaque fixed-length identifier")
+      }
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
+  it("keeps one daemon token across stream resubscriptions of the same source", async () => {
+    const runtimeKey = Symbol.for("codenomad.opencode.runtime")
+    const connection = {
+      endpoint: Object.assign(
+        { url: "http://127.0.0.1:4011" },
+        { [runtimeKey]: Object.freeze({ version: "2.1.2", pid: 4242, contract: {} }) },
+      ),
+    }
+    const firstSubscription = serverConnected()
+    const resubscription = serverConnected()
+    nativeEventConnections.set(firstSubscription, connection as any)
+    nativeEventConnections.set(resubscription, connection as any)
+    let subscriptions = 0
+    const manager = {
+      list: () => [{ id: "a", path: "/repo-a" }],
+      ownsDirectory: async () => true,
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        subscriptions += 1
+        yield subscriptions === 1 ? firstSubscription : resubscription
+        // The first subscription ends (transport loss); the bridge must
+        // resubscribe and still recognize the same source.
+        if (subscriptions === 1) return
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const received: any[] = []
+    bus.on("instance.event", (event) => { if (event.event.type === "server.connected") received.push(event.event) })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 2)
+      assert.equal(subscriptions, 2, "the stream reconnected between the two announcements")
+      assert.equal(received[0].data.daemon, received[1].data.daemon,
+        "a resubscription of the same source keeps its token (continuity survives reconnects)")
     } finally {
       bridge.shutdown()
     }

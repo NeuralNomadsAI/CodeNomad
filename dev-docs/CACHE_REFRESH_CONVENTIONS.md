@@ -92,10 +92,11 @@ Beyond the relay rule in [OPENCODE_COMPATIBILITY.md](OPENCODE_COMPATIBILITY.md)
 (server `workspaces/instance-events.ts`, `instance-event-queue.ts`): per-session
 order includes move/delete, unrelated sessions have no global order, other
 scoped events keep FIFO per complete native location and global notifications
-have their own lane. `server.connected` is relayed with a `daemon` digest
-(sha256 over url, runtime version/pid and auth) identifying which daemon the
-stream belongs to; the UI gates reconnect transcript continuity on a matching
-digest and keeps a hard reset for a replaced or unattributed source. Ownership
+have their own lane. `server.connected` is relayed with a `daemon` field: an
+opaque token held by the relay, issued randomly per daemon source and stable
+across verified same-source reconnects (changed on replacement, absent from an
+unattributed stream); the UI gates reconnect transcript continuity on a
+matching token and keeps a hard reset otherwise. Ownership
 promises/2 s
 results are shared per recipient and full location. Ingestion-time worktree
 invalidation and local inventory changes fence pending ownership checks;

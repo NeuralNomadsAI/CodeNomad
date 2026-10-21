@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto"
+import { randomBytes } from "node:crypto"
 import { isSessionNotFoundError, type LocationRef, type OpenCodeEvent } from "@opencode/client"
 import { readLocationRef } from "../opencode/compatibility/location"
 import { runtimeIdentity } from "../opencode/compatibility/runtime"
@@ -50,20 +50,29 @@ interface EventRoute {
   receivedAt: number
 }
 
-/** Digest of the daemon a server.connected belongs to, over the same fields
- * connection validation compares (url, runtime version and pid, auth). Clients
- * gate reconnect continuity on it; credentials never cross the wire — only
- * this one-way digest does. */
+/** Opaque per-source identity tokens, issued randomly and held server-side.
+ * One token maps to one daemon source (the same url, runtime version/pid and
+ * auth tuple connection validation compares — the tuple itself never leaves
+ * the process). Subscribers see only the token: it is stable across verified
+ * same-source reconnects, changes when the source is replaced, and nothing a
+ * client could recompute or correlate across backends derives from it. */
+const daemonSourceTokens = new Map<string, string>()
+
 function daemonSourceEnvelope(event: OpenCodeEvent, connection: ServiceConnection): OpenCodeEvent {
   const identity = runtimeIdentity(connection.endpoint)
-  const digest = createHash("sha256").update(JSON.stringify([
+  const sourceKey = JSON.stringify([
     connection.endpoint.url,
     identity?.version ?? null,
     identity?.pid ?? null,
     connection.endpoint.auth?.username ?? null,
     connection.endpoint.auth?.password ?? null,
-  ])).digest("hex")
-  return { ...event, data: { ...event.data, daemon: digest } } as OpenCodeEvent
+  ])
+  let token = daemonSourceTokens.get(sourceKey)
+  if (token === undefined) {
+    token = randomBytes(16).toString("hex")
+    daemonSourceTokens.set(sourceKey, token)
+  }
+  return { ...event, data: { ...event.data, daemon: token } } as OpenCodeEvent
 }
 
 export class InstanceEventBridge {

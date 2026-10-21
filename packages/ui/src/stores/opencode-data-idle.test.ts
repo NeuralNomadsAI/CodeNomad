@@ -223,3 +223,47 @@ test("a settled session keeps its reducer until a user shell started before sett
     assert.notEqual(f.emit("permission.replied", { requestID: "missing" }), settled, "released once the shell ended")
   } finally { f.cleanup() }
 })
+
+test("a same-source reconnect keeps deferred retirement for a still-running shell", async () => {
+  const instanceId = "settled-shell-reconnect"
+  const f = fixture(instanceId)
+  const client = getRootClient(instanceId) as any
+  client.session.get = async () => ({ id: sessionId, location: { directory: "/work" }, time: { created: 1, updated: 6001 } })
+  client.session.active = async () => ({})
+  client.session.inbox = { list: async () => [] }
+  client.permission.list = async () => []
+  client.session.form.list = async () => []
+  client.message.list = async () => ({
+    data: [{
+      id: "final", type: "assistant", agent: "build", model,
+      content: [{ type: "text", text: "final answer" }], time: { created: 5000, completed: 5001 },
+    }], cursor: {},
+  })
+  try {
+    // Record the daemon identity the later reconnect is verified against.
+    f.emit("server.connected", { daemon: "source-a" })
+    const shell = { id: "shell-1", command: "sleep 5", status: "running", metadata: {} }
+    f.emit("session.shell.started", { shell })
+    f.finalStep()
+    const settled = f.emit(SETTLED)
+    assert.equal(f.emit("permission.replied", { requestID: "missing" }), settled)
+
+    // Transport reconnect from the same daemon: the recreated reducer keeps
+    // the deferred retirement, so the shell still settles in it.
+    f.emit("server.connected", { daemon: "source-a" })
+    const tokens = { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+    await waitForReplay(() => f.emit("session.usage.updated", { cost: 0, tokens })
+      .session.message.list(sessionId).some((message) => message.type === "shell"))
+    const ended = f.emit("session.shell.ended", { shell: { ...shell, status: "exited", exit: 0 }, output: { output: "done" } })
+    assert.notEqual(ended, settled, "the shell settles in the recreated reducer")
+    const row = ended.session.message.list(sessionId).find((message) => message.type === "shell")
+    assert.equal(row?.type === "shell" ? row.status : undefined, "exited")
+
+    // The reconciliation armed at the reconnect trails the last arrival by its
+    // quiet delay; once it settles, the deferred retirement completes.
+    await new Promise(resolve => setTimeout(resolve, 2600))
+    const replacement = f.emit("permission.replied", { requestID: "missing" })
+    assert.notEqual(replacement, ended, "released once the shell ended after the reconnect")
+    assert.deepEqual(replacement.session.message.list(sessionId), [], "no resident rows outlive the settlement")
+  } finally { f.cleanup() }
+})

@@ -10,6 +10,11 @@ import { sseManager } from "../lib/sse-manager"
 import { getLogger } from "../lib/logger"
 import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
+import {
+  boundedTranscript, eventAffectsMessages, eventMayAppendMessage, eventSessionId,
+  MAX_TRANSCRIPT_MESSAGES,
+} from "./opencode-data-events"
+import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
 
 const log = getLogger("session")
 
@@ -63,8 +68,8 @@ type TranscriptEntry = {
   onResynced?: (data: Data) => void
 }
 
-const MAX_ACTIVE_TRANSCRIPT_MESSAGES = 32
-const MAX_TRANSCRIPT_MESSAGES = MESSAGE_WINDOW_PAGE_SIZE
+export type { TranscriptEntry }
+
 // ponytail: overflow collapses all native deltas; one quiet, revision-stable fresh snapshot becomes authority.
 const MAX_TRANSCRIPT_EVENT_QUEUE = 4096
 const MAX_ROTATION_RESERVE = 64
@@ -73,13 +78,8 @@ const MAX_TRANSCRIPT_REPLAY_CHUNK = 64
 const TRANSCRIPT_RESYNC_QUIET_MS = 25
 const TRANSCRIPT_RETRY_DELAY_MS = 25
 const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
-/** A shared-stream reconnect reconciles this long after the last native event. */
-const RECONNECT_RESYNC_DELAY_MS = 1000
 const entries = new Map<string, DataEntry>()
 const transcriptEntries = new Map<string, TranscriptEntry>()
-/** Last observed daemon identity digest per instance; a reconnect seeds
- * continuity only when the daemon source is verified unchanged. */
-const daemonSources = new Map<string, string>()
 const mutationRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
 const messageRevisions = new Map<string, number>()
 const fullDataRevisions = new Map<string, number>()
@@ -286,102 +286,6 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
   return transcript
 }
 
-function isActiveTranscriptMessage(message: any): boolean {
-  return (message.type === "assistant" && !message.time?.completed)
-    || (message.type === "shell" && message.status === "running")
-    || (message.type === "compaction" && message.status === "running")
-}
-
-function boundedTranscript(messages: SessionMessageInfo[], limit = MAX_TRANSCRIPT_MESSAGES): SessionMessageInfo[] {
-  const active = messages.filter(isActiveTranscriptMessage).slice(-MAX_ACTIVE_TRANSCRIPT_MESSAGES)
-  const completedLimit = Math.max(0, limit - active.length)
-  const completed = messages
-    .filter((message) => !isActiveTranscriptMessage(message))
-    .slice(-completedLimit)
-  const retained = new Set([...completed, ...active].map((message) => message.id))
-  return messages
-    .filter((message) => retained.has(message.id))
-    .map((message) => JSON.parse(JSON.stringify(message)) as SessionMessageInfo)
-}
-
-function eventMayAppendMessage(event: OpenCodeEvent, runningCompactions = 0): boolean {
-  switch (event.type) {
-    case "session.agent.selected":
-    case "session.model.selected":
-    case "session.moved":
-    case "session.synthetic":
-    case "session.shell.started":
-    case "session.step.started":
-    case "session.compaction.started":
-      return true
-    case "session.compaction.ended":
-    case "session.compaction.failed":
-      return runningCompactions === 0
-    case "session.instructions.updated":
-      return event.data.text !== undefined
-    case "session.inbox.enqueued":
-      return event.data.item.type === "user" || event.data.item.type === "synthetic"
-    default:
-      return false
-  }
-}
-
-function eventAffectsMessages(event: OpenCodeEvent): boolean {
-  switch (event.type) {
-    case "session.agent.selected":
-    case "session.model.selected":
-    case "session.moved":
-    case "session.inbox.delivered":
-    case "session.inbox.cancelled":
-    case "session.execution.succeeded":
-    case "session.execution.failed":
-    case "session.execution.interrupted":
-    case "session.synthetic":
-    case "session.step.started":
-    case "session.step.ended":
-    case "session.step.failed":
-    case "session.text.started":
-    case "session.text.delta":
-    case "session.text.ended":
-    case "session.reasoning.started":
-    case "session.reasoning.delta":
-    case "session.reasoning.ended":
-    case "session.tool.input.started":
-    case "session.tool.input.delta":
-    case "session.tool.input.ended":
-    case "session.tool.called":
-    case "session.tool.progress":
-    case "session.tool.success":
-    case "session.tool.failed":
-    case "session.retry.scheduled":
-    case "session.revert.committed":
-    case "session.compaction.started":
-    case "session.compaction.delta":
-    case "session.compaction.ended":
-    case "session.compaction.failed":
-    case "session.shell.started":
-    case "session.shell.ended":
-    case "session.skill.activated":
-      return true
-    case "session.instructions.updated":
-      return event.data.text !== undefined
-    case "session.inbox.enqueued":
-      return event.data.item.type === "user" || event.data.item.type === "synthetic"
-    case "session.created":
-    case "session.renamed":
-    case "session.viewed":
-    case "session.inbox.delivery.changed":
-    case "session.execution.started":
-    case "session.revert.staged":
-    case "session.revert.cleared":
-    case "session.usage.updated":
-    case "session.forked":
-      return false
-    default:
-      return event.type.startsWith("session.")
-  }
-}
-
 function getOpenCodeFullDataRevision(instanceId: string, sessionId: string): number {
   return fullDataRevisions.get(messageRevisionKey(instanceId, sessionId)) ?? 0
 }
@@ -442,59 +346,49 @@ function collapseTranscriptQueue(instanceId: string, sessionId: string, transcri
   scheduleAuthoritativeResync(instanceId, sessionId, transcript)
 }
 
-/** One quiet, revision-stable reconnect reconciliation: live events keep
- * admitting on the resident entry, so the fetch only starts after the stream
- * stays quiet for the delay and never drops anything. */
-function scheduleTrailingResync(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
-  if (!isTranscriptCurrent(instanceId, sessionId, transcript)
-    || transcript.needsAuthoritativeResync || transcript.resyncing || !transcript.reconnectResync) return
-  clearTranscriptRetry(transcript)
-  const revision = getOpenCodeFullDataRevision(instanceId, sessionId)
-  transcript.retryTimer = setTimeout(() => {
-    transcript.retryTimer = undefined
-    if (!isTranscriptCurrent(instanceId, sessionId, transcript) || !transcript.reconnectResync) return
-    if (getOpenCodeFullDataRevision(instanceId, sessionId) !== revision) {
-      // Events kept arriving: trail behind the live stream instead of racing it.
-      scheduleTrailingResync(instanceId, sessionId, transcript)
-      return
+/** Reconnect continuity: capture, reset, reseed and trailing reconciliation
+ * for verified same-source reconnects (see opencode-reconnect.ts). */
+const reconnect = createReconnect({
+  capture: instanceId => {
+    const prefix = `${instanceId}\0`
+    const live: ReconnectCapture[] = []
+    for (const [key, transcript] of transcriptEntries) {
+      if (!key.startsWith(prefix)) continue
+      const sessionId = key.substring(prefix.length)
+      const messages = transcript.entry.data.session.message.list(sessionId)
+      if (messages.length) {
+        live.push({
+          sessionId,
+          directory: transcript.directory,
+          messages,
+          // A settlement still waiting on running work (e.g. a user shell) must
+          // keep waiting after the reconnect, not strand its reducer forever.
+          retireWhenDrained: transcript.retireWhenDrained,
+          onResynced: transcript.onResynced,
+        })
+      }
     }
-    void resyncAuthoritativeTranscript(instanceId, sessionId, transcript)
-  }, RECONNECT_RESYNC_DELAY_MS)
-}
-
-/** A shared-stream reconnect is transport recovery, not a data reset. Keep the
- * reset semantics (generation fences, observer rebinding, REST state) but seed
- * each live session's fresh reducer with its last projected page so streaming
- * continues uninterrupted; one quiet snapshot then reconciles whatever the
- * disconnect window missed. */
-function reconnectOpenCodeData(instanceId: string): void {
-  const prefix = `${instanceId}\0`
-  const live: Array<{ sessionId: string; directory: string; messages: SessionMessageInfo[]; onResynced?: (data: Data) => void }> = []
-  for (const [key, transcript] of transcriptEntries) {
-    if (!key.startsWith(prefix)) continue
-    const sessionId = key.substring(prefix.length)
-    const messages = transcript.entry.data.session.message.list(sessionId)
-    if (messages.length) live.push({ sessionId, directory: transcript.directory, messages, onResynced: transcript.onResynced })
-  }
-  destroyOpenCodeData(instanceId)
-  for (const { sessionId, directory, messages, onResynced } of live) {
-    const transcript = ensureTranscript(instanceId, sessionId, directory)
+    return live
+  },
+  resetInstance: destroyOpenCodeData,
+  recreateTranscript: (instanceId, capture) => {
+    const transcript = ensureTranscript(instanceId, capture.sessionId, capture.directory)
     transcript.reconnectResync = true
+    transcript.retireWhenDrained = capture.retireWhenDrained
     // Without a later admitted event, nothing re-registers the publication
     // callback; carry it so a quiet snapshot still reaches the display.
-    transcript.onResynced = onResynced
-    void transcript.entry.syncMessages(sessionId, boundedTranscript(messages), () => true)
-      .then(() => {
-        scheduleTrailingResync(instanceId, sessionId, transcript)
-      })
-      .catch(() => {
-        // Seeding failed: fall back to dropping-mode recovery so the transcript
-        // still reconciles from one quiet authoritative snapshot.
-        transcript.reconnectResync = false
-        scheduleAuthoritativeResync(instanceId, sessionId, transcript)
-      })
-  }
-}
+    transcript.onResynced = capture.onResynced
+    return transcript
+  },
+  seedPage: (instanceId, capture) =>
+    ensureTranscript(instanceId, capture.sessionId, capture.directory)
+      .entry.syncMessages(capture.sessionId, boundedTranscript(capture.messages), () => true),
+  scheduleDroppingResync: scheduleAuthoritativeResync,
+  isCurrent: isTranscriptCurrent,
+  fullDataRevision: getOpenCodeFullDataRevision,
+  clearRetryTimer: clearTranscriptRetry,
+  resyncAuthoritative: resyncAuthoritativeTranscript,
+})
 
 /** A finished resync that leaves queued arrivals (they could not rotate while
  * the fresh read owned the transcript) restarts rotation to drain them. */
@@ -543,7 +437,7 @@ async function resyncAuthoritativeTranscript(
       || getOpenCodeFullDataRevision(instanceId, sessionId) !== revision) {
       transcript.resyncing = false
       transcript.freshEntry = undefined
-      if (transcript.reconnectResync) scheduleTrailingResync(instanceId, sessionId, transcript)
+      if (transcript.reconnectResync) reconnect.scheduleTrailing(instanceId, sessionId, transcript)
       else scheduleAuthoritativeResync(instanceId, sessionId, transcript)
       resumeRotationAfterResync(instanceId, sessionId, transcript)
       return
@@ -569,7 +463,7 @@ async function resyncAuthoritativeTranscript(
     transcript.resyncing = false
     transcript.freshEntry = undefined
     transcript.retryCount += 1
-    if (transcript.reconnectResync) scheduleTrailingResync(instanceId, sessionId, transcript)
+    if (transcript.reconnectResync) reconnect.scheduleTrailing(instanceId, sessionId, transcript)
     else scheduleAuthoritativeResync(instanceId, sessionId, transcript, retryDelay(transcript))
     resumeRotationAfterResync(instanceId, sessionId, transcript)
   } finally {
@@ -706,17 +600,6 @@ function startTranscriptRotation(instanceId: string, sessionId: string, transcri
   queueMicrotask(() => void rotateTranscript(instanceId, sessionId, transcript, entry, generation))
 }
 
-function eventSessionId(event: OpenCodeEvent): string | undefined {
-  const sessionId = (event as { data?: { sessionID?: unknown } }).data?.sessionID
-  if (typeof sessionId === "string") return sessionId
-  if (event.type === "form.created") return event.data.form.sessionID
-}
-
-function daemonSourceOf(event: OpenCodeEvent): string | undefined {
-  const daemon = (event as { data?: { daemon?: unknown } }).data?.daemon
-  return typeof daemon === "string" && daemon.length > 0 ? daemon : undefined
-}
-
 function invalidateTranscript(transcript: TranscriptEntry): void {
   clearTranscriptRetry(transcript)
   transcript.resyncGeneration += 1
@@ -740,15 +623,7 @@ export function applyOpenCodeDataEvent(
   admission?: OpenCodeDataEventAdmission,
 ): Data {
   if (admission) admission.deferred = false
-  if (event.type === "server.connected") {
-    // Seed continuity only across a verified same-daemon reconnect; a replaced
-    // daemon (url, pid, version or auth changed, hashed by the relay) and an
-    // unattributed stream keep the hard reset.
-    const source = daemonSourceOf(event)
-    if (source !== undefined && daemonSources.get(instanceId) === source) reconnectOpenCodeData(instanceId)
-    else destroyOpenCodeData(instanceId)
-    if (source !== undefined) daemonSources.set(instanceId, source)
-  }
+  if (event.type === "server.connected") reconnect.onServerConnected(instanceId, event)
   const primary = ensureData(instanceId, directory)
   // This native reducer owns transcript/inbox projection only. CodeNomad's
   // stores already reconcile catalogues, Shells and connection state. Even
@@ -984,9 +859,9 @@ export function destroyOpenCodeData(instanceId: string, sessionId?: string): voi
   for (const key of unobservedCompactions) {
     if (key.startsWith(`${instanceId}\0`)) unobservedCompactions.delete(key)
   }
-  // The reconnect handler re-verifies and re-records the source after its own
-  // reset; every other destroy (instance removal, client replacement) forgets it.
-  daemonSources.delete(instanceId)
+  // Every destroy outside the reconnect handler (instance removal, client
+  // replacement) forgets the observed daemon source.
+  reconnect.forgetInstance(instanceId)
   instanceGenerations.set(instanceId, ++nextInstanceGeneration)
   entries.get(instanceId)?.dispose()
   entries.delete(instanceId)
