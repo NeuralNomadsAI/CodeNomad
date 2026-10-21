@@ -64,12 +64,18 @@ This adds no timer or ordinary Form/permission-list fallback. Existing notificat
 history is not retroactively removed when recovery later succeeds.
 
 A failed or partial session-family move is different from idle history. Source and
-target directory authority, and the pending selector target, survive failed native
-reconciliation and inventory removal. `worktrees.ts` captures these exact locations
-before the single mutation; `session-api.ts` releases them only after a complete
-family inventory and fresh activity, from a read begun after the mutation returned.
-Earlier, incomplete, failed or superseded reads cannot release a newer move's hold.
-This does not change native move/rollback behavior or replay an uncertain move.
+target directory authority survives failed native reconciliation and inventory
+removal. Selector busy/target state is independent and clears when its latest move
+task settles, even if directory recovery remains uncertain. `worktrees.ts` captures
+the exact locations before the single mutation; `session-api.ts` releases them only
+after a complete owned project inventory and fresh activity, from a read begun after
+the mutation returned. Authoritative absence from that same scope counts too:
+deleted, moved-away or stale resident member IDs cannot pin the hold forever.
+Missing/changing project metadata, directory-only/partial inventories, failed activity
+and superseded reads cannot release a newer move's hold. Known requests and active
+placements remain independently required. This does not change native move/rollback
+behavior or replay an uncertain move. A failed fresh inventory request rejects even
+if a cached trailing read was queued; it never loops through cached retries.
 
 ### Stats restoration and remaining native cost
 

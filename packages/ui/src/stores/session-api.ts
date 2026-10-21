@@ -592,6 +592,7 @@ async function fetchSessions(instanceId: string, options?: {
   }
 
   const requestId = beginSessionListRequest(instanceId)
+  const worktreeMoveProject = getInstanceMetadata(instanceId)?.project?.id
   const reconcileWorktreeMoves = captureWorktreeMoveReconciliation(instanceId)
   const client = instance.client
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
@@ -830,7 +831,8 @@ async function fetchSessions(instanceId: string, options?: {
         return next
       })
       reconcilePendingSessionIndicators(instanceId)
-      if (inventoryComplete) reconcileWorktreeMoves(new Set(apiSessions.map(session => session.id)))
+      if (inventoryComplete && worktreeMoveProject && worktreeMoveProject !== "global" && getInstanceMetadata(instanceId)?.project?.id === worktreeMoveProject
+        && !getDirectoryOnlyWorktree(instanceId)) reconcileWorktreeMoves()
     })
     if (options?.strictStatus) await statusUpdate
 

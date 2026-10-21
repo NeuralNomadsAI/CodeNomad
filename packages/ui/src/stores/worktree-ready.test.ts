@@ -7,6 +7,29 @@ import type { Session } from "../types/session.ts"
 import { sessions, setSessions } from "./session-state.ts"
 
 describe("handleWorktreeReady", () => {
+  it("rejects a failed fresh read even when a cached trailing demand succeeds", async () => {
+    const id = "fresh-failure-cached-trailing", original = serverApi.fetchWorktrees
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    const calls: boolean[] = []
+    serverApi.fetchWorktrees = async (_id, fresh = false) => {
+      calls.push(fresh)
+      if (fresh) { await gate; throw new Error("fresh validation failed") }
+      return { worktrees: [{ slug: "root", directory: "/repo", kind: "root" }] }
+    }
+    try {
+      const fresh = reloadWorktrees(id, true)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      const cached = reloadWorktrees(id)
+      const rejected = assert.rejects(fresh, /fresh validation failed/)
+      const trailingRejected = assert.rejects(cached, /fresh validation failed/)
+      release()
+      await Promise.all([rejected, trailingRejected])
+      assert.deepEqual(calls, [true], "failed fresh demand must terminate, not poll through cached retries")
+      await reloadWorktrees(id)
+      assert.deepEqual(calls, [true, false], "a later explicit display request remains usable")
+    } finally { release(); serverApi.fetchWorktrees = original }
+  })
   it("preserves a fresh recovery demand behind an in-flight cached display read", async () => {
     const original = serverApi.fetchWorktrees
     let release!: () => void
@@ -187,7 +210,7 @@ describe("session family worktree moves", () => {
     let release!: () => void, started!: () => void
     const gate = new Promise<void>(resolve => { release = resolve })
     const reading = new Promise<void>(resolve => { started = resolve })
-    let oldRead: ((ids: ReadonlySet<string>) => void) | undefined
+    let oldRead: (() => void) | undefined
     serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: ["root", "a", "b"].map(slug => ({
       slug, directory: slug === "root" ? "/repo" : `/repo-${slug}`, kind: slug === "root" ? "root" as const : "worktree" as const,
     })) })
@@ -198,22 +221,23 @@ describe("session family worktree moves", () => {
         moveFamily: async () => {}, refreshSessions: async () => {
           oldRead = captureWorktreeMoveReconciliation(id)
           started(); await gate
-          oldRead(new Set(["s"]))
+          oldRead()
         },
       })
       await reading
       const second = setWorktreeSlugForParentSession(id, "s", "b", {
         moveFamily: async () => {
           assert.equal(getPendingWorktreeSlug(id, "s"), "b")
-          oldRead!(new Set(["s"]))
+          oldRead!()
           assert.deepEqual(new Set(getPendingWorktreeLocations(id).map(location => location.directory)), new Set(["/repo", "/repo-a", "/repo-b"]))
         }, refreshSessions: async () => { throw new Error("read unavailable") },
       })
       await new Promise<void>(resolve => setImmediate(resolve))
       release()
       await first; await second
-      assert.equal(getPendingWorktreeSlug(id, "s"), "b")
-      captureWorktreeMoveReconciliation(id)(new Set(["s"]))
+      assert.equal(getPendingWorktreeSlug(id, "s"), undefined, "selector busy state ends with its latest task, not with directory authority")
+      assert.equal(getPendingWorktreeLocations(id).length, 3)
+      captureWorktreeMoveReconciliation(id)()
       assert.equal(getPendingWorktreeSlug(id, "s"), undefined)
     } finally { release(); clearPendingWorktreeMoves(id); serverApi.fetchWorktrees = original }
   })
@@ -247,7 +271,7 @@ describe("session family worktree moves", () => {
             [root.id, { ...root, location: { directory: "/repo-feature" } }],
             [child.id, { ...child, location: { directory: "/repo-feature" } }],
           ])))
-          captureWorktreeMoveReconciliation(instanceId)(new Set([root.id, child.id]))
+          captureWorktreeMoveReconciliation(instanceId)()
         },
       })
       assert.deepEqual(calls, ["move:root:feature", "refresh"])

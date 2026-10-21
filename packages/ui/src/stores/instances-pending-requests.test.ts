@@ -20,7 +20,7 @@ import { captureWorktreeMoveReconciliation, getPendingWorktreeLocations, getPend
 import { sseManager } from "../lib/sse-manager"
 import { getToastHistory } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
-import { fetchSessions } from "./session-api"
+import { fetchSessions, removeSessionRuntimeState } from "./session-api"
 import { setInstanceMetadata } from "./instance-metadata"
 
 const permission = (id: string): PermissionRequest => ({ id, sessionID: "background", action: "read", resources: ["file"] })
@@ -340,6 +340,89 @@ for (const outcome of ["failed", "unchanged", "permission-arrival", "form-arriva
   })
 }
 
+test("a settled move clears selector busy state without releasing unreconciled directory authority", async () => {
+  const h = harness(), original = serverApi.fetchWorktrees
+  try {
+    serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "target", directory: `${h.directory}/target`, kind: "worktree" }] })
+    await reloadWorktrees(h.id)
+    const root = createClientSession({ id: "root", location: { directory: h.directory }, time: { created: 1, updated: 1 } } as any, h.id)
+    setSessions(previous => new Map(previous).set(h.id, new Map([[root.id, root]])))
+    await setWorktreeSlugForParentSession(h.id, root.id, "target", { moveFamily: async () => {}, refreshSessions: async () => {} })
+    assert.equal(getPendingWorktreeSlug(h.id, root.id), undefined, "missing metadata must not leave the selector disabled")
+    assert.equal(getPendingWorktreeLocations(h.id).length, 2, "selector settlement is not directory recovery authority")
+  } finally { serverApi.fetchWorktrees = original; h.cleanup() }
+})
+
+for (const disposition of ["native-deleted", "authoritative-remove", "outside-project", "stale-resident"] as const) {
+  test(`complete post-move scope reconciles an absent ${disposition} family member`, async () => {
+    const h = harness(), original = serverApi.fetchWorktrees, originalClient = sdkManager.createClient
+    const target = `${h.directory}/removed-target`
+    try {
+      serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "target", directory: target, kind: "worktree" }] })
+      await reloadWorktrees(h.id)
+      const root = createClientSession({ id: "scope-root", location: { directory: h.directory }, time: { created: 1, updated: 1 } } as any, h.id)
+      const child = createClientSession({ id: "scope-child", parentID: root.id, location: { directory: h.directory }, time: { created: 1, updated: 1 } } as any, h.id)
+      setSessions(previous => new Map(previous).set(h.id, new Map([[root.id, root], [child.id, child]])))
+      await setWorktreeSlugForParentSession(h.id, root.id, "target", { moveFamily: async () => {}, refreshSessions: async () => { throw new Error("read failed") } })
+      if (disposition === "native-deleted") sseManager["handleEvent"](h.id, { id: "deleted-child", created: Date.now(), durable: { aggregateID: child.id, seq: 1, version: 2 }, type: "session.deleted", location: { directory: h.directory }, data: { sessionID: child.id } })
+      if (disposition === "authoritative-remove") removeSessionRuntimeState(h.id, child.id)
+      if (disposition === "native-deleted" || disposition === "authoritative-remove") assert.equal(sessions().get(h.id)?.has(child.id), false)
+      if (disposition === "outside-project") setSessions(previous => new Map(previous).set(h.id, new Map([[root.id, root], [child.id, { ...child, location: { directory: "/other-project" } }]])))
+      let mode: "complete" | "error" | "pagination" | "activity-failure" = "complete"
+      let activeTarget = false
+      const nativeRoot = { id: root.id, projectID: "scope-project", title: "Root", location: { directory: h.directory }, time: { created: 1, updated: 2 } }
+      const nativeActive = { ...nativeRoot, id: "active-target", location: { directory: target } }
+      sdkManager.createClient = () => ({ session: {
+        list: async (input: any) => {
+          if (mode === "error" && input.project) throw new Error("inventory failed")
+          return { data: [nativeRoot, ...(activeTarget ? [nativeActive] : [])], cursor: mode === "pagination" ? { next: "repeated" } : {} }
+        }, active: async () => { if (mode === "activity-failure") throw new Error("activity failed"); return activeTarget ? { [nativeActive.id]: {} } : {} },
+      } }) as unknown as OpenCodeClient
+      await fetchSessions(h.id, { reset: true, strictStatus: true })
+      assert.equal(getPendingWorktreeLocations(h.id).length, 2, "missing project metadata is not complete scope")
+      setInstanceMetadata(h.id, { project: { id: "scope-project" } as any })
+      for (const failed of ["error", "pagination"] as const) {
+        mode = failed
+        await assert.rejects(fetchSessions(h.id, { reset: true, strictStatus: true }))
+        assert.equal(getPendingWorktreeLocations(h.id).length, 2, `${failed} is not authoritative absence`)
+      }
+      mode = "activity-failure"
+      await fetchSessions(h.id, { reset: true, strictStatus: true })
+      assert.equal(getPendingWorktreeLocations(h.id).length, 2)
+      mode = "complete"
+      setInstanceMetadata(h.id, { project: { id: "global" } as any })
+      await fetchSessions(h.id, { reset: true, strictStatus: true })
+      assert.equal(getPendingWorktreeLocations(h.id).length, 2, "directory-scoped global history cannot prove whole-project absence")
+      setInstanceMetadata(h.id, { project: { id: "scope-project" } as any })
+      serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "root", directory: h.directory, kind: "root", directoryOnly: true }] })
+      await reloadWorktrees(h.id)
+      await fetchSessions(h.id, { reset: true, strictStatus: true })
+      assert.equal(getPendingWorktreeLocations(h.id).length, 2, "directory-only coverage is not a complete owned project inventory")
+      serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: h.directory, kind: "root" }] })
+      await reloadWorktrees(h.id)
+      await fetchSessions(h.id, { reset: true, strictStatus: true })
+      await fetchSessions(h.id, { reset: true, strictStatus: true })
+      assert.deepEqual(getPendingWorktreeLocations(h.id), [], "complete current scope proves absence; old resident IDs must not pin the hold")
+      serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+        assert.ok(!optional?.includes(target), "active/known placements remain required independently of move holds")
+        return { supported: true, directories: directories.map(directory => directory === target
+          ? { directory, status: "error" as const, reason: "missing" as const }
+          : { directory, status: "ok" as const, locations: [emptyLocation(directory)] }) }
+      }
+      activeTarget = true
+      await fetchSessions(h.id, { reset: true, strictStatus: true })
+      assert.equal(sessions().get(h.id)?.get(nativeActive.id)?.status, "working")
+      await assert.rejects(syncPendingRequests(h.id))
+      removeSessionRuntimeState(h.id, nativeActive.id)
+      addPermissionToQueue(h.id, permission("still-known"), target)
+      addPendingForm(h.id, form("still-known"), target)
+      await assert.rejects(syncPendingRequests(h.id))
+      assert.equal(getPermissionQueue(h.id)[0]?.id, "still-known")
+      assert.equal(getFormQueue(h.id)[0]?.id, "still-known")
+    } finally { serverApi.fetchWorktrees = original; sdkManager.createClient = originalClient; h.cleanup() }
+  })
+}
+
 test("a failed partial family move retains source/target authority until complete post-move native reconciliation", async () => {
   const h = harness(), original = serverApi.fetchWorktrees
   const originalClient = sdkManager.createClient
@@ -359,7 +442,7 @@ test("a failed partial family move retains source/target authority until complet
         mutations++
         // Native may have moved only one member before a lost reply/failed rollback.
         setSessions(previous => new Map(previous).set(h.id, new Map([[root.id, root], [child.id, { ...child, location: { directory: deleted } }]])))
-        captureWorktreeMoveReconciliation(h.id)(new Set([root.id, child.id]))
+        captureWorktreeMoveReconciliation(h.id)()
         assert.equal(getPendingWorktreeLocations(h.id).length, 2, "a read started during native effects cannot settle the move")
         throw new Error("partial move; rollback state unavailable")
       },
@@ -367,10 +450,9 @@ test("a failed partial family move retains source/target authority until complet
     }))
     assert.equal(mutations, 1)
     assert.equal(refreshes, 2)
-    assert.equal(getPendingWorktreeSlug(h.id, child.id), "target")
-    preMoveRead(new Set([root.id, child.id]))
-    captureWorktreeMoveReconciliation(h.id)(new Set([root.id]))
-    assert.equal(getPendingWorktreeLocations(h.id).length, 2, "old or incomplete inventories cannot settle unknown family effects")
+    assert.equal(getPendingWorktreeSlug(h.id, child.id), undefined, "settled failure must not leave the selector busy")
+    preMoveRead()
+    assert.equal(getPendingWorktreeLocations(h.id).length, 2, "a read begun before the move cannot settle unknown family effects")
     serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: h.directory, kind: "root" }] })
     await reloadWorktrees(h.id)
     serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {

@@ -21,7 +21,7 @@ const pendingWorktreeRefreshes = new Set<string>()
 const freshWorktreeRefreshes = new Set<string>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
-const unreconciledFamilyMoves = new Map<string, { instanceId: string; sessionIds: string[]; directories: string[]; settled: boolean; request: Promise<void> }>()
+const unreconciledFamilyMoves = new Map<string, { instanceId: string; directories: string[]; settled: boolean; request: Promise<void> }>()
 const [pendingFamilyMoveSlugs, setPendingFamilyMoveSlugs] = createSignal(new Map<string, string>())
 const defaultDirectories = new Map<string, string>()
 
@@ -56,7 +56,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
       })
     } catch (error) {
       log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
-      if (!initialRead) throw error
+      if (!initialRead || freshRead) throw error
 
       setWorktreesByInstance((prev) => {
         const next = new Map(prev)
@@ -83,7 +83,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
       try {
         await load(initialRead, freshRead)
       } catch (error) {
-        if (!pendingWorktreeRefreshes.has(instanceId)) throw error
+        if (freshRead || !pendingWorktreeRefreshes.has(instanceId)) throw error
       }
       initialRead = false
     } while (pendingWorktreeRefreshes.has(instanceId))
@@ -266,17 +266,17 @@ export function clearPendingWorktreeMoves(instanceId: string): void {
   })
 }
 
-/** Only a complete native family inventory plus fresh activity can release an
+/** Only a complete owned project inventory plus fresh activity can release an
  * uncertain move's locations. Capture before I/O so an older read cannot settle
- * a newer or still-running move. This never retries a mutation. */
+ * a newer or still-running move. Absence from that scope is authoritative too;
+ * deleted or moved-away member IDs must not pin these directories forever.
+ * This never retries a mutation and does not own selector busy state. */
 export function captureWorktreeMoveReconciliation(instanceId: string) {
   const captured = [...unreconciledFamilyMoves].filter(([, move]) => move.instanceId === instanceId && move.settled)
-  return (sessionIds: ReadonlySet<string>) => {
+  return () => {
     for (const [key, move] of captured) {
-      if (unreconciledFamilyMoves.get(key) !== move || (familyMoveRequests.has(key) && familyMoveRequests.get(key) !== move.request)
-        || !move.sessionIds.every(id => sessionIds.has(id))) continue
+      if (unreconciledFamilyMoves.get(key) !== move || (familyMoveRequests.has(key) && familyMoveRequests.get(key) !== move.request)) continue
       unreconciledFamilyMoves.delete(key)
-      setPendingFamilyMoveSlugs(previous => { const next = new Map(previous); next.delete(key); return next })
     }
   }
 }
@@ -312,7 +312,7 @@ async function setWorktreeSlugForParentSession(
   const task: Promise<void> = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
     const family = [...(sessions().get(instanceId)?.values() ?? [])].filter(session => getParentSessionId(instanceId, session.id) === rootSessionId)
     const prior = unreconciledFamilyMoves.get(key)
-    const recovery = { instanceId, sessionIds: [...new Set([rootSessionId, ...family.map(session => session.id), ...(prior?.sessionIds ?? [])])],
+    const recovery = { instanceId,
       directories: [...new Set([targetDirectory, ...family.map(session => session.location.directory), ...(prior?.directories ?? [])])], settled: false, request: task }
     unreconciledFamilyMoves.set(key, recovery)
     let moveError: unknown
@@ -344,7 +344,7 @@ async function setWorktreeSlugForParentSession(
   await task.finally(() => {
     if (familyMoveRequests.get(key) !== task) return
     familyMoveRequests.delete(key)
-    if (!unreconciledFamilyMoves.has(key)) setPendingFamilyMoveSlugs(previous => {
+    setPendingFamilyMoveSlugs(previous => {
       const next = new Map(previous)
       next.delete(key)
       return next
