@@ -54,8 +54,12 @@ runtime-handle clones/drops on eight workers, followed by teardown. It opens
 no visible window and uses no web page, CodeNomad data, backend or daemon.
 Every corrected run must exit successfully. The optional negative control
 copies the same crate and lockfile, reverses only the counter correction,
-and requires a native fault within ten isolated processes. A surviving
-negative-control process is reported explicitly, not counted as a fault.
+and runs up to fifty isolated processes, stopping at the first native fault.
+A surviving negative-control process is reported explicitly, not counted as a
+fault. The race is timing-dependent: about half of the GitHub Windows runners
+sampled on 2026-10-21 reproduced it within ten processes (1 to 8 faults) and
+the others never did, so a series without a fault emits a warning instead of
+failing; the corrected runs remain the regression check.
 
 Initial diagnosis: the original build failed in all three stress runs;
 the corrected build completed all five runs (four million clones total).

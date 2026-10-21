@@ -78,8 +78,9 @@ or a general guarantee that Tao window targets are safe to use across threads.
 
 `node scripts/test-tauri-runner-refcount.mjs --baseline` calls the real pinned
 Wry runtime's safe public handle API on eight workers. The negative control
-reverts only the counter in a temporary crate copy and requires a native fault;
-the corrected build must finish every run and tear down cleanly. It uses no
+reverts only the counter in a temporary crate copy and stops at its first native
+fault, warning when a machine never reproduces the timing-dependent race; the
+corrected build must finish every run and tear down cleanly. It uses no
 CodeNomad profile, page, backend or OpenCode service. Individual negative-control
 processes can survive a race that leaks instead of freeing early.
 
