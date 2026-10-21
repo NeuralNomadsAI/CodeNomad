@@ -8,7 +8,7 @@ Three independent notions:
 | Update feed | Which releases are offered: `stable` or `preview` | The user, in Settings → Info → Updates (`server.updateFeed`) | Update offers only. Until chosen, `-dev-*` builds default to preview, others to stable. |
 | Data profile | Which desktop state is used: windows, tabs, drafts, WebView/Chromium storage, singleton and CodeNomad backend | Developers, explicitly, with `CODENOMAD_PROFILE` | Desktop data only. |
 
-OpenCode sessions and messages live in the shared OpenCode daemon and are the same in every profile. Server configuration (`CLI_CONFIG`, default `~/.config/codenomad/config.yaml`) is also independent of the profile; a non-default config file still gets its own scope, as before.
+OpenCode sessions and messages live in the shared OpenCode daemon and are the same in every profile. Server configuration (`CLI_CONFIG`, default `~/.config/codenomad/config.yaml`) is also independent of the profile; a non-default config file gets its own scope.
 
 ## Selecting a profile
 
@@ -16,7 +16,7 @@ Precedence, evaluated by both Electron (`electron/main/data-profile.ts`) and Tau
 
 1. `CODENOMAD_PROFILE=<name>` — explicit profile.
 2. `CODENOMAD_UPDATE_CHANNEL=<value>` — deprecated alias, only when `CODENOMAD_PROFILE` is unset or blank.
-3. Unpackaged (npm/dev) runs — the `dev` profile, as before.
+3. Unpackaged (npm/dev) runs — the `dev` profile.
 4. Packaged builds — the remembered choice, otherwise the one-time transition below, otherwise the default profile.
 
 Updating CodeNomad or changing the update feed never changes the profile.
@@ -27,11 +27,11 @@ After trimming ASCII whitespace and lowercasing ASCII letters: 1–64 characters
 
 ### Storage
 
-The default profile with the default config uses the historical unscoped locations (`~/.codenomad/client-state/v2`, Electron's `userData`, Tauri's stable identifier and WebView directory). Every other profile/config pair uses `<scope> = <key>-sha256(key + "\0" + configIdentity)[0..16]`, i.e. `%APPDATA%/CodeNomad/scopes/<scope>` (Electron `userData` and both hosts' client state) and `…-v2/scopes/<scope>` (Tauri WebView), plus a scoped Tauri identifier. The default profile's key is `stable`, so existing folders such as `dev-<hash>` and `dev-v2-<hash>` are reached with `CODENOMAD_PROFILE=dev` / `dev-v2`.
+The default profile with the default config uses the unscoped locations (`~/.codenomad/client-state/v2`, Electron's `userData`, Tauri's stable identifier and WebView directory). Every other profile/config pair uses `<scope> = <key>-sha256(key + "\0" + configIdentity)[0..16]`, i.e. `%APPDATA%/CodeNomad/scopes/<scope>` (Electron `userData` and both hosts' client state) and `…-v2/scopes/<scope>` (Tauri WebView), plus a scoped Tauri identifier. The default profile's key is `stable`, so existing folders such as `dev-<hash>` and `dev-v2-<hash>` are reached with `CODENOMAD_PROFILE=dev` / `dev-v2`.
 
-The alias keeps each host's historical normalization exactly (Electron lowercases Unicode and turns each run of other characters into `-`; Tauri lowercases ASCII and collapses separators), so existing alias values map to the same scope as before. One quirk is preserved deliberately: `CODENOMAD_UPDATE_CHANNEL=default` still means the old `default-<hash>` scope, whereas `CODENOMAD_PROFILE=default` is the default profile.
+The alias uses each host's own normalization (Electron lowercases Unicode and turns each run of other characters into `-`; Tauri lowercases ASCII and collapses separators); keep both exactly, since changing either moves alias scopes. `CODENOMAD_UPDATE_CHANNEL=default` selects the `default-<hash>` scope, whereas `CODENOMAD_PROFILE=default` is the default profile.
 
-Non-ASCII config paths on Windows: each host folds the config identity's case differently (Electron uses Unicode lowercase, Tauri ASCII lowercase), so for a path such as `C:\Users\Émile\…` the two hosts compute different scope hashes. This divergence predates profiles and is deliberately kept: changing either fold would move existing scoped folders. The new choices file does not inherit it (see below).
+Non-ASCII config paths on Windows: each host folds the config identity's case differently (Electron uses Unicode lowercase, Tauri ASCII lowercase), so for a path such as `C:\Users\Émile\…` the two hosts compute different scope hashes. Keep this divergence: changing either fold would move scoped folders. The choices file uses one shared fold (see below).
 
 The host passes `CODENOMAD_DESKTOP_PROFILE=<name>` to its backend for non-default profiles; Settings → Info then shows a "Data profile" row. The default profile is never announced in that row. Separately, every backend launch (the default profile included, as key `stable`) receives the resolved scope that the backend uses as its Mission profile scope: `CODENOMAD_UPDATE_CHANNEL=<profile key>`, `CODENOMAD_PROFILE_CONFIG_IDENTITY=<config identity>` and the selected `CLI_CONFIG`. Tauri applies these only to the backend `Command`, never through a process-wide `set_var`. They are backend-only: the backend strips them, `CODENOMAD_PROFILE`, `CODENOMAD_DESKTOP_PROFILE` and the private hand-offs from the environment of the shared OpenCode daemon it starts (`workspaces/host-opencode-service.ts`), so agent shells never pin a desktop launched from them to this profile.
 
@@ -55,7 +55,7 @@ Dismissing the question: with one or two candidates the dialog has a Quit button
 
 ## Deleting other saved profiles
 
-A profile is only saved desktop state, so Settings → General → Startup offers to delete the others. The row "Other saved profiles: N profiles, X — Delete…" appears below the restore settings only when at least one other profile exists on this machine; a normal user with only the default profile never sees it. It works in main windows and in the desktop Preferences window, and is hidden in a plain browser and in remote windows. "Clear saved state" is unchanged and only affects the current window.
+A profile is only saved desktop state, so Settings → General → Startup offers to delete the others. The row "Other saved profiles: N profiles, X — Delete…" appears below the restore settings only when at least one other profile exists on this machine; a normal user with only the default profile never sees it. It works in main windows and in the desktop Preferences window, and is hidden in a plain browser and in remote windows. "Clear saved state" only affects the current window.
 
 **Which profiles.** Every data profile on this machine except the open one: each `scopes/<key>-<hash>` folder under Electron's userData base or the Tauri WebView root (any config identity, including legacy-alias keys; profiles of another config are labelled "other configuration"), the default profile when the open one is scoped (named, or the default profile of a non-default config), and Tauri lock folders `ai.neuralnomads.codenomad.client.scope.s<hash>` whose hash matches no scope folder (shown as unused lock folders). The listing is computed when the card mounts or on explicit refresh, never polled, read-only, reading at most 10 000 names and keeping at most 512 profiles per root, with a size walk of at most 20 000 entries and depth 32 per profile (the size is then shown as "at least X").
 
@@ -85,4 +85,4 @@ Known limits: the Tauri singleton itself is not file-based; a Tauri instance is 
 - Tauri: `data_profile`, `profile_transition`, `profile_selection_dialog`, `client_state::restorable`, `identity`, `data_profile_cleanup` tests.
 - UI: `tests/browser/server-info.test.ts` (Data profile row), `tests/browser/other-profiles.test.ts` (other profiles row in Preferences and inline).
 
-The real native dialogs (Electron relaunch flow, rfd on Windows/macOS/Linux) are not covered by automated tests. Profile deletion is tested against temporary roots, not against a running second host; Chromium singleton files are simulated at the location derived from main.ts ordering, not captured from a live instance.
+The real native dialogs (Electron relaunch flow, rfd on Windows/macOS/Linux) need manual checks. Profile deletion is tested against temporary roots, with Chromium singleton files simulated at the location derived from main.ts ordering; a running second host needs a manual check.

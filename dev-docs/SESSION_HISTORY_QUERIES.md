@@ -2,10 +2,10 @@
 
 ## Entry points
 
-The existing non-modal transcript search window (Ctrl/Cmd+F or the header toggle)
-can query the entire session or workspace. It displays paginated excerpts and
-page-local progress from that search alone. The command palette's existing remove-tools-and-
-reasoning command plans against the same stored history. Navigation:
+The non-modal transcript search window (Ctrl/Cmd+F or the header toggle) can
+query the entire session or workspace. It displays paginated excerpts and
+page-local progress from that search alone. The command palette's
+remove-tools-and-reasoning command plans against the same stored history. Navigation:
 [SESSION_HISTORY_NAVIGATION.md](SESSION_HISTORY_NAVIGATION.md).
 
 Both paths use the bundled `codenomad-session-pruning` plugin's authenticated RPC,
@@ -14,11 +14,11 @@ with two fixed CodeNomad routes:
 - `POST /api/workspaces/:id/session-history/query` → `history`
 - `POST /api/workspaces/:id/session-history/prune` → `pruneBatch`
 
-No generic RPC, caller-supplied SQL, database filename, replacement content or
-caller-selected directory is exposed. The normal daemon and plugin provisioning
-lifecycle remains in charge. The plugin performs a fresh `ctx.storage` challenge
-to bind a read-only SQLite connection to this daemon. That challenge changes
-temporary plugin KV state, not session content.
+Never expose generic RPC, caller-supplied SQL, a database filename, replacement
+content or a caller-selected directory. The normal daemon and plugin provisioning
+lifecycle governs the plugin. The plugin performs a fresh `ctx.storage` challenge
+to bind a read-only SQLite connection to this daemon; that challenge writes only
+temporary plugin KV state.
 
 ## Scope and resource limits
 
@@ -37,11 +37,10 @@ clones that share a native project ID. This provenance is stripped from HTTP out
 Content counts and pruning pages examine at most 32 rows. Search and message-only
 counts examine up to 1024 rows, stopping at 32 matching messages or 32 contributing
 sessions. All scans yield to the native event loop between rows and end the page
-after roughly 40 ms of processing. JSON is materialized one message at a time,
-limited to 16 MiB. This is not a strict SQL execution
-deadline: a SQLite statement/JSON parse cannot be interrupted at that granularity.
+after roughly 40 ms of processing; a running SQLite statement or JSON parse
+finishes first. JSON is materialized one message at a time, limited to 16 MiB.
 Oversized or unsupported content is counted as skipped and reported to the UI.
-There is no new index, trigger, FTS table or persistent transcript copy.
+Never add an index, trigger, FTS table or persistent transcript copy.
 
 Cursors bind scope and query; the broker also binds the authorized directory
 inventory. A rowid horizon excludes new rows appended during each location scan.
@@ -50,30 +49,29 @@ query scans nothing. Its progress (visible results and messages scanned for the
 current page) updates as batches arrive and resets on pagination or a new search.
 The technical-content switch changes only the search, never triggering a
 tools/reasoning count.
-The separate stats RPC remains available for explicit callers; message-only
-stats read metadata without decoding JSON.
-A traversal is not one long database transaction: concurrent edits/deletes/moves
-can affect later pages, and different locations start at different times.
+The separate stats RPC serves explicit callers; message-only stats read metadata
+without decoding JSON. A traversal spans many reads: concurrent
+edits/deletes/moves can affect later pages, and different locations start at
+different times.
 
 Search is literal and case-insensitive, with one matching excerpt per message
 (up to 320 characters), in stored row order. It searches text, reasoning, tool
 names/arguments/text output/errors and readable native user/system/synthetic/
-skill/shell/compaction text. Attachments and opaque continuation state are not
-searched. With the technical-content switch off, SQLite projects only readable
-text into JavaScript, retaining original part positions. It still reads/parses the
-stored JSON, but does not materialize tool output, images or provider state in JS.
+skill/shell/compaction text, skipping attachments and opaque continuation state.
+With the technical-content switch off, SQLite reads/parses the stored JSON
+but projects only readable text into JavaScript, retaining original part positions.
 The UI combines scan batches until it has at least 32 results or reaches the end,
 displaying partial results as they arrive. It retains one bounded result page
 (at most 63 hits, to retain the final transport batch without losing its cursor).
-The next-results action advances to the next page, not the next 32 scanned rows.
+The next-results action advances by result page, independently of scanned rows.
 Ownership checks are shared by identical locations only within each broker request
 and revalidated on subsequent requests. Closing the window,
 changing query/scope or leaving the session cancels obsolete UI work. Resident matches scroll to their existing row without a network read.
 
 Workspace results group consecutive hits by session. Each group names its
 conversation and the worktree (label, normally its branch) that currently holds
-the session's native location; hits carry no commit, since a message is not
-bound to one. Titles and locations come from the session store, or from one
+the session's native location; never label hits with a commit (messages have
+none). Titles and locations come from the session store, or from one
 `session.get` per distinct unloaded session (older catalog pages, collapsed
 subsessions), at most four in flight. These display reads never add sessions
 to the list. Queued reads follow the visible results: a new query or page drops
@@ -88,22 +86,22 @@ through its normal anchor path.
 ## Cleanup semantics
 
 Planning returns compact message IDs, content hashes and technical-part counts;
-it does not download transcripts. The existing confirmation reports eligible
+it never downloads transcripts. The confirmation reports eligible
 tools/reasoning and explicitly reports skipped content. Execution sends at most
-16 candidates per RPC. Each message independently uses the existing synchronous
+16 candidates per RPC. Each message independently uses the synchronous
 write transaction, fresh DB challenge, durable native claim/ownership checks,
 content revision comparison and atomic receipt. Part indexes are computed from
 the authorized stored content inside that transaction.
 
 Text and message/session metadata remain intact. A changed message is refused
 rather than silently expanding what the user confirmed. Pre-compaction messages
-are included; active/incomplete content is not pruned. Whole-session cleanup is
-not all-or-nothing: a later conflict does not undo successful earlier messages.
+are included; active/incomplete content is skipped. Whole-session cleanup commits
+per message: a later conflict leaves earlier successful messages pruned.
 Progress and cancellation are displayed above the transcript. Cancellation stops
 future batches; an already dispatched batch may commit. Ambiguous acknowledgments
 invalidate the active window; identical retries use the same durable receipts.
 The ordinary custom pruning events coalesce native-window refreshes in other
-clients. No command creates or resumes generation.
+clients. Cleanup never creates or resumes generation.
 
 ## Validation
 
@@ -118,8 +116,8 @@ asserts that searches/counts and selected previews never page the transcript.
 fixture: 241 imported synthetic messages, counts, search, cleanup and exact batch
 replays against a real daemon; a second session verifies all 242 text-only
 workspace matches. The parent fixture also checks active-generation refusal and
-pre-compaction discovery. Never point it at a user's DB or shared daemon; native
-Windows, browser rendering and other platforms are separate validation claims.
+pre-compaction discovery. Never point it at a user's DB or shared daemon; report
+native Windows, browser rendering and other platforms as separate validation claims.
 
 `node scripts/benchmark-session-history.mjs [baseline-ref]` compares local scan
 cost (synthetic in-memory database, excluding broker/RPC) with a Git revision,

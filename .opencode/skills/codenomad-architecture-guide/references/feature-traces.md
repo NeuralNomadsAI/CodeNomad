@@ -7,7 +7,7 @@
 3. The adapter runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle and validates the authenticated loopback endpoint. WSL requires Windows localhost forwarding and stays inside the Linux namespace.
 4. `client.location.get` validates the directory and returns its native project metadata and directory-only public location.
 5. CodeNomad publishes workspace events on `/api/events` and exposes `/workspaces/:id/instance` as the authorized native API proxy.
-6. Closing a project tab deletes that occurrence's logical workspace without evicting its native Location; sessions continue. Other windows displaying the same record close its tab via `workspace.stopped` and notify, unlike the initiating window. Separate occurrences are unaffected. Whole-window close, quit and reload preserve restoration behavior; backend shutdown only clears connection state. Neither close nor shutdown stops the daemon.
+6. Closing a project tab deletes that occurrence's logical workspace without evicting its native Location; sessions continue. Other windows displaying the same record close its tab via `workspace.stopped` and notify, unlike the initiating window. Separate occurrences are unaffected. Whole-window close, quit and reload preserve restoration behavior; backend shutdown only clears connection state. The daemon keeps running through close and shutdown.
 
 ## Prompt, Shell, Instructions, And PTYs
 
@@ -16,11 +16,9 @@
 3. A normal prompt calls `client.session.prompt`; `!` shell mode calls native `client.session.shell`. Native Shell remains separate from PTY management.
 4. The Status panel lists native background Shells for the active location, displays their native metadata, and refreshes on Shell events and reconnect.
 5. Removal uses native Shell APIs; the proxy verifies native `cwd` ownership before every ID-scoped operation and preserves output cursors.
-6. Interactive PTYs use separate `pty.*` APIs and are not background-process records.
-7. The proxy checks directory/session ownership and forwards to the shared service's `/api/*` route.
+6. Interactive PTYs use the separate `pty.*` APIs.
+7. The proxy checks directory/session ownership, applies the profile's session environment before prompt/command/shell sends (`workspaces/session-environment.ts`) and forwards to the shared service's `/api/*` route.
 8. One upstream event subscription feeds `InstanceEventBridge`, then CodeNomad `/api/events`, then UI stores.
-
-No CodeNomad OpenCode plugin participates in this flow. `packages/opencode-plugin` and server plugin/background-process paths remain deleted and must not be restored.
 
 ## Permission And Yolo
 
@@ -37,12 +35,12 @@ No CodeNomad OpenCode plugin participates in this flow. `packages/opencode-plugi
 2. Stage, unstage and commit post to corresponding `git-stage`, `git-unstage` and `git-commit` routes.
 3. The server resolves the owned worktree directory, validates relative paths/messages, and runs Git in `packages/server/src/workspaces/git-mutations.ts`.
 
-Do not replace mutation routes with OpenCode file/status calls; CodeNomad owns this write boundary.
+Never replace mutation routes with OpenCode file/status calls; CodeNomad owns this write boundary.
 
 ## Events
 
 - OpenCode events: shared `client.event.subscribe()` -> `InstanceEventBridge` -> `EventBus`.
 - CodeNomad events: workspace/Git-adjacent policy/Yolo producers -> `EventBus`.
 - Browser transport: `GET /api/events` with heartbeat/pong via `/api/client-connections/pong`.
-- The native stream is volatile. On reconnect, refetch authoritative session/pending-request/file/config state rather than expecting replay.
-- Current invalidations use `filesystem.changed` and `config.updated`; session lifecycle/output uses `session.created`, `session.renamed`, `session.moved`, `session.execution.*` (OpenCode never publishes the declared `session.status`/`session.idle`), `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.
+- The native stream is volatile. On reconnect, refetch authoritative session/pending-request/file/config state.
+- Invalidations use `filesystem.changed` and `config.updated`; session lifecycle/output uses `session.created`, `session.renamed`, `session.moved`, `session.execution.*` (OpenCode never publishes the declared `session.status`/`session.idle`), `session.compaction.*`, `session.text.*`, `session.reasoning.*`, and `session.tool.*`.

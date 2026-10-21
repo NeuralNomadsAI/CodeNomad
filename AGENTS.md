@@ -17,24 +17,24 @@ Rules here apply everywhere. Before changing code in an area listed under [Area 
 ## Coding Principles
 - Keep modules narrowly scoped with only the public API callers need (KISS); share helpers through dedicated modules instead of copy/paste (DRY); split files when concerns diverge (state, actions, API, events); prefer composable primitives (signals, hooks, utilities) over deep inheritance or implicit global state; isolate platform integrations (SSE, IPC, SDK) in thin adapters surfacing typed events/actions.
 - Follow `dev-docs/CACHE_REFRESH_CONVENTIONS.md` for display snapshots, coalesced trailing refreshes, stale-response fencing and authoritative mutation reads. Check existing feature semantics before adding another cache or refresh policy.
-- CodeNomad integrates with an independently installed and updated OpenCode service: compatibility depends on the API/capability contracts actually consumed, not on the versions pinned to build or test CodeNomad (those pins only make its own build reproducible). Never turn tested versions into a daemon allowlist or block a runtime/feature only because its version is untested; a version-specific restriction needs a demonstrated failing test or an identified breaking change in a consumed contract, cited with why the restriction is necessary. Review upstream changes and affected callers rigorously (private API use needs contract scrutiny); exhaustive testing of unchanged contracts is not required. "Tested with" does not mean "works only with". Missing capabilities must fail safely without destructive or mass-loading fallbacks.
-- The user explicitly forbids modifying OpenCode for Missions autonomy: use and qualify existing native service/plugin mechanisms, and never infer an upstream-extension requirement from the absence of a named scheduling API.
+- CodeNomad integrates with an independently installed and updated OpenCode service: compatibility depends only on the API/capability contracts actually consumed; the versions pinned to build or test CodeNomad only make its own build reproducible. Never turn tested versions into a daemon allowlist or block a runtime/feature only because its version is untested; a version-specific restriction needs a demonstrated failing test or an identified breaking change in a consumed contract, cited with why the restriction is necessary. Review upstream changes and affected callers rigorously (private API use needs contract scrutiny) instead of exhaustively retesting unchanged contracts. Missing capabilities must fail safely without destructive or mass-loading fallbacks.
+- Never modify OpenCode for Missions autonomy: use and qualify existing native service/plugin mechanisms, and never infer an upstream-extension requirement from the absence of a named scheduling API.
 
 ## Area conventions
 Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 
-- **Missions** (`missions/`, `opencode/missions-plugin.ts`, `server/routes/mission-*`, `host-lifetime/`; UI `components/mission-*`, `components/settings/missions-settings-section.tsx`, `stores/mission-*`, `styles/panels/mission-*`): `dev-docs/MISSIONS.md`; recurring schedules and Wayfinder human gates (its "Wayfinder human decision mark" section) `dev-docs/MISSIONS_RECURRING_SIMPLE.md`.
+- **Missions** (`missions/`, `opencode/missions-plugin.ts`, `server/routes/mission-*`, `host-lifetime/`; UI `components/mission-*`, `components/settings/missions-settings-section.tsx`, `stores/mission-*`, `styles/panels/mission-*`): `dev-docs/MISSIONS.md`; recurring schedules and Wayfinder human gates (its "Wayfinder human decision mark" section) `dev-docs/MISSIONS_RECURRING.md`.
 - **Questions, permissions and pending-request recovery** (interruption dock, permission receipts, `question-data.ts`, `server/routes/pending-requests.ts`, `workspaces/pending-discovery.ts`, `stores/pending-recovery-*`): `dev-docs/NATIVE_INTERRUPTION_UX.md`.
 - **Composer** (`components/prompt-input*`, `prompt-input/`, `PromptContextControls`, `/btw`): `dev-docs/COMPOSER.md`.
 - **Transcript** (message rendering, Message content and presets, token lines, tool renderers, `stores/message-v2/`, `stores/opencode-data.ts`, `lib/native-execution-events.ts`): `dev-docs/TRANSCRIPT.md`; long-text bounds `dev-docs/TEXT_DISPLAY_BOUNDS.md`.
 - **Timeline, transcript scrolling and history search** (`virtual-follow-list.tsx`, `timeline-*`, `stores/timeline-previews.ts`, history search): `dev-docs/SESSION_HISTORY_NAVIGATION.md`, `dev-docs/SESSION_HISTORY_QUERIES.md`.
 - **Shell, panels, tabs, session sidebar and native menus** (`instance/shell/`, `tab-scroll.tsx`, session list, `lib/native/menu-labels*`): `dev-docs/UI_SHELL.md`.
 - **Dialogs, utility windows, icon toggles, surfaces and scrollbars** (`alert-dialog.tsx`, `dismissible-window.tsx`, auth recovery, `styles/utilities.css`, `index.css`): `dev-docs/UI_CONVENTIONS.md`.
-- **Settings and Preferences** (settings rows/actions, Preferences window and project context, Providers/Web search, Stats, notifications, bug report): `dev-docs/SETTINGS.md`; provider accounts and usage `dev-docs/PROVIDER_ACCOUNTS_UX_PLAN.md`; hotkeys `dev-docs/HOTKEYS.md`; palettes `dev-docs/PALETTE_SOURCES.md`; plugin controls `dev-docs/PLUGIN_ACTIVATION_CONTROLS.md`; right-panel customization and panel extensions `dev-docs/PANEL_EXTENSIONS.md`.
+- **Settings and Preferences** (settings rows/actions, Preferences window and project context, Providers/Web search, Stats, notifications, bug report): `dev-docs/SETTINGS.md`; provider accounts and usage `dev-docs/PROVIDER_ACCOUNTS.md`; hotkeys `dev-docs/HOTKEYS.md`; palettes `dev-docs/PALETTE_SOURCES.md`; plugin controls `dev-docs/PLUGIN_CONTROLS.md`; right-panel customization and panel extensions `dev-docs/PANEL_EXTENSIONS.md`.
 - **Projects and tabs** (closing tabs, temporary workspaces, new-instance launcher, Git-unavailable mode): `dev-docs/PROJECTS.md`.
 - **Files panel and Git** (Workspace/Changes/Commits, file watches, Git init, whitespace filter): `dev-docs/FILES_PANEL.md`.
 - **Worktrees and event ownership** (`workspaces/native-worktrees.ts`, `workspaces/worktree-inventory.ts`): `dev-docs/WORKTREE_SESSION_PLACEMENT.md`.
-- **OpenCode runtime, setup, upgrades and OpenCode settings**: `dev-docs/OPENCODE_V2_POST_BETA.md`; bundled plugin builds, provisioning, presence readiness and the event relay: `dev-docs/OPENCODE_V2_COMPATIBILITY.md`; connection budget: `dev-docs/CACHE_REFRESH_CONVENTIONS.md`; session environment: `dev-docs/SESSION_ENVIRONMENT.md`; pruning: `dev-docs/SESSION_PRUNING_RPC.md`.
+- **OpenCode runtime, setup, upgrades and OpenCode settings**: `dev-docs/OPENCODE_RUNTIME_SETUP.md`; bundled plugin builds, provisioning, presence readiness and the event relay: `dev-docs/OPENCODE_COMPATIBILITY.md`; connection budget: `dev-docs/CACHE_REFRESH_CONVENTIONS.md`; session environment: `dev-docs/SESSION_ENVIRONMENT.md`; pruning: `dev-docs/SESSION_PRUNING_RPC.md`.
 - **Remote Control and Remote Access settings**: `dev-docs/REMOTE_CONTROL.md`; **SideCars**: `dev-docs/architecture.md`.
 - **Browser previews and automation**: `dev-docs/BROWSER_AUTOMATION.md`, `dev-docs/BROWSER_DEVICE_EMULATION.md`.
 - **Desktop hosts**: data profiles `dev-docs/DESKTOP_DATA_PROFILES.md`; updates and update feed `dev-docs/TAURI_UPDATER.md`; Tao/Tauri backports `packages/tauri-app/vendor/README.md`; bundled Node/npm `dev-docs/RUNTIME_MAINTENANCE.md`.
@@ -42,10 +42,10 @@ Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 
 ## Multi-Language Support (i18n)
 
-Never hardcode user-visible strings. The UI uses a small custom i18n layer (`packages/ui/src/lib/i18n/index.tsx`, no ICU/messageformat).
+Never hardcode user-visible strings. The UI uses a small custom i18n layer (`packages/ui/src/lib/i18n/index.tsx`).
 - Use `useI18n()` (`const { t } = useI18n();`) in components and `tGlobal(...)` in stores/non-component code; never import `enMessages` in feature code.
 - Messages are flat dot-key TypeScript objects (`"flat.dot.keys": "string"`) in `packages/ui/src/lib/i18n/messages/<locale>/`, merged by each locale's `index.ts` via `messages/merge.ts` (duplicate keys throw at build time). Add a string to the right `en/*.ts` part file and the same key to every other locale's matching file: missing keys silently fall back to English, then the key.
-- Placeholders are simple `{name}` replacements (word characters only, not `{file-name}`); plurals use separate keys such as `something.one`/`something.other`, chosen in code.
+- Placeholders are simple `{name}` replacements (word characters only; never `{file-name}`); plurals use separate keys such as `something.one`/`something.other`, chosen in code.
 - A new language needs a `messages/<locale>/` folder + `index.ts`, an entry in `SUPPORTED_LOCALES` (`lib/i18n/index.tsx`) and an option in `components/locale-selector.tsx`.
 - The selected locale is the `locale` app preference, persisted via the server config (default `~/.config/codenomad/config.yaml`; `config.json` is migration input only).
 
@@ -55,15 +55,15 @@ File size is a refactoring signal, never by itself a reason to refactor. When a 
 
 ## Tooling Preferences
 - Modify existing files with the `edit` tool; use `write` only to create new files.
-- Browser rendering regressions live in `packages/ui/tests/browser/` (deterministic HTTP fixtures in `fixtures/`) and exercise the real Solid components and native event dispatcher, never reimplemented rendering logic. Run `npm run test:browser --workspace @codenomad/ui` after `npx playwright install chromium`; `CODENOMAD_BROWSER_PATH` may select an existing Chromium executable and never targets the installed application or user sessions.
+- Browser rendering regressions live in `packages/ui/tests/browser/` (deterministic HTTP fixtures in `fixtures/`) and exercise the real Solid components and native event dispatcher, never reimplemented rendering logic. Run `npm run test:browser --workspace @codenomad/ui` after `npx playwright install chromium`; `CODENOMAD_BROWSER_PATH` may select an existing Chromium executable.
 - Concurrent Vite browser fixtures use `tests/browser/fixture-cache.ts` for per-server optimized-dependency caches; close the server before disposing its owned temporary cache. Never clear the checkout's shared cache to repair a fixture or make parallel tests share mutable optimizer output.
 
-## V2 Runtime Launch
-- Native automation instrumentation starts automatically; no Developer Mode toggle or activation restart is required. Do not configure a fixed CDP port or a manual WebView2 profile.
+## Desktop Runtime Launch
+- Native automation instrumentation starts automatically. Do not configure a fixed CDP port or a manual WebView2 profile.
 - Rebuild Electron before calling `codenomad.act({ action: "restart" })`. For Windows Tauri, stop and relaunch the release executable only when the linker cannot replace it; never stop the shared OpenCode daemon.
 
 ## Pull Requests
-- A PR that changes user-visible behavior (labels, controls, steps, defaults, limitations) updates the affected help pages in the same PR: English first, then the nine translations using each locale's UI labels (`dev-docs/USER_HELP.md`). Help publishes from `dev`, and CI checks only its structure and links, not whether the text matches the UI. Answer the non-blocking `help-update-reminder.yml` comment (English UI messages changed without `docs/help`) before merging: update the help, or confirm nothing user-facing is documented there.
+- A PR that changes user-visible behavior (labels, controls, steps, defaults, limitations) updates the affected help pages in the same PR: English first, then the nine translations using each locale's UI labels (`dev-docs/USER_HELP.md`). Help publishes from `dev`, and CI checks only its structure and links. Answer the non-blocking `help-update-reminder.yml` comment (English UI messages changed without `docs/help`) before merging: update the help, or confirm nothing user-facing is documented there.
 
 ## Commit Message Guidelines
-- Commit messages: a concise conventional-style subject, then body paragraphs explaining why the change exists, the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or tests that prevent regressions, not just a list of touched files.
+- Commit messages: a concise conventional-style subject, then body paragraphs explaining why the change exists, the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or tests that prevent regressions.

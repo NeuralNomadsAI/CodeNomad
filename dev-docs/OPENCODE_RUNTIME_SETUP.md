@@ -1,24 +1,24 @@
-# OpenCode V2 stable-runtime transition
+# OpenCode runtime setup and admission
 
 Minimum and recommendation: `packages/server/src/opencode/runtime-support.ts`;
 pins: the server, UI and pruning `package.json`; rationale and qualification:
-[OPENCODE_V2_COMPATIBILITY.md](OPENCODE_V2_COMPATIBILITY.md). Source changes
+[OPENCODE_COMPATIBILITY.md](OPENCODE_COMPATIBILITY.md). Source changes
 never upgrade or restart a user's service.
 
 ## Admission
 
-- Historical `0.0.0-beta-*` publications and versions below the minimum are
-  refused with HTTP 426 and a concrete reason (`runtime-support.ts`). Unlisted,
-  future-major, custom and prerelease labels are unverified, not refused: they
-  undergo authenticated bounded API recognition.
-- Authenticated daemon metadata, not an older selected discovery CLI, controls
-  admission, which precedes functional requests and plugin provisioning;
+- `0.0.0-beta-*` labels and versions below the minimum are refused with HTTP 426
+  and a concrete reason (`runtime-support.ts`). Unlisted, future-major, custom
+  and prerelease labels are unverified and admitted after authenticated bounded
+  API recognition.
+- Admission uses authenticated daemon metadata, never the selected discovery
+  CLI's version, and precedes functional requests and plugin provisioning;
   replacement daemons are rechecked even at the same URL. Client/plugin pins
   are separate from admission.
 - Recognition checks canonical session/permission/Form/inbox shapes and the
   required `PUT /api/session/{sessionID}/environment`; missing APIs are reported
   separately from an untested version. Optional configuration reload follows
-  its own route presence. No speculative write establishes support.
+  its own route presence. Never probe support with a write.
 
 ## Setup and recovery
 
@@ -31,27 +31,22 @@ changes, foreground entry and unsupported proxy responses refresh state; stale
 responses cannot overwrite a changed executable or completed action. Only a
 pending folder open may resume; prompts are never replayed.
 
-Automatic selection now follows PATH order (`opencode2`, then `opencode` within
-each directory), then the conventional user npm installation. The retired private
-CodeNomad installation is never a fallback. An explicit supported executable retains
-priority. Both setup and binary validation use the same discovery. The UI shows
-the effective path and source; “automatic” replaces the misleading “system PATH”
-label. Recovery puts diagnosis and installation before executable selection.
-Official npm packages from the beta and 2.0.0 transition advertised different
-launcher targets: discovery checks their published `bin` map and real launcher
-target, choosing `opencode` when `opencode2` is only the retired `.cjs` alias.
-Known historical beta versions can migrate to a stable target without treating
-their version label as an unrecognized custom build.
+Automatic selection follows PATH order (`opencode2`, then `opencode` within
+each directory), then the conventional user npm installation. An explicit
+supported executable keeps priority. Setup and binary validation share one
+discovery. The UI shows the effective path and labels this source “automatic”.
+Recovery puts diagnosis and installation before executable selection.
+Discovery reads each npm package's published `bin` map and real launcher target,
+choosing `opencode` when `opencode2` is only a `bin/*.cjs` alias.
 Discovery preserves terminal PATH/PATHEXT ordering even when a standalone
 executable shares the npm command directory; such an executable remains
-user-managed. On POSIX, only the prefix's actual `bin` directory is treated as
-an npm command directory, not a neighboring folder. A standalone executable
-replacing a POSIX npm symlink is still selected in PATH order and remains
-user-managed; only an actual symlink to the package's retired `.cjs` alias is
-skipped in favor of the working `opencode` command. On Windows, the same
-retired alias is skipped only when the npm `.cmd` script positively invokes
-the package's `.cjs` target; a customized `.cmd` wrapper keeps PATH priority
-and cannot be overwritten through the automatic npm updater.
+user-managed. On POSIX, only the prefix's actual `bin` directory counts as an
+npm command directory. A standalone executable replacing a POSIX npm symlink is
+selected in PATH order and remains user-managed; only an actual symlink to
+the package's `.cjs` alias is skipped in favor of the working `opencode`
+command. On Windows, that alias is skipped only when the npm `.cmd` script
+positively invokes the package's `.cjs` target; a customized `.cmd` wrapper
+keeps PATH priority and the automatic npm updater never overwrites it.
 
 Default host installation uses bundled Node/npm to run a standard global npm
 installation of `@opencode/cli`. Existing writable npm installations on PATH are
@@ -95,11 +90,11 @@ codes a generic failure stating 1.x is still installed; a package npm already
 changed reports `legacy_partially_removed` with manual `npm uninstall -g
 opencode-ai` guidance. A failure after complete removal is reported as
 `legacy_removed_install_failed`; the next attempt is an ordinary installation,
-never an automatic replay. The data directory is untouched: OpenCode
-2 uses the same `opencode.db` and its server imports 1.x sessions itself at
-startup (upstream `V1Migration`, present since 2.0.0); CodeNomad converts nothing.
+never an automatic replay. CodeNomad leaves the data directory untouched: the
+OpenCode 2 server imports 1.x sessions from the same `opencode.db` at startup
+(upstream `V1Migration`).
 
-For a foreign installation below the minimum or unusable, resolution then prefers
+For a foreign installation below the minimum or unusable, resolution prefers
 the verified side-by-side npm installation (`installationSource: "managed"`);
 the UI says the terminal `opencode` may still start the older version. winget
 portable packages are identified from default locations only:
@@ -111,8 +106,8 @@ root. The package ID (for example `SST.opencode`) is shown with an optional manu
 
 `opencode-update/foreign-probe.ts` results (5 s deadline) are cached by the
 command's file identity (path, mtime and size, plus the executable an npm-style shim launches); any change
-reads as unknown until reprobed. A timeout is cached as unknown for only 60 s, so
-a hanging wrapper is not re-run on every read while a slow first run (for example
+reads as unknown until reprobed. A timeout is cached as unknown for 60 s, so a
+hanging wrapper reruns at most once a minute while a slow first run (for example
 an antivirus scan) is retried later. At most one probe of a command runs at a
 time; concurrent readers, including an explicit recheck, join it. The setup
 panel's Check action sends `recheck=1`, which forces a fresh probe even within
@@ -129,13 +124,13 @@ confirmed replacement and verifies the installed 2.x command. It never runs a se
 
 An exclusive `.codenomad-opencode-install.lock` in the npm prefix serializes
 CodeNomad backends; the version is re-probed under that lock. A competing backend
-gets a retryable conflict. A lock left after a crash is deliberately not stolen
-by time/PID heuristics: npm may outlive its backend. The server log gives the lock
-path; remove it only after confirming the installer has exited. External package
-managers do not participate in this lock. Verified npm installations at 2.0.15 or
+gets a retryable conflict. A lock left after a crash is never stolen through
+time/PID heuristics: npm may outlive its backend. The server log gives the lock
+path; remove it only after confirming the installer has exited. The lock covers
+CodeNomad backends only. Verified npm installations at 2.0.15 or
 later use the installed CLI's `upgrade <exact-version> --method npm` for version
-changes. OpenCode owns Windows running-image retention (upstream #50819); opening
-that image for writing first incorrectly rejects supported live upgrades. A private,
+changes. OpenCode retains Windows running images itself, so this path skips the
+write preflight, which would reject a supported live upgrade. A private,
 temporary npm command adapter supplies bundled Node/npm and pins the verified prefix
 and registry, including when the desktop runtime has no npm launcher on PATH. It is
 also the command's working directory, preventing cwd from shadowing npm on Windows.
@@ -151,9 +146,8 @@ installer against an isolated prefix/home/service: the installed CLI upgrades
 while the running daemon keeps its PID and version. `CODENOMAD_FIXTURE_NODE`
 selects a packaged Node with bundled npm; cleanup uses the isolated CLI only.
 
-Explicit custom binaries remain selected. WSL and custom installations receive
-execution-host instructions rather than a Windows-side Linux installation.
-Remote setup runs on the CodeNomad server, not the browser machine.
+Explicit custom binaries stay selected. WSL and custom installations receive
+execution-host instructions.
 
 Installation and service activation are separate. A technically incompatible running daemon requires
 the explicit **Restart shared service** action, whose copy explains interruption
@@ -172,52 +166,60 @@ after a failed fresh status check, shares the host/WSL path and serialization
 with update activation, confirms the all-client interruption, fences a changed
 executable or unmounted view and never resumes a pending workspace-open callback.
 Opening settings, checking status, reconnecting and reloading never restart
-implicitly; neither action deletes history.
+implicitly; both actions keep session history.
 
 Mounted Windows discovery directories and Linux aliases are canonicalized through
 the selected distro, then translated for host filesystem access. Native import
-URLs and lease paths stay Linux-native; canonical outside-root storage is retained.
-This does not repair native watcher mount/symlink limitations. The existing
-setup card therefore offers explicit **Reload OpenCode configuration** recovery.
-Its copy names every effect (all loaded locations rebuilt, pending
-permissions/Forms cancelled, terminals/background commands closed for all
-clients) and never claims a process restart or memory reclamation. Conflicting
-service actions are refused while an explicit action runs.
+URLs and lease paths stay Linux-native; canonical outside-root storage is kept.
+Native watchers can miss changes through mounts and symlinks, so the setup card
+offers explicit **Reload OpenCode configuration** recovery. Its copy names every
+effect (all loaded locations rebuilt, pending permissions/Forms cancelled,
+terminals/background commands closed for all clients) and never presents it as a
+process restart or memory reclamation. Conflicting service actions are refused
+while an explicit action runs.
 
-## Historical migration
+## Stored-history migration
 
 `scripts/test-opencode-history-migration.mjs OLD_CLI TARGET_CLI` seeds synthetic
-historical storage (location identities, forks, long histories with
+older storage (location identities, forks, long histories with
 reasoning/tool/compaction checkpoints, a moved worktree session, pending inbox,
 provider configuration and a synthetic credential, pending Forms), copies its
 DB/WAL and lets the target migrate it, retaining seeds, CLI hashes and logs in a
 fresh fixture; it never touches the shared service or rewrites native tables. CI
-seeds from 2.0.3, beta-19271 and 2.0.32. The target migrates historical
-`workspaceID` values to the local directory scope, keeping session IDs and
-content; CodeNomad manufactures no aliases. Pending Forms do not survive a native
-restart either, so migration does not preserve them. Assertions compare old
-connection fields fully and never discard unknown fields or relax history checks.
+seeds from 2.0.3, beta-19271 and 2.0.32. The target maps stored `workspaceID`
+values to the local directory scope, keeping session IDs and content, and
+CodeNomad uses that scope as is. Pending Forms end with a native restart, and
+migration drops them the same way. Assertions compare old connection fields
+fully and never discard unknown fields or relax history checks.
 
-## Retirement disposition
+## Compatibility seams
 
-| Area | Implementation |
-| --- | --- |
-| `catalog.updated` alias | Removed; current catalogs use resource-specific events. `session.message.content.updated` is replay-only (declared, never published live, as of the 2.1.0 minimum), so its live invalidation is removed too. |
-| Authentication, cancellation, origin and connection generations | Retained and regression-tested at the existing shared seam. |
-| Older discovery routes | Retained for authenticated diagnosis of an outdated running daemon, not functional live support. Probed only after a 404 from `/api/info`, which every admitted daemon serves; the transport no longer rewrites `/api/status` requests. |
-| Historical location/context, import/cursor and pruning checks | Retained for internal identity and current directory authorization. Obsolete public selectors are rejected unconditionally. Original cursor bytes and independent import-history ownership are preserved. |
-| Legacy schema recognition | Removed. A retired (pre-2.0.4) contract and an unrecognised one share the same `canonical_api` refusal; the legacy fixture remains a rejection input. |
-| Existing CodeNomad plugin-entry/presence migration | Retained for upgrades/concurrent backends, independently of OpenCode runtime support. |
-| Query-only pruning preview and TUI refresh synchronization | Retained: the plugin still lacks `session.message`, and publication races remain current. |
+- Authentication, cancellation, origin and connection generations are
+  regression-tested at the shared connection seam.
+- Older discovery routes serve only to diagnose an outdated running daemon; they
+  are probed only after `/api/info` (served by every admitted daemon) returns 404.
+- Internal identity and directory authorization keep the location/context,
+  import/cursor and pruning checks for older stored identities. Public workspace
+  selectors (`workspaceID`, `x-opencode-workspace`) are rejected unconditionally;
+  original cursor bytes and independent import-history ownership are preserved.
+- Unrecognised contracts receive the `canonical_api` refusal;
+  `legacyContractFixture` (`compatibility/contract-fixture.ts`) is a rejection
+  input.
+- Catalogs update through resource-specific events. `session.message.content.updated`
+  is replay-only (never published live), so live invalidation ignores it.
+- Pruning preview stays query-only and TUI refresh synchronization stays in
+  place: the plugin API has no `session.message`, and publication can race.
+- Keep these older-identity authority checks; the synthetic migration seed alone
+  never justifies removing them.
 
 ## Validation and release gates
 
-Implemented checks include server/UI typechecks, server regressions, real Solid
-browser setup tests and rendered captures, isolated bundled-Node installation,
-native migration, native locations/worktrees, automation heartbeat/provisioning
-and pruning acceptance. CI adds first installation and old-seed migration at
-the fixed minimum and resolved latest stable on Windows, Linux and macOS ARM64.
-The existing cross-platform native pruning gate remains in place.
+Checks include server/UI typechecks, server regressions, real Solid browser
+setup tests and rendered captures, isolated bundled-Node installation, native
+migration, native locations/worktrees, automation heartbeat/provisioning and
+pruning acceptance. CI runs first installation and old-seed migration at the
+fixed minimum and resolved latest stable on Windows, Linux and macOS ARM64,
+plus the cross-platform native pruning gate.
 
 ### Reproduce desktop and WSL acceptance
 
@@ -236,15 +238,12 @@ node scripts/test-opencode-setup-wsl.mjs DISTRO ABSOLUTE_LINUX_CLI aliased reloa
 
 Each desktop fixture emits `results.json`, artifact/resource hashes, per-host
 logs/API responses and screenshots in its isolated output directory. Retain those
-artifacts with the qualification PR/CI rather than documenting machine-local paths.
-
-Do not remove the remaining historical authority checks based solely on the
-synthetic migration seed.
+artifacts with the qualification PR/CI; never document machine-local paths.
 
 ## Agent conventions
 
-- OpenCode settings start with the OpenCode version card (runtime status, install/update and service actions directly inline), followed by the executable selection card, which has only the selector's own "OpenCode binary" heading (no separate Runtime/server-setting header). Only version details and troubleshooting are collapsed disclosures at the bottom of the runtime panel; log levels remain the final settings card. Troubleshooting always exposes an explicit, confirmed shared-service restart independently of updates; retain the inline activation shortcut after an update, and never downgrade a newer daemon through an older selected CLI. Configuration reload remains a separate process-preserving action. Share controls with the startup recovery dialog rather than routing settings through a separate management modal. The disclosures use the shared `.settings-disclosure` (`styles/components/settings-disclosure.css`).
+- OpenCode settings start with the OpenCode version card (runtime status, install/update and service actions directly inline), followed by the executable selection card, which has only the selector's own "OpenCode binary" heading. Only version details and troubleshooting are collapsed disclosures at the bottom of the runtime panel; log levels remain the final settings card. Troubleshooting always exposes an explicit, confirmed shared-service restart independently of updates; retain the inline activation shortcut after an update, and never downgrade a newer daemon through an older selected CLI. Configuration reload remains a separate process-preserving action. Share controls with the startup recovery dialog; never route settings through a separate management modal. The disclosures use the shared `.settings-disclosure` (`styles/components/settings-disclosure.css`).
 - Startup restoration remembers only definite `426 opencode_update_required` workspace refusals for the recovery dialog's successful action or explicit Continue. Keep this window-owned continuation separate from the latest manually requested folder: run the manual open first, then resume only still-unbound saved tabs under their original selection/order/removal guards. Read-only status refresh and settings maintenance do not replay restoration; disposal cancels it. Never replay uncertain creations, generic errors or session mutations.
 - Verified shared npm OpenCode installations at 2.0.15+ delegate version changes to native `upgrade` through `opencode-update/native-upgrade.ts`, with bundled npm scoped to the verified prefix. Native Windows image retention replaces the write preflight only on that path; first install, older migration and same-version repair retain direct npm/preflight. Never retry a failed native mutation via npm or restart the daemon implicitly. Validate with the isolated `scripts/test-opencode-upgrade-native.mjs` fixture.
-- OpenCode minimum requirements must follow demonstrated technical dependencies, never the latest published or solely tested version. Keep required, recommended/tested and unverified versions distinct in `opencode/runtime-support.ts` and setup diagnostics. Validate authenticated daemon metadata/contract before client use/plugin provisioning. Setup uses bundled Node/npm for a shared user npm installation and prefers PATH. Only a verified `@opencode/cli` npm installation is updated via npm; an OpenCode 1.x `opencode-ai` npm shim (identified by its manifest and shim target, never a version string) is replaced in its prefix only after explicit UI confirmation naming that exact installation (rechecked under the installation lock), with every native image of the package preflighted, npm failure states reported truthfully and failure after removal retryable rather than replayed. Foreign `--version` probes are asynchronous, bounded and tree-killed (`opencode-update/foreign-probe.ts`); unknown keeps PATH precedence and synchronous resolution never spawns. Foreign installations (winget, Homebrew, curl, manual) are never modified: when below the minimum or unusable, OpenCode 2 is installed in the user npm prefix beside them and the verified managed installation wins over that PATH command; valid foreign V2 and explicit custom executables keep their precedence. Detection lives in `opencode-update/legacy-installation.ts`. The retired private `~/.local/share/codenomad/opencode` tree must never be discovered or launched; ignore its receipts and saved selections without migrating or deleting it. Keep installer locking and Windows live-executable preflight in `opencode-update/installation-lock.ts`; register terminal PATH only on explicit installation. A running daemon restart is a separate explicit action. Configuration reload is also explicit: native `location.reload` rebuilds every loaded location and cancels pending Forms/permissions, so never use it as an automatic watcher fallback. Retire old wire translations without removing current identity/ownership checks. See `dev-docs/OPENCODE_V2_POST_BETA.md` for version boundaries and isolated validation evidence.
-- A selected CLI's `service status` can report `stopped` for a live older daemon. Preserve the bounded, read-only registration fallback in `workspaces/native-service-registration.ts` and authenticate historical metadata before allowing start; `ensure()` repeats discovery. Native service lookup is separate from plugin-root discovery, which must still use the connected daemon's `config.get`. Never write service registration/configuration files from the backend.
+- OpenCode minimum requirements must follow demonstrated technical dependencies, never the latest published or solely tested version. Keep required, recommended/tested and unverified versions distinct in `opencode/runtime-support.ts` and setup diagnostics. Validate authenticated daemon metadata/contract before client use/plugin provisioning. Setup uses bundled Node/npm for a shared user npm installation and prefers PATH. Only a verified `@opencode/cli` npm installation is updated via npm; an OpenCode 1.x `opencode-ai` npm shim (identified by its manifest and shim target, never a version string) is replaced in its prefix only after explicit UI confirmation naming that exact installation (rechecked under the installation lock), with every native image of the package preflighted, npm failure states reported truthfully and failure after removal retryable rather than replayed. Foreign `--version` probes are asynchronous, bounded and tree-killed (`opencode-update/foreign-probe.ts`); unknown keeps PATH precedence and synchronous resolution never spawns. Foreign installations (winget, Homebrew, curl, manual) are never modified: when below the minimum or unusable, OpenCode 2 is installed in the user npm prefix beside them and the verified managed installation wins over that PATH command; valid foreign V2 and explicit custom executables keep their precedence. Detection lives in `opencode-update/legacy-installation.ts`. The CodeNomad-private `~/.local/share/codenomad/opencode` tree (`opencode-update/retired-installation.ts`) must never be discovered or launched; ignore its receipts and saved selections without migrating or deleting it. Keep installer locking and Windows live-executable preflight in `opencode-update/installation-lock.ts`; register terminal PATH only on explicit installation. A running daemon restart is a separate explicit action. Configuration reload is also explicit: native `location.reload` rebuilds every loaded location and cancels pending Forms/permissions, so never use it as an automatic watcher fallback.
+- A selected CLI's `service status` can report `stopped` for a live older daemon. Preserve the bounded, read-only registration fallback in `workspaces/native-service-registration.ts` and authenticate that daemon's metadata before allowing start; `ensure()` repeats discovery. Native service lookup is separate from plugin-root discovery, which must still use the connected daemon's `config.get`. Never write service registration/configuration files from the backend.

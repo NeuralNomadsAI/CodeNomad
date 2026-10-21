@@ -1,9 +1,7 @@
 # Recurring Missions — simple native contract
 
-Authoritative user decision **2026-10-08**; supersedes signed recurring authority
-(signatures, grants, epochs, effect receipts/budgets, event-log replay). One-time
-Mission receipts are unchanged; the Wayfinder UI-answer mark below applies to both
-modes. Acceptance status: `MISSIONS_RECURRING_SIMPLE_QUALIFICATION.md`.
+The Wayfinder UI-answer mark below applies to both one-time and recurring Missions.
+Acceptance status: `MISSIONS_RECURRING_QUALIFICATION.md`.
 
 ## Product boundary
 
@@ -27,19 +25,18 @@ Store one schedule document in project-scoped plugin kv, including:
 - Result history bounded to **30** entries.
 - A monotonically checked custom `revision`.
 
-Native kv provides **no CAS**. The plugin must serialize document updates and
-compare the supplied expected revision before committing the new revision.
-A read followed by an unguarded write is not CAS. Controls, due admission and
-settlement use the same guarded document mutation path; concurrent attempts
-cannot replace each other's pending identity or lose an archive.
-Keep this small: no authority epochs, signing keys or per-effect ledgers.
+Native kv offers no compare-and-swap, so the plugin serializes document updates and
+compares the supplied expected revision before committing the new revision; never
+follow a read with an unguarded write. Controls, due admission and settlement use
+the same guarded document mutation path; concurrent attempts cannot replace each
+other's pending identity or lose an archive.
 
 ## User controls
 
 Create paused, Play, Pause, Stop, Resume, Run now and Check passage are admitted only through:
 
 1. The authenticated CodeNomad UI/backend route.
-2. The existing HMAC-authenticated bridge.
+2. The HMAC-authenticated bridge.
 3. The plugin's schedule-control RPC.
 
 The route's human principal, with local auth enabled, is a live login cookie
@@ -52,7 +49,7 @@ Never expose these controls as model tools. Validate project/Location ownership,
 connection identity, inputs and frozen execution profiles at the existing boundary.
 Each control has `requestID` idempotency and `expectedRevision` CAS.
 A duplicate request must not start a second Job, passage or coordinator message.
-A stale revision is a conflict, not permission to overwrite current state.
+A stale revision is a conflict; never overwrite current state with it.
 Native stays the authoritative CAS: the exact status read reports `rejected`
 (`revision-conflict` or `control-conflict`) only when storage proves a request with
 no record never applied and never can — a later revision whose record provably was
@@ -88,10 +85,9 @@ admission beside it, never transfer it: the same backend workspace object,
 native project ID and canonical path (which OpenCode derives from the Git root),
 directory, checkout, physical root and Settings profile must be re-proven, plus
 the same exact native partial record (random request ID, revision and state).
-These are real ownership gates, but there is no daemon-storage identity
-challenge: a byte-identical copy of the native database served by another daemon
-at the same project/path is indistinguishable, and a retry's effects would land
-in that copy while the backend retires its permit. The old permit is retired
+Limit: these gates cannot distinguish a byte-identical copy of the native database
+served by another daemon at the same project/path; a retry's effects would land in
+that copy while the backend retires its permit. The old permit is retired
 only at dispatch, after the fresh one is entered. An in-flight, still-preparing
 or already-replacing original, a live original connection, or any mismatch
 refuses without effects; a deletion already waiting on the old permit blocks the
@@ -100,9 +96,9 @@ permit (committed and complete, with the owner re-proven) while such a deletion
 waits, and never resend.
 A dispatched control or Run now that native refused before writing any record
 (transport-proof callback timeout, transient Git/family read, profile check,
-Resume not interrupted, service death) first reads unknown: a timeout alone
-proves nothing. Every record-creating CAS (`beginControl`, `reserveManual`)
-rechecks the signed proof's 30 s freshness synchronously inside its write
+Resume not interrupted, service death) first reads unknown, as does a timeout.
+Every record-creating CAS (`beginControl`, `reserveManual`) rechecks the signed
+proof's 30 s freshness synchronously inside its write
 transaction. Once the backend's clock considers the exact proof it still holds
 expired, its status reads (and the route's immediate read after a lost reply)
 send that backend-signed `issuedAt` — never a browser value. Native, serialized
@@ -124,14 +120,13 @@ Everything else (including an unprovable profile change) stays unknown.
 If a reply is lost, retain that request identity and reread its status.
 Refresh, reconnect, remount and status reads never automatically resend it.
 An uncertain control must not be replaced with a fresh request to evade the hold.
-Explicit Resume is a new user action, not an automatic retry of an unknown send.
-Stopped schedules cannot be played, resumed or run now.
+Resume is only ever an explicit user action. Stopped schedules cannot be played, resumed or run now.
 
 A schedule document keeps at most 64 control records. Admitting a new control
 evicts the oldest completed record; unresolved records are never evicted, and an
 evicted request's exact status reads unknown, which never authorizes a resend.
-`evictedControlRevision` bounds every evicted record's revision (a first bound is
-the current revision, covering evictions by older stores).
+`evictedControlRevision` bounds every evicted record's revision; a document without
+it starts from its current revision as the bound.
 A Play/Resume/Check whose Job or observer start stayed unknown is resolved by a
 later completed control that restarted or cancelled it. While such an intent, or
 a reserved but unadmitted Run now, stays unknown, the snapshot offers only
@@ -144,7 +139,7 @@ refusal restores it. If another client's exact read proves a retained middle
 intent had no effect while a newer control still supersedes it, only that
 intent's permit is released and the newer control inherits its predecessor, so
 a later no-effect restores (and a commit retires) the earlier intent instead of
-orphaning its permit. Run now itself still completes only on admission or archive.
+orphaning its permit. Run now itself completes only on admission or archive.
 In-flight, preparing and partial Pause/Stop permits are never superseded. A Play/Resume whose native
 Job start fails while a fresh read positively shows no running daily Job completes
 its record with the schedule Interrupted (reason `error`), releasing the backend
@@ -163,13 +158,11 @@ to interrupt (dispatch of an unadmitted passage is refused once paused/stopped).
 
 ## Threat model
 
-HMAC authenticates the desktop bridge; it is not an OS sandbox. An unrestricted
-shell can read the service password and kv database, and no in-process mechanism,
-signatures included, prevents it: native shell permissions and OS isolation are the
-boundary, and marks must never be described as tamper-proof. Signed grants, standing
-authorization, epochs, effect budgets/receipts and signed answer receipts are removed
-from recurring passages; existing ownership, authentication, permission and data-loss
-protections remain, and unknown effects stay unknown.
+HMAC authenticates the desktop bridge. An unrestricted shell can read the service
+password and kv database and act with the service's privileges; native shell
+permissions and OS isolation are the security boundary, so never describe marks as
+tamper-proof. Ownership, authentication, permission and data-loss protections apply
+to every passage, and unknown effects stay unknown.
 
 ## Native guarantees and missing primitives
 
@@ -180,28 +173,26 @@ The implementation relies on existing native contracts, qualified at their calle
 - Plugin tools receive native session, message and call identity.
 - Jobs are process-local and disappear when the service restarts.
 - A turn holds a durable execution claim (`session_v2.time_suspended`) until its
-  terminal event; a hard kill leaves the claim without one. Native continuation
-  after a restart is not qualified: do not rely on it.
+  terminal event; a hard kill leaves the claim without one. Never rely on native
+  continuation after a restart.
 
-First admission is not proof of model consumption, useful work or completion.
 Resume never sends a continuation or replacement coordinator prompt. A claim
 written before the current service process started and not live now is a turn
 cut by a restart: once the rest of the family is quiescent, the passage settles
 `ended-without-report` with reason `interrupted` ("Interrupted by a restart").
 If native work later resumes such a claim anyway, its effects remain unknown.
-These guarantees do not make arbitrary shell/tool side effects exactly-once.
 
-Missing primitives are handled honestly:
+Plugin-side mechanisms cover three native gaps:
 
-- No native kv CAS: implement the small revision guard above.
-- No native family-settled operation: observe the whole passage family and queues.
-- No native Form answerer identity: use the simple backend UI-answer mark below.
+- Compare-and-swap: the revision guard above.
+- Family settlement: observation of the whole passage family and queues.
+- Form answerer identity: the backend UI-answer mark below.
 
 ## Scheduler and civil time
 
 Keep **one native Job per running schedule** in the live OpenCode process.
 It sleeps until `min(nextDueAt, now + 1h)`, then rereads the wall clock and document.
-This hourly ceiling bounds clock-change detection; it is not per-minute polling.
+This hourly ceiling bounds clock-change detection; never poll per minute.
 A native `session.execution.succeeded|failed|interrupted` publication (Bus
 `listen`) also wakes the Job after a 3 s debounce, so settlement follows family
 quiescence in seconds; it is only a wake hint. Without that native contract the
@@ -214,17 +205,17 @@ Use the saved time zone and daily civil clock rather than 24-hour elapsed timers
 Preserve the clock contract for DST gaps, advancing day-end gaps; a wholly skipped
 civil day has no passage. Repeated clock hours must not create two daily passages.
 A wall-clock rollback must not make an already processed day new again.
-`nextDueAt` is a display projection, not execution authority.
+`nextDueAt` is a display projection only; never schedule from it.
 
-Pause and Stop cancel the schedule Job and interrupt the pending passage's registered root coordinator, without proving that coordinator or its descendants stopped; Stop is terminal.
+Pause and Stop cancel the schedule Job and interrupt the pending passage's registered root coordinator; Stop is terminal.
 Retain pending passage identity and observations rather than clearing live work.
 
 Desired running without a live native Job is displayed as **Interrupted** with
 an interruption reason. Service restart therefore leaves scheduling Interrupted.
 Do not rearm from plugin load, a read, UI reopen or backend reconnect.
 Only explicit Resume may restore scheduling; pending work is reconciled first.
-Scheduler-interrupted is not passage-stopped; a passage cut by the restart settles
-as interrupted after Resume rather than waiting for a native continuation.
+An Interrupted schedule keeps its passage pending; a passage cut by the restart
+settles as interrupted after Resume, without waiting for a native continuation.
 
 ## Write-ahead passage start and recovery
 
@@ -243,7 +234,7 @@ Never resend under a new identity or infer missing work from a lost RPC reply.
 
 Resume is allowed when a passage is pending, but it is **reconcile-only** for that
 passage: no second coordinator message. Unknown native coverage leaves pending
-uncertain and blocks a further passage. No expiry converts unknown into safe replay.
+uncertain and blocks a further passage. Never let an expiry turn unknown into a replay.
 
 An unadmitted pending passage is reconciled by reading natively whether its
 deterministic start message exists (delivered or inbox):
@@ -260,7 +251,7 @@ deterministic start message exists (delivered or inbox):
   native absence of the start message (pruned history) is observed history: the
   passage settles by family quiescence and the message is never sent again.
 Run now cannot overlap an unresolved pending passage or bypass terminal Stop.
-Manual runs do not masquerade as a different scheduled civil day's completion.
+A manual run never counts as another scheduled civil day's completion.
 
 Run now without a live schedule Job (paused, or Interrupted after a restart)
 starts a separate **settlement-only observer Job** using the same sleep/wake seam,
@@ -279,7 +270,7 @@ snapshot offers an explicit **Check passage** (`check`) control, admitted like t
 others (requestID, expectedRevision, authenticated route), which only restarts
 that observer and keeps the schedule paused or stopped.
 
-A failed wake does not end the Job. It records a display-only `lastError
+A failed wake keeps the Job running: it records a display-only `lastError
 { code, at }` in a sibling kv key (outside the document revision) and retries with
 a capped backoff (30 s, 2 min, 5 min, 15 min, 1 h). The next successful wake clears
 it. Only definitively fatal causes (Location or Job binding gone) end the Job as
@@ -290,12 +281,11 @@ Interrupted with reason `error`; a missing or stopped schedule simply exits.
 Register `mission_*` tools independently of CodeNomad backend presence.
 Use native session identity to route a passage and its actors to its isolated
 journal; otherwise route to the one-time journal. Do not accept arbitrary journal
-selectors from the model. Native message/call identity remains available for
-ordinary tool admission and journal ownership, not a new effect-receipt layer.
+selectors from the model. Native message/call identity serves ordinary tool
+admission and journal ownership.
 
-Native permissions govern every other tool. Read, shell, ordinary subagents and
-business tools are allowed under those permissions; there is no Mission whitelist
-and no per-tool receipt requirement. Preserve frozen profiles and taskMode.
+Native permissions govern every other tool: read, shell, ordinary subagents and
+business tools run under those permissions alone. Preserve frozen profiles and taskMode.
 Both native descendants and passage-owned independent actors must be accounted
 for without inventing ancestry from task dependencies.
 
@@ -304,9 +294,9 @@ for without inventing ancestry from task dependencies.
 Settlement requires the coordinator and **all descendants** to be inactive,
 their inboxes empty, no applicable pending Form/permission, and no running Shell
 or background subagent. Passage-owned independent actors also cannot remain live.
-Activity alone is insufficient; a final report alone is insufficient.
+All of these conditions must hold together, whatever the activity or final report.
 Use bounded native observations, recheck identities and retain pending on unknown,
-incomplete or over-bound coverage. No exact event-log replay proof is required.
+incomplete or over-bound coverage.
 The family walk shares the 4096-session whole-family control ceiling
 (`MAX_CONTROL_FAMILY_SESSIONS`) with one-time lifecycle control, so ordinary
 recursive delegation settles; a larger family stays pending as unknown coverage
@@ -328,8 +318,7 @@ in the guarded schedule document. Keep history at ≤30; do not let a crash betw
 separate document writes permit a second passage for the same settled day.
 Advance watched processed-message cursors **only on completed**.
 Failed and ended-without-report leave those cursors unchanged.
-Keep watch cursor continuity when a watch is removed; removal does not prove
-unprocessed source messages were consumed. No signed source-read receipts.
+Keep watch cursor continuity when a watch is removed.
 Watched sources are read as a stable complete-message prefix after the exact cursor
 (`native-service-adapter.ts`): a streaming reply stops the prefix, and a deleted or
 rewritten anchor is never read as no change. Complete replies up to 16,384 characters
@@ -346,14 +335,12 @@ A definitely failed forward (Form still observed pending) removes the mark; a
 lost/uncertain reply leaves it pending forever. Pending never qualifies, so a
 later non-UI answer cannot borrow an earlier failed UI attempt; Wayfinder may ask again.
 The Wayfinder human gate accepts only a native Form with the matching confirmed UI mark.
-An ordinary native answer without that mark is not a proven UI human decision.
 A refusal reaches the model as "Human decision required: the user must answer this
 question from the CodeNomad interface", with the gate's cause as a detail.
-The shipped bundle publishes no native task binding, so the gate also proves the
-decision session natively: a fresh child of the expected parent's exact `subagent`
-call whose prompt carries the declared assignment. Native 2.0.26 `serve` writes no
-`event` rows; answers and execution failures are read from durable message
-projections (completed question part, `idle` outcome).
+The gate also proves the decision session natively: a fresh child of the expected
+parent's exact `subagent` call whose prompt carries the declared assignment. Answers
+and execution failures are read from durable message projections (completed question
+part, `idle` outcome).
 Do not infer identity from answer text, tool completion or the agent's assertion.
 
 Only Forms whose session belongs to a Mission family take the mark path: a root
@@ -362,7 +349,7 @@ existing coordinator) that the plugin finds as the coordinator actor of a
 Mission in the project's durable one-time journal, after walking the bounded
 native parent chain to exactly that root. Every other Form uses the ordinary
 native reply unchanged and gets no mark. Marks live under
-`codenomad-missions/human-marks-v1`, never the retired `authority-v2` namespace.
+`codenomad-missions/human-marks-v1`.
 
 The UI principal is explicit in the private bridge proof: a local login cookie
 session (auth enabled), or a paired Remote Control device chosen by ingress
@@ -381,8 +368,7 @@ Auto/Yolo or SDK calls (`tests/browser/interruption-dock.test.ts`,
 reported as uncertain.
 
 Missing evidence leaves the gate unmet and never replays an answer; the ordinary
-answer path keeps its ownership and uncertainty checks. One-time lifecycle receipts
-are unaffected.
+answer path keeps its ownership and uncertainty checks.
 
 ## Per-schedule snapshot
 
@@ -393,7 +379,7 @@ latestResult and history. `starting` means a live Job/observer is handling a not
 yet admitted start; `uncertain` (with reason `not-observed` or `admission-failing`)
 only when no observer is live or that admission keeps failing. History and pending
 items carry their `daily | manual` trigger; a non-blocking `lastError` is exposed
-while relevant. Do not expose epochs/grants/receipts/budgets.
+while relevant.
 Actions reflect terminality, unresolved controls and pending passage state.
 Read-only projections and invalidations never start work or settle unknown sends.
 
@@ -407,7 +393,8 @@ Read-only projections and invalidations never start work or settle unknown sends
 2. **Restart with pending:** restart the service during a pending passage → reopen
    shows Interrupted → explicit Resume reconciles existing session/message/inbox →
    no second coordinator message → settled archive (`ended-without-report` /
-   `interrupted` when the restart cut the turn) → next day. Missing/uncertain evidence stays pending, not silently rearmed.
+   `interrupted` when the restart cut the turn) → next day. Missing/uncertain evidence
+   stays pending, and only Resume rearms scheduling.
 3. **Run now:** explicit authenticated Run now uses the shared write-ahead path;
    duplicate request/status reads produce no second passage. An unresolved pending
    passage blocks overlap. A lost reply is reread, never automatically resent.
@@ -415,20 +402,19 @@ Read-only projections and invalidations never start work or settle unknown sends
    still observed honestly. Pause can be explicitly resumed; Stop cannot. Exercise
    CAS conflicts and cancellation uncertainty without claiming recursive suspension.
 5. **Human gate:** native UI Form answer has the matching mark in both modes;
-   an agent/native answer without it does not satisfy Wayfinder's human gate.
+   an agent/native answer without it leaves Wayfinder's human gate unmet.
 
-These are integrated journeys, not acceptance inferred from an isolated helper.
+Acceptance requires these integrated journeys; isolated helper tests never count.
 
-Coverage boundary: the offline `recurring-day.e2e.test.ts` fixture drives the real
-plugin, scheduler, storage and `mission_*` tools, but its scripted model only
-records `read`/`shell` call names; it executes no real shell or backend tool.
-Real shell/backend execution under native permissions is covered only by the
-isolated native qualification fixture (`MISSIONS_RECURRING_SIMPLE_QUALIFICATION.md`,
-journeys A–G, L, W, Q and N; acceptance remains partial), not by the offline e2e.
+Coverage: the offline `recurring-day.e2e.test.ts` fixture drives the real plugin,
+scheduler, storage and `mission_*` tools with a scripted model that only records
+`read`/`shell` call names. Real shell/backend execution under native permissions is
+covered by the isolated native qualification fixture
+(`MISSIONS_RECURRING_QUALIFICATION.md`, journeys A–G, L, W, Q and N).
 Native tests must use isolated service/database/provider fixtures, never the shared
-daemon or user Mission. No install, daemon mutation or push is authorized by this doc.
+daemon or user Mission.
 
 ## Agent conventions
 
-- Missions autonomy target is explicitly native: the OpenCode service/plugin runs scheduled passages with both CodeNomad UI and intermediary backend closed; neither a persistent CodeNomad backend nor a window timer is a substitute. One process-local native Job per running schedule sleeps until min(nextDueAt, now + 1h), then rereads clock/document and admits only the latest due civil day newer than lastDaily. A native session-execution terminal event (Bus `listen`, 3 s debounce) also wakes the Job so archives follow family quiescence promptly; the event is a wake hint, never settlement evidence. Pause/Stop cancel the Job; desired running without a live Job is Interrupted until explicit Resume, never automatic rearming. Do not rely on native continuation after a restart: Resume never sends one, and a family turn cut by the restart settles `ended-without-report` / `interrupted`. Host-lifetime work lives outside this tree (MISSIONS.md Agent conventions) and is not native-plugin autonomy acceptance.
+- Missions autonomy target is explicitly native: the OpenCode service/plugin runs scheduled passages with both CodeNomad UI and intermediary backend closed; neither a persistent CodeNomad backend nor a window timer is a substitute. One process-local native Job per running schedule sleeps until min(nextDueAt, now + 1h), then rereads clock/document and admits only the latest due civil day newer than lastDaily. A native session-execution terminal event (Bus `listen`, 3 s debounce) also wakes the Job so archives follow family quiescence promptly; the event is a wake hint, never settlement evidence. Pause/Stop cancel the Job; desired running without a live Job is Interrupted until explicit Resume, never automatic rearming. Do not rely on native continuation after a restart: Resume never sends one, and a family turn cut by the restart settles `ended-without-report` / `interrupted`.
 - Core: `missions/recurrence-{contract,clock,store,runner}.ts` (native side `opencode/missions/native-recurrence-*.ts`); omitting a profile variant is valid. Every rule in the sections above binds.

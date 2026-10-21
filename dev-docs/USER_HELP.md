@@ -1,7 +1,6 @@
 # Public user help
 
-The guide covers current CodeNomad with OpenCode V2, not the old runtime or
-every upstream configuration option. Assume readers already know OpenCode:
+The guide covers CodeNomad with OpenCode V2. Assume readers already know OpenCode:
 document CodeNomad's controls, workflow differences and state/scope boundaries
 instead of teaching agents, prompts, Git or MCP. Keep pages focused and link
 to the official V2 docs for native configuration details.
@@ -16,7 +15,7 @@ to the official V2 docs for native configuration details.
 - `docs/help/i18n/<locale>.json`: translated site chrome and section labels.
   Keep the same non-empty keys in every language. Page titles belong in Markdown, not here.
 - `docs/help/help.css`: square, responsive chrome, light/dark palettes and
-  logical properties for Hebrew RTL. No application styles/runtime are imported.
+  logical properties for Hebrew RTL. Never import application styles/runtime.
 
 Every H2/H3 (and deeper heading, if used) needs an explicit ASCII kebab-case id:
 
@@ -57,10 +56,9 @@ and `dir="ltr"`, including within Hebrew pages. The page's language menu and
 `hreflang` alternates retain its identity in every language. An absent translation
 offers a contribution link for that locale; existing pages link to their editor.
 
-Fallback is not validation success. The full check fails for missing translations,
-heading-id drift, unresolved links/anchors/images, duplicate or missing heading
-ids and invalid page structure. `--locale en` checks English alone while the
-translation work is pending; it does not claim the other locales are ready.
+The full check fails for missing translations, heading-id drift, unresolved
+links/anchors/images, duplicate or missing heading ids and invalid page
+structure. `--locale en` checks English alone while translation is pending.
 
 ## Build and check
 
@@ -76,7 +74,7 @@ node scripts/test-help-browser.mjs
 Output is `dist/help/<locale>/<page>.html`, with `index.html` also serving each
 locale directory. Shared assets live under `dist/help/assets/`. Serve `dist/help`
 with any static HTTP server; no backend, credentials or OpenCode service is
-needed. The builder uses the existing `marked` dependency. To exercise a
+needed. The builder uses the `marked` dependency. To exercise a
 throwaway source tree without editing real content:
 
 ```sh
@@ -99,7 +97,7 @@ temporary directory on other systems). It accepts the same `--content` override.
 Locale navigation and articles need no JavaScript. The root chooser has a tiny inline script,
 hash-authorized by its CSP, to select the best supported `navigator.languages`
 match (including `zh-*` → `zh-Hans` and `iw` → `he`). Plain language links work
-with scripting disabled. There are no analytics, remote fonts or remote runtime
+with scripting disabled. Never add analytics, remote fonts or remote runtime
 requests. Navigation/alternate links work under the GitHub project-site path.
 
 The only other script is first-party `docs/help/help-search.js`, copied unchanged
@@ -118,12 +116,12 @@ code/key chords isolate LTR, and selected rows follow the app's 40%/50% accent-i
 ## Application entry points
 
 Electron and both Tauri Help-menu branches put **CodeNomad Help** first, before
-the existing update/About items. The hosts send `open-help` to the primary renderer; its existing palette-command dispatch
+the update/About items. The hosts send `open-help` to the primary renderer; its palette-command dispatch
 executes the localized **Open help** command and uses the current UI locale.
 Browser and remote users can run the same command from the palette.
 
 `packages/ui/src/lib/help-url.ts` owns the base URL and locale→path mapping;
-`openExternalUrl` opens the system browser on native hosts (Electron's existing
+`openExternalUrl` opens the system browser on native hosts (Electron's
 new-window policy handles `window.open` and reports asynchronous opener failures
 through a visible host error) or a separate browser tab. Tauri remote windows
 have no generic opener/native capability: their owned new-window/navigation policy
@@ -133,10 +131,10 @@ New-window callbacks recheck the registered window generation before opening.
 Help never
 navigates the application renderer. Preferences/remote/loading windows without
 a primary menu listener fall back to the root chooser. The custom Windows
-titlebar's `help` menu still opens the same native submenu.
+titlebar's `help` menu opens the same native submenu.
 Malformed locale tags are rejected before prefix mapping. Opening failures use
 localized renderer alerts or a native host error; actions are never replayed.
-`window.open` returning null with `noopener` is not evidence of failure.
+Treat `window.open` returning null with `noopener` as success.
 
 Search suppresses Chromium/WebKit's native search-cancel affordance; the single
 labelled Clear button retains its 44px touch target.

@@ -10,31 +10,31 @@ Electron/Tauri -> CodeNomad Fastify server -> one shared OpenCode service
                   SolidJS UI <- /api/events <- event bridge
 ```
 
-The server uses `packages/server/src/workspaces/opencode-service.ts` and the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and performs no cross-namespace PID operations. `WorkspaceManager` validates each selected directory with `client.location.get()` and stores its `LocationRef`. Closing a project tab deletes that occurrence's logical record, not the native Location; sessions continue in OpenCode. Whole-window close, quit and reload preserve restoration behavior. CodeNomad never evicts Locations.
+The server uses `packages/server/src/workspaces/opencode-service.ts` and the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global daemon. It owns no private port/database/registration/PID and never stops the daemon on backend shutdown. WSL requires Windows localhost forwarding and performs no cross-namespace PID operations. `WorkspaceManager` validates each selected directory with `client.location.get()` and stores its `LocationRef`. Closing a project tab deletes only that occurrence's logical record; sessions continue in OpenCode. Whole-window close, quit and reload preserve restoration behavior. CodeNomad never evicts Locations.
 
-Native desktop identity is channel plus config profile and uses one singleton process/backend per profile with multiple UUID windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window. Stable/dev/non-default profiles isolate native/browser/client state. OpenCode sessions/messages remain shared; tabs, drafts, views, and restore membership are per-window.
+Native desktop identity is data profile plus config identity (`dev-docs/DESKTOP_DATA_PROFILES.md`) and uses one singleton process/backend per scope with multiple UUID windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window. Each scope isolates native/browser/client state. OpenCode sessions/messages remain shared; tabs, drafts, views, and restore membership are per-window.
 
-Client-state V3 is a per-window envelope over the V2 content-addressed partition graph. Electron and Tauri prepare immutable partitions before atomically publishing the root, fence migration and writes on current ownership, and collect only unreferenced partitions after publication. Native SideCar/browser previews omit same-origin sandbox permission, making DOM comment inspection web-only.
+Client-state V3 is a per-window envelope over the V2 content-addressed partition graph. Electron and Tauri prepare immutable partitions before atomically publishing the root, fence migration and writes on current ownership, and collect only unreferenced partitions after publication. Preview and SideCar frame policy (opaque-origin preview iframes, trusted same-origin SideCars, native preview guests) is in `dev-docs/architecture.md`.
 
 ## Boundaries
 
 | Owner | Responsibilities | Main paths |
 |---|---|---|
-| OpenCode V2 | Sessions, messages, permissions, Forms, files, session Shell/instructions, background Shells, interactive PTYs | pinned stable `@opencode/client@2.1.0` contract across server and UI; host-owned native plugin runtime |
-| CodeNomad server | Shared service lifecycle, locations, proxy authorization, Git mutations, Yolo, auth, storage, speech, SSE multiplexing, Developer Mode bridge | `packages/server/src/` |
+| OpenCode V2 | Sessions, messages, permissions, Forms, files, session Shell/instructions, background Shells, interactive PTYs | pinned `@opencode/client@2.1.0` contract across server and UI; host-owned native plugin runtime |
+| CodeNomad server | Shared service lifecycle, locations, proxy authorization, Git mutations, Yolo, auth, storage, speech, SSE multiplexing, desktop automation bridge | `packages/server/src/` |
 | CodeNomad UI | Generated Promise clients, state reconciliation, interaction and rendering | `packages/ui/src/` |
 | Desktop hosts | Start CodeNomad and provide native OS integration | `packages/electron-app/`, `packages/tauri-app/` |
 
-Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped `shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Output preserves native cursor pagination; interactive `pty.*` terminals remain separate. `packages/opencode-plugin/` and the legacy server plugin/background-process integration remain deleted and must not be restored or used as extension points. The narrow bundled automation, Missions and session-pruning integrations use native V2 discovery and backend presence.
+Session Shell remains separate from background Shell and PTY management. The Status panel lists location-scoped `shell.*` records, refreshes on Shell events/reconnect, displays native metadata, and supports ownership-checked removal. Output preserves native cursor pagination; interactive `pty.*` terminals remain separate. Never add server plugin or background-process extension points; the narrow bundled automation, Missions and session-pruning integrations use native V2 discovery and backend presence.
 
-Native Forms are the interruption API. Legacy Question request/reply/reject routes are retired; do not restore a Question queue architecture.
+Native Forms are the interruption API; never add a separate Question queue.
 
 ## HTTP And Events
 
 - CodeNomad control endpoints live under `/api/*`, including `/api/workspaces`, Git routes and `/api/events`.
-- OpenCode requests use `/workspaces/:id/instance/api/*`. The explicit method/path allowlist injects service auth, validates supplied paths and `location`/`directory` values, checks session ownership, and defaults safe requests to the workspace directory. New upstream routes require review and are not exposed automatically.
-- Yolo state endpoints currently use `/workspaces/:id/yolo/sessions/:sessionId`; state changes and auto-accept confirmations travel over `/api/events`.
-- `InstanceEventBridge` subscribes once to the volatile shared OpenCode event stream and publishes typed `instance.event` records on CodeNomad's event bus. Reconnect must refetch authoritative state because missed events are not replayed reliably.
+- OpenCode requests use `/workspaces/:id/instance/api/*`. The explicit method/path allowlist injects service auth, validates supplied paths and `location`/`directory` values, checks session ownership, and defaults safe requests to the workspace directory. New upstream routes are exposed only after review.
+- Yolo state endpoints use `/workspaces/:id/yolo/sessions/:sessionId`; state changes and auto-accept confirmations travel over `/api/events`.
+- `InstanceEventBridge` subscribes once to the volatile shared OpenCode event stream and publishes typed `instance.event` records on CodeNomad's event bus. Reconnect must refetch authoritative state because missed events are lost.
 
 ## Persistence
 
@@ -42,7 +42,7 @@ Native Forms are the interruption API. Legacy Question request/reply/reject rout
 
 OpenCode location/workspace identity is upstream state. CodeNomad persists only its own preferences and policy metadata, including Yolo state.
 
-OpenCode owns the global daemon's standard state and database. Allowed configured environment variables apply only when CodeNomad starts a missing daemon; an existing daemon is unchanged, and legacy `OPENCODE_DB`/`XDG_STATE_HOME` ownership variables are ignored.
+OpenCode owns the global daemon's standard state and database. Allowed configured environment variables apply only when CodeNomad starts a missing daemon; an existing daemon is unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` ownership variables are ignored.
 
 ## Entry Points
 

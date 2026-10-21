@@ -2,7 +2,7 @@
 
 ## Framework: SolidJS
 
-- Components use JSX (not React)
+- Components use Solid JSX
 - State management via signals: `createSignal()`, `createMemo()`
 - Hooks follow `use*` naming convention: `useSpeech()`, `useScrollCache()`
 - Effects via `createEffect()`
@@ -10,38 +10,7 @@
 
 ## i18n (Internationalization)
 
-### Runtime API
-
-- **In components:** `const { t } = useI18n()`
-- **In stores/non-component code:** `tGlobal("key")`
-- **Implementation:** `packages/ui/src/lib/i18n/index.tsx`
-
-### Message Files
-
-- **Location:** `packages/ui/src/lib/i18n/messages/<locale>/`
-- **Format:** TypeScript objects with flat dot keys: `"flat.dot.keys": "string"`
-- **Merge helper:** `packages/ui/src/lib/i18n/messages/merge.ts`
-- **Duplicate keys:** Throw at build time
-
-### Supported Locales (9)
-
-| Locale | Code | Direction |
-|--------|------|-----------|
-| English | `en` | LTR |
-| Spanish | `es` | LTR |
-| French | `fr` | LTR |
-| Russian | `ru` | LTR |
-| Japanese | `ja` | LTR |
-| Simplified Chinese | `zh-Hans` | LTR |
-| Hebrew | `he` | RTL |
-| German | `de` | LTR |
-| Nepali | `ne` | LTR |
-
-### Adding a New String
-
-1. Add to `packages/ui/src/lib/i18n/messages/en/*.ts` (appropriate part file)
-2. Add same key to each other locale's corresponding file
-3. Missing translations fall back to English (then to the key itself)
+Follow the Multi-Language Support rules in `AGENTS.md`. The locale list is `SUPPORTED_LOCALES` in `packages/ui/src/lib/i18n/index.tsx`; `RTL_LOCALES` there marks the right-to-left locales (`he`).
 
 ### Anti-Pattern
 
@@ -62,13 +31,7 @@ const text = t("key")
 - Signal-based using SolidJS `createSignal()`
 - Export signal accessor and setter: `export const [things, setThings] = createSignal(...)`
 - Co-locate related stores (e.g., `session-*.ts` files for session management)
-
-### File Size Limits
-
-| Type | Warning | Target Limit |
-|------|---------|-------------|
-| Source files | >500 lines | <800 lines |
-| Test files | >1000 lines | <1000 lines |
+- File size thresholds: File Length Guidelines in `AGENTS.md`
 
 ### Example Store Structure
 
@@ -93,11 +56,7 @@ export function addItem(item: Item): void {
 
 ### Styling
 
-- Use existing token/utility CSS layers
-- Tokens: `src/styles/tokens.css`
-- Utilities: `src/styles/utilities.css`
-- Co-locate reusable UI patterns under `src/styles/components/`
-- New component styles: place in scoped subdirectory, import from aggregator file
+Follow the Styling Guidelines in `AGENTS.md` and the area document listed under its Area conventions.
 
 ### Pattern
 
@@ -118,15 +77,7 @@ export function ExampleComponent(props: ExampleProps) {
 
 ## Testing
 
-- **Framework:** Vitest
+- **Framework:** `node:test` with `node:assert/strict`, run through `tsx`: `node --conditions=browser --import tsx --test <files>` for UI units
 - **UI stores/utilities:** `*.test.ts` alongside source files
 - **Example:** `packages/ui/src/stores/session-status.test.ts`
-
-## Commit Messages
-
-- Use conventional style subject line
-- Body paragraphs explain:
-  - User-visible behavior change
-  - Implementation approach
-  - Edge cases or platform considerations
-  - Validation or test coverage
+- **Rendering regressions:** `packages/ui/tests/browser/` (Tooling Preferences in `AGENTS.md`)

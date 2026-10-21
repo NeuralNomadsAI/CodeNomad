@@ -1,33 +1,30 @@
-# OpenCode V2 compatibility and runtime qualification
+# OpenCode compatibility and runtime qualification
 
-## Current qualification policy
+## Qualification policy
 
 Qualify the pinned client/plugin dependencies (moved together) against the
 technical minimum and `@opencode/cli@latest` before publishing; CI records the
-resolved runtime. Retained compatibility code implies no support for older
-runtimes. Review a release from its exact tags, published npm packages and an
-authenticated isolated OpenAPI dump (the tagged `packages/protocol/openapi.json`
-can be stale; GitHub's compare view is not a source); V2 release notes are at
-[opencode.ai/changelog](https://opencode.ai/changelog), GitHub Releases list V1.
-Keep results in the PR and CI logs, never as per-version sections here.
+resolved runtime. Review a release from its exact tags, published npm packages
+and an authenticated isolated OpenAPI dump (the tagged
+`packages/protocol/openapi.json` can lag the runtime), never GitHub's compare
+view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog)
+(GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
+per-version sections here.
 
 Minimum and recommended runtime: **2.1.2** (`runtime-support.ts`), with **2.1.0**
-client/plugin pins. On 2.1.0/2.1.1, native Code Mode breaks JavaScript
-run-to-completion (lost shared updates, async caller resumed before its first
-await): a demonstrated execution defect, not an API-shape or pin change. Upstream
-#54276 fixes it in 2.1.2; `scripts/test-codemode-jobs-native.mjs` keeps the
-red/green regression, run in CI against minimum and latest. The pinned 2.1
-reducer consumes the 2.1 replay contract (below), so 2.0.x daemons are refused
-with `native_contract`. Plugins share the host Effect 4.0.1/Schema runtime
-(boundary from 2.0.27). Unlisted/prerelease/custom/future labels undergo
-authenticated contract recognition; missing canonical APIs, session environment
-or the 2.1 replay shape give a concrete reason. OpenCode 2.1 reads older stored
-data. Pre-2.0.4 adapters and the timestamp fallback are retired; historical
-identity, import/cursor authorization, cancellation and connection checks remain.
+client/plugin pins. Earlier native Code Mode breaks JavaScript run-to-completion
+(lost shared updates, async caller resumed before its first await);
+`scripts/test-codemode-jobs-native.mjs` keeps the red/green regression, run in
+CI against minimum and latest. The pinned 2.1 reducer consumes the replay
+contract (below), so 2.0.x daemons are refused with `native_contract`. Plugins
+share the host Effect 4.0.1/Schema runtime. Unlisted/prerelease/custom/future
+labels undergo authenticated contract recognition; missing canonical APIs,
+session environment or the replay shape give a concrete reason. OpenCode 2.1
+reads older stored data.
 
 ### Native Codex subscription usage
 
-Beyond the usage rules in [PROVIDER_ACCOUNTS_UX_PLAN.md](PROVIDER_ACCOUNTS_UX_PLAN.md):
+Beyond the usage rules in [PROVIDER_ACCOUNTS.md](PROVIDER_ACCOUNTS.md):
 Codex uses only the owned session's integration's first connection and its
 matching active ChatGPT OAuth credential (`chatgpt-browser`/`chatgpt-headless`),
 never Codex CLI credentials, SQLite or another saved account; WSL uses the
@@ -35,33 +32,31 @@ selected daemon's credentials. Snapshots are keyed by native connection,
 instance, session, directory, provider and credential identity and revalidate
 native selection before publication; the proxy keeps blocking browser credential
 export and generic RPC. Fixture: `node scripts/test-provider-usage-native.mjs <cli>`
-(synthetic credentials, mocked quota HTTP; not live ChatGPT or WSL).
+(synthetic credentials and mocked quota HTTP only).
 
 ### Side questions (`/btw`)
 
-Native `session.generate({ sessionID, prompt })` through the ownership-checked
-proxy: no `session.command`, fork, environment replacement or transcript/inbox
-record; one text answer, no client-side context or tool loop; closing aborts only
-that request. `scripts/test-session-aside-native.mjs` (private daemon, local
+`/btw` calls only native `session.generate({ sessionID, prompt })` through the
+ownership-checked proxy and shows its single text answer; the session's
+environment, transcript and inbox stay untouched, and closing aborts only that
+request. `scripts/test-session-aside-native.mjs` (private daemon, local
 provider) runs in the minimum/latest CI matrix.
 
 ### Contract notes
 
-- Generated client URLs pass through unchanged (upstream keeps `baseUrl`
-  prefixes); scheduling classifies API paths relative to the proxy prefix. Do
-  not restore a prefix-repair workaround.
+- Generated client URLs keep their `baseUrl` prefix and pass through unchanged;
+  scheduling classifies API paths relative to the proxy prefix.
 - The proxy allowlist stays closed to pairing (`/api/pair`, `/auth/connect/*`),
   credential export/creation (`/api/credential`) and experimental voice
   (`/api/experimental/voice/session`); a runtime update never widens it or
   retries a mutation under another contract (`instance-proxy.test.ts`).
 - Session creation needs an inspectable JSON object; the proxy rejects any
-  `parentID` before forwarding (native `parentID` ignores the location). Owned
-  root creation and the ownership-checked fork API remain.
+  `parentID` before forwarding (native `parentID` ignores the location).
 - Service lifecycle uses the selected CLI's status/start/password and the
   registration fallback, never SDK `Service.ensure/stop` or an assumed default
   port. A user's `opencode service set env` value overrides CodeNomad's
-  missing-daemon start variable of the same name; `session.environment` is
-  unaffected.
+  missing-daemon start variable of the same name; per-send
+  `session.environment` applies independently.
 - Plugin bundles externalize Effect and the plugin SDK because two Effect
   runtimes cannot share one native fiber and host Schema APIs differ across
   releases. Test hosts that spread the Promise plugin context must declare the
@@ -75,21 +70,22 @@ provider) runs in the minimum/latest CI matrix.
 - Upstream #52922 (Bus routing before Location fanout) is open: keep the
   discovery and event-relay mitigations.
 
-### 2.1 replay contract
+### Replay contract
 
-Text/reasoning/tool/step provider data is one `native` field (formerly `state`,
-`providerState`, `providerResultState`; on a shared key the tool result wins).
-Summary compactions reference `metadata.keepID`, with former `recent` text in
-`metadata.recent`; provider compactions replay from `native.messages`. The
-`SessionLegacy` codec (`@opencode/schema`) upgrades stored rows/events on read
-without rewriting bytes, retiring a compaction's `providerContext.version`/
-`provenance` and an unreplayed `providerState` beside a `providerContext`. The
-UI reduces events with the pinned `createData` (`stores/opencode-data.ts`);
-mismatched pins change reasoning identity and `stores/session-actions.ts`
-refuses pruning (`session-pruning-projection.test.ts`). Admission therefore
-requires `Session.Message.Assistant.Text.native` without `state` and
+Text/reasoning/tool/step provider data is one `native` field (on a key shared by
+a tool call and its result, the result wins). Summary compactions reference
+`metadata.keepID`, with kept text in `metadata.recent`; provider compactions
+replay from `native.messages`. On read, the `SessionLegacy` codec
+(`@opencode/schema`) upgrades stored rows/events carrying `state`,
+`providerState`, `providerResultState` or `recent` without rewriting bytes, and
+drops a compaction's `providerContext.version`/`provenance` and a
+`providerState` stored beside a `providerContext`. The UI reduces events with
+the pinned `createData` (`stores/opencode-data.ts`); mismatched pins change
+reasoning identity and `stores/session-actions.ts` refuses pruning
+(`session-pruning-projection.test.ts`). Admission therefore requires
+`Session.Message.Assistant.Text.native` without `state` and
 `Session.Message.Compaction.Completed` with `metadata` but no `recent`
-(`compatibility/negotiate.ts`); no 2.0.x adapter. `planner.ts` hashes the
+(`compatibility/negotiate.ts`). `planner.ts` hashes the
 `SessionLegacy` projection and writes surviving stored parts back unchanged
 (`pruning.test.ts`). CodeNomad never archives (`session.archived`/`unarchived`
 only invalidate); the UI compaction part keeps `native` (`normalizers.ts`). The
@@ -98,8 +94,8 @@ packed pruning plugin declares every bare import, including `@opencode/schema`
 
 ### Capability-checked loaded-only pending recovery
 
-Rules: [NATIVE_INTERRUPTION_UX.md](NATIVE_INTERRUPTION_UX.md). Existing
-pruning/history methods keep their own support and write checks.
+Rules: [NATIVE_INTERRUPTION_UX.md](NATIVE_INTERRUPTION_UX.md). Pruning/history
+methods have their own support and write checks.
 
 The reader uses private native LocationServiceMap, Location, Form and Permission
 services, scoped existing-only leases and repeated inventory/object-identity
@@ -112,25 +108,24 @@ output, a two-second reader deadline and the broker's 30-second overall deadline
 Git worker). Overflow or unsafe serialization fails rather than truncates.
 
 The UI sends at most eight directories per request within the escaped URL
-budget, under its own ten-second deadline; there is no whole-history deadline
-or completion guarantee on slow filesystems. The broker rejects overflowing raw
-JSON numbers (including unknown metadata) before coverage/capability admission;
-native numeric codec strings remain unchanged.
+budget, under its own ten-second deadline; recovering a whole history on a slow
+filesystem can take arbitrarily long. The broker rejects overflowing raw JSON
+numbers (including unknown metadata) before coverage/capability admission;
+native numeric codec strings pass through unchanged.
 
 `GET /api/workspaces/:id/pending-requests` keeps its UI wire shape and calls only
 `POST /api/rpc/codenomad.pending-requests/snapshot?location[directory]=<root>`
 with `{ "input": { "directories": [...] } }`. Legacy workspace identities are
-rejected, not erased; workspace/connection replacement, root or candidate
+rejected and never erased; workspace/connection replacement, root or candidate
 deletion and changed authority fence dispatch and publication. Cold UI coverage
-synthesizes a location from the validated native entry directory, not the
+synthesizes a location from the validated native entry directory, never the
 browser's alias. Plain 404s, malformed output, authentication failures, reader
 errors, timeouts and overflow return non-authoritative 503s. An unverified
-capability is never probed during an observed compaction; this hold is
-intentional.
+capability is deliberately never probed during an observed compaction.
 
-Candidate traversal constructs no cold Locations, but native HTTP middleware may
-still warm/rebuild the single bootstrap root; root eviction/config rebuild is
-not construction-free. Snapshots can go stale after leases release, so per-kind
+Candidate traversal constructs no cold Locations; native HTTP middleware may
+warm or rebuild the single bootstrap root, and root eviction or a config rebuild
+constructs it again. Snapshots can go stale after leases release, so per-kind
 mutation fences and settlement tombstones stay essential.
 
 ## Agent conventions
@@ -138,4 +133,4 @@ mutation fences and settlement tombstones stay essential.
 - Desktop automation and pruning provisioning follows the authenticated OpenCode connection and its `config.get` global discovery directory, including reconnects. Replacing a connection aborts its in-flight provisioning: `opencode/desktop-plugin-provisioning.ts` logs that at debug as superseded (the new connection provisions again) and keeps errors for failures on the current connection. Never derive a running daemon's roots from backend/startup environment or CLI `debug paths`. OpenCode watches the entire discovery root recursively: keep changing presence leases outside it, in the sibling `.codenomad/<root-hash>/` namespace. Retain existing outside-root storage; migrate inside-root storage while reading older backends' leases without writing there. WSL translates the daemon-reported paths through the selected distro only for filesystem access. Verify heartbeat stability with the isolated native automation fixture.
 - Plugins register only at their next presence check, so a backend's first plugin RPC could arrive before registration and be refused. Followers acknowledge a lease with a `<lease>.ready` marker (current namespace only) once every follower of that directory in the native process has observed it while registered; routes calling bundled-plugin RPCs await `workspaceManager.desktopPluginsReady()` before reading or authorizing the session, so ownership checks and deletion-fence entry stay adjacent (bounded to 5 s, never rejects). The bound is paid in full only when no marker can arrive: no Location loaded yet, or pre-marker plugin copies still loaded after an upgrade. Do not replace this ordering with retries of refused reads.
 - The shared native event relay consumes upstream events before slow routing I/O. Preserve per-session/PTY/Shell and per-recipient FIFO, validated full-location ownership, invalidation/connection/workspace fences and bounded-backlog reconnect recovery. A slow recipient must not block another or the shared SDK subscriber. Validate with the relay regressions and isolated native location fixture.
-- Native OpenCode plugins share `packages/server/scripts/native-plugin-build.mjs`: never embed Effect or the public plugin SDK into daemon-loaded bundles (version boundaries: Current qualification policy above). Keep backend-side OpenTunnel isolation separate, and run the bundle regression plus isolated plugin-runtime/pruning/automation/Missions fixtures when changing this boundary.
+- Native OpenCode plugins share `packages/server/scripts/native-plugin-build.mjs`: never embed Effect or the public plugin SDK into daemon-loaded bundles (version boundaries: Qualification policy above). Keep backend-side OpenTunnel isolation separate, and run the bundle regression plus isolated plugin-runtime/pruning/automation/Missions fixtures when changing this boundary.

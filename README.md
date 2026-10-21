@@ -23,7 +23,7 @@ CodeNomad is a **desktop and browser workspace for OpenCode V2** — built for d
 - **📎 Files and attachments** — Pick, paste, or drop device files; use `@` references for project files and browse your workspace from the file panel.
 - **🌐 Remote access** — Connect to a CodeNomad server from a desktop client or browser, with password authentication and HTTPS support. Or turn on **Remote Control** to pair a phone or another computer from anywhere through an [OpenTunnel](https://github.com/anomalyco/opentunnel) relay, without opening ports: TLS ends on your machine.
 - **🧩 Tools and previews** — Monitor native background shells, manage MCP connections and Global/Project plugin activation, and open web tools as SideCars.
-- **🔎 Agent-driven browser previews** — Let your agent open and inspect a visible web preview in Electron or Windows Tauri, without a Developer Mode switch.
+- **🔎 Agent-driven browser previews** — Let your agent open and inspect a visible web preview in Electron or Windows Tauri.
 - **🎙️ Voice input and speech** — Dictate prompts and listen to responses.
 - **⌨️ A workspace you can adapt** — Command palette, notifications, customizable panels, independent light/dark palettes, and multiple interface languages.
 

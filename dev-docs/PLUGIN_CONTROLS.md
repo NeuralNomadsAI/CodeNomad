@@ -1,8 +1,8 @@
 # OpenCode V2 plugin activation controls
 
-CodeNomad exposes **activation controls** plus native package check/update
-(`stores/plugin-package-actions.ts`), not a package manager: it does not install,
-remove or edit plugin options, which stay in OpenCode configuration and the CLI.
+The Plugins surface toggles plugin activation per scope and runs native package
+check/update (`stores/plugin-package-actions.ts`); installation, removal and
+plugin options stay in OpenCode configuration and the CLI.
 
 ## V2 contract
 
@@ -11,9 +11,9 @@ an ID, `plugin.id` later re-enables it, `*` matches all plugins, and `prefix.*`
 matches an ID prefix. Source declarations remain in place when an activation
 rule is added.
 
-The runtime's `plugin.list`/`plugin.check`/`plugin.update` have no enable/disable
-counterpart and the pinned client's `config.update` accepts only its declared
-preference fields, so activation is one narrow, authenticated configuration mutation.
+The native plugin API offers `plugin.list`/`plugin.check`/`plugin.update`, and the
+pinned client's `config.update` accepts only its declared preference fields, so
+activation is one narrow, authenticated configuration-file mutation.
 
 ## Authority and precedence
 
@@ -32,8 +32,8 @@ OpenCode connection and an ownership check for the complete native location.
   `.opencode/opencode.jsonc` there. It never selects the ancestor as its target.
 
 WSL paths are resolved and mutated through the workspace's selected distro;
-configuration permissions never come from synthetic UNC metadata. No path is
-derived from the CodeNomad process environment, CLI debug output, or
+configuration permissions never come from synthetic UNC metadata. Never derive a
+path from the CodeNomad process environment, CLI debug output or
 `OPENCODE_CONFIG_CONTENT`. Reads return the canonical service directory; the UI
 aliases an initial Windows/UNC request to that identity so native plugin events,
 later session locations, and the original host path share one cache record.
@@ -41,20 +41,18 @@ later session locations, and the original host path share one cache record.
 If the location is the global configuration root, or Global and Project resolve
 through symlinks/junctions to the same physical document, Project is unavailable.
 Its switch remains visible but disabled, and the server rejects a direct Project
-mutation rather than writing the Global document under the wrong scope.
-The higher-precedence Project fallback is also unavailable if its physical
-destination escapes the active location through a symlink/junction; it must not
-edit an ancestor/shared file to implement a location-local override. Missing
-fallback documents are created only by an explicit mutation, not display reads.
+mutation. The higher-precedence Project fallback is also unavailable if its
+physical destination escapes the active location through a symlink/junction; it
+must never edit an ancestor/shared file to implement a location-local override.
+Missing fallback documents are created only by an explicit mutation.
 
 Global rules can be overridden by later project rules. Built-in OpenCode entries
-remain in the authoritative snapshot but are not presented as user activation
-controls. An exact disabled ID remains available even when it is absent from
-`plugin.list`, so it can be re-enabled. A plugin hidden only by a
-broad wildcard cannot be named safely unless the runtime or an exact configured
-rule reveals its ID. OpenCode's reserved `opencode.*` identity is retained on
-disabled synthesized controls so builtins do not become visible merely because
-`plugin.list` omits inactive entries.
+remain in the authoritative snapshot without user activation controls. An exact
+disabled ID remains available even when it is absent from `plugin.list`, so it
+can be re-enabled. A plugin hidden only by a broad wildcard gets a control once
+the runtime or an exact configured rule reveals its ID. Disabled synthesized
+controls retain OpenCode's reserved `opencode.*` identity, so builtins stay hidden
+when `plugin.list` omits inactive entries.
 
 A scope without an explicit matching rule inherits predictably in the compact
 switch UI: Global uses OpenCode's enabled baseline, while Project inherits the
@@ -65,9 +63,8 @@ operations when they re-enable an already resolved plugin, matching OpenCode's
 native supervisor. Relative and `file://` local declarations are correlated with
 the resolved runtime entrypoint before that ordered replay.
 
-Display snapshots are never keyed by session workspace identifiers: changing
-sessions inside one worktree reuses its snapshot, and the first read waits until
-the Plugins surface is visible and expanded. Location-scoped plugin events mark
+Changing sessions inside one worktree reuses its snapshot, and the first read
+waits until the Plugins surface is visible and expanded. Location-scoped plugin events mark
 only their worktree stale; an unknown directory matches nothing, while a canonical
 event arriving before its WSL alias is learned is retained and fences only the
 snapshot that later adopts that identity. Merging separate host and canonical
@@ -107,19 +104,17 @@ operation:
    inert; locks self-heal after 30 s.
 
 WSL performs bounded inspect/read/create/chmod/sync/rename operations inside the
-selected distro, retaining native modes such as `0600` rather than inferring them
-from the UNC projection. Shell helpers prefer portable fallbacks (`realpath`,
+selected distro, retaining native modes such as `0600`. Shell helpers prefer portable fallbacks (`realpath`,
 `sync`, `sha256sum`/`shasum`); Ubuntu remains the tested distro for minimal busybox
 images. A toggle costs four unpooled `wsl.exe` cold starts (`inspectMany`, `load`,
 `prepare`, `commit`; cleanup only after a failed commit): roughly 2–8 s of
 filesystem time before daemon RPCs on slow hosts.
 
-The server keeps no display cache by design: every read and mutation reissues
-`config.get` + `plugin.list` (plus one `location.get` for session-scoped
-locations) and re-resolves targets, so snapshots can never serve stale daemon
-state. Expensive work is bounded instead: one snapshot base per mutation with
-positional overlays (no triple rebuild), per-write-target mutation queues, and
-UI-side coalesced trailing refreshes.
+Never add a server display cache: every read and mutation reissues `config.get` +
+`plugin.list` (plus one `location.get` for session-scoped locations) and
+re-resolves targets, so snapshots always reflect current daemon state. Expensive
+work is bounded: one snapshot base per mutation with positional overlays,
+per-write-target mutation queues, and UI-side coalesced trailing refreshes.
 
 UI cache records live until `workspace.stopped` clears the instance
 (`clearInstance` also aborts in-flight reads). Records are keyed by worktree
@@ -136,28 +131,25 @@ daemon are paired positionally and replayed after its normalized document. Raw
 enable the no-op shortcut. A no-op additionally requires the whole normalized
 prefix to match the raw target, followed only by concrete rules included in the
 projection. A raw deletion/replacement or an unprojected entry during watcher
-lag instead appends the requested exact rule; stale daemon state cannot prove
-that the requested state is already durable.
+lag instead appends the requested exact rule.
 
 The connection generation is rechecked after discovery, before file preparation,
 and again immediately before the atomic rename. Mutations also enter the active
-worktree's deletion fence, so
-worktree removal drains an admitted write and a blocked write fails closed. The
-route accepts no caller-provided config path and refuses foreign locations,
-malformed runtime inventory, or IDs absent from the authorized
-runtime/configured inventory.
+worktree's deletion fence, so worktree removal drains an admitted write and a
+blocked write fails closed. The route never accepts a caller-provided config path
+and refuses foreign locations, malformed runtime inventory, or IDs absent from the
+authorized runtime/configured inventory.
 
-OpenCode watches these configuration roots. CodeNomad does not restart the
-daemon and does not claim that a successful file write means the plugin is
-already active. The mutation response publishes the durable configured state;
-`config.updated` and `plugin.updated` trigger fenced, coalesced refreshes until
-runtime state catches up.
+OpenCode watches these configuration roots. Never restart the daemon or report a
+successful file write as an active plugin: the mutation response publishes the
+durable configured state, and `config.updated` and `plugin.updated` trigger
+fenced, coalesced refreshes until runtime state catches up.
 
 ## Runtime qualification
 
-Activation adds no version requirement beyond `opencode/runtime-support.ts`; its
-write is a local JSONC rule, not a runtime mutation endpoint. Read or discovery
-failures leave controls unavailable and never fall back to guessed paths.
+Activation requires only the global minimum in `opencode/runtime-support.ts`.
+Read or discovery failures leave controls unavailable and never fall back to
+guessed paths.
 
 ## Validation
 
@@ -176,9 +168,11 @@ failures leave controls unavailable and never fall back to guessed paths.
 - real Solid UI, full stylesheet, dual explicit scope switches, lazy visibility,
   shared rounded geometry, mutation, and native event dispatcher:
   `packages/ui/tests/browser/plugin-controls.test.ts`
+- package check/update menus, one native request per target and pending state
+  across hiding: `packages/ui/tests/browser/plugin-packages.test.ts`
 
 ## Agent conventions
 
 - Present Global and Project as separate per-plugin columns so every mutation has an explicit scope. Cache display snapshots by instance and worktree directory, and refresh them only while the plugin surface is visible.
-- Keep the Plugins surface minimal: plugin names, a compact package check/update icon when applicable, and Global/Project switches. Activating the icon opens a menu that names the exact package operation (check or update with its native target) instead of firing blindly; put source/status/target details and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary. The compact Refresh icon occupies the name-column header and spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and menu chrome is shared with `action-overflow-menu`.
+- Keep the Plugins surface minimal: plugin names, a compact package check/update icon when applicable, and Global/Project switches. Activating the icon opens a menu that names the exact package operation (check or update with its native target); put source/status/target details and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary. The compact Refresh icon occupies the name-column header and spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and menu chrome is shared with `action-overflow-menu`.
 - Plugin packages that fail before exporting an ID remain visible by their native target with check/update actions and failure details in the name tooltip. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds.

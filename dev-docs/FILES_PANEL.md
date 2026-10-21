@@ -16,8 +16,7 @@ An open row menu survives resizing until dismissal. Change counts are muted;
 additions use success green, deletions error red.
 
 Changes has two independently collapsible sections, initially expanded: Staged
-Changes (Git actions and the compact commit field before its rows, no separate
-Actions disclosure) and Changes. Collapsing keeps the commit draft and
+Changes (Git actions and the compact commit field before its rows) and Changes. Collapsing keeps the commit draft and
 selection, reads no status and leaves the header a staging drop target; mode
 switches and refreshes keep both disclosure states.
 
@@ -31,8 +30,8 @@ worktrees) over thousands of changes are bounded by three rules:
   structurally identical, so no memo recomputes and no row is touched. When the
   status changed, entries and list items whose fields all match (by path / by
   item id) keep their previous objects; only changed, added or removed rows reach
-  the DOM. List items therefore hold primitive fields only. The request-version,
-  worktree and whitespace-option stale fences are unchanged.
+  the DOM. List items therefore hold primitive fields only. Request-version,
+  worktree and whitespace-option fences discard stale reads.
 - **Bounded sections.** `git-change-window.ts` renders each section's first
   `GIT_CHANGE_ROW_LIMIT` (200) rows and closes it with an in-place "Show 200
   more" line stating how many files are not shown; header and file counts stay the
@@ -40,13 +39,12 @@ worktrees) over thousands of changes are bounded by three rules:
   survive refreshes and mode switches, and reset when the worktree changes.
   Current, previewed and bulk-selected rows always render, and the pins are
   sticky (`stickyPins`): a row once pinned stays rendered until the worktree
-  changes or its file leaves the loaded inventory (a returning file is not pinned
-  again; a list discarded while Changes is hidden is not a departure). Beyond the bound they follow the window in list order, before Show
+  changes or its file leaves the loaded inventory (a returning file starts
+  unpinned; discarding the list while Changes is hidden keeps the pins). Beyond the bound they follow the window in list order, before Show
   more, so an auto-selected most-changed file or a preview moved by staging stays
-  reachable without rendering every row before it, and nothing shown there
-  disappears because a preview closed, the selection moved or focus left. The
-  sticky set only grows through selection and previews. There is no focus
-  tracking. A focused row that unmounts anyway (staged/unstaged into the other
+  reachable without rendering every row before it, and rows shown there stay when
+  a preview closes, the selection moves or focus leaves. The sticky set grows only
+  through selection and previews; focus never pins a row. A focused row that unmounts (staged/unstaged into the other
   section, changed or removed by a refresh) hands focus to its replacement for
   the same file, else to the nearest following row or Show more control that
   survived (a bulk move removes neighbours in the same update), the nearest
@@ -54,7 +52,7 @@ worktrees) over thousands of changes are bounded by three rules:
   (`git-change-row-focus.ts`): never the
   commit box or an action on another file, never the document.
   Shift ranges span the rendered rows only, so bulk actions never include files
-  hidden beyond the bound (collapsed sections keep their existing behavior).
+  hidden beyond the bound; a collapsed section's windowed rows count as rendered.
 - **Per-row selection state** uses `createSelector`, so a selection change only
   updates the rows whose state changed.
 
@@ -100,7 +98,7 @@ Stored with the UI settings; the rules are in Agent conventions. Beyond them:
 - Detection never compares index with HEAD: a file staged with real content and
   re-indented afterwards shows only its staged row.
 - `useGitChanges` exposes only the visible inventory, so hidden files stay
-  unstaged; there is no "stage all" command. Toggling while Changes is hidden
+  unstaged. Toggling while Changes is hidden
   drops its cached rows for the next activation; turning the option off shows
   flagged rows immediately.
 - In diffs, indentation and trailing spaces/tabs compare equal while inner
@@ -122,7 +120,7 @@ draft, and explicit refresh asks before discarding edits.
 Clicked readers have a reserved one-request lane beside the two background scan
 slots. Start the local Monaco load alongside the content read; preview Git work
 uses the worker's foreground queue. Commit metadata and parent IDs share one Git
-process. These changes preserve ownership checks and cancellation fencing.
+process. Ownership checks and cancellation fencing apply to all of them.
 
 `lib/monaco/theme.ts` resolves the selected palette's CSS tokens into Monaco hex
 colors, including source tokens, editor surfaces and added/removed-line tints.
@@ -133,32 +131,31 @@ insertion into the composer remain available.
 
 ## Backend boundaries
 
-Listings register their watch before reading the directory: native filesystem
-events do not cover every browsed folder, and this path needs no initialized
-OpenCode client. `workspace.filesChanged` carries the workspace ID and changed
-listing directories, not one event per file. Stale visible directories reread
-on the existing background read budget, with one coalesced follow-up when busy.
-There is no periodic scan or polling, and explicit Refresh rereads every
-visible directory. Version metadata is disposed with the workspace. Watches
+Listings register their watch before reading the directory, because native
+filesystem events miss some browsed folders; this path needs no initialized
+OpenCode client. Each `workspace.filesChanged` batch carries the workspace ID and
+the changed listing directories. Stale visible directories reread on the
+shared background read budget, with one coalesced follow-up when busy. Never
+add periodic scans or polling; explicit Refresh rereads every visible directory. Version metadata is disposed with the workspace. Watches
 never follow an outward symlink and cover at most the 256 most recently listed
 directories per backend. A replaced directory rebinds its inode identity; setup
 errors stay best effort and a later listing retries. Directory entries carry an
 opaque device/inode identity distinct from mtime.
 
 - `/api/workspaces/:id/files/preview` accepts a relative `path` and the browsed
-  `directory`, validates it through the manager's existing worktree ownership,
+  `directory`, validates it through the manager's worktree ownership,
   and uses the bounded filesystem content reader (5 MiB, base64). This also works
   for the explicitly opened directory in Git-degraded mode.
 - `/api/workspaces/:id/worktrees/:slug/git-history` returns up to 50 commits plus
   a continuation flag. Later pages retain their original HEAD hash.
 - `PUT /api/workspaces/:id/files/content` accepts the exact browsed `directory`
   alongside the relative path, checks current ownership and the deletion fence,
-  and uses the existing filesystem writer. It never redirects a linked-worktree
+  and uses the shared filesystem writer. It never redirects a linked-worktree
   edit to the root checkout.
 - `/git-history/:commit` returns the message and files; an optional `path` returns
   before/after text against the first parent (empty for a root commit).
 - Commit IDs are full SHA-1/SHA-256 hashes. Files must belong to the commit's
-  authoritative change list. Git commands run in the existing worker with a
+  authoritative change list. Git commands run in the shared Git worker with a
   timeout and output bound. Renames use their original path; gitlinks show their
   object IDs rather than reading another repository. Binary diffs use a fallback.
 
@@ -214,13 +211,13 @@ opaque device/inode identity distinct from mtime.
   rows kept, bulk targets, live toggling and stale-option responses;
   `file-viewer/diff-whitespace.test.ts` (CRLF/CR/BOM, empty sides, linear time on
   long blank runs) and `settings/behavior-registry.test.ts` cover the classifier
-  and the preference. The design fixture remains available through
-  `node scripts/preview-git-history.mjs` with synthetic data only.
+  and the preference. `node scripts/preview-git-history.mjs` renders the design
+  fixture with synthetic data only.
 
 ## Agent conventions
 
-- Workspace text remains editable in the central file reader (including Markdown source), with Save and Ctrl/Cmd+S. Keep dirty drafts in `components/workspace-file-editor.ts`, scoped by instance/directory/path; invalidation must not replace them. Saves reread for external-change confirmation and pass the exact owned directory through the deletion-fenced filesystem write route. Images, binary content and historical diffs remain read-only.
-- Files row selection never opens the central preview implicitly. All three modes reuse `FileRowActions` with a pinned eye using the shared `icon-toggle` active state; secondary actions use whole-row overflow measurements. Keep selection beneath the entire row including controls and rollover in `styles/panels/control-hover.css`. Changes keeps staged/unstaged disclosures with commit actions at the top of the staged section. Git image readers use exact bounded HEAD/index/worktree or parent/commit bytes, not current-file substitutes for historical content.
-- The Files panel combines Workspace, Changes and Commits in one compact switch, initially on Workspace. Its lazy worktree tree preserves expanded folders while switching modes; tree styles live in `styles/panels/workspace-tree.css`, Git navigation in `styles/panels/git-history.css`, row actions in `styles/panels/file-row-actions.css`. Workspace secondary actions are folder-specific (open, terminal, copy path) and file-specific (open, reveal, copy path). Changes rows carry explicit stage/unstage actions and drag between staged/unstaged drop zones. Large Changes inventories stay cheap: an identical status refresh publishes nothing and changed ones reuse unchanged item objects (`reuseUnchanged`), each section renders `GIT_CHANGE_ROW_LIMIT` rows plus sticky current/previewed/bulk-selected rows (kept until the worktree changes or the file leaves the loaded inventory; a hidden-mode discard is not a departure; no focus tracking) with an in-place Show more (`git-change-window.ts`), a focused row that unmounts hands focus only to its replacement, the nearest surviving row/Show more or the section header (without scrolling), never the commit box or `<body>` (`git-change-row-focus.ts`), ranges span rendered rows only and row state uses `createSelector`. File/diff readers close with a trailing X; the unified/split switch shows the current layout with Columns/Rows iconography. All three modes are cache-first: directory listings, git status and commit history revalidate lazily on filesystem invalidation, mode activation or explicit refresh, never on every focus or expand. `components/files-preview-view.tsx` chooses the central editable Workspace reader or shared read-only diff reader above the composer. The Advanced "Hide whitespace-only changes" preference (`hideDiffWhitespaceChanges`, default on, no toolbar toggle) mainly removes unstaged files that Git's own `diff --numstat -z --ignore-all-space` omits entirely (whitespace incl. CRLF, inner spacing and a removed/added final newline such as `"x\n"` → `"x"`) from the Changes list, its counts and every selection/bulk/drag action: the status route runs that single extra bounded worker query only when `?hideWhitespace=1` is requested, starts it after the ordinary unstaged numstat resolves, keys its singleflight by the option and fails open. Hide only paths absent from the `-w` output: any listed record, including `0 0` (worktree mode changes, unmerged paths, or every whitespace-only file on older Git), stays visible; skip entries whose staged side is unmerged regardless of record order. Never flag untracked, binary, added/deleted/renamed or staged changes: staged rows (including a staged chmod) are never filtered out; beyond the row bound they stay counted and revealable. Toggling refreshes the visible list and discards reads made under the other option. As a secondary effect, Changes and Commits diffs map it to Monaco's native `ignoreTrimWhitespace` (diff reads unchanged; staging/commits keep exact content), and `file-viewer/diff-whitespace.ts` mirrors Monaco's model (BOM strip, line split, space/tab trim, empty-side whole-file change) in linear time so the reader is never silently blank: factual, setting-independent notes for whitespace-only files (never advice to change the setting: Monaco 0.52 never draws same-length trailing-whitespace swaps in either mode) and for line-ending/BOM-only files, which Monaco never draws either. Do not replicate Monaco's diff loops to predict what it draws. Worktree browsing never checks out a branch or moves a session. Historical reads use bounded worker Git commands behind existing worktree ownership checks. Workspace previews use the bounded directory-authorized preview route; Monaco tokenizers ship locally.
-- A known non-repository (Git available, `isGitRepo: false`) keeps Changes/Commits reachable, without Git reads, showing an explicit unconfirmed "Initialize Git" button (`right-panel/useGitInit.ts`); the no-Git directory-only mode (unknown repository status) is unchanged. `POST /api/workspaces/:id/git-init` accepts only the explicitly opened folder (realpath match), refuses directory-only mode and existing/ancestor repositories, holds its deletion fence, verifies native `location.get`'s project directory is that exact folder (never a parent), then sends one native `vcs.init` with provider `git` (`workspaces/git-init.ts`); 501 `VcsInitNotSupportedError` becomes `git_init_unsupported`. Never replay: success and any failure only invalidate/re-read the inventory, git status, filesystem caches, then project metadata before sessions (the native project ID changes, sessions follow it). The `codenomad.git-availability` advisory depends on the Git executable only, not repository presence. Validate with `server/routes/git-init.test.ts`, `workspaces/git-init.test.ts`, `tests/browser/git-init.test.ts` and the isolated `scripts/test-git-init-native.mjs`.
-- Listed Workspace directories use bounded non-recursive host watches (`workspaces/file-watches.ts`), never a recursive project scan or a new native daemon dependency. `workspace.filesChanged` feeds the existing SSE stream with browsing-root/directory scope; preserve logical alias paths separately from physical containment so internal junctions retain every listing subscriber. `lib/filesystem-events.ts` coalesces passive cache invalidations (including native filesystem events) to at most one publication every five seconds during continuous activity; no timer runs without pending observations. Explicit mutations/recovery remain immediate. `useWorkspaceTree` rereads only stale visible directories in the selected root; hidden/collapsed and other-worktree snapshots wait for demand. A changed directory device/inode identity drops only its cached subtree and cancels old reads, reloading still-expanded paths; mtime changes never force a subtree scan. Preserve ownership, physical-path/inode and workspace-lifetime fences, and close watches on removal/shutdown.
+- Workspace text is editable in the central file reader (including Markdown source), with Save and Ctrl/Cmd+S. Keep dirty drafts in `components/workspace-file-editor.ts`, scoped by instance/directory/path; invalidation must not replace them. Saves reread for external-change confirmation and pass the exact owned directory through the deletion-fenced filesystem write route. Images, binary content and historical diffs are read-only.
+- Files row selection never opens the central preview implicitly. All three modes reuse `FileRowActions` with a pinned eye using the shared `icon-toggle` active state; secondary actions use whole-row overflow measurements. Keep selection beneath the entire row including controls and rollover in `styles/panels/control-hover.css`. Changes keeps staged/unstaged disclosures with commit actions at the top of the staged section. Git image readers use exact bounded HEAD/index/worktree or parent/commit bytes, never current-file substitutes for historical content.
+- The Files panel combines Workspace, Changes and Commits in one compact switch, initially on Workspace. Its lazy worktree tree preserves expanded folders while switching modes; tree styles live in `styles/panels/workspace-tree.css`, Git navigation in `styles/panels/git-history.css`, row actions in `styles/panels/file-row-actions.css`. Workspace secondary actions are folder-specific (open, terminal, copy path) and file-specific (open, reveal, copy path). Changes rows carry explicit stage/unstage actions and drag between staged/unstaged drop zones. Large Changes inventories stay cheap: an identical status refresh publishes nothing and changed ones reuse unchanged item objects (`reuseUnchanged`), each section renders `GIT_CHANGE_ROW_LIMIT` rows plus sticky current/previewed/bulk-selected rows (kept until the worktree changes or the file leaves the loaded inventory; a hidden-mode discard keeps them; focus never pins) with an in-place Show more (`git-change-window.ts`), a focused row that unmounts hands focus only to its replacement, the nearest surviving row/Show more or the section header (without scrolling), never the commit box or `<body>` (`git-change-row-focus.ts`), ranges span rendered rows only and row state uses `createSelector`. File/diff readers close with a trailing X; the unified/split switch shows the current layout with Columns/Rows iconography. All three modes are cache-first: directory listings, git status and commit history revalidate lazily on filesystem invalidation, mode activation or explicit refresh, never on every focus or expand. `components/files-preview-view.tsx` chooses the central editable Workspace reader or shared read-only diff reader above the composer. The Advanced "Hide whitespace-only changes" preference (`hideDiffWhitespaceChanges`, default on, set only in Advanced settings) mainly removes unstaged files that Git's own `diff --numstat -z --ignore-all-space` omits entirely (whitespace incl. CRLF, inner spacing and a removed/added final newline such as `"x\n"` → `"x"`) from the Changes list, its counts and every selection/bulk/drag action: the status route runs that single extra bounded worker query only when `?hideWhitespace=1` is requested, starts it after the ordinary unstaged numstat resolves, keys its singleflight by the option and fails open. Hide only paths absent from the `-w` output: any listed record, including `0 0` (worktree mode changes, unmerged paths, or every whitespace-only file on older Git), stays visible; skip entries whose staged side is unmerged regardless of record order. Never flag untracked, binary, added/deleted/renamed or staged changes: staged rows (including a staged chmod) are never filtered out; beyond the row bound they stay counted and revealable. Toggling refreshes the visible list and discards reads made under the other option. As a secondary effect, Changes and Commits diffs map it to Monaco's native `ignoreTrimWhitespace` (diff reads ignore the option; staging/commits keep exact content), and `file-viewer/diff-whitespace.ts` mirrors Monaco's model (BOM strip, line split, space/tab trim, empty-side whole-file change) in linear time so the reader is never silently blank: factual, setting-independent notes for whitespace-only files (never advice to change the setting: Monaco 0.52 never draws same-length trailing-whitespace swaps in either mode) and for line-ending/BOM-only files, which Monaco never draws either. Do not replicate Monaco's diff loops to predict what it draws. Worktree browsing never checks out a branch or moves a session. Historical reads use bounded worker Git commands behind existing worktree ownership checks. Workspace previews use the bounded directory-authorized preview route; Monaco tokenizers ship locally.
+- A known non-repository (Git available, `isGitRepo: false`) keeps Changes/Commits reachable, without Git reads, showing an explicit unconfirmed "Initialize Git" button (`right-panel/useGitInit.ts`); in no-Git directory-only mode (unknown repository status) Changes/Commits keep their Git views, whose reads report `git_required`. `POST /api/workspaces/:id/git-init` accepts only the explicitly opened folder (realpath match), refuses directory-only mode and existing/ancestor repositories, holds its deletion fence, verifies native `location.get`'s project directory is that exact folder (never a parent), then sends one native `vcs.init` with provider `git` (`workspaces/git-init.ts`); 501 `VcsInitNotSupportedError` becomes `git_init_unsupported`. Never replay: success and any failure only invalidate/re-read the inventory, git status, filesystem caches, then project metadata before sessions (the native project ID changes, sessions follow it). The `codenomad.git-availability` advisory depends only on the Git executable. Validate with `server/routes/git-init.test.ts`, `workspaces/git-init.test.ts`, `tests/browser/git-init.test.ts` and the isolated `scripts/test-git-init-native.mjs`.
+- Listed Workspace directories use bounded non-recursive host watches (`workspaces/file-watches.ts`), never a recursive project scan or a new native daemon dependency. `workspace.filesChanged` feeds the shared SSE stream with browsing-root/directory scope; preserve logical alias paths separately from physical containment so internal junctions retain every listing subscriber. `lib/filesystem-events.ts` coalesces passive cache invalidations (including native filesystem events) to at most one publication every five seconds during continuous activity; no timer runs without pending observations. Explicit mutations/recovery remain immediate. `useWorkspaceTree` rereads only stale visible directories in the selected root; hidden/collapsed and other-worktree snapshots wait for demand. A changed directory device/inode identity drops only its cached subtree and cancels old reads, reloading still-expanded paths; mtime changes never force a subtree scan. Preserve ownership, physical-path/inode and workspace-lifetime fences, and close watches on removal/shutdown.

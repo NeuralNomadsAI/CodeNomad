@@ -1,9 +1,9 @@
 # Soft palette sources and adaptation
 
-CodeNomad's soft collection uses its own localized names and semantic roles. The
-picker is flat and filters by fixed mode; Auto exposes both slots for editing.
-These are adaptations, not exact editor-theme ports. No Zed syntax definitions,
-theme loader, extension code, or complete theme JSON is shipped.
+CodeNomad's soft collection adapts the referenced editor themes' surface
+relationships under its own localized names and semantic roles; it ships only
+CodeNomad color values in `soft-color-schemes.ts`. The picker is flat and
+filters by fixed mode; Auto exposes both slots for editing.
 
 | CodeNomad family | Light ID | Dark ID | Visual reference |
 | --- | --- | --- | --- |
@@ -22,8 +22,8 @@ never silently recolored.
 The soft light canvases are darker than the original editor whites. Dark
 canvases use mid-dark grays instead of near-black. Text is adjusted for at least
 4.5:1 on base, panel, tool and user-message surfaces; participant colors are
-checked at full opacity for at least 3:1. Decorative resting icon opacity is
-unchanged and is not claimed to meet that full-opacity contrast threshold.
+checked at full opacity for at least 3:1. These thresholds apply at full
+opacity; decorative resting icons keep their partial opacity.
 
 ## Reference revisions
 

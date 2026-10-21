@@ -6,7 +6,7 @@ CodeNomad supports Electron and Tauri as equal desktop hosts. Identity is data p
 
 OpenCode sessions and messages stay in the shared global daemon. Tabs, drafts, views, restore membership, and native bounds are per-window. Client-state V3 is a per-window envelope over the V2 SHA-256 content-addressed partition graph: prepare immutable partitions, fence migration and writes on current ownership and renderer authority, atomically publish the root, then remove only partitions unreferenced by every window.
 
-Iframe browser fallbacks are sandboxed without `allow-same-origin`; DOM comment inspection is web-only. SideCar iframes keep `allow-same-origin` by design (trusted extensions with the application's access) so their cookie-authenticated `/sidecars/*` requests work. Never extend that flag to browser previews. SideCar proxies filter CodeNomad session/device cookies and upstream overwrites over HTTP and WebSocket; this is credential filtering, not DOM/API isolation. Electron and Windows Tauri browser previews use isolated native guest webviews with no application capabilities. Tauri grants target primary webview labels, never parent-window wildcards, and native window counting must include windows containing multiple webviews.
+Iframe browser fallbacks are sandboxed without `allow-same-origin`; their element comments use a source-checked message bridge. SideCar iframes add `allow-same-origin` by design (trusted extensions running with the application's origin and access) so their cookie-authenticated `/sidecars/*` requests work. Never extend that flag to browser previews. SideCar proxies filter CodeNomad session/device cookies and upstream overwrites over HTTP and WebSocket. Electron and Windows Tauri browser previews use native guest webviews sharing one preview profile kept separate from the app, with no application capabilities (`dev-docs/BROWSER_AUTOMATION.md`). Tauri grants target primary webview labels, never parent-window wildcards, and native window counting must include windows containing multiple webviews.
 
 ## Current Host Paths
 
@@ -22,8 +22,9 @@ Iframe browser fallbacks are sandboxed without `allow-same-origin`; DOM comment 
 | Client state | `packages/electron-app/electron/main/client-state.ts` and `client-state-*.ts` | `packages/tauri-app/src-tauri/src/client_state.rs` and `client_state/` |
 | Shutdown | `packages/electron-app/electron/main/multiwindow-lifecycle.ts` | `packages/tauri-app/src-tauri/src/shutdown.rs` |
 | Workspace open | `packages/electron-app/electron/main/workspace-open.ts` | `packages/tauri-app/src-tauri/src/workspace_open.rs` |
+| Automation instrumentation (`dev-docs/BROWSER_AUTOMATION.md`) | `packages/electron-app/electron/main/developer-mode.ts` | `packages/tauri-app/src-tauri/src/developer_mode.rs` |
 
-The desktop process managers start and supervise the CodeNomad backend. They do not own or stop the shared OpenCode daemon.
+The desktop process managers start and supervise the CodeNomad backend; they never own or stop the shared OpenCode daemon.
 
 The backend delegates only the official `service start` command through its private stdout/stdin native-parent bridge (`opencode.service.start`). Both hosts execute the starter outside backend containment, so the shared daemon cannot inherit Tauri's kill-on-close Job Object or Electron's backend process-tree cleanup. Status, password retrieval and authenticated health remain in the server lifecycle adapter. Standalone servers execute the same official CLI directly. Never expose the starter as renderer IPC or attach its daemon descendants to backend cleanup.
 
@@ -42,7 +43,7 @@ Use these abstractions instead of importing host APIs into feature components.
 
 ## Strict Parity
 
-- Every desktop behavior change must ship for Electron and Tauri in the same change. There is no Electron-first or follow-up parity exception.
+- Every desktop behavior change must ship for Electron and Tauri in the same change, never Electron first with parity as a follow-up.
 - Keep lifecycle, singleton identity, window restore, client-state safety, navigation security, native commands, and shutdown semantics equivalent.
 - Add or update tests for both hosts. Include Web behavior when the shared abstraction has a browser fallback.
 - Platform-specific implementation details may differ, but user-visible behavior and security boundaries must not.

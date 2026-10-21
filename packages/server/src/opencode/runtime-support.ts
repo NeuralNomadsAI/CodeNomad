@@ -8,7 +8,7 @@
  * 2.1.0/2.1.1 lose shared updates and resume async callers before the first await.
  * Reproduced by scripts/test-codemode-jobs-native.mjs against isolated daemons.
  * OpenCode 2.1 reads data stored by older releases. See
- * dev-docs/OPENCODE_V2_COMPATIBILITY.md for the demonstrated boundary.
+ * dev-docs/OPENCODE_COMPATIBILITY.md for the demonstrated boundary.
  */
 export const MINIMUM_OPENCODE_VERSION = "2.1.2"
 /** Qualification target, independent of the technically required minimum. */

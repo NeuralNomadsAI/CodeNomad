@@ -12,8 +12,8 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 
 - `packages/remote-tunnel` wraps `@opentunnel/client` behind CodeNomad-owned
   types. The server build bundles it with its resolved Effect copy into
-  `dist/remote-control/tunnel-runtime.js`; the published server keeps no runtime
-  dependency on the private workspace package.
+  `dist/remote-control/tunnel-runtime.js`; never give the published server a
+  runtime dependency on the private workspace package.
 - CodeNomad claims one random route (`codenomad-<hex>`, persisted) on the
   device's shared `default` identity. OpenCode's `opencode pair --remote` and
   the OpenTunnel CLI use the same identity with their own routes. Stopping
@@ -33,11 +33,11 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   directory resumes (`remote-control.owner`, live-PID lease replaced after a
   crash): OpenTunnel gives a route to one bridge and a contender retries until
   it takes over, so a second backend would otherwise silently serve the paired
-  devices. An explicit Start is not blocked. Settings polls the status only while
+  devices. An explicit Start always proceeds. Settings polls the status only while
   the tunnel is (re)connecting, keeps paired devices listed while it is off and
   offers Stop after a failed resume.
-- CodeNomad does not enable OpenTunnel's per-route PROXY protocol: the ingress
-  expects plain HTTP.
+- Keep OpenTunnel's per-route PROXY protocol off: the ingress expects plain
+  HTTP.
 
 ## Admission
 

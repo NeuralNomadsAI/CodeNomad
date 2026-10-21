@@ -20,8 +20,8 @@ GitHub's source-code ZIP is not the
 installable package. New code requires a new release/version and explicit trust;
 activation is revoked on replacement.
 
-API compatibility is `apiVersion: 1`, not the exact CodeNomad version. This sample
-cannot read messages/images or access files, OpenCode, native commands or network
-APIs. It is a distribution smoke example, **not** the planned assets gallery.
+`apiVersion: 1` is the public extension API version, independent of CodeNomad's own
+version. The sample displays only the panel context that API 1 provides and serves as a
+distribution smoke example; the assets gallery is an API 2 addon in the official catalogue.
 See `dev-docs/PANEL_EXTENSIONS.md` in the CodeNomad repository for the public
 contract, packaging rules, lifecycle and security limits.

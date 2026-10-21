@@ -49,15 +49,14 @@ Supported installed formats:
 
 Debian/RPM packages, loose Windows executables and builds without an embedded
 public key open the release page. Linux requires both the native AppImage bundle
-marker and a nonempty `APPIMAGE` path. `APPRUN` alone is insufficient. Installer
-signatures are independent of Apple code signing/notarization and Authenticode.
+marker and a nonempty `APPIMAGE` path; `APPRUN` alone is insufficient.
 
 `desktop_updater.rs` authorizes native callers against local application origins
 and serializes checks/downloads across windows. A check while another window
 checks or installs returns `busy`, shown as information rather than a failure
 (a notification still opens its release page). Only the three guarded application
-commands (check, install, take failure) are granted to local webviews;
-updater/process plugin permissions are not granted to previews, remote windows or
+commands (check, install, take failure) are granted to local webviews; never
+grant updater/process plugin permissions to previews, remote windows or
 renderers generally.
 
 The plugin verifies the complete download before shutdown admission. A prepared
@@ -65,12 +64,12 @@ installer and restart intent enter the shutdown coordinator under one lock.
 Every renderer must flush and the owned CodeNomad backend must stop before
 installation. A timeout or cleanup failure discards the pending installer; a
 late acknowledgement or later ordinary quit cannot replay it. Windows logout
-discards a waiting update. The shared OpenCode daemon remains externally owned.
+discards a waiting update. Installation never stops the shared OpenCode daemon.
 
 On macOS/Linux, successful installation follows the normal native restart. On
 Windows, the NSIS installer performs relaunch and the plugin exits. The vendored
-2.12.0 plugin moves its exit callback after successful `ShellExecuteW`: a refused
-launch must not release client-state persistence ownership. On an installation
+2.12.0 plugin runs its exit callback only after a successful `ShellExecuteW`, so
+a refused launch keeps client-state persistence ownership. On an installation
 error, the application restores its owned backend without replaying installation.
 That recovery reloads every window, so failures are recorded natively with the
 webview whose install was accepted. That webview's document takes and reports
@@ -94,8 +93,8 @@ See `packages/tauri-app/vendor/README.md` for provenance.
 
 `configure-updater.mjs` writes a Tauri V2 `plugins.updater` entry and
 `bundle.createUpdaterArtifacts: true` when `TAURI_UPDATER_PUBKEY` contains a
-minisign public key, with `requireSignedVersion`: the manifest itself is not
-signed, so the signed trusted comment must carry the announced version and an
+minisign public key, with `requireSignedVersion`: the manifest itself is
+unsigned, so the signed trusted comment must carry the announced version and an
 older signed artifact cannot be relabelled. It configures no endpoint; the
 application selects the manifest per feed. Absent keys remove updater
 configuration and explicitly disable artifact signing. The native host registers
@@ -121,8 +120,7 @@ to record the release version, copies it to the final release asset name, and
 writes a per-platform receipt. The receipt contains the verified signature, the
 public key fingerprint and the payload digest, never private key material. The
 signature is published only inside `latest.json`, which is where the updater
-reads it; releases carry no separate `.sig` assets, and staging removes any left
-on a rebuilt tag by older builds.
+reads it; staging removes any separate `.sig` asset from a rebuilt tag.
 
 The final publication job waits for all four platform jobs, merges their receipts
 and checks the uploaded GitHub asset digests. Missing/duplicate targets, mixed
@@ -137,9 +135,8 @@ existing `latest.json`, so no published manifest pairs new bytes with an old
 signature; until publication succeeds, the release is simply not installable.
 
 Downloads have connect (30 s) and read-stall (60 s) limits but no total limit,
-so slow connections can still fetch large installers.
-`tauri build` is not expected to generate that manifest. Fully unsigned builds
-produce no update manifest. Linux arm64 remains outside the existing release matrix.
+so slow connections can still fetch large installers. Fully unsigned builds
+produce no update manifest. The release matrix has no Linux arm64 target.
 
 The Linux build requests only `appimage`, with verbose linuxdeploy diagnostics;
 the Linux deb is the Electron build. The Windows NSIS installer is published
@@ -188,9 +185,9 @@ cargo test --locked -p tauri-plugin-updater windows_launch_tests
 node --import tsx --test tests/browser/desktop-updates.test.ts
 ```
 
-These automated checks do not replace signed install/relaunch trials. Track actual
-Windows, Linux and macOS artifact trials separately in the PR; macOS guest access
-and Apple Silicon hardware are required for their respective real-device evidence.
+Signed install/relaunch trials on real artifacts are also required: track
+Windows, Linux and macOS trials in the PR; macOS guest access and Apple Silicon
+hardware are required for their respective real-device evidence.
 
 ## Agent conventions
 

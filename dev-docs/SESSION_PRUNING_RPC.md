@@ -9,10 +9,10 @@ legacy API fallback or optimistic deletion. Version labels never gate it; see
 
 ## Why this exists
 
-PR [48043](https://github.com/anomalyco/opencode/pull/48043) removed the replacement
-API (`0.0.0-beta-19365`); [maintainer guidance](https://github.com/anomalyco/opencode/issues/44984#issuecomment-5602099543)
-on V1-parity issue [44984](https://github.com/anomalyco/opencode/issues/44984)
-proposes plugin-owned SQLite access and RPC events. Follow-up: [48090](https://github.com/anomalyco/opencode/issues/48090).
+OpenCode V2 offers no message-replacement API ([48043](https://github.com/anomalyco/opencode/pull/48043));
+[maintainer guidance](https://github.com/anomalyco/opencode/issues/44984#issuecomment-5602099543)
+proposes plugin-owned SQLite access and RPC events. Upstream follow-up:
+[48090](https://github.com/anomalyco/opencode/issues/48090).
 
 ## Modules and request flow
 
@@ -34,9 +34,9 @@ proposes plugin-owned SQLite access and RPC events. Follow-up: [48090](https://g
 `pruning-lifecycle.ts` and `pruning-installation.ts` beside that directory own
 automatic provisioning and backend leases. The server build bundles the payload
 and its dependencies under `dist/plugins/session-pruning/`, copied by both desktop hosts.
-Provisioning and lease placement follow the `OPENCODE_V2_COMPATIBILITY.md` Agent conventions.
+Provisioning and lease placement follow the `OPENCODE_COMPATIBILITY.md` Agent conventions.
 
-The UI keeps individual, per-message, group and session cleanup entry points. It
+The UI offers individual, per-message, group and session cleanup entry points. It
 fetches the native message, resolves selected tools by ID and reasoning by a unique
 content/time match, then sends indexes plus a canonical SHA-256 content revision.
 Ambiguous reasoning or stale content fails closed. It never submits replacement text.
@@ -45,9 +45,9 @@ body and 16 MiB stored-message budget. Larger messages fail closed.
 
 `POST /api/workspaces/:id/session-pruning/{preview,prune}` validates workspace
 ownership from the native session location and participates in the worktree deletion
-fence. It pins `codenomad.session-pruning`, the method and runtime location; arbitrary
-RPC remains blocked by the instance proxy. The removed PATCH route is also blocked.
-The existing server authentication middleware protects these new routes.
+fence. It pins `codenomad.session-pruning`, the method and runtime location; the
+instance proxy blocks arbitrary RPC. Server authentication middleware protects
+these routes.
 
 After commit the caller re-reads native history, never a synthesized remainder.
 `rpc.codenomad.session-pruning.pruned` contains session/message IDs and the content
@@ -55,45 +55,44 @@ revision. The UI invalidates both message-load authority and its native SDK tran
 including pending rotations, then coalesces active-session reloads. Late reads cannot
 overwrite a newer pruning invalidation. Reconnect uses authoritative reconciliation.
 The optional TUI companion invalidates/synchronizes its public message cache and
-reconciles loaded sessions on reconnect. Unmodified third-party clients do not know
-this event and may display cached history until they reload.
+reconciles loaded sessions on reconnect. Third-party clients may display cached
+history until they reload.
 
 The receipt and content change commit together; an identical retry returns the same
 receipt and re-emits the event. Receipts contain no deleted content. Event delivery
 is best-effort: failure cannot roll back a committed prune. A timed-out caller must
-re-read or retry the **same** request, not assume no mutation occurred.
+re-read or retry the **same** request, never assume no mutation occurred.
 
 ## Version and loading notes
 
 `history` and `pruneBatch` extend this plugin; see
 [full-history queries](SESSION_HISTORY_QUERIES.md).
 
-- The broker uses the published low-level `rpc.call` transport. `@opencode/plugin` is a development-only dependency bundled into the shipped payload; no npm installation happens at startup and discovery has no exact runtime-version gate. The native test runs the stable client against an explicitly supplied isolated official runtime, including RPC, custom events and the guarded UI proxy.
-- In that plugin contract, `ctx.session.message` and `ctx.db` do not exist.
+- The broker uses the published low-level `rpc.call` transport. `@opencode/plugin` is a development-only dependency bundled into the shipped payload; startup installs nothing from npm, and discovery is never gated on an exact runtime version. The native test runs the stable client against an explicitly supplied isolated official runtime, including RPC, custom events and the guarded UI proxy.
+- The plugin contract lacks `ctx.session.message` and `ctx.db`; the plugin opens its own SQLite connection.
 - SQLite unit tests use Node's `node:sqlite`; the native test also exercises that
-  driver **inside the official compiled runtime**, not an embedded SDK substitute.
+  driver **inside the official compiled runtime**.
 - The module has a packable manifest with `index.ts` and `./tui` entrypoints.
-  Local configuration must target the **directory**, not `plugin.ts`.
+  Local configuration must target the **directory**, never `plugin.ts`.
 - An automatically provisioned entry in the global OpenCode `plugins` directory is
-  discovered for all projects. Its small lifecycle module remains loaded; pruning
-  RPCs exist only while CodeNomad is present. No daemon upgrade or
-  restart is performed by pruning commands.
+  discovered for all projects. Its small lifecycle module stays loaded; pruning
+  RPCs exist only while CodeNomad is present. Pruning commands never upgrade or
+  restart the daemon.
 
-## Coordination and remaining validation
+## Coordination and validation coverage
 
 Locking and claim checks: [the audited boundary](SESSION_PRUNING_SAFETY.md).
 
-Verified: real preview/prune RPC, active-generation refusal, both prompt/transaction
-orderings, retry receipts, two event subscribers, next primary request payload,
-fork isolation, pre-compaction deletion without summary changes, and server restart.
-Unit tests cover rollback and client projection/read races. No actual provider
-token savings are claimed: the mock's usage numbers are synthetic.
+The native fixture covers real preview/prune RPC, active-generation refusal, both
+prompt/transaction orderings, retry receipts, two event subscribers, next primary
+request payload, fork isolation, pre-compaction deletion without summary changes,
+and server restart. Unit tests cover rollback and client projection/read races.
+The mock's usage numbers are synthetic; never cite them as provider token savings.
 
-Still required before general availability: native WSL runs, interactive
-TUI and two desktop-window/scroll verification, provider-specific continuation-state
-and budget coverage, interactive bulk progress/cancel verification and installation/capability UI.
-Do not describe these as passed on the strength of HTTP or mocked cache tests.
-Physical VACUUM, V1 cleanup and repair are separate maintenance work.
+Unvalidated: native WSL runs, interactive TUI, two desktop windows/scroll,
+provider-specific continuation state and budgets, and interactive bulk
+progress/cancel. Never describe these as passed on the strength of HTTP or
+mocked cache tests.
 
 ## Checks
 
@@ -114,4 +113,4 @@ An optional third argument tests an independently installed plugin package direc
 
 ## Agent conventions
 
-- Session pruning is a narrow V2 plugin/RPC exception under `packages/server/src/opencode/session-pruning/`. Bundle it with the shared server for both desktop hosts and provision through normal native plugin discovery. RPC registrations follow backend presence; clean shutdown removes that backend's lease and crashes expire. Loading never deletes content. Deletion occurs only on an explicit pruning request, without an extra enable-write switch or beta-number gate. Keep generic RPC proxy access closed. Writes validate actual storage, a fresh daemon-storage identity challenge and the native durable execution claim inside a synchronous SQLite transaction. Run isolated native concurrency/payload and client-cache regressions; tests must never target the shared daemon or a user's database.
+- Session pruning is a narrow V2 plugin/RPC exception under `packages/server/src/opencode/session-pruning/`. Bundle it with the shared server for both desktop hosts and provision through normal native plugin discovery. RPC registrations follow backend presence; clean shutdown removes that backend's lease and crashes expire. Loading never deletes content. Deletion occurs only on an explicit pruning request, never behind an enable-write switch or version gate. Keep generic RPC proxy access closed. Writes validate actual storage, a fresh daemon-storage identity challenge and the native durable execution claim inside a synchronous SQLite transaction. Run isolated native concurrency/payload and client-cache regressions; tests must never target the shared daemon or a user's database.
