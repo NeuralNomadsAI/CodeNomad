@@ -25,6 +25,14 @@ Store one schedule document in project-scoped plugin kv, including:
 - Result history bounded to **30** entries.
 - A monotonically checked custom `revision`.
 
+Ceilings (`missions/recurrence-contract.ts`): 64 schedules per project, a 64 KiB
+configuration, a 256 KiB document and 64 remembered conversations
+(watched plus cursor-retaining); beyond that ceiling the document is refused, so never
+reset deduplication silently. Never add signing keys, authority epochs, grants,
+standing/child authority, per-effect receipts, budgets or ledgers, per-tool effect
+accounting or exact event-log replay to schedules, settlement or snapshots; human
+answers use the UI-answer marks below.
+
 Native kv offers no compare-and-swap, so the plugin serializes document updates and
 compares the supplied expected revision before committing the new revision; never
 follow a read with an unguarded write. Controls, due admission and settlement use
@@ -319,11 +327,30 @@ separate document writes permit a second passage for the same settled day.
 Advance watched processed-message cursors **only on completed**.
 Failed and ended-without-report leave those cursors unchanged.
 Keep watch cursor continuity when a watch is removed.
-Watched sources are read as a stable complete-message prefix after the exact cursor
-(`native-service-adapter.ts`): a streaming reply stops the prefix, and a deleted or
-rewritten anchor is never read as no change. Complete replies up to 16,384 characters
-are quoted verbatim; a larger one becomes an unconsumed
-`needsDecision: "source-input-capacity"` reference (`recurrence-input.ts`).
+
+Watched sources (`opencode/missions/native-service-adapter.ts`, `missions/recurrence-input.ts`):
+
+- Read only the configured conversation IDs, in order, through exact native
+  `get`/`message`/`messages` calls, each source placed in the project at its exact
+  directory/workspace under a configured root; never list sessions, discover
+  ancestry or fall back to full history.
+- Read at most 32 messages per source, ascending after the exact cursor, as a stable
+  complete-message prefix: a streaming assistant or tool, running Shell or compaction
+  ends it, every message is point-read again and changed bytes defer it and every
+  later ID, and a location switch fails the read. After the query the anchor's full
+  native bytes and the source placement are rechecked; a deleted, rewritten or moved
+  anchor is never read as no change.
+- Project only user/synthetic text and assistant text parts with the message ID,
+  type, native digest and completion time; never tools, reasoning, images, skills,
+  provider state or credentials.
+- Keep messages whole. The whole start text fits the 16,384-character lifecycle
+  input; each source gets the room left after the instructions, the worst-case
+  envelope (descriptors ≤ 48 KiB), earlier sources' messages and a 1 KiB reserve per
+  remaining watch (`recurrence-read-budget.ts`). A message that does not fit ends the
+  batch as an unconsumed `needsDecision: "source-input-capacity"` reference with
+  empty text.
+- Cursors keep each source's placement digest: re-adding a moved source fails closed
+  instead of resetting its high-water mark.
 
 ## Wayfinder human decision mark — both execution modes
 
@@ -340,7 +367,9 @@ question from the CodeNomad interface", with the gate's cause as a detail.
 The gate also proves the decision session natively: a fresh child of the expected
 parent's exact `subagent` call whose prompt carries the declared assignment. Answers
 and execution failures are read from durable message projections (completed question
-part, `idle` outcome).
+part, `idle` outcome). Native question and delegation evidence counts only from
+local tool parts and events: `isLocalNativeTool` (`missions/native-call-observation.ts`)
+accepts `executed === false`; `true` (provider-hosted) or a missing flag never qualifies.
 Do not infer identity from answer text, tool completion or the agent's assertion.
 
 Only Forms whose session belongs to a Mission family take the mark path: a root
@@ -361,10 +390,12 @@ poses as a cookie session. When the mark cannot be prepared before forwarding
 session move), the answer falls back to the ordinary reply without a mark; the
 user is never blocked from answering. The human-answer header alone (automation,
 Yolo, SDK) never mints a mark. The dock sends `x-codenomad-human-answer` only for a
-real pointer click or submit keydown on that exact request, never for
+real pointer click or submit keydown on that exact question, never for
 `element.click()`, `requestSubmit()`, synthetic events, developer automation,
 Auto/Yolo or SDK calls (`tests/browser/interruption-dock.test.ts`,
-`automation-input.test.ts`). Only a dispatched mark reply with a lost outcome is
+`automation-input.test.ts`). The input captures a one-use token bound to the exact
+request, schema and answer (`lib/form-answer-interaction.ts`); it expires with that
+input task and is consumed at the SDK send in `stores/instances.ts`. Only a dispatched mark reply with a lost outcome is
 reported as uncertain.
 
 Missing evidence leaves the gate unmet and never replays an answer; the ordinary

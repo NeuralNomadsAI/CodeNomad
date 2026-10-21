@@ -3,7 +3,7 @@
 The viewport menu has exactly six fixed templates: responsive,
 desktop 1440 × 900, tablet 768 × 1024, tablet landscape 1024 × 768,
 mobile 390 × 844 and mobile landscape 844 × 390 CSS px; landscape templates
-stand in for rotation. Native mobile templates automatically apply
+stand in for rotation, so never add a separate rotation button. Native mobile templates automatically apply
 Android / Chromium touch, mobile identity and density settings.
 Device profiles set CSS viewport, screen orientation, DPR 2.75, touch media and
 events, Android user agent and mobile client hints. Switching between profiles

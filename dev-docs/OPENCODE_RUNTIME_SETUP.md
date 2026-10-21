@@ -217,9 +217,9 @@ fully and never discard unknown fields or relax history checks.
 Checks include server/UI typechecks, server regressions, real Solid browser
 setup tests and rendered captures, isolated bundled-Node installation, native
 migration, native locations/worktrees, automation heartbeat/provisioning and
-pruning acceptance. CI runs first installation and old-seed migration at the
-fixed minimum and resolved latest stable on Windows, Linux and macOS ARM64,
-plus the cross-platform native pruning gate.
+pruning acceptance. On Windows, Linux and macOS ARM64, CI runs first
+installation at the fixed minimum, old-seed migration at the fixed minimum and
+resolved latest stable, plus the cross-platform native pruning gate.
 
 ### Reproduce desktop and WSL acceptance
 

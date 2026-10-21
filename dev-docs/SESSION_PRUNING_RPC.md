@@ -7,12 +7,11 @@ OpenCode. Unsupported or absent plugins produce a localized failure, never a
 legacy API fallback or optimistic deletion. Version labels never gate it; see
 [the audited boundary](SESSION_PRUNING_SAFETY.md).
 
-## Why this exists
+## Integration
 
-OpenCode V2 offers no message-replacement API ([48043](https://github.com/anomalyco/opencode/pull/48043));
-[maintainer guidance](https://github.com/anomalyco/opencode/issues/44984#issuecomment-5602099543)
-proposes plugin-owned SQLite access and RPC events. Upstream follow-up:
-[48090](https://github.com/anomalyco/opencode/issues/48090).
+Pruning edits stored messages through this plugin's own SQLite access and RPC
+methods, the integration OpenCode's maintainers recommend for plugins
+([guidance](https://github.com/anomalyco/opencode/issues/44984#issuecomment-5602099543)).
 
 ## Modules and request flow
 
@@ -68,7 +67,7 @@ re-read or retry the **same** request, never assume no mutation occurred.
 `history` and `pruneBatch` extend this plugin; see
 [full-history queries](SESSION_HISTORY_QUERIES.md).
 
-- The broker uses the published low-level `rpc.call` transport. `@opencode/plugin` is a development-only dependency bundled into the shipped payload; startup installs nothing from npm, and discovery is never gated on an exact runtime version. The native test runs the stable client against an explicitly supplied isolated official runtime, including RPC, custom events and the guarded UI proxy.
+- The broker uses the published low-level `rpc.call` transport. The plugin builds through `packages/server/scripts/native-plugin-build.mjs`, which bundles application dependencies and leaves `effect` and `@opencode/plugin` to the daemon (never embed them); startup installs nothing from npm, and discovery is never gated on an exact runtime version. The native test runs the stable client against an explicitly supplied isolated official runtime, including RPC, custom events and the guarded UI proxy.
 - The plugin contract lacks `ctx.session.message` and `ctx.db`; the plugin opens its own SQLite connection.
 - SQLite unit tests use Node's `node:sqlite`; the native test also exercises that
   driver **inside the official compiled runtime**.

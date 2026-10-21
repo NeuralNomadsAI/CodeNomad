@@ -119,8 +119,11 @@ with `{ "input": { "directories": [...] } }`. Legacy workspace identities are
 rejected and never erased; workspace/connection replacement, root or candidate
 deletion and changed authority fence dispatch and publication. Cold UI coverage
 synthesizes a location from the validated native entry directory, never the
-browser's alias. Plain 404s, malformed output, authentication failures, reader
-errors, timeouts and overflow return non-authoritative 503s. An unverified
+browser's alias. Only HTTP 400 with a strict bounded `RpcError` envelope
+(`_tag: "RpcError"`, type `rpc.unavailable` or `rpc.method_not_found`, message of
+at most 4,096 characters) means unsupported, and only after origin and candidate
+revalidation. Plain 404s, other errors, malformed output, authentication failures,
+reader errors, timeouts and overflow return non-authoritative 503s. An unverified
 capability is deliberately never probed during an observed compaction.
 
 Candidate traversal constructs no cold Locations; native HTTP middleware may

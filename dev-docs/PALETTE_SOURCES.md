@@ -29,8 +29,8 @@ opacity; decorative resting icons keep their partial opacity.
 
 - Zed One, Ayu and Gruvbox: `zed-industries/zed` commit
   `6f73c7d0a4aae8e32afb5d01b0fcb89e5e3642ff`, under `assets/themes/`.
-- [Catppuccin for Zed](https://github.com/catppuccin/zed), reviewed 2026-09-08.
-- [Everforest for Zed](https://github.com/albertsko/zed-everforest), reviewed 2026-09-08.
+- [Catppuccin for Zed](https://github.com/catppuccin/zed).
+- [Everforest for Zed](https://github.com/albertsko/zed-everforest).
 - [Original Solarized](https://github.com/altercation/solarized), MIT licensed.
   The GPL Zed Solarized extension was inspected as a visual reference only;
   none of its code, JSON or color values is included in Linen's definition.

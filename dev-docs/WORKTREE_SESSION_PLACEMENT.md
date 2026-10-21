@@ -36,7 +36,8 @@ Implementation:
 
 - `workspaces/native-worktrees.ts` calls OpenCode `worktree.refresh/list/create/remove`;
   never add a second production `git worktree list/add/remove` implementation. Git
-  reads only annotate HEAD and branch.
+  reads establish each checkout's physical common-directory identity (rejecting
+  unrelated repositories) and annotate HEAD and branch.
 - Opaque directory-derived identifiers remain stable when branches change; labels
   are separate. Main checkouts cannot be deleted. Nested workspace paths are mirrored
   over the same checkout roots, retaining host/service namespace separation for WSL.

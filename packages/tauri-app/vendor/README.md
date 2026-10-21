@@ -84,6 +84,7 @@ fixture performs 800,000 clones/drops; the
 negative control runs up to fifty processes; in CI a fault-free negative series
 only warns (naming the CPU), and corrected runs on that runner are no timing
 evidence. Also run the input regression: its backport shares `event_loop.rs`.
+Never commit or upload captured crash dumps: they contain application memory.
 
 Remove the tao override only when the resolved dependencies contain the input
 fix (a bump within the unfixed 0.34.x/0.35.x lines is insufficient) and the
