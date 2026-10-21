@@ -794,6 +794,11 @@ latest package or an optional schema field changed.
   native **2.0.15 → 2.1.2** upgrade pass; the running fixture daemon keeps its
   PID and old version until a separate explicit restart. Installer unit
   fixtures target supported releases without relaxing their assertions.
+  The final full-server run reports **2,448 passed, 7 skipped, zero failed
+  assertions and one timed-out/cancelled test**: the existing real piped-process
+  shutdown check exceeded its unchanged **5-second** bound. That four-test
+  shutdown suite passes twice alone; the subprocess takes **1.94 s / 2.08 s**.
+  No timeout, assertion or product code was changed to obtain those passes.
 
 Evidence is retained under `qualify-2.1.2/run-20261021-f5dd76d79/`, including
 the deliberate failing controls. This is Windows qualification, not packaged
