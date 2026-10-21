@@ -1274,7 +1274,8 @@ export default function MessageSection(props: MessageSectionProps) {
       const direction = matchesHotkey("user-message-prev", event) ? "previous"
         : matchesHotkey("user-message-next", event) ? "next" : null
       if (!direction || !keyAllowsUserMessageJump(event)) return
-      if (document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      // An open composer picker moves its selection with every arrow key.
+      if (document.querySelector('[role="dialog"][aria-modal="true"], [data-prompt-picker]')) return
       event.preventDefault()
       if (!event.repeat) jumpToUserMessage(direction)
     }

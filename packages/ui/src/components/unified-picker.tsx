@@ -530,6 +530,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       <div
         ref={containerRef}
         class="dropdown-surface bottom-full left-0 mb-1"
+        data-prompt-picker
       >
         <div class="dropdown-header">
           <div class="dropdown-header-title">

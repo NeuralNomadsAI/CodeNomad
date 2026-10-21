@@ -37,7 +37,7 @@
 | 会话标签页 1-9 | `Mod+Shift+1` 至 `Mod+Shift+9` |
 | 实例信息 | `Mod+Shift+L` |
 | 搜索会话历史 | `Mod+F` |
-| 上一条 / 下一条用户消息（对话中，文本框外） | `Shift+ArrowUp` / `Shift+ArrowDown` |
+| 上一条 / 下一条用户消息 | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) 或 `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | 下一个 / 上一个搜索结果（搜索获得焦点） | `Enter` / `Shift+Enter` |
 | 聚焦输入框 / 清空输入框 | `Mod+P` / `Mod+K` |
 | 打开模型 / 智能体选择器 | `Mod+Shift+M` / `Mod+Shift+A` |

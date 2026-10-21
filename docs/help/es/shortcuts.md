@@ -37,7 +37,7 @@ Si el guardado falla, conserva disponible el atajo anterior y reintenta tras com
 | Pestaña de sesión 1–9 | `Mod+Shift+1` a `Mod+Shift+9` |
 | Info de la instancia | `Mod+Shift+L` |
 | Buscar en el historial de sesión | `Mod+F` |
-| Mensaje de usuario anterior / siguiente (conversación, fuera de los campos de texto) | `Shift+ArrowUp` / `Shift+ArrowDown` |
+| Mensaje de usuario anterior / siguiente | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) o `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Resultado de búsqueda siguiente / anterior (búsqueda enfocada) | `Enter` / `Shift+Enter` |
 | Enfocar entrada / Borrar entrada | `Mod+P` / `Mod+K` |
 | Abrir selector de modelo / agente | `Mod+Shift+M` / `Mod+Shift+A` |

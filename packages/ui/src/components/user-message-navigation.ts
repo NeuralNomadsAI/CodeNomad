@@ -64,10 +64,19 @@ export function findUserMessageJumpTarget(input: {
   return null
 }
 
-/** Fields, arrow-key widgets and IME composition keep the keystroke: Shift+Arrow selects text there. */
+// Modified arrows move lines in the code editor, reach the terminal's program and
+// open selects and popup buttons (Alt+Down).
+const MODIFIED_ARROW_TARGETS = ".monaco-editor, .xterm, select, [aria-haspopup]:not([aria-haspopup='false'])"
+const TEXT_INPUT_TYPES = new Set(["text", "search", "email", "url", "tel", "password"])
+
+/**
+ * Text fields, the composer included, allow the jump. Code editors, terminals,
+ * arrow-key widgets, popup triggers, other inputs and IME composition keep it.
+ */
 export function keyAllowsUserMessageJump(event: KeyboardEvent): boolean {
   if (event.isComposing || event.keyCode === 229) return false
-  if ((event.target as HTMLElement | null)?.isContentEditable) return false
-  const target = describeKeyTarget(event.target)
-  return !target.textEditing && !target.arrowWidget
+  const target = event.target as HTMLInputElement | null
+  if (typeof target?.closest !== "function") return true
+  if (target.closest(MODIFIED_ARROW_TARGETS) || describeKeyTarget(target).arrowWidget) return false
+  return target.tagName !== "INPUT" || TEXT_INPUT_TYPES.has(target.type)
 }

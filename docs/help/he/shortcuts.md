@@ -37,7 +37,7 @@
 | לשונית סשן 1–9 | `Mod+Shift+1` עד `Mod+Shift+9` |
 | מידע על מופע | `Mod+Shift+L` |
 | חיפוש בהיסטוריית סשן | `Mod+F` |
-| הודעת משתמש קודמת / הבאה (בשיחה, מחוץ לשדות טקסט) | `Shift+ArrowUp` / `Shift+ArrowDown` |
+| הודעת משתמש קודמת / הבאה | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) או `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | תוצאת חיפוש הבאה / קודמת (כשהחיפוש ממוקד) | `Enter` / `Shift+Enter` |
 | מיקוד קלט / ניקוי קלט | `Mod+P` / `Mod+K` |
 | פתיחת בורר מודל / סוכן | `Mod+Shift+M` / `Mod+Shift+A` |

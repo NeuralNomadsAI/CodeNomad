@@ -37,7 +37,7 @@ If saving fails, keep the old shortcut available and retry after checking the di
 | Session tab 1–9 | `Mod+Shift+1` through `Mod+Shift+9` |
 | Instance info | `Mod+Shift+L` |
 | Search session history | `Mod+F` |
-| Previous / next user message (conversation, outside text fields) | `Shift+ArrowUp` / `Shift+ArrowDown` |
+| Previous / next user message | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) or `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Next / previous search result (search focused) | `Enter` / `Shift+Enter` |
 | Focus prompt / Clear prompt | `Mod+P` / `Mod+K` |
 | Open model / agent selector | `Mod+Shift+M` / `Mod+Shift+A` |

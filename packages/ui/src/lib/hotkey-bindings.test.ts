@@ -53,6 +53,14 @@ describe("hotkey catalog and effective bindings", () => {
     assert.deepEqual(resolveHotkeyBindings("prompt-send", { "prompt-send": [] }), [])
     assert.deepEqual(resolveHotkeyBindings("prompt-send", { "prompt-send": [{ key: "s", alt: true }] }, false), [{ key: "s", alt: true }])
     assert.deepEqual(resolveHotkeyBindings("session-tab-9", {}), [{ key: "9", mod: true, shift: true }])
+    // Alt+Up/Down outside macOS, where Option+Up/Down moves within a text field's paragraphs.
+    assert.deepEqual(resolveHotkeyBindings("user-message-prev", {}, true, false), [{ key: "ArrowUp", alt: true }])
+    assert.deepEqual(resolveHotkeyBindings("user-message-next", {}, true, false), [{ key: "ArrowDown", alt: true }])
+    assert.deepEqual(resolveHotkeyBindings("user-message-prev", {}, true, true), [{ key: "ArrowUp", alt: true, mod: true }])
+    assert.deepEqual(resolveHotkeyBindings("user-message-next", {}, true, true), [{ key: "ArrowDown", alt: true, mod: true }])
+    for (const mac of [false, true]) {
+      assert.ok(!findHotkeyConflicts({}, true, mac).some(conflict => conflict.ids.some(id => id.startsWith("user-message-"))), `mac=${mac}`)
+    }
     const defaults = resolveHotkeyBindings("new-instance", {})
     defaults[0].key = "changed"
     assert.equal(resolveHotkeyBindings("new-instance", {})[0].key, "n")

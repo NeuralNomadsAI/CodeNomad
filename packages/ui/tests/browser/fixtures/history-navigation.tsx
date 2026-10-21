@@ -8,7 +8,7 @@ import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverApi } from "../../../src/lib/api-client"
-import { addInstance } from "../../../src/stores/instances"
+import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import { sessions, setSessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
@@ -160,6 +160,8 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
     }
   },
   prompts: () => prompts,
+  /** The composer opens its `/` and `@` picker only for the active instance. */
+  activateInstance: () => setActiveInstanceId(instanceId),
   snapshot: () => ({ nativeLists, ids: store.getSessionMessageIds(sessionId), window: store.getMessageWindow(sessionId),
     scroll: store.getScrollSnapshot(sessionId, "message-stream"), model: sessions().get(instanceId)?.get(sessionId)?.model }),
 }

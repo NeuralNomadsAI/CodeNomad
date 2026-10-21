@@ -48,18 +48,27 @@ describe("user message jumps", () => {
 })
 
 describe("user message jump keys", () => {
-  const key = (target: { closest?: (selector: string) => unknown; isContentEditable?: boolean } | null, values: Partial<KeyboardEvent> = {}) =>
+  const key = (target: object | null, values: Partial<KeyboardEvent> = {}) =>
     ({ isComposing: false, keyCode: 38, target, ...values }) as unknown as KeyboardEvent
-  const element = (matches: string) => ({ closest: (selector: string) => selector.split(", ").includes(matches) ? {} : null })
+  // `inside` lists the selectors the target or one of its ancestors matches.
+  const element = (tagName: string, inside: string[] = [], type?: string) => ({ tagName, type,
+    closest: (selector: string) => selector.split(", ").some(part => inside.includes(part)) ? {} : null })
 
-  it("leaves text selection, arrow widgets and composition to their target", () => {
-    assert.equal(keyAllowsUserMessageJump(key(element("div"))), true)
+  it("jumps from the conversation and text fields, the composer included", () => {
+    assert.equal(keyAllowsUserMessageJump(key(element("DIV"))), true)
     assert.equal(keyAllowsUserMessageJump(key(null)), true)
-    assert.equal(keyAllowsUserMessageJump(key(element("textarea"))), false)
-    assert.equal(keyAllowsUserMessageJump(key(element("input"))), false)
-    assert.equal(keyAllowsUserMessageJump(key({ ...element("div"), isContentEditable: true })), false)
-    assert.equal(keyAllowsUserMessageJump(key(element("[role='listbox']"))), false)
-    assert.equal(keyAllowsUserMessageJump(key(element("div"), { isComposing: true })), false)
-    assert.equal(keyAllowsUserMessageJump(key(element("div"), { keyCode: 229 })), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("TEXTAREA"))), true)
+    assert.equal(keyAllowsUserMessageJump(key(element("INPUT", [], "search"))), true)
+  })
+
+  it("leaves code editors, terminals, arrow widgets, popup triggers, other inputs and composition their keys", () => {
+    assert.equal(keyAllowsUserMessageJump(key(element("TEXTAREA", [".monaco-editor"]))), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("TEXTAREA", [".xterm"]))), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("SELECT", ["select"]))), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("BUTTON", ["[aria-haspopup]:not([aria-haspopup='false'])"]))), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("DIV", ["[role='listbox']"]))), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("INPUT", [], "number"))), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("TEXTAREA"), { isComposing: true })), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("DIV"), { keyCode: 229 })), false)
   })
 })

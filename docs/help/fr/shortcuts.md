@@ -37,7 +37,7 @@ Si l’enregistrement échoue, gardez l’ancien raccourci disponible et réessa
 | Onglet de session 1–9 | `Mod+Shift+1` à `Mod+Shift+9` |
 | Infos de l’instance | `Mod+Shift+L` |
 | Rechercher dans l’historique de session | `Mod+F` |
-| Message utilisateur précédent / suivant (conversation, hors champs de saisie) | `Shift+ArrowUp` / `Shift+ArrowDown` |
+| Message utilisateur précédent / suivant | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) ou `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Résultat suivant / précédent (recherche focalisée) | `Enter` / `Shift+Enter` |
 | Focaliser / Effacer la saisie | `Mod+P` / `Mod+K` |
 | Ouvrir le sélecteur de modèle / d’agent | `Mod+Shift+M` / `Mod+Shift+A` |

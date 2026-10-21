@@ -82,8 +82,6 @@ const defaults: Record<string, HotkeyBinding[]> = {
   "open-agent-selector": [{ key: "a", mod: true, shift: true }],
   "focus-variant": [{ key: "t", mod: true, shift: true }],
   "session-search": [{ key: "f", mod: true }],
-  "user-message-prev": [{ key: "ArrowUp", shift: true }],
-  "user-message-next": [{ key: "ArrowDown", shift: true }],
   "session-background": [{ key: "b", mod: true }],
   "prompt-alternate-send": [{ key: "Enter", mod: true, shift: true }],
   "prompt-history-prev": [{ key: "ArrowUp" }],
@@ -103,6 +101,11 @@ export function defaultHotkeyBindings(id: string, promptSubmitOnEnter = true, ma
   // Alt+Enter leads, Mod+Shift+Enter keeps working. On macOS Option+Return is
   // the native line break in text fields, so only Cmd+Shift+Return sends there.
   if (id === "prompt-alternate-send" && !mac) return [{ key: "Enter", alt: true }, { key: "Enter", mod: true, shift: true }]
+  // Alt+Up/Down is free in text fields, so it also works from the composer. On
+  // macOS Option+Up/Down moves to the paragraph's start or end there: Cmd+Option.
+  if (id === "user-message-prev" || id === "user-message-next") {
+    return [{ key: id === "user-message-prev" ? "ArrowUp" : "ArrowDown", alt: true, ...(mac ? { mod: true } : {}) }]
+  }
   if (id === "prompt-newline") return promptSubmitOnEnter
     ? [{ key: "Enter", shift: true }, { key: "Enter", mod: true }]
     : [{ key: "Enter" }, { key: "Enter", shift: true }]

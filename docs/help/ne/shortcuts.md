@@ -37,7 +37,7 @@ save असफल भए पुरानो shortcut उपलब्ध रा�
 | सत्र ट्याब 1–9 | `Mod+Shift+1` देखि `Mod+Shift+9` |
 | instance जानकारी | `Mod+Shift+L` |
 | सत्र इतिहास खोज | `Mod+F` |
-| अघिल्लो / अर्को प्रयोगकर्ता सन्देश (वार्तालापमा, पाठ फिल्डबाहिर) | `Shift+ArrowUp` / `Shift+ArrowDown` |
+| अघिल्लो / अर्को प्रयोगकर्ता सन्देश | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) वा `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | अर्को / अघिल्लो खोज नतिजा (खोज focus मा) | `Enter` / `Shift+Enter` |
 | prompt focus / prompt खाली | `Mod+P` / `Mod+K` |
 | model / agent selector खोल्ने | `Mod+Shift+M` / `Mod+Shift+A` |

@@ -37,7 +37,7 @@ Schlägt Speichern fehl, behalten Sie das alte Kürzel verfügbar und prüfen Si
 | Sitzungs-Tab 1–9 | `Mod+Shift+1` bis `Mod+Shift+9` |
 | Instanz-Info | `Mod+Shift+L` |
 | Sitzungsverlauf durchsuchen | `Mod+F` |
-| Vorherige / nächste Benutzernachricht (Unterhaltung, außerhalb von Textfeldern) | `Shift+ArrowUp` / `Shift+ArrowDown` |
+| Vorherige / nächste Benutzernachricht | `Alt+ArrowUp` / `Alt+ArrowDown` (Windows, Linux) oder `Mod+Alt+ArrowUp` / `Mod+Alt+ArrowDown` (macOS) |
 | Nächstes / vorheriges Suchergebnis (Suche fokussiert) | `Enter` / `Shift+Enter` |
 | Eingabe fokussieren / leeren | `Mod+P` / `Mod+K` |
 | Modell- / Agentenauswahl öffnen | `Mod+Shift+M` / `Mod+Shift+A` |
