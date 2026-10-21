@@ -31,15 +31,26 @@ const outlineEntryShape = {
 /** The `outline` method's entries. Backends validate them strictly: never extend this shape. */
 export const outlineEntrySchema = z.object(outlineEntryShape).strict()
 /**
+ * The parts a transcript message shows before any reveal: all of them up to
+ * the limit, otherwise its first and last halves around the omitted parts
+ * (`record-display-cache.ts`). Outline layouts list exactly those parts.
+ */
+export const MESSAGE_DISPLAY_LIMIT = 1000
+export const MESSAGE_DISPLAY_HEAD = Math.floor(MESSAGE_DISPLAY_LIMIT / 2)
+export const MESSAGE_DISPLAY_TAIL = MESSAGE_DISPLAY_LIMIT - MESSAGE_DISPLAY_HEAD
+export const OUTLINE_LAYOUT_PATTERN = new RegExp(`^(?:[RTX]{0,${MESSAGE_DISPLAY_LIMIT}}|[RTX]{0,${MESSAGE_DISPLAY_HEAD}}-[RTX]{0,${MESSAGE_DISPLAY_TAIL}})$`)
+/**
  * The versioned `outlineLayout` method's entries add an assistant step's
- * visible parts in order: R reasoning and T text runs, X per tool. Beyond 64
- * kinds the layout keeps the first 32 and last 31 around `-`, and `omitted`
- * counts the reasoning and text runs between them (tools follow from `tools`).
+ * markers in the order its transcript displays them: R reasoning and T text
+ * runs, X per tool. Around the omitted parts (`-`), `omitted` counts the
+ * reasoning and text runs that start among them (their tools follow from
+ * `tools`), and whether the first displayed run after them `continues` the
+ * native run before them, so the markers after them keep native ordinals.
  */
 export const outlineLayoutEntrySchema = z.object({ ...outlineEntryShape,
-  layout: z.string().regex(/^(?:[RTX]{0,64}|[RTX]{32}-[RTX]{31})$/).optional(),
-  omitted: z.object({ reasoning: count, text: count }).strict().optional(),
-}).strict()
+  layout: z.string().regex(OUTLINE_LAYOUT_PATTERN).optional(),
+  omitted: z.object({ reasoning: count, text: count, continues: z.boolean() }).strict().optional(),
+}).strict().refine(entry => (entry.omitted !== undefined) === Boolean(entry.layout?.includes("-")), "omitted runs accompany exactly a layout around omitted parts")
 export type OutlineEntry = z.infer<typeof outlineLayoutEntrySchema>
 const outlinePageSchema = <T extends z.ZodTypeAny>(entry: T) => z.union([pruningBlockedSchema, z.object({
   status: z.literal("outline"), entries: z.array(entry).max(16384),

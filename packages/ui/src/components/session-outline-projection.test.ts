@@ -1,9 +1,12 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 
-import type { OutlineEntry } from "../../../server/src/opencode/session-pruning/navigation-contract"
+import { outlineLayoutEntrySchema, type OutlineEntry } from "../../../server/src/opencode/session-pruning/navigation-contract"
+import { displayLayout } from "../../../server/src/opencode/session-pruning/outline-layout"
+import { normalizeSessionMessage } from "../stores/message-v2/normalizers"
+import type { MessageRecord } from "../stores/message-v2/types"
+import { buildTimelineSegments, foldTimelineSegments, type TimelineSegment } from "./message-timeline-projection"
 import { createSessionOutlineProjection } from "./session-outline-projection"
-import type { TimelineSegment } from "./message-timeline"
 
 const t = (key: string) => key
 const entry = (toolName = "shell"): OutlineEntry => ({
@@ -41,7 +44,6 @@ test("indexed messages get the markers the transcript shows for them, in part or
     "each tool keeps its own marker, after the reply that announced it")
   assert.deepEqual(ids([step("late", 1, "XTRX")]), ["late:tool:0", "late:assistant:0", "late:reasoning:0", "late:tool:1"])
   assert.deepEqual(ids([step("tools-only", 1, "X")]), ["tools-only:tool:0"], "a tool-only step has no reply marker")
-  assert.equal(ids([step("long", 1, "X".repeat(64), 70)]).length, 70, "tools beyond the bounded layout follow it")
   // Older plugin copies report counts only: thinking, then text (kept when unknown), then tools.
   assert.deepEqual(ids([{ id: "older", seq: 1, type: "assistant", tools: 2, reasoning: 1, toolName: "read" }]),
     ["older:reasoning:0", "older:assistant:0", "older:tool:0", "older:tool:1"])
@@ -52,26 +54,67 @@ test("indexed messages get the markers the transcript shows for them, in part or
   assert.deepEqual(ids(["shell", "synthetic", "idle", "agent-switched"].map((type, seq) => ({ id: type, seq, type: type as OutlineEntry["type"], tools: 0, reasoning: 0 }))), [])
 })
 
-test("a layout bounded around omitted runs keeps every marker, the trailing reply and thinking included", () => {
-  const project = createSessionOutlineProjection()
-  const markers = (entry: OutlineEntry) => project([entry], [], [], t)
-  // As the plugin bounds a step of 64 tools then a reply: 32 kinds, then the last 31.
-  const reply = markers({ id: "long", seq: 1, type: "assistant", tools: 64, reasoning: 0, text: 1, toolName: "read",
-    layout: `${"X".repeat(32)}-${"X".repeat(30)}T`, omitted: { reasoning: 0, text: 0 } })
-  assert.equal(reply.length, 65)
-  assert.deepEqual(reply.at(-1)?.id, "long:assistant:0", "the reply after the 64 tools keeps its marker")
-  assert.equal(reply.filter(segment => segment.type === "tool").length, 64)
-  // Thinking before each of 40 tools, then a reply: nine thinking runs are omitted.
-  const thoughtful = markers({ id: "steps", seq: 1, type: "assistant", tools: 40, reasoning: 40, text: 1, toolName: "read",
-    layout: `${"RX".repeat(16)}-${"RX".repeat(15)}T`, omitted: { reasoning: 9, text: 0 } })
-  assert.deepEqual(thoughtful.map(segment => segment.type[0]).join(""), `${"rt".repeat(40)}a`)
-  // Interleaved thinking, replies and tools: counts stay exact and no two runs of a kind touch.
-  const mixed = markers({ id: "mixed", seq: 1, type: "assistant", tools: 30, reasoning: 30, text: 30, toolName: "read",
-    layout: `${"RTX".repeat(10)}RT-X${"RTX".repeat(10)}`, omitted: { reasoning: 9, text: 9 } })
-  for (const type of ["reasoning", "assistant", "tool"]) assert.equal(mixed.filter(segment => segment.type === type).length, 30, type)
-  assert.ok(mixed.every((segment, index) => segment.type === "tool" || segment.type !== mixed[index + 1]?.type),
-    "adjacent thinking or text runs would share one transcript row")
-  assert.equal(new Set(mixed.map(segment => segment.id)).size, 90)
+// Native steps, from the plugin's real outline reader to the markers its loaded
+// transcript shows (`buildTimelineSegments` over the client's normalized parts).
+let tools = 0, instances = 0
+const text = (value = "words") => ({ type: "text", text: value })
+const blank = () => ({ type: "text", text: " \n" })
+const thinking = () => ({ type: "reasoning", text: "thought" })
+const tool = (name = "read") => ({ type: "tool", id: `tool-${++tools}`, name, time: { created: 1 }, state: { status: "completed", input: {}, content: [] } })
+const repeat = (count: number, part: () => Record<string, unknown>) => Array.from({ length: count }, part)
+const steps: Record<string, { content: Array<Record<string, unknown>>; error?: object }> = {
+  interleaved: { content: Array.from({ length: 20 }, () => [text(), tool(), text(), thinking(), tool(), thinking()]).flat() },
+  toolsThenText: { content: [...repeat(600, tool), ...repeat(600, text)] },
+  continuedText: { content: repeat(1200, text) },
+  headRunThroughTail: { content: [...repeat(450, tool), ...repeat(700, text)] },
+  toolsThenReply: { content: [...repeat(1001, tool), text()] },
+  omittedAlternation: { content: Array.from({ length: 400 }, () => [thinking(), text(), tool()]).flat() },
+  blanksAroundOmitted: { content: [...repeat(499, tool), thinking(), ...repeat(300, blank), thinking(), ...repeat(400, tool), blank(), thinking()] },
+  failedTools: { content: repeat(1000, tool), error: { type: "unknown", message: "failed" } },
+}
+// The plugin's layout from the kinds its SQL projects per native part (its
+// reader is covered against SQLite in `navigation.test.ts`).
+function loadedAndIndexed(name: string, step: { content: Array<Record<string, unknown>>; error?: object }) {
+  const message = { id: `msg_${name}`, type: "assistant", agent: "build", model: { providerID: "p", id: "m" }, time: { created: 1, completed: 2 }, ...step }
+  const kinds = step.content.flatMap((part, index) => {
+    const visible = typeof part.text === "string" && part.text.trim().length > 0
+    const kind = part.type === "tool" ? "X" : part.type === "reasoning" && visible ? "R" : part.type === "text" && visible ? "T" : ""
+    return kind ? [`${index}${kind}`] : []
+  }).join(",")
+  const errorRow = step.error && !step.content.some(part => part.type === "text") ? 1 : 0
+  const toolCount = step.content.filter(part => part.type === "tool").length
+  const entry: OutlineEntry = { id: message.id, seq: 0, type: "assistant", tools: toolCount, reasoning: 0, text: 0,
+    ...(toolCount ? { toolName: "read" } : {}), ...displayLayout(kinds, step.content.length + errorRow) }
+  assert.equal(outlineLayoutEntrySchema.safeParse(entry).success, true, `${name} satisfies the outline contract`)
+  const parts = normalizeSessionMessage("s", message as any).message.parts
+  const record = { id: message.id, sessionId: "s", role: "assistant", status: "complete", createdAt: 1, updatedAt: 1, revision: 1,
+    partIds: parts.map(part => part.id!), parts: Object.fromEntries(parts.map(part => [part.id!, { id: part.id!, revision: 0, data: part }])) } as unknown as MessageRecord
+  return { entry, indexed: createSessionOutlineProjection()([entry], [], [], t), loaded: buildTimelineSegments(`outline-${++instances}`, record, t) }
+}
+
+test("indexed markers are the markers their loaded step shows, around omitted parts too, under every visibility", async () => {
+  const shape = (segments: TimelineSegment[]) => segments.map(segment => `${segment.id}${segment.omittedBefore ? "|after-omitted" : ""}`)
+  for (const [name, step] of Object.entries(steps)) {
+    const { entry, indexed, loaded } = await loadedAndIndexed(name, step)
+    assert.ok((entry.layout?.length ?? 0) <= 1001, `${name}: the layout stays within the display window`)
+    assert.deepEqual(shape(indexed), shape(loaded), name)
+    for (const hiddenTools of [false, true]) for (const hiddenThinking of [false, true]) {
+      const hidden = (segment: TimelineSegment) => (hiddenTools && segment.type === "tool") || (hiddenThinking && segment.type === "reasoning")
+      assert.deepEqual(foldTimelineSegments(indexed, hidden).visible.map(segment => segment.id),
+        foldTimelineSegments(loaded, hidden).visible.map(segment => segment.id), `${name} ${hiddenTools} ${hiddenThinking}`)
+    }
+  }
+  // With Nothing, each pair of replies around a hidden tool shares one row.
+  const { indexed } = await loadedAndIndexed("interleaved", steps.interleaved)
+  assert.equal(foldTimelineSegments(indexed, segment => segment.type !== "assistant").visible.length, 20)
+  const { entry: split } = await loadedAndIndexed("toolsThenText", steps.toolsThenText)
+  assert.deepEqual(split.omitted, { reasoning: 0, text: 1, continues: true }, "the reply after the omitted parts starts among them")
+  for (const name of ["continuedText", "headRunThroughTail"]) {
+    const { indexed: continued } = await loadedAndIndexed(name, steps[name])
+    assert.ok(continued.some(segment => segment.id === `msg_${name}:assistant:0:continued` && segment.omittedBefore), `${name} continues its run after the omitted parts`)
+  }
+  const { entry: failed } = await loadedAndIndexed("failedTools", steps.failedTools)
+  assert.ok(failed.layout?.includes("-"), "the error row the transcript adds can push a step past the display limit")
 })
 
 test("resident messages keep their exact markers at their native position", () => {

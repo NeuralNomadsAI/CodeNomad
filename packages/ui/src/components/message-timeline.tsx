@@ -9,7 +9,7 @@ import { useI18n } from "../lib/i18n"
 import { getMessageContentIcon } from "./message-content-icons"
 import { Markdown } from "./markdown"
 import { createTimelinePreviews } from "../stores/timeline-previews"
-import { collectTextFromPart, foldTimelineSegments, getToolTitle, type TimelineSegment, type TimelineSegmentType } from "./message-timeline-projection"
+import { collectTextFromPart, foldTimelineSegments, getToolTitle, parseTimelineSegmentId, survivingTimelineSegmentId, type TimelineSegment, type TimelineSegmentType } from "./message-timeline-projection"
 
 export type { TimelineSegment, TimelineSegmentType }
 
@@ -222,8 +222,9 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const fold = createMemo(() => foldTimelineSegments(props.segments, segment => segmentStateFor(segment.id).hidden))
   const visibleSegments = () => fold().visible
   const segmentIndexById = createMemo(() => new Map(visibleSegments().map((segment, index) => [segment.id, index])))
-  // A folded marker is represented by its row's marker; one whose content is
-  // hidden, by its message's first visible marker.
+  // A selected marker that a reveal removed is represented by its surviving
+  // run marker, a folded one by its row's marker, and one whose content is
+  // hidden (or gone) by its message's first visible marker.
   const messageBySegmentId = createMemo(() => new Map(props.segments.map(segment => [segment.id, segment.messageId])))
   const firstVisibleByMessage = createMemo(() => {
     const result = new Map<string, string>()
@@ -233,9 +234,11 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
   const activeVisibleId = createMemo(() => {
     const requested = props.activeSegmentId
     if (!requested) return null
-    const id = fold().representative.get(requested) ?? requested
+    const known = messageBySegmentId()
+    const surviving = survivingTimelineSegmentId(requested, id => known.has(id))
+    const id = fold().representative.get(surviving) ?? surviving
     if (segmentIndexById().has(id)) return id
-    const messageId = messageBySegmentId().get(id)
+    const messageId = known.get(id) ?? parseTimelineSegmentId(id)?.messageId
     return messageId === undefined ? null : firstVisibleByMessage().get(messageId) ?? null
   })
   // One uniform gap between visible markers, none before the first. V2 records

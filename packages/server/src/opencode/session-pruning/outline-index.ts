@@ -3,6 +3,7 @@ import type { DatabaseSync, SQLInputValue } from "node:sqlite"
 import { setImmediate as yieldTurn } from "node:timers/promises"
 import type { HistoryScope } from "./history-store"
 import type { OutlineCheckpoint, OutlineEntry, OutlineResult } from "./navigation-contract"
+import { displayLayout } from "./outline-layout"
 import { ownedSession } from "./navigation-scope"
 
 function boundedToolName(value: unknown): string {
@@ -12,20 +13,9 @@ function boundedToolName(value: unknown): string {
 }
 
 const VISIBLE_TEXT = "length(trim(coalesce(json_extract(value,'$.text'),''),char(32,9,10,13)))>0"
-const LAYOUT_HEAD = 32, LAYOUT_TAIL = 31
-// `key || kind` pairs: aggregate order is unspecified, so the part index orders them.
-// A longer layout keeps its ends and counts the text and thinking runs between them.
-function boundedLayout(value: unknown): Pick<OutlineEntry, "layout" | "omitted"> {
-  if (typeof value !== "string" || !value) return { layout: "" }
-  let layout = ""
-  for (const [, kind] of value.split(",").map(item => [Number.parseInt(item, 10), item.at(-1)!] as const).sort((a, b) => a[0] - b[0])) {
-    if (kind === "X" || layout.at(-1) !== kind) layout += kind
-  }
-  if (layout.length <= LAYOUT_HEAD + LAYOUT_TAIL + 1) return { layout }
-  const middle = layout.slice(LAYOUT_HEAD, -LAYOUT_TAIL)
-  return { layout: `${layout.slice(0, LAYOUT_HEAD)}-${layout.slice(-LAYOUT_TAIL)}`,
-    omitted: { reasoning: middle.replace(/[^R]/g, "").length, text: middle.replace(/[^T]/g, "").length } }
-}
+// A page stops adding checkpoint ranges once its layouts reach this size (as
+// many characters as 16,384 64-kind layouts), so long steps add pages instead.
+const LAYOUT_PAGE_CHARACTERS = 16384 * 64
 
 // Checkpoint boundaries survive deletion: removing an early row must not shift
 // every later chunk. Only changed chunks need technical-part JSON projection.
@@ -65,10 +55,13 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
           WHEN json_extract(value,'$.type')='reasoning' AND ${VISIBLE_TEXT} THEN 'R'
           WHEN json_extract(value,'$.type')='text' AND coalesce(json_extract(value,'$.synthetic'),0)=0
             AND coalesce(json_extract(value,'$.ignored'),0)=0 AND ${VISIBLE_TEXT} THEN 'T' END AS kind
-        FROM json_each(data,'$.content')) WHERE kind IS NOT NULL) END AS layout` : ""}
+        FROM json_each(data,'$.content')) WHERE kind IS NOT NULL) END AS layout,
+      CASE WHEN type='assistant' THEN coalesce(json_array_length(data,'$.content'),0)
+        + (coalesce(json_type(data,'$.error'),'null')<>'null' AND NOT EXISTS (SELECT 1 FROM json_each(data,'$.content')
+          WHERE json_extract(value,'$.type')='text')) END AS display_parts` : ""}
       FROM session_message WHERE ${where} AND seq>? AND seq<=? ORDER BY seq LIMIT 512`)
     const entries: OutlineEntry[] = [], checkpoints: Array<OutlineCheckpoint & { changed: boolean }> = []
-    let examined = 0
+    let examined = 0, layoutCharacters = 0
     // Row counts do not bound time: one assistant can contain megabytes of tool
     // output. Cooperate during both checkpoint reads and JSON projection. A
     // single SQLite step is still synchronous, so this is not a hard deadline.
@@ -100,10 +93,11 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
         for (const row of project.iterate(...params, after, chunkEnd)) {
           signal.throwIfAborted()
           const tools = Number(row.tools)
+          const layout = layouts && row.type === "assistant" ? displayLayout(row.layout, Number(row.display_parts)) : {}
+          layoutCharacters += layout.layout?.length ?? 0
           entries.push({ id: String(row.id), seq: Number(row.seq), type: row.type as OutlineEntry["type"],
             tools, reasoning: Number(row.reasoning), text: Number(row.text),
-            ...(tools ? { toolName: boundedToolName(row.tool_name) } : {}),
-            ...(layouts && row.type === "assistant" ? boundedLayout(row.layout) : {}) })
+            ...(tools ? { toolName: boundedToolName(row.tool_name) } : {}), ...layout })
           if (entries.length % 128 === 0 || performance.now() - turnStarted >= 8) {
             await yieldTurn(undefined, { signal })
             turnStarted = performance.now()
@@ -117,7 +111,7 @@ export async function readSessionOutline(db: DatabaseSync, scope: HistoryScope,
       turnStarted = performance.now()
     // Old ranges shrink after deletions. Reserve a whole block before reading
     // another; the page budget is not necessarily a multiple of 512 anymore.
-    } while (after < through && examined <= 16384 - 512 && checkpoints.length < 512)
+    } while (after < through && examined <= 16384 - 512 && checkpoints.length < 512 && layoutCharacters < LAYOUT_PAGE_CHARACTERS)
     return { status: "outline", entries, checkpoints, total, cursor: after < through ? { after, through } : null }
   } finally { db.exec("ROLLBACK") }
 }

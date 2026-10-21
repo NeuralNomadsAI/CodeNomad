@@ -7,54 +7,43 @@ const kindTypes: Record<string, TimelineSegmentType> = { U: "user", C: "compacti
 const toolCount = (kinds: string) => kinds.replace(/[^X]/g, "").length
 
 /**
- * The runs a bounded layout omits between `before` and `after`, in an order
- * the transcript could show: no two thinking or two text runs touch, as they
- * would share one row. Excess runs of one kind take a slot each between tools,
- * the balanced rest alternates within one slot.
+ * The markers the transcript will show for an indexed message before any
+ * reveal, as `buildTimelineSegments` keys them once it loads: the layout lists
+ * the displayed parts' markers, and markers after the omitted parts skip the
+ * native runs that start among them.
  */
-function omittedKinds(reasoning: number, text: number, tools: number, before = "", after = ""): string {
-  const slots = Array.from({ length: tools + 1 }, () => "")
-  const excess = reasoning > text ? "R" : "T", other = excess === "R" ? "T" : "R"
-  let extra = Math.abs(reasoning - text)
-  for (let slot = 0; slot < slots.length && extra > 0; slot++) {
-    if ((slot === 0 && before === excess) || (slot === tools && after === excess)) continue
-    slots[slot] = excess
-    extra--
-  }
-  // Counts stay exact even for an arrangement the native order cannot have.
-  if (extra > 0) slots[tools] += excess.repeat(extra)
-  const pairs = Math.min(reasoning, text)
-  const host = slots.findIndex(slot => slot === excess)
-  if (host >= 0) slots[host] = excess + (other + excess).repeat(pairs)
-  else if (pairs) {
-    const startsWithText = before === "R" || (tools === 0 && after === "T")
-    slots[0] = (startsWithText ? "TR" : "RT").repeat(pairs)
-  }
-  return slots.join("X")
-}
-
-/** The markers the transcript will show for an indexed message, in its part order. */
 function outlineSegments(entry: OutlineEntry, t: Translate): TimelineSegment[] {
-  let kinds = entry.type === "user" ? "U" : entry.type === "compaction" ? "C" : entry.type === "system" ? "S" : ""
+  let head = entry.type === "user" ? "U" : entry.type === "compaction" ? "C" : entry.type === "system" ? "S" : ""
+  let tail: string | undefined
   if (entry.type === "assistant") {
-    // A long layout keeps its ends around the omitted runs' counts. An index
-    // without layouts (an older plugin copy) has counts only: steps usually
-    // think, answer, then call tools, and unknown text keeps its marker.
-    const [head, tail] = entry.layout?.split("-") ?? []
-    kinds = tail !== undefined
-      ? head + omittedKinds(entry.omitted?.reasoning ?? 0, entry.omitted?.text ?? 0,
-        Math.max(0, entry.tools - toolCount(head) - toolCount(tail)), head.at(-1), tail[0]) + tail
-      : head !== undefined
-        ? head + "X".repeat(Math.max(0, entry.tools - toolCount(head)))
-        : `${entry.reasoning ? "R" : ""}${entry.text !== 0 ? "T" : ""}${"X".repeat(entry.tools)}`
+    // An index without layouts (an older plugin copy) has counts only: steps
+    // usually think, answer, then call tools, and unknown text keeps its marker.
+    if (entry.layout !== undefined) [head, tail] = entry.layout.split("-")
+    else head = `${entry.reasoning ? "R" : ""}${entry.text !== 0 ? "T" : ""}${"X".repeat(entry.tools)}`
   }
   const ordinals = new Map<TimelineSegmentType, number>()
-  return [...kinds].map(kind => {
-    const type = kindTypes[kind], ordinal = ordinals.get(type) ?? 0
+  const marker = (type: TimelineSegmentType, ordinal: number, after?: { continued: boolean }): TimelineSegment => ({
+    id: timelineSegmentId(entry.id, type, ordinal, after?.continued), messageId: entry.id, type, label: timelineSegmentLabel(type, t), tooltip: "",
+    totalChars: type === "tool" ? 100 : 0, ...(type === "tool" && entry.toolName?.trim() ? { toolName: entry.toolName.trim() } : {}),
+    ...(after ? { omittedBefore: true as const } : {}) })
+  const next = (type: TimelineSegmentType) => {
+    const ordinal = ordinals.get(type) ?? 0
     ordinals.set(type, ordinal + 1)
-    return { id: timelineSegmentId(entry.id, type, ordinal), messageId: entry.id, type, label: timelineSegmentLabel(type, t), tooltip: "",
-      totalChars: type === "tool" ? 100 : 0, ...(type === "tool" && entry.toolName?.trim() ? { toolName: entry.toolName.trim() } : {}) }
-  })
+    return ordinal
+  }
+  const segments = [...head].map(kind => marker(kindTypes[kind], next(kindTypes[kind])))
+  if (tail === undefined) return segments
+  const omitted = entry.omitted ?? { reasoning: 0, text: 0, continues: false }
+  const skipped: Partial<Record<TimelineSegmentType, number>> = { reasoning: omitted.reasoning, assistant: omitted.text,
+    tool: Math.max(0, entry.tools - toolCount(head) - toolCount(tail)) }
+  for (const [type, count] of Object.entries(skipped) as Array<[TimelineSegmentType, number]>) ordinals.set(type, (ordinals.get(type) ?? 0) + count)
+  return [...segments, ...[...tail].map((kind, index) => {
+    const type = kindTypes[kind]
+    // The first run after the omitted parts may continue the native run before
+    // them: the head's last one (its continuation) or one that starts among them.
+    if (index === 0 && omitted.continues && type !== "tool") return marker(type, (ordinals.get(type) ?? 1) - 1, { continued: !skipped[type] })
+    return index === 0 ? marker(type, next(type), { continued: false }) : marker(type, next(type))
+  })]
 }
 
 /**

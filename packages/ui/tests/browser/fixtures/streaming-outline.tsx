@@ -1,7 +1,9 @@
 import { serverApi } from "../../../src/lib/api-client"
+import { updatePreferences, type ToolCallExpansionPreset } from "../../../src/stores/preferences"
+import { transcriptPresetPatch } from "../../../src/components/transcript-visibility"
 import { applyUiSettings } from "./ui-settings"
 
-const count = 10_000
+const count = 16_000
 const entries = Array.from({ length: count }, (_, seq) => ({
   id: seq >= count - 620 ? `msg_${String(seq - count + 620).padStart(4, "0")}` : `archive_${String(seq).padStart(5, "0")}`,
   seq, type: seq === 0 ? "user" : "assistant", tools: 0, reasoning: 0,
@@ -21,10 +23,13 @@ await import("./session")
 const source = (window as any).fixture
 await source.seedHistory(620)
 await applyUiSettings({ locale: "en", showMessageTimeline: true })
+const work = () => (window as any).__outlineWork ?? { calls: 0 }
 ;(window as any).outlineFixture = {
   start: () => source.start(), delta: (text: string) => source.delta(text),
+  startAfterTool: (name: string) => source.startAfterTool(name),
+  preset: (preset: ToolCallExpansionPreset) => updatePreferences(transcriptPresetPatch(preset)),
   finish: (text: string) => source.end(text),
   locale: (locale: string) => applyUiSettings({ locale }),
-  snapshot: () => ({ reads, text: source.snapshot().text, ...(window as any).__outlineWork }),
-  reset: () => { (window as any).__outlineWork.calls = 0 },
+  snapshot: () => ({ reads, text: source.snapshot().text, replyText: source.snapshot().replyText, ...work(), folds: (window as any).__timelineFolds ?? 0 }),
+  reset: () => { work().calls = 0; (window as any).__timelineFolds = 0 },
 }

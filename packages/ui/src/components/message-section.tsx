@@ -200,12 +200,14 @@ export default function MessageSection(props: MessageSectionProps) {
   const handleTechnicalCleanupHoverChange = (messageId: string, partId: string, hovered: boolean) => {
     setTechnicalCleanupHoverTarget(hovered ? { messageId, partId } : null)
   }
+  // Resolving targets reads the transcript store, which changes per token: only
+  // a changed target set may invalidate its consumers (grouping, the rail).
   const pendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
     .filter((form) => form.sessionID === props.sessionId)
     .flatMap((form) => {
       const target = resolveFormToolTarget(form, store())
       return target ? [technicalPartKey(target.messageId, target.partId)] : []
-    })))
+    })), undefined, { equals: (previous, next) => previous.size === next.size && [...next].every((key) => previous.has(key)) })
   const technicalGroupProjection = createMemo(() => {
     sessionRevision()
     const resolvedStore = store()
@@ -393,13 +395,12 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     return result
   })
-  // As in the transcript, a hidden tool awaiting a permission or form stays shown.
-  const isPendingToolSegment = (segment: TimelineSegment) => (segment.toolPartIds ?? []).some((partId) => {
-    const part = store().getMessage(segment.messageId)?.parts[partId]?.data
-    return Boolean((part?.type === "tool" && part.pendingPermission?.active) || pendingFormToolTargets().has(technicalPartKey(segment.messageId, partId)))
-  })
+  // As in the transcript, a hidden tool awaiting a form stays shown (the rail
+  // keeps those awaiting a permission itself).
+  const isPendingFormSegment = (segment: TimelineSegment) =>
+    (segment.toolPartIds ?? []).some((partId) => pendingFormToolTargets().has(technicalPartKey(segment.messageId, partId)))
   const isTimelineSegmentHidden = (segment: TimelineSegment) => segment.type === "tool"
-    ? resolveToolVisibility(preferences(), segment.toolName ?? "") === "hidden" && !isPendingToolSegment(segment)
+    ? resolveToolVisibility(preferences(), segment.toolName ?? "") === "hidden" && !isPendingFormSegment(segment)
     : segment.type === "reasoning" ? !preferences().showThinkingBlocks
       : segment.type === "system" && preferences().systemMessagesVisibility === "hidden"
   const hasTimelineSegments = () => timelineSegments().length > 0
@@ -880,12 +881,11 @@ export default function MessageSection(props: MessageSectionProps) {
     else claimSearchReveal()
   }
 
-  /** An indexed marker may start among the parts its loaded message omits: reveal them first. */
+  /** A marker stands for its whole native run: reveal the omitted parts its run starts among. */
   function revealTimelineSegment(messageId: string, segmentId: string) {
     const record = store().getMessage(messageId)
-    if (!record || untrack(timelineSegmentsByMessage).get(messageId)?.some(segment => segment.id === segmentId)) return
-    const start = timelineRunStart(record, segmentId, t)
-    if (start === undefined) return
+    const start = record ? timelineRunStart(record, segmentId, t) : undefined
+    if (!record || start === undefined) return
     for (let step = 0; step <= record.partIds.length / MESSAGE_PART_REVEAL_STEP && !isRecordPartDisplayed(props.instanceId, record, start); step++) {
       revealHiddenRecordParts(props.instanceId, messageId)
     }

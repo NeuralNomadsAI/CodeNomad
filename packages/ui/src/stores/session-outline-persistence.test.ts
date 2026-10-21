@@ -62,15 +62,18 @@ test("index normalization bounds optional storage, rejects invalid ordering and 
   const unordered = normalizePersistedOutline({ ...valid, entries: valid.entries.map(({ layout: _, ...entry }) => entry) })!
   assert.equal(hasCompleteOutlineMetadata(unordered), false, "indexes saved before part layouts refresh once too")
   assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, layout: "RTQ" })) }), undefined)
-  assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, layout: "X".repeat(65) })) }), undefined)
   const bounded = (fields: Record<string, unknown>) => normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, ...fields })) })
-  const long = `R${"X".repeat(31)}-${"X".repeat(30)}T`
-  assert.deepEqual(bounded({ layout: long, omitted: { reasoning: 2, text: 1 } })?.entries.map(entry => entry.omitted), [{ reasoning: 2, text: 1 }, { reasoning: 2, text: 1 }],
-    "a bounded layout keeps the counts of the runs it omits")
-  assert.equal(bounded({ layout: long }), undefined, "a bounded layout without its omitted runs would drop visible markers")
-  assert.equal(bounded({ omitted: { reasoning: 1, text: 0 } }), undefined)
-  assert.equal(bounded({ layout: long, omitted: { reasoning: -1, text: 0 } }), undefined)
-  assert.equal(bounded({ layout: `${"X".repeat(31)}-${"X".repeat(31)}`, omitted: { reasoning: 0, text: 0 } }), undefined)
+  const long = `R${"X".repeat(499)}-${"X".repeat(499)}T`
+  const omitted = { reasoning: 2, text: 1, continues: true }
+  assert.equal(bounded({ layout: "RTX".repeat(333) })?.entries[0].layout?.length, 999, "a step's whole display window is listed")
+  assert.deepEqual(bounded({ layout: long, omitted })?.entries.map(entry => entry.omitted), [omitted, omitted],
+    "a layout around omitted parts keeps the runs that start among them")
+  assert.equal(bounded({ layout: long }), undefined, "a layout around omitted parts needs their runs for native ordinals")
+  assert.equal(bounded({ omitted }), undefined)
+  assert.equal(bounded({ layout: long, omitted: { reasoning: -1, text: 0, continues: false } }), undefined)
+  assert.equal(bounded({ layout: long, omitted: { reasoning: 0, text: 0 } }), undefined)
+  assert.equal(bounded({ layout: "X".repeat(1001) }), undefined, "no display window lists more than 1,000 parts")
+  assert.equal(bounded({ layout: `${"X".repeat(501)}-T`, omitted }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, text: -1 })) }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, entries: [valid.entries[1], valid.entries[0]] }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, checkpoints: [{ after: 0, through: 1, digest: "a".repeat(64) }] }), undefined)

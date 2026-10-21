@@ -11,10 +11,15 @@ challenge as history queries. Never expose generic RPC or SQL access through the
   type, technical-part counts and the first tool name used for indexed tool icons,
   with no excerpt or body. The plugin's `outline` method keeps that entry shape,
   which backends validate strictly; its versioned `outlineLayout` method adds an
-  assistant step's `layout` (its visible parts in order: `R` and `T` for each run
-  of non-blank thinking or visible text, `X` per tool). A layout over 64 kinds keeps
-  its first 32 and last 31 around `-`, and `omitted` counts the thinking and text
-  runs between them; the tools between them follow from the tool count. The route
+  assistant step's `layout`: the markers of the parts its transcript displays
+  before any reveal, in order (`R` and `T` for each run of non-blank thinking or
+  visible text, `X` per tool). That is every part up to `MESSAGE_DISPLAY_LIMIT`
+  (1,000, shared with `record-display-cache.ts`), otherwise the first and last 500
+  around `-`, where `omitted` counts the thinking and text runs that start among
+  the omitted parts (their tools follow from the tool count) and whether the first
+  run after them continues the run before them. A layout therefore has at most
+  1,001 characters, and a page stops adding checkpoint ranges once its layouts
+  reach 1 MiB (16,384 × 64 characters). The route
   calls `outlineLayout` and falls back to `outline` only on a declared
   `rpc.method_not_found` from a plugin copy without it. SQL projects this metadata
   directly; large content never enters JS/RPC/renderer just to draw the rail.
@@ -85,8 +90,10 @@ immediately, then revalidate every checkpoint once before being persisted again.
 The text count covers non-blank text parts that are neither synthetic nor ignored.
 An index from an older plugin copy has no layout: its steps are drawn from the
 counts as thinking, then text (kept when its count is unknown), then tools. A
-bounded layout's omitted runs are rebuilt between its ends with exact counts, in
-an order where no two thinking or two text runs touch. The
+layout's markers are exactly those its step shows once loaded, before any reveal,
+so folding by Message content visibility gives the same rail indexed or loaded;
+markers after the omitted parts take native ordinals by skipping the runs that
+start among them. The
 `outline-index-v1` root extension fences older renderers rather than letting them
 discard session documents they cannot interpret. Hosts without partition support
 use a monolithic snapshot without the optional indexes.
@@ -127,8 +134,11 @@ derive their markers from the outline's `layout`. Markers are keyed
 `messageId:type:ordinal`, with ordinals counted over all of a message's parts,
 displayed or omitted, so an indexed marker keeps its identity and target when its
 window loads. A run the omitted-parts placeholder splits keeps its id before it and
-adds `:continued` after it; clicking a marker whose run starts among the omitted
-parts reveals them first. A tool inside a collapsed technical group stands for that group's header.
+adds `:continued` after it. A marker stands for its whole native run: clicking one
+whose run starts among the omitted parts reveals them first, even when its marker
+shows only the run's part after them; a continuation stands for that part. A
+selected continuation a reveal joins to its run hands the selection to the run's
+marker (`survivingTimelineSegmentId`). A tool inside a collapsed technical group stands for that group's header.
 
 A click (or a user-message jump) makes its marker active until the reader
 scrolls: the key jump holds that marker's own block at the top, through row
@@ -377,8 +387,13 @@ A status transition during an incomplete scan cannot discard its progress.
   native event dispatcher and SQL readers on a 1,500-message Chromium fixture;
   `timeline-sync.test.ts` checks marker order, identity, placement and the reading
   line with the same readers on mixed native step shapes, the rail against the
-  rendered rows under every preset and thinking/tool/system visibility, a step
-  beyond the part display window and a send after a jump.
+  rendered rows under every preset and thinking/tool/system visibility, steps
+  beyond the part display window (indexed markers equal to loaded ones, runs
+  starting among or split by omitted parts) and a send after a jump.
+  `session-outline-projection.test.ts` compares the plugin's layouts, projected,
+  with the markers `buildTimelineSegments` builds for the same native steps;
+  `streaming-outline.test.ts` counts full-history projections and rail folds per
+  token, including after a hidden tool under Nothing.
 - `timeline-sync.qualification.ts` (opt-in, `npm run qualify:browser:timeline-sync`)
   measures marker agreement and click accuracy on replayed native session stores.
 - `test-session-navigation-native.mjs`, run by the isolated pruning fixture, checks
@@ -388,9 +403,9 @@ A status transition during an incomplete scan cannot discard its progress.
 
 ## Agent conventions
 
-- Timeline markers mirror the transcript: one marker per marked block, in transcript order (each text run, thinking run, tool or collapsed tool group, compaction and system context). They follow Message content: a tool marker is hidden when the tool type it shows (its icon, the outline's representative tool for indexed history) is hidden there, thinking markers when thinking is hidden and system markers when system messages are; tool markers awaiting a permission or form stay visible, as their tools do. Folding follows the transcript's rows through the shared `groupTranscriptRows` (`foldTimelineSegments`): text or thinking around a hidden tool keeps one marker, and hidden thinking or system context still ends a row. A hidden active marker hands its highlight and reveal to its message's first visible marker (`activeVisibleId`) and never reappears just because it is active. Message content is the only control: never add a timeline-tools preference, View menu item, palette command or shortcut. The Nothing preset hides every tool marker. Covered by `tests/browser/timeline-tool-filters.test.ts` and `tests/browser/timeline-sync.test.ts`.
+- Timeline markers mirror the transcript: one marker per marked block, in transcript order (each text run, thinking run, tool or collapsed tool group, compaction and system context). They follow Message content: a tool marker is hidden when the tool type it shows (its icon, the outline's representative tool for indexed history) is hidden there, thinking markers when thinking is hidden and system markers when system messages are; tool markers awaiting a permission or form stay visible, as their tools do. Marker visibility reads only preferences, permission state and the value-diffed pending-form targets, never streamed transcript data, so tokens never refold the whole rail (`streaming-outline.test.ts`). Folding follows the transcript's rows through the shared `groupTranscriptRows` (`foldTimelineSegments`): text or thinking around a hidden tool keeps one marker, and hidden thinking or system context still ends a row. A hidden active marker hands its highlight and reveal to its message's first visible marker (`activeVisibleId`) and never reappears just because it is active. Message content is the only control: never add a timeline-tools preference, View menu item, palette command or shortcut. The Nothing preset hides every tool marker. Covered by `tests/browser/timeline-tool-filters.test.ts` and `tests/browser/timeline-sync.test.ts`.
 - Session timeline placement spans the transcript and composer via the session-owned mount; keep its rail layout in `styles/messaging/session-timeline-rail.css`. Hide the rail and force conversation-header actions into their overflow menu below 420 CSS px of the `session-center` container on all platforms. Keep that width-only force separate from measured header density so trial layouts can expand again above the breakpoint; filters anchor and return focus to the visible menu. Docked drawers reserve a minimum conversation width of 390 CSS px before overlaying. The composer worktree selector becomes a compact arrow-only cell below 460 CSS px of that conversation container (never the remaining composer width); keep its accessible label and styles in `styles/components/prompt-context-controls.css`. Timeline visibility must not depend on measured header density, changing status controls or viewport height; preserve the saved visibility preference.
-- Timeline geometry uses the cached structural index independently of transcript/excerpt loading. Resident messages keep their exact markers (`buildTimelineSegments`); indexed messages outside the window take their native sequence position around them, with markers from the outline's `layout` (the step's visible part order, bounded around `omitted` run counts) or, from older plugin copies, its counts ordered as thinking, text (kept when unknown), tools. Layouts come only from the versioned `outlineLayout` RPC; `outline` keeps the strict legacy entry shape for backends sharing the plugin, and the route falls back to it only on `rpc.method_not_found`. Markers are keyed `messageId:type:ordinal` by native ordinal over all of a message's parts (`:continued` after the omitted-parts placeholder), so an indexed marker keeps its identity and target once its window loads, and a click reveals omitted parts its run starts in; resident messages the transcript hides have no markers. Indexed tool markers retain the outline's representative tool name so their icon does not fall back to `other`; preserve that metadata through projection and persisted-index revalidation. A clicked marker or user-message jump stays active until the reader scrolls, sends, jumps to the first/latest message or an activation restore runs, and its own block is held at the top by the list's key jump (`scrollToKey` with a block selector, which survives row remounts and follows Virtua's estimate until the row renders); otherwise the active marker is the first marked block reaching below the transcript's reading line, refreshed once per frame on scroll and content rendering. Marker-to-block lookup and the reading line live in `components/timeline-transcript-blocks.ts`. Hover/focus previews render bounded Markdown, prefetch visible-nearby excerpts and prioritize the hovered marker through `stores/timeline-previews.ts`; never mount whole message/tool cards or fetch transcript windows for hover. Keep the viewport-bounded surface in `styles/messaging/timeline-preview.css`.
+- Timeline geometry uses the cached structural index independently of transcript/excerpt loading. Resident messages keep their exact markers (`buildTimelineSegments`); indexed messages outside the window take their native sequence position around them, with markers from the outline's `layout` (exactly the markers of the parts the loaded step displays before any reveal, around `omitted` run counts beyond `MESSAGE_DISPLAY_LIMIT`; never an invented order) or, from older plugin copies, its counts ordered as thinking, text (kept when unknown), tools. Layouts come only from the versioned `outlineLayout` RPC; `outline` keeps the strict legacy entry shape for backends sharing the plugin, and the route falls back to it only on `rpc.method_not_found`. Markers are keyed `messageId:type:ordinal` by native ordinal over all of a message's parts (`:continued` after the omitted-parts placeholder), so an indexed marker keeps its identity and target once its window loads, a click reveals omitted parts its run starts in (even when its marker exists), and a selected continuation a reveal removes hands over to its run's marker; resident messages the transcript hides have no markers. Indexed tool markers retain the outline's representative tool name so their icon does not fall back to `other`; preserve that metadata through projection and persisted-index revalidation. A clicked marker or user-message jump stays active until the reader scrolls, sends, jumps to the first/latest message or an activation restore runs, and its own block is held at the top by the list's key jump (`scrollToKey` with a block selector, which survives row remounts and follows Virtua's estimate until the row renders); otherwise the active marker is the first marked block reaching below the transcript's reading line, refreshed once per frame on scroll and content rendering. Marker-to-block lookup and the reading line live in `components/timeline-transcript-blocks.ts`. Hover/focus previews render bounded Markdown, prefetch visible-nearby excerpts and prioritize the hovered marker through `stores/timeline-previews.ts`; never mount whole message/tool cards or fetch transcript windows for hover. Keep the viewport-bounded surface in `styles/messaging/timeline-preview.css`.
 - Transcript rows and the header row (`.virtual-follow-list-before`) retain pointer hit testing during virtualizer scrolling (`styles/messaging/virtual-follow-list.css`), so nested code/tool scrollers, message and history controls receive gestures at their visible target.
 - The transcript header (`renderBeforeItems`) is Virtua's row 0, ahead of the retired prefix: Virtua compensates its resizes like any row's, so never add list-side header corrections. Keep its index translation inside `virtual-follow-list.tsx`; it is never an anchor, a message or a `renderItem` call.
 - Every list-owned transcript position write goes through `VirtualFollowList.writeScroll` with a reason from the closed `SCROLL_REASONS` list (`components/virtual-scroll-trace.ts`); never add a direct `scrollTop`/Virtua write beside it. User-gesture routing (wheel re-emission and middle-button autoscroll) also writes the transcript outside it; search reveals inside nested scrollers are the explicitly traced external exception (`search-reveal`); their transcript step goes through the list's `alignElement`. Diagnose jumps with the `scroll` logger namespace.

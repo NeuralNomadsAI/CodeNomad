@@ -2,6 +2,7 @@ import { createStore, produce } from "solid-js/store"
 import type { ClientPart } from "../../types/message"
 import { extractReasoningTextForRender } from "../../lib/message-render-cache"
 import type { MessageRecord } from "./types"
+import { MESSAGE_DISPLAY_HEAD, MESSAGE_DISPLAY_LIMIT, MESSAGE_DISPLAY_TAIL } from "../../../../server/src/opencode/session-pruning/navigation-contract"
 
 type ClientPartWithRevision = ClientPart & { revision?: number }
 
@@ -24,9 +25,10 @@ interface RecordDisplayCacheEntry {
 const recordDisplayCache = new Map<string, RecordDisplayCacheEntry>()
 // One message is one virtualized row, so this bounds the DOM a single long
 // agent turn can mount. Omitted parts stay in the store and can be revealed.
-export const MESSAGE_PART_DISPLAY_LIMIT = 1000
+// Indexed timeline markers mirror the same window, hence the shared bound.
+export const MESSAGE_PART_DISPLAY_LIMIT = MESSAGE_DISPLAY_LIMIT
 export const MESSAGE_PART_REVEAL_STEP = 1000
-const MESSAGE_PART_TAIL_COUNT = MESSAGE_PART_DISPLAY_LIMIT - Math.floor(MESSAGE_PART_DISPLAY_LIMIT / 2)
+const MESSAGE_PART_TAIL_COUNT = MESSAGE_DISPLAY_TAIL
 
 // User-revealed part counts keyed by instance/message. Reactive so every
 // projection of the same record (blocks, grouping, timeline) agrees.
@@ -68,7 +70,7 @@ export function getRevealedRecordParts(instanceId: string, messageId: string): n
 
 function getDisplayWindow(instanceId: string, record: MessageRecord) {
   const revealed = getRevealedRecordParts(instanceId, record.id)
-  const headCount = Math.floor(MESSAGE_PART_DISPLAY_LIMIT / 2) + revealed
+  const headCount = MESSAGE_DISPLAY_HEAD + revealed
   const hiddenCount = Math.max(0, record.partIds.length - headCount - MESSAGE_PART_TAIL_COUNT)
   return { revealed, headCount, hiddenCount }
 }

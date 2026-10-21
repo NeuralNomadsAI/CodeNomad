@@ -19,6 +19,14 @@ before(async () => {
           res.end(await server.transformIndexHtml("/fixture", '<html><body><div id="root" style="display:flex;height:850px;width:1200px"></div><script type="module" src="/tests/browser/fixtures/streaming-outline.tsx"></script></body></html>'))
         })
       }, async load(id) {
+        if (id.replaceAll("\\", "/").endsWith("/src/components/message-timeline-projection.ts")) {
+          // Count the rail's full-history visibility folds the same way.
+          const source = await readFile(id, "utf8")
+          const counted = source.replace("const representative = new Map<string, string>()",
+            ";(globalThis as any).__timelineFolds = ((globalThis as any).__timelineFolds ?? 0) + 1; const representative = new Map<string, string>()")
+          if (counted === source) throw new Error("timeline fold anchor missing")
+          return counted
+        }
         if (!id.replaceAll("\\", "/").endsWith("/src/components/session-outline-projection.ts")) return
         const source = process.env.CODENOMAD_OUTLINE_BASELINE
           ? await readFile(process.env.CODENOMAD_OUTLINE_BASELINE, "utf8") : await readFile(id, "utf8")
@@ -36,7 +44,7 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close(); if (cache) await rm(cache, { recursive: true, force: true }) })
 
-test("real native token deltas do not reproject a 10k outline until resident markers change", async () => {
+test("real native token deltas do not reproject a 16k outline until resident markers change", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 850 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -44,7 +52,7 @@ test("real native token deltas do not reproject a 10k outline until resident mar
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 })
     await page.waitForFunction(() => Boolean((window as any).outlineFixture), {}, { timeout: 60000 })
-    await page.waitForFunction(() => (window as any).outlineFixture.snapshot().reads >= 20 && (window as any).outlineFixture.snapshot().calls > 0)
+    await page.waitForFunction(() => (window as any).outlineFixture.snapshot().reads >= 32 && (window as any).outlineFixture.snapshot().calls > 0)
     await page.evaluate(() => (window as any).outlineFixture.start())
     await page.evaluate(() => (window as any).outlineFixture.delta("a"))
     await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
@@ -64,6 +72,35 @@ test("real native token deltas do not reproject a 10k outline until resident mar
     await page.waitForFunction(before => (window as any).outlineFixture.snapshot().calls > before, beforeLocale)
     await page.evaluate(() => (window as any).outlineFixture.finish("a".repeat(65) + "b".repeat(64)))
     assert.equal(await page.evaluate(() => (window as any).outlineFixture.snapshot().text), "a".repeat(65) + "b".repeat(64))
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a reply streaming after a hidden tool does not refold the 16k rail per token", async () => {
+  const page = await browser.newPage({ viewport: { width: 1200, height: 850 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "{}" }))
+  try {
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 })
+    await page.waitForFunction(() => Boolean((window as any).outlineFixture), {}, { timeout: 60000 })
+    await page.waitForFunction(() => (window as any).outlineFixture.snapshot().reads >= 32 && (window as any).outlineFixture.snapshot().calls > 0)
+    // Nothing hides the step's completed read tool, so the rail folds around it.
+    await page.evaluate(() => (window as any).outlineFixture.preset("nothing"))
+    await page.evaluate(() => (window as any).outlineFixture.startAfterTool("read"))
+    await page.evaluate(() => (window as any).outlineFixture.delta("a"))
+    await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))))
+    assert.ok(await page.evaluate(() => (window as any).outlineFixture.snapshot().folds) > 0, "the fold counter observes the rail")
+    const measurement = await page.evaluate(async () => {
+      const fixture = (window as any).outlineFixture
+      fixture.reset()
+      for (let index = 0; index < 32; index++) { fixture.delta("a"); await new Promise(resolve => setTimeout(resolve, 5)) }
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      return fixture.snapshot()
+    })
+    assert.equal(measurement.replyText, "a".repeat(33))
+    assert.equal(measurement.folds, 0, "sub-bucket deltas must not refold the whole rail")
+    assert.equal(measurement.calls, 0, "nor reproject the whole outline")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

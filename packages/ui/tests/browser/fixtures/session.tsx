@@ -91,6 +91,14 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     emit("session.step.started", { assistantMessageID: assistantId, agent: "build", model })
     emit("session.text.started", { assistantMessageID: assistantId })
   },
+  /** Streams a reply after a completed `name` tool call in the same step. */
+  startAfterTool: (name: string) => {
+    emit("session.step.started", { assistantMessageID: assistantId, agent: "build", model })
+    emit("session.tool.input.started", { assistantMessageID: assistantId, id: "tool-before-reply", name })
+    emit("session.tool.called", { assistantMessageID: assistantId, id: "tool-before-reply", input: { filePath: "a.txt" } })
+    emit("session.tool.success", { assistantMessageID: assistantId, id: "tool-before-reply", content: [{ type: "text", text: "read" }], metadata: {} })
+    emit("session.text.started", { assistantMessageID: assistantId })
+  },
   delta: (delta: string) => emit("session.text.delta", { assistantMessageID: assistantId, ordinal: 0, delta }),
   appendTextPart: (text: string) => {
     emit("session.text.started", { assistantMessageID: assistantId })
@@ -114,5 +122,6 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   return: () => { setActiveSession(instanceId, sessionId); setVisible(true) },
   // Keeps the SessionView mounted, as a project tab or session switch does.
   setActive,
-  snapshot: () => ({ calls, ids: store.getSessionMessageIds(sessionId), window: store.getMessageWindow(sessionId), scroll: store.getScrollSnapshot(sessionId, "message-stream"), text: store.getMessage(assistantId)?.parts[`${assistantId}-text-0`]?.data.text }),
+  snapshot: () => ({ calls, ids: store.getSessionMessageIds(sessionId), window: store.getMessageWindow(sessionId), scroll: store.getScrollSnapshot(sessionId, "message-stream"), text: store.getMessage(assistantId)?.parts[`${assistantId}-text-0`]?.data.text,
+    replyText: Object.values(store.getMessage(assistantId)?.parts ?? {}).flatMap(part => part.data.type === "text" ? [part.data.text] : []).join("") }),
 }

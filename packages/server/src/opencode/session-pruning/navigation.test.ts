@@ -171,15 +171,62 @@ test("assistant layouts list visible reasoning and text runs and each tool in co
     step(1, [{ type: "tool", name: "read" }, { type: "reasoning", text: " " }, { type: "text", text: "after" }, { type: "reasoning", text: "e" },
       { type: "text", text: "x", synthetic: true }, { type: "text", text: "y", ignored: true }, { type: "text", text: "\n" }, { type: "tool", name: "shell" }])
     step(2, [...Array.from({ length: 64 }, (_, index) => ({ type: "tool", name: `tool${index}` })), { type: "text", text: "reply" }])
-    step(3, [...Array.from({ length: 40 }, (_, index) => [{ type: "reasoning", text: `step ${index}` }, { type: "tool", name: "read" }]).flat(),
-      { type: "text", text: "done" }])
+    step(3, Array.from({ length: 20 }, () => [{ type: "text", text: "t" }, { type: "tool", name: "read" }, { type: "text", text: "t" },
+      { type: "reasoning", text: "r" }, { type: "tool", name: "read" }, { type: "reasoning", text: "r" }]).flat())
     const outline = await readSessionOutline(db, scope, undefined, signal(), -1, [], true)
     if (outline.status !== "outline") assert.fail("Expected index")
-    assert.deepEqual(outline.entries.map(entry => entry.layout), ["RTXX", "XTRX", `${"X".repeat(32)}-${"X".repeat(30)}T`, `${"RX".repeat(16)}-${"RX".repeat(15)}T`])
-    assert.deepEqual(outline.entries.map(entry => entry.omitted), [undefined, undefined, { reasoning: 0, text: 0 }, { reasoning: 9, text: 0 }],
-      "a layout over 64 kinds keeps its ends and counts the runs between them")
+    assert.deepEqual(outline.entries.map(entry => entry.layout), ["RTXX", "XTRX", `${"X".repeat(64)}T`, "TXTRXR".repeat(20)],
+      "every step the transcript displays whole is listed exactly")
+    assert(outline.entries.every(entry => entry.omitted === undefined))
     const { outlineLayoutResultSchema } = await import("./navigation-contract")
     assert.equal(outlineLayoutResultSchema.safeParse(outline).success, true)
+  } finally { db.close() }
+})
+
+test("beyond the display limit, layouts list the parts the transcript displays, with the runs omitted between them", async () => {
+  const db = fixture(4)
+  try {
+    const step = (index: number, data: object) => db.prepare("UPDATE session_message SET type='assistant', data=? WHERE id=?").run(JSON.stringify(data), id(index))
+    const parts = (count: number, part: object) => Array.from({ length: count }, () => part)
+    const tool = { type: "tool", name: "read" }, text = { type: "text", text: "t" }, reasoning = { type: "reasoning", text: "r" }
+    step(0, { content: [...parts(600, tool), ...parts(600, text)] })
+    step(1, { content: parts(1200, text) })
+    step(2, { content: [...parts(499, tool), reasoning, ...parts(200, text), tool, reasoning, ...parts(300, tool), reasoning, text] })
+    // The transcript adds a blank row for a failed step's error when it has no text part.
+    step(3, { content: parts(1000, tool), error: { type: "unknown", message: "failed" } })
+    const outline = await readSessionOutline(db, scope, undefined, signal(), -1, [], true)
+    if (outline.status !== "outline") assert.fail("Expected index")
+    assert.deepEqual(outline.entries.map(({ layout, omitted }) => ({ layout, omitted })), [
+      { layout: `${"X".repeat(500)}-T`, omitted: { reasoning: 0, text: 1, continues: true } },
+      { layout: "T-T", omitted: { reasoning: 0, text: 0, continues: true } },
+      // Its reply starts among the 4 omitted parts and continues after them.
+      { layout: `${"X".repeat(499)}R-TXR${"X".repeat(300)}RT`, omitted: { reasoning: 0, text: 1, continues: true } },
+      // 1,001 displayed parts, the last of them the error row.
+      { layout: `${"X".repeat(500)}-${"X".repeat(499)}`, omitted: { reasoning: 0, text: 0, continues: false } },
+    ])
+    const { outlineLayoutResultSchema } = await import("./navigation-contract")
+    assert.equal(outlineLayoutResultSchema.safeParse(outline).success, true)
+  } finally { db.close() }
+})
+
+test("long layouts end a page early instead of growing it, and the cursor resumes after them", async () => {
+  const db = fixture(3000)
+  try {
+    db.prepare("UPDATE session_message SET type='assistant', data=?").run(JSON.stringify({ content: Array.from({ length: 1000 }, (_, index) =>
+      index % 2 ? { type: "tool", name: "read" } : { type: "text", text: "t" }) }))
+    const first = await readSessionOutline(db, scope, undefined, signal(), -1, [], true)
+    if (first.status !== "outline") assert.fail("Expected index")
+    assert(first.cursor, "the page stops before the session's end")
+    const layouts = first.entries.reduce((sum, entry) => sum + (entry.layout?.length ?? 0), 0)
+    assert(layouts < 16384 * 64 + 512 * 1001, `a page's layouts stay bounded (${layouts})`)
+    const ids = first.entries.map(entry => entry.id)
+    for (let cursor: { after: number; through: number } | null = first.cursor; cursor;) {
+      const page = await readSessionOutline(db, scope, cursor, signal(), -1, [], true)
+      if (page.status !== "outline") assert.fail("Expected page")
+      ids.push(...page.entries.map(entry => entry.id))
+      cursor = page.cursor
+    }
+    assert.equal(new Set(ids).size, 3000)
   } finally { db.close() }
 })
 

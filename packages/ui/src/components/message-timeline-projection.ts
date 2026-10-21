@@ -40,11 +40,20 @@ export function timelineSegmentId(messageId: string, type: TimelineSegmentType, 
   return `${messageId}:${type}:${ordinal}${continued ? ":continued" : ""}`
 }
 
-export function parseTimelineSegmentId(messageId: string, id: string): { type: TimelineSegmentType; ordinal: number; continued: boolean } | undefined {
-  if (!id.startsWith(`${messageId}:`)) return
-  const [type, ordinal, suffix, ...rest] = id.slice(messageId.length + 1).split(":")
-  if (rest.length || (suffix !== undefined && suffix !== "continued") || !SEGMENT_TYPES.has(type) || !/^\d+$/.test(ordinal ?? "")) return
-  return { type: type as TimelineSegmentType, ordinal: Number(ordinal), continued: suffix === "continued" }
+export function parseTimelineSegmentId(id: string): { messageId: string; type: TimelineSegmentType; ordinal: number; continued: boolean } | undefined {
+  const match = /^(.+):([a-z]+):(\d+)(:continued)?$/.exec(id)
+  if (!match || !SEGMENT_TYPES.has(match[2])) return
+  return { messageId: match[1], type: match[2] as TimelineSegmentType, ordinal: Number(match[3]), continued: Boolean(match[4]) }
+}
+
+/**
+ * The marker standing for a selected id once reveals or omissions changed its
+ * message's markers: itself, or for a continuation the omitted parts no longer
+ * split, its run's marker.
+ */
+export function survivingTimelineSegmentId(id: string, exists: (id: string) => boolean): string {
+  const parsed = parseTimelineSegmentId(id)
+  return exists(id) || !parsed?.continued ? id : timelineSegmentId(parsed.messageId, parsed.type, parsed.ordinal)
 }
 
 export function timelineSegmentLabel(type: TimelineSegmentType, t: (key: string, params?: Record<string, unknown>) => string): string {
@@ -159,8 +168,9 @@ function nativeTimelineRuns(record: MessageRecord, t: Translate): Array<{ type: 
 
 /** Index in `record.partIds` where a marker's native run starts, if it exists. */
 export function timelineRunStart(record: MessageRecord, segmentId: string, t: Translate): number | undefined {
-  const parsed = parseTimelineSegmentId(record.id, segmentId)
-  if (!parsed) return undefined
+  const parsed = parseTimelineSegmentId(segmentId)
+  // A continuation stands for its run's part after the omitted ones.
+  if (!parsed || parsed.messageId !== record.id || parsed.continued) return undefined
   const index = nativeTimelineRuns(record, t).findIndex((run) => run?.type === parsed.type && run.ordinal === parsed.ordinal)
   return index < 0 ? undefined : index
 }

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { buildTimelineSegments, foldTimelineSegments, parseTimelineSegmentId, timelineRunStart, type TimelineSegment } from "./message-timeline-projection.ts"
+import { buildTimelineSegments, foldTimelineSegments, parseTimelineSegmentId, survivingTimelineSegmentId, timelineRunStart, type TimelineSegment } from "./message-timeline-projection.ts"
 import { isRecordPartDisplayed, revealHiddenRecordParts } from "../stores/message-v2/record-display-cache.ts"
 import type { MessageRecord } from "../stores/message-v2/types.ts"
 
@@ -111,9 +111,29 @@ describe("timeline markers keep native ordinals across the omitted-parts window"
     assert.deepEqual(ids(segments), ["m:assistant:0", "m:assistant:0:continued"])
     assert.equal(segments[1].omittedBefore, true)
     assert.deepEqual(ids(foldTimelineSegments(segments, () => false).visible), ids(segments), "no row spans the omitted parts")
-    assert.deepEqual(parseTimelineSegmentId("m", "m:assistant:0:continued"), { type: "assistant", ordinal: 0, continued: true })
-    assert.deepEqual(parseTimelineSegmentId("m", "m:tool:12"), { type: "tool", ordinal: 12, continued: false })
-    assert.equal(parseTimelineSegmentId("m", "m:tool:x"), undefined)
-    assert.equal(parseTimelineSegmentId("m", "other:tool:1"), undefined)
+    assert.deepEqual(parseTimelineSegmentId("m:assistant:0:continued"), { messageId: "m", type: "assistant", ordinal: 0, continued: true })
+    assert.deepEqual(parseTimelineSegmentId("msg:with:colons:tool:12"), { messageId: "msg:with:colons", type: "tool", ordinal: 12, continued: false })
+    assert.equal(parseTimelineSegmentId("m:tool:x"), undefined)
+    assert.equal(parseTimelineSegmentId("m:part:1"), undefined)
+  })
+
+  it("targets a run's native start even when its marker shows only the part after the omitted ones", () => {
+    const instanceId = `window-${++instances}`
+    const value = record("m", [...Array.from({ length: 600 }, () => tool("read")), ...Array.from({ length: 600 }, () => text())])
+    const loaded = buildTimelineSegments(instanceId, value, t)
+    const reply = loaded.find(segment => segment.type === "assistant")!
+    assert.equal(reply.id, "m:assistant:0", "the reply's marker exists once loaded")
+    assert.equal(reply.partIds?.[0], "m-700", "it shows the run's first displayed part")
+    assert.equal(timelineRunStart(value, reply.id, t), 600, "its run starts among the omitted parts")
+    assert.equal(isRecordPartDisplayed(instanceId, value, 600), false)
+    const continued = record("c", Array.from({ length: 1200 }, () => text()))
+    assert.equal(timelineRunStart(continued, "c:assistant:0:continued", t), undefined, "a continuation stands for its displayed part")
+  })
+
+  it("selects a removed continuation's surviving run marker", () => {
+    const exists = (id: string) => ["m:assistant:0", "m:tool:3"].includes(id)
+    assert.equal(survivingTimelineSegmentId("m:assistant:0:continued", exists), "m:assistant:0", "a reveal joined the run's parts")
+    assert.equal(survivingTimelineSegmentId("m:assistant:0:continued", id => id.endsWith("continued")), "m:assistant:0:continued")
+    assert.equal(survivingTimelineSegmentId("m:tool:9", exists), "m:tool:9", "only continuations merge into another marker")
   })
 })

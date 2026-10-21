@@ -14,7 +14,7 @@
     "history-contract.ts", "history-store.ts", "history-service.ts",
     "assets-contract.ts", "assets-store.ts",
     "history-database.ts", "navigation-contract.ts", "navigation-store.ts",
-    "navigation-scope.ts", "outline-index.ts", "outline-preview.ts",
+    "navigation-scope.ts", "outline-index.ts", "outline-layout.ts", "outline-preview.ts",
     "transaction.ts", "tui.ts", "tui-reload.ts"
   ],
   "dependencies": {

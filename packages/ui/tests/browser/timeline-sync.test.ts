@@ -66,7 +66,20 @@ const wideMessages = Array.from({ length: 260 }, (_, index) => index === 1
     { type: "text", text: prose("Done", 1) }])
   : index % 2 ? assistant(index, [{ type: "text", text: prose(`Note ${index}`, 2) }]) : { id: id(index), type: "user", time: { created: index + 1 }, text: prose(`Ask ${index}`, 1) })
 
-let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string
+// Indexed steps whose loaded markers once diverged: replies around hidden tools,
+// a reply starting among omitted parts, one text run split by them.
+const LONG = { interleaved: 1, replyAmongOmitted: 3, splitRun: 5 }
+const native = (index: number, type: string, value: string) => type === "tool"
+  ? { ...tool(id(index), "fixture_alpha", 1), id: `${id(index)}-t${value}` } : { type, text: prose(`${type} ${value}`, 1) }
+const longMessages = Array.from({ length: 260 }, (_, index) => index === LONG.interleaved
+  ? assistant(index, Array.from({ length: 20 }, (_, n) => [["text", "a"], ["tool", `${n}a`], ["text", "b"], ["reasoning", "c"], ["tool", `${n}b`], ["reasoning", "d"]]
+    .map(([type, value]) => native(index, type, value))).flat())
+  : index === LONG.replyAmongOmitted ? assistant(index, [...Array.from({ length: 600 }, (_, n) => native(index, "tool", String(n))),
+    ...Array.from({ length: 600 }, (_, n) => native(index, "text", String(n)))])
+  : index === LONG.splitRun ? assistant(index, Array.from({ length: 1200 }, (_, n) => native(index, "text", String(n))))
+  : index % 2 ? assistant(index, [{ type: "text", text: prose(`Note ${index}`, 2) }]) : { id: id(index), type: "user", time: { created: index + 1 }, text: prose(`Ask ${index}`, 1) })
+
+let server: Awaited<ReturnType<typeof startTimelineSyncServer>>, directory: string, store: string, visibilityStore: string, wideStore: string, longStore: string
 before(async () => {
   directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-timeline-sync-"))
   store = path.join(directory, "session.sqlite")
@@ -75,6 +88,8 @@ before(async () => {
   createSessionStore(visibilityStore, visibilityMessages)
   wideStore = path.join(directory, "wide.sqlite")
   createSessionStore(wideStore, wideMessages)
+  longStore = path.join(directory, "long.sqlite")
+  createSessionStore(longStore, longMessages)
   server = await startTimelineSyncServer({ instrument: true })
 })
 after(async () => { await server?.close(); if (directory) await rm(directory, { recursive: true, force: true }) })
@@ -194,12 +209,14 @@ test("under every visibility, the rail has one marker per transcript row, in ord
   }
 }, visibilityStore))
 
-// The last tool is displayed after the omitted parts; tool 500 is among them.
-for (const ordinal of [WIDE_TOOLS - 1, 500]) test(`a step beyond the part display window keeps tool ${ordinal}'s marker identity and target`, { timeout: 120_000 }, async () => {
+// Tools 500 and 501 are omitted: like the loaded step, the index has no marker
+// for them; tool 502 follows the omitted parts and the last tool ends the step.
+for (const ordinal of [WIDE_TOOLS - 1, 502]) test(`a step beyond the part display window keeps tool ${ordinal}'s marker identity and target`, { timeout: 120_000 }, async () => {
   const wide = id(1)
   await withSession("balanced", async (page) => {
     const indexed = (await markers(page)).find(marker => marker.id === `${wide}:tool:${ordinal}`)
     assert.ok(indexed && !indexed.toolPartIds, `indexed tool ${ordinal} has a marker before its step loads`)
+    assert.ok(!(await markers(page)).some(marker => marker.id === `${wide}:tool:500`), "omitted tools have no indexed marker")
     await clickMarker(page, indexed)
     await settleTranscript(page, 600)
     assert.equal(await active(page), indexed.id, `tool ${ordinal} stays the active marker once its step loads`)
@@ -226,3 +243,48 @@ test("a send after a marker jump returns the active marker to the reading line",
   assert.notEqual(await active(page), marker.id, "the marker selected before the send is released")
   await assertReadingLineActive(page, "after the send")
 }))
+
+const messageMarkers = async (page: Page, messageId: string) => (await markers(page)).filter(marker => marker.messageId === messageId).map(marker => marker.id)
+
+for (const preset of ["nothing", "everything"]) test(`${preset}: a historical step keeps its visible markers once it loads`, { timeout: 120_000 }, () => withSession(preset, async (page) => {
+  const step = id(LONG.interleaved)
+  const indexed = await messageMarkers(page, step)
+  // With Nothing, each pair of replies around a hidden tool shares one row.
+  assert.equal(indexed.filter(marker => marker.includes(":assistant:")).length, preset === "nothing" ? 20 : 40)
+  await clickMarker(page, (await markers(page)).find(marker => marker.id === indexed[0])!)
+  await settleTranscript(page, 600)
+  assert.ok((await page.evaluate(() => (window as any).fixture.ids())).includes(step), "the step is loaded")
+  assert.deepEqual(await messageMarkers(page, step), indexed)
+}, longStore))
+
+test("a marker whose run starts among omitted parts reveals them and places the run's start", { timeout: 120_000 }, () => withSession("balanced", async (page) => {
+  const step = id(LONG.replyAmongOmitted)
+  const reply = (await markers(page)).find(marker => marker.id === `${step}:assistant:0`)
+  assert.ok(reply, "the reply after the omitted parts has an indexed marker")
+  await clickMarker(page, reply)
+  await settleTranscript(page, 800)
+  assert.equal(await active(page), reply.id)
+  const placed = (await markers(page)).find(marker => marker.id === reply.id)!
+  assert.equal(placed.partIds?.[0], `${step}-text-600`, "the marker stands for its whole native run")
+  assert.equal(await page.locator(`[data-virtual-follow-key="${step}"] .message-hidden-parts`).count(), 0, "the omitted parts are revealed")
+  const offset = await blockOffset(page, placed)
+  assert.ok(offset !== null && Math.abs(offset) <= 2, `the run's first part is at the reading position (${offset})`)
+}, longStore))
+
+test("a selected continuation stays highlighted when revealing the omitted parts joins its run", { timeout: 120_000 }, () => withSession("balanced", async (page) => {
+  const step = id(LONG.splitRun)
+  await clickMarker(page, (await markers(page)).find(marker => marker.id === `${step}:assistant:0`)!)
+  await settleTranscript(page, 600)
+  const continued = (await markers(page)).find(marker => marker.id === `${step}:assistant:0:continued`)
+  assert.ok(continued, "the run split by the omitted parts continues after them")
+  await clickMarker(page, continued)
+  assert.equal(await active(page), continued.id)
+  const reveal = page.locator(`[data-virtual-follow-key="${step}"] .message-hidden-parts-button`)
+  await reveal.focus()
+  await page.keyboard.press("Enter")
+  await settleTranscript(page, 600)
+  assert.equal(await page.locator(`[data-virtual-follow-key="${step}"] .message-hidden-parts`).count(), 0)
+  assert.deepEqual(await messageMarkers(page, step), [`${step}:assistant:0`], "the revealed run has one marker")
+  assert.equal(await active(page), `${step}:assistant:0`, "its run's marker takes over the selection")
+  assert.equal(await page.locator('.message-timeline-segment[aria-current="true"]').getAttribute("data-segment-id"), `${step}:assistant:0`)
+}, longStore))
