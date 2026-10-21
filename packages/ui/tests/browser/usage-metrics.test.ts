@@ -124,14 +124,19 @@ test("message token rows ellipsize collapsed and wrap expanded chips on the same
       const summary = element.querySelector<HTMLElement>(".message-step-usage-summary")!
       const chevron = element.querySelector(".disclosure-chevron")!.getBoundingClientRect()
       const button = element.getBoundingClientRect()
+      const style = getComputedStyle(summary)
       return { overflow: element.scrollWidth > element.clientWidth, truncated: summary.scrollWidth > summary.clientWidth,
-        ellipsis: getComputedStyle(summary).textOverflow, whiteSpace: getComputedStyle(summary).whiteSpace,
+        ellipsis: style.textOverflow, whiteSpace: style.whiteSpace, fontSize: style.fontSize,
+        mutedColor: style.color === getComputedStyle(element.querySelector(".disclosure-chevron")!).color,
         buttonWidth: button.width, summaryWidth: summary.clientWidth, summaryScrollWidth: summary.scrollWidth,
         chevronInside: chevron.left >= button.left && chevron.right <= button.right }
     })
     assert.equal(geometry.overflow, false)
     assert.equal(geometry.ellipsis, "ellipsis")
     assert.equal(geometry.whiteSpace, "nowrap")
+    // The ellipsis of a truncated summary is drawn in the summary's own text style.
+    assert.equal(geometry.fontSize, "10px")
+    assert.equal(geometry.mutedColor, true, "the summary text uses the muted metric colour")
     assert.equal(geometry.chevronInside, true)
     if (width === 220) assert.equal(geometry.truncated, true, JSON.stringify(geometry))
     await toggle.focus()
@@ -169,6 +174,17 @@ test("message token rows ellipsize collapsed and wrap expanded chips on the same
     assert.equal(await toggle.locator(".message-step-usage-chip").count(), 3)
     assert.equal(await toggle.locator(".message-step-usage-summary").count(), 1)
   }
+  // The chevron is sized in rem and the chips in px: it stays level with the
+  // first chip row under a non-default root font size too.
+  await page.evaluate(() => { document.documentElement.style.fontSize = "24px" })
+  await toggle.click()
+  assert.equal(await toggle.getAttribute("aria-expanded"), "true")
+  const offset = await toggle.evaluate(element => {
+    const chevron = element.querySelector(".disclosure-chevron")!.getBoundingClientRect()
+    const firstChip = element.querySelector(".message-step-usage-chip")!.getBoundingClientRect()
+    return (chevron.top + chevron.height / 2) - (firstChip.top + firstChip.height / 2)
+  })
+  assert.ok(Math.abs(offset) < 2, `chevron centre ${offset}px from the first chip row at a 24px root font`)
 }))
 
 test("a settling text-then-tool step gains its line without remounting or collapsing its tool", async () => open(async page => {

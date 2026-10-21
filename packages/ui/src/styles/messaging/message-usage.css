@@ -11,8 +11,10 @@
   text-align: start;
 }
 
-/* The collapsed metric row: one line, ellipsized summary chips. */
+/* The collapsed metric row: one line, ellipsized summary chips. Its own muted
+   10px text styles the ellipsis like the chips it truncates. */
 .message-step-usage-summary {
+  @apply text-[10px] text-[var(--text-muted)];
   display: block;
   min-width: 0;
   overflow: hidden;
@@ -27,10 +29,11 @@
 .message-step-usage-disclosure {
   @apply shrink-0;
   /* Stay level with the first chip row when the expanded row wraps:
-     chips are 22px tall, the chevron 12px, so half the difference
-     recentres it (the toggle itself centres against the whole block). */
+     chips are 22px tall and the chevron 0.75rem, so half the difference
+     recentres it at any root font size (the toggle itself centres against
+     the whole block). */
   align-self: flex-start;
-  margin-block-start: 5px;
+  margin-block-start: calc((22px - 0.75rem) / 2);
   width: 0.75rem;
   height: 0.75rem;
   color: var(--text-muted);
