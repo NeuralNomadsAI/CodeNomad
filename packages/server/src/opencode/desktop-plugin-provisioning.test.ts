@@ -55,7 +55,9 @@ test("a connection replaced while its discovery read is in flight is superseded,
   assert.deepEqual(calls.map(({ level, message }) => ({ level, message })),
     [{ level: "debug", message: "Bundled plugin provisioning was superseded by a newer OpenCode connection" }])
   // The same abort the issue's log shows, now reported as a supersession.
-  assert.match(String((calls[0].err as Error).cause ?? calls[0].err), /aborted/i)
+  // The server compiles against a library without `Error.cause`; read it structurally.
+  const err = calls[0].err as { cause?: unknown }
+  assert.match(String(err.cause ?? err), /aborted/i)
 })
 
 test("failures on the current connection are still errors, at each provisioning step", async () => {
