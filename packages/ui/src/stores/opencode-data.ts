@@ -49,6 +49,9 @@ type TranscriptEntry = {
   rotating: boolean
   rotationGeneration: number
   needsAuthoritativeResync: boolean
+  /** Reconnect reconciliation: live events keep admitting while one quiet
+   * snapshot replaces the seeded page; events are never dropped for it. */
+  reconnectResync: boolean
   preserveNativePageOnResync: boolean
   resyncing: boolean
   resyncGeneration: number
@@ -70,6 +73,8 @@ const MAX_TRANSCRIPT_REPLAY_CHUNK = 64
 const TRANSCRIPT_RESYNC_QUIET_MS = 25
 const TRANSCRIPT_RETRY_DELAY_MS = 25
 const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
+/** A shared-stream reconnect reconciles this long after the last native event. */
+const RECONNECT_RESYNC_DELAY_MS = 1000
 const entries = new Map<string, DataEntry>()
 const transcriptEntries = new Map<string, TranscriptEntry>()
 const mutationRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
@@ -266,6 +271,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     rotating: false,
     rotationGeneration: 0,
     needsAuthoritativeResync: false,
+    reconnectResync: false,
     preserveNativePageOnResync: false,
     resyncing: false,
     resyncGeneration: 0,
@@ -423,11 +429,65 @@ function scheduleAuthoritativeResync(
 
 function collapseTranscriptQueue(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
   transcript.queue = []
+  // Dropping-mode recovery owns the transcript; a pending reconnect
+  // reconciliation must not re-admit events onto a collapsed projection.
+  transcript.reconnectResync = false
   if (!transcript.needsAuthoritativeResync) {
     transcript.rotationGeneration += 1
     transcript.rotating = false
   }
   scheduleAuthoritativeResync(instanceId, sessionId, transcript)
+}
+
+/** One quiet, revision-stable reconnect reconciliation: live events keep
+ * admitting on the resident entry, so the fetch only starts after the stream
+ * stays quiet for the delay and never drops anything. */
+function scheduleTrailingResync(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  if (!isTranscriptCurrent(instanceId, sessionId, transcript)
+    || transcript.needsAuthoritativeResync || transcript.resyncing || !transcript.reconnectResync) return
+  clearTranscriptRetry(transcript)
+  const revision = getOpenCodeFullDataRevision(instanceId, sessionId)
+  transcript.retryTimer = setTimeout(() => {
+    transcript.retryTimer = undefined
+    if (!isTranscriptCurrent(instanceId, sessionId, transcript) || !transcript.reconnectResync) return
+    if (getOpenCodeFullDataRevision(instanceId, sessionId) !== revision) {
+      // Events kept arriving: trail behind the live stream instead of racing it.
+      scheduleTrailingResync(instanceId, sessionId, transcript)
+      return
+    }
+    void resyncAuthoritativeTranscript(instanceId, sessionId, transcript)
+  }, RECONNECT_RESYNC_DELAY_MS)
+}
+
+/** A shared-stream reconnect is transport recovery, not a data reset. Keep the
+ * reset semantics (generation fences, observer rebinding, REST state) but seed
+ * each live session's fresh reducer with its last projected page so streaming
+ * continues uninterrupted; one quiet snapshot then reconciles whatever the
+ * disconnect window missed. */
+function reconnectOpenCodeData(instanceId: string): void {
+  const prefix = `${instanceId}\0`
+  const live: Array<{ sessionId: string; directory: string; messages: SessionMessageInfo[] }> = []
+  for (const [key, transcript] of transcriptEntries) {
+    if (!key.startsWith(prefix)) continue
+    const sessionId = key.substring(prefix.length)
+    const messages = transcript.entry.data.session.message.list(sessionId)
+    if (messages.length) live.push({ sessionId, directory: transcript.directory, messages })
+  }
+  destroyOpenCodeData(instanceId)
+  for (const { sessionId, directory, messages } of live) {
+    const transcript = ensureTranscript(instanceId, sessionId, directory)
+    transcript.reconnectResync = true
+    void transcript.entry.syncMessages(sessionId, boundedTranscript(messages), () => true)
+      .then(() => {
+        scheduleTrailingResync(instanceId, sessionId, transcript)
+      })
+      .catch(() => {
+        // Seeding failed: fall back to dropping-mode recovery so the transcript
+        // still reconciles from one quiet authoritative snapshot.
+        transcript.reconnectResync = false
+        scheduleAuthoritativeResync(instanceId, sessionId, transcript)
+      })
+  }
 }
 
 function isResyncCurrent(
@@ -449,7 +509,7 @@ async function resyncAuthoritativeTranscript(
   transcript: TranscriptEntry,
 ): Promise<void> {
   if (!isTranscriptCurrent(instanceId, sessionId, transcript)
-    || !transcript.needsAuthoritativeResync
+    || (!transcript.needsAuthoritativeResync && !transcript.reconnectResync)
     || transcript.resyncing) return
   transcript.resyncing = true
   const generation = ++transcript.resyncGeneration
@@ -471,7 +531,8 @@ async function resyncAuthoritativeTranscript(
       || getOpenCodeFullDataRevision(instanceId, sessionId) !== revision) {
       transcript.resyncing = false
       transcript.freshEntry = undefined
-      scheduleAuthoritativeResync(instanceId, sessionId, transcript)
+      if (transcript.reconnectResync) scheduleTrailingResync(instanceId, sessionId, transcript)
+      else scheduleAuthoritativeResync(instanceId, sessionId, transcript)
       return
     }
 
@@ -479,6 +540,7 @@ async function resyncAuthoritativeTranscript(
     transcript.entry = fresh
     transcript.freshEntry = undefined
     transcript.needsAuthoritativeResync = false
+    transcript.reconnectResync = false
     transcript.resyncing = false
     transcript.retryCount = 0
     swapped = true
@@ -493,7 +555,8 @@ async function resyncAuthoritativeTranscript(
     transcript.resyncing = false
     transcript.freshEntry = undefined
     transcript.retryCount += 1
-    scheduleAuthoritativeResync(instanceId, sessionId, transcript, retryDelay(transcript))
+    if (transcript.reconnectResync) scheduleTrailingResync(instanceId, sessionId, transcript)
+    else scheduleAuthoritativeResync(instanceId, sessionId, transcript, retryDelay(transcript))
   } finally {
     if (!swapped) fresh.dispose()
   }
@@ -639,6 +702,7 @@ function invalidateTranscript(transcript: TranscriptEntry): void {
   transcript.resyncGeneration += 1
   transcript.rotationGeneration += 1
   transcript.needsAuthoritativeResync = false
+  transcript.reconnectResync = false
   transcript.resyncing = false
   transcript.rotating = false
   transcript.queue = []
@@ -656,7 +720,7 @@ export function applyOpenCodeDataEvent(
   admission?: OpenCodeDataEventAdmission,
 ): Data {
   if (admission) admission.deferred = false
-  if (event.type === "server.connected") destroyOpenCodeData(instanceId)
+  if (event.type === "server.connected") reconnectOpenCodeData(instanceId)
   const primary = ensureData(instanceId, directory)
   // This native reducer owns transcript/inbox projection only. CodeNomad's
   // stores already reconcile catalogues, Shells and connection state. Even
@@ -724,7 +788,7 @@ export function applyOpenCodeDataEvent(
       if (admission) admission.deferred = true
       return transcript.entry.data
     }
-    if (transcript.needsAuthoritativeResync || transcript.resyncing) {
+    if (transcript.needsAuthoritativeResync || (transcript.resyncing && !transcript.reconnectResync)) {
       collapseTranscriptQueue(instanceId, sessionId, transcript)
       if (admission) admission.deferred = true
       return transcript.entry.data
@@ -808,7 +872,9 @@ export function projectOpenCodeMessages(
   confirmPending = true,
 ): void {
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
-  if (transcript && (transcript.entry.data !== data || transcript.needsAuthoritativeResync || transcript.resyncing)) return
+  if (transcript && (transcript.entry.data !== data
+    || transcript.needsAuthoritativeResync
+    || (transcript.resyncing && !transcript.reconnectResync))) return
   const source = data.session.message.list(sessionId).slice(-MESSAGE_WINDOW_PAGE_SIZE)
   const store = messageStoreBus.getOrCreate(instanceId)
   // During pruning reconciliation, only loadMessages owns native page

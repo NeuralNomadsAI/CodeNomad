@@ -436,6 +436,7 @@ jobs:
           packages/ui/src/stores/opencode-data.test.ts
           packages/ui/src/stores/opencode-data-idle.test.ts
           packages/ui/src/stores/opencode-data-settlement.test.ts
+          packages/ui/src/stores/opencode-data-reconnect.test.ts
           packages/ui/src/stores/opencode-transcript-replay.test.ts
           packages/ui/src/stores/opencode-compaction.test.ts
           packages/ui/src/lib/message-part-grouping.test.ts
