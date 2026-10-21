@@ -373,7 +373,10 @@ jobs:
             # Compare numeric IDs: electron-builder's archive may store only IDs
             # (0/0) while dpkg-deb --root-owner-group also stores names (root/root).
             deb_listing() {
-              dpkg-deb --fsys-tarfile "$1" | tar -tv --numeric-owner | awk '$6 != "./" {print $1, $2, $6}' | sort
+              # Identical files are hardlinked and a repack may store the link in
+              # either direction: list a hardlink with its target's regular type.
+              dpkg-deb --fsys-tarfile "$1" | tar -tv --numeric-owner \
+                | awk '$6 != "./" {mode = $1; sub(/^h/, "-", mode); print mode, $2, $6}' | sort
             }
             diff <(deb_listing "$artifact") <(deb_listing "$probe")
             diff <(dpkg-deb --ctrl-tarfile "$artifact" | tar -t | sort) <(dpkg-deb --ctrl-tarfile "$probe" | tar -t | sort)

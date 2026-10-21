@@ -32,8 +32,9 @@ function run(fixed, count) {
       assert.equal(result.status, 0, result.stdout + result.stderr)
       assert.match(result.stdout, /PASS: 800000 runtime handle clones and clean teardown/)
     } else if (result.status !== 0) {
-      // Native heap/access failures and Rust's abort on an invalid Rc refcount.
-      assert.ok([0xc000001d, 0xc0000005, 0xc0000374, 0xc0000409].includes(result.status >>> 0),
+      // Native heap/access failures, Rust's abort on an invalid Rc refcount, and
+      // the same faults raised inside a window-procedure callback (0xc000041d).
+      assert.ok([0xc000001d, 0xc0000005, 0xc0000374, 0xc0000409, 0xc000041d].includes(result.status >>> 0),
         `Expected the native refcount failure, got ${result.status}: ${result.stdout}${result.stderr}`)
       crashes++
     } else {
