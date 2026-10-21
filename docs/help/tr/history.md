@@ -19,7 +19,7 @@ Boş arama açmak geçmişi taramaz. Sorguyu/kapsamı değiştirmek, pencereyi k
 
 1. Çevresindeki pasaja atlamak için geçerli oturum arama sonucunu seçin.
 2. Söz konusu mesajın ayrı bir önizlemesini açmak için başka bir oturumdan bir sonuç seçin; o konuşmaya isabetin olduğu yerde gitmek için **Oturumda aç** öğesini kullanın.
-3. **Mesaj zaman çizelgesi** bölümünde bir alıntı için işaretçinin üzerine gelin veya odaklanın, ardından gezinmek için onu seçin. Saklanan geçmişin sonuna dönmek için ilk/en son mesaj kontrollerini kullanın.
+3. **Mesaj zaman çizelgesi** bölümünde bir alıntı için işaretçinin üzerine gelin veya odaklanın, ardından gezinmek için onu seçin: bloğu en üste gelir ve siz kaydırana kadar işaretçi vurgulu kalır; sonra vurgu, konuşmanın en üstündeki bloğu izler. Saklanan geçmişin sonuna dönmek için ilk/en son mesaj kontrollerini kullanın.
 
 Zaman çizelgesi, konuşma dökümü yalnızca sınırlı bir pasaj içerdiğinde bile tam oturum yapısını temsil eder. Atlamalar, araya giren her mesajı getirmek yerine hedefi yükler. Diğer oturum arama önizlemeleri o oturumun tüm metnini yüklemez veya onu seçmez; konuşmayı yalnızca **Oturumda aç** değiştirir.
 

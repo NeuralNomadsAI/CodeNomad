@@ -37,8 +37,11 @@ export interface VirtualFollowListApi {
   scrollToTop: (opts?: { immediate?: boolean }) => void
   scrollToBottom: (opts?: { immediate?: boolean }) => void
   settleAtBottom: () => Promise<VirtualBottomSettlement>
-  /** Places the keyed row at the top, holding it there for the alignment window. */
-  scrollToKey: (key: string) => void
+  /**
+   * Places the keyed row at the top, holding it there for the alignment window;
+   * `select` holds a block of that row instead once it renders.
+   */
+  scrollToKey: (key: string, select?: () => HTMLElement | null) => void
   notifyContentRendered: () => void
   /** Leaves follow mode and holds `target` at `viewportOffset` px below the viewport top, clamped into view. */
   alignElement: (target: HTMLElement, viewportOffset: number) => void
@@ -133,7 +136,6 @@ export interface VirtualFollowListProps<T> {
   onExplicitBottomPinCancelled?: () => void
   onMouseUp?: (event: MouseEvent) => void
   onClick?: (event: MouseEvent) => void
-  onActiveKeyChange?: (key: string | null) => void
   registerApi?: (api: VirtualFollowListApi) => void
   registerState?: (state: VirtualFollowListState) => void
   renderControls?: (state: VirtualFollowListState, api: VirtualFollowListApi) => JSX.Element
@@ -206,6 +208,8 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   // A header control a remount blurred; see `restoreHeaderFocus`.
   let pendingHeaderFocus: HTMLElement | undefined
   let nativeScrollbarDragging = false
+  // The block `scrollToKey` holds instead of its row, during that dispatch only.
+  let keyJumpSelect: (() => HTMLElement | null) | undefined
 
   function invalidateScrollRestore() {
     restoreToken.invalidate()
@@ -284,8 +288,16 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   const readerSettlement = createVirtualReaderSettlement({
     enabled: () => isActive() && !autoScroll() && !scrollController.snapshot().restoring,
     align: (anchor) => {
-      const element = scrollElement(), target = anchor.element ?? itemElements.get(anchor.key)
-      // A virtual row may remount under its key; a detached revealed part is gone.
+      const element = scrollElement(), row = itemElements.get(anchor.key)
+      // A jump lands on Virtua's estimate, and measuring the rows around it can
+      // move its row out of the rendered range: follow the estimate until the
+      // row renders (or remounts) to be measured.
+      if (!anchor.element && !row?.isConnected) {
+        const index = findLiveIndex(anchor.key)
+        return index !== -1 && writeIndex("reader-settle", index)
+      }
+      const target = anchor.element ?? (anchor.select?.() || row)
+      // A detached revealed part is gone.
       if (!element || !target?.isConnected) return !anchor.element
       // A held element keeps its requested offset; only its application follows the viewport.
       const delta = measureAnchorDelta(element, target, anchor.element ? clampAlignmentOffset(element, anchor.offset) : anchor.offset)
@@ -526,12 +538,13 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
   }
 
   function performScrollToKey(key: string, source: ScrollReason) {
+    const select = keyJumpSelect
     const index = findLiveIndex(key)
     if (index === -1) return
     // The jump lands at once on Virtua's estimate; the reader settlement then
-    // holds the row at the top once it is measured, for the alignment window
-    // only, like an in-place reveal.
-    if (writeIndex(source, index)) readerSettlement.hold({ key, offset: 0 })
+    // holds the row (or its selected block) at the top once it is measured, for
+    // the alignment window only, like an in-place reveal.
+    if (writeIndex(source, index)) readerSettlement.hold({ key, offset: 0, select })
   }
 
   /**
@@ -607,10 +620,7 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     const item = virtualItems()[start]
     if (!item) return
     const key = props.getKey(item, start)
-    if (key !== activeKey()) {
-      setActiveKey(key)
-      props.onActiveKeyChange?.(key)
-    }
+    if (key !== activeKey()) setActiveKey(key)
   }
 
   function getAnchorIdForKey(key: string) {
@@ -1100,9 +1110,11 @@ export default function VirtualFollowList<T>(props: VirtualFollowListProps<T>) {
     props.onJumpBottom?.()
   }
 
-  function scrollToKey(key: string) {
+  function scrollToKey(key: string, select?: () => HTMLElement | null) {
     supersedePositioning()
-    dispatchFollowEvent({ type: "jump-key", key })
+    keyJumpSelect = select
+    try { dispatchFollowEvent({ type: "jump-key", key }) }
+    finally { keyJumpSelect = undefined }
   }
 
   function alignElement(target: HTMLElement, viewportOffset: number) {

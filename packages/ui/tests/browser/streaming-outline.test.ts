@@ -24,7 +24,9 @@ before(async () => {
           ? await readFile(process.env.CODENOMAD_OUTLINE_BASELINE, "utf8") : await readFile(id, "utf8")
         // Count the real full-history implementation, without changing inputs,
         // outputs, scheduling or the production interface.
-        return source.replace("const byMessage =", "(globalThis as any).__outlineWork ??= { calls: 0 }; (globalThis as any).__outlineWork.calls++; const byMessage =")
+        const counted = source.replace("const position =", "(globalThis as any).__outlineWork ??= { calls: 0 }; (globalThis as any).__outlineWork.calls++; const position =")
+        if (counted === source) throw new Error("full-history projection anchor missing")
+        return counted
       },
     }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })

@@ -19,7 +19,7 @@ const integer = (value: unknown, min = 0): value is number => Number.isSafeInteg
 /** Indexes saved before a metadata field existed trigger one full native refresh. */
 export function hasCompleteOutlineMetadata(value: PersistedOutline): boolean {
   return value.entries.every(entry => (!entry.tools || entry.toolName !== undefined)
-    && (entry.type !== "assistant" || entry.text !== undefined))
+    && (entry.type !== "assistant" || (entry.text !== undefined && entry.layout !== undefined)))
 }
 
 // Frozen normalized values are reused by scroll/draft captures without repeatedly
@@ -38,11 +38,13 @@ export function normalizePersistedOutline(value: unknown): PersistedOutline | un
     if (!record(entry) || !string(entry.id, 256) || ids.has(entry.id) || !integer(entry.seq) || entry.seq <= seq
       || typeof entry.type !== "string" || !types.has(entry.type) || !integer(entry.tools) || !integer(entry.reasoning)
       || (entry.text !== undefined && !integer(entry.text))
-      || (entry.toolName !== undefined && (typeof entry.toolName !== "string" || entry.toolName.length > 256))) return
+      || (entry.toolName !== undefined && (typeof entry.toolName !== "string" || entry.toolName.length > 256))
+      || (entry.layout !== undefined && (typeof entry.layout !== "string" || !/^[RTX]{0,64}$/.test(entry.layout)))) return
     ids.add(entry.id); seq = entry.seq
     entries.push(Object.freeze({ id: entry.id, seq, type: entry.type as OutlineEntry["type"], tools: entry.tools, reasoning: entry.reasoning,
       ...(entry.text === undefined ? {} : { text: entry.text }),
-      ...(entry.toolName === undefined ? {} : { toolName: entry.toolName }) }))
+      ...(entry.toolName === undefined ? {} : { toolName: entry.toolName }),
+      ...(entry.layout === undefined ? {} : { layout: entry.layout }) }))
   }
   for (const checkpoint of value.checkpoints) {
     if (!record(checkpoint) || checkpoint.after !== through || !integer(checkpoint.through) || checkpoint.through <= through

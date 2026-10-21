@@ -47,7 +47,7 @@ Built-in layout is window layout, not a project mutation. Extension checkboxes a
 3. In **General**, check **Show the message timeline**, **Split tool-call diffs** and **Queue sent prompts** (queue prompts sent while a session works instead of steering it) as needed.
 4. Resize the composer using its resize control; long drafts scroll inside the field.
 
-Timeline tool markers follow **Message content**: hiding a tool type there also hides its markers, except one with a pending permission, and **Nothing** hides them all. Visibility and expansion settings only change presentation. They do not remove stored tools/reasoning or compact the model context. See [History and cleanup](history.md) for destructive operations.
+The timeline has one marker for each reply, thinking block, tool, compaction and system context shown in the conversation, in the same order. Its markers follow **Message content**: hiding a tool type, thinking or system messages there also hides their markers, except a tool with a pending permission, and **Nothing** hides every tool marker. Visibility and expansion settings only change presentation. They do not remove stored tools/reasoning or compact the model context. See [History and cleanup](history.md) for destructive operations.
 
 Composer height follows the visible conversation, including the software keyboard: minimum 8% with a 44 px floor, maximum 60%. Manual height is remembered proportionally; narrow width and long text do not raise those limits. An expanded permission/question temporarily minimizes the composer without changing its saved height or draft. Collapse or settle the request to resume resizing.
 

@@ -12,22 +12,9 @@ import { useI18n } from "../lib/i18n"
 import { getMessageContentIcon } from "./message-content-icons"
 import { Markdown } from "./markdown"
 import { createTimelinePreviews } from "../stores/timeline-previews"
+import { timelineSegmentId, timelineSegmentLabel, type TimelineSegment, type TimelineSegmentType } from "./message-timeline-projection"
 
-export type TimelineSegmentType = "user" | "assistant" | "tool" | "compaction"
-
-export interface TimelineSegment {
-  id: string
-  messageId: string
-  type: TimelineSegmentType
-  label: string
-  tooltip: string
-  toolName?: string
-  variant?: "auto" | "manual"
-  toolPartIds?: string[]
-  partIds?: string[]
-  partId?: string
-  totalChars: number
-}
+export type { TimelineSegment, TimelineSegmentType }
 
 interface MessageTimelineProps {
   segments: TimelineSegment[]
@@ -36,8 +23,8 @@ interface MessageTimelineProps {
   instanceId: string
   sessionId: string
   isActive?: boolean
-  /** Tool types hidden in Message content are hidden here too. */
-  isToolHidden?: (toolName: string) => boolean
+  /** Content hidden in Message content (tool types, thinking, system context) is hidden here too. */
+  isSegmentHidden?: (segment: TimelineSegment) => boolean
   searchMatchedSegmentIds?: Accessor<Set<string>>
   activeSearchSegmentId?: Accessor<string | null>
   revealActiveToken?: number
@@ -48,12 +35,10 @@ const MAX_TOOLTIP_LENGTH = 220
 type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
 interface PendingSegment {
-  type: TimelineSegmentType
+  type: "user" | "assistant" | "reasoning"
   texts: string[]
-  reasoningTexts: string[]
   partIds: string[]
   totalChars: number
-  hasPrimaryText: boolean
 }
 
 interface TimelineSegmentState {
@@ -167,136 +152,88 @@ export function buildTimelineSegments(
   t: (key: string, params?: Record<string, unknown>) => string,
 ): TimelineSegment[] {
   if (!record) return []
-  const { orderedParts } = buildRecordDisplayData(instanceId, record)
+  const { orderedParts, hiddenCount, gapIndex } = buildRecordDisplayData(instanceId, record)
   if (!orderedParts || orderedParts.length === 0) {
     return []
   }
 
-  const segmentLabel = (type: TimelineSegmentType) => {
-    if (type === "user") return t("messageTimeline.segment.user.label")
-    if (type === "assistant") return t("messageTimeline.segment.assistant.label")
-    if (type === "compaction") return t("messageTimeline.segment.compaction.label")
-    return t("messageTimeline.tool.fallbackLabel").slice(0, 4)
-  }
-
+  // One marker per transcript block, in its order: each text or thinking run
+  // (a content row or reasoning card), each tool, compaction and system part.
   const result: TimelineSegment[] = []
-  let segmentIndex = 0
+  const ordinals = new Map<TimelineSegmentType, number>()
+  const push = (type: TimelineSegmentType, segment: Omit<TimelineSegment, "id" | "messageId" | "type">) => {
+    const ordinal = ordinals.get(type) ?? 0
+    ordinals.set(type, ordinal + 1)
+    result.push({ id: timelineSegmentId(record.id, type, ordinal), messageId: record.id, type, ...segment })
+  }
   let pending: PendingSegment | null = null
   const flushPending = () => {
     if (!pending) return
-    if (pending.type === "assistant" && !pending.hasPrimaryText) {
-      pending = null
-      return
-    }
-    const label = segmentLabel(pending.type)
-    const tooltip = formatTextsTooltip(
-      [...pending.texts, ...pending.reasoningTexts],
-      pending.type === "user" ? t("messageTimeline.tooltip.userFallback") : t("messageTimeline.tooltip.assistantFallback"),
-    )
-
-    result.push({
-      id: `${record.id}:${segmentIndex}`,
-      messageId: record.id,
-      type: pending.type,
-      label,
-      tooltip,
-      partIds: pending.partIds,
-      totalChars: pending.totalChars,
-    })
-    segmentIndex += 1
+    const { type, texts, partIds, totalChars } = pending
     pending = null
+    const fallback = type === "user" ? t("messageTimeline.tooltip.userFallback")
+      : type === "reasoning" ? t("messageBlock.reasoning.thoughtsFallback") : t("messageTimeline.tooltip.assistantFallback")
+    push(type, { label: timelineSegmentLabel(type, t), tooltip: formatTextsTooltip(texts, fallback), partIds, totalChars })
   }
-
-  const ensureSegment = (type: TimelineSegmentType): PendingSegment => {
-    if (!pending || pending.type !== type) {
+  const appendRun = (type: PendingSegment["type"], text: string, part: ClientPart) => {
+    if (pending?.type !== type) {
       flushPending()
-      pending = {
-        type,
-        texts: [],
-        reasoningTexts: [],
-        partIds: [],
-        totalChars: 0,
-        hasPrimaryText: type !== "assistant",
-      }
+      pending = { type, texts: [], partIds: [], totalChars: 0 }
     }
-    return pending!
+    pending!.texts.push(text)
+    if (typeof part.id === "string" && part.id.length > 0) pending!.partIds.push(part.id)
+    pending!.totalChars += getPartCharCount(part)
   }
+  const contentType = record.role === "user" ? "user" : "assistant"
 
-
-  const defaultContentType: TimelineSegmentType = record.role === "user" ? "user" : "assistant"
-
-  for (const part of orderedParts) {
-    if (!part || typeof part !== "object") continue
+  orderedParts.forEach((part, index) => {
+    // Omitted parts render as a placeholder between the runs around them.
+    if (hiddenCount > 0 && index === gapIndex) flushPending()
+    if (!part || typeof part !== "object") return
+    const partId = typeof part.id === "string" ? part.id : ""
 
     if (part.type === "tool") {
       flushPending()
       const toolPart = part as ToolCallPart
-      const toolName = typeof toolPart.tool === "string" ? toolPart.tool.trim() : ""
-      const partId = typeof toolPart.id === "string" ? toolPart.id : ""
-      const title = getToolTitle(toolPart, t)
-      result.push({
-        id: `${record.id}:${segmentIndex}`,
-        messageId: record.id,
-        type: "tool",
-        label: getToolTypeLabel(toolPart, t) || segmentLabel("tool"),
-        tooltip: formatToolTooltip([title], t),
-        toolName,
+      push("tool", {
+        label: getToolTypeLabel(toolPart, t) || timelineSegmentLabel("tool", t),
+        tooltip: formatToolTooltip([getToolTitle(toolPart, t)], t),
+        toolName: typeof toolPart.tool === "string" ? toolPart.tool.trim() : "",
         toolPartIds: partId ? [partId] : undefined,
         totalChars: getPartCharCount(part),
       })
-      segmentIndex += 1
-      continue
-    }
-
-    if (part.type === "reasoning") {
-      const text = collectReasoningText(part)
-      if (text.trim().length === 0) continue
-      const target = ensureSegment(defaultContentType)
-      if (target) {
-        target.reasoningTexts.push(text)
-        if (typeof (part as any).id === "string" && (part as any).id.length > 0) {
-          target.partIds.push((part as any).id)
-        }
-        target.totalChars += getPartCharCount(part)
-      }
-      continue
+      return
     }
 
     if (part.type === "compaction") {
       flushPending()
       const isAuto = Boolean((part as any)?.auto)
-      const partId = typeof (part as any)?.id === "string" ? ((part as any).id as string) : ""
-      result.push({
-        id: `${record.id}:${segmentIndex}`,
-        messageId: record.id,
-        type: "compaction",
-        label: segmentLabel("compaction"),
+      push("compaction", {
+        label: timelineSegmentLabel("compaction", t),
         tooltip: isAuto ? t("messageTimeline.tooltip.compaction.auto") : t("messageTimeline.tooltip.compaction.manual"),
         variant: isAuto ? "auto" : "manual",
         partId,
         totalChars: 0,
       })
-      segmentIndex += 1
-      continue
+      return
     }
 
     if (part.type === "system") {
-      continue
+      flushPending()
+      push("system", { label: timelineSegmentLabel("system", t), tooltip: truncateText(part.description?.trim() || part.text.trim() || timelineSegmentLabel("system", t)),
+        partId, totalChars: getPartCharCount(part) })
+      return
+    }
+
+    if (part.type === "reasoning") {
+      const text = collectReasoningText(part)
+      if (text.trim().length > 0) appendRun("reasoning", text, part)
+      return
     }
 
     const text = collectTextFromPart(part, t)
-    if (text.trim().length === 0) continue
-    const target = ensureSegment(defaultContentType)
-    if (target) {
-      target.texts.push(text)
-      target.hasPrimaryText = true
-      if (typeof (part as any).id === "string" && (part as any).id.length > 0) {
-        target.partIds.push((part as any).id)
-      }
-      target.totalChars += getPartCharCount(part)
-    }
-  }
-
+    if (text.trim().length > 0) appendRun(contentType, text, part)
+  })
 
   flushPending()
 
@@ -321,12 +258,17 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     if (!segment || props.isActive === false) return ""
     const record = store().getMessage(segment.messageId)
     if (record) {
+      // A loaded marker previews its own block; an indexed one its message's parts of that kind.
+      const own = new Set([...segment.partIds ?? [], ...segment.toolPartIds ?? [], ...segment.partId ? [segment.partId] : []])
       const parts = buildRecordDisplayData(props.instanceId, record).orderedParts
-      const text = parts.filter(part => segment.type === "tool" ? part.type === "tool" : part.type !== "tool")
+      const text = parts.filter(part => own.size ? own.has(part.id ?? "") : segment.type === "tool" ? part.type === "tool"
+        : segment.type === "reasoning" ? part.type === "reasoning" : part.type !== "tool" && part.type !== "reasoning")
         .map(part => part.type === "tool" ? `${getToolTitle(part as ToolCallPart, t)}\n${part.state && "output" in part.state && typeof part.state.output === "string" ? part.state.output.slice(0, 4096) : ""}`
           : collectTextFromPart(part, t).slice(0, 4096)).join("\n\n").slice(0, 4096)
       if (text) return text
     }
+    // Excerpts carry a message's text and tools, not its thinking.
+    if (segment.type === "reasoning") return segment.tooltip
     const preview = previews(segment.messageId)
     return (segment.type === "tool" ? preview?.tools : preview?.text) || segment.tooltip || ""
   })
@@ -463,8 +405,8 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
         }
       }
 
-      // A marker follows its tool type (the one its icon shows); pending permissions stay visible.
-      const hidden = segment.type === "tool" && !hasActivePermission && Boolean(props.isToolHidden?.(segment.toolName ?? ""))
+      // A marker follows its content (a tool by the type its icon shows); pending permissions stay visible.
+      const hidden = !hasActivePermission && Boolean(props.isSegmentHidden?.(segment))
 
       result.set(segment.id, {
         hasActivePermission,
@@ -482,10 +424,24 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     }
   }
 
-  const visibleSegments = createMemo(() => props.segments.filter(segment => !segmentStateFor(segment.id).hidden))
+  // The transcript joins the text around hidden tools into one row; so does the rail.
+  const visibleSegments = createMemo(() => {
+    const result: TimelineSegment[] = []
+    let hiddenToolsOnly = false
+    for (const segment of props.segments) {
+      const previous = result.at(-1)
+      if (segmentStateFor(segment.id).hidden) {
+        hiddenToolsOnly = segment.type === "tool" && previous?.messageId === segment.messageId && (hiddenToolsOnly || previous.type === "assistant")
+        continue
+      }
+      if (!(hiddenToolsOnly && segment.type === "assistant" && previous?.type === "assistant" && previous.messageId === segment.messageId)) result.push(segment)
+      hiddenToolsOnly = false
+    }
+    return result
+  })
   const segmentIndexById = createMemo(() => new Map(visibleSegments().map((segment, index) => [segment.id, index])))
-  // The transcript reports a message's first marker, often a tool marker. When
-  // that marker is hidden, the message's first visible marker stands in for it.
+  // An active marker whose content is hidden is represented by its message's
+  // first visible marker.
   const messageBySegmentId = createMemo(() => new Map(props.segments.map(segment => [segment.id, segment.messageId])))
   const firstVisibleByMessage = createMemo(() => {
     const result = new Map<string, string>()
@@ -509,7 +465,7 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
           setScrollElement(element)
         }}
         class="message-timeline"
-        data-segment-count={props.segments.length}
+        data-segment-count={visibleSegments().length}
         role="navigation"
         tabIndex={0}
         aria-label={t("messageTimeline.ariaLabel")}
@@ -536,6 +492,9 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
               }
               if (segment.type === "compaction") {
                 return <FoldVertical class="message-timeline-icon" aria-hidden="true" />
+              }
+              if (segment.type === "reasoning" || segment.type === "system") {
+                return <Dynamic component={getMessageContentIcon(segment.type === "reasoning" ? "thinking" : "system")} class="message-timeline-icon" aria-hidden="true" />
               }
               if (segment.type === "user") {
                 return <UserIcon class="message-timeline-icon" aria-hidden="true" />

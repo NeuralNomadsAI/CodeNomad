@@ -32,6 +32,7 @@ import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
+import { findTimelineSegmentBlock, readingLineSegmentId } from "./timeline-transcript-blocks"
 import { JUMP_USER_MESSAGE_EVENT, findUserMessageJumpTarget, keyAllowsUserMessageJump, type JumpUserMessageDetail, type UserMessageJumpDirection } from "./user-message-navigation"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -129,7 +130,8 @@ export default function MessageSection(props: MessageSectionProps) {
         return preferences().systemMessagesVisibility !== "hidden"
       }
 
-      if (buildTimelineSegments(props.instanceId, record, t).length > 0) {
+      // Thinking shows only with its preference, checked below.
+      if (buildTimelineSegments(props.instanceId, record, t).some(segment => segment.type !== "reasoning")) {
         return true
       }
 
@@ -137,8 +139,7 @@ export default function MessageSection(props: MessageSectionProps) {
         return true
       }
 
-      // The navigation timeline omits reasoning-only segments. The transcript
-      // must still show retained thoughts after their neighbouring tools are pruned.
+      // The transcript must still show retained thoughts after their neighbouring tools are pruned.
       if (preferences().showThinkingBlocks
         && buildRecordDisplayData(props.instanceId, record).orderedParts.some(reasoningHasRenderableContent)) return true
 
@@ -282,9 +283,15 @@ export default function MessageSection(props: MessageSectionProps) {
     return `${showThinking}|${thinkingExpansion}|${usageVisibility}|${pref.systemMessagesVisibility}`
   })
 
+  // The active marker follows the block at the reading line. A selected marker
+  // stays active instead until the reader scrolls: its placement, the row's late
+  // layout or a top it cannot reach must not select a neighbour.
+  let readerOwnsActiveSegment = true
+  let readingLineFrame: number | undefined
+  onCleanup(() => { if (readingLineFrame !== undefined) cancelAnimationFrame(readingLineFrame) })
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
     setActiveSegmentId(segment.id)
-    navigateToMessage(segment.messageId)
+    navigateToMessage(segment.messageId, undefined, segment.id)
   }
 
   // Workspace metadata updates can re-evaluate the identity accessors without
@@ -375,8 +382,21 @@ export default function MessageSection(props: MessageSectionProps) {
   const timelineSegments = createMemo(() => {
     const boundary = sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID
     const entries = boundary ? outline.entries().filter(entry => entry.id < boundary) : outline.entries()
-    return entries.length ? projectSessionOutline(entries, residentTimelineSegments(), t) : residentTimelineSegments()
+    return entries.length ? projectSessionOutline(entries, residentTimelineSegments(), messageIds(), t) : residentTimelineSegments()
   })
+  const timelineSegmentsByMessage = createMemo(() => {
+    const result = new Map<string, TimelineSegment[]>()
+    for (const segment of timelineSegments()) {
+      const list = result.get(segment.messageId)
+      if (list) list.push(segment)
+      else result.set(segment.messageId, [segment])
+    }
+    return result
+  })
+  const isTimelineSegmentHidden = (segment: TimelineSegment) => segment.type === "tool"
+    ? resolveToolVisibility(preferences(), segment.toolName ?? "") === "hidden"
+    : segment.type === "reasoning" ? !preferences().showThinkingBlocks
+      : segment.type === "system" && preferences().systemMessagesVisibility === "hidden"
   const hasTimelineSegments = () => timelineSegments().length > 0
 
   function segmentMatchesSearch(segment: TimelineSegment, match: { messageId: string; partId?: string; partType?: string }): boolean {
@@ -460,6 +480,9 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function settlePaging(paging: PagingNavigation, positioning = false) {
+    // Scrolls during paging were ignored, and a page may end without moving
+    // anything: the reading line decides once it settles.
+    scheduleReadingLineSegment()
     // Paging that never positioned a list the activation had not restored yet
     // leaves that restore pending, unless the caller positions the list now; its
     // unpositioned list has nothing to persist. A failed or cancelled jump thus
@@ -488,6 +511,7 @@ export default function MessageSection(props: MessageSectionProps) {
   function resetNavigation() {
     cancelWindowNavigation()
     retryAnchorRestore = null
+    readerOwnsActiveSegment = true
     setNavigation({ kind: "unrestored" })
   }
 
@@ -816,27 +840,46 @@ export default function MessageSection(props: MessageSectionProps) {
 
   /**
    * Places a message at the top, first paging in its history window when it is
-   * not resident. A search navigation then reveals its occurrence once.
+   * not resident. A search navigation then reveals its occurrence once; a
+   * selected marker keeps its highlight and places its own block.
    */
-  function navigateToMessage(messageId: string, searchMatchId?: string) {
+  function navigateToMessage(messageId: string, searchMatchId?: string, segmentId?: string) {
     forgetUserMessageJump()
-    if (messageIds().includes(messageId)) placeResidentMessage(messageId, searchMatchId)
-    else void pageWindow("around", api => placeMessage(api, messageId, searchMatchId), messageId)
+    readerOwnsActiveSegment = !segmentId
+    if (messageIds().includes(messageId)) placeResidentMessage(messageId, searchMatchId, segmentId)
+    else void pageWindow("around", api => placeMessage(api, messageId, searchMatchId, segmentId), messageId)
   }
 
-  function placeResidentMessage(messageId: string, searchMatchId?: string) {
+  function placeResidentMessage(messageId: string, searchMatchId?: string, segmentId?: string) {
     const api = listApi()
     // A resident message the list hides (filtered, beyond a revert) places nothing.
     const placeable = Boolean(api) && visibleMessageIds().includes(messageId)
     cancelWindowNavigation(placeable)
-    if (placeable) placeMessage(api!, messageId, searchMatchId)
+    if (placeable) placeMessage(api!, messageId, searchMatchId, segmentId)
     else claimSearchReveal()
   }
 
-  function placeMessage(api: VirtualFollowListApi, messageId: string, searchMatchId?: string) {
-    api.scrollToKey(messageId)
+  function placeMessage(api: VirtualFollowListApi, messageId: string, searchMatchId?: string, segmentId?: string) {
+    // A selected marker's own block (a later tool, a reply after its thinking)
+    // is held at the top once its row renders, even when the row remounts.
+    api.scrollToKey(messageId, segmentId ? () => {
+      const scroller = streamElement(), segment = timelineSegmentsByMessage().get(messageId)?.find(candidate => candidate.id === segmentId)
+      return scroller && segment ? findTimelineSegmentBlock(scroller, segment, technicalGroupForPart) : null
+    } : undefined)
     if (searchMatchId) setSearchReveal({ matchId: searchMatchId, claimed: false })
     else claimSearchReveal()
+  }
+
+  function scheduleReadingLineSegment() {
+    if (readingLineFrame !== undefined || !readerOwnsActiveSegment) return
+    readingLineFrame = requestAnimationFrame(() => {
+      readingLineFrame = undefined
+      // Intermediate positions while a window loads must not move the rail.
+      const scroller = streamElement()
+      if (!readerOwnsActiveSegment || navigation().kind === "paging" || !scroller) return
+      const id = readingLineSegmentId(scroller, timelineSegmentsByMessage())
+      if (id) setActiveSegmentId(current => (current === id ? current : id))
+    })
   }
 
   /** Any other navigation or gesture now owns the position: a pending reveal must not pull it. */
@@ -862,7 +905,7 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     const segment = segments.find(segment => segment.messageId === target && segment.type === "user")
     if (segment) setActiveSegmentId(segment.id)
-    navigateToMessage(target)
+    navigateToMessage(target, undefined, segment?.id)
     userMessageJumpTarget = target
   }
 
@@ -966,6 +1009,8 @@ export default function MessageSection(props: MessageSectionProps) {
  
   function handleContentRendered() {
     listApi()?.notifyContentRendered()
+    // Rendering can move the reading line's block without a scroll event.
+    scheduleReadingLineSegment()
   }
 
   function overlayWindowOnSnapshot(snapshot: VirtualFollowScrollSnapshot | undefined) {
@@ -1029,6 +1074,8 @@ export default function MessageSection(props: MessageSectionProps) {
       saved,
     }
     setNavigation(paging)
+    // A jump keeps its selected marker; other pages show the reading line's.
+    if (direction !== "around") readerOwnsActiveSegment = true
     const isCurrent = () => navigation() === paging && isActive() && api === listApi()
     if (direction !== "latest") api.setAutoScroll(false)
     setOlderMessageLoadFailed(false)
@@ -1059,9 +1106,6 @@ export default function MessageSection(props: MessageSectionProps) {
       api.notifyContentRendered()
       await waitTwoFrames()
       if (!isCurrent()) return
-      const activeMessageId = api.captureScrollSnapshot()?.anchorKey ?? listState()?.activeKey()
-      const segment = timelineSegments().find(segment => segment.messageId === activeMessageId)
-      if (segment) setActiveSegmentId(segment.id)
       if (direction === "latest" || direction === "oldest") setRevealActiveToken(value => value + 1)
     } catch (error) {
       if (isCurrent()) {
@@ -1356,6 +1400,7 @@ export default function MessageSection(props: MessageSectionProps) {
           onScroll={() => {
             clearQuoteSelection()
             scrollUnsettled = true
+            scheduleReadingLineSegment()
           }}
           onScrollEnd={persistSettledScroll}
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
@@ -1363,6 +1408,9 @@ export default function MessageSection(props: MessageSectionProps) {
             setRevealActiveToken(value => value + 1)
             claimSearchReveal()
             forgetUserMessageJump()
+            // The reader now owns the position, and with it the active marker.
+            readerOwnsActiveSegment = true
+            scheduleReadingLineSegment()
             // An opposite directional gesture supersedes pending history paging
             // before it can position; taps and the requesting gesture do not.
             const nav = navigation()
@@ -1373,13 +1421,6 @@ export default function MessageSection(props: MessageSectionProps) {
           onJumpTop={() => { void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
           onJumpBottom={() => { void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
           onMouseUp={() => handleStreamMouseUp()}
-          onActiveKeyChange={(messageId) => {
-            if (!messageId || navigation().kind === "paging") return
-            const firstSeg = timelineSegments().find((s) => s.messageId === messageId)
-            if (firstSeg) {
-              setActiveSegmentId((current) => (current === firstSeg.id ? current : firstSeg.id))
-            }
-          }}
           onScrollElementChange={(element) => {
             setStreamElement(element)
             if (!element) clearQuoteSelection()
@@ -1688,7 +1729,7 @@ export default function MessageSection(props: MessageSectionProps) {
               revealActiveToken={revealActiveToken()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
-              isToolHidden={(toolName) => resolveToolVisibility(preferences(), toolName) === "hidden"}
+              isSegmentHidden={isTimelineSegmentHidden}
               searchMatchedSegmentIds={searchMatchedTimelineSegmentIds}
               activeSearchSegmentId={activeSearchTimelineSegmentId}
             />

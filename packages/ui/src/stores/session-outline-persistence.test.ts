@@ -7,7 +7,7 @@ import type { ClientSnapshotV1, RestorableWorkspaceTabState } from "./client-sta
 function index(count = 20000) {
   return normalizePersistedOutline({ format: 1, directory: "/repo", projectID: "p",
     entries: Array.from({ length: count }, (_, seq) => ({ id: `message-${seq}`, seq, type: "assistant", tools: seq % 2,
-      reasoning: 1, text: seq % 3 ? 1 : 0, ...(seq % 2 ? { toolName: "shell" } : {}) })),
+      reasoning: 1, text: seq % 3 ? 1 : 0, ...(seq % 2 ? { toolName: "shell" } : {}), layout: `R${seq % 3 ? "T" : ""}${seq % 2 ? "X" : ""}` })),
     checkpoints: Array.from({ length: Math.ceil(count / 512) }, (_, chunk) => ({ after: chunk * 512 - 1,
       through: Math.min(count, (chunk + 1) * 512) - 1, digest: "a".repeat(64) })),
   })!
@@ -58,6 +58,11 @@ test("index normalization bounds optional storage, rejects invalid ordering and 
   assert.equal(hasCompleteOutlineMetadata(legacy), false, "older indexes trigger one native metadata refresh")
   const textless = normalizePersistedOutline({ ...valid, entries: valid.entries.map(({ text: _, ...entry }) => entry) })!
   assert.equal(hasCompleteOutlineMetadata(textless), false, "indexes saved before text counts refresh once too")
+  assert.deepEqual(valid.entries.map(entry => entry.layout), ["R", "RTX"])
+  const unordered = normalizePersistedOutline({ ...valid, entries: valid.entries.map(({ layout: _, ...entry }) => entry) })!
+  assert.equal(hasCompleteOutlineMetadata(unordered), false, "indexes saved before part layouts refresh once too")
+  assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, layout: "RTQ" })) }), undefined)
+  assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, layout: "X".repeat(65) })) }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, text: -1 })) }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, entries: [valid.entries[1], valid.entries[0]] }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, checkpoints: [{ after: 0, through: 1, digest: "a".repeat(64) }] }), undefined)

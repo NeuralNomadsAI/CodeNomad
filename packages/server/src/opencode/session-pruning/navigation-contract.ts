@@ -27,6 +27,9 @@ export const outlineEntrySchema = z.object({
   // Non-blank visible text parts; absent from older plugin copies, so unknown.
   text: z.number().int().nonnegative().optional(),
   toolName: z.string().max(256).optional(),
+  // An assistant step's visible parts in order: R reasoning and T text runs,
+  // X per tool, first 64 kinds. Absent from older plugin copies, so unknown.
+  layout: z.string().regex(/^[RTX]{0,64}$/).optional(),
 }).strict()
 export type OutlineEntry = z.infer<typeof outlineEntrySchema>
 export const outlineResultSchema = z.union([pruningBlockedSchema, z.object({

@@ -159,6 +159,22 @@ test("demand excerpts preserve Markdown, bound tool output and enforce ownership
   } finally { db.close() }
 })
 
+test("assistant layouts list visible reasoning and text runs and each tool in content order", async () => {
+  const db = fixture(4)
+  try {
+    const step = (index: number, content: unknown[]) => db.prepare("UPDATE session_message SET type='assistant', data=? WHERE id=?")
+      .run(JSON.stringify({ content }), id(index))
+    step(0, [{ type: "reasoning", text: "a" }, { type: "reasoning", text: "b" }, { type: "text", text: "c" }, { type: "text", text: "d" },
+      { type: "tool", name: "read" }, { type: "tool", name: "grep" }])
+    step(1, [{ type: "tool", name: "read" }, { type: "reasoning", text: " " }, { type: "text", text: "after" }, { type: "reasoning", text: "e" },
+      { type: "text", text: "x", synthetic: true }, { type: "text", text: "y", ignored: true }, { type: "text", text: "\n" }, { type: "tool", name: "shell" }])
+    step(2, Array.from({ length: 70 }, (_, index) => ({ type: "tool", name: `tool${index}` })))
+    const outline = await readSessionOutline(db, scope, undefined, signal())
+    if (outline.status !== "outline") assert.fail("Expected index")
+    assert.deepEqual(outline.entries.map(entry => entry.layout), ["RTXX", "XTRX", "X".repeat(64), undefined])
+  } finally { db.close() }
+})
+
 test("persisted checkpoints reconcile offline edits, pruning, deletions and appends without replaying unchanged ranges", async () => {
   const db = fixture(1500)
   try {

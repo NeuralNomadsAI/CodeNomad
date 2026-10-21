@@ -19,7 +19,7 @@ Abrir una búsqueda vacía no analiza el historial. Cambiar la consulta/el ámbi
 
 1. Elige un resultado de búsqueda de la sesión actual para saltar al pasaje que lo rodea.
 2. Elige un resultado de otra sesión para abrir una vista previa independiente de ese mensaje; usa **Abrir en la sesión** para ir a esa conversación en el resultado.
-3. En **Línea de tiempo de mensajes**, pasa el puntero o enfoca un marcador para ver un fragmento y selecciónalo para navegar. Usa los controles de primer/último mensaje para volver a los extremos del historial almacenado.
+3. En **Línea de tiempo de mensajes**, pasa el puntero o enfoca un marcador para ver un fragmento y selecciónalo para navegar: su bloque pasa arriba y el marcador sigue resaltado hasta que te desplaces; después, el resaltado sigue al bloque de la parte superior de la conversación. Usa los controles de primer/último mensaje para volver a los extremos del historial almacenado.
 
 La línea de tiempo representa la estructura completa de la sesión aunque la transcripción solo contenga un pasaje acotado. Los saltos cargan el destino en lugar de obtener todos los mensajes intermedios. Las vistas previas de resultados de otras sesiones no cargan toda su transcripción ni las seleccionan; solo **Abrir en la sesión** cambia de conversación.
 

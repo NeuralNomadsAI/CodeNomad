@@ -145,6 +145,11 @@
   color: var(--message-tool-border);
 }
 
+.message-timeline-reasoning,
+.message-timeline-system {
+  color: var(--text-secondary);
+}
+
 .message-timeline-segment.message-timeline-segment-permission {
   color: var(--session-status-permission-fg);
 }

@@ -19,7 +19,7 @@ Das Öffnen einer leeren Suche durchsucht keinen Verlauf. Änderungen an Begriff
 
 1. Wählen Sie ein Suchergebnis der aktuellen Sitzung, um zur umgebenden Passage zu springen.
 2. Wählen Sie ein Ergebnis einer anderen Sitzung, um eine separate Vorschau dieser Nachricht zu öffnen; verwenden Sie **In Sitzung öffnen**, um an der Trefferstelle zu dieser Unterhaltung zu wechseln.
-3. Zeigen Sie in **Nachrichten-Timeline** auf eine Markierung oder fokussieren Sie sie für einen Auszug und wählen Sie sie dann zur Navigation. Über die Bedienelemente für erste/neueste Nachricht gelangen Sie zu den Enden des gespeicherten Verlaufs.
+3. Zeigen Sie in **Nachrichten-Timeline** auf eine Markierung oder fokussieren Sie sie für einen Auszug und wählen Sie sie dann zur Navigation: Ihr Block rückt nach oben, und die Markierung bleibt hervorgehoben, bis Sie scrollen; danach folgt die Hervorhebung dem Block oben im Gespräch. Über die Bedienelemente für erste/neueste Nachricht gelangen Sie zu den Enden des gespeicherten Verlaufs.
 
 Die Timeline stellt die gesamte Sitzungsstruktur dar, auch wenn die Verlaufsanzeige nur eine begrenzte Passage enthält. Sprünge laden das Ziel, nicht jede dazwischenliegende Nachricht. Suchvorschauen anderer Sitzungen laden weder deren gesamten Verlauf noch wählen sie diese aus; nur **In Sitzung öffnen** wechselt die Unterhaltung.
 

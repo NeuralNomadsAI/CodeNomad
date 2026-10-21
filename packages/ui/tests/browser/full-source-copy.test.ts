@@ -88,7 +88,7 @@ test("message parts beyond the display limit reveal in place at the omission", {
   assert.equal(await block.locator(".tool-call-diagnostic-message").count(), 0, "No copy-only truncation footer remains")
   assert.equal(await block.locator('.tool-call-message[data-part-id="hidden-range-tool"]').count(), 0)
   const timeline = page.locator("[data-segment-count]")
-  assert.equal(await timeline.getAttribute("data-segment-count"), "1", "The omitted tool has no timeline marker yet")
+  assert.equal(await timeline.getAttribute("data-segment-count"), "2", "The rows around the omission have markers; the omitted tool has none yet")
 
   // The placeholder sits exactly where the omitted parts belong.
   const order = await block.evaluate((element) => {

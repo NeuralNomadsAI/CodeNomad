@@ -1,5 +1,9 @@
-/** `element` holds a descendant of the keyed row (an in-place reveal) instead of the row itself. */
-interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement }
+/**
+ * `element` holds a descendant of the keyed row (an in-place reveal) instead of
+ * the row itself. `select` finds a block standing for the row on every frame,
+ * so it survives a remount of that row; until it finds one, the row is held.
+ */
+interface VirtualItemAnchor { key: string; offset: number; element?: HTMLElement; select?: () => HTMLElement | null }
 
 // A hold lasts the former element-alignment window, counted from its request:
 // later layout never extends it.

@@ -16,14 +16,18 @@ const segments: TimelineSegment[] = [
   { id: "user-0", messageId: "message-0", type: "user", label: "You", tooltip: "Question", totalChars: 0 },
   tool(1, "shell"), tool(2, "read"), tool(3, "custom_mcp_tool"),
   { id: "assistant-3", messageId: "message-3", type: "assistant", label: "Assistant", tooltip: "Answer", totalChars: 0 },
+  // A reply on both sides of a tool: one row in the transcript once the tool is hidden.
+  { id: "assistant-4", messageId: "message-4", type: "assistant", label: "Assistant", tooltip: "Before", totalChars: 0 },
+  tool(4, "read"),
+  { id: "assistant-4b", messageId: "message-4", type: "assistant", label: "Assistant", tooltip: "After", totalChars: 0 },
 ]
 await applyUiSettings({ locale: "en" })
 const rows = transcriptVisibilityRows((key) => key)
-// The transcript reports a message's first marker as active, which may be a tool marker.
+// The active marker may be one whose tool type is hidden.
 const [active, setActive] = createSignal<string | null>(null)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><div class="message-timeline-sidebar" style={{ height: "600px", width: "60px" }}>
   <MessageTimeline instanceId="timeline-filters" sessionId="timeline" segments={segments} activeSegmentId={active()}
-    isToolHidden={(toolName) => resolveToolVisibility(preferences(), toolName) === "hidden"} />
+    isSegmentHidden={(segment) => segment.type === "tool" && resolveToolVisibility(preferences(), segment.toolName ?? "") === "hidden"} />
 </div></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   // The rail's geometry probe is a marker without a message.
