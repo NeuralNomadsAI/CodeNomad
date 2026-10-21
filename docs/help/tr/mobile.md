@@ -28,7 +28,7 @@ Kurulum eksikse önce HTTPS güvenini ve tarayıcı desteğini doğrulayın, ard
 
 Gezinmeyi ve araçları açmak için **Sol panel** ve **Sağ panel** kontrollerini kullanın. Dar düzenlerde paneller, masaüstü genişliğinde bir tuvali zorlamak yerine konuşmayı üst üste bindirir; bir yüzer panelin açılması diğerini kapatır. Konuşma başlığı eylemleri, alan sınırlı olduğunda taşma menüsüne taşınır.
 
-İleti düzenleyicisi Ajan, Model ve Düşünme kontrollerini alt satırında tutar. Alan, ekran klavyesi dahil görünür konuşmaya göre boyutlanır; uzun taslaklar kaydırılabilir. İstek açmak kayıtlı yükseklik veya taslağı değiştirmeden ileti düzenleyicisini geçici küçültür. İzin/soruları üstündeki istek panelinde, yanıt eylemlerinin bulunduğu sabit alt bölüm erişilebilir kalacak şekilde yanıtlayın. Bkz. [Konuşmalar](conversations.md) ve [İzinler](permissions.md).
+İleti düzenleyicisi Ajan, Model ve Düşünme kontrollerini alt satırında tutar. Alan, ekran klavyesi dahil görünür konuşmaya göre boyutlanır; uzun taslaklar kaydırılabilir. Yalnızca dokunmatik cihazlarda gönderme ekran klavyesini yeniden açmaz; böylece yanıtı okuyabilirsiniz, devam etmek için ileti düzenleyicisine dokunun. Bir oturum çalışırken ileti düzenleyicisinin **Diğer eylemler** menüsü, normal gönderiminizin yapmadığı davranışı (**Mesajı kuyruğa ekle** veya **Şimdi yönlendir**) donanım klavyesi kısayolu gerektirmeden sunar. İstek açmak kayıtlı yükseklik veya taslağı değiştirmeden ileti düzenleyicisini geçici küçültür. İzin/soruları üstündeki istek panelinde, yanıt eylemlerinin bulunduğu sabit alt bölüm erişilebilir kalacak şekilde yanıtlayın. Bkz. [Konuşmalar](conversations.md) ve [İzinler](permissions.md).
 
 ## Yetenek ve bağlantı sınırları {#limits}
 

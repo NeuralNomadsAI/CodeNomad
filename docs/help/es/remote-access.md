@@ -29,10 +29,12 @@ Esto cambia el modo de escucha directa del anfitrión, no un proyecto ni Control
 
 | Inicio/modo | HTTP escucha en | HTTPS escucha en |
 | --- | --- | --- |
-| Independiente, solo HTTPS (predeterminado) | No activado | `--host` |
+| Independiente, solo HTTPS (predeterminado) | Solo el listener privado de loopback (ver más abajo) | `--host` |
 | Independiente, solo HTTP | **`--host`**, incluida una dirección LAN/comodín | No activado |
 | Independiente, ambos listeners | `127.0.0.1` independientemente de `--host` | `--host` |
 | Backend nativo de escritorio | Su listener HTTP permanece en `127.0.0.1`, incluido su listener interno del anfitrión | `--host` cuando HTTPS está activado |
+
+Cada backend mantiene además un listener HTTP en `127.0.0.1` para los propios plugins de OpenCode incluidos con CodeNomad, como Misiones. Cuando no se solicitó HTTP, o el listener HTTP solicitado escucha en una dirección distinta de `127.0.0.1` o `0.0.0.0`, el backend añade un listener HTTP privado en un puerto aleatorio de `127.0.0.1`. Nunca se muestra ni se ofrece como dirección de conexión, no es accesible desde otras máquinas y sirve la misma aplicación autenticada.
 
 Una dirección LAN concreta no tiene por qué aceptar conexiones loopback. `0.0.0.0` significa todas las interfaces IPv4; `::` es el listener comodín de doble pila. Usa en el navegador una dirección accesible real, no un comodín. Los identificadores de zona IPv6 no se admiten en `--host`.
 
@@ -48,7 +50,7 @@ Para HTTP solo en loopback, por ejemplo detrás de un proxy local de confianza:
 codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
-No supongas que el puerto es 9898 o 9899: los puertos omitidos pueden cambiar si están ocupados. Un `--https-port` o `--http-port` explícito distinto de cero fija el puerto y falla si no puede escuchar; `0` pide al sistema operativo que asigne uno. Las **Local Connection URL** y **Remote Connection URL** indicadas, y las **Direcciones accesibles** actualizadas, son autoritativas para esa ejecución. Consulta la [referencia completa de la CLI del servidor](server.md).
+No supongas que el puerto es 9898 o 9899: los puertos omitidos pueden cambiar si están ocupados. Un `--https-port` explícito distinto de cero, o un `--http-port` con HTTP activado, fija el puerto y falla si no puede escuchar; `0` pide al sistema operativo que asigne uno. Las **Local Connection URL** y **Remote Connection URL** indicadas, y las **Direcciones accesibles** actualizadas, son autoritativas para esa ejecución. Consulta la [referencia completa de la CLI del servidor](server.md).
 
 ## Configurar TLS de confianza {#tls}
 
@@ -81,10 +83,10 @@ Si un cliente muestra una advertencia de certificado, detente y comprueba el nom
 
 ## Guardar un servidor remoto {#saved-servers}
 
-1. En la página de inicio de escritorio, selecciona **Servidores** y después **Conectar a un servidor**.
-2. Introduce **Nombre del servidor** y **URL del servidor** usando un origen HTTPS de confianza. Deja sin marcar **Omitir la verificación TLS para certificados autofirmados.**; establece confianza en su lugar.
+1. En la página de inicio de escritorio, elige **Conectar servidor CodeNomad**. El mismo botón aparece en una pestaña **Servidores** vacía y en **Configuración → Acceso remoto → Servidores**.
+2. En **Conectar a un servidor**, introduce **Nombre del servidor** y **URL del servidor** usando un origen HTTPS de confianza. Deja sin marcar **Omitir la verificación TLS para certificados autofirmados.**; establece confianza en su lugar.
 3. Elige **Guardar** para crear un marcador o **Conectar** para guardarlo y abrirlo. Inicia sesión en ese servidor.
 
-Los marcadores pertenecen a esta configuración de CodeNomad, no a los proyectos del servidor remoto. Guardar una URL no inicia el servidor ni concede acceso. **Eliminar servidor guardado** elimina el marcador, no las conversaciones remotas, el backend ni sus credenciales.
+Selecciona un servidor guardado en la pestaña **Servidores** de la página de inicio para volver a abrirlo. Los marcadores pertenecen a esta configuración de CodeNomad, no a los proyectos del servidor remoto. Guardar una URL no inicia el servidor ni concede acceso. **Eliminar servidor guardado** elimina el marcador, no las conversaciones remotas, el backend ni sus credenciales.
 
 Para Control remoto, pega en su lugar un enlace de emparejamiento nuevo en **URL del servidor**. El marcador conserva solo el origen del túnel, nunca el código de un solo uso; consulta [Control remoto](remote-control.md) para volver a emparejar tras perder la cookie del dispositivo.

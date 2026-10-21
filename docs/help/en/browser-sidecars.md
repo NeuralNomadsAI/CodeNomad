@@ -2,8 +2,8 @@
 
 ## Open a session browser {#session-browser}
 
-1. In a conversation's toolbar, open its web/browser preview.
-2. Enter a credential-free `http://` or `https://` URL. Use the toolbar to navigate, refresh and go Back/Forward.
+1. In a conversation's toolbar, choose **Open web preview**.
+2. Enter a credential-free `http://` or `https://` **Preview URL**, then **Open preview**. Use the toolbar to navigate, refresh and go Back/Forward.
 3. Use the preview's close button to return to chat. Reopen it in that conversation to continue.
 
 Each preview belongs to its project folder and session. Switching conversation, project, Info or chat hides an explicitly opened native guest without discarding its live document/history. Hidden guests are not automation targets. Closing the project/window or restarting the renderer ends the live document.
@@ -21,7 +21,7 @@ Native previews share cookies, sign-ins and site storage across projects/session
 | macOS/Linux Tauri | Sandboxed iframe | No native browser automation | Dimensions only |
 | Plain browser/remote view | Iframe fallback | No local native preview target | Dimensions only |
 
-There is no Developer Mode toggle or extra activation restart. Native automation is prepared at desktop startup and uses the session-bound `codenomad.browser` tool for open, navigate, snapshot, click, type and screenshot. Tool availability is not authorization for every window: execution checks the owning backend, native capabilities, session and visible target. Page contents remain untrusted. An iframe may fail because the target forbids embedding; use an external browser rather than weakening its protections.
+There is no Developer Mode toggle or extra activation restart. Native automation is prepared at desktop startup and uses the session-bound `codenomad.browser` tool for open, navigate, snapshot, screenshot and page actions: click, type, select, hover, drag, scroll, key presses and waiting for text. Tool availability is not authorization for every window: execution checks the owning backend, native capabilities, session and visible target. An action whose page was hidden, replaced or navigated meanwhile is refused rather than sent to another page, and an action is never repeated automatically. Page contents remain untrusted. An iframe may fail because the target forbids embedding; use an external browser rather than weakening its protections.
 
 ## Choose one of six viewport templates {#templates}
 
@@ -56,7 +56,9 @@ Native mobile templates set Android/Chromium identity, orientation, touch and DP
 
 Registration is server configuration, shared by its clients; it neither installs nor starts the service. The port is on the backend host, not your viewing laptop or phone. **Running** indicates reachability, not that the tool's application/authentication is healthy. Removing registration does not stop the separately launched process. Closing its tab does not stop it either.
 
-If unreachable, check the process and port on the backend. If HTML loads but assets/WebSockets fail, check the tool's base path and prefix mode. Recreate a wrong registration with the intended settings; do not expose the upstream publicly just to work around a proxy error. SideCar applications can expose a terminal or files with the server account's authority; trust their users and configuration. Remote Control does not expose SideCar application proxy traffic; use the appropriate direct-access path described in [Remote access](remote-access.md) and [Remote Control](remote-control.md).
+If unreachable, check the process and port on the backend. If HTML loads but assets/WebSockets fail, check the tool's base path and prefix mode. Recreate a wrong registration with the intended settings; do not expose the upstream publicly just to work around a proxy error. SideCar applications can expose a terminal or files with the server account's authority; trust their users and configuration.
+
+A SideCar is a trusted extension of CodeNomad, not a sandboxed preview: its page runs with CodeNomad's own origin, so its scripts can use CodeNomad with your signed-in access. Register only services whose code you trust. CodeNomad does not forward its own sign-in cookies to the service, while the service's own cookies are kept. Remote Control does not expose SideCar application proxy traffic; use the appropriate direct-access path described in [Remote access](remote-access.md) and [Remote Control](remote-control.md).
 
 ## OpenVSCode Server recipe {#openvscode}
 

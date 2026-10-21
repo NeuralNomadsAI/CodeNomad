@@ -6,13 +6,13 @@
 2. कार्य नाम लेख्नुहोस्। प्यालेटमा application कार्य र हालको Location का custom command छन्; उपलब्धता सक्रिय दृश्यमा निर्भर हुन्छ।
 3. हालको UI भाषामा बाह्य browser सन्दर्भमा यो गाइड खोल्न **मद्दत खोल्नुहोस्** चलाउनुहोस्। नेटिभ **मद्दत → CodeNomad मद्दत** ले उही गाइड खोल्छ।
 
-मद्दतले एप दृश्य र मस्यौदा छुँदैन। खोल्न असफल भए सोझै [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) जानुहोस्। command खोजिनुमा shortcut अनुकूलन गर्न मिल्छ भन्ने होइन: shortcut manager ले निश्चित 49-command renderer catalogue समेट्छ, सबै palette वा native-menu कार्य होइन।
+मद्दतले एप दृश्य र मस्यौदा छुँदैन। खोल्न असफल भए सोझै [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) जानुहोस्। command खोजिनुमा shortcut अनुकूलन गर्न मिल्छ भन्ने होइन: shortcut manager ले 72 renderer कार्यको निश्चित catalogue समेट्छ, सबै palette वा native-menu कार्य होइन। यसमा **सत्र संक्षिप्त गर्नुहोस्**, **अन्तिम सन्देश फिर्ता लिनुहोस् (Undo)** वा **मद्दत खोल्नुहोस्** जस्ता **कुनै सर्टकट छैन** बाट सुरु हुने palette command पनि छन्; project-folder, terminal र editor कार्य स्थानीय डेस्कटप विन्डोमा मात्र चल्छन्।
 
 ## record, अक्षम र reset {#customize}
 
-1. **सेटिङहरू → किबोर्ड सर्टकटहरू** खोली कार्य भेट्न **सर्टकटहरू छान्नुहोस्** प्रयोग गर्नुहोस्।
+1. **सेटिङहरू → किबोर्ड सर्टकटहरू** खोली कार्य वा कुञ्जी संयोजन भेट्न **सर्टकटहरू छान्नुहोस्** प्रयोग गर्नुहोस्।
 2. **सम्पादन** रोजेर **कुञ्जीहरूको संयोजन थिच्नुहोस्** मा चाहेको संयोजन थिच्नुहोस्। recording ले binding बचत गर्छ।
-3. renderer binding हटाउन **निष्क्रिय पार्नुहोस्**, default फर्काउन **रिसेट**, वा सबै renderer binding का लागि **सबै रिसेट गर्नुहोस्** प्रयोग गर्नुहोस्।
+3. त्यो कार्यको renderer binding हटाउन **सर्टकट मेटाउनुहोस्** (×), default फर्काउन **रिसेट**, वा सबै renderer binding का लागि **सबै रिसेट गर्नुहोस्** प्रयोग गर्नुहोस्।
 4. conflict भएका हरेक row को चेतावनी समाधान गर्नुहोस्; conflict बताइन्छन्, चुपचाप अक्षम हुँदैनन्।
 
 binding CodeNomad UI configuration मा बचत हुन्छन् र साझा गर्ने क्लाइन्टलाई असर गर्छन्। OpenCode CLI/TUI binding वा native menu accelerator सम्पादन गर्दैनन्। recording ले app renderer shortcut रोक्छ, तर OS वा native menu रोक्न सक्दैन। **रद्द गर्नुहोस्**, focus गुम्दा, खण्ड बन्द गर्दा वा विन्डो छोड्दा recording सकिन्छ। एक्ला modifier र IME composition बेवास्ता हुन्छन्; साधारण Tab/Shift+Tab ले focus सार्छ।
@@ -51,7 +51,7 @@ save असफल भए पुरानो shortcut उपलब्ध रा�
 | छेउको प्रश्न पठाउने (`/btw` विन्डो) | `Mod+Enter` |
 | फाइल बचत (workspace editor) | `Mod+S` |
 
-Enter-to-submit अक्षम कन्फिगरेसनमा **इनपुट पठाउनुहोस्** को default `Mod+Enter` र **नयाँ पङ्क्ति थप्नुहोस्** को `Enter` वा `Shift+Enter` हुन्छ। स्पष्ट shortcut override ले default बदल्छ। प्रभावकारी binding manager मा हेर्नुहोस्। अघिल्लो/अर्को सत्रले session सूची घुमाउँछ; यो sidebar को browser-जस्तो **पछाडि**/**अगाडि** इतिहास होइन, जसको shortcut छैन।
+Enter-to-submit अक्षम कन्फिगरेसनमा **इनपुट पठाउनुहोस्** को default `Mod+Enter` र **नयाँ पङ्क्ति थप्नुहोस्** को `Enter` वा `Shift+Enter` हुन्छ। स्पष्ट shortcut override ले default बदल्छ। प्रभावकारी binding manager मा हेर्नुहोस्। macOS मा `Option+Return` line break नै रहन्छ, त्यसैले वैकल्पिक व्यवहारमा `Cmd+Shift+Return` ले मात्र पठाउँछ; सत्र काम गर्दै गर्दा कम्पोजरको **थप कार्यहरू** मेनुले उही विकल्प (**सन्देश लाममा राख्नुहोस्** वा **अहिले पठाउनुहोस्**) दिन्छ। **इनपुट खाली गर्नुहोस्** ले नयाँ कुराकानीको पहिलो मस्यौदामा समेत कम्पोजरकै Clear कार्य चलाउँछ। अघिल्लो/अर्को सत्रले session सूची घुमाउँछ; यो sidebar को browser-जस्तो **पछाडि**/**अगाडि** इतिहास होइन, जसको shortcut छैन।
 
 ## नेटिभ key र प्लेटफर्म interception {#native-keys}
 
@@ -73,4 +73,4 @@ Enter-to-submit अक्षम कन्फिगरेसनमा **इनप
 
 अङ्क पङ्क्ति र square-bracket shortcut ले AZERTY/QWERTZ समेत recording, execution र conflict जाँचमा भौतिक key स्थान प्रयोग गर्छन्। अन्य key ले logical मान प्रयोग गर्छन्। प्रयोग गर्ने किबोर्डमै record गरेर देखिएको नतिजा जाँच्नुहोस्।
 
-IME composition मा पाठ प्रवेश प्राथमिक हुन्छ। prompt history र Escape कार्य पनि focus, picker/shell अवस्था र हालको कार्यमा निर्भर छन्; हरेक ArrowUp वा Escape सर्तरहित global कार्य हो नमान्नुहोस्। hover tooltip र shortcut manager ले स्थायी keyboard-help strip नथपी हालको assignment देखाउँछन्।
+IME composition मा पाठ प्रवेश प्राथमिक हुन्छ। prompt history र Escape कार्य पनि focus, picker/shell अवस्था र हालको कार्यमा निर्भर छन्; हरेक ArrowUp वा Escape सर्तरहित global कार्य हो नमान्नुहोस्। डेस्कटपमा पठाउँदा focus कुराकानीमा सर्छ, त्यसैले arrow, paging key र Space ले यसलाई scroll गर्छन्; कुनै अक्षर टाइप गर्दा त्यही अक्षरसहित कम्पोजरमा फर्किन्छ, र **इनपुटमा फोकस गर्नुहोस्** ले prompt history प्रयोग गर्नुअघि त्यहाँ फर्काउँछ। command palette, खोज, नयाँ सत्र, जानकारी र कम्पोजर selector जस्ता नियन्त्रणका tooltip ले हालको shortcut देखाउँछन्; shortcut manager सँगै तिनले स्थायी keyboard-help strip नथपी assignment देखाउँछन्।

@@ -8,7 +8,7 @@ Usa el repositorio para informes de errores, versiones actuales y contribuciones
 2. Selecciona **Informar de un error** para abrir el formulario de incidencias de GitHub.
 3. Revisa la información de versión/cliente rellenada. Añade una reproducción mínima, el comportamiento esperado y el resultado real y envíalo mediante GitHub.
 
-La acción rellena las versiones de CodeNomad/OpenCode, el sistema operativo y contexto acotado del cliente/entorno de ejecución. No rellena direcciones de escucha, rutas de espacios de trabajo, credenciales ni texto de conversaciones. Abrir el formulario no envía una incidencia.
+La acción rellena las versiones de CodeNomad y OpenCode (incluido el servicio OpenCode en ejecución cuando difiere del instalado), tu sistema operativo, el tipo de cliente (con el agente de usuario del navegador en un navegador web) y el sistema operativo del servidor. No rellena direcciones de escucha, rutas de espacios de trabajo, credenciales ni texto de conversaciones. Abrir el formulario no envía una incidencia.
 
 Si necesitas más diagnósticos, **Copiar al portapapeles** o **Descargar .txt** produce un informe separado. Ese informe más completo puede contener rutas locales y direcciones de red: revísalo y oculta datos antes de adjuntarlo. Una captura o fragmento de registro puede contener secretos aunque el informe automático de diagnóstico excluya los secretos de autenticación.
 

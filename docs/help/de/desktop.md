@@ -6,17 +6,19 @@
 2. Verwenden Sie das native **Fenster → Neues Fenster** (`Ctrl+Shift+N` oder `Cmd+Shift+N`) für ein separates Anwendungsfenster.
 3. Aktivieren Sie unter **Einstellungen → Erweitert** die Option **Vorhandenes Fenster beim zweiten Start fokussieren**, wenn ein weiterer Start das zuletzt verwendete Fenster fokussieren statt ein neues öffnen soll.
 
-Projekt-Tabs, ausgewählte Unterhaltungen und Layout gehören zum Fenster. OpenCode-Sitzungen/-Nachrichten gehören zum gemeinsamen nativen OpenCode-Dienst: Andere Fenster können dieselbe Unterhaltung sehen. Fenster- oder App-Tab-Schließen stoppt diesen Dienst nicht. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad; Sitzungen laufen in OpenCode weiter und sind nach erneutem Öffnen des Projekts wieder verfügbar; siehe [Projekte](projects.md). Verwenden Sie geschlossene Fenster nicht als Beweis, dass Agent oder geplante Mission gestoppt wurde.
+Projekt-Tabs, ausgewählte Unterhaltungen und Layout gehören zum Fenster. OpenCode-Sitzungen/-Nachrichten gehören zum gemeinsamen nativen OpenCode-Dienst: Andere Fenster können dieselbe Unterhaltung sehen. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad, nicht seine OpenCode-Sitzungen; öffnen Sie es erneut, um sie wiederzufinden. Ein anderes Fenster, das dieselbe Projektverbindung anzeigt, schließt seinen Tab ebenfalls und zeigt eine Benachrichtigung; separat geöffnete Tabs desselben Ordners sind nicht betroffen. Das Schließen eines ganzen Fensters, Beenden oder Neuladen bewahrt Projektverbindungen für die Wiederherstellung; siehe [Projekte](projects.md). Verwenden Sie geschlossene Fenster nicht als Beweis, dass Agent oder geplante Mission gestoppt wurde.
+
+Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald ein Fenster geladen ist; bis dahin erscheinen sie auf Englisch. **Hilfe → Über CodeNomad** (auch im macOS-Anwendungsmenü) öffnet **Einstellungen → Info** mit Version, Updates und Diagnose.
 
 ## Einstellungen und Startwiederherstellung {#preferences-startup}
 
 1. Öffnen Sie Einstellungen aus dem zu konfigurierenden Fenster. Lokale Desktop-Einstiege fokussieren das eine native Einstellungsfenster mit Projekt/Location dieses öffnenden Fensters.
-2. Aktivieren/deaktivieren Sie unter **Allgemein → Startverhalten** die Option **Vorherigen Zustand wiederherstellen**.
-3. Verwenden Sie zum Vergessen des gespeicherten Fensterlayouts **Gespeicherten Zustand löschen**, nachdem Sie die Folgen gelesen haben.
+2. Schalten Sie unter **Allgemein** die Option **Vorherigen Zustand wiederherstellen** ein oder aus.
+3. Verwenden Sie zum Vergessen des gespeicherten Fensterlayouts **Gespeicherten Startzustand löschen**. Dies wirkt sofort, ohne Bestätigung.
 
 Wiederherstellung kann Arbeitsbereichs-/SideCar-Tabs und aktive Sitzungen, ungesendeten Text, Scrollpositionen, Panels, Fensterposition und Zoom erneut öffnen. Es handelt sich um fensterbezogenen Client-Zustand, keine Kopie der nativen Unterhaltungsdatenbank. Löschen entfernt gespeicherte Tabs, Entwürfe und Layout; es löscht weder CodeNomad-Konfiguration noch OpenCode-Unterhaltungen. Sichern Sie wichtige ungesendete Entwürfe vorher anderswo.
 
-Das Einstellungsfenster hat keinen separaten Wiederherstellungszustand: Startverhalten zielt auf das Fenster, das es öffnete. Ist dieses geschlossen oder unbekannt, weil die Einstellungen beim Start wieder geöffnet wurden, folgt Startverhalten dem zuletzt verwendeten Fenster; eine für ein anderes Fenster vorbereitete Änderung wird nie angewendet, die Bedienelemente zeigen zuerst den Wert des neuen Fensters. Um ein bestimmtes Fenster zu konfigurieren, öffnen Sie die Einstellungen aus diesem Fenster. Projektbezogene Einstellungen verwenden ebenfalls die Location des öffnenden Fensters und bleiben ohne sie nicht verfügbar.
+Das Einstellungsfenster hat keinen separaten Wiederherstellungszustand: Diese Bedienelemente zielen auf das Fenster, das es öffnete. Ist dieses geschlossen oder unbekannt, weil die Einstellungen beim Start wieder geöffnet wurden, folgen sie stattdessen dem zuletzt verwendeten Fenster; eine für ein anderes Fenster vorbereitete Änderung wird nie angewendet, die Bedienelemente zeigen zuerst den Wert des neuen Fensters. Um ein bestimmtes Fenster zu konfigurieren, öffnen Sie die Einstellungen aus diesem Fenster. Projektbezogene Einstellungen verwenden ebenfalls die Location des öffnenden Fensters und bleiben ohne sie nicht verfügbar. Werden die Einstellungen beim Start wieder geöffnet, verbinden sie sich erneut, sobald dieses Projekt fertig geöffnet ist; solange der Ordner noch startet oder in mehreren Tabs geöffnet ist, bleiben sie nicht verfügbar, bis Sie die Einstellungen aus dem gewünschten Fenster öffnen.
 
 Browser- und Remote-Einstellungen sind eingebettet, kein zweiter nativer Einstellungsbesitzer. Ein Fehler beim Öffnen nativer Einstellungen wird gemeldet; er bedeutet nicht, dass stattdessen eine versteckte eingebettete Einstellungsseite geöffnet wurde.
 
@@ -46,13 +48,13 @@ Unter macOS-Tauri teilen Profile System-WebKit-Speicher, Anmeldungen und Cache; 
 
 ## Andere gespeicherte Profile löschen {#delete-profiles}
 
-1. Suchen Sie unter nativen **Einstellungen → Allgemein → Startverhalten** nach **Andere gespeicherte Profile**. Dies erscheint nur bei anderen vorhandenen Profilen auf dem Rechner.
+1. Suchen Sie unter nativen **Einstellungen → Allgemein** nach **Andere gespeicherte Profile** unterhalb von **Vorherigen Zustand wiederherstellen**. Dies erscheint nur bei anderen vorhandenen Profilen auf dem Rechner.
 2. Aktualisieren Sie bei Bedarf die Liste, wählen Sie **Löschen…** und lesen Sie Ziele und übersprungene Profile.
 3. Bestätigen Sie erst nach Sicherung benötigter Entwürfe/Anmeldungen. Prüfen Sie vor Wiederholung Berichte zu unvollständiger Entfernung.
 
 Die Löschung entfernt gespeicherte Tabs, Entwürfe, Layout und zugehörigen Webspeicher/Cache/Anmeldungen anderer Profile, einschließlich aufgelisteter Profile anderer Konfigurationen. Sie bewahrt geöffnetes Profil, OpenCode-Unterhaltungen und Projektdateien. Offene Profile oder Profile mit unbekanntem Zustand werden übersprungen; schließen Sie relevante CodeNomad-Fenster vor expliziter Aktualisierung/Wiederholung. Unbekannte Inhalte werden behalten und gemeldet statt pauschal gelöscht.
 
-Der gemeinsame WebKit-Speicher von macOS-Tauri bleibt erhalten, da dessen Löschung andere Profile betreffen würde. Diese Bereinigung ist nicht rückgängig zu machen: Eine erhaltene native Unterhaltung stellt keinen gelöschten ungesendeten Entwurf wieder her. **Gespeicherten Zustand löschen** ist die kleinere Aktion, wenn Sie nur das aktuelle Fenster zurücksetzen möchten.
+Der gemeinsame WebKit-Speicher von macOS-Tauri bleibt erhalten, da dessen Löschung andere Profile betreffen würde. Diese Bereinigung ist nicht rückgängig zu machen: Eine erhaltene native Unterhaltung stellt keinen gelöschten ungesendeten Entwurf wieder her. **Gespeicherten Startzustand löschen** ist die kleinere Aktion, wenn Sie nur das aktuelle Fenster zurücksetzen möchten.
 
 ## Zoom und Panel-Geometrie {#zoom-panels}
 

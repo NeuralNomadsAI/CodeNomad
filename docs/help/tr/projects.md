@@ -12,7 +12,7 @@ Uzak bir sunucuya göz atmak, telefonunuzun veya dizüstü bilgisayarınızın d
 
 Klonlama hedefe bir depo yazar. **Hedef klasör zaten varsa önce onu kaldırın.** yıkıcıdır: yalnızca zaten orada olan her şeyin silinebildiği durumlarda etkinleştirin. Emin değilseniz yeni bir hedef kullanın. Başarısız bir klon, mevcut bir projeyi silmek için bir neden değildir; yeniden denemeden önce bildirilen hedefi ve hatayı inceleyin.
 
-Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** görünen adı değiştirir; **Son kullanılanlardan kaldır** dosyaları veya konuşmaları değil, kısayolu kaldırır. Zaten açık bir son kullanılan proje seçildiğinde mevcut sekmesine geçilebilir.
+Son kullanılan kayıtlar birer kısayoldur. **Workspace'i yeniden adlandır** görünen adı değiştirir; **Son kullanılanlardan kaldır** dosyaları veya konuşmaları değil, kısayolu kaldırır. Zaten açık olan bir son kullanılan projeye tıklamak yeni bir sekme açar; mevcut sekmeyi seçmek için bunun yerine projenin **Aç** düğmesini (**Açık projeye geç**) kullanın.
 
 ## Yeni örnek başlatıcıyı kullanın {#new-instance-launcher}
 
@@ -23,30 +23,32 @@ Normal bir tıklama yine de tam ana sayfayı açar. Başlatıcı, yönetim yüze
 
 ## Bir projeyi kapatın {#close-stop}
 
-1. Projeyi CodeNomad'de kapatmak için sekmenin kapat düğmesini veya komut paletindeki **Sekmeyi Kapat** öğesini kullanın.
-2. CodeNomad o sekmenin projesini takip etmeyi bırakır; oturumlar OpenCode'da çalışmaya devam eder.
+1. Sekmenin kapat düğmesini veya komut paletindeki **Sekmeyi Kapat** öğesini (arayüzde `Ctrl/Cmd+W`) kullanın.
+2. Sekmeyi kapatmak o projeyi CodeNomad'de kapatır: CodeNomad projenin olaylarını ve isteklerini izlemeyi bırakır. Oturumlar OpenCode'da çalışmaya devam eder.
 3. Konuşmaları yeniden bulmak için klasörü Gözat veya Son Kullanılanlar aracılığıyla tekrar açın.
 
 | Eylem | Kapsam ve etki | Ne yapmaz |
 | --- | --- | --- |
-| Sekmeyi Kapat | O sekmenin projesini CodeNomad'de kapatır | Proje dosyalarını veya yerel geçmişi silmez; oturumları veya OpenCode hizmetini durdurmaz |
+| Sekmeyi Kapat | O sekmenin CodeNomad proje bağlantısını kaldırır; aynı klasörde ayrı açılmış başka bir sekme etkilenmez | Proje dosyalarını veya yerel geçmişi silmez, oturumları durdurmaz veya OpenCode'un Location bağlamını kaldırmaz |
 | Oturumu durdur | Seçilen görüşmenin yürütülmesi | Projeyi kapatmaz veya geçmişini silmez |
 
-Aynı klasörün ayrı bir sekmesi etkilenmez. Aynı çalışma alanı başka bir pencerede görüntüleniyorsa oradaki sekme de kapanır ve bir bildirim gösterilir. Projeyi kapatmak OpenCode Location bağlamını kaldırmaz. Yürütmenin bittiğini doğrulamak istiyorsanız kapatmadan önce ilgili çalıştırmaları açıkça durdurun. Paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
+Aynı proje bağlantısını başka bir pencere gösteriyorsa oradaki sekme de kapanır ve o pencere bir bildirim gösterir. Kapatmayı başlatan pencere bildirim göstermez. Kapatma hemen gerçekleşir; arka uç projeyi kapatamazsa bir hata görünür ve ana sayfadaki **Açık projeye geç** yine projeye ulaşır. Otomatik yeniden deneme yoktur. Kapatılan sekmenin gönderilmemiş taslakları başlangıç geri yüklemesinde korunmaz.
+
+Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını kapatmaz; normal başlangıç geri yüklemesi yine uygulanır. Yürütmenin bittiğini doğrulamak istiyorsanız ilgili çalıştırmaları açıkça durdurun. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz; paylaşılan hizmetin bakımı [OpenCode kurulumu](opencode.md) bölümünde açıklanır.
 
 ## Geçici çalışma alanları {#temporary-workspaces}
 
 1. Başlatıcıda **Geçici** öğesini veya ana sayfada **Yeni geçici instance** öğesini seçin.
 2. Boş CodeNomad tarafından yönetilen klasörde çalışın; Git otomatik olarak başlatılmıyor.
-3. Sekmeyi kapatırken **Sakla**, **At** veya **İptal** öğesini seçin. Sakla, klasörü ve konuşmaları koruyarak projeyi CodeNomad'de kapatır. Sekme menüsü ayrıca **Proje olarak sakla** öğesini de sunar.
+3. Sekmeyi kapatırken **Sakla**, **At** veya **İptal** öğesini seçin. Sekme menüsü ayrıca **Proje olarak sakla** öğesini de sunar.
 
 | Seçim | Etki | Kurtarma |
 | --- | --- | --- |
-| Sakla | Klasörü ve konuşmaları korur, geçici durumunu kaldırır ve son kullanılan projelere ekler | Son kullanılanlardan yeniden açın; klasör taşınmaz |
+| Sakla | Projeyi CodeNomad'de kapatır, klasörü ve konuşmaları korur, geçici durumunu kaldırır ve son kullanılan projelere ekler | Son kullanılanlardan yeniden açın; klasör taşınmaz |
 | At | Geçici çalışma alanının konuşmalarını ve dosyalarını siler | Geri alma yok; ihtiyaç duyulan her şeyi önce başka bir yere kaydedin |
 | İptal | Geçici çalışma alanını açık bırakır | Çalışmaya devam edin veya daha sonra karar verin |
 
-Hiçbir konuşma, dosya veya gönderilmemiş taslak içermeyen, dokunulmamış bir geçici sekme, kapatıldığında sessizce atılır. Açık geçici sekmeler normal başlangıç ​​geri yüklemesine katılır, ancak ana sayfada kapatılan geçici klasörlerin devam ettirilmesi için ayrı bir liste yoktur.
+Hiçbir konuşma, dosya veya gönderilmemiş taslak içermeyen, dokunulmamış bir geçici sekme, kapatıldığında sessizce atılır. Açık geçici sekmeler normal başlangıç geri yüklemesine katılır, ancak ana sayfada kapatılan geçici klasörlerin devam ettirilmesi için ayrı bir liste yoktur.
 
 Bir konuşma çalışırken veya klasör başka sekmede/pencerede açıkken At işlemi reddedilir. Önce çalıştırmayı durdurup diğer görünümleri kapatın. Atma başarısız olursa çalışma alanı geçici kalır: üst dizini elle silmek yerine bildirilen sorunu çözüp yeniden deneyin.
 

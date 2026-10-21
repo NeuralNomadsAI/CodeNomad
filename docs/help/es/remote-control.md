@@ -11,12 +11,12 @@ Control remoto permite a un navegador o cliente de escritorio emparejado usar tu
 
 El enlace es válido durante **cinco minutos** y funciona **una vez**. Trátalo como una credencial: cualquiera que lo consuma puede convertirse en un dispositivo emparejado. El código está en el fragmento de la URL, no en la cadena de consulta. **Crear nuevo enlace de emparejamiento** invalida inmediatamente el enlace anterior sin usar. Detener, apagar el backend y los fallos del túnel cancelan los enlaces de emparejamiento pendientes.
 
-Para emparejar otro CodeNomad de escritorio, abre **Servidores → Conectar a un servidor**, pega el enlace en **URL del servidor** y elige **Conectar**. Solo se guarda el origen del túnel como marcador; el código no se conserva. La verificación TLS permanece activada para enlaces de emparejamiento.
+Para emparejar otro CodeNomad de escritorio, elige **Conectar servidor CodeNomad** en su página de inicio, pega el enlace en **URL del servidor** y elige **Conectar**. Un enlace de emparejamiento abre su ventana incluso desde **Guardar**, porque abrirlo consume el código. Solo se guarda el origen del túnel como marcador; el código no se conserva. La verificación TLS permanece activada para enlaces de emparejamiento.
 
 ## Gestionar dispositivos emparejados {#paired-devices}
 
 1. En el equipo anfitrión, vuelve a **Configuración → Acceso remoto → Control remoto**.
-2. Revisa **Dispositivos emparejados** y su hora de **Última actividad**.
+2. Revisa **Dispositivos emparejados** y su hora de **Última actividad**. Cada dispositivo recibe el nombre de la plataforma y el navegador que lo emparejaron, como `iPhone · Safari`.
 3. Elige **Revocar** para un dispositivo que ya no deba conectarse.
 
 La revocación finaliza las conexiones HTTP/SSE actuales del dispositivo y su acceso futuro. Vuelve a emparejarlo con un enlace nuevo para restaurar el acceso. Un dispositivo caduca tras **30 días sin uso**. Al alcanzar el **límite de 32 dispositivos**, un emparejamiento nuevo reemplaza el dispositivo con actividad más antigua y cierra sus conexiones.
@@ -27,9 +27,9 @@ Cambiar la contraseña de acceso directo **no** revoca dispositivos. **Detener c
 
 ### Volver a emparejar sin perder tu lugar {#re-pair}
 
-1. Si el cliente indica que el dispositivo ya no está emparejado, deja abierta esa página.
+1. Si el cliente muestra **Vincular de nuevo este dispositivo**, deja abierta esa página.
 2. En el anfitrión, elige **Crear nuevo enlace de emparejamiento** y ábrelo en el **mismo navegador/perfil del cliente**. Para un servidor de escritorio guardado, reconecta usando el enlace nuevo para reutilizar el almacenamiento de su ventana remota existente.
-3. Vuelve a la página en espera y comprueba de nuevo la autenticación.
+3. Vuelve a la página en espera y elige **Comprobar conexión**; también vuelve a comprobarla cuando la página recupera el foco.
 
 La recuperación conserva la página abierta y los borradores; no repite una acción fallida. Comprueba si un envío, respuesta o eliminación surtió efecto antes de reintentarlo. Una contraseña de acceso directo no puede recuperar el emparejamiento de Control remoto.
 
@@ -42,7 +42,7 @@ La recuperación conserva la página abierta y los borradores; no repite una acc
 | Detener control remoto | Desconecta el acceso y borra la reanudación automática al iniciar; conserva los registros de dispositivos. |
 | Apagado del backend / se cierra la última ventana de escritorio y la aplicación termina | Control remoto queda sin conexión. El servicio compartido de OpenCode puede seguir ejecutándose, pero no puede servir esta interfaz mediante un backend detenido. |
 | Iniciar después de dejar Control remoto activado | Reconecta en segundo plano sin emitir un enlace de emparejamiento nuevo. Las instalaciones donde nunca se inició no se activan solas. |
-| Reanudación fallida o error fatal del túnel | La elección recordada permanece; consulta **Actualizar** en el anfitrión. **Detener control remoto** la borra; un inicio posterior reintenta si permanece activada. |
+| Reanudación fallida o error fatal del túnel | La elección recordada permanece y el anfitrión muestra el error; el icono de actualizar de la tarjeta de Control remoto vuelve a leer su estado. **Iniciar control remoto** reintenta ahora; **Detener control remoto** borra la elección. Si no, un inicio posterior reintenta. |
 
 La reanudación automática al iniciar se limita a un backend por directorio de configuración. No inicies anfitriones que compitan con la misma configuración para obtener más capacidad de túnel. Para un equipo que deba seguir accesible tras salir del escritorio, despliega un [servidor independiente](server.md) gestionado por separado; Control remoto no es un daemon independiente.
 

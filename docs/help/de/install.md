@@ -45,7 +45,7 @@ Die Electron-Debian-Installation richtet die Chromium-Sandbox ein. Deaktivieren 
 
 | Anforderung | Wo sie verfügbar sein muss | Aktuelle Anforderung |
 | --- | --- | --- |
-| OpenCode-CLI | Ausgewählter Ausführungshost, gegebenenfalls einschließlich der ausgewählten WSL-Distribution | Mindestens **2.1.0**; **2.1.0** ist das empfohlene/qualifizierte Ziel. Neuere oder angepasste Versionen werden anhand der Schnittstellenverträge geprüft, nicht wegen fehlender Tests ausgeschlossen. |
+| OpenCode-CLI | Ausgewählter Ausführungshost, gegebenenfalls einschließlich der ausgewählten WSL-Distribution | Mindestens **2.1.0**; **2.1.1** ist das empfohlene/qualifizierte Ziel. Neuere oder angepasste Versionen werden anhand der Schnittstellenverträge geprüft, nicht wegen fehlender Tests ausgeschlossen. |
 | Git | Im `PATH` des CodeNomad-Backend-Kontos | Erforderlich für Repository-Identität, Git-Vorgänge und Worktrees. |
 | Node.js/npm | Host für eigenständigen Server und Quellcode-Builds | Node.js 24 LTS; reproduzierbare Quellcode-Builds verwenden `.node-version` (**24.20.0**). In den Desktop-Laufzeit-/Installationsressourcen enthalten. |
 | Arbeitsbereichsordner | Für das Backend zugänglicher Datenträger | Ein ausdrücklich geöffneter physischer Ordner, kein von einem Remote-Browser angenommener gerätelokaler Ordner. |
@@ -62,7 +62,7 @@ Ohne Git können Sie weiterhin einen physischen Ordner öffnen und verzeichnisge
 2. Prüfen Sie vor dem Öffnen eines Projekts den Laufzeitstatus.
 3. Öffnen Sie später **Einstellungen → OpenCode**, um Programmdatei, Installation und gemeinsamen Dienst getrennt zu verwalten.
 
-CodeNomad bevorzugt kompatible Programmdateien im `PATH` und unterstützt eine ausdrücklich ausgewählte Programmdatei. Das Installieren/Aktualisieren einer CLI startet einen bereits laufenden gemeinsamen Dienst nicht stillschweigend neu. Die [OpenCode-Einrichtung](opencode.md) erläutert Neustart-/Neuladefolgen, WSL und die Sitzungsumgebung.
+CodeNomad bevorzugt kompatible Programmdateien im `PATH` und unterstützt eine ausdrücklich ausgewählte Programmdatei. Startet `PATH` ein älteres OpenCode, bietet die Einrichtung an, ein mit npm installiertes OpenCode 1.x nach Bestätigung zu ersetzen oder OpenCode 2 für CodeNomad neben einer auf anderem Weg erstellten Installation zu installieren, die sie nie verändert; siehe [OpenCode-Einrichtung](opencode.md#select-cli). Das Installieren/Aktualisieren einer CLI startet einen bereits laufenden gemeinsamen Dienst nicht stillschweigend neu. Die [OpenCode-Einrichtung](opencode.md) erläutert Neustart-/Neuladefolgen, WSL und die Sitzungsumgebung.
 
 ## Stattdessen einen Browser verwenden {#browser-install}
 

@@ -6,17 +6,19 @@
 2. Usa **Ventana → Nueva ventana** nativo (`Ctrl+Shift+N` o `Cmd+Shift+N`) para una ventana de aplicación separada.
 3. En **Configuración → Avanzado**, activa **Enfocar la ventana existente en el segundo inicio** si otro inicio debe enfocar la ventana usada más recientemente en lugar de abrir una nueva.
 
-Las pestañas de proyectos, conversaciones seleccionadas y disposición pertenecen a una ventana. Las sesiones/mensajes OpenCode pertenecen al servicio nativo compartido de OpenCode: otra ventana puede ver la misma conversación. Cerrar una ventana o pestaña de la aplicación no detiene ese servicio. Cerrar una pestaña de proyecto cierra el proyecto en CodeNomad; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto; consulta [Proyectos](projects.md). No uses el cierre de ventanas como prueba de que se ha detenido un agente o una Misión programada.
+Las pestañas de proyectos, conversaciones seleccionadas y disposición pertenecen a una ventana. Las sesiones/mensajes OpenCode pertenecen al servicio nativo compartido de OpenCode: otra ventana puede ver la misma conversación. Cerrar una pestaña de proyecto cierra ese proyecto en CodeNomad, no sus sesiones OpenCode; vuelve a abrirlo para encontrarlas. Otra ventana que muestre la misma conexión de proyecto también cierra su pestaña y muestra una notificación; las pestañas de la misma carpeta abiertas por separado no se ven afectadas. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas; consulta [Proyectos](projects.md). No uses el cierre de ventanas como prueba de que se ha detenido un agente o una Misión programada.
+
+Los menús nativos de la aplicación usan el idioma de la interfaz de CodeNomad en cuanto se ha cargado una ventana; hasta entonces se muestran en inglés. **Ayuda → Acerca de CodeNomad** (también en el menú de la aplicación en macOS) abre **Configuración → Info** con la versión, las actualizaciones y los diagnósticos.
 
 ## Preferencias y restauración al iniciar {#preferences-startup}
 
 1. Abre Configuración desde la ventana que quieras configurar. Los puntos de entrada locales de escritorio enfocan la única ventana nativa de Preferencias con el proyecto/Location de esa ventana de origen.
-2. En **General → Inicio**, activa o desactiva **Restaurar el estado anterior**.
-3. Para olvidar la disposición guardada de esa ventana, usa **Borrar estado guardado** después de leer sus consecuencias.
+2. En **General**, activa o desactiva **Restaurar el estado anterior**.
+3. Para olvidar la disposición guardada de esa ventana, usa **Borrar el estado de inicio guardado**. Se aplica de inmediato, sin confirmación.
 
 La restauración puede reabrir pestañas de espacios de trabajo/SideCar y sesiones activas, texto sin enviar, posiciones de desplazamiento, paneles, posición de ventanas y zoom. Es estado del cliente por ventana, no una copia de la base de datos nativa de conversaciones. Borrarlo elimina pestañas guardadas, borradores y disposición; no elimina la configuración de CodeNomad ni conversaciones OpenCode. Guarda primero cualquier borrador importante sin enviar en otro lugar.
 
-La ventana de Preferencias no tiene un estado de restauración independiente: Inicio apunta a la ventana que la abrió. Si esa ventana se cerró, o es desconocida porque Preferencias se reabrió al iniciar, Inicio sigue la ventana usada más recientemente; un cambio preparado para otra ventana nunca se aplica, los controles muestran primero el valor de la nueva ventana. Para configurar una ventana concreta, abre Preferencias desde ella. Los ajustes con ámbito de proyecto usan igualmente la Location de origen; sin ella no están disponibles.
+La ventana de Preferencias no tiene un estado de restauración independiente: estos controles apuntan a la ventana que la abrió. Si esa ventana se cerró, o es desconocida porque Preferencias se reabrió al iniciar, siguen la ventana usada más recientemente; un cambio preparado para otra ventana nunca se aplica, y los controles muestran primero el valor de la nueva ventana. Para configurar una ventana concreta, abre Preferencias desde ella. Los ajustes con ámbito de proyecto usan igualmente la Location de origen; sin ella no están disponibles. Cuando Preferencias se reabre al iniciar, se vuelven a conectar en cuanto ese proyecto termina de abrirse; mientras la carpeta sigue iniciándose, o está abierta en varias pestañas, permanecen no disponibles hasta que abras Preferencias desde la ventana deseada.
 
 La configuración del navegador y remota está integrada en lugar de tener un segundo propietario nativo de Preferencias. Se informa de un error al abrir Preferencias nativas; no es motivo para suponer que se abrió una pantalla integrada oculta en su lugar.
 
@@ -46,13 +48,13 @@ En Tauri para macOS, los perfiles separados comparten almacenamiento WebKit del 
 
 ## Eliminar otros perfiles guardados {#delete-profiles}
 
-1. En **Configuración → General → Inicio** nativo, busca **Otros perfiles guardados**. Solo aparece si hay otros perfiles en el equipo.
+1. En **Configuración → General** nativo, busca **Otros perfiles guardados** debajo de **Restaurar el estado anterior**. Solo aparece si hay otros perfiles en el equipo.
 2. Actualiza la lista si es necesario, elige **Eliminar…** y lee los destinos enumerados y los perfiles omitidos.
 3. Confirma solo después de conservar los borradores/inicios de sesión que necesites. Inspecciona cualquier informe de eliminación incompleta antes de reintentar.
 
 La eliminación borra las pestañas, borradores, disposición y almacenamiento web/caché/inicios de sesión propios de otros perfiles, incluidos perfiles enumerados de otra configuración. Conserva el perfil abierto, las conversaciones OpenCode y los archivos del proyecto. Se omiten los perfiles abiertos o de estado desconocido; cierra las ventanas de CodeNomad relevantes antes de actualizar explícitamente y reintentar. El contenido no reconocido se conserva y se notifica en lugar de eliminarse indiscriminadamente.
 
-El almacén WebKit compartido de Tauri en macOS se conserva porque borrarlo afectaría a otros perfiles. Esta limpieza no se puede deshacer: que sobreviva una conversación nativa no restaura un borrador sin enviar eliminado. **Borrar estado guardado** es la acción más limitada cuando solo quieres restablecer la ventana actual.
+El almacén WebKit compartido de Tauri en macOS se conserva porque borrarlo afectaría a otros perfiles. Esta limpieza no se puede deshacer: que sobreviva una conversación nativa no restaura un borrador sin enviar eliminado. **Borrar el estado de inicio guardado** es la acción más limitada cuando solo quieres restablecer la ventana actual.
 
 ## Zoom y geometría de paneles {#zoom-panels}
 

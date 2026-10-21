@@ -11,12 +11,12 @@ Fernsteuerung ermöglicht einem gekoppelten Browser- oder Desktop-Client die Nut
 
 Der Link gilt **fünf Minuten** und funktioniert **einmal**. Behandeln Sie ihn als Zugangsdaten: Wer ihn einlöst, kann ein gekoppeltes Gerät werden. Der Code steht im URL-Fragment, nicht in der Abfragezeichenfolge. **Neuen Kopplungslink erstellen** macht den vorherigen ungenutzten Link sofort ungültig. Stop, Backend-Ende und Tunnelfehler stornieren offene Kopplungslinks.
 
-Um einen weiteren CodeNomad-Desktop zu koppeln, öffnen Sie **Server → Mit Server verbinden**, fügen den Link in **Server-URL** ein und wählen **Verbinden**. Nur die Tunnel-Origin wird als Lesezeichen gespeichert; der Code bleibt nicht erhalten. TLS-Prüfung bleibt für Kopplungslinks aktiviert.
+Um einen weiteren CodeNomad-Desktop zu koppeln, wählen Sie auf dessen Startseite **CodeNomad-Server verbinden**, fügen den Link in **Server-URL** ein und wählen **Verbinden**. Ein Kopplungslink öffnet sein Fenster auch über **Speichern**, weil das Öffnen den Code einlöst. Nur die Tunnel-Origin wird als Lesezeichen gespeichert; der Code bleibt nicht erhalten. TLS-Prüfung bleibt für Kopplungslinks aktiviert.
 
 ## Gekoppelte Geräte verwalten {#paired-devices}
 
 1. Kehren Sie auf dem Host zu **Einstellungen → Remote-Zugriff → Fernsteuerung** zurück.
-2. Prüfen Sie **Gekoppelte Geräte** und deren **Zuletzt gesehen:**-Zeit.
+2. Prüfen Sie **Gekoppelte Geräte** und deren **Zuletzt gesehen:**-Zeit. Jedes Gerät ist nach der Plattform und dem Browser benannt, die es gekoppelt haben, etwa `iPhone · Safari`.
 3. Wählen Sie **Widerrufen** für ein Gerät, das nicht länger zugreifen soll.
 
 Widerruf beendet aktuelle HTTP-/SSE-Verbindungen des Geräts sowie zukünftigen Zugriff. Koppeln Sie zum Wiederherstellen mit einem neuen Link. Ein Gerät verfällt nach **30 Tagen ohne Nutzung**. Bei der **Grenze von 32 Geräten** ersetzt eine neue Kopplung das am längsten nicht gesehene Gerät und schließt dessen Verbindungen.
@@ -27,9 +27,9 @@ Eine Änderung des Direktzugriffspassworts widerruft Geräte **nicht**. **Fernst
 
 ### Ohne Positionsverlust erneut koppeln {#re-pair}
 
-1. Meldet der Client, dass das Gerät nicht mehr gekoppelt ist, lassen Sie diese Seite offen.
+1. Zeigt der Client **Dieses Gerät erneut koppeln**, lassen Sie diese Seite offen.
 2. Wählen Sie auf dem Host **Neuen Kopplungslink erstellen** und öffnen Sie ihn im **selben Client-Browser/-Profil**. Verbinden Sie bei gespeichertem Desktop-Server mit dem frischen Link neu, damit der vorhandene Remote-Fensterspeicher wiederverwendet wird.
-3. Kehren Sie zur wartenden Seite zurück und prüfen Sie die Authentifizierung erneut.
+3. Kehren Sie zur wartenden Seite zurück und wählen Sie **Verbindung prüfen**; sie prüft auch erneut, wenn die Seite wieder den Fokus erhält.
 
 Die Wiederherstellung bewahrt die geöffnete Seite und Entwürfe; sie wiederholt keine fehlgeschlagene Aktion. Prüfen Sie vor Wiederholung, ob Senden, Antworten oder Löschen wirksam war. Ein Direktzugriffspasswort kann die Fernsteuerungskopplung nicht wiederherstellen.
 
@@ -42,7 +42,7 @@ Die Wiederherstellung bewahrt die geöffnete Seite und Entwürfe; sie wiederholt
 | Fernsteuerung beenden | Trennt den Zugriff und löscht automatisches Fortsetzen beim Start; behält Gerätedatensätze. |
 | Backend-Ende / letztes Desktop-Fenster schließt und App endet | Fernsteuerung geht offline. OpenCodes gemeinsamer Dienst kann weiterlaufen, kann diese Oberfläche aber nicht durch ein gestopptes Backend bereitstellen. |
 | Start nach aktiviert gelassener Fernsteuerung | Verbindet im Hintergrund ohne neuen Kopplungslink. Niemals gestartete Installationen aktivieren sich nicht selbst. |
-| Fehlgeschlagenes Fortsetzen oder schwerer Tunnelfehler | Gemerkte Auswahl bleibt; prüfen Sie **Aktualisieren** auf dem Host. **Fernsteuerung beenden** löscht sie; ein späterer Start versucht es erneut, falls sie aktiviert bleibt. |
+| Fehlgeschlagenes Fortsetzen oder schwerer Tunnelfehler | Gemerkte Auswahl bleibt und der Host zeigt den Fehler; das Aktualisieren-Symbol der Fernsteuerungskarte liest ihren Zustand erneut. **Fernsteuerung starten** versucht es sofort erneut; **Fernsteuerung beenden** löscht die Auswahl. Andernfalls versucht es ein späterer Start erneut. |
 
 Automatisches Fortsetzen beim Start ist auf ein Backend pro Konfigurationsverzeichnis begrenzt. Starten Sie keine konkurrierenden Hosts mit gleicher Konfiguration für zusätzliche Tunnelkapazität. Soll ein Host nach Desktop-Ende erreichbar bleiben, betreiben Sie einen separat verwalteten [eigenständigen Server](server.md); Fernsteuerung ist kein unabhängiger Daemon.
 

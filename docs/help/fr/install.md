@@ -45,7 +45,7 @@ L’installation Debian d’Electron configure le bac à sable Chromium. Ne dés
 
 | Prérequis | Où il doit être disponible | Exigence actuelle |
 | --- | --- | --- |
-| CLI OpenCode | Hôte d’exécution sélectionné, y compris la distribution WSL choisie le cas échéant | Minimum **2.1.0** ; **2.1.0** est la cible recommandée/qualifiée. Les versions plus récentes ou personnalisées passent une validation des contrats plutôt qu’une interdiction des versions non testées. |
+| CLI OpenCode | Hôte d’exécution sélectionné, y compris la distribution WSL choisie le cas échéant | Minimum **2.1.0** ; **2.1.1** est la cible recommandée/qualifiée. Les versions plus récentes ou personnalisées passent une validation des contrats plutôt qu’une interdiction des versions non testées. |
 | Git | `PATH` du compte du backend CodeNomad | Requis pour l’identité des dépôts, les opérations Git et les worktrees. |
 | Node.js/npm | Hôte du serveur autonome et de compilation depuis les sources | Node.js 24 LTS ; les compilations reproductibles utilisent `.node-version` (**24.20.0**). Fourni avec les ressources d’exécution/d’installation de bureau. |
 | Dossier de travail | Disque accessible au backend | Dossier physique explicitement ouvert, pas un dossier local à l’appareil déduit par un navigateur distant. |
@@ -62,7 +62,7 @@ Sans Git, vous pouvez toujours ouvrir un dossier physique et utiliser des conver
 2. Vérifiez l’état de l’environnement d’exécution avant d’ouvrir un projet.
 3. Revenez à **Préférences → OpenCode** pour gérer séparément l’exécutable, l’installation et le service partagé.
 
-CodeNomad privilégie les exécutables compatibles dans `PATH` et accepte un exécutable explicitement sélectionné. Installer/mettre à jour une CLI ne redémarre pas silencieusement un service partagé déjà lancé. Consultez la [configuration d’OpenCode](opencode.md) pour les conséquences d’un redémarrage/rechargement, WSL et l’environnement des sessions.
+CodeNomad privilégie les exécutables compatibles dans `PATH` et accepte un exécutable explicitement sélectionné. Si `PATH` lance un OpenCode plus ancien, la configuration propose, après confirmation, de remplacer un OpenCode 1.x installé avec npm, ou d’installer OpenCode 2 pour CodeNomad à côté d’une installation faite autrement, qu’elle ne modifie jamais ; voir la [configuration d’OpenCode](opencode.md#select-cli). Installer/mettre à jour une CLI ne redémarre pas silencieusement un service partagé déjà lancé. Consultez la [configuration d’OpenCode](opencode.md) pour les conséquences d’un redémarrage/rechargement, WSL et l’environnement des sessions.
 
 ## Utiliser plutôt un navigateur {#browser-install}
 

@@ -4,10 +4,10 @@ La autenticación de proveedores pertenece al servicio OpenCode conectado, no al
 
 ## Conectar un proveedor de modelos o búsqueda {#connect}
 
-1. Abre un espacio de trabajo y después **Configuración → Proveedores**.
-2. En **Modelos** o **Búsqueda web**, elige **Seleccionar proveedor** y después **Conectar**.
-3. Completa el **Método de autenticación** nativo ofrecido: clave API, OAuth o comando. Para OAuth, usa **Abrir página de autorización** y envía un código de autorización solo cuando se solicite.
-4. Comprueba la fila del proveedor configurado al terminar; usa **Actualizar** si el resultado no está claro.
+1. Abre un espacio de trabajo y después **Configuración → Proveedores**. **Modelos** empieza expandido; expande **Búsqueda web** para los proveedores de búsqueda.
+2. En ese grupo, elige **Seleccionar proveedor** y después **Conectar**.
+3. Para un proveedor de modelos, completa el **Método de autenticación** nativo ofrecido: clave API, OAuth o comando. Para OAuth, usa **Abrir página de autorización** y envía un código de autorización solo cuando se solicite. Los proveedores de búsqueda se conectan con una clave API.
+4. Comprueba la fila del proveedor configurado al terminar. **Modelos** vuelve a leer tras las conexiones, los cambios de cuenta y las reconexiones; **Búsqueda web** también tiene **Actualizar**.
 
 Las integraciones exclusivas de búsqueda aparecen en **Búsqueda web**, no en **Modelos**. Guardar la autenticación no elige un modelo ni cambia el proveedor de búsqueda predeterminado. Las claves API y las credenciales OAuth las guarda el servidor OpenCode activo. El navegador recibe metadatos de conexión, no secretos de credenciales guardadas. Una conexión procedente de variables de entorno es de solo lectura en esta interfaz: cambia el entorno propietario en lugar de intentar desconectarla aquí.
 
@@ -17,9 +17,9 @@ Si se bloquea la ventana de autorización, usa **Abrir página de autorización*
 
 1. En la fila del proveedor, usa **Cuenta activa** para seleccionar una credencial guardada.
 2. Usa **Añadir cuenta** para autenticar otra conexión.
-3. Para gestionar otra cuenta guardada, selecciónala primero y usa **Renombrar cuenta** o **Eliminar cuenta**. Para renombrar se usan **Nombre de cuenta** y **Guardar**.
+3. Para gestionar otra cuenta guardada, selecciónala primero y usa **Renombrar cuenta** o **Eliminar cuenta**. Para renombrar se usan **Nombre de cuenta** y **Guardar**; **Eliminar cuenta** actúa de inmediato, sin confirmación.
 
-La selección, el cambio de nombre y la eliminación afectan a esa integración en todo el servicio OpenCode, incluidos otros proyectos y clientes. Eliminar una credencial puede dejar a esos clientes sin autenticación; no elimina el historial de conversaciones ni revoca la cuenta remota del proveedor. Las conexiones del entorno no pueden seleccionarse como credenciales guardadas modificables ni eliminarse aquí. Si una operación falla, actualiza y reconcilia **Cuenta activa** antes de volver a actuar.
+La selección, el cambio de nombre y la eliminación afectan a esa integración en todo el servicio OpenCode, incluidos otros proyectos y clientes. Eliminar una credencial puede dejar a esos clientes sin autenticación; no elimina el historial de conversaciones ni revoca la cuenta remota del proveedor. Las conexiones del entorno no pueden seleccionarse como credenciales guardadas modificables ni eliminarse aquí. Si una operación falla, CodeNomad vuelve a leer las cuentas: comprueba de nuevo **Cuenta activa** antes de actuar.
 
 ### Límites de selección automática {#automatic-selection}
 
@@ -27,7 +27,7 @@ Con varias credenciales guardadas en una integración compatible, **Seleccionar 
 
 | Integración elegible | Tipo de cuenta elegible |
 | --- | --- |
-| OpenAI / Codex | Cuentas de suscripción OAuth de Codex, no claves de pago por uso de OpenAI. |
+| OpenAI / Codex | Cuentas de suscripción OAuth de Codex por navegador/dispositivo, no claves de pago por uso de OpenAI ni el método de inicio de sesión de ChatGPT cuyo uso OpenAI no proporciona. |
 | OpenCode Go | Clave Go o inicio de sesión/clave de OpenCode Console usados **solo para el proveedor Go**, no créditos Zen de pago por uso. |
 | Anthropic | Inicio de sesión OAuth de Claude Pro/Max de OpenCode, **no** el inicio de sesión de Claude Code. |
 | GitHub Copilot | OAuth con cuota legible de solicitudes premium; las credenciales de endpoint empresarial no son candidatas legibles. |
@@ -48,7 +48,9 @@ La visibilidad y los favoritos organizan los selectores de CodeNomad; no desinst
 
 ## Uso, recuentos de tokens e inicios de sesión caducados {#usage}
 
-Usa **Uso** en el panel derecho para ver los periodos del plan del proveedor de la conversación activa, sus horas de reinicio y los saldos compatibles. Estas lecturas del proveedor difieren de los **Tokens** por mensaje y las estimaciones de coste: una cuota de suscripción no es una factura calculada a partir de la transcripción visible. Una lectura ausente, obsoleta o desconocida no equivale a uso cero ni demuestra capacidad restante. **Saldo de créditos del proveedor** en la configuración de Chat controla la visualización complementaria del saldo.
+Usa **Uso** en el panel derecho para ver los periodos del plan del proveedor de la conversación activa, sus horas de reinicio y los saldos compatibles. Estas lecturas del proveedor difieren de los **Tokens** por mensaje y las estimaciones de coste: una cuota de suscripción no es una factura calculada a partir de la transcripción visible. Una lectura ausente, obsoleta o desconocida no equivale a uso cero ni demuestra capacidad restante. **Saldo de créditos del proveedor** en **Configuración → Avanzado** controla la visualización complementaria del saldo.
+
+OpenAI no proporciona datos de uso para uno de los métodos de inicio de sesión de ChatGPT: Uso lo indica en lugar de mostrar periodos de cuota. Chatear sigue funcionando, y volver a conectar el mismo inicio de sesión no restaura la lectura.
 
 Uso sigue la credencial nativa seleccionada. Claude mediante `anthropic`/`claude` usa el OAuth de Anthropic de OpenCode. El proveedor `claude-code` usa el inicio de sesión de Claude Code en el equipo del daemon, incluida su distribución WSL: `CLAUDE_CODE_OAUTH_TOKEN`, después el inicio de sesión almacenado, con `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` o `~/.claude` determinando el almacenamiento de archivos; macOS local puede usar el Llavero. CodeNomad no sustituye un inicio de sesión de Claude por el otro.
 
@@ -71,10 +73,10 @@ Mantén tokens/cookies fuera del historial de shell, capturas e informes. Los le
 
 ## Búsqueda web predeterminada y valor de Proyecto {#web-search}
 
-1. En **Configuración → Proveedores → Búsqueda web**, conecta la integración de búsqueda si necesita autenticación.
+1. En **Configuración → Proveedores**, expande **Búsqueda web** y conecta la integración de búsqueda con su clave API si la necesita.
 2. Elige **Búsqueda predeterminada** para la configuración Global.
-3. Usa **Para el proyecto actual** para sustituirla en la Location activa. Comprueba **Búsqueda en este proyecto** para conocer el resultado efectivo.
+3. Usa **Para el proyecto actual** para sustituirla en la Location activa. Pasa el puntero o enfoca ese selector para ver **Búsqueda en este proyecto** con el resultado efectivo.
 
-Los cambios se guardan automáticamente. **Predeterminado / heredado** usa la configuración heredada o la elección nativa guardada; un valor de Proyecto prevalece sobre Global. **Desactivado** desactiva la búsqueda en el ámbito seleccionado; **Proveedor automático** solicita la selección automática nativa del proveedor. Una elección procedente del entorno se muestra como solo lectura.
+Los cambios se guardan automáticamente. **Predeterminado / heredado** usa la configuración heredada o la elección nativa guardada; un valor de Proyecto prevalece sobre Global. **Desactivado** desactiva la búsqueda en el ámbito seleccionado; **Proveedor automático** solicita la selección automática nativa del proveedor. **Búsqueda web** carga sus conexiones y elecciones solo mientras está expandido. **Desconectar** elimina una clave de búsqueda guardada; una conexión proporcionada por una variable de entorno se etiqueta como de solo lectura y no tiene **Desconectar**.
 
 Las credenciales de búsqueda siguen siendo globales al servicio aunque la elección de proveedor tenga ámbito de Proyecto. Guardar una clave no la selecciona como búsqueda predeterminada. Si falla la lectura/el guardado, actualiza antes de reintentar; no reemplaces la configuración a ciegas. Para detalles de configuración nativa, consulta la [documentación de OpenCode](https://opencode.ai/v2/docs/) y la [configuración de OpenCode](opencode.md).

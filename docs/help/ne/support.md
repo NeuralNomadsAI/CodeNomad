@@ -8,7 +8,7 @@ bug report, current release र contribution का लागि repository प�
 2. GitHub issue form खोल्न **बग रिपोर्ट गर्नुहोस्** चयन गर्नुहोस्।
 3. prefilled version/client जानकारी समीक्षा गर्नुहोस्। न्यूनतम reproduction, अपेक्षित व्यवहार र वास्तविक नतिजा थपेर GitHub बाट बुझाउनुहोस्।
 
-कार्यले CodeNomad/OpenCode version, OS र bounded client/runtime context पूर्वभर्छ। listener address, workspace path, credential वा conversation text भर्दैन। form खोल्नु issue बुझाउनु होइन।
+कार्यले CodeNomad र OpenCode version (स्थापित भन्दा फरक हुँदा चलिरहेको OpenCode सेवासमेत), तपाईंको operating system, client प्रकार (web browser मा browser को user agent सहित) र server को operating system पूर्वभर्छ। listener address, workspace path, credential वा conversation text भर्दैन। form खोल्नु issue बुझाउनु होइन।
 
 थप निदान चाहिए **क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्** वा **.txt डाउनलोड गर्नुहोस्** ले छुट्टै report बनाउँछ। त्यस विस्तृत report मा local path र network address हुन सक्छन्: attach अघि review/redact गर्नुहोस्। automatic diagnostic report ले authentication secret हटाए पनि screenshot वा log अंशमा secret हुन सक्छन्।
 

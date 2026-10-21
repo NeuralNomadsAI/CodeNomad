@@ -7,7 +7,7 @@ CodeNomad expose les connexions MCP natives, l’activation des plugins, les com
 | Intégration | Où agir | Ce que la commande change |
 | --- | --- | --- |
 | Serveur MCP | **Statut → Serveurs MCP** | Connexion native à la Location affichée ; n’installe pas de serveur. |
-| Plugin natif | **Statut → Plugins** | Règle d’activation persistante **Global** ou **Projet** ; n’installe/met à jour/retire pas le paquet. |
+| Plugin natif | **Statut → Plugins** | Règle d’activation persistante **Global** ou **Projet** ; pour un plugin issu d’un paquet, vérification ou mise à jour explicite de ce paquet. N’installe ni ne retire de paquets. |
 | Compétence | Menu `@` de saisie | Pièce jointe explicite au prochain prompt dans la Location de la conversation. |
 | Commande personnalisée | Menu `/` de saisie | Exécute une commande exposée par OpenCode pour cette Location. |
 
@@ -28,10 +28,13 @@ Si aucun serveur n’apparaît, vérifiez la Location active et sa configuration
 1. Installez/déclarez le plugin natif avec OpenCode ; puis ouvrez **Statut → Plugins**.
 2. Survolez ou focalisez son nom pour inspecter source, échec d’exécution et détails de cible de configuration.
 3. Basculez délibérément **Global** ou **Projet**. Attendez l’écriture et utilisez **Actualiser les contrôles des plugins** si l’état est incertain.
+4. Pour un plugin installé depuis un paquet, utilisez l’icône à côté de son nom. Son menu nomme l’opération exacte : **Vérifier les mises à jour de** ce paquet, ou le **Mettre à jour** une fois une version plus récente trouvée.
 
 Global cible la configuration globale découverte du démon connecté. Projet cible la configuration dans la Location active, pas un fichier ancêtre hérité. Une règle Projet ultérieure peut remplacer Global ; le commutateur Global montre toujours la règle Global, sans prétendre être l’état Projet final. Sans règle Projet, Projet hérite de l’état Global résolu.
 
 Ces commutateurs ajoutent des règles d’activation exactes en préservant les déclarations de sources et la configuration sans rapport. Ils ne modifient pas les options des plugins, n’installent pas de paquets et ne retirent pas de fichiers. Les plugins intégrés d’OpenCode ne sont pas proposés comme commutateurs utilisateur. Projet est désactivé si sa cible ne peut pas être séparée de Global sans risque ou sort de la Location active.
+
+Une mise à jour de paquet modifie ce paquet dans le cache partagé d’OpenCode pour toutes les Locations qui l’utilisent, comme l’indique son infobulle ; elle ne change pas les règles d’activation, ne redémarre pas OpenCode et ne recharge pas la configuration. Les plugins locaux, intégrés et fournis par le SDK n’ont pas d’action de paquet. Un paquet qui échoue avant de communiquer l’ID de son plugin est listé sous son nom de paquet, avec l’échec dans son infobulle et les actions de vérification/mise à jour, mais sans commutateurs d’activation. Une vérification ou mise à jour échouée est signalée et jamais réessayée automatiquement.
 
 La surface conserve son dernier instantané quand elle est masquée et le revalide à l’affichage, aux changements natifs/reconnexions et à l’actualisation explicite. Une règle enregistrée et la disponibilité réelle peuvent brièvement différer. Si un plugin reste indisponible, inspectez son infobulle et sa configuration native avant **Recharger la configuration OpenCode** ; cette action affecte toutes les Locations chargées, pas seulement ce plugin. Une configuration mal formée ou une modification concurrente n’est pas écrasée silencieusement : résolvez-la, actualisez et réessayez explicitement.
 

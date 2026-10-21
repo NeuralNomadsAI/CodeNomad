@@ -54,6 +54,8 @@ direct remote access मा trusted HTTPS प्रयोग गर्नुह�
 
 `--workspace-root` ले खोल्न मिल्ने workspace सीमित गर्छ, र `--unrestricted-root` ले browsing खुकुलो बनाउँछ। कुनै पनि OS jail, container, filesystem sandbox वा authorized native tool ले गर्न सक्ने कामको सीमा होइन। agent, shell command, plugin र MCP tool execution host permission र आफ्नै configured credential मा काम गर्छन्।
 
+[SideCars](browser-sidecars.md) विश्वसनीय थप हुन्। CodeNomad ले आफ्ना sign-in र paired-device cookie SideCar सेवाबाट रोक्छ, तर SideCar पृष्ठ CodeNomad कै origin मा लोड हुन्छ र यसका script ले तपाईंको sign-in भएको session सहित काम गर्न सक्छन्। CodeNomad लाई जत्तिकै विश्वास गर्ने सेवा मात्र दर्ता गर्नुहोस्।
+
 वास्तविक अलगाव चाहिए OS account, container/VM र upstream permission configuration प्रयोग गर्नुहोस्। एउटा ट्याब मात्र देख्ला भन्ने अपेक्षाले device लाई access नदिनुहोस्। server configuration र shared OpenCode service ले अन्य कुराकानी/project प्रभावित गर्न सक्छन्; छुट्टै सीमाका लागि [OpenCode सेटअप](opencode.md), [अनुमति](permissions.md) र [विस्तार](extensions.md) हेर्नुहोस्।
 
 ## credential र निदान निजी राख्नुहोस् {#privacy}

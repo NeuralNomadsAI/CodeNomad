@@ -7,10 +7,10 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 1. Open **Missions** in the right panel and choose **Create mission**.
 2. Fill **What should the mission do?** and check **Title**, prefilled from the first sentence (up to 60 characters).
 3. Under **When**, select **Once** or **Every day at**. For daily work, verify the displayed time zone; **Change** allows an IANA zone.
-4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, saved briefs and optional followed conversations.
+4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
 5. Choose **Create**. Select the new entry, then use its separate ▶ action when ready: **Start mission** for one-time work, or **Play schedule {id}** for a daily schedule.
 
-**Create never starts work.** A one-time mission is prepared; a daily schedule is paused. Neither creation nor saving a brief arms a timer. Creation is scoped to the selected project/Location and freezes the requested profiles and task-session policy. Validation is beside the affected field; a refusal that says nothing was sent leaves the draft available for correction.
+**Create never starts work.** A one-time mission is prepared; a daily schedule is paused. Neither creation nor saving a brief arms a timer. Creation is scoped to the selected project/Location and freezes the requested profiles and task-session policy. Validation is beside the affected field; a refusal that says nothing was sent leaves the draft available for correction. A coordinator can also prepare a separate mission for you, such as a follow-up: it appears in the list as **Prepared** and, like any mission, starts only from its ▶ action.
 
 ### Playbooks {#playbooks}
 
@@ -20,6 +20,9 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 | Debugging | Diagnosis, implementation, separate standards/specification review and fresh validation; resolution continues the implementer. |
 | Exploration | Maps uncertainties and works through bounded decisions with human questions. |
 | Product delivery | Coordinates product analysis, architecture, implementation and quality roles. |
+| Compare two models | Runs the same task with identical briefs on **Model A** and **Model B**, then a **Blind judge** scores both under neutral labels and gives a verdict: **Model A wins**, **Model B wins**, **Equivalent** or **Inconclusive**. |
+
+For **Compare two models**, both models are required and must differ; a different **Thinking** level alone is not a different model. Unless you choose one, the judge uses the coordinator's model; the form warns when it matches A or B, which may bias the comparison. The overview shows the verdict, both model names and the scores by criterion.
 
 The playbook guides coordination; it does not bypass native permissions or guarantee success. Answer Exploration's decision questions through CodeNomad's interruption dock so an explicit UI answer is recorded, rather than asking an agent to impersonate approval.
 
@@ -36,10 +39,11 @@ The playbook guides coordination; it does not bypass native permissions or guara
 | Active | Native activity was observed. |
 | Waiting | Declared dependencies are not yet met. |
 | Blocked | A blockage was reported, not necessarily a question for you. |
-| Needs you | An open native Form/question or permission needs an answer. |
+| Awaiting your input | An open native Form/question or permission needs an answer; it is listed under **Needs you**. |
 | Done | A task result was recorded; inspect its evidence and any remaining native work. |
+| Failed / Retired | The task failed, or the coordinator replaced or abandoned it. |
 
-The graph includes completed and retired work. Retiring a task does not itself stop its conversation. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
+The graph includes completed and retired work. Retiring a task does not itself stop its conversation; the coordinator can stop a retired task's own conversations separately, without touching other tasks. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
 
 ### Briefings and update requests {#briefings}
 
@@ -50,9 +54,10 @@ Use **Request an update** below the toolbar for a fresh coordinator assessment, 
 ## Profiles, delegation and depth {#profiles}
 
 1. Use the Missions gear or **Settings → Missions** to edit **New mission defaults**.
-2. Choose global defaults and playbook exceptions, then **Save**. In creation, use **Options → Agents and models** for specific requested profiles.
-3. Choose **Task sessions** independently of **Playbook**.
-4. For native recursion limits, use **OpenCode depth → Maximum depth → Save Location depth** separately.
+2. Under **Apply to**, choose **All missions** or one playbook, then set **Task sessions** and, under **Agents and models**, one row per role (coordinator, then the playbook's roles). Each choice is saved immediately; there is no Save button.
+3. In a playbook scope, rows show the global values marked **Global**. Changing a field customizes that role starting from them; its revert icon uses the global values again. **Reset** (after confirmation) clears only the agents and models of the shown scope.
+4. In creation, use **Options → Agents and models** for specific requested profiles; **Use saved defaults** restores the saved ones.
+5. For native recursion limits, edit **Subsession nesting depth → Depth override for the project**. Pressing Enter or leaving the field saves a changed valid value; **Inherit** saves at once; Escape discards an unsaved value.
 
 | Setting | Scope and effect |
 | --- | --- |
@@ -60,11 +65,11 @@ Use **Request an update** below the toolbar for a fresh coordinator assessment, 
 | Agent / Model / Thinking | Requested coordinator/role selections recorded with creation; a busy actor is not silently switched to satisfy later work. Daily runs reuse their frozen requested profiles. |
 | Native subagents | Task sessions use native subagent/all agents under the coordinator. |
 | Independent sessions | Declared task sessions use primary/all agents and independent conversations; this does not disable internal native helpers. |
-| OpenCode depth | Location/project configuration for **all** conversations there, not just Missions. Empty inherits. Save does not reload OpenCode or change running conversations. |
+| Subsession nesting depth | Project configuration for **all** OpenCode conversations there, not just Missions. Empty inherits. Saving does not reload OpenCode or change running conversations. |
 
-**Native default** and **Inherit global defaults** are different: the former requests native defaults, the latter uses the configured global profile. Catalog availability is checked; a requested profile is not proof of the profile a conversation currently uses. Native permissions and configured depth still govern internal helper calls in either task mode.
+**Native default** and **Global** are different: the former requests OpenCode's own defaults, the latter inherits the global choice; choosing native defaults in a playbook scope remains an explicit exception. Catalog availability is checked; a requested profile is not proof of the profile a conversation currently uses. Native permissions and configured depth still govern internal helper calls in either task mode.
 
-If defaults/depth saving is unconfirmed, retain the draft and **Reload** defaults or **Refresh Location depth** before another change. Do not interpret **Effective depth unknown** as zero or disabled.
+A refused or unconfirmed choice is never resent: the stored values are shown again, and **Reload** appears only when they cannot be read. If a depth change is unconfirmed, your value is kept; use **Refresh project depth** before another change. Do not interpret **OpenCode effective depth unknown** as zero or disabled.
 
 ## Reuse a saved brief {#saved-briefs}
 
@@ -72,7 +77,7 @@ If defaults/depth saving is unconfirmed, retain the draft and **Reload** default
 2. Review the copied objective, notes, playbook, profiles and delegation before **Create**.
 3. Use **Save as brief** to name a reusable draft. A selected one-time mission, including a finished one, also offers **Save as brief**.
 
-Briefs store instructions and requested choices, not task plans, results, conversations, schedule clocks or execution authority. Loading one fills an ordinary creation draft; it does not start or schedule anything. Removing a brief keeps existing missions/conversations. **Settings → Missions → Saved briefs** manages the library; an explicit library reset removes saved briefs, not executions. Schedules themselves have no save-as-brief action.
+Briefs store instructions and requested choices, not task plans, results, conversations, schedule clocks or execution authority. Loading one fills an ordinary creation draft; it does not start or schedule anything. Removing a brief keeps existing missions/conversations. **Settings → Missions → Saved briefs** manages the library; if the library becomes unreadable, **Reset the saved library** (after confirmation) removes saved briefs, not executions. Schedules themselves have no save-as-brief action.
 
 ## Daily time, catch-up and followed conversations {#daily-schedules}
 
@@ -102,6 +107,15 @@ Creation time also bounds eligible daily work; starting a new schedule is not pe
 | OpenCode service restart | Loses process-local schedule jobs. A desired-running schedule becomes **Interrupted** until an explicit **Resume**; reopening CodeNomad does not rearm it. |
 
 After a restart, inspect the pending run and choose **Resume** when ready. Resume reconciles the existing run without sending its coordinator input twice; it does not promise continuation of an interrupted native turn. A turn cut off by restart can settle as ended without a report, with **Interrupted by a restart**. Do not use restarting as a way to retry tool side effects.
+
+Missions work with the desktop apps and with a standalone CodeNomad [server](server.md). When the panel shows **Mission Control is unavailable**, its message names the cause:
+
+| Cause | What to do |
+| --- | --- |
+| The OpenCode workspace is not ready | Reconnect the project, then refresh. |
+| OpenCode has not loaded the Missions plugin | Refresh in a moment; if it persists, use **Reload OpenCode configuration** in **Settings → OpenCode**. |
+| OpenCode could not load the Missions plugin | Read its error in the Plugins list, then refresh once it is fixed. |
+| The CodeNomad server could not open its local Missions connection (127.0.0.1) | Check the server log; reloading OpenCode does not help. |
 
 ## Pause, Stop and uncertain outcomes {#controls-recovery}
 

@@ -28,7 +28,7 @@ install विकल्प नभए पहिले HTTPS trust र browser sup
 
 navigation र tool खोल्न **बायाँ प्यानल** र **दायाँ प्यानल** प्रयोग गर्नुहोस्। साँघुरो layout मा desktop-चौडाइ canvas थोपर्नुको सट्टा प्यानल कुराकानीमाथि overlay हुन्छन्; एउटा floating panel खोल्दा अर्को बन्द हुन्छ। ठाउँ सीमित हुँदा conversation-header कार्य overflow menu मा जान्छन्।
 
-कम्पोजरको footer मै Agent, Model र Thinking रहन्छन्। field on-screen keyboard समेत देखिने कुराकानीअनुसार resize हुन्छ; लामो मस्यौदा scroll योग्य रहन्छन्। interruption खोल्दा सुरक्षित उचाइ वा मस्यौदा नबदली कम्पोजर अस्थायी सानो हुन्छ। माथिको dock मा permission/question उत्तर दिँदा action footer पुग्न मिल्ने राख्नुहोस्। [कुराकानी](conversations.md) र [अनुमति](permissions.md) हेर्नुहोस्।
+कम्पोजरको footer मै Agent, Model र Thinking रहन्छन्। field on-screen keyboard समेत देखिने कुराकानीअनुसार resize हुन्छ; लामो मस्यौदा scroll योग्य रहन्छन्। touch-मात्र device मा पठाउँदा on-screen keyboard फेरि खुल्दैन, त्यसैले तपाईं जवाफ पढ्न सक्नुहुन्छ; जारी राख्न कम्पोजरमा tap गर्नुहोस्। सत्र चलिरहँदा कम्पोजरको **थप कार्यहरू** मेनुले hardware-keyboard shortcut बिनै **सन्देश लाममा राख्नुहोस्** वा **अहिले पठाउनुहोस्** दिन्छ, जुन तपाईंको सामान्य पठाइले गर्दैन। interruption खोल्दा सुरक्षित उचाइ वा मस्यौदा नबदली कम्पोजर अस्थायी सानो हुन्छ। माथिको dock मा permission/question उत्तर दिँदा action footer पुग्न मिल्ने राख्नुहोस्। [कुराकानी](conversations.md) र [अनुमति](permissions.md) हेर्नुहोस्।
 
 ## क्षमता र जडान सीमा {#limits}
 

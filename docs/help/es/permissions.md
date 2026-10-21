@@ -73,6 +73,6 @@ Desactivar Yolo no revoca una decisión ya aceptada ni revierte efectos sobre ar
 
 1. Comprueba el indicador de conexión y reconecta al mismo backend/proyecto.
 2. Deja que la recuperación reconcilie las solicitudes nativas pendientes; las solicitudes conocidas y los borradores se conservan si la cobertura es incompleta.
-3. Si aparece el aviso **preguntas y permisos no recuperados por completo**, su mensaje indica la causa, las carpetas y las sesiones afectadas. Resuelve esa causa (por ejemplo, un worktree eliminado o una sesión que trabaja fuera de este proyecto); el siguiente paso de recuperación reintenta automáticamente.
+3. Si aparece el aviso **preguntas y permisos no recuperados por completo**, indica el proyecto, la causa, las carpetas y las sesiones afectadas. Resuelve esa causa (por ejemplo, un worktree eliminado o una sesión que trabaja fuera de este proyecto); el siguiente paso de recuperación reintenta automáticamente.
 
 La recuperación no carga todos los worktrees inactivos solo para enumerar solicitudes. Una respuesta incompleta no es una cola vacía autoritativa, y la advertencia no autoriza a repetir un mensaje, una respuesta o una aprobación. Recargar la configuración puede cancelar formularios/permisos nativos; no lo uses como botón habitual para actualizar solicitudes. Consulta [Solución de problemas](troubleshooting.md) y [configuración de OpenCode](opencode.md).

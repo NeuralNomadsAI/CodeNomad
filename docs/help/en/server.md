@@ -2,13 +2,13 @@
 
 Run CodeNomad where your projects and tools live, then use its browser UI locally or remotely. The backend supplies filesystem access, Git operations, authentication and event delivery. OpenCode's shared service owns conversations and execution; it is not a child server to stop when a browser disconnects.
 
-The same UI supports [multiple project tabs and worktrees](projects.md), [conversation families and background activity](conversations.md), [bounded history loading, search and timeline navigation](history.md), and a [command palette and shortcuts](shortcuts.md). Browser and tablet access do not move execution off the host.
+The same UI supports [multiple project tabs and worktrees](projects.md), [conversation families and background activity](conversations.md), [bounded history loading, search and timeline navigation](history.md), a [command palette and shortcuts](shortcuts.md), and [Missions](missions.md). Browser and tablet access do not move execution off the host.
 
 ## Prepare the host {#prerequisites}
 
 1. Install Node.js 24 LTS and npm; the repository's pinned build runtime is 24.20.0. Desktop packages include Node/npm.
 2. Put Git on the **backend process's PATH**. Git inside WSL alone does not satisfy a Windows backend.
-3. Install or select OpenCode: the required minimum is **2.1.0**, with **2.1.0** the recommended qualification target. Newer or custom builds undergo compatibility checks, not a tested-version allowlist. See [OpenCode setup](opencode.md).
+3. Install or select OpenCode: the required minimum is **2.1.0**, with **2.1.1** the recommended qualification target. Newer or custom builds undergo compatibility checks, not a tested-version allowlist. See [OpenCode setup](opencode.md).
 4. Choose the folder from which to start the server, or pass `--workspace-root` explicitly.
 
 Without Git, conversations remain available only in the explicitly opened physical folder; Git and worktree operations fail. Install Git and restart the backend after a PATH change. A workspace root limits opening/browsing, not agent execution: see [Security](security.md).
@@ -52,6 +52,8 @@ Closing a browser does not stop a separately running standalone backend. Closing
 Startup prints **Local Connection URL**, and **Remote Connection URL** when one is available, plus **Other Accessible URLs** where applicable. Use the printed scheme and port, not a guessed address. A loopback URL is reachable only on that machine; a printed LAN address still requires routing and firewall access.
 
 HTTPS prefers port **9898** and HTTP prefers **9899**. With no port override, an occupied preferred port falls back to an OS-assigned port. An explicit nonzero port does not fall back; `0` requests an OS-assigned port. Ports accept integers from 0 through 65535.
+
+The backend can also open an unannounced, authenticated HTTP listener on a random `127.0.0.1` port for its own OpenCode plugins, such as Missions. It is not printed and is not a client address.
 
 For listener exposure, certificates, VPN/SSH and reverse proxies, use [Direct remote access](remote-access.md). For access without an inbound port, use [Remote Control](remote-control.md).
 

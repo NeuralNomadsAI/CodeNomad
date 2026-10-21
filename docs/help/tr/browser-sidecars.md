@@ -2,8 +2,8 @@
 
 ## Bir oturum tarayıcısı açın {#session-browser}
 
-1. Konuşmanın araç çubuğunda web/tarayıcı önizlemesini açın.
-2. Kimlik bilgisi içermeyen bir `http://` veya `https://` URL'si girin. Gezinmek, yenilemek ve Geri/İleri gitmek için araç çubuğunu kullanın.
+1. Konuşmanın araç çubuğunda **Web önizlemesini aç** öğesini seçin.
+2. Kimlik bilgisi içermeyen bir `http://` veya `https://` **Önizleme URL'si** girin, ardından **Önizlemeyi aç** öğesini seçin. Gezinmek, yenilemek ve Geri/İleri gitmek için araç çubuğunu kullanın.
 3. Sohbete geri dönmek için önizlemenin kapat düğmesini kullanın. Devam etmek için bu görüşmede tekrar açın.
 
 Her önizleme kendi proje klasörüne ve oturumuna aittir. Konuşma, proje, Bilgi veya sohbet arasında geçiş yapmak, açıkça açılmış native tarayıcıyı canlı belgesini/geçmişini atmadan gizler. Gizli tarayıcılar otomasyon hedefi değildir. Projeyi/pencereyi kapatmak veya arayüzü yeniden başlatmak canlı belgeyi sonlandırır.
@@ -21,7 +21,7 @@ Native önizlemeler aynı masaüstü motoru ve profil/yapılandırma kapsamında
 | macOS/Linux Tauri | Korumalı alana alınmış iframe | Yerel tarayıcı otomasyonu yok | Yalnızca boyutlar |
 | Normal tarayıcı/uzak görünüm | Alternatif iframe görünümü | Yerel native önizleme hedefi yok | Yalnızca boyutlar |
 
-Geliştirici Modu geçişi veya ekstra etkinleştirme yeniden başlatması yoktur. Yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anlık görüntü, tıklama, yazma ve ekran görüntüsü için oturuma bağlı `codenomad.browser` aracını kullanır. Aracın kullanılabilirliği her pencere için yetkilendirme değildir: yürütme, sahip olunan arka ucu, yerel yetenekleri, oturumu ve görünür hedefi kontrol eder. Sayfa içerikleri güvenilmez durumda kalıyor. Hedef yerleştirmeyi yasakladığından iframe başarısız olabilir; korumalarını zayıflatmak yerine harici bir tarayıcı kullanın.
+Geliştirici Modu geçişi veya ekstra etkinleştirme yeniden başlatması yoktur. Yerel otomasyon, masaüstü başlangıcında hazırlanır ve açma, gezinme, anlık görüntü, ekran görüntüsü ve sayfa eylemleri için oturuma bağlı `codenomad.browser` aracını kullanır: tıklama, yazma, seçme, üzerine gelme, sürükleme, kaydırma, tuşa basma ve metin bekleme. Aracın kullanılabilirliği her pencere için yetkilendirme değildir: yürütme, sahip olunan arka ucu, yerel yetenekleri, oturumu ve görünür hedefi kontrol eder. Sayfası bu arada gizlenmiş, değiştirilmiş veya başka bir adrese gitmiş bir eylem başka bir sayfaya gönderilmek yerine reddedilir ve hiçbir eylem otomatik olarak tekrarlanmaz. Sayfa içerikleri güvenilmez durumda kalıyor. Hedef yerleştirmeyi yasakladığından iframe başarısız olabilir; korumalarını zayıflatmak yerine harici bir tarayıcı kullanın.
 
 ## Altı görünüm alanı şablonundan birini seçin {#templates}
 
@@ -56,7 +56,9 @@ Yerel mobil şablonlar Android/Chromium kimliğini, yönelimini, dokunuşunu ve 
 
 Kayıt, istemcilerin paylaştığı sunucu yapılandırmasıdır; hizmeti yüklemez veya başlatmaz. Port, görüntüleyen dizüstü/telefon üzerinde değil, arka uç ana bilgisayarındadır. **Çalışıyor** uygulamanın/kimlik doğrulamasının sağlıklı olduğunu değil, erişilebilirliği gösterir. Kaydı kaldırmak ayrı başlatılmış süreci durdurmaz. Sekmeyi kapatmak da durdurmaz.
 
-Ulaşılamıyorsa arka uçtaki işlemi ve bağlantı noktasını kontrol edin. HTML yüklenir ancak asset/WebSockets başarısız olursa, aracın temel yolunu ve önek modunu kontrol edin. Yanlış bir kaydı amaçlanan ayarlarla yeniden oluşturun; Proxy hatasını geçici olarak çözmek için yukarı akışı herkese açık şekilde göstermeyin. SideCar uygulamaları, sunucu hesabının yetkisine sahip bir terminali veya dosyaları açığa çıkarabilir; kullanıcılarına ve yapılandırmalarına güvenin. Uzaktan Kontrol, SideCar uygulama proxy trafiğini açığa çıkarmaz; [Uzaktan erişim](remote-access.md) ve [Uzaktan Kontrol](remote-control.md)'de açıklanan uygun doğrudan erişim yolunu kullanın.
+Ulaşılamıyorsa arka uçtaki işlemi ve bağlantı noktasını kontrol edin. HTML yüklenir ancak asset/WebSockets başarısız olursa, aracın temel yolunu ve önek modunu kontrol edin. Yanlış bir kaydı amaçlanan ayarlarla yeniden oluşturun; Proxy hatasını geçici olarak çözmek için yukarı akışı herkese açık şekilde göstermeyin. SideCar uygulamaları, sunucu hesabının yetkisine sahip bir terminali veya dosyaları açığa çıkarabilir; kullanıcılarına ve yapılandırmalarına güvenin.
+
+SideCar, korumalı alana alınmış bir önizleme değil, CodeNomad'ın güvenilir bir uzantısıdır: sayfası CodeNomad'ın kendi kaynağıyla (origin) çalışır, bu nedenle betikleri oturum açmış erişiminizle CodeNomad'ı kullanabilir. Yalnızca koduna güvendiğiniz hizmetleri kaydedin. CodeNomad kendi oturum açma çerezlerini hizmete iletmez; hizmetin kendi çerezleri ise korunur. Uzaktan Kontrol, SideCar uygulama proxy trafiğini açığa çıkarmaz; [Uzaktan erişim](remote-access.md) ve [Uzaktan Kontrol](remote-control.md)'de açıklanan uygun doğrudan erişim yolunu kullanın.
 
 ## OpenVSCode Sunucu tarifi {#openvscode}
 

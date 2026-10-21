@@ -2,8 +2,8 @@
 
 ## सत्र ब्राउजर खोल्नुहोस् {#session-browser}
 
-1. कुराकानी toolbar मा web/browser पूर्वावलोकन खोल्नुहोस्।
-2. credential नभएको `http://` वा `https://` URL भर्नुहोस्। नेभिगेट, refresh र Back/Forward का लागि toolbar प्रयोग गर्नुहोस्।
+1. कुराकानी toolbar मा **वेब पूर्वावलोकन खोल्नुहोस्** रोज्नुहोस्।
+2. credential नभएको `http://` वा `https://` **पूर्वावलोकन URL** भर्नुहोस्, त्यसपछि **पूर्वावलोकन खोल्नुहोस्** रोज्नुहोस्। नेभिगेट, refresh र Back/Forward का लागि toolbar प्रयोग गर्नुहोस्।
 3. chat मा फर्कन पूर्वावलोकनको close बटन प्रयोग गर्नुहोस्। जारी राख्न त्यही कुराकानीमा फेरि खोल्नुहोस्।
 
 प्रत्येक पूर्वावलोकन आफ्नो परियोजना फोल्डर र सत्रको हो। कुराकानी, परियोजना, Info वा chat बदल्दा स्पष्ट खोलिएको नेटिभ guest को live document/history नहटाई लुक्छ। लुकेका guest automation target होइनन्। परियोजना/विन्डो बन्द वा renderer restart गर्दा live document सकिन्छ।
@@ -21,7 +21,7 @@
 | macOS/Linux Tauri | sandbox भएको iframe | नेटिभ browser automation छैन | आयाम मात्र |
 | सामान्य browser/remote दृश्य | iframe fallback | स्थानीय native preview target छैन | आयाम मात्र |
 
-Developer Mode toggle वा थप activation restart छैन। नेटिभ automation desktop startup मै तयार हुन्छ र open, navigate, snapshot, click, type र screenshot का लागि session-bound `codenomad.browser` tool प्रयोग गर्छ। tool उपलब्धता हरेक विन्डोको अनुमति होइन: execution ले स्वामी backend, native capability, session र visible target जाँच्छ। पृष्ठ सामग्री अविश्वसनीय नै हुन्छ। target ले embedding निषेध गर्दा iframe असफल हुन सक्छ; सुरक्षा कमजोर पार्नुको सट्टा बाह्य browser प्रयोग गर्नुहोस्।
+Developer Mode toggle वा थप activation restart छैन। नेटिभ automation desktop startup मै तयार हुन्छ र open, navigate, snapshot, screenshot र page action (click, type, select, hover, drag, scroll, key press र text पर्खने) का लागि session-bound `codenomad.browser` tool प्रयोग गर्छ। tool उपलब्धता हरेक विन्डोको अनुमति होइन: execution ले स्वामी backend, native capability, session र visible target जाँच्छ। बीचमै पृष्ठ लुकेको, बदलिएको वा अर्कै ठाउँ नेभिगेट भएको action अर्को पृष्ठमा पठाइँदैन, अस्वीकार गरिन्छ; कुनै action स्वतः दोहोर्‍याइँदैन। पृष्ठ सामग्री अविश्वसनीय नै हुन्छ। target ले embedding निषेध गर्दा iframe असफल हुन सक्छ; सुरक्षा कमजोर पार्नुको सट्टा बाह्य browser प्रयोग गर्नुहोस्।
 
 ## छ viewport template मध्ये एक रोज्नुहोस् {#templates}
 
@@ -56,7 +56,9 @@ Developer Mode toggle वा थप activation restart छैन। नेटि
 
 दर्ता क्लाइन्टले साझा गर्ने server configuration हो; यसले सेवा स्थापना वा सुरु गर्दैन। port backend host को हो, हेर्ने laptop वा phone को होइन। **चलिरहेको छ** ले पहुँचयोग्यता जनाउँछ, tool application/authentication स्वस्थ छ भन्ने होइन। दर्ता हटाउँदा छुट्टै चलाइएको प्रक्रिया रोकिँदैन। ट्याब बन्द गर्दा पनि रोकिँदैन।
 
-पहुँच नभए backend मा process र port जाँच्नुहोस्। HTML खुले पनि asset/WebSocket असफल भए tool को base path र prefix mode जाँच्नुहोस्। गलत दर्ता चाहेको सेटिङमा फेरि बनाउनुहोस्; proxy त्रुटि छल्न upstream सार्वजनिक नगर्नुहोस्। SideCar अनुप्रयोगले server खाताको अधिकारमा terminal वा फाइल देखाउन सक्छन्; प्रयोगकर्ता र कन्फिगरेसनलाई विश्वास गर्नुपर्छ। Remote Control ले SideCar application proxy traffic दिँदैन; [रिमोट पहुँच](remote-access.md) र [Remote Control](remote-control.md) मा भएको उपयुक्त direct-access मार्ग प्रयोग गर्नुहोस्।
+पहुँच नभए backend मा process र port जाँच्नुहोस्। HTML खुले पनि asset/WebSocket असफल भए tool को base path र prefix mode जाँच्नुहोस्। गलत दर्ता चाहेको सेटिङमा फेरि बनाउनुहोस्; proxy त्रुटि छल्न upstream सार्वजनिक नगर्नुहोस्। SideCar अनुप्रयोगले server खाताको अधिकारमा terminal वा फाइल देखाउन सक्छन्; प्रयोगकर्ता र कन्फिगरेसनलाई विश्वास गर्नुपर्छ।
+
+SideCar sandbox गरिएको पूर्वावलोकन होइन, CodeNomad को विश्वसनीय विस्तार हो: यसको पृष्ठ CodeNomad कै origin मा चल्छ, त्यसैले यसका script ले तपाईंको sign-in भएको पहुँचसहित CodeNomad प्रयोग गर्न सक्छन्। जसको code मा विश्वास छ ती सेवा मात्र दर्ता गर्नुहोस्। CodeNomad ले आफ्नै sign-in cookie सेवामा पठाउँदैन, तर सेवाका आफ्नै cookie राखिन्छन्। Remote Control ले SideCar application proxy traffic दिँदैन; [रिमोट पहुँच](remote-access.md) र [Remote Control](remote-control.md) मा भएको उपयुक्त direct-access मार्ग प्रयोग गर्नुहोस्।
 
 ## OpenVSCode Server विधि {#openvscode}
 

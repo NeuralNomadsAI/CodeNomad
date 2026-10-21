@@ -15,7 +15,7 @@ The **Files** right-panel tab combines checkout browsing, local changes and comm
 | Changes | Index and working-tree changes | Git mutations happen only through explicit actions |
 | Commits | Paginated commit history and revision contents | Read-only history; no checkout |
 
-Expanded folders survive mode changes. Listings/status/history use cached snapshots and revalidate after relevant filesystem changes, activation or explicit refresh; focusing the panel is not a guarantee of a new read.
+Expanded folders survive mode changes. Listings/status/history use cached snapshots and revalidate after relevant filesystem changes, activation or explicit refresh; focusing the panel is not a guarantee of a new read. Visible Workspace folders pick up files created, edited, renamed or deleted on the backend host by themselves, at most once every five seconds during continuous activity; collapsed folders and other worktrees are reread only when you show them.
 
 Row actions include **Copy path** and, where the client supports opening backend paths, file-manager/editor/terminal actions such as **Open with default application**, **Show in folder**, **Open in file manager** and **Open terminal here**. Actions can move into **More actions for {name}** when space is limited; the file or folder name replaces `{name}`. A remote browser cannot assume a server path is a local-device path; see [Remote Control](remote-control.md).
 
@@ -54,7 +54,7 @@ Preview reads are bounded; large/unsupported content may be unavailable rather t
 2. Use **Stage file** / **Unstage file**, select several rows for the corresponding selected-files action, or drag rows between the sections.
 3. Enter a message at the top of **Staged Changes**, then choose **Commit**.
 
-Collapsed section headers remain drop targets. Collapsing sections or changing modes preserves their state and the commit-message draft. Staging/unstaging changes the index in the browsed worktree; committing records staged content only. Unstaging does not discard the worktree edit.
+Collapsed section headers remain drop targets. Collapsing sections or changing modes preserves their state and the commit-message draft. A long section shows its first 200 files, then a line such as **480 files not shown** with **Show 200 more** to reveal the next ones in place; section counts remain full totals, and the current, previewed and selected files stay shown. Shift-click ranges cover shown rows only, so a bulk action never includes a file you cannot see. Staging/unstaging changes the index in the browsed worktree; committing records staged content only. Unstaging does not discard the worktree edit.
 
 Review staged files before committing, especially when agents or another client also write there. A failed commit is not automatically replayed. Refresh status/history and inspect the error before retrying, because a lost reply is not proof that no commit was created.
 

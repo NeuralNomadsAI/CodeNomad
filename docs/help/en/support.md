@@ -8,7 +8,7 @@ Use the repository for bug reports, current releases and contributions. The [tro
 2. Select **Report a bug** to open the GitHub issue form.
 3. Review the prefilled version/client information. Add a minimal reproduction, expected behavior and actual result, then submit through GitHub.
 
-The action prefills CodeNomad/OpenCode versions, OS and bounded client/runtime context. It does not prefill listener addresses, workspace paths, credentials or conversation text. Opening the form is not submitting an issue.
+The action prefills the CodeNomad and OpenCode versions (including the running OpenCode service when it differs from the installed one), your operating system, the client type (with the browser's user agent in a web browser) and the server's operating system. It does not prefill listener addresses, workspace paths, credentials or conversation text. Opening the form is not submitting an issue.
 
 If you need more diagnostics, **Copy to clipboard** or **Download .txt** produces a separate report. That fuller report can contain local paths and network addresses: review and redact it before attaching it. A screenshot or log excerpt can still contain secrets even when the automatic diagnostic report excludes authentication secrets.
 

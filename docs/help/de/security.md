@@ -54,6 +54,8 @@ Prüfen Sie [Bindungsmatrix und TLS-Verfahren](remote-access.md), besonders den 
 
 `--workspace-root` begrenzt die zu öffnenden Arbeitsbereiche, `--unrestricted-root` lockert die Ordnersuche. Keines ist OS-Gefängnis, Container, Dateisystem-Sandbox oder Einschränkung autorisierter nativer Werkzeuge. Agenten, Shell-Befehle, Plugins und MCP-Werkzeuge handeln mit den Rechten des Ausführungshosts und ihren konfigurierten Zugangsdaten.
 
+[SideCars](browser-sidecars.md) sind vertrauenswürdige Ergänzungen. CodeNomad hält seine Anmelde- und Geräte-Cookies vom SideCar-Dienst zurück, aber die SideCar-Seite lädt im selben Origin wie CodeNomad, und ihre Skripte können mit Ihrer angemeldeten Sitzung handeln. Registrieren Sie nur Dienste, denen Sie ebenso vertrauen wie CodeNomad selbst.
+
 Verwenden Sie für echte Isolation OS-Konten, Container/VMs und vorgelagerte Berechtigungskonfiguration. Gewähren Sie einem Gerät nicht nur deshalb Zugriff, weil es Ihrer Erwartung nach nur einen Tab sehen wird. Serverkonfiguration und gemeinsamer OpenCode-Dienst können andere Unterhaltungen/Projekte betreffen; deren separate Grenzen erläutern [OpenCode-Einrichtung](opencode.md), [Berechtigungen](permissions.md) und [Erweiterungen](extensions.md).
 
 ## Zugangsdaten und Diagnosen privat halten {#privacy}

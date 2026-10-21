@@ -8,7 +8,7 @@ Verwenden Sie das Repository für Fehlerberichte, aktuelle Releases und Beiträg
 2. Wählen Sie **Fehler melden**, um das GitHub-Issue-Formular zu öffnen.
 3. Prüfen Sie vorausgefüllte Versions-/Clientinformationen. Ergänzen Sie eine minimale Reproduktion, erwartetes Verhalten und tatsächliches Ergebnis und senden Sie dann über GitHub ab.
 
-Die Aktion füllt CodeNomad-/OpenCode-Versionen, OS und begrenzten Client-/Laufzeitkontext vorab aus. Listeneradressen, Arbeitsbereichspfade, Zugangsdaten und Unterhaltungstext werden nicht vorausgefüllt. Formularöffnen ist noch keine Meldung.
+Die Aktion füllt die Versionen von CodeNomad und OpenCode (einschließlich des laufenden OpenCode-Dienstes, wenn er von der installierten Version abweicht), Ihr Betriebssystem, den Clienttyp (in einem Webbrowser mit dessen User-Agent) und das Betriebssystem des Servers vorab aus. Listeneradressen, Arbeitsbereichspfade, Zugangsdaten und Unterhaltungstext werden nicht vorausgefüllt. Formularöffnen ist noch keine Meldung.
 
 Benötigen Sie mehr Diagnosen, erzeugen **In Zwischenablage kopieren** oder **.txt herunterladen** einen separaten Bericht. Dieser ausführlichere Bericht kann lokale Pfade und Netzwerkadressen enthalten: Prüfen und schwärzen Sie ihn vor dem Anhängen. Screenshots oder Log-Auszüge können weiterhin Geheimnisse enthalten, selbst wenn der automatische Diagnosebericht Authentifizierungsgeheimnisse ausschließt.
 

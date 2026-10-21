@@ -8,7 +8,7 @@
 
 feed CodeNomad server configuration मा सुरक्षित हुन्छ र offered release मात्र बदल्छ। desktop data profile, draft, window, OpenCode session वा service configuration बदल्दैन। स्पष्ट चयन नभए preview-labelled build को default preview र अन्यको stable हुन्छ।
 
-Stable ले नवीनतम final release चयन गर्छ। Preview ले publication order पछ्याउँछ किनकि development build ले एउटै base version number साझा गर्न सक्छन्; numeric version मात्र तुलना नगर्नुहोस्। preview package prerelease व्यवहार परीक्षण गर्न इच्छुकका लागि हुन्; restart अघि release note जाँचेर महत्त्वपूर्ण draft जोगाउनुहोस्।
+Stable ले नवीनतम final release चयन गर्छ। Preview ले publication order पछ्याउँछ किनकि development build ले एउटै base version number साझा गर्न सक्छन्; numeric version मात्र तुलना नगर्नुहोस्। preview release यसका सबै build प्रकाशित भएपछि मात्र प्रस्ताव गरिन्छ। preview package prerelease व्यवहार परीक्षण गर्न इच्छुकका लागि हुन्; restart अघि release note जाँचेर महत्त्वपूर्ण draft जोगाउनुहोस्।
 
 ## desktop स्थापना update {#desktop-update}
 
@@ -28,7 +28,7 @@ Tauri application र native **प्राथमिकताहरू** window 
 
 Tauri को **मद्दत → अपडेटहरू जाँच गर्नुहोस्…** menu ले focus भएको application window मा update flow चलाउँछ। प्राथमिकताहरू वा remote window बाट प्रयोग गर्दा, यसले सबैभन्दा हाल प्रयोग गरिएको application window अगाडि ल्याएर check चलाउँछ; remote window मार्फत install गर्दैन। लक्षित loading, login वा pairing screen लगायत कुनै application window ले कार्य ग्रहण गर्न नसके menu ले यसको सट्टा release page खोल्छ।
 
-Tauri ले chosen feed/target को published update manifest भएका release मात्र दिन्छ। भर्खर घोषित release अझै install योग्य नहुन सक्छ; notification ले release page खोल्न सक्छ। installation अघि native signature verification आवश्यक छ। updater signature OS notarization/code-signing आश्वासनभन्दा फरक हुन्।
+Tauri ले chosen feed/target को published update manifest भएका release मात्र स्थापना गर्छ। घोषित release अझै install गर्न नमिले notification ले यसको सट्टा release page खोल्छ। installation अघि native signature verification आवश्यक छ। updater signature OS notarization/code-signing आश्वासनभन्दा फरक हुन्।
 
 installation ले app बदल्नु/restart अघि सबै app window flush र owned CodeNomad backend stop गर्छ। स्वतन्त्र OpenCode daemon यो shutdown को भाग होइन। CodeNomad बन्द हुँदा नफर्केसम्म backend-dependent सुविधा हराउँछन्; continuing OpenCode session बाट UI सेवा निर्बाध छ नठान्नुहोस्।
 

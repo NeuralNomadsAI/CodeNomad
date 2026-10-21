@@ -29,10 +29,12 @@ Bu, tek projeyi veya Uzaktan Kontrolü değil, ana bilgisayarın doğrudan dinle
 
 | Başlatma/mod | HTTP şuraya bağlanır: | HTTPS bağlanır |
 | --- | --- | --- |
-| Bağımsız, yalnızca HTTPS (varsayılan) | Etkin değil | `--host` |
+| Bağımsız, yalnızca HTTPS (varsayılan) | Yalnızca özel geri döngü dinleyicisi (aşağıya bakın) | `--host` |
 | Bağımsız, yalnızca HTTP | **`--host`**, LAN/joker karakter adresi dahil | Etkin değil |
 | Bağımsız, her iki dinleyici | `127.0.0.1`, `--host`'den bağımsız olarak | `--host` |
 | Yerel masaüstü arka ucu | HTTP dinleyicisi, ana bilgisayar dahili dinleyicisi de dahil olmak üzere `127.0.0.1`'de kalır | HTTPS etkinleştirildiğinde `--host` |
+
+Her arka uç, Görevler gibi CodeNomad'in kendi paketlenmiş OpenCode eklentileri için `127.0.0.1` üzerinde ayrıca bir HTTP dinleyicisi tutar. HTTP istenmediğinde veya istenen HTTP dinleyicisi `127.0.0.1` ya da `0.0.0.0` dışında bir adrese bağlandığında, arka uç rastgele bir `127.0.0.1` portunda özel bir HTTP dinleyicisi ekler. Bu dinleyici hiçbir zaman yazdırılmaz veya bağlantı adresi olarak sunulmaz, başka makinelerden erişilemez ve aynı kimlik doğrulamalı uygulamayı sunar.
 
 Somut bir LAN adresinin geridöngü bağlantılarını kabul etmesi gerekmez. `0.0.0.0`, tüm IPv4 arayüzleri anlamına gelir; `::` çift yığınlı joker karakter dinleyicisidir. Bir tarayıcıda joker karakter değil, gerçek ulaşılabilir bir adres kullanın. IPv6 bölge tanımlayıcıları `--host`'de desteklenmez.
 
@@ -48,7 +50,7 @@ Yalnızca geri döngü HTTP için, örneğin yerel güvenilir bir proxy'nin arka
 codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
-9898 veya 9899 portunu varsaymayın: belirtilmeyen portlar doluyken başka port kullanılabilir. Açıkça verilen sıfır olmayan `--https-port` veya `--http-port` portu sabitler ve bağlanamazsa başarısız olur; `0` işletim sisteminden port atamasını ister. Yazdırılan **Local Connection URL** ve **Remote Connection URL** ile yenilenen **Erişilebilir adresler** o çalıştırma için yetkili bilgidir. Tam [sunucu CLI başvurusuna](server.md) bakın.
+9898 veya 9899 portunu varsaymayın: belirtilmeyen portlar doluyken başka port kullanılabilir. Açıkça verilen sıfır olmayan `--https-port` veya HTTP etkinken `--http-port` portu sabitler ve bağlanamazsa başarısız olur; `0` işletim sisteminden port atamasını ister. Yazdırılan **Local Connection URL** ve **Remote Connection URL** ile yenilenen **Erişilebilir adresler** o çalıştırma için yetkili bilgidir. Tam [sunucu CLI başvurusuna](server.md) bakın.
 
 ## Güvenilir TLS'yi yapılandırın {#tls}
 
@@ -81,10 +83,10 @@ Bir istemci bir sertifika uyarısı bildirirse, durdurun ve ana bilgisayar adın
 
 ## Uzak sunucuyu kaydedin {#saved-servers}
 
-1. Masaüstü ana sayfasında **Sunucular** öğesini ve ardından **Sunucuya Bağlan** öğesini seçin.
-2. Güvenilir bir HTTPS kaynağını kullanarak **Sunucu adı** ve **Sunucu URL'si** öğesini girin. **Kendinden imzalı sertifikalar için TLS doğrulamasını atla.** öğesini işaretlemeden bırakın; bunun yerine güven oluşturun.
+1. Masaüstü ana sayfasında **CodeNomad Sunucusuna Bağlan** öğesini seçin. Aynı düğme boş bir **Sunucular** sekmesinde ve **Ayarlar → Uzak Erişim → Sunucular** bölümünde de bulunur.
+2. **Sunucuya Bağlan** penceresinde, güvenilir bir HTTPS kaynağını kullanarak **Sunucu adı** ve **Sunucu URL'si** öğesini girin. **Kendinden imzalı sertifikalar için TLS doğrulamasını atla.** öğesini işaretlemeden bırakın; bunun yerine güven oluşturun.
 3. Yer imlerine eklemek için **Kaydet** öğesini veya kaydedip açmak için **Bağlan** öğesini seçin. Bu sunucuda oturum açın.
 
-Yer imleri uzak sunucunun projelerine değil, bu CodeNomad yapılandırmasına aittir. Bir URL'nin kaydedilmesi sunucuyu başlatmaz veya erişim sağlamaz. **Kayıtlı sunucuyu kaldır**, uzak konuşmaları, arka ucu veya kimlik bilgilerini değil, yer işaretini kaldırır.
+Kayıtlı bir sunucuyu yeniden açmak için ana sayfanın **Sunucular** sekmesinde onu seçin. Yer imleri uzak sunucunun projelerine değil, bu CodeNomad yapılandırmasına aittir. Bir URL'nin kaydedilmesi sunucuyu başlatmaz veya erişim sağlamaz. **Kayıtlı sunucuyu kaldır**, uzak konuşmaları, arka ucu veya kimlik bilgilerini değil, yer işaretini kaldırır.
 
 Uzaktan Kontrol için bunun yerine **Sunucu URL'si** öğesine yeni bir eşleştirme bağlantısı yapıştırın. Yer imi yalnızca tünelin kökenini korur, asla tek kullanımlık eşleştirme kodunu içermez; Cihaz çerezi kaybından sonra yeniden eşleştirme için bkz. [Uzaktan Kontrol](remote-control.md).

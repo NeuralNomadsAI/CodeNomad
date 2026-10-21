@@ -45,7 +45,7 @@ Electron Debian 安装过程会配置 Chromium 沙箱。不要通过禁用沙箱
 
 | 要求 | 必须可用的位置 | 当前要求 |
 | --- | --- | --- |
-| OpenCode CLI | 所选执行主机，适用时包括所选 WSL 发行版 | 最低 **2.1.0**；建议/已验证目标为 **2.1.0**。更新版本或自定义版本会接受契约验证，而非因未经测试就被禁止。 |
+| OpenCode CLI | 所选执行主机，适用时包括所选 WSL 发行版 | 最低 **2.1.0**；建议/已验证目标为 **2.1.1**。更新版本或自定义版本会接受契约验证，而非因未经测试就被禁止。 |
 | Git | CodeNomad 后端账户的 `PATH` | 仓库身份识别、Git 操作和工作树必需。 |
 | Node.js/npm | 独立服务器和源码构建主机 | Node.js 24 LTS；可重现的源码构建使用 `.node-version`（**24.20.0**）。桌面运行时/安装资源已随附。 |
 | 工作区文件夹 | 后端可访问的磁盘 | 显式打开的物理文件夹，而非远程浏览器推断出的设备本地文件夹。 |
@@ -62,7 +62,7 @@ Windows 上，请安装 [Git for Windows](https://gitforwindows.org/)，并启�
 2. 打开项目前确认运行时状态。
 3. 返回**偏好设置 → OpenCode**，分别管理可执行文件、安装和共享服务。
 
-CodeNomad 优先使用 `PATH` 中兼容的可执行文件，也支持显式选择。安装/更新 CLI 不会静默重启已运行的共享服务。重启/重新加载的影响、WSL 和会话环境请参阅 [OpenCode 设置](opencode.md)。
+CodeNomad 优先使用 `PATH` 中兼容的可执行文件，也支持显式选择。如果 `PATH` 启动的是较旧的 OpenCode，设置流程会在确认后替换通过 npm 安装的 OpenCode 1.x；对于以其他方式安装的版本，则会在其旁边为 CodeNomad 安装 OpenCode 2，且绝不修改原安装；参阅 [OpenCode 设置](opencode.md#select-cli)。安装/更新 CLI 不会静默重启已运行的共享服务。重启/重新加载的影响、WSL 和会话环境请参阅 [OpenCode 设置](opencode.md)。
 
 ## 改用浏览器 {#browser-install}
 

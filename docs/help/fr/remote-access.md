@@ -29,10 +29,12 @@ Cela change le mode d’écoute directe de l’hôte, pas un projet ni le Contr�
 
 | Lancement/mode | HTTP écoute sur | HTTPS écoute sur |
 | --- | --- | --- |
-| Autonome, HTTPS seul (défaut) | Non activé | `--host` |
+| Autonome, HTTPS seul (défaut) | Écoute privée en boucle locale uniquement (voir ci-dessous) | `--host` |
 | Autonome, HTTP seul | **`--host`**, y compris une adresse LAN/générique | Non activé |
 | Autonome, les deux écoutes | `127.0.0.1` quel que soit `--host` | `--host` |
 | Backend de bureau natif | Son écoute HTTP reste sur `127.0.0.1`, y compris son écoute interne à l’hôte | `--host` quand HTTPS est activé |
+
+Chaque backend conserve aussi une écoute HTTP sur `127.0.0.1` pour les plugins OpenCode fournis avec CodeNomad, comme Missions. Lorsque HTTP n’a pas été demandé, ou que l’écoute HTTP demandée est liée à une autre adresse que `127.0.0.1` ou `0.0.0.0`, le backend ajoute une écoute HTTP privée sur un port aléatoire de `127.0.0.1`. Elle n’est jamais affichée ni proposée comme adresse de connexion, n’est pas accessible depuis d’autres machines et sert la même application authentifiée.
 
 Une adresse LAN précise n’accepte pas nécessairement les connexions de boucle locale. `0.0.0.0` désigne toutes les interfaces IPv4 ; `::` est l’écoute générique double pile. Utilisez une adresse réellement accessible dans un navigateur, pas une adresse générique. Les identifiants de zone IPv6 ne sont pas pris en charge dans `--host`.
 
@@ -48,7 +50,7 @@ Pour du HTTP en boucle locale uniquement, par exemple derrière un proxy local d
 codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
-Ne supposez pas le port 9898 ou 9899 : les ports omis peuvent changer s’ils sont occupés. Un `--https-port` ou `--http-port` explicite non nul fixe le port et échoue si l’écoute est impossible ; `0` demande au système d’en attribuer un. Les **Local Connection URL** et **Remote Connection URL** affichées, et les **Adresses accessibles** actualisées, font autorité pour cette exécution. Voir la [référence CLI serveur](server.md) complète.
+Ne supposez pas le port 9898 ou 9899 : les ports omis peuvent changer s’ils sont occupés. Un `--https-port` explicite non nul, ou un `--http-port` avec HTTP activé, fixe le port et échoue si l’écoute est impossible ; `0` demande au système d’en attribuer un. Les **Local Connection URL** et **Remote Connection URL** affichées, et les **Adresses accessibles** actualisées, font autorité pour cette exécution. Voir la [référence CLI serveur](server.md) complète.
 
 ## Configurer un TLS de confiance {#tls}
 
@@ -81,10 +83,10 @@ Si un client signale un avertissement de certificat, arrêtez-vous et vérifiez 
 
 ## Enregistrer un serveur distant {#saved-servers}
 
-1. Dans l’accueil de bureau, sélectionnez **Serveurs**, puis **Se connecter à un serveur**.
-2. Saisissez **Nom du serveur** et **URL du serveur** avec une origine HTTPS de confiance. Laissez **Ignorer la vérification TLS pour les certificats auto-signés.** décoché ; établissez plutôt la confiance.
+1. Sur l’accueil de bureau, choisissez **Se connecter au serveur CodeNomad**. Le même bouton apparaît dans un onglet **Serveurs** vide et dans **Paramètres → Accès distant → Serveurs**.
+2. Dans **Se connecter à un serveur**, saisissez **Nom du serveur** et **URL du serveur** avec une origine HTTPS de confiance. Laissez **Ignorer la vérification TLS pour les certificats auto-signés.** décoché ; établissez plutôt la confiance.
 3. Choisissez **Enregistrer** pour ajouter un favori, ou **Se connecter** pour l’enregistrer et l’ouvrir. Connectez-vous sur ce serveur.
 
-Les favoris appartiennent à cette configuration CodeNomad, pas aux projets du serveur distant. Enregistrer une URL ne démarre pas le serveur et n’accorde pas l’accès. **Supprimer le serveur enregistré** retire le favori, pas les conversations distantes, le backend ou ses identifiants.
+Sélectionnez un serveur enregistré dans l’onglet **Serveurs** de l’accueil pour l’ouvrir de nouveau. Les favoris appartiennent à cette configuration CodeNomad, pas aux projets du serveur distant. Enregistrer une URL ne démarre pas le serveur et n’accorde pas l’accès. **Supprimer le serveur enregistré** retire le favori, pas les conversations distantes, le backend ou ses identifiants.
 
 Pour le Contrôle à distance, collez plutôt un lien d’appairage récent dans **URL du serveur**. Le favori ne conserve que l’origine du tunnel, jamais le code d’appairage à usage unique ; voir [Contrôle à distance](remote-control.md) pour le réappairage après perte du cookie de l’appareil.

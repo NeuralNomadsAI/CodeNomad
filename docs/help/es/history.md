@@ -9,7 +9,7 @@ El historial almacenado, lo que muestra actualmente la transcripción y el conte
 3. Activa **Incluir herramientas y razonamiento** si necesitas contenido técnico además del texto legible.
 4. Selecciona un fragmento o usa **Siguientes resultados** para continuar más allá de la página actual.
 
-La búsqueda es literal y no distingue mayúsculas de minúsculas; recorre el historial almacenado, no solo las filas montadas de la transcripción. El ámbito del espacio de trabajo sigue el árbol de directorios y los worktrees autorizados del proyecto abierto, no todos los proyectos del servicio OpenCode. Los bytes de archivos/imágenes adjuntos y el estado opaco del proveedor no son texto buscable.
+La búsqueda es literal y no distingue mayúsculas de minúsculas; recorre el historial almacenado, no solo las filas montadas de la transcripción. El ámbito del espacio de trabajo sigue el árbol de directorios y los worktrees autorizados del proyecto abierto, no todos los proyectos del servicio OpenCode; sus resultados se agrupan por conversación, cada una identificada por su título y el worktree que la contiene actualmente. Los bytes de archivos/imágenes adjuntos y el estado opaco del proveedor no son texto buscable.
 
 La línea de progreso **Esta página: … resultados · … mensajes examinados** describe esta página de resultados, no los totales del espacio de trabajo. Los resultados llegan por lotes. Se informa de los mensajes demasiado grandes o no compatibles omitidos; la ausencia de un resultado no demuestra que esos mensajes no contengan coincidencias. Los mensajes nuevos que llegan durante un análisis necesitan una búsqueda nueva para incluirse de forma coherente.
 
@@ -18,10 +18,12 @@ Abrir una búsqueda vacía no analiza el historial. Cambiar la consulta/el ámbi
 ## Abrir resultados y usar la línea de tiempo {#timeline-navigation}
 
 1. Elige un resultado de búsqueda de la sesión actual para saltar al pasaje que lo rodea.
-2. Elige un resultado de otra sesión para abrir una vista previa independiente de ese mensaje.
+2. Elige un resultado de otra sesión para abrir una vista previa independiente de ese mensaje; usa **Abrir en la sesión** para ir a esa conversación en el resultado.
 3. En **Línea de tiempo de mensajes**, pasa el puntero o enfoca un marcador para ver un fragmento y selecciónalo para navegar. Usa los controles de primer/último mensaje para volver a los extremos del historial almacenado.
 
-La línea de tiempo representa la estructura completa de la sesión aunque la transcripción solo contenga un pasaje acotado. Los saltos cargan el destino en lugar de obtener todos los mensajes intermedios. Las vistas previas de resultados de otras sesiones no cargan toda su transcripción ni las seleccionan silenciosamente.
+La línea de tiempo representa la estructura completa de la sesión aunque la transcripción solo contenga un pasaje acotado. Los saltos cargan el destino en lugar de obtener todos los mensajes intermedios. Las vistas previas de resultados de otras sesiones no cargan toda su transcripción ni las seleccionan; solo **Abrir en la sesión** cambia de conversación.
+
+Los marcadores de herramientas siguen **Contenido de los mensajes**: un tipo de herramienta oculto allí no tiene marcador (ninguno con **Nada**), salvo una herramienta que espera un permiso. Un paso que solo ejecutó herramientas muestra únicamente sus marcadores de herramientas, sin un marcador de agente vacío.
 
 Mientras se carga un salto, el pasaje anterior permanece visible. Un salto más reciente o una interacción manual con la transcripción sustituye la navegación obsoleta; un salto fallido deja intacto el pasaje visible. Reintenta el destino en lugar de recargar todo el proyecto repetidamente. Leer el historial no cambia la selección de agente/modelo del editor de mensajes.
 
@@ -38,7 +40,7 @@ La línea de tiempo se oculta cuando la conversación es demasiado estrecha (men
 | Eliminar sesión | **Eliminar sesión** en la fila de la sesión, o eliminación de sesiones seleccionadas | Elimina recursivamente la conversación nativa y sus subsesiones/historial descendientes tras confirmar; no se puede deshacer |
 | Depurar sesiones | Paleta de comandos | Eliminación más amplia de sesiones, no un ajuste de visualización ni de tamaño del contexto |
 
-**Contenido de los mensajes** se aplica a todas las conversaciones. Ocultar herramientas no las desactiva, no cambia permisos ni elimina la salida almacenada. Los mensajes individuales muy grandes también pueden mostrar **Mostrar … más** en un hueco omitido para mantener la fluidez de representación; expandir ese hueco no recupera contenido eliminado.
+**Contenido de los mensajes** se aplica a todas las conversaciones. Elige un preajuste (**Nada**, **Mínimo**, **Equilibrado** o **Todo**) en su parte superior o en **Configuración → Chat** y después ajusta filas individuales; el menú de preajustes de **Contenido de los mensajes** muestra entonces **Personalizado**. Ocultar herramientas no las desactiva, no cambia permisos ni elimina la salida almacenada. Para mantener la fluidez de representación, los mensajes muy grandes muestran **Mostrar … más** en un hueco omitido, y los textos o salidas de herramientas muy largos se detienen en una línea **… caracteres más ocultos** con **Mostrar todo**. Revelar cualquiera de ellos solo afecta a la visualización y no recupera contenido eliminado.
 
 ## Compactar una sesión {#compact-session}
 

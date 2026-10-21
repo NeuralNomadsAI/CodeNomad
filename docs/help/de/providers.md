@@ -4,10 +4,10 @@ Anbieterauthentifizierung gehört zum verbundenen OpenCode-Dienst, nicht zum Bro
 
 ## Modell- oder Suchanbieter verbinden {#connect}
 
-1. Öffnen Sie einen Arbeitsbereich und dann **Einstellungen → Anbieter**.
-2. Wählen Sie unter **Modelle** oder **Websuche** zuerst **Anbieter auswählen**, dann **Verbinden**.
-3. Durchlaufen Sie die angebotene native **Authentifizierungsmethode**: API-Schlüssel, OAuth oder Befehl. Verwenden Sie bei OAuth **Autorisierungsseite öffnen** und übermitteln Sie einen Autorisierungscode nur auf Aufforderung.
-4. Prüfen Sie nach Abschluss die Zeile des konfigurierten Anbieters; verwenden Sie bei unklarem Ergebnis **Aktualisieren**.
+1. Öffnen Sie einen Arbeitsbereich und dann **Einstellungen → Anbieter**. **Modelle** ist anfangs aufgeklappt; klappen Sie für Suchanbieter **Websuche** auf.
+2. Wählen Sie in dieser Gruppe zuerst **Anbieter auswählen**, dann **Verbinden**.
+3. Durchlaufen Sie bei einem Modellanbieter die angebotene native **Authentifizierungsmethode**: API-Schlüssel, OAuth oder Befehl. Verwenden Sie bei OAuth **Autorisierungsseite öffnen** und übermitteln Sie einen Autorisierungscode nur auf Aufforderung. Suchanbieter verbinden sich mit einem API-Schlüssel.
+4. Prüfen Sie nach Abschluss die Zeile des konfigurierten Anbieters. **Modelle** liest nach Verbindungen, Kontoänderungen und Wiederverbindungen erneut; **Websuche** bietet zusätzlich **Aktualisieren**.
 
 Reine Suchintegrationen erscheinen unter **Websuche**, nicht **Modelle**. Das Speichern der Authentifizierung wählt kein Modell und ändert keinen Standardsuchanbieter. API-Schlüssel und OAuth-Zugangsdaten speichert der aktive OpenCode-Server. Der Browser erhält Verbindungsmetadaten, keine gespeicherten Geheimnisse. Eine Verbindung aus Umgebungsvariablen ist hier schreibgeschützt: Ändern Sie deren zuständige Umgebung, statt sie hier trennen zu wollen.
 
@@ -17,9 +17,9 @@ Wird das Autorisierungsfenster blockiert, verwenden Sie **Autorisierungsseite ö
 
 1. Wählen Sie in der Anbieterzeile unter **Aktives Konto** gespeicherte Zugangsdaten.
 2. Verwenden Sie **Konto hinzufügen**, um eine weitere Verbindung zu authentifizieren.
-3. Wählen Sie zum Verwalten eines anderen gespeicherten Kontos dieses zuerst aus und verwenden Sie **Konto umbenennen** oder **Konto entfernen**. Umbenennen verwendet **Kontobezeichnung** und **Speichern**.
+3. Wählen Sie zum Verwalten eines anderen gespeicherten Kontos dieses zuerst aus und verwenden Sie **Konto umbenennen** oder **Konto entfernen**. Umbenennen verwendet **Kontobezeichnung** und **Speichern**; **Konto entfernen** wirkt sofort, ohne Bestätigung.
 
-Auswahl, Umbenennung und Entfernen betreffen diese Integration im gesamten OpenCode-Dienst einschließlich anderer Projekte und Clients. Das Entfernen von Zugangsdaten kann diesen Clients die Authentifizierung nehmen; es löscht keinen Unterhaltungsverlauf und widerruft nicht das externe Anbieterkonto. Umgebungsverbindungen lassen sich hier weder als beschreibbare gespeicherte Zugangsdaten auswählen noch entfernen. Aktualisieren und prüfen Sie bei einem Fehler **Aktives Konto**, bevor Sie erneut handeln.
+Auswahl, Umbenennung und Entfernen betreffen diese Integration im gesamten OpenCode-Dienst einschließlich anderer Projekte und Clients. Das Entfernen von Zugangsdaten kann diesen Clients die Authentifizierung nehmen; es löscht keinen Unterhaltungsverlauf und widerruft nicht das externe Anbieterkonto. Umgebungsverbindungen lassen sich hier weder als beschreibbare gespeicherte Zugangsdaten auswählen noch entfernen. Schlägt ein Vorgang fehl, liest CodeNomad die Konten erneut: Prüfen Sie **Aktives Konto** noch einmal, bevor Sie handeln.
 
 ### Grenzen automatischer Auswahl {#automatic-selection}
 
@@ -27,7 +27,7 @@ Bei mehreren gespeicherten Zugangsdaten einer unterstützten Integration aktivie
 
 | Geeignete Integration | Geeigneter Kontotyp |
 | --- | --- |
-| OpenAI / Codex | Codex-OAuth-Abonnementkonten, keine nutzungsabhängigen OpenAI-Schlüssel. |
+| OpenAI / Codex | Codex-Abonnementkonten mit Browser-/Geräte-OAuth, weder nutzungsabhängige OpenAI-Schlüssel noch die ChatGPT-Anmeldemethode, für die OpenAI keine Nutzungsdaten bereitstellt. |
 | OpenCode Go | Go-Schlüssel oder OpenCode-Console-Anmeldung/-Schlüssel **nur für den Go-Anbieter**, keine nutzungsabhängigen Zen-Guthaben. |
 | Anthropic | OpenCodes Claude-Pro/Max-OAuth-Anmeldung, **nicht** die Claude-Code-Anmeldung. |
 | GitHub Copilot | OAuth mit lesbarem Premium-Anfragekontingent; Zugangsdaten für Enterprise-Endpunkte sind keine lesbaren Kandidaten. |
@@ -48,7 +48,9 @@ Sichtbarkeit und Favoriten ordnen CodeNomads Auswahlfelder; sie deinstallieren k
 
 ## Nutzung, Tokenzahlen und abgelaufene Anmeldungen {#usage}
 
-Verwenden Sie **Nutzung** im rechten Panel für die Anbieter-Planfenster, Rücksetzzeiten und unterstützten Guthaben der aktiven Unterhaltung. Diese Anbieterwerte unterscheiden sich von **Tokens** und Kostenschätzungen pro Nachricht: Ein Abonnementkontingent ist keine aus dem sichtbaren Verlauf berechnete Rechnung. Ein fehlender, veralteter oder unbekannter Wert bedeutet weder Nullnutzung noch nachgewiesene Restkapazität. **Anbieterguthaben** in den Chat-Einstellungen steuert ergänzende Guthabenanzeigen.
+Verwenden Sie **Nutzung** im rechten Panel für die Anbieter-Planfenster, Rücksetzzeiten und unterstützten Guthaben der aktiven Unterhaltung. Diese Anbieterwerte unterscheiden sich von **Tokens** und Kostenschätzungen pro Nachricht: Ein Abonnementkontingent ist keine aus dem sichtbaren Verlauf berechnete Rechnung. Ein fehlender, veralteter oder unbekannter Wert bedeutet weder Nullnutzung noch nachgewiesene Restkapazität. **Anbieterguthaben** unter **Einstellungen → Erweitert** steuert ergänzende Guthabenanzeigen.
+
+Für eine ChatGPT-Anmeldemethode stellt OpenAI keine Nutzungsdaten bereit: Nutzung weist darauf hin, statt Kontingentfenster anzuzeigen. Chatten funktioniert weiterhin, und eine erneute Verbindung derselben Anmeldung stellt den Wert nicht wieder her.
 
 Nutzung folgt den ausgewählten nativen Zugangsdaten. Claude über `anthropic`/`claude` verwendet OpenCodes Anthropic-OAuth. Der Anbieter `claude-code` verwendet die Claude-Code-Anmeldung auf dem Daemon-Host einschließlich dessen WSL-Distribution: zuerst `CLAUDE_CODE_OAUTH_TOKEN`, dann die gespeicherte Anmeldung, wobei `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` oder `~/.claude` den Dateispeicher bestimmen; lokales macOS kann den Schlüsselbund verwenden. CodeNomad ersetzt keine Claude-Anmeldung durch die andere.
 
@@ -71,10 +73,10 @@ Halten Sie Tokens/Cookies aus Shell-Verlauf, Screenshots und Berichten heraus. O
 
 ## Websuche-Standard und Projektüberschreibung {#web-search}
 
-1. Verbinden Sie unter **Einstellungen → Anbieter → Websuche** die Suchintegration, falls Authentifizierung nötig ist.
+1. Klappen Sie unter **Einstellungen → Anbieter** die Gruppe **Websuche** auf und verbinden Sie die Suchintegration mit ihrem API-Schlüssel, falls sie einen benötigt.
 2. Wählen Sie **Standardsuche** für die globale Konfiguration.
-3. Verwenden Sie **Für das aktuelle Projekt** als Überschreibung für die aktive Location. Prüfen Sie **Suche in diesem Projekt** für das wirksame Ergebnis.
+3. Verwenden Sie **Für das aktuelle Projekt** als Überschreibung für die aktive Location. Zeigen Sie auf dieses Auswahlfeld oder fokussieren Sie es, um **Suche in diesem Projekt** mit dem wirksamen Ergebnis zu sehen.
 
-Änderungen speichern automatisch. **Standard / geerbt** verwendet geerbte Konfiguration oder die gespeicherte native Auswahl; eine Projektüberschreibung hat Vorrang vor Global. **Deaktiviert** schaltet die Suche im gewählten Geltungsbereich aus; **Automatischer Anbieter** fordert native automatische Anbieterauswahl an. Eine umgebungsbasierte Auswahl wird schreibgeschützt angezeigt.
+Änderungen speichern automatisch. **Standard / geerbt** verwendet geerbte Konfiguration oder die gespeicherte native Auswahl; eine Projektüberschreibung hat Vorrang vor Global. **Deaktiviert** schaltet die Suche im gewählten Geltungsbereich aus; **Automatischer Anbieter** fordert native automatische Anbieterauswahl an. **Websuche** lädt ihre Verbindungen und Auswahlen nur, solange sie aufgeklappt ist. **Trennen** entfernt einen gespeicherten Suchschlüssel; eine von einer Umgebungsvariable bereitgestellte Verbindung ist als schreibgeschützt gekennzeichnet und hat kein **Trennen**.
 
 Suchzugangsdaten bleiben dienstglobal, auch bei projektbezogener Anbieterwahl. Das Speichern eines Schlüssels wählt ihn nicht als Suchstandard. Aktualisieren Sie bei Lese-/Speicherfehlern vor dem Wiederholen; ersetzen Sie Konfiguration nicht blind. Native Konfigurationsdetails finden Sie in der [OpenCode-Dokumentation](https://opencode.ai/v2/docs/) und [OpenCode-Einrichtung](opencode.md).

@@ -8,7 +8,7 @@ Hata raporları, güncel sürümler ve katkılar için depoyu kullanın. [Sorun 
 2. GitHub sorun formunu açmak için **Hata bildir** öğesini seçin.
 3. Önceden doldurulan sürüm/istemci bilgilerini inceleyin. En küçük yeniden üretme örneğini, beklenen davranışı ve gerçek sonucu ekleyip GitHub üzerinden gönderin.
 
-Eylem, CodeNomad/OpenCode sürümlerini, işletim sistemini ve sınırlı istemci/çalışma zamanı bağlamını önceden doldurur. Dinleyici adreslerini, çalışma alanı yollarını, kimlik bilgilerini veya konuşma metnini önceden doldurmaz. Formu açmak bir sorun göndermiyor.
+Eylem, CodeNomad ve OpenCode sürümlerini (kurulu olandan farklıysa çalışan OpenCode hizmetininki dahil), işletim sisteminizi, istemci türünü (web tarayıcısında tarayıcının kullanıcı aracısıyla birlikte) ve sunucunun işletim sistemini önceden doldurur. Dinleyici adreslerini, çalışma alanı yollarını, kimlik bilgilerini veya konuşma metnini önceden doldurmaz. Formu açmak bir sorun göndermiyor.
 
 Daha fazla tanılama gerekiyorsa **Panoya kopyala** veya **.txt indir** ayrı rapor üretir. Bu kapsamlı rapor yerel yolları ve ağ adreslerini içerebilir: eklemeden önce inceleyip hassas bilgileri gizleyin. Otomatik rapor kimlik doğrulama sırlarını hariç tutsa da ekran görüntüsü veya günlük alıntısı sır içerebilir.
 

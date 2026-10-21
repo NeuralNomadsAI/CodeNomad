@@ -41,8 +41,8 @@ Sahip olunan bir çalışma ağacı veya konuşma yerleşimi doğrulanamıyorsa,
 
 ## OpenCode çalışma zamanı ve WSL {#opencode-runtime}
 
-1. **Preferences → OpenCode** öğesini açın ve seçilen yürütülebilir dosyayı, yüklü sürümü ve çalışan hizmet durumunu kontrol edin.
-2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.1.0**; önerilen/doğrulanan: **2.1.0**.
+1. **Preferences → OpenCode** öğesini açın ve **OpenCode sürümü** kartını (kurulu sürüm ve çalışan hizmet durumu), ardından **OpenCode Binary** altındaki seçili yürütülebilir dosyayı kontrol edin.
+2. Gerekli çalışma zamanı yoksa desteklenen kurulum/güncelleme eylemini kullanın. Güncel alt sınır: **2.1.0**; önerilen/doğrulanan: **2.1.1**.
 3. Kurulu CLI, çalışan hizmetten farklıysa, paylaşılan hizmetin yeniden başlatılıp başlatılmayacağına açıkça karar verin.
 
 **OpenCode hizmetini yeniden başlat**, **Sorun giderme** altında mevcuttur ve onay gerektirir. Bağlı her istemcideki aktif çalışmayı kesintiye uğratır ancak oturum geçmişini korur. Yapılandırmanın yeniden yüklenmesi ayrı bir eylemdir: süreci korur ancak yüklenen Konumları yeniden oluşturur ve bekleyen soruları/izinleri iptal eder. Zararsız bir yenileme de değildir.
@@ -65,11 +65,11 @@ Kimlik doğrulama kurtarıldıktan sonra, yanıtı belirsiz olan bir değişikli
 
 ## Uzaktan Kontrol eşleştirme {#pairing}
 
-1. Ana bilgisayarda **Ayarlar → Uzak Erişim** öğesini açın ve Uzaktan Kontrolnın çalıştığını kontrol edin.
+1. Ana bilgisayarda **Ayarlar → Uzak Erişim** öğesini açın ve Uzaktan Kontrol'ün çalıştığını kontrol edin.
 2. Yeni bir eşleştirme bağlantısı oluşturun ve süresi dolmadan bu bağlantıyı amaçlanan cihazda açın.
 3. İstemci **Bu cihazı yeniden eşleştirin** gösteriyorsa, ana bilgisayardan eşleştirin ve ardından istemcide **Bağlantıyı kontrol et** öğesini seçin.
 
-Eşleştirme bağlantıları tek kullanımlıktır ve kısa ömürlüdür; doğrudan erişim şifresi onun yerine geçmez. İptal edilen veya etkinliğin sona erdiği cihaz kimlik bilgilerinin yeniden eşleştirilmesi gerekir. Son masaüstü penceresinin kapatılması, arka ucunu ve dolayısıyla Uzaktan Denetimi durdurur; Etkinleştirilmiş bir hizmet, bir sonraki uygulama açılışında devam eder. Kullanılamayan yalnızca ana bilgisayar yüzeyleri ve iptal için [Uzaktan Kontrol](remote-control.md) bölümüne bakın.
+Eşleştirme bağlantıları tek kullanımlıktır ve kısa ömürlüdür; doğrudan erişim şifresi onun yerine geçmez. İptal edilen veya etkinliğin sona erdiği cihaz kimlik bilgilerinin yeniden eşleştirilmesi gerekir. Son masaüstü penceresinin kapatılması, arka ucunu ve dolayısıyla Uzaktan Kontrolü durdurur; Etkinleştirilmiş bir hizmet, bir sonraki uygulama açılışında devam eder. Kullanılamayan yalnızca ana bilgisayar yüzeyleri ve iptal için [Uzaktan Kontrol](remote-control.md) bölümüne bakın.
 
 ## Sağlayıcı, eklenti ve uzantı durumu {#providers-and-addons}
 
@@ -79,6 +79,7 @@ Eşleştirme bağlantıları tek kullanımlıktır ve kısa ömürlüdür; doğr
 | Süresi dolmuş harici mülkiyetli OAuth | OpenCode, Claude Code veya ilgili kimlik bilgisi sahibi aracılığıyla tekrar oturum açın. CodeNomad yenileme jetonlarını değiştirmez. |
 | Otomatik hesap seçimi geçiş yapmıyor | Özelliğin açık ve hesabın uygun olduğunu, mevcut kotanın tamamen dolduğunu kontrol edin. Bu, devam eden isteğe müdahale veya hemen yeniden yürütme değil, kabul öncesi ilkedir. |
 | Eklenti durumu eski görünüyor | **Plugin denetimlerini yenile** öğesini kullanın ve eklenti ipucunun kapsamını/hedefini inceleyin; çalışma zamanı aktivasyonu yerel yenilemeyi bekleyebilir. Belirsiz bir yazmayı tekrar tekrar değiştirmeyin. |
+| **Görev Kontrolü kullanılamıyor** | Belirtilen nedeni izleyin. OpenCode Görevler eklentisini yüklemediyse yenileyin, sorun sürerse **OpenCode yapılandırmasını yeniden yükle** eylemini kullanın; eklenti yüklenemediyse hatasını Eklentiler listesinde okuyun; sunucu yerel Görevler bağlantısını açamadıysa sunucu günlüğünü kontrol edin, çünkü OpenCode'u yeniden yüklemek işe yaramaz. Görevler bağımsız sunucuda da çalışır. |
 | Yüklü uzantı eksik | Panel özelleştirmesinde tek etkinleştirme onay kutusunu işaretleyin. Kurulum/değiştirme işlemi, siz açıkça etkinleştirip gerekli onayı onaylayana kadar onu devre dışı bırakır. |
 | Uzantı öğeleri reddedildi | Geçerli bağlı oturum için API 2 varlık okuma iznini onaylayın. Bir uzantı yüklemek, rastgele dosyaları/geçmişi okuma izni değildir. |
 
@@ -88,7 +89,7 @@ Bkz. [Sağlayıcılar](providers.md), [Entegrasyonlar](integrations.md) ve [Uzan
 
 Tam geçmiş araması, halihazırda yüklü olan konuşma dökümü satırlarıyla sınırlı değildir. Görüntüleme filtresi içeriği silmeden gizler; Arama, sıkıştırma, teknik temizleme ve silme işlemlerini ayırt etmek için [Geçmiş](history.md)'yi kullanın.
 
-Bekleyen istek kurtarma işlemi tamamlanmadıysa CodeNomad, eksik kapsamı boş bir kuyruk olarak ele almak yerine bilinen kuyrukları ve yanıt taslaklarını korur. Art arda iki eksik kurtarma sonrasında olağan bildirimlerle uyarıda bulunur; Geçici arızalar canlılık kontrolü tarafından yeniden denenir. Sıkıştırmayla ilgili erteleme, talebin iptal edildiği anlamına gelmez. Taslağı olduğu gibi bırakın, hizmet bağlantısını doğrulayın ve tekrar yanıtlamadan önce isteğin mevcut durumunu kullanın.
+Bekleyen istek kurtarma işlemi tamamlanmadıysa CodeNomad, eksik kapsamı boş bir kuyruk olarak ele almak yerine bilinen kuyrukları ve yanıt taslaklarını korur. Art arda iki eksik kurtarma sonrasında projeyi, nedeni, klasörleri ve etkilenen oturumları belirterek bir kez uyarır; uyarı **Projeler ve sekmeler** bildirim kategorisine aittir (varsayılan olarak ekranda ve geçmişte görünür; bkz. **Ayarlar → Bildirimler**). Geçici arızalar canlılık kontrolü tarafından yeniden denenir. Sıkıştırmayla ilgili erteleme, talebin iptal edildiği anlamına gelmez. Taslağı olduğu gibi bırakın, hizmet bağlantısını doğrulayın ve tekrar yanıtlamadan önce isteğin mevcut durumunu kullanın.
 
 İptal edilmiş veya kısmi temizlikte başka silme başlatmadan önce ilerlemeyi/karar kayıtlarını okuyun. İptal gönderilmiş toplu işlemi geri almaz. Geçmişi OpenCode veritabanını düzenleyerek onarmayın. Görev belirsizliğinde yeni çalıştırma oluşturmak veya işi otomatik tekrarlamak yerine **Durumu denetle**/yenileme kurtarmasını kullanın; [Görevler](missions.md) yeniden başlatma ve çalışma ömrü sınırlarını açıklar.
 

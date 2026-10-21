@@ -15,7 +15,7 @@
 | Değişiklikler | Dizin ve çalışma ağacı değişiklikleri | Git değişiklik işlemleri yalnızca açık eylemlerle gerçekleşir |
 | Commitler | Sayfalandırılmış commit geçmişi ve revizyon içerikleri | Salt okunur geçmiş; çalışma kopyasını değiştirmez |
 
-Genişletilmiş klasörler mod değişikliklerinden etkilenmez. Listeleme/durum/geçmiş, önbelleğe alınmış anlık görüntüleri kullanır ve ilgili dosya sistemi değişiklikleri, etkinleştirme veya açık yenileme sonrasında yeniden doğrulanır; panele odaklanmak yeni bir okuma garantisi değildir.
+Genişletilmiş klasörler mod değişikliklerinden etkilenmez. Listeleme/durum/geçmiş, önbelleğe alınmış anlık görüntüleri kullanır ve ilgili dosya sistemi değişiklikleri, etkinleştirme veya açık yenileme sonrasında yeniden doğrulanır; panele odaklanmak yeni bir okuma garantisi değildir. Görünür Çalışma alanı klasörleri, arka uç ana bilgisayarında oluşturulan, düzenlenen, yeniden adlandırılan veya silinen dosyaları kendiliğinden algılar; sürekli etkinlik sırasında bu en fazla beş saniyede bir olur. Daraltılmış klasörler ve diğer çalışma ağaçları yalnızca onları gösterdiğinizde yeniden okunur.
 
 Satır eylemleri arasında **Yolu kopyala** ve istemcinin arka uç yollarının açılmasını desteklediği durumlarda **Varsayılan uygulamayla aç**, **Klasörde göster**, **Dosya yöneticisinde aç** ve **Burada terminal aç** gibi dosya yöneticisi/düzenleyici/terminal eylemleri bulunur. Alan sınırlı olduğunda eylemler **{name} için daha fazla eylem** öğesine taşınabilir; dosya veya klasör adı `{name}`'nin yerine geçer. Uzak bir tarayıcı, sunucu yolunun yerel aygıt yolu olduğunu varsayamaz; bkz. [Uzaktan Kontrol](remote-control.md).
 
@@ -54,7 +54,7 @@ Okuyucunun sonundaki kapatma düğmesi konuşmaya döner; ileti düzenleyicisi o
 2. **Dosyayı stage et** / **Dosyayı unstage et** öğesini kullanın, karşılık gelen seçili dosyalar eylemi için birkaç satır seçin veya satırları bölümler arasında sürükleyin.
 3. **Staged Değişiklikler** öğesinin üst kısmına bir mesaj girin ve ardından **Commit** öğesini seçin.
 
-Daraltılmış bölüm başlıkları sürükle-bırak hedefi olmaya devam eder. Bölümleri daraltmak veya mod değiştirmek durumlarını ve commit mesajı taslağını korur. Stage/unstage göz atılan çalışma ağacının indeksini değiştirir; commit yalnızca stage edilmiş içeriği kaydeder. Unstage, çalışma ağacındaki düzenlemeyi geri almaz.
+Daraltılmış bölüm başlıkları sürükle-bırak hedefi olmaya devam eder. Bölümleri daraltmak veya mod değiştirmek durumlarını ve commit mesajı taslağını korur. Uzun bir bölüm ilk 200 dosyasını gösterir, ardından sonrakileri yerinde açmak için **200 tane daha göster** ile birlikte **480 dosya gösterilmiyor** gibi bir satır gelir; bölüm sayıları tam toplamları göstermeye devam eder ve geçerli, önizlenen ve seçili dosyalar görünür kalır. Shift ile tıklanarak seçilen aralıklar yalnızca gösterilen satırları kapsar; böylece toplu bir eylem göremediğiniz bir dosyayı asla içermez. Stage/unstage göz atılan çalışma ağacının indeksini değiştirir; commit yalnızca stage edilmiş içeriği kaydeder. Unstage, çalışma ağacındaki düzenlemeyi geri almaz.
 
 Özellikle ajanlar veya başka istemci de aynı yere yazıyorsa commit öncesinde stage edilmiş dosyaları inceleyin. Başarısız commit otomatik yeniden gönderilmez. Yeniden denemeden önce durumu/geçmişi yenileyip hatayı inceleyin; kayıp yanıt hiçbir commit oluşmadığının kanıtı değildir.
 

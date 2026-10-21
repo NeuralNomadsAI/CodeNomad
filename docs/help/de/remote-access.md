@@ -29,10 +29,12 @@ Dies ändert den direkten Abhörmodus des Hosts, nicht ein Projekt und nicht die
 
 | Start/Modus | HTTP bindet an | HTTPS bindet an |
 | --- | --- | --- |
-| Eigenständig, nur HTTPS (Standard) | Nicht aktiviert | `--host` |
+| Eigenständig, nur HTTPS (Standard) | Nur privater Loopback-Listener (siehe unten) | `--host` |
 | Eigenständig, nur HTTP | **`--host`**, einschließlich LAN-/Wildcard-Adresse | Nicht aktiviert |
 | Eigenständig, beide Listener | `127.0.0.1` unabhängig von `--host` | `--host` |
 | Natives Desktop-Backend | Sein HTTP-Listener bleibt auf `127.0.0.1`, einschließlich des hostinternen Listeners | `--host`, wenn HTTPS aktiviert ist |
+
+Jedes Backend behält außerdem einen HTTP-Listener auf `127.0.0.1` für CodeNomads eigene mitgelieferte OpenCode-Plugins wie Missionen. Wurde HTTP nicht angefordert oder ist der angeforderte HTTP-Listener an eine andere Adresse als `127.0.0.1` oder `0.0.0.0` gebunden, ergänzt das Backend einen privaten HTTP-Listener auf einem zufälligen `127.0.0.1`-Port. Er wird nie ausgegeben oder als Verbindungsadresse angeboten, ist von anderen Rechnern nicht erreichbar und stellt dieselbe authentifizierte Anwendung bereit.
 
 Eine konkrete LAN-Adresse muss keine Loopback-Verbindungen annehmen. `0.0.0.0` bedeutet alle IPv4-Schnittstellen; `::` ist der Dual-Stack-Wildcard-Listener. Verwenden Sie im Browser eine tatsächlich erreichbare Adresse, keine Wildcard. IPv6-Zonenkennungen werden in `--host` nicht unterstützt.
 
@@ -48,7 +50,7 @@ Für reines Loopback-HTTP, etwa hinter einem lokalen vertrauenswürdigen Proxy:
 codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
-Setzen Sie Port 9898 oder 9899 nicht voraus: Nicht angegebene Ports können bei Belegung ausweichen. Ein expliziter von null verschiedener `--https-port` oder `--http-port` legt den Port fest und schlägt bei fehlgeschlagener Bindung fehl; `0` fordert eine OS-Zuweisung an. Die ausgegebenen **Local Connection URL** und **Remote Connection URL** sowie aktualisierte **Erreichbare Adressen** sind für diesen Lauf maßgeblich. Siehe die vollständige [Server-CLI-Referenz](server.md).
+Setzen Sie Port 9898 oder 9899 nicht voraus: Nicht angegebene Ports können bei Belegung ausweichen. Ein expliziter von null verschiedener `--https-port` oder ein `--http-port` bei aktiviertem HTTP legt den Port fest und schlägt bei fehlgeschlagener Bindung fehl; `0` fordert eine OS-Zuweisung an. Die ausgegebenen **Local Connection URL** und **Remote Connection URL** sowie aktualisierte **Erreichbare Adressen** sind für diesen Lauf maßgeblich. Siehe die vollständige [Server-CLI-Referenz](server.md).
 
 ## Vertrauenswürdiges TLS konfigurieren {#tls}
 
@@ -81,10 +83,10 @@ Meldet ein Client eine Zertifikatswarnung, halten Sie an und prüfen Sie Hostnam
 
 ## Remote-Server speichern {#saved-servers}
 
-1. Wählen Sie auf der Desktop-Startseite **Server**, dann **Mit Server verbinden**.
-2. Geben Sie **Servername** und **Server-URL** mit einer vertrauenswürdigen HTTPS-Origin ein. Lassen Sie **TLS-Verifizierung für selbstsignierte Zertifikate überspringen.** deaktiviert; richten Sie stattdessen Vertrauen ein.
+1. Wählen Sie auf der Desktop-Startseite **CodeNomad-Server verbinden**. Dieselbe Schaltfläche erscheint auf einem leeren Tab **Server** und unter **Einstellungen → Remote-Zugriff → Server**.
+2. Geben Sie in **Mit Server verbinden** **Servername** und **Server-URL** mit einer vertrauenswürdigen HTTPS-Origin ein. Lassen Sie **TLS-Verifizierung für selbstsignierte Zertifikate überspringen.** deaktiviert; richten Sie stattdessen Vertrauen ein.
 3. Wählen Sie **Speichern** für ein Lesezeichen oder **Verbinden** zum Speichern und Öffnen. Melden Sie sich auf diesem Server an.
 
-Lesezeichen gehören zu dieser CodeNomad-Konfiguration, nicht den Projekten des Remote-Servers. Eine URL zu speichern startet keinen Server und gewährt keinen Zugriff. **Gespeicherten Server entfernen** entfernt das Lesezeichen, nicht entfernte Unterhaltungen, Backend oder Zugangsdaten.
+Wählen Sie einen gespeicherten Server auf dem Tab **Server** der Startseite, um ihn erneut zu öffnen. Lesezeichen gehören zu dieser CodeNomad-Konfiguration, nicht den Projekten des Remote-Servers. Eine URL zu speichern startet keinen Server und gewährt keinen Zugriff. **Gespeicherten Server entfernen** entfernt das Lesezeichen, nicht entfernte Unterhaltungen, Backend oder Zugangsdaten.
 
 Fügen Sie für Fernsteuerung stattdessen einen frischen Kopplungslink in **Server-URL** ein. Das Lesezeichen behält nur die Tunnel-Origin, nie den Einmal-Kopplungscode; siehe [Fernsteuerung](remote-control.md) zur erneuten Kopplung nach Verlust des Geräte-Cookies.

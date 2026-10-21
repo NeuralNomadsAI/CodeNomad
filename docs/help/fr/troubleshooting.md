@@ -41,8 +41,8 @@ Si un worktree détenu ou l’emplacement d’une conversation ne peut être vé
 
 ## Environnement OpenCode et WSL {#opencode-runtime}
 
-1. Ouvrez **Préférences → OpenCode** et vérifiez l’exécutable sélectionné, la version installée et l’état du service actif.
-2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.1.0** ; recommandé/qualifié : **2.1.0**.
+1. Ouvrez **Préférences → OpenCode** et vérifiez la carte **Version d’OpenCode** (version installée et état du service actif), puis l’exécutable sélectionné sous **Binaire OpenCode**.
+2. Utilisez l’action d’installation/mise à jour prise en charge si l’environnement requis manque. Minimum actuel : **2.1.0** ; recommandé/qualifié : **2.1.1**.
 3. Si la CLI installée diffère du service actif, décidez explicitement s’il faut redémarrer le service partagé.
 
 **Redémarrer le service OpenCode** est disponible sous **Dépannage** et exige confirmation. Cela interrompt le travail actif de tous les clients connectés mais conserve l’historique. Le rechargement de configuration est distinct : il garde le processus mais reconstruit les Locations chargées et annule les questions/autorisations en attente. Aucun n’est une actualisation anodine.
@@ -79,6 +79,7 @@ Les liens d’appairage sont à usage unique et de courte durée ; le mot de pas
 | OAuth externe expiré | Reconnectez-vous via OpenCode, Claude Code ou le propriétaire d’identifiants concerné. CodeNomad n’échange pas leurs jetons de rafraîchissement. |
 | La rotation automatique ne bascule pas | Vérifiez l’activation volontaire, l’admissibilité et si le compte actuel est réellement saturé. C’est une politique avant admission, pas un basculement en cours de requête ni un rejeu de prompt. |
 | État de plugin apparemment périmé | Utilisez **Actualiser les contrôles des plugins** et inspectez la portée/cible dans l’infobulle ; l’activation réelle peut attendre une actualisation native. Ne basculez pas à répétition une écriture incertaine. |
+| **Le centre de mission est indisponible** | Suivez la cause indiquée. Si OpenCode n’a pas chargé le plugin Missions, actualisez, puis utilisez **Recharger la configuration OpenCode** si cela persiste ; si le plugin n’a pas pu se charger, lisez son erreur dans la liste des plugins ; si le serveur n’a pas pu ouvrir sa connexion locale pour les Missions, consultez le journal du serveur, car recharger OpenCode n’y changera rien. Les Missions fonctionnent aussi sur le serveur autonome. |
 | Extension installée manquante | Vérifiez sa case d’activation unique dans la personnalisation. Installation/remplacement la laisse désactivée jusqu’à votre activation explicite et approbation du consentement requis. |
 | Ressources d’extension refusées | Confirmez le consentement API 2 de lecture des ressources pour la session montée actuelle. Installer une extension n’autorise pas la lecture arbitraire de fichiers/historique. |
 
@@ -88,7 +89,7 @@ Voir [Fournisseurs](providers.md), [Intégrations](integrations.md) et [Extensio
 
 La recherche dans tout l’historique ne se limite pas aux lignes de transcription chargées. Un filtre d’affichage masque sans supprimer ; utilisez [Historique](history.md) pour distinguer recherche, compactage, nettoyage technique et suppression.
 
-Si la récupération des demandes est incomplète, CodeNomad conserve les files connues et brouillons de réponse au lieu de traiter une couverture manquante comme une file vide. Après deux récupérations incomplètes consécutives, il avertit via les notifications ordinaires ; les échecs transitoires sont réessayés par le contrôle de présence. Un report lié au compactage ne signifie pas que la demande a été annulée. Laissez le brouillon intact, vérifiez la connexion au service et consultez l’état actuel avant de répondre à nouveau.
+Si la récupération des demandes est incomplète, CodeNomad conserve les files connues et brouillons de réponse au lieu de traiter une couverture manquante comme une file vide. Après deux récupérations incomplètes consécutives, il avertit une fois, en nommant le projet, la cause, les dossiers et les sessions concernés ; l’avertissement relève de la catégorie de notifications **Projets et onglets** (à l’écran et dans l’historique par défaut, voir **Paramètres → Notifications**). Les échecs transitoires sont réessayés par le contrôle de présence. Un report lié au compactage ne signifie pas que la demande a été annulée. Laissez le brouillon intact, vérifiez la connexion au service et consultez l’état actuel avant de répondre à nouveau.
 
 Pour un nettoyage annulé ou partiel, lisez sa progression/ses reçus avant une autre suppression. Annuler ne défait pas un lot déjà envoyé. Ne réparez pas l’historique en modifiant la base native. Pour une Mission incertaine, utilisez **Vérifier l’état**/la récupération par actualisation plutôt que de créer une autre exécution ou rejouer automatiquement le travail ; [Missions](missions.md) explique les limites de redémarrage et durée de vie.
 

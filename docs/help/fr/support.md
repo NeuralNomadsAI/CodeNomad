@@ -8,7 +8,7 @@ Utilisez le dépôt pour les signalements de bugs, versions actuelles et contrib
 2. Sélectionnez **Signaler un bug** pour ouvrir le formulaire de ticket GitHub.
 3. Vérifiez les informations de version/client préremplies. Ajoutez une reproduction minimale, le comportement attendu et le résultat réel, puis soumettez via GitHub.
 
-L’action préremplit les versions CodeNomad/OpenCode, le système et un contexte client/exécution borné. Elle ne préremplit pas les adresses d’écoute, chemins de travail, identifiants ou textes de conversation. Ouvrir le formulaire ne soumet pas de ticket.
+L’action préremplit les versions de CodeNomad et d’OpenCode (y compris celle du service OpenCode en cours lorsqu’elle diffère de la version installée), votre système d’exploitation, le type de client (avec l’agent utilisateur du navigateur dans un navigateur web) et le système d’exploitation du serveur. Elle ne préremplit pas les adresses d’écoute, chemins de travail, identifiants ou textes de conversation. Ouvrir le formulaire ne soumet pas de ticket.
 
 Pour davantage de diagnostics, **Copier dans le presse-papiers** ou **Télécharger .txt** produit un rapport distinct. Ce rapport plus complet peut contenir des chemins locaux et adresses réseau : relisez-le et masquez-les avant de le joindre. Une capture ou un extrait de journal peut encore contenir des secrets même si le diagnostic automatique exclut les secrets d’authentification.
 

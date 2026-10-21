@@ -4,18 +4,20 @@ CodeNomad, yürütme ana bilgisayarındaki paylaşılan bir OpenCode hizmetine b
 
 ## CLI seçin veya kurun {#select-cli}
 
-1. **Ayarlar → OpenCode** öğesini açın ve yürütülebilir dosyayı seçmek için **OpenCode Binary** öğesini kullanın.
-2. Sunucunun PATH'sini, ardından kullanıcı npm kurulumunu tercih etmek için otomatik seçimi etkin bırakın; veya **Binary için gözat…** kullanın veya bir yol girin ve **Ekle** öğesini seçin.
+1. **Ayarlar → OpenCode** öğesini açın ve yürütülebilir dosyayı seçmek için **OpenCode sürümü** altındaki **OpenCode Binary** kartını kullanın.
+2. Sunucunun PATH'sini (eski bir OpenCode içermediği sürece), ardından kullanıcı npm OpenCode 2 kurulumunu tercih etmek için otomatik girişi seçili bırakın; veya **Binary için gözat…** kullanın veya bir yol girin ve **Ekle** öğesini seçin.
 3. **Durumu ve güncellemeleri denetle** öğesini kullanın. OpenCode eksikse **OpenCode'u kur ve başlat** öğesini seçin; önce ana bilgisayarı ve kurulum kapsamını inceleyin.
 4. Kurulum **Bağlan ve devam et** sunuyorsa, bildirilen sorunu çözdükten sonra bunu kullanın.
 
 Kurulum, diğer istemcilerle paylaşılan standart bir kullanıcı kurulumu için paketlenmiş Node/npm'yi kullanır. **Kullanıcı için kur ve PATH'i yapılandır** bu kullanıcının terminal kurulumunu değiştirir; daha sonra yeni bir terminal açın. Bir tarayıcı CodeNomad sunucusuna bağlanır: dosya seçicisi ve yürütülebilir seçimi, tarama cihazını değil, söz konusu sunucuyu ilgilendirir.
 
-Yüklü yürütülebilir dosya ve çalışan hizmetin farklı sürümleri olabilir. Başka bir yürütülebilir dosyanın seçilmesinin canlı arka plan programının yerini aldığını varsaymak yerine **Sürüm ayrıntıları** öğesini kontrol edin. Kurulum meşgulse veya yürütülebilir dosya kilitliyse, yükleyicinin veya işlemin onu serbest bırakmasını bekleyin ve yeniden denemeden önce durumu kontrol edin; Rakip yükleyicileri çalıştırmayın.
+PATH üzerinde önce eski bir OpenCode geliyorsa, sunulan eylem nasıl kurulduğuna bağlıdır. npm ile kurulmuş OpenCode 1.x için **OpenCode {version} sürümünü OpenCode 2 ile değiştir** onay ister, o npm paketini kaldırır ve OpenCode 2'yi aynı npm klasörüne kurar; OpenCode veri klasörü korunur ve OpenCode 2, 1.x konuşmalarını kendisi içe aktarır. Başka bir yolla (winget, Homebrew, elle) kurulmuş eski veya kullanılamayan bir OpenCode asla değiştirilmez: **CodeNomad için OpenCode 2 kur**, OpenCode 2'yi onun yanına, kullanıcı npm klasörüne kurar ve CodeNomad bundan sonra bu kopyayı kullanır. Bir terminaldeki `opencode` komutu yine eski sürümü başlatabilir. Açıkça seçilmiş özel bir yürütülebilir dosya asla değiştirilmez.
+
+Yüklü yürütülebilir dosya ve çalışan hizmetin farklı sürümleri olabilir. Başka bir yürütülebilir dosyanın seçilmesinin canlı arka plan programının yerini aldığını varsaymak yerine **OpenCode sürümü** kartında **Kurulu sürüm** ile **Çalışan hizmet** değerlerini karşılaştırın; **Sürüm ayrıntıları** minimum ve önerilen sürümleri listeler. Kurulum meşgulse veya yürütülebilir dosya kilitliyse, yükleyicinin veya işlemin onu serbest bırakmasını bekleyin ve yeniden denemeden önce durumu kontrol edin; Rakip yükleyicileri çalıştırmayın.
 
 ## Gerekli, önerilen ve doğrulanmamış sürümler {#versions}
 
-| sınıflandırma | Mevcut gereksinim | Anlamı |
+| Sınıflandırma | Mevcut gereksinim | Anlamı |
 | --- | --- | --- |
 | Asgari | OpenCode **2.1.0** | Gerekli yerel döküm, yeniden oynatma verisi ve sıkıştırma biçimi; önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. |
 | Önerilen | OpenCode **2.1.1** | Teknik alt sınırdan farklı, doğrulanan hedef. |
@@ -27,7 +29,7 @@ Gerekli oturum, izin, Form, gelen kutusu ve oturum-ortam sözleşmelerinin de me
 
 Windows'ta seçilen bir WSL yürütülebilir dosyası, seçilen dağıtımın içinde çalışır. Oraya yükleyin/güncelleyin ve bu dağıtımda anlamlı olan yolları kullanın. WSL bağlantısı Windows localhost yönlendirmesine bağlıdır. Windows CLI ve WSL CLI, birbirinin yerine kullanılabilen yürütme ortamları değildir.
 
-OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına sahiptir. CodeNomad, pencere veya proje başına özel bir OpenCode veritabanı oluşturmaz. Sekmeyi kapatmak Location bağlamını kaldırmadan projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda bulunur. Pencereyi veya CodeNomad arka ucunu kapatmak paylaşılan arka plan programını durdurmaz; bkz. [Projeler](projects.md).
+OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına sahiptir. CodeNomad, pencere veya proje başına özel bir OpenCode veritabanı oluşturmaz. Proje sekmesini kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda yeniden görünür. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz. Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını geri yükleme için korur; ne bu eylemler ne de arka ucun kapanması paylaşılan arka plan programını durdurur. Bkz. [Projeler](projects.md).
 
 ## Güncelleme, yeniden başlatma veya yeniden yükleme {#maintenance}
 
@@ -42,12 +44,12 @@ OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına
 | Hizmeti yeniden başlat | Paylaşılan süreci değiştirir ve bağlı tüm OpenCode istemcilerindeki etkin işleri keser; oturum geçmişi kalır. | Yeniden bağlanıp konuşmaları ve zamanlanmış Görevleri inceleyin; yeniden başlatma otomatik devam anlamına gelmez. |
 | OpenCode yapılandırmasını yeniden yükle | Süreci korur ancak tüm istemcilerdeki **yüklü her Location** bağlamını yeniden kurar. Bekleyen izinleri/Formları iptal eder, terminalleri/arka plan komutlarını kapatır; etkin işler kesilebilir. | Yeniden yükledikten sonra kaynakları ve bekleyen işleri kontrol edin. Yanıt kayboldu diye istemi veya değişiklik işlemini tekrarlamayın. |
 
-Kaydedilmiş bir yapılandırma veya yüklü eklenti kullanılamadığında ve kesinti kabul edilebilir olduğunda **OpenCode yapılandırmasını yeniden yükle** öğesini açıkça kullanın. Zararsız bir ekran yenileme değildir. CodeNomad, daha yeni çalışan bir arka plan programının sürümünü düşürmek için seçilen eski bir CLI'yi kullanmayacaktır.
+Kaydedilmiş bir yapılandırma veya yüklü eklenti kullanılamadığında ve kesinti kabul edilebilir olduğunda, çalışan hizmet destekliyorsa **Sorun giderme** altında bulunan **OpenCode yapılandırmasını yeniden yükle** öğesini açıkça kullanın. Zararsız bir ekran yenileme değildir. CodeNomad, daha yeni çalışan bir arka plan programının sürümünü düşürmek için seçilen eski bir CLI'yi kullanmayacaktır.
 
 ## Oturum ortamı {#session-environment}
 
-1. **Ayarlar → Gelişmiş → Ortam Değişkenleri** öğesini açın.
-2. Profilin geçersiz kılmalarını ekleyin, değiştirin veya kaldırın.
+1. **Ayarlar → Gelişmiş** öğesini açın ve **Ortam Değişkenleri** bölümünü genişletin.
+2. Profilin geçersiz kılmalarını ekleyin, değiştirin veya kaldırın; her değişiklik hemen kaydedilir.
 3. Geçerli ortamı söz konusu konuşmaya uygulamak için sonraki istemi, özel komutu veya oturum kabuğu isteğini CodeNomad aracılığıyla gönderin.
 
 Bu, her göndermeden önce sunucu tarafında uygulanan bir yapılandırma profili ayarıdır. Yalnızca bir görüşmeyi açmak/okumak veya ayarları kaydetmek yerel oturumu değiştirmez. Bir geçersiz kılmayı kaldırmak, yürütme ana bilgisayarının devralınan değerini geri yükler veya orada yoksa kaldırır. Ortamın uygulanmaması, eski değerleri kullanmak yerine gönderimi engeller.

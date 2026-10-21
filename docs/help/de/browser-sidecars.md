@@ -2,8 +2,8 @@
 
 ## Sitzungsbrowser öffnen {#session-browser}
 
-1. Öffnen Sie in der Symbolleiste einer Unterhaltung deren Web-/Browser-Vorschau.
-2. Geben Sie eine `http://`- oder `https://`-URL ohne Zugangsdaten ein. Verwenden Sie die Symbolleiste für Navigation, Aktualisieren sowie Zurück/Vorwärts.
+1. Wählen Sie in der Symbolleiste einer Unterhaltung **Web-Vorschau öffnen**.
+2. Geben Sie eine `http://`- oder `https://`-**Vorschau-URL** ohne Zugangsdaten ein und wählen Sie dann **Vorschau öffnen**. Verwenden Sie die Symbolleiste für Navigation, Aktualisieren sowie Zurück/Vorwärts.
 3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie in dieser Unterhaltung zum Fortsetzen erneut.
 
 Jede Vorschau gehört zu ihrem Projektordner und ihrer Sitzung. Wechsel von Unterhaltung, Projekt, Info oder Chat verbirgt einen ausdrücklich geöffneten nativen Gast, ohne dessen aktives Dokument/Verlauf zu verwerfen. Verborgene Gäste sind keine Automatisierungsziele. Projekt-/Fensterschließen oder Renderer-Neustart beendet das aktive Dokument.
@@ -21,7 +21,7 @@ Native Vorschauen teilen Cookies, Anmeldungen und Websitespeicher über Projekte
 | macOS-/Linux-Tauri | Iframe in Sandbox | Keine native Browser-Automatisierung | Nur Abmessungen |
 | Normaler Browser/Remote-Ansicht | Iframe-Ersatz | Kein lokales natives Vorschauziel | Nur Abmessungen |
 
-Es gibt weder Entwicklermodus-Schalter noch zusätzlichen Aktivierungsneustart. Native Automatisierung wird beim Desktop-Start vorbereitet und nutzt das sitzungsgebundene Werkzeug `codenomad.browser` zum Öffnen, Navigieren, Schnappschuss, Klicken, Tippen und Screenshot. Werkzeugverfügbarkeit autorisiert nicht jedes Fenster: Ausführung prüft zuständiges Backend, native Fähigkeiten, Sitzung und sichtbares Ziel. Seiteninhalte bleiben nicht vertrauenswürdig. Ein iframe kann scheitern, weil das Ziel Einbettung verbietet; nutzen Sie einen externen Browser, statt Schutzmaßnahmen zu schwächen.
+Es gibt weder Entwicklermodus-Schalter noch zusätzlichen Aktivierungsneustart. Native Automatisierung wird beim Desktop-Start vorbereitet und nutzt das sitzungsgebundene Werkzeug `codenomad.browser` zum Öffnen, Navigieren, Schnappschuss, Screenshot und für Seitenaktionen: Klicken, Tippen, Auswählen, Überfahren, Ziehen, Scrollen, Tastendrücke und Warten auf Text. Werkzeugverfügbarkeit autorisiert nicht jedes Fenster: Ausführung prüft zuständiges Backend, native Fähigkeiten, Sitzung und sichtbares Ziel. Eine Aktion, deren Seite inzwischen verborgen, ersetzt oder weiternavigiert wurde, wird abgelehnt statt an eine andere Seite gesendet, und eine Aktion wird nie automatisch wiederholt. Seiteninhalte bleiben nicht vertrauenswürdig. Ein iframe kann scheitern, weil das Ziel Einbettung verbietet; nutzen Sie einen externen Browser, statt Schutzmaßnahmen zu schwächen.
 
 ## Eine von sechs Ansichtsgrößenvorlagen wählen {#templates}
 
@@ -56,7 +56,9 @@ Native Mobilvorlagen setzen Android-/Chromium-Identität, Ausrichtung, Touch und
 
 Registrierung ist von Clients geteilte Serverkonfiguration; sie installiert oder startet den Dienst nicht. Der Port liegt auf dem Backend-Host, nicht auf Ihrem anzeigenden Notebook/Telefon. **Läuft** bezeichnet Erreichbarkeit, nicht funktionierende Anwendung/Authentifizierung des Werkzeugs. Entfernen der Registrierung stoppt den separat gestarteten Prozess nicht. Auch Tab-Schließen stoppt ihn nicht.
 
-Prüfen Sie bei Nichterreichbarkeit Prozess und Port auf dem Backend. Lädt HTML, aber scheitern Dateien/WebSockets, prüfen Sie Basispfad und Präfix-Modus des Werkzeugs. Erstellen Sie eine falsche Registrierung mit den vorgesehenen Einstellungen neu; geben Sie den Upstream nicht nur zum Umgehen eines Proxyfehlers öffentlich frei. SideCar-Anwendungen können Terminal oder Dateien mit der Autorität des Serverkontos freigeben; vertrauen Sie ihren Benutzern und ihrer Konfiguration. Fernsteuerung stellt keinen SideCar-Anwendungsproxyverkehr bereit; verwenden Sie den passenden Direktzugriffsweg unter [Fernzugriff](remote-access.md) und [Fernsteuerung](remote-control.md).
+Prüfen Sie bei Nichterreichbarkeit Prozess und Port auf dem Backend. Lädt HTML, aber scheitern Dateien/WebSockets, prüfen Sie Basispfad und Präfix-Modus des Werkzeugs. Erstellen Sie eine falsche Registrierung mit den vorgesehenen Einstellungen neu; geben Sie den Upstream nicht nur zum Umgehen eines Proxyfehlers öffentlich frei. SideCar-Anwendungen können Terminal oder Dateien mit der Autorität des Serverkontos freigeben; vertrauen Sie ihren Benutzern und ihrer Konfiguration.
+
+Ein SideCar ist eine vertrauenswürdige Erweiterung von CodeNomad, keine Vorschau in einer Sandbox: Seine Seite läuft unter dem eigenen Origin von CodeNomad, sodass seine Skripte CodeNomad mit Ihrem angemeldeten Zugang nutzen können. Registrieren Sie nur Dienste, deren Code Sie vertrauen. CodeNomad leitet seine eigenen Anmelde-Cookies nicht an den Dienst weiter, während die eigenen Cookies des Dienstes erhalten bleiben. Fernsteuerung stellt keinen SideCar-Anwendungsproxyverkehr bereit; verwenden Sie den passenden Direktzugriffsweg unter [Fernzugriff](remote-access.md) und [Fernsteuerung](remote-control.md).
 
 ## OpenVSCode-Server-Rezept {#openvscode}
 

@@ -8,7 +8,7 @@
 
 El canal se guarda en la configuración del servidor CodeNomad y solo cambia qué versiones se ofrecen. No cambia perfiles de datos de escritorio, borradores, ventanas, sesiones OpenCode ni configuración del servicio. Sin una selección explícita, las compilaciones etiquetadas como preliminares usan por defecto las preliminares; las demás, las estables.
 
-Estable selecciona la última versión final. Preliminar sigue el orden de publicación porque las compilaciones de desarrollo pueden compartir número de versión base; no compares solo sus versiones numéricas. Los paquetes preliminares son para quienes aceptan probar comportamiento previo a una versión final; inspecciona las notas y protege los borradores importantes antes de reiniciar.
+Estable selecciona la última versión final. Preliminar sigue el orden de publicación porque las compilaciones de desarrollo pueden compartir número de versión base; no compares solo sus versiones numéricas. Una versión preliminar solo se ofrece cuando se han publicado todas sus compilaciones. Los paquetes preliminares son para quienes aceptan probar comportamiento previo a una versión final; inspecciona las notas y protege los borradores importantes antes de reiniciar.
 
 ## Actualizar una instalación de escritorio {#desktop-update}
 
@@ -28,7 +28,7 @@ En las ventanas de la aplicación Tauri y las ventanas nativas de **Preferencias
 
 El menú de Tauri **Ayuda → Buscar actualizaciones…** ejecuta el proceso de actualización en la ventana de la aplicación que tiene el foco. Desde Preferencias o una ventana remota, trae al frente la ventana de la aplicación utilizada más recientemente para ejecutar la comprobación; no instala a través de la ventana remota. Si ninguna ventana de la aplicación puede recibir la acción, incluso cuando la ventana de destino muestra una pantalla de carga, inicio de sesión o emparejamiento, el menú abre la página de la versión en su lugar.
 
-Tauri solo ofrece versiones con un manifiesto de actualización publicado para el canal/destino elegido. Una versión recién anunciada puede no ser instalable aún; la notificación puede abrir su página en su lugar. Se requiere verificación nativa de firma antes de instalar. Las firmas del actualizador son distintas de las garantías de notarización/firma de código del sistema operativo.
+Tauri solo instala versiones con un manifiesto de actualización publicado para el canal/destino elegido. Si una versión anunciada aún no se puede instalar, la notificación abre su página en su lugar. Se requiere verificación nativa de firma antes de instalar. Las firmas del actualizador son distintas de las garantías de notarización/firma de código del sistema operativo.
 
 La instalación vuelca el estado de todas las ventanas de la aplicación y detiene el backend propio de CodeNomad antes de reemplazar/reiniciar la aplicación. El daemon OpenCode de propiedad independiente no forma parte de este apagado. Cerrar CodeNomad sigue retirando las funciones dependientes del backend hasta que vuelva; no deduzcas que los servicios de interfaz continúan sin interrupción porque una sesión OpenCode siga activa.
 

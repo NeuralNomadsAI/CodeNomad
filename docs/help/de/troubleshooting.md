@@ -41,8 +41,8 @@ Lässt sich ein zugehöriger Worktree oder Unterhaltungsort nicht überprüfen, 
 
 ## OpenCode-Laufzeit und WSL {#opencode-runtime}
 
-1. Öffnen Sie **Einstellungen → OpenCode** und prüfen Sie gewählte Programmdatei, installierte Version und Status des laufenden Dienstes.
-2. Verwenden Sie die unterstützte Installation/Aktualisierung, falls die erforderliche Laufzeit fehlt. Aktuelles Minimum: **2.1.0**; empfohlen/qualifiziert: **2.1.0**.
+1. Öffnen Sie **Einstellungen → OpenCode** und prüfen Sie die Karte **OpenCode-Version** (installierte Version und Status des laufenden Dienstes), dann die gewählte Programmdatei unter **OpenCode-Binärdatei**.
+2. Verwenden Sie die unterstützte Installation/Aktualisierung, falls die erforderliche Laufzeit fehlt. Aktuelles Minimum: **2.1.0**; empfohlen/qualifiziert: **2.1.1**.
 3. Weicht die installierte CLI vom laufenden Dienst ab, entscheiden Sie ausdrücklich über einen Neustart des gemeinsamen Dienstes.
 
 **OpenCode-Dienst neu starten** ist unter **Fehlerbehebung** verfügbar und benötigt Bestätigung. Es unterbricht aktive Arbeit in jedem verbundenen Client, behält aber Sitzungsverlauf. Konfigurationsneuladen ist separat: Es behält den Prozess, erstellt aber geladene Locations neu und storniert offene Fragen/Berechtigungen. Beides ist keine harmlose Aktualisierung.
@@ -79,6 +79,7 @@ Kopplungslinks sind einmalig und kurzlebig; das Direktzugriffspasswort ersetzt s
 | Abgelaufenes extern verwaltetes OAuth | Über OpenCode, Claude Code oder zuständigen Zugangsdatenverwalter neu anmelden. CodeNomad tauscht deren Refresh-Tokens nicht aus. |
 | Automatische Rotation wechselt nicht | Opt-in-Eignung und tatsächliche Ausschöpfung des aktuellen Kontos prüfen. Es ist eine Richtlinie vor Annahme, kein Failover während der Ausführung oder Prompt-Wiederholen. |
 | Plugin-Zustand veraltet | **Plugin-Steuerung aktualisieren** verwenden und Umfang/Ziel im Plugin-Tooltip prüfen; Laufzeitaktivierung kann native Aktualisierung abwarten. Ungewisse Schreibvorgänge nicht wiederholt umschalten. |
+| **Missionszentrale ist nicht verfügbar** | Der genannten Ursache folgen. Hat OpenCode das Missions-Plugin nicht geladen, aktualisieren und, falls es so bleibt, **OpenCode-Konfiguration neu laden** verwenden; ist das Laden des Plugins fehlgeschlagen, dessen Fehler in der Plugin-Liste lesen; konnte der Server seine lokale Verbindung für Missionen nicht öffnen, das Serverprotokoll prüfen, denn OpenCode neu zu laden hilft dann nicht. Missionen laufen auch auf dem eigenständigen Server. |
 | Installierte Erweiterung fehlt | Einzelnes Aktivierungskästchen in der Panel-Anpassung prüfen. Installation/Ersatz lässt sie deaktiviert, bis Sie ausdrücklich aktivieren und erforderlicher Zustimmung zustimmen. |
 | Erweiterungs-Assets verweigert | API-2-Asset-Lesezustimmung für die aktuell eingebundene Sitzung prüfen. Installation erlaubt kein Lesen beliebiger Dateien/Verläufe. |
 
@@ -88,7 +89,7 @@ Siehe [Anbieter](providers.md), [Integrationen](integrations.md) und [Erweiterun
 
 Vollverlaufssuche ist nicht auf aktuell geladene Verlaufszeilen begrenzt. Ein Anzeigefilter verbirgt Inhalte ohne Löschung; [Verlauf](history.md) unterscheidet Suche, Komprimierung, technische Bereinigung und Löschung.
 
-Bei unvollständiger Anfragewiederherstellung behält CodeNomad bekannte Warteschlangen und Antwortentwürfe, statt fehlende Abdeckung als leere Warteschlange zu behandeln. Nach zwei aufeinanderfolgenden unvollständigen Wiederherstellungen warnt es durch normale Benachrichtigungen; die Lebendigkeitsprüfung wiederholt vorübergehende Fehler. Komprimierungsbedingter Aufschub bedeutet keinen Anfrageabbruch. Lassen Sie den Entwurf unverändert, prüfen Sie die Dienstverbindung und verwenden Sie vor erneuter Antwort den aktuellen Anfragezustand.
+Bei unvollständiger Anfragewiederherstellung behält CodeNomad bekannte Warteschlangen und Antwortentwürfe, statt fehlende Abdeckung als leere Warteschlange zu behandeln. Nach zwei aufeinanderfolgenden unvollständigen Wiederherstellungen warnt es einmal und nennt Projekt, Ursache, Ordner und betroffene Sitzungen; die Warnung gehört zur Benachrichtigungskategorie **Projekte und Tabs** (standardmäßig auf dem Bildschirm und im Verlauf, siehe **Einstellungen → Benachrichtigungen**). Die Lebendigkeitsprüfung wiederholt vorübergehende Fehler. Komprimierungsbedingter Aufschub bedeutet keinen Anfrageabbruch. Lassen Sie den Entwurf unverändert, prüfen Sie die Dienstverbindung und verwenden Sie vor erneuter Antwort den aktuellen Anfragezustand.
 
 Lesen Sie bei abgebrochener/teilweiser Bereinigung Fortschritt/Belege vor weiterer Löschung. Abbrechen macht bereits versandte Stapel nicht rückgängig. Reparieren Sie Verlauf nicht durch Bearbeitung der nativen Datenbank. Verwenden Sie bei Missionsungewissheit **Status prüfen**/Aktualisierung statt eines weiteren Laufs oder automatischer Arbeitswiederholung; [Missionen](missions.md) erklärt Neustart- und Lebensdauergrenzen.
 

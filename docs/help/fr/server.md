@@ -2,13 +2,13 @@
 
 Exécutez CodeNomad là où se trouvent vos projets et outils, puis utilisez son interface navigateur localement ou à distance. Le backend fournit l’accès aux fichiers, les opérations Git, l’authentification et la livraison des événements. Le service partagé d’OpenCode possède les conversations et l’exécution ; ce n’est pas un serveur enfant à arrêter quand un navigateur se déconnecte.
 
-La même interface prend en charge [plusieurs onglets de projet et worktrees](projects.md), les [familles de conversations et l’activité en arrière-plan](conversations.md), le [chargement borné de l’historique, la recherche et la navigation chronologique](history.md), ainsi qu’une [palette de commandes et des raccourcis](shortcuts.md). L’accès par navigateur ou tablette ne déplace pas l’exécution hors de l’hôte.
+La même interface prend en charge [plusieurs onglets de projet et worktrees](projects.md), les [familles de conversations et l’activité en arrière-plan](conversations.md), le [chargement borné de l’historique, la recherche et la navigation chronologique](history.md), une [palette de commandes et des raccourcis](shortcuts.md), ainsi que les [Missions](missions.md). L’accès par navigateur ou tablette ne déplace pas l’exécution hors de l’hôte.
 
 ## Préparer l’hôte {#prerequisites}
 
 1. Installez Node.js 24 LTS et npm ; la version d’exécution épinglée du dépôt pour la compilation est 24.20.0. Les paquets de bureau incluent Node/npm.
 2. Placez Git dans le **PATH du processus backend**. Git dans WSL seul ne suffit pas pour un backend Windows.
-3. Installez ou sélectionnez OpenCode : le minimum requis est **2.1.0**, avec **2.1.0** comme cible de qualification recommandée. Les versions plus récentes ou personnalisées passent des contrôles de compatibilité, pas une liste de versions testées autorisées. Consultez la [configuration d’OpenCode](opencode.md).
+3. Installez ou sélectionnez OpenCode : le minimum requis est **2.1.0**, avec **2.1.1** comme cible de qualification recommandée. Les versions plus récentes ou personnalisées passent des contrôles de compatibilité, pas une liste de versions testées autorisées. Consultez la [configuration d’OpenCode](opencode.md).
 4. Choisissez le dossier depuis lequel démarrer le serveur, ou passez explicitement `--workspace-root`.
 
 Sans Git, les conversations restent disponibles uniquement dans le dossier physique explicitement ouvert ; les opérations Git et worktree échouent. Installez Git et redémarrez le backend après une modification de PATH. Une racine d’espace de travail limite l’ouverture/la navigation, pas l’exécution de l’agent : voir [Sécurité](security.md).
@@ -45,13 +45,15 @@ npx codenomad --generate-token --launch
 
 Les commandes s’exécutent au premier plan. Fermer le terminal ou envoyer Ctrl+C arrête ce backend et sa connexion de Contrôle à distance. `--launch` ouvre seulement un navigateur ; il ne transforme pas le serveur en démon. Pour une disponibilité sans surveillance, exécutez la même commande sous le gestionnaire de processus/services de votre système, avec une configuration, un répertoire de travail, un environnement et une politique de redémarrage explicites. Ne mettez pas de secrets dans les journaux du service ou un fichier d’unité public.
 
-Fermer un navigateur n’arrête pas un backend autonome exécuté séparément. Fermer un onglet de projet ferme le projet dans CodeNomad, qui cesse de le suivre ; les sessions continuent dans OpenCode et se retrouvent en rouvrant le projet. La Location native n’est pas déchargée et le démon partagé n’est pas arrêté. L’arrêt du backend laisse également le service OpenCode actif. Les fonctionnalités dépendant du backend restent indisponibles jusqu’au retour de CodeNomad ; consultez [Missions](missions.md) pour la durée de vie distincte de la planification native.
+Fermer un navigateur n’arrête pas un backend autonome exécuté séparément. Fermer un onglet de projet retire la connexion CodeNomad de ce projet, mais les sessions continuent dans OpenCode ; rouvrez le projet pour les retrouver. CodeNomad ne décharge jamais sa Location native. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration. L’arrêt du backend laisse également le service OpenCode actif. Les fonctionnalités dépendant du backend restent indisponibles jusqu’au retour de CodeNomad ; consultez [Missions](missions.md) pour la durée de vie distincte de la planification native.
 
 ## Adresses et ports {#addresses}
 
 Le démarrage affiche **Local Connection URL**, et **Remote Connection URL** si disponible, ainsi que **Other Accessible URLs** le cas échéant. Utilisez le protocole et le port affichés, pas une adresse supposée. Une URL de boucle locale n’est accessible que sur cette machine ; une adresse LAN affichée nécessite encore un routage et un accès autorisé par le pare-feu.
 
 HTTPS privilégie le port **9898** et HTTP le port **9899**. Sans remplacement du port, si le port préféré est occupé, un port attribué par le système est utilisé. Un port explicite non nul n’a pas de solution de repli ; `0` demande un port attribué par le système. Les ports acceptent les entiers de 0 à 65535.
+
+Le backend peut aussi ouvrir une écoute HTTP authentifiée et non annoncée sur un port aléatoire de `127.0.0.1` pour ses propres plugins OpenCode, comme Missions. Elle n’est pas affichée et n’est pas une adresse cliente.
 
 Pour l’exposition de l’écoute, les certificats, VPN/SSH et les proxys inverses, consultez [Accès distant direct](remote-access.md). Pour un accès sans port entrant, consultez [Contrôle à distance](remote-control.md).
 

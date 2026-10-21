@@ -54,6 +54,8 @@ Doğrudan uzaktan erişimde güvenilir HTTPS kullanın. Düz HTTP, ağın o böl
 
 `--workspace-root` açılabilecek çalışma alanlarını sınırlar; `--unrestricted-root` gezinme sınırlarını gevşetir. İkisi de işletim sistemi hapishanesi, kapsayıcı, dosya sistemi korumalı alanı veya yetkili OpenCode aracının yapabileceklerine sınır değildir. Ajanlar, kabuk komutları, eklentiler ve MCP araçları yürütme ana bilgisayarının izinleriyle ve kendi kimlik bilgileriyle çalışır.
 
+[SideCars](browser-sidecars.md) güvenilir eklemelerdir. CodeNomad oturum açma ve eşleştirilmiş cihaz çerezlerini SideCar hizmetinden saklar, ancak SideCar sayfası CodeNomad ile aynı kaynakta (origin) yüklenir ve betikleri oturum açmış oturumunuzla işlem yapabilir. Yalnızca CodeNomad'in kendisi kadar güvendiğiniz hizmetleri kaydedin.
+
 Gerçek yalıtım gerekiyorsa işletim sistemi hesapları, kapsayıcılar/VM'ler ve OpenCode izin yapılandırmasını kullanın. Yalnızca tek sekme göreceğini düşündüğünüz için cihaza erişim vermeyin. Sunucu yapılandırması ve paylaşılan OpenCode hizmeti başka konuşmaları/projeleri etkileyebilir; ayrı sınırlar için [OpenCode kurulumu](opencode.md), [İzinler](permissions.md) ve [Uzantılar](extensions.md) sayfalarına bakın.
 
 ## Kimlik bilgilerini ve teşhis bilgilerini gizli tutun {#privacy}

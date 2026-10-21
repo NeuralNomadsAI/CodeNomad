@@ -6,13 +6,13 @@
 2. Tapez un nom d’action. La palette inclut les actions de l’application et les commandes personnalisées de la Location actuelle ; leur disponibilité dépend de la vue active.
 3. Exécutez **Ouvrir l’aide** pour ouvrir ce guide dans la langue actuelle de l’interface, dans un contexte de navigateur externe. Le menu natif **Aide → Aide de CodeNomad** ouvre le même guide.
 
-L’aide laisse la vue et le brouillon intacts. Si l’ouverture échoue, visitez directement [Aide CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Une commande découvrable n’a pas nécessairement un raccourci personnalisable : le gestionnaire couvre un catalogue fixe de 49 commandes du moteur de rendu, pas toutes les actions de palette ou de menu natif.
+L’aide laisse la vue et le brouillon intacts. Si l’ouverture échoue, visitez directement [Aide CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Une commande découvrable n’a pas nécessairement un raccourci personnalisable : le gestionnaire couvre un catalogue fixe de 72 actions du moteur de rendu, pas toutes les actions de palette ou de menu natif. Il inclut des commandes de palette comme **Compacter la session**, **Annuler le dernier message** ou **Ouvrir l’aide**, qui commencent sans raccourci (**Aucun raccourci**) ; les actions de dossier de projet, de terminal et d’éditeur ne s’exécutent que dans les fenêtres de bureau locales.
 
 ## Enregistrer, désactiver et réinitialiser {#customize}
 
-1. Ouvrez **Paramètres → Raccourcis clavier** et utilisez **Filtrer les raccourcis** pour trouver l’action.
+1. Ouvrez **Paramètres → Raccourcis clavier** et utilisez **Filtrer les raccourcis** pour trouver l’action ou une combinaison de touches.
 2. Choisissez **Modifier**, puis appuyez sur la combinaison voulue dans **Appuyez sur une combinaison de touches**. La capture enregistre cette affectation.
-3. Utilisez **Désactiver** pour retirer l’affectation de cette action du moteur de rendu, **Réinitialiser** pour sa valeur par défaut, ou **Tout réinitialiser** pour toutes les affectations du moteur de rendu.
+3. Utilisez **Effacer le raccourci** (×) pour retirer l’affectation de cette action du moteur de rendu, **Réinitialiser** pour sa valeur par défaut, ou **Tout réinitialiser** pour toutes les affectations du moteur de rendu.
 4. Résolvez les avertissements de chaque ligne en conflit ; les conflits sont signalés, pas désactivés silencieusement.
 
 Les affectations sont enregistrées dans la configuration d’interface CodeNomad et affectent les clients qui la partagent. Elles ne modifient pas les raccourcis CLI/TUI d’OpenCode ni les accélérateurs de menu natif. La capture suspend les raccourcis du moteur de rendu, mais ne peut pas suspendre ceux du système ou du menu natif. **Annuler**, la perte de focus, la fermeture de la section ou la sortie de la fenêtre termine la capture. Les modificateurs seuls et la composition IME sont ignorés ; Tab/Shift+Tab simple déplace le focus.
@@ -51,7 +51,7 @@ Si l’enregistrement échoue, gardez l’ancien raccourci disponible et réessa
 | Envoyer une question annexe (fenêtre `/btw`) | `Mod+Enter` |
 | Enregistrer le fichier (éditeur de travail) | `Mod+S` |
 
-Si l’envoi par Entrée est désactivé, **Envoyer la saisie** vaut par défaut `Mod+Enter` et **Insérer une nouvelle ligne** vaut `Enter` ou `Shift+Enter`. Un raccourci explicitement remplacé prime sur cette valeur. Utilisez le gestionnaire pour voir l’affectation effective. Session précédente/suivante parcourt la liste ; ce n’est pas l’historique **Retour**/**Avancer** de type navigateur de la barre latérale, qui n’a pas de raccourci.
+Si l’envoi par Entrée est désactivé, **Envoyer la saisie** vaut par défaut `Mod+Enter` et **Insérer une nouvelle ligne** vaut `Enter` ou `Shift+Enter`. Un raccourci explicitement remplacé prime sur cette valeur. Utilisez le gestionnaire pour voir l’affectation effective. Sous macOS, `Option+Return` reste un saut de ligne : seul `Cmd+Shift+Return` envoie avec le comportement alternatif ; le menu **Plus d'actions** de la zone de saisie propose le même choix (**Mettre le message en file d'attente** ou **Injecter maintenant**) pendant qu’une session travaille. **Effacer la saisie** exécute l’action Effacer propre à la zone de saisie, y compris dans le premier brouillon d’une nouvelle conversation. Session précédente/suivante parcourt la liste ; ce n’est pas l’historique **Retour**/**Avancer** de type navigateur de la barre latérale, qui n’a pas de raccourci.
 
 ## Touches natives et interception par la plateforme {#native-keys}
 
@@ -73,4 +73,4 @@ Les fenêtres ordinaires de navigateur gardent aussi leurs raccourcis. Si une af
 
 Les raccourcis de la rangée de chiffres et des crochets utilisent les positions physiques des touches pour la capture, l’exécution et les conflits, y compris sur AZERTY/QWERTZ. Les autres touches utilisent leurs valeurs logiques. Capturez sur le clavier prévu, puis vérifiez le résultat affiché.
 
-Pendant la composition IME, la saisie de texte prime. L’historique des prompts et les actions Échap dépendent aussi du focus, de l’état du sélecteur/shell et de l’opération actuelle ; ne supposez pas qu’ArrowUp ou Échap soit toujours une action globale inconditionnelle. Les infobulles et le gestionnaire montrent les affectations actuelles sans ajouter une bande permanente d’aide clavier.
+Pendant la composition IME, la saisie de texte prime. L’historique des prompts et les actions Échap dépendent aussi du focus, de l’état du sélecteur/shell et de l’opération actuelle ; ne supposez pas qu’ArrowUp ou Échap soit toujours une action globale inconditionnelle. Sur ordinateur, l’envoi place le focus sur la conversation pour que les flèches, les touches de défilement par page et Espace la fassent défiler ; taper un caractère revient à la zone de saisie avec ce caractère, et **Activer la saisie** y revient avant d’utiliser l’historique des prompts. Les infobulles indiquent le raccourci actuel de commandes comme la palette de commandes, la recherche, Nouvelle session, Info et les sélecteurs de la zone de saisie ; avec le gestionnaire de raccourcis, elles montrent les affectations sans ajouter de bande permanente d’aide clavier.

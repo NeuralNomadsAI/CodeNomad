@@ -7,10 +7,10 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 1. Öffnen Sie **Missionen** im rechten Panel und wählen Sie **Mission erstellen**.
 2. Füllen Sie **Was soll die Mission tun?** aus und prüfen Sie **Titel**, der aus dem ersten Satz vorbelegt wird (bis 60 Zeichen).
 3. Wählen Sie unter **Wann** entweder **Einmal** oder **Täglich um**. Prüfen Sie für tägliche Arbeit die angezeigte Zeitzone; **Ändern** erlaubt eine IANA-Zone.
-4. Klappen Sie **Optionen** für **Playbook**, **Notizen**, **Agenten und Modelle**, **Aufgabensitzungen**, gespeicherte Aufträge und optional verfolgte Unterhaltungen auf.
+4. Klappen Sie **Optionen** für **Playbook**, **Notizen**, **Agenten und Modelle**, **Aufgabensitzungen**, gespeicherte Aufträge und optional verfolgte Unterhaltungen auf. Mit **Zwei Modelle vergleichen** erscheinen die Auswahlfelder **Modell A** und **Modell B** im Hauptformular.
 5. Wählen Sie **Erstellen**. Wählen Sie den neuen Eintrag und verwenden Sie bei Bereitschaft die separate ▶-Aktion: **Mission starten** für einmalige Arbeit oder **Zeitplan {id} starten** für einen täglichen Zeitplan.
 
-**Erstellen startet niemals Arbeit.** Eine einmalige Mission ist vorbereitet; ein täglicher Zeitplan pausiert. Weder Erstellen noch das Speichern eines Auftrags aktiviert einen Timer. Die Erstellung gilt für das ausgewählte Projekt/die Location und friert angeforderte Profile sowie die Aufgabensitzungsrichtlinie ein. Validierung steht neben dem betroffenen Feld; eine Verweigerung mit dem Hinweis, dass nichts gesendet wurde, lässt den Entwurf zur Korrektur verfügbar.
+**Erstellen startet niemals Arbeit.** Eine einmalige Mission ist vorbereitet; ein täglicher Zeitplan pausiert. Weder Erstellen noch das Speichern eines Auftrags aktiviert einen Timer. Die Erstellung gilt für das ausgewählte Projekt/die Location und friert angeforderte Profile sowie die Aufgabensitzungsrichtlinie ein. Validierung steht neben dem betroffenen Feld; eine Verweigerung mit dem Hinweis, dass nichts gesendet wurde, lässt den Entwurf zur Korrektur verfügbar. Ein Koordinator kann auch eine separate Mission für Sie vorbereiten, etwa eine Folgemission: Sie erscheint in der Liste als **Vorbereitet** und startet wie jede Mission nur über ihre ▶-Aktion.
 
 ### Playbooks {#playbooks}
 
@@ -20,6 +20,9 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 | Fehlerbehebung | Diagnose, Implementierung, getrennte Prüfung von Standards/Spezifikation und frische Validierung; die weitere Fehlerbehebung setzt die Arbeit in der bestehenden Implementierer-Unterhaltung fort. |
 | Erkundung | Erfasst Unsicherheiten und arbeitet begrenzte Entscheidungen mit menschlichen Rückfragen ab. |
 | Produktauslieferung | Koordiniert Produktanalyse, Architektur, Implementierung und Qualitätsrollen. |
+| Zwei Modelle vergleichen | Führt dieselbe Aufgabe mit identischen Aufträgen auf **Modell A** und **Modell B** aus; danach bewertet ein **Blinder Gutachter** beide unter neutralen Bezeichnungen und fällt ein Urteil: **Modell A gewinnt**, **Modell B gewinnt**, **Gleichwertig** oder **Nicht eindeutig**. |
+
+Für **Zwei Modelle vergleichen** sind beide Modelle erforderlich und müssen sich unterscheiden; eine andere **Denken**-Stufe allein ist kein anderes Modell. Sofern Sie keinen wählen, verwendet der Gutachter das Modell des Koordinators; das Formular warnt, wenn es mit A oder B übereinstimmt, was den Vergleich verzerren kann. Die Übersicht zeigt das Urteil, beide Modellnamen und die Bewertungen nach Kriterium.
 
 Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und garantiert keinen Erfolg. Beantworten Sie Entscheidungsfragen der Erkundung über CodeNomads Unterbrechungsdock, damit eine ausdrückliche UI-Antwort erfasst wird, statt einen Agenten um vorgetäuschte Zustimmung zu bitten.
 
@@ -36,10 +39,11 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 | Aktiv | Native Aktivität wurde beobachtet. |
 | Wartend | Erklärte Abhängigkeiten sind noch nicht erfüllt. |
 | Blockiert | Eine Blockade wurde gemeldet, nicht unbedingt eine Frage an Sie. |
-| Braucht Sie | Ein offenes natives Form/eine Frage oder Berechtigung benötigt eine Antwort. |
+| Wartet auf Ihre Eingabe | Ein offenes natives Form/eine Frage oder Berechtigung benötigt eine Antwort; es steht unter **Braucht Sie**. |
 | Erledigt | Ein Aufgabenergebnis wurde erfasst; prüfen Sie dessen Belege und verbleibende native Arbeit. |
+| Fehlgeschlagen / Zurückgezogen | Die Aufgabe ist fehlgeschlagen, oder der Koordinator hat sie ersetzt oder aufgegeben. |
 
-Der Graph enthält abgeschlossene und zurückgezogene Arbeit. Eine Aufgabe zurückzuziehen stoppt nicht von selbst deren Unterhaltung. **In Arbeit** ist der Lebenszykluszustand der Mission, kein Beweis, dass der Koordinator gerade läuft. Vollständiger Text gehört in die zentrale Leseansicht, nicht die Aufgabenliste des Panels; **Technische Details** klappt Kennungen und angeforderte Ausführungsinformationen ein.
+Der Graph enthält abgeschlossene und zurückgezogene Arbeit. Eine Aufgabe zurückzuziehen stoppt nicht von selbst deren Unterhaltung; der Koordinator kann die eigenen Unterhaltungen einer zurückgezogenen Aufgabe separat stoppen, ohne andere Aufgaben zu berühren. **In Arbeit** ist der Lebenszykluszustand der Mission, kein Beweis, dass der Koordinator gerade läuft. Vollständiger Text gehört in die zentrale Leseansicht, nicht die Aufgabenliste des Panels; **Technische Details** klappt Kennungen und angeforderte Ausführungsinformationen ein.
 
 ### Lageberichte und Aktualisierungsanfragen {#briefings}
 
@@ -50,9 +54,10 @@ Verwenden Sie **Update anfordern** unter der Symbolleiste für eine neue Koordin
 ## Profile, Delegation und Tiefe {#profiles}
 
 1. Verwenden Sie das Missionszahnrad oder **Einstellungen → Missionen**, um **Vorgaben für neue Missionen** zu bearbeiten.
-2. Wählen Sie globale Vorgaben und Playbook-Ausnahmen, dann **Speichern**. Verwenden Sie beim Erstellen **Optionen → Agenten und Modelle** für bestimmte angeforderte Profile.
-3. Wählen Sie **Aufgabensitzungen** unabhängig vom **Playbook**.
-4. Verwenden Sie für native Rekursionsgrenzen separat **OpenCode-Tiefe → Maximale Tiefe → Tiefe dieses Orts speichern**.
+2. Wählen Sie unter **Anwenden auf** entweder **Alle Missionen** oder ein Playbook und legen Sie dann **Aufgabensitzungen** sowie unter **Agenten und Modelle** eine Zeile pro Rolle fest (Koordinator, dann die Rollen des Playbooks). Jede Auswahl wird sofort gespeichert; es gibt keine Speichern-Schaltfläche.
+3. In einem Playbook-Bereich zeigen die Zeilen die globalen Werte mit der Kennzeichnung **Global**. Das Ändern eines Felds passt diese Rolle ausgehend von ihnen an; ihr Zurücksetzen-Symbol verwendet wieder die globalen Werte. **Zurücksetzen** (nach Bestätigung) löscht nur die Agenten und Modelle des angezeigten Bereichs.
+4. Verwenden Sie beim Erstellen **Optionen → Agenten und Modelle** für bestimmte angeforderte Profile; **Gespeicherte Standardwerte verwenden** stellt die gespeicherten wieder her.
+5. Bearbeiten Sie für native Rekursionsgrenzen **Verschachtelungstiefe der Untersitzungen → Vorgegebene Tiefe für das Projekt**. Enter oder das Verlassen des Felds speichert einen geänderten gültigen Wert; **Erben** speichert sofort; Escape verwirft einen ungespeicherten Wert.
 
 | Einstellung | Geltungsbereich und Wirkung |
 | --- | --- |
@@ -60,11 +65,11 @@ Verwenden Sie **Update anfordern** unter der Symbolleiste für eine neue Koordin
 | Agent / Modell / Denken | Bei Erstellung erfasste Koordinator-/Rollenauswahl; ein beschäftigter Akteur wird für spätere Arbeit nicht stillschweigend umgestellt. Tägliche Läufe verwenden ihre eingefrorenen angeforderten Profile erneut. |
 | Native Subagenten | Aufgabensitzungen verwenden native subagent/all-Agenten unter dem Koordinator. |
 | Unabhängige Sitzungen | Erklärte Aufgabensitzungen verwenden primary/all-Agenten und unabhängige Unterhaltungen; dies deaktiviert keine internen nativen Helfer. |
-| OpenCode-Tiefe | Location-/Projektkonfiguration für **alle** dortigen Unterhaltungen, nicht nur Missionen. Leer bedeutet Vererbung. Speichern lädt OpenCode nicht neu und ändert keine laufenden Unterhaltungen. |
+| Verschachtelungstiefe der Untersitzungen | Projektkonfiguration für **alle** dortigen OpenCode-Unterhaltungen, nicht nur Missionen. Leer bedeutet Vererbung. Speichern lädt OpenCode nicht neu und ändert keine laufenden Unterhaltungen. |
 
-**Nativer Standard** und **Globale Standardwerte übernehmen** unterscheiden sich: Ersteres fordert native Standards an, Letzteres nutzt das konfigurierte globale Profil. Katalogverfügbarkeit wird geprüft; ein angefordertes Profil beweist nicht das aktuell verwendete Profil einer Unterhaltung. Native Berechtigungen und konfigurierte Tiefe regeln interne Helferaufrufe weiterhin in beiden Aufgabenmodi.
+**Nativer Standard** und **Global** unterscheiden sich: Ersteres fordert die eigenen Standards von OpenCode an, Letzteres erbt die globale Auswahl; native Standards in einem Playbook-Bereich zu wählen bleibt eine ausdrückliche Ausnahme. Katalogverfügbarkeit wird geprüft; ein angefordertes Profil beweist nicht das aktuell verwendete Profil einer Unterhaltung. Native Berechtigungen und konfigurierte Tiefe regeln interne Helferaufrufe weiterhin in beiden Aufgabenmodi.
 
-Ist das Speichern von Vorgaben/Tiefe unbestätigt, behalten Sie den Entwurf und verwenden Sie **Neu laden** für Vorgaben oder **Tiefe dieses Orts aktualisieren** vor einer weiteren Änderung. Interpretieren Sie **Effektive Tiefe unbekannt** nicht als null oder deaktiviert.
+Eine abgelehnte oder unbestätigte Auswahl wird nie erneut gesendet: Die gespeicherten Werte werden wieder angezeigt, und **Neu laden** erscheint nur, wenn sie nicht gelesen werden können. Ist eine Tiefenänderung unbestätigt, bleibt Ihr Wert erhalten; verwenden Sie vor einer weiteren Änderung **Tiefe dieses Projekts aktualisieren**. Interpretieren Sie **Effektive OpenCode-Tiefe unbekannt** nicht als null oder deaktiviert.
 
 ## Gespeicherten Auftrag wiederverwenden {#saved-briefs}
 
@@ -72,7 +77,7 @@ Ist das Speichern von Vorgaben/Tiefe unbestätigt, behalten Sie den Entwurf und 
 2. Prüfen Sie vor **Erstellen** das kopierte Ziel, Notizen, Playbook, Profile und Delegation.
 3. Verwenden Sie **Als Auftrag speichern**, um einen wiederverwendbaren Entwurf zu benennen. Auch eine ausgewählte einmalige Mission, einschließlich abgeschlossener, bietet **Als Auftrag speichern**.
 
-Aufträge speichern Anweisungen und angeforderte Auswahl, keine Aufgabenpläne, Ergebnisse, Unterhaltungen, Zeitplanuhren oder Ausführungsbefugnis. Laden füllt einen normalen Erstellungsentwurf; es startet oder plant nichts. Entfernen eines Auftrags behält bestehende Missionen/Unterhaltungen. **Einstellungen → Missionen → Gespeicherte Aufträge** verwaltet die Bibliothek; ein ausdrückliches Zurücksetzen entfernt gespeicherte Aufträge, keine Ausführungen. Zeitpläne selbst haben keine Aktion zum Speichern als Auftrag.
+Aufträge speichern Anweisungen und angeforderte Auswahl, keine Aufgabenpläne, Ergebnisse, Unterhaltungen, Zeitplanuhren oder Ausführungsbefugnis. Laden füllt einen normalen Erstellungsentwurf; es startet oder plant nichts. Entfernen eines Auftrags behält bestehende Missionen/Unterhaltungen. **Einstellungen → Missionen → Gespeicherte Aufträge** verwaltet die Bibliothek; wird die Bibliothek unlesbar, entfernt **Gespeicherte Bibliothek zurücksetzen** (nach Bestätigung) gespeicherte Aufträge, keine Ausführungen. Zeitpläne selbst haben keine Aktion zum Speichern als Auftrag.
 
 ## Tägliche Zeit, Nachholen und verfolgte Unterhaltungen {#daily-schedules}
 
@@ -95,13 +100,22 @@ Auch die Erstellungszeit begrenzt zulässige tägliche Arbeit; der Start eines n
 
 | Komponente | Bedeutung des Schließens |
 | --- | --- |
-| CodeNomad-Projekt-Tab | Schließt das Projekt in CodeNomad; native Arbeit läuft in OpenCode weiter und ist nach erneutem Öffnen des Projekts wieder verfügbar. |
-| CodeNomad-Fenster | Trennt die Ansicht; stoppt weder native Arbeit noch OpenCode-Dienst. |
+| CodeNomad-Projekt-Tab | Schließt das Projekt in CodeNomad; native Sitzungen laufen in OpenCode weiter. Öffnen Sie das Projekt erneut, um sie wiederzufinden. |
+| Ganzes Fenster, App beenden oder Renderer neu laden | Bewahrt Projektverbindungen für die Wiederherstellung; stoppt weder native Arbeit noch den OpenCode-Dienst. |
 | CodeNomad-Backend | Stoppt OpenCode nicht. Einmalige CodeNomad-Koordination hängt von der Backend-Präsenz ab; nehmen Sie keine weitere Verfügbarkeit neuer einmaliger Vergaben/Steuerung bei geschlossenem Backend an. |
 | Laufender täglicher Zeitplan | Uhr und Durchlauf laufen im OpenCode-Plugin/-Dienst, auch bei geschlossener CodeNomad-Oberfläche und Backend. Ausführungshost und OpenCode-Dienst müssen weiterlaufen. |
 | OpenCode-Dienstneustart | Verliert prozesslokale Zeitplanjobs. Ein auf laufend gesetzter Zeitplan wird **Unterbrochen** bis zu einem ausdrücklichen **Fortsetzen**; erneutes Öffnen von CodeNomad aktiviert ihn nicht wieder. |
 
 Prüfen Sie nach einem Neustart den offenen Lauf und wählen Sie bei Bereitschaft **Fortsetzen**. Dies gleicht den vorhandenen Lauf ab, ohne die Koordinatoreingabe doppelt zu senden; es garantiert keine Fortsetzung eines unterbrochenen nativen Turns. Ein durch Neustart abgeschnittener Turn kann ohne Bericht enden, mit **Durch Neustart unterbrochen**. Verwenden Sie Neustarts nicht zum Wiederholen von Werkzeugnebenwirkungen.
+
+Missionen funktionieren mit den Desktop-Apps und mit einem eigenständigen CodeNomad-[Server](server.md). Zeigt das Panel **Missionszentrale ist nicht verfügbar**, nennt seine Meldung die Ursache:
+
+| Ursache | Was zu tun ist |
+| --- | --- |
+| Der OpenCode-Arbeitsbereich ist nicht bereit | Verbinden Sie das Projekt erneut und aktualisieren Sie dann. |
+| OpenCode hat das Missions-Plugin nicht geladen | Aktualisieren Sie nach einem Moment; bleibt es so, verwenden Sie **OpenCode-Konfiguration neu laden** unter **Einstellungen → OpenCode**. |
+| OpenCode konnte das Missions-Plugin nicht laden | Lesen Sie dessen Fehler in der Plugin-Liste und aktualisieren Sie nach der Behebung. |
+| Der CodeNomad-Server konnte seine lokale Verbindung für Missionen (127.0.0.1) nicht öffnen | Prüfen Sie das Serverprotokoll; OpenCode neu zu laden hilft nicht. |
 
 ## Pause, Stop und ungewisse Ergebnisse {#controls-recovery}
 

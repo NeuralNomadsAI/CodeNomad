@@ -54,6 +54,8 @@ Vérifiez la [matrice d’écoute et les procédures TLS](remote-access.md), en 
 
 `--workspace-root` restreint les espaces de travail ouvrables et `--unrestricted-root` assouplit la navigation. Aucun n’est une prison système, un conteneur, un bac à sable de fichiers ou une restriction sur les actions d’un outil natif autorisé. Agents, commandes shell, plugins et outils MCP agissent avec les permissions de l’hôte d’exécution et leurs propres identifiants configurés.
 
+Les [SideCars](browser-sidecars.md) sont des ajouts de confiance. CodeNomad ne transmet pas au service SideCar ses cookies de connexion ni ceux des appareils appairés, mais la page SideCar se charge dans la même origine que CodeNomad et ses scripts peuvent agir avec votre session connectée. N’enregistrez que des services auxquels vous faites autant confiance qu’à CodeNomad lui-même.
+
 Utilisez des comptes système, conteneurs/VM et la configuration d’autorisations en amont si une réelle isolation est nécessaire. N’accordez pas l’accès à un appareil uniquement parce que vous vous attendez à ce qu’il voie un seul onglet. La configuration serveur et le service OpenCode partagé peuvent affecter d’autres conversations/projets ; voir [Configuration d’OpenCode](opencode.md), [Autorisations](permissions.md) et [Extensions](extensions.md) pour leurs limites distinctes.
 
 ## Garder identifiants et diagnostics privés {#privacy}

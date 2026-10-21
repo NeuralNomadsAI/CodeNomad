@@ -5,7 +5,7 @@
 1. Abre **Configuración → Voz**. La tarjeta **Voz** usa un adaptador del servidor compatible con OpenAI, independiente del proveedor de modelos de tu conversación.
 2. Introduce **Clave API**, opcionalmente **URL base**, **Modelo de transcripción**, **Modelo de voz** y **Voz predeterminada**.
 3. Si entrada y salida necesitan servicios distintos, activa **Proveedores separados para entrada y salida** y rellena los campos de clave, URL base y modelo de entrada/salida.
-4. Elige **Modo de reproducción** y **Formato de salida** y después **Guardar**. Comprueba que aparezca **Guardado**, **Configurado** o **Parcialmente configurado** antes de probar.
+4. Elige **Modo de reproducción** y **Formato de salida** y después **Guardar** (disponible mientras haya cambios sin guardar). Comprueba el estado junto a los botones de prueba, **Configurado**, **Parcialmente configurado** o **Falta la clave API**, antes de probar; un guardado fallido muestra **Error al guardar**.
 
 Los ajustes y claves de voz pertenecen a la configuración del servidor CodeNomad conectado, no al proyecto seleccionado ni a la conexión del proveedor OpenCode. Los demás clientes que la compartan usan esos ajustes. Las claves guardadas se ocultan: un campo de clave vacío conserva el valor guardado; **Borrar clave guardada** programa su eliminación al guardar. Una dirección de entrada o salida sin endpoint ni clave propios puede usar los ajustes compartidos; un endpoint separado necesita su propia clave, y una clave separada necesita su endpoint. Al cambiar un endpoint, proporciona explícitamente la clave prevista y verifica la configuración guardada; los cambios de endpoint borran la clave guardada de esa posición en lugar de enviarla a otro anfitrión.
 
@@ -17,7 +17,7 @@ El backend también puede usar `OPENAI_API_KEY` y `OPENAI_BASE_URL` como valores
 | Modelo de transcripción / Modelo de entrada | Modelo aceptado por el endpoint STT; por defecto `gpt-4o-mini-transcribe`. |
 | Modelo de voz / Modelo de salida | Modelo aceptado por el endpoint TTS; por defecto `gpt-4o-mini-tts`. |
 | Voz predeterminada | Identificador de voz del proveedor; por defecto `alloy`. No es un selector de voces del sistema operativo. |
-| Streaming | Empieza a reproducir conforme llega el audio, cuando proveedor y navegador admiten el formato seleccionado. |
+| Streaming | Predeterminado. Empieza a reproducir conforme llega el audio, cuando proveedor y navegador admiten el formato seleccionado. |
 | Con búfer | Espera la respuesta de audio completa antes de reproducir. |
 | Formato de salida | `mp3`, `wav`, `opus` o `aac`; por defecto `mp3`. La compatibilidad varía según navegador/proveedor. |
 
@@ -35,24 +35,24 @@ Si falla el streaming, selecciona **Con búfer**, prueba `mp3`, guarda y vuelve 
 
 ## Dictar un mensaje {#dictate}
 
-1. Activa **Entrada de voz del prompt** en **Voz**.
-2. En el editor, mantén pulsado el control de micrófono (**Iniciar entrada de voz**) y permite el acceso al micrófono de este dispositivo.
-3. Suéltalo para detener y transcribir. Si usas la entrada del menú de acciones, elige **Iniciar entrada de voz** y después **Detener grabación y transcribir**.
+1. Mantén activada **Entrada de voz del prompt** en **Voz** (está activada por defecto).
+2. En el editor, abre **Más acciones**, elige **Iniciar entrada de voz** y permite el acceso al micrófono de este dispositivo.
+3. Cuando termines de hablar, elige **Detener grabación y transcribir** en el mismo menú; **Transcribiendo audio** se muestra mientras se procesa.
 4. Revisa y edita el texto insertado antes de enviar el mensaje normalmente.
 
-La transcripción inserta texto en la selección actual; no lo envía automáticamente a OpenCode. El control de micrófono aparece solo cuando STT está configurado y el cliente admite grabación. La grabación usa el micrófono del dispositivo cliente, incluso si CodeNomad se ejecuta en un servidor remoto.
+La transcripción inserta texto en la selección actual; no lo envía automáticamente a OpenCode. La entrada del menú aparece solo cuando STT está configurado y el cliente admite grabación. La grabación usa el micrófono del dispositivo cliente, incluso si CodeNomad se ejecuta en un servidor remoto.
 
-Si falta un control, comprueba el interruptor y la configuración STT. Ante errores de permiso, permite el micrófono tanto en los ajustes de privacidad del navegador como del sistema operativo. La grabación en navegador remoto necesita un contexto seguro, normalmente HTTPS de confianza; consulta [Acceso móvil](mobile.md) y [Acceso remoto directo](remote-access.md). Cambiar de vista o cerrar el editor termina su ciclo de grabación; no confíes en poder recuperar audio sin enviar. El borrador escrito sigue siendo el lugar donde revisar el resultado.
+Si falta la entrada, comprueba el interruptor y la configuración STT. Ante errores de permiso, permite el micrófono tanto en los ajustes de privacidad del navegador como del sistema operativo. La grabación en navegador remoto necesita un contexto seguro, normalmente HTTPS de confianza; consulta [Acceso móvil](mobile.md) y [Acceso remoto directo](remote-access.md). Cambiar de vista o cerrar el editor termina su ciclo de grabación; no confíes en poder recuperar audio sin enviar. El borrador escrito sigue siendo el lugar donde revisar el resultado.
 
 ## Leer mensajes en voz alta {#playback}
 
-1. Usa **Reproducir mensaje** en un mensaje cuando TTS esté disponible.
-2. Usa **Detener reproduccion** en el mismo control activo antes de iniciar otra lectura.
+1. Usa **Reproducir mensaje** en un mensaje, o la misma acción en una llamada a herramienta, cuando TTS esté disponible.
+2. Usa **Detener reproduccion** en el mismo control para terminarla; iniciar otra lectura detiene la actual.
 3. Cambia la voz, el modelo, el modo o el formato guardados en **Voz** para solicitudes posteriores.
 
 La reproducción usa la proyección de texto de CodeNomad, no una captura narrada: los bytes binarios/de imágenes y los comprobantes de permisos no son contenido de voz. No ejecuta un mensaje ni cambia el modelo OpenCode seleccionado. La compatibilidad de audio del navegador y las respuestas del proveedor aún pueden impedir la reproducción aunque se pueda seleccionar un formato.
 
-Para voz automática de conversación, usa **Activar modo conversacion** en las acciones del editor. Lee texto del asistente que comienza con un bloque delimitado `spoken` completado en la sesión principal activa; no lee automáticamente todas las respuestas ni subagentes. Pide ese formato de salida cuando lo necesites. **Desactivar modo conversacion** detiene su cola. Iniciar la entrada de micrófono también detiene la voz de conversación activa. El interruptor aparece con la entrada de voz o mientras el modo conversación ya está activado y requiere TTS operativo para activarse.
+Para voz automática de conversación, usa **Activar modo conversacion** en el menú **Más acciones** del editor; se aplica a esa pestaña de proyecto y no se conserva tras recargar. Mientras está activado, CodeNomad pide al agente, con cada mensaje que envías, que empiece su respuesta con un breve resumen delimitado `spoken`. Solo se lee ese bloque completado, en la sesión principal activa; no lee automáticamente todas las respuestas ni subagentes. **Desactivar modo conversacion** detiene su cola y deja de pedir el resumen. Iniciar la entrada de micrófono también detiene la voz de conversación activa. El interruptor aparece con la entrada de voz o mientras el modo conversación ya está activado y requiere TTS operativo para activarse.
 
 ## Flujo de datos y privacidad {#privacy}
 

@@ -29,10 +29,12 @@ binding ले firewall नियम, port forwarding, DNS वा VPN बना�
 
 | Launch/mode | HTTP bind | HTTPS bind |
 | --- | --- | --- |
-| Standalone, HTTPS मात्र (default) | सक्षम छैन | `--host` |
+| Standalone, HTTPS मात्र (default) | निजी loopback listener मात्र (तल हेर्नुहोस्) | `--host` |
 | Standalone, HTTP मात्र | LAN/wildcard ठेगानासमेत **`--host`** | सक्षम छैन |
 | Standalone, दुवै listener | `127.0.0.1`, `--host` जे भए पनि | `--host` |
 | नेटिभ desktop backend | host-internal listener समेत HTTP `127.0.0.1` मै रहन्छ | HTTPS enabled हुँदा `--host` |
+
+हरेक backend ले Missions जस्ता CodeNomad कै bundled OpenCode plugin का लागि `127.0.0.1` मा HTTP listener पनि राख्छ। HTTP माग नगरिएको भए, वा मागिएको HTTP listener `127.0.0.1` वा `0.0.0.0` बाहेक अर्को ठेगानामा bind भएको भए, backend ले अनियमित `127.0.0.1` port मा निजी HTTP listener थप्छ। यो कहिल्यै छापिँदैन वा जडान ठेगानाका रूपमा दिइँदैन, अरू मेसिनबाट पहुँचयोग्य हुँदैन, र उही प्रमाणीकृत application सेवा दिन्छ।
 
 ठोस LAN ठेगानाले loopback connection स्वीकार नगर्न सक्छ। `0.0.0.0` सबै IPv4 interface हुन्; `::` dual-stack wildcard listener हो। browser मा wildcard होइन वास्तविक पहुँचयोग्य ठेगाना प्रयोग गर्नुहोस्। `--host` मा IPv6 zone identifier समर्थित छैनन्।
 
@@ -48,7 +50,7 @@ loopback-मात्र HTTP का लागि, जस्तै local trusted
 codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
-9898 वा 9899 port नमान्नुहोस्: नदिएका port व्यस्त भए अर्कोमा जान सक्छन्। स्पष्ट nonzero `--https-port` वा `--http-port` ले port स्थिर गरी bind नसके असफल हुन्छ; `0` ले OS लाई चयन गर्न दिन्छ। छापिएका **Local Connection URL**, **Remote Connection URL** र ताजा **पहुँचयोग्य ठेगानाहरू** त्यस run का आधिकारिक हुन्। पूर्ण [server CLI सन्दर्भ](server.md) हेर्नुहोस्।
+9898 वा 9899 port नमान्नुहोस्: नदिएका port व्यस्त भए अर्कोमा जान सक्छन्। स्पष्ट nonzero `--https-port`, वा HTTP सक्षम हुँदा `--http-port`, ले port स्थिर गरी bind नसके असफल हुन्छ; `0` ले OS लाई चयन गर्न दिन्छ। छापिएका **Local Connection URL**, **Remote Connection URL** र ताजा **पहुँचयोग्य ठेगानाहरू** त्यस run का आधिकारिक हुन्। पूर्ण [server CLI सन्दर्भ](server.md) हेर्नुहोस्।
 
 ## Trusted TLS कन्फिगर {#tls}
 
@@ -81,10 +83,10 @@ certificate चेतावनी आए रोकिएर hostname, SAN, trust
 
 ## remote server बचत {#saved-servers}
 
-1. desktop गृह पृष्ठमा **सर्भरहरू**, त्यसपछि **सर्भरमा जडान गर्नुहोस्** चयन गर्नुहोस्।
-2. trusted HTTPS origin सहित **सर्भरको नाम** र **सर्भर URL** भर्नुहोस्। **स्व-हस्ताक्षरित प्रमाणपत्रहरूको लागि TLS प्रमाणीकरण छोड्नुहोस्।** नछान्नुहोस्; बरु trust स्थापित गर्नुहोस्।
+1. desktop गृह पृष्ठमा **CodeNomad सर्भर जडान गर्नुहोस्** रोज्नुहोस्। उही बटन खाली **सर्भरहरू** ट्याबमा र **सेटिङहरू → रिमोट पहुँच → सर्भरहरू** मा पनि देखिन्छ।
+2. **सर्भरमा जडान गर्नुहोस्** मा trusted HTTPS origin सहित **सर्भरको नाम** र **सर्भर URL** भर्नुहोस्। **स्व-हस्ताक्षरित प्रमाणपत्रहरूको लागि TLS प्रमाणीकरण छोड्नुहोस्।** नछान्नुहोस्; बरु trust स्थापित गर्नुहोस्।
 3. bookmark गर्न **बचत गर्नुहोस्**, वा बचत र खोल्न **जडान गर्नुहोस्** रोज्नुहोस्। त्यो server मा sign in गर्नुहोस्।
 
-bookmark यो CodeNomad कन्फिगरेसनका हुन्, remote server का project होइनन्। URL बचतले server सुरु वा access प्रदान गर्दैन। **बचत गरिएको सर्भर हटाउनुहोस्** ले bookmark हटाउँछ, remote कुराकानी, backend वा credential होइन।
+सुरक्षित सर्भर फेरि खोल्न गृह पृष्ठको **सर्भरहरू** ट्याबमा त्यसलाई चयन गर्नुहोस्। bookmark यो CodeNomad कन्फिगरेसनका हुन्, remote server का project होइनन्। URL बचतले server सुरु वा access प्रदान गर्दैन। **बचत गरिएको सर्भर हटाउनुहोस्** ले bookmark हटाउँछ, remote कुराकानी, backend वा credential होइन।
 
 Remote Control मा **सर्भर URL** मा नयाँ pairing link paste गर्नुहोस्। bookmark ले tunnel origin मात्र राख्छ, one-use code कहिल्यै होइन; device-cookie हराएपछि पुनःpair गर्न [Remote Control](remote-control.md) हेर्नुहोस्।

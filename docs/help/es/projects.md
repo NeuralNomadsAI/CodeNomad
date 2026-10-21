@@ -12,7 +12,7 @@ Explorar un servidor remoto significa explorar el sistema de archivos de ese ser
 
 La clonación escribe un repositorio en el destino. **Eliminar primero la carpeta de destino si ya existe.** es destructivo: actívalo solo si se puede borrar todo lo que ya haya allí. Usa un destino nuevo si tienes dudas. Una clonación fallida no es motivo para eliminar un proyecto existente; inspecciona el destino y el error indicados antes de reintentar.
 
-Las entradas recientes son accesos directos. **Renombrar workspace** cambia su nombre visible; **Eliminar de recientes** elimina el acceso directo, no sus archivos ni conversaciones. Un proyecto reciente que ya esté abierto puede llevarte a su pestaña existente.
+Las entradas recientes son accesos directos. **Renombrar workspace** cambia su nombre visible; **Eliminar de recientes** elimina el acceso directo, no sus archivos ni conversaciones. Hacer clic en un proyecto reciente que ya esté abierto abre una pestaña nueva; su botón **Abierta** (**Cambiar al proyecto abierto**) selecciona en cambio la pestaña existente.
 
 ## Usar el lanzador de nuevas instancias {#new-instance-launcher}
 
@@ -23,26 +23,28 @@ Un clic normal sigue abriendo la página de inicio completa. El lanzador es un a
 
 ## Cerrar una pestaña de proyecto {#close-stop}
 
-1. Usa el botón de cierre de la pestaña o **Cerrar pestaña** en la paleta de comandos para cerrar el proyecto en CodeNomad. CodeNomad deja de seguir esa instancia abierta del proyecto.
-2. Las sesiones siguen ejecutándose en OpenCode; los archivos del proyecto y el historial nativo se conservan.
-3. Vuelve a abrir la carpeta desde Buscar carpetas o Carpetas recientes para encontrar de nuevo las sesiones.
+1. Usa el botón de cierre de la pestaña o **Cerrar pestaña** en la paleta de comandos (`Ctrl/Cmd+W` en el renderer).
+2. Cerrar la pestaña cierra ese proyecto en CodeNomad: deja de seguir sus eventos y solicitudes. Las sesiones siguen ejecutándose en OpenCode.
+3. Vuelve a abrir la carpeta desde Buscar carpetas o Carpetas recientes para encontrar de nuevo esas conversaciones.
 
 | Acción | Ámbito y efecto | Qué no hace |
 | --- | --- | --- |
-| Cerrar pestaña | Cierra esa instancia abierta del proyecto en CodeNomad | No elimina archivos ni sesiones nativas, ni detiene la generación o el servicio compartido de OpenCode |
+| Cerrar pestaña | Retira la conexión de proyecto de CodeNomad de esa pestaña; otra pestaña abierta por separado en la misma carpeta no se ve afectada | No elimina archivos del proyecto ni el historial nativo, no detiene sesiones ni descarga la Location de OpenCode |
 | Detener sesión | Ejecución de la conversación seleccionada | No cierra el proyecto ni elimina su historial |
 
-Otra pestaña de la misma carpeta abierta por separado no se ve afectada. Si otra ventana muestra la misma instancia abierta del proyecto, su pestaña también se cierra y esa ventana muestra una notificación. CodeNomad no descarga la Location nativa de OpenCode. Detén explícitamente las ejecuciones relevantes antes de cerrar si quieres que terminen. El mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
+Si otra ventana muestra la misma conexión de proyecto, su pestaña también se cierra y esa ventana muestra una notificación. La ventana que inicia el cierre no muestra ninguna. El cierre es inmediato; si el backend no puede cerrar el proyecto, aparece un error y **Cambiar al proyecto abierto** en la página de inicio sigue llevando a él. No hay reintento automático. Los borradores sin enviar de la pestaña cerrada no se conservan en la restauración al iniciar.
+
+Cerrar una ventana entera, salir o recargar no cierra sus conexiones de proyecto; se sigue aplicando la restauración normal al iniciar. Detén explícitamente las ejecuciones relevantes si necesitas verificar que la ejecución terminó. CodeNomad nunca descarga las Locations nativas; el mantenimiento del servicio compartido se describe en [configuración de OpenCode](opencode.md).
 
 ## Espacios de trabajo temporales {#temporary-workspaces}
 
 1. Elige **Temporal** en el lanzador o **Nueva instancia temporal** en la página de inicio.
 2. Trabaja en la carpeta vacía gestionada por CodeNomad; Git no se inicializa automáticamente.
-3. Al cerrar la pestaña, elige **Conservar**, **Descartar** o **Cancelar**. Tras **Conservar**, la pestaña se cierra como cualquier pestaña de proyecto. El menú de la pestaña también ofrece **Conservar como proyecto**.
+3. Al cerrar la pestaña, elige **Conservar**, **Descartar** o **Cancelar**. El menú de la pestaña también ofrece **Conservar como proyecto**.
 
 | Opción | Efecto | Recuperación |
 | --- | --- | --- |
-| Conservar | Conserva la carpeta y las conversaciones, retira su condición temporal y añade un proyecto reciente | Vuelve a abrirlo desde Carpetas recientes; la carpeta no se mueve |
+| Conservar | Cierra el proyecto en CodeNomad, conserva la carpeta y las conversaciones, retira su condición temporal y añade un proyecto reciente | Vuelve a abrirlo desde Carpetas recientes; la carpeta no se mueve |
 | Descartar | Elimina las conversaciones y los archivos del espacio de trabajo temporal | No se puede deshacer; guarda primero en otro lugar lo que necesites |
 | Cancelar | Deja abierto el espacio de trabajo temporal | Continúa trabajando o decide más tarde |
 

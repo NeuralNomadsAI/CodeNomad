@@ -4,14 +4,16 @@ CodeNomad se conecta a un servicio compartido de OpenCode en el equipo de ejecuc
 
 ## Seleccionar o instalar la CLI {#select-cli}
 
-1. Abre **Configuración → OpenCode** y usa **Binario de OpenCode** para seleccionar el ejecutable.
-2. Deja activada la selección automática para preferir el PATH del servidor y después su instalación npm de usuario; o usa **Explorar binario…** o introduce una ruta y elige **Agregar**.
+1. Abre **Configuración → OpenCode** y usa la tarjeta **Binario de OpenCode**, debajo de **Versión de OpenCode**, para seleccionar el ejecutable.
+2. Deja seleccionada la entrada automática para preferir el PATH del servidor, salvo que contenga un OpenCode anterior, y después su instalación npm de usuario de OpenCode 2; o usa **Explorar binario…** o introduce una ruta y elige **Agregar**.
 3. Usa **Comprobar estado y actualizaciones**. Si falta OpenCode, elige **Instalar e iniciar OpenCode**; revisa primero el equipo y el ámbito de instalación.
 4. Si la configuración inicial ofrece **Conectar y continuar**, úsalo tras resolver el problema indicado.
 
 La instalación usa Node/npm incluidos para una instalación de usuario estándar compartida con otros clientes. **Instalar para el usuario y configurar PATH** cambia la configuración de terminal de ese usuario; abre una terminal nueva después. Un navegador se conecta al servidor de CodeNomad: su selector de archivos y selección de ejecutable se refieren a ese servidor, no al dispositivo que navega.
 
-El ejecutable instalado y el servicio en ejecución pueden tener versiones distintas. Comprueba **Detalles de versiones** en lugar de suponer que seleccionar otro ejecutable ha reemplazado el daemon activo. Si la instalación está ocupada o el ejecutable bloqueado, espera a que el instalador o proceso lo libere y comprueba el estado antes de reintentar; no ejecutes instaladores simultáneos.
+Cuando un OpenCode anterior aparece primero en el PATH, la acción ofrecida depende de cómo se instaló. Para OpenCode 1.x instalado con npm, **Reemplazar OpenCode {version} por OpenCode 2** pide confirmación, elimina ese paquete npm e instala OpenCode 2 en la misma carpeta npm; la carpeta de datos de OpenCode se conserva, y OpenCode 2 importa por sí mismo las conversaciones de 1.x. Un OpenCode anterior o inutilizable instalado de otra forma (winget, Homebrew, manual) nunca se modifica: **Instalar OpenCode 2 para CodeNomad** instala OpenCode 2 en la carpeta npm del usuario junto a él, y CodeNomad usa después esa copia. El comando `opencode` de una terminal puede seguir iniciando la versión anterior. Un ejecutable personalizado seleccionado explícitamente nunca se reemplaza.
+
+El ejecutable instalado y el servicio en ejecución pueden tener versiones distintas. Compara **Versión instalada** con **Servicio en ejecución** en la tarjeta **Versión de OpenCode** en lugar de suponer que seleccionar otro ejecutable ha reemplazado el daemon activo; **Detalles de versiones** enumera las versiones mínima y recomendada. Si la instalación está ocupada o el ejecutable bloqueado, espera a que el instalador o proceso lo libere y comprueba el estado antes de reintentar; no ejecutes instaladores simultáneos.
 
 ## Versiones requeridas, recomendadas y no verificadas {#versions}
 
@@ -27,7 +29,7 @@ También deben estar disponibles los contratos requeridos de sesiones, permisos,
 
 En Windows, un ejecutable WSL seleccionado se ejecuta dentro de su distribución elegida. Instálalo/actualízalo allí y usa rutas que tengan sentido dentro de esa distribución. La conectividad WSL depende del reenvío de localhost de Windows. Una CLI de Windows y una CLI de WSL no son entornos de ejecución intercambiables.
 
-OpenCode es propietario de su registro global de servicio, sesiones, mensajes y base de datos. CodeNomad no crea una base de datos privada de OpenCode por ventana o proyecto. Cerrar una pestaña/ventana o apagar el backend de CodeNomad no detiene el daemon compartido. Cerrar una pestaña de proyecto solo cierra el proyecto en CodeNomad, sin descargar la Location nativa. Las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto; consulta [Proyectos](projects.md).
+OpenCode es propietario de su registro global de servicio, sesiones, mensajes y base de datos. CodeNomad no crea una base de datos privada de OpenCode por ventana o proyecto. Cerrar una pestaña de proyecto cierra ese proyecto en CodeNomad; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto. CodeNomad nunca descarga las Locations nativas. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas; ni esas acciones ni el apagado del backend detienen el daemon compartido. Consulta [Proyectos](projects.md).
 
 ## Actualizar, reiniciar o recargar {#maintenance}
 
@@ -42,12 +44,12 @@ OpenCode es propietario de su registro global de servicio, sesiones, mensajes y 
 | Reiniciar servicio | Reemplaza el proceso compartido e interrumpe el trabajo activo de todos los clientes OpenCode conectados; el historial de sesiones permanece. | Reconecta e inspecciona conversaciones y Misiones programadas; un reinicio no implica continuación automática. |
 | Recargar la configuración de OpenCode | Mantiene el proceso, pero reconstruye **todas las Locations cargadas** para todos los clientes. Cancela permisos/formularios pendientes y cierra terminales/comandos en segundo plano; puede interrumpirse el trabajo activo. | Vuelve a comprobar recursos y trabajo pendiente tras recargar. No repitas un mensaje o modificación solo porque se perdió su respuesta. |
 
-Usa **Recargar la configuración de OpenCode** explícitamente cuando una configuración guardada o un plugin instalado siga sin estar disponible y la interrupción sea aceptable. No es una actualización visual inofensiva. CodeNomad no usará una CLI seleccionada más antigua para rebajar un daemon en ejecución más nuevo.
+Usa **Recargar la configuración de OpenCode**, en **Solución de problemas** cuando el servicio en ejecución lo admite, explícitamente cuando una configuración guardada o un plugin instalado siga sin estar disponible y la interrupción sea aceptable. No es una actualización visual inofensiva. CodeNomad no usará una CLI seleccionada más antigua para rebajar un daemon en ejecución más nuevo.
 
 ## Entorno de sesión {#session-environment}
 
-1. Abre **Configuración → Avanzado → Variables de entorno**.
-2. Añade, cambia o retira los valores sobrescritos del perfil.
+1. Abre **Configuración → Avanzado** y expande **Variables de entorno**.
+2. Añade, cambia o retira los valores sobrescritos del perfil; cada cambio se guarda de inmediato.
 3. Envía el siguiente mensaje, comando personalizado o solicitud shell de sesión a través de CodeNomad para aplicar el entorno actual a esa conversación.
 
 Es un ajuste del perfil de configuración, aplicado en el servidor antes de cada envío. Abrir/leer una conversación o guardar ajustes no altera una sesión nativa. Retirar un valor sobrescrito restaura el valor heredado del equipo de ejecución, o lo elimina si allí no existe. Si no se puede aplicar el entorno, el envío se bloquea en lugar de usar valores obsoletos.

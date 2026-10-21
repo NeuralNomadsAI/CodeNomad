@@ -15,7 +15,7 @@ Der rechte Panel-Tab **Dateien** vereint das Durchsuchen von Checkouts, lokale �
 | Änderungen | Änderungen im Index und Arbeitsbaum | Git-Änderungen erfolgen nur über ausdrückliche Aktionen |
 | Commits | Seitenweiser Commit-Verlauf und Revisionsinhalte | Schreibgeschützter Verlauf; kein Checkout |
 
-Aufgeklappte Ordner bleiben bei Moduswechseln erhalten. Listen/Status/Verlauf verwenden zwischengespeicherte Schnappschüsse und prüfen sie nach relevanten Dateisystemänderungen, Aktivierung oder expliziter Aktualisierung erneut; das Fokussieren des Panels garantiert kein erneutes Lesen.
+Aufgeklappte Ordner bleiben bei Moduswechseln erhalten. Listen/Status/Verlauf verwenden zwischengespeicherte Schnappschüsse und prüfen sie nach relevanten Dateisystemänderungen, Aktivierung oder expliziter Aktualisierung erneut; das Fokussieren des Panels garantiert kein erneutes Lesen. Sichtbare Arbeitsbereichsordner übernehmen auf dem Backend-Host erstellte, bearbeitete, umbenannte oder gelöschte Dateien von selbst, bei andauernder Aktivität höchstens alle fünf Sekunden; eingeklappte Ordner und andere Worktrees werden erst erneut gelesen, wenn Sie sie anzeigen.
 
 Zeilenaktionen umfassen **Pfad kopieren** und, soweit der Client Backend-Pfade öffnen kann, Dateimanager-/Editor-/Terminal-Aktionen wie **Mit Standardanwendung öffnen**, **Im Ordner anzeigen**, **Im Dateimanager öffnen** und **Terminal hier öffnen**. Bei wenig Platz können Aktionen unter **Weitere Aktionen für {name}** erscheinen; der Datei- oder Ordnername ersetzt `{name}`. Ein Remote-Browser darf einen Serverpfad nicht als lokalen Gerätepfad voraussetzen; siehe [Fernsteuerung](remote-control.md).
 
@@ -54,7 +54,7 @@ Vorschaulesevorgänge sind begrenzt; große/nicht unterstützte Inhalte sind geg
 2. Verwenden Sie **Datei stagen** / **Datei unstagen**, wählen Sie mehrere Zeilen für die entsprechende Auswahlaktion oder ziehen Sie Zeilen zwischen den Abschnitten.
 3. Geben Sie oben in **Gestagte Änderungen** eine Nachricht ein und wählen Sie **Commit erstellen**.
 
-Eingeklappte Abschnittsköpfe bleiben Ablageziele. Einklappen oder Moduswechsel bewahren deren Zustand und den Commit-Nachrichtenentwurf. Stagen/Unstagen ändert den Index im durchsuchten Worktree; Committen erfasst ausschließlich gestagte Inhalte. Unstagen verwirft die Änderung im Worktree nicht.
+Eingeklappte Abschnittsköpfe bleiben Ablageziele. Einklappen oder Moduswechsel bewahren deren Zustand und den Commit-Nachrichtenentwurf. Ein langer Abschnitt zeigt seine ersten 200 Dateien, dann eine Zeile wie **480 Dateien nicht angezeigt** mit **200 weitere anzeigen**, um die nächsten an Ort und Stelle einzublenden; die Abschnittszähler bleiben vollständige Summen, und die aktuelle, in der Vorschau geöffnete und ausgewählte Dateien bleiben angezeigt. Umschalt-Klick-Bereiche umfassen nur angezeigte Zeilen, sodass eine Sammelaktion nie eine Datei einschließt, die Sie nicht sehen. Stagen/Unstagen ändert den Index im durchsuchten Worktree; Committen erfasst ausschließlich gestagte Inhalte. Unstagen verwirft die Änderung im Worktree nicht.
 
 Prüfen Sie gestagte Dateien vor dem Commit, besonders wenn Agenten oder andere Clients dort ebenfalls schreiben. Ein fehlgeschlagener Commit wird nicht automatisch wiederholt. Aktualisieren Sie Status/Verlauf und prüfen Sie vor dem Wiederholen den Fehler, denn eine verlorene Antwort beweist nicht, dass kein Commit erstellt wurde.
 

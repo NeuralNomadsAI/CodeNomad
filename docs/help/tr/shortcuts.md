@@ -6,13 +6,13 @@
 2. Bir eylem adı yazın. Palet, uygulama eylemlerini ve mevcut Location bağlamının özel komutlarını içerir; Kullanılabilirlik aktif görünüme bağlıdır.
 3. Bu kılavuzu harici bir tarayıcı bağlamında mevcut kullanıcı arayüzü dilinde açmak için **Yardımı aç** komutunu çalıştırın. Yerel **Yardım → CodeNomad Yardımı** aynı kılavuzu açar.
 
-Yardım, uygulama görünümünü ve taslağını değiştirmez. Açılamazsa doğrudan [CodeNomad Yardımı](https://neuralnomadsai.github.io/CodeNomad/) adresini ziyaret edin. Komutun bulunabilir olması özelleştirilebilir kısayolu olduğu anlamına gelmez: kısayol yöneticisi her palet/native menü eylemini değil, arayüzün sabit 49 komutluk kataloğunu kapsar.
+Yardım, uygulama görünümünü ve taslağını değiştirmez. Açılamazsa doğrudan [CodeNomad Yardımı](https://neuralnomadsai.github.io/CodeNomad/) adresini ziyaret edin. Komutun bulunabilir olması özelleştirilebilir kısayolu olduğu anlamına gelmez: kısayol yöneticisi her palet/native menü eylemini değil, 72 arayüz eyleminden oluşan sabit bir kataloğu kapsar. Bu katalog, **Kısayol yok** ile başlayan **Session'ı Sıkıştır**, **Son Mesajı Geri Al** veya **Yardımı aç** gibi palet komutlarını da içerir; proje klasörü, terminal ve düzenleyici eylemleri yalnızca yerel masaüstü pencerelerinde çalışır.
 
 ## Kaydedin, devre dışı bırakın ve sıfırlayın {#customize}
 
-1. **Ayarlar → Klavye kısayolları** öğesini açın ve eylemi bulmak için **Kısayolları filtrele** öğesini kullanın.
+1. **Ayarlar → Klavye kısayolları** öğesini açın ve eylemi veya bir tuş birleşimini bulmak için **Kısayolları filtrele** öğesini kullanın.
 2. **Düzenle** eylemini seçip **Bir tuş birleşimine basın** alanında istediğiniz birleşime basın. Kaydetme bu atamayı saklar.
-3. Bu eylemin arayüz bağlamasını kaldırmak için **Devre dışı bırak** öğesini, varsayılanı geri yüklemek için **Sıfırla** öğesini veya tüm arayüz bağlamaları için **Tümünü sıfırla** öğesini kullanın.
+3. Bu eylemin arayüz bağlamasını kaldırmak için **Kısayolu temizle** (×) öğesini, varsayılanı geri yüklemek için **Sıfırla** öğesini veya tüm arayüz bağlamaları için **Tümünü sıfırla** öğesini kullanın.
 4. Çakışan her satırdaki uyarıları çözün; çatışmalar sessizce devre dışı bırakılmaz, raporlanır.
 
 Atamalar CodeNomad arayüz yapılandırmasına kaydedilir ve bunu paylaşan istemcileri etkiler. OpenCode CLI/TUI atamalarını veya native menü kısayollarını düzenlemez. Kayıt uygulamanın arayüz kısayollarını bastırır ancak işletim sistemi/native menü kısayollarını bastıramaz. **İptal**, odak kaybı, bölümün kapanması veya pencereden çıkış kaydı bitirir. Tek başına değiştirici tuşlar ve IME birleşimi yok sayılır; yalın Tab/Shift+Tab odağı taşır.
@@ -51,11 +51,11 @@ Kaydetme başarısız olursa eski kısayolu kullanılabilir durumda tutun ve gö
 | Yan soruyu gönder (`/btw` penceresi) | `Mod+Enter` |
 | Dosyayı kaydet (çalışma alanı düzenleyicisi) | `Mod+S` |
 
-Enter ile göndermenin kapalı olduğu yapılandırmada **İstemi gönder** varsayılanı `Mod+Enter`, **Yeni satır ekle** varsayılanı `Enter` veya `Shift+Enter` olur. Açık kısayol geçersiz kılması bu varsayılanı değiştirir. Etkin atamayı yöneticiyle görün. Önceki/sonraki oturum oturum listesini döner; kısayolu olmayan tarayıcı benzeri **Geri**/**İleri** geçmişi değildir.
+Enter ile göndermenin kapalı olduğu yapılandırmada **İstemi gönder** varsayılanı `Mod+Enter`, **Yeni satır ekle** varsayılanı `Enter` veya `Shift+Enter` olur. Açık kısayol geçersiz kılması bu varsayılanı değiştirir. Etkin atamayı yöneticiyle görün. macOS'ta `Option+Return` satır sonu olarak kalır; bu nedenle alternatif davranışla yalnızca `Cmd+Shift+Return` gönderir. Bir oturum çalışırken ileti düzenleyicisinin **Diğer eylemler** menüsü aynı seçimi (**Mesajı kuyruğa ekle** veya **Şimdi yönlendir**) sunar. **Girdiyi temizle**, yeni bir konuşmanın ilk taslağı dahil, ileti düzenleyicisinin kendi temizleme eylemini çalıştırır. Önceki/sonraki oturum oturum listesini döner; kısayolu olmayan tarayıcı benzeri **Geri**/**İleri** geçmişi değildir.
 
 ## Native tuşlar ve platformun araya girmesi {#native-keys}
 
-Native tuşlar sabittir; karşılık gelen arayüz atamasını değiştirseniz veya kapatsanız da etkin kalır. Özellikle native **New Window**, arayüzde Yeni oturum varsayılanı olan `Mod+Shift+N` birleşimini kullanır. Native menü araya giriyorsa görünür Yeni oturum kontrolünü kullanın veya arayüz eylemini başka tuşa atayın. Benzer biçimde native `Mod+W`, yalnızca uygulama sekmesi yerine pencereyi kapatabilir.
+Native tuşlar sabittir; karşılık gelen arayüz atamasını değiştirseniz veya kapatsanız da etkin kalır. Özellikle native **Yeni pencere**, arayüzde Yeni oturum varsayılanı olan `Mod+Shift+N` birleşimini kullanır. Native menü araya giriyorsa görünür Yeni oturum kontrolünü kullanın veya arayüz eylemini başka tuşa atayın. Benzer biçimde native `Mod+W`, yalnızca uygulama sekmesi yerine pencereyi kapatabilir.
 
 | Yerel eylem | Electron | Tauri |
 | --- | --- | --- |
@@ -73,4 +73,4 @@ Normal tarayıcı pencereleri tarayıcı kısayollarını da korur. Tuş birleş
 
 Rakam sırası ve köşeli parantez kısayolları AZERTY/QWERTZ dahil kayıt, yürütme ve çakışma kontrolünde fiziksel tuş konumlarını kullanır. Diğer tuşlar mantıksal değerlerini kullanır. Kullanacağınız klavyeyle kaydedip gösterilen sonucu kontrol edin.
 
-IME birleşimi sırasında metin girişi önceliklidir. İstem geçmişi ve Escape eylemleri ayrıca odağa, seçici/Shell durumuna ve devam eden işleme bağlıdır; her ArrowUp veya Escape basışının koşulsuz genel eylem olduğunu varsaymayın. Üzerine gelince çıkan ipuçları ve kısayol yöneticisi kalıcı klavye yardım şeridi eklemeden mevcut atamaları gösterir.
+IME birleşimi sırasında metin girişi önceliklidir. İstem geçmişi ve Escape eylemleri ayrıca odağa, seçici/Shell durumuna ve devam eden işleme bağlıdır; her ArrowUp veya Escape basışının koşulsuz genel eylem olduğunu varsaymayın. Masaüstünde gönderme odağı konuşmaya taşır; böylece oklar, sayfa tuşları ve Boşluk konuşmayı kaydırır. Bir karakter yazmak o karakterle birlikte ileti düzenleyicisine döner; **Girdiye odaklan** ise istem geçmişini kullanmadan önce odağı oraya döndürür. Araç ipuçları komut paleti, arama, Yeni oturum, Bilgi ve ileti düzenleyicisi seçicileri gibi kontrollerin geçerli kısayolunu belirtir; kısayol yöneticisiyle birlikte kalıcı bir klavye yardım şeridi eklemeden atamaları gösterir.

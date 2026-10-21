@@ -5,7 +5,7 @@
 1. **Ayarlar → Konuşma** öğesini açın. **Konuşma** kartı, görüşmenizin model sağlayıcısından bağımsız olarak OpenAI uyumlu bir sunucu tarafı bağdaştırıcısı kullanır.
 2. **API anahtarı** öğesini, isteğe bağlı olarak **Temel URL**, **Transkripsiyon modeli**, **Konuşma modeli** ve **Varsayılan ses** öğesini girin.
 3. Giriş ve çıkış farklı hizmetlere ihtiyaç duyuyorsa **Girdi ve çıktı için ayrı provider'lar** öğesini etkinleştirin, ardından giriş/çıkış anahtarını, temel URL'yi ve model alanlarını doldurun.
-4. **Oynatma modu** ve **Çıktı formatı** öğesini, ardından **Kaydet** öğesini seçin. Test etmeden önce **Kaydedildi**, **Yapılandırıldı** veya **Kısmen yapılandırıldı** öğesini kontrol edin.
+4. **Oynatma modu** ve **Çıktı formatı** öğesini, ardından **Kaydet** öğesini seçin (kaydedilmemiş değişiklikler varken kullanılabilir). Test etmeden önce test düğmelerinin yanındaki durumu kontrol edin: **Yapılandırıldı**, **Kısmen yapılandırıldı** veya **API anahtarı eksik**; başarısız bir kaydetme **Kaydetme başarısız** gösterir.
 
 Konuşma ayarları ve anahtarlar, seçilen projeye veya OpenCode sağlayıcı bağlantısına değil, bağlı CodeNomad sunucu yapılandırmasına aittir. Bunu paylaşan diğer istemciler bu ayarları kullanır. Kaydedilen anahtarlar gizlidir: boş bir anahtar alanı kaydedilen değeri tutar; **Kayıtlı anahtarı temizle** kaydedildiğinde kaldırılmasını planlıyor. Kendi uç noktası veya anahtarı olmayan bir yön, paylaşılan ayarları kullanabilir; ayrı bir uç noktanın kendi anahtarına, ayrı bir anahtarın da kendi uç noktasına ihtiyacı vardır. Bir uç noktayı değiştirirken amaçlanan anahtarı açıkça sağlayın ve kaydedilen yapılandırmayı doğrulayın; uç nokta değişiklikleri, farklı bir ana bilgisayara göndermek yerine o yuva için kayıtlı anahtarı temizler.
 
@@ -17,7 +17,7 @@ Arka uç, paylaşılan varsayılanlar için `OPENAI_API_KEY` ve `OPENAI_BASE_URL
 | Transkripsiyon modeli / Giriş modeli | STT uç noktası tarafından kabul edilen model; varsayılan `gpt-4o-mini-transcribe`. |
 | Konuşma modeli / Çıkış modeli | TTS uç noktası tarafından kabul edilen model; varsayılan `gpt-4o-mini-tts`. |
 | Varsayılan ses | Sağlayıcının ses tanımlayıcısı; varsayılan `alloy`. Bu bir işletim sistemi ses seçicisi değildir. |
-| Akış | Sağlayıcı ve tarayıcı seçilen formatı desteklediğinde, ses geldiğinde oynatmayı başlatır. |
+| Akış | Varsayılan. Sağlayıcı ve tarayıcı seçilen formatı desteklediğinde, ses geldiğinde oynatmayı başlatır. |
 | Tamponlanmış | Oynatmadan önce sesli yanıtın tamamını bekler. |
 | Çıkış formatı | `mp3`, `wav`, `opus` veya `aac`; varsayılan `mp3`. Uyumluluk tarayıcıya/sağlayıcıya göre değişir. |
 
@@ -35,24 +35,24 @@ Akış başarısızsa **Tamponlanmış** seçeneğini ve `mp3` biçimini deneyin
 
 ## Bir istemi dikte edin {#dictate}
 
-1. **Konuşma** bölümünde **Prompt ses girişi** öğesini etkinleştirin.
-2. İleti düzenleyicisinde mikrofon kontrolünü (**Ses girişini başlat**) basılı tutun ve bu cihazda mikrofon erişimine izin verin.
-3. Durdurmak ve yazıya dökmek için bırakın. Bunun yerine eylem menüsü girişini kullanırken **Ses girişini başlat** öğesini ve ardından **Kaydı durdur ve metne dönüştür** öğesini seçin.
+1. **Konuşma** bölümünde **Prompt ses girişi** öğesini etkin tutun (varsayılan olarak açıktır).
+2. İleti düzenleyicisinde **Diğer eylemler** menüsünü açın, **Ses girişini başlat** öğesini seçin ve bu cihazda mikrofon erişimine izin verin.
+3. Konuşmanız bitince aynı menüde **Kaydı durdur ve metne dönüştür** öğesini seçin; işlenirken **Ses metne dönüştürülüyor** görünür.
 4. İstemi normal şekilde göndermeden önce eklenen metni inceleyin ve düzenleyin.
 
-Transkripsiyon metni geçerli seçime ekler; bunu otomatik olarak OpenCode'a göndermez. Mikrofon kontrolü yalnızca STT yapılandırıldığında ve istemci kaydetmeyi desteklediğinde görünür. Kayıt, CodeNomad uzak bir sunucuda çalıştığında bile istemci aygıtının mikrofonunu kullanır.
+Transkripsiyon metni geçerli seçime ekler; bunu otomatik olarak OpenCode'a göndermez. Menü girişi yalnızca STT yapılandırıldığında ve istemci kaydetmeyi desteklediğinde görünür. Kayıt, CodeNomad uzak bir sunucuda çalıştığında bile istemci aygıtının mikrofonunu kullanır.
 
-Eksik bir kontrol için geçiş düğmesini ve STT yapılandırmasını kontrol edin. İzin hataları için, hem tarayıcı hem de işletim sistemi gizlilik ayarlarında mikrofona izin verin. Uzaktan tarayıcı kaydı, normalde güvenilen HTTPS olan güvenli bir bağlama ihtiyaç duyar; bkz. [Mobil erişim](mobile.md) ve [Doğrudan uzaktan erişim](remote-access.md). İleti düzenleyicisini değiştirmek veya kapatmak, onun kayıt yaşam döngüsünü sona erdirir; gönderilmemiş sesin kurtarılabilir olduğuna güvenmeyin. Yazdığınız taslak, sonucu gözden geçirebileceğiniz yer olarak kalır.
+Eksik bir menü girişi için geçiş düğmesini ve STT yapılandırmasını kontrol edin. İzin hataları için, hem tarayıcı hem de işletim sistemi gizlilik ayarlarında mikrofona izin verin. Uzaktan tarayıcı kaydı, normalde güvenilen HTTPS olan güvenli bir bağlama ihtiyaç duyar; bkz. [Mobil erişim](mobile.md) ve [Doğrudan uzaktan erişim](remote-access.md). İleti düzenleyicisini değiştirmek veya kapatmak, onun kayıt yaşam döngüsünü sona erdirir; gönderilmemiş sesin kurtarılabilir olduğuna güvenmeyin. Yazdığınız taslak, sonucu gözden geçirebileceğiniz yer olarak kalır.
 
 ## Mesajları yüksek sesle oku {#playback}
 
-1. TTS kullanılabiliyorsa mesajın **Mesajı seslendir** eylemini kullanın.
-2. Farklı bir okumaya başlamadan önce aynı aktif kontrolde **Oynatmayı durdur** öğesini kullanın.
+1. TTS kullanılabiliyorsa bir mesajda **Mesajı seslendir** eylemini veya bir araç çağrısında aynı eylemi kullanın.
+2. Bitirmek için aynı kontrolde **Oynatmayı durdur** öğesini kullanın; başka bir okumayı başlatmak geçerli okumayı durdurur.
 3. Sonraki istekler için **Konuşma** bölümünde kayıtlı sesi, modeli, modu veya formatı değiştirin.
 
 Oynatma, anlatımlı bir ekran görüntüsünü değil, CodeNomad'in metin projeksiyonunu kullanır: ikili/görüntü baytları ve izin makbuzları konuşma içeriği değildir. Bir istem çalıştırmaz veya seçilen OpenCode modelini değiştirmez. Tarayıcı ses desteği ve sağlayıcı yanıtları, bir format seçilebilir olsa bile oynatmayı yine de engelleyebilir.
 
-Otomatik konuşma seslendirmesi için ileti düzenleyicisinin eylemlerinden **Konuşma modunu etkinleştir** seçeneğini kullanın. Etkin ana oturumda tamamlanmış, kod çitleri arasındaki `spoken` bloğuyla başlayan asistan metnini okur; her yanıtı veya alt ajanı otomatik okumaz. Gerektiğinde bu çıktı biçimini isteyin. **Konuşma modunu devre dışı bırak** kuyruğu durdurur. Mikrofon girişine başlamak da etkin seslendirmeyi durdurur. Anahtar ses girişiyle birlikte veya konuşma modu zaten açıkken görünür; etkinleştirmek için çalışan TTS gerekir.
+Otomatik konuşma seslendirmesi için ileti düzenleyicisinin **Diğer eylemler** menüsünden **Konuşma modunu etkinleştir** seçeneğini kullanın; bu mod o proje sekmesi için geçerlidir ve yeniden yüklemeden sonra korunmaz. Açıkken CodeNomad, gönderdiğiniz her istemle birlikte ajandan yanıtına kod çitleri arasında kısa bir `spoken` özetiyle başlamasını ister. Etkin ana oturumda yalnızca bu tamamlanmış blok okunur; her yanıtı veya alt ajanı otomatik okumaz. **Konuşma modunu devre dışı bırak** kuyruğu durdurur ve artık özeti istemez. Mikrofon girişine başlamak da etkin seslendirmeyi durdurur. Anahtar ses girişiyle birlikte veya konuşma modu zaten açıkken görünür; etkinleştirmek için çalışan TTS gerekir.
 
 ## Veri akışı ve gizlilik {#privacy}
 

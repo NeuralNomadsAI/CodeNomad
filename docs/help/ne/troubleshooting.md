@@ -41,8 +41,8 @@ owned worktree वा conversation placement verify गर्न नसके �
 
 ## OpenCode runtime र WSL {#opencode-runtime}
 
-1. **प्राथमिकताहरू → OpenCode** खोली selected executable, installed version र running service status जाँच्नुहोस्।
-2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.1.0**; recommended/qualified: **2.1.0**।
+1. **प्राथमिकताहरू → OpenCode** खोली **OpenCode संस्करण** card (installed version र running service status), त्यसपछि **OpenCode बाइनरी** अन्तर्गतको selected executable जाँच्नुहोस्।
+2. आवश्यक runtime नभए समर्थित installation/update प्रयोग गर्नुहोस्। हालको minimum: **2.1.0**; recommended/qualified: **2.1.1**।
 3. installed CLI running service भन्दा फरक भए shared service restart गर्ने कि स्पष्ट निर्णय गर्नुहोस्।
 
 **OpenCode सेवा पुनः सुरु गर्नुहोस्** **समस्या समाधान** अन्तर्गत उपलब्ध छ र पुष्टि चाहिन्छ। हरेक connected client को सक्रिय काम interrupt गर्छ, तर session history राख्छ। configuration reload छुट्टै हो: process राख्छ तर loaded Location पुनर्निर्माण र pending question/permission रद्द गर्छ। कुनै हानिरहित refresh होइन।
@@ -79,6 +79,7 @@ pairing link single-use र छोटो आयुका हुन्; direct-ac
 | बाह्य स्वामित्वको OAuth expired | OpenCode, Claude Code वा credential owner बाट फेरि sign in गर्नुहोस्। CodeNomad ले refresh token साट्दैन। |
 | automatic rotation switch हुँदैन | opt-in eligibility र current account साँच्चै full छ कि जाँच्नुहोस्। pre-admission नीति हो, in-flight failover वा prompt replay होइन। |
 | plugin अवस्था पुरानो | **प्लगइन नियन्त्रण ताजा गर्नुहोस्** र tooltip scope/target जाँच्नुहोस्; runtime activation लाई native refresh पर्खनुपर्न सक्छ। अनिश्चित write बारम्बार toggle नगर्नुहोस्। |
+| **मिसन नियन्त्रण उपलब्ध छैन** | यसले बताएको कारण पछ्याउनुहोस्। OpenCode ले Missions plugin लोड गरेको छैन भने refresh गर्नुहोस्, रहिरहे **OpenCode कन्फिगरेसन पुनः लोड गर्नुहोस्** प्रयोग गर्नुहोस्; plugin लोड हुन असफल भए Plugins सूचीमा यसको त्रुटि पढ्नुहोस्; server ले आफ्नो स्थानीय Missions जडान खोल्न सकेन भने server log जाँच्नुहोस्, किनकि OpenCode reload गर्दा मद्दत हुँदैन। Missions standalone server मा पनि चल्छन्। |
 | स्थापित extension हराएको | panel customization मा एउटै activation checkbox जाँच्नुहोस्। installation/replacement पछि explicit activation र required consent नदिँदासम्म disabled हुन्छ। |
 | extension asset denied | current mounted session को API 2 asset-read consent जाँच्नुहोस्। extension स्थापना मनपरी file/history पढ्ने अनुमति होइन। |
 
@@ -88,7 +89,7 @@ pairing link single-use र छोटो आयुका हुन्; direct-ac
 
 full-history search हाल loaded transcript row मा सीमित छैन। display filter ले नमेटी सामग्री लुकाउँछ; search, compaction, technical cleanup र deletion छुट्याउन [इतिहास](history.md) प्रयोग गर्नुहोस्।
 
-pending-request recovery अपूर्ण भए CodeNomad ले coverage नभएकोलाई खाली लाम नठानी ज्ञात queue र answer draft राख्छ। लगातार दुई अपूर्ण recovery पछि सामान्य notification मार्फत चेतावनी दिन्छ; liveness check ले अस्थायी failure retry गर्छ। compaction-सम्बन्धी deferral request रद्द भएको होइन। draft राख्नुहोस्, service connection जाँच्नुहोस् र फेरि उत्तरअघि current request state प्रयोग गर्नुहोस्।
+pending-request recovery अपूर्ण भए CodeNomad ले coverage नभएकोलाई खाली लाम नठानी ज्ञात queue र answer draft राख्छ। लगातार दुई अपूर्ण recovery पछि यसले परियोजना, कारण, फोल्डर र प्रभावित सत्रको नाम दिँदै एक पटक चेतावनी दिन्छ; चेतावनी **परियोजना र ट्याबहरू** सूचना वर्गमा पर्छ (पूर्वनिर्धारित रूपमा स्क्रिनमा र इतिहासमा; **सेटिङहरू → सूचनाहरू** हेर्नुहोस्)। liveness check ले अस्थायी failure retry गर्छ। compaction-सम्बन्धी deferral request रद्द भएको होइन। draft राख्नुहोस्, service connection जाँच्नुहोस् र फेरि उत्तरअघि current request state प्रयोग गर्नुहोस्।
 
 cancelled वा partial cleanup मा अर्को deletion अघि progress/receipt पढ्नुहोस्। cancel ले dispatched batch undo गर्दैन। native database सम्पादन गरी history मर्मत नगर्नुहोस्। Mission uncertainty मा अर्को run बनाउने वा automatic replay को सट्टा **अवस्था जाँच गर्नुहोस्**/refresh recovery प्रयोग गर्नुहोस्; [मिसन](missions.md) ले restart र lifetime सीमा बताउँछ।
 

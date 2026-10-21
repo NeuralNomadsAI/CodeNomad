@@ -12,7 +12,7 @@ Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, 
 
 Klonen schreibt ein Repository ins Zielverzeichnis. **Zielordner zuerst entfernen, falls er bereits existiert.** ist destruktiv: Aktivieren Sie dies nur, wenn alles dort Vorhandene gelöscht werden darf. Verwenden Sie im Zweifel ein neues Ziel. Ein fehlgeschlagener Klon ist kein Grund, ein vorhandenes Projekt zu löschen; prüfen Sie vor dem Wiederholen das gemeldete Ziel und den Fehler.
 
-Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** ändert den Anzeigenamen; **Aus Liste entfernen** entfernt die Verknüpfung, nicht die Dateien oder Unterhaltungen. Ein bereits geöffnetes zuletzt verwendetes Projekt kann zu seinem vorhandenen Tab wechseln.
+Zuletzt verwendete Einträge sind Verknüpfungen. **Arbeitsbereich umbenennen** ändert den Anzeigenamen; **Aus Liste entfernen** entfernt die Verknüpfung, nicht die Dateien oder Unterhaltungen. Ein Klick auf ein bereits geöffnetes zuletzt verwendetes Projekt öffnet einen neuen Tab; seine Schaltfläche **Offen** (**Zum offenen Projekt wechseln**) wählt stattdessen den vorhandenen Tab.
 
 ## Schnellstarter für neue Instanzen verwenden {#new-instance-launcher}
 
@@ -23,26 +23,28 @@ Ein normaler Klick öffnet weiterhin die vollständige Startseite. Der Schnellst
 
 ## Projekt-Tab schließen {#close-stop}
 
-1. Verwenden Sie die Schließen-Schaltfläche des Tabs oder **Tab schließen** in der Befehlspalette, um das Projekt in CodeNomad zu schließen. CodeNomad verfolgt diese geöffnete Projektinstanz nicht mehr.
-2. Sitzungen laufen in OpenCode weiter; die Projektdateien und der native Verlauf bleiben erhalten.
-3. Öffnen Sie den Ordner bei Bedarf über die Ordnersuche oder zuletzt verwendete Einträge erneut, um die Sitzungen wiederzufinden.
+1. Verwenden Sie die Schließen-Schaltfläche des Tabs oder **Tab schließen** in der Befehlspalette (`Ctrl/Cmd+W` im Renderer).
+2. Das Schließen des Tabs schließt dieses Projekt in CodeNomad: CodeNomad verfolgt dessen Ereignisse und Anfragen nicht mehr. Sitzungen laufen in OpenCode weiter.
+3. Öffnen Sie den Ordner über die Ordnersuche oder zuletzt verwendete Einträge erneut, um diese Unterhaltungen wiederzufinden.
 
 | Aktion | Geltungsbereich und Wirkung | Was sie nicht tut |
 | --- | --- | --- |
-| Tab schließen | Schließt diese geöffnete Projektinstanz in CodeNomad | Löscht keine Projektdateien oder nativen Sitzungen und beendet keine Generierung oder den gemeinsamen OpenCode-Dienst |
+| Tab schließen | Entfernt die CodeNomad-Projektverbindung dieses Tabs; ein anderer, separat geöffneter Tab desselben Ordners bleibt unberührt | Löscht weder Projektdateien noch nativen Verlauf, stoppt keine Sitzungen und entlädt nicht die OpenCode-Location |
 | Sitzung stoppen | Ausführung der ausgewählten Unterhaltung | Schließt weder Projekt noch löscht es dessen Verlauf |
 
-Ein anderer, separat geöffneter Tab desselben Ordners bleibt unberührt. Zeigt ein anderes Fenster dieselbe geöffnete Projektinstanz, schließt sich dessen Tab ebenfalls; dort erscheint eine Benachrichtigung. CodeNomad entfernt dabei keine native OpenCode-Location. Stoppen Sie relevante Ausführungen ausdrücklich vor dem Schließen, wenn sie beendet werden sollen. Die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
+Zeigt ein anderes Fenster dieselbe Projektverbindung, schließt sich dessen Tab ebenfalls und dieses Fenster zeigt eine Benachrichtigung. Das auslösende Fenster zeigt keine. Das Schließen erfolgt sofort; kann das Backend das Projekt nicht schließen, erscheint ein Fehler, und **Zum offenen Projekt wechseln** auf der Startseite erreicht es weiterhin. Es gibt keine automatische Wiederholung. Ungesendete Entwürfe des geschlossenen Tabs werden nicht in die Startwiederherstellung übernommen.
+
+Das Schließen eines ganzen Fensters, Beenden oder Neuladen schließt dessen Projektverbindungen nicht; die normale Startwiederherstellung gilt weiterhin. Stoppen Sie relevante Ausführungen ausdrücklich, wenn Sie sicherstellen müssen, dass sie beendet sind. CodeNomad entlädt niemals native Locations; die Wartung des gemeinsamen Dienstes beschreibt die [OpenCode-Einrichtung](opencode.md).
 
 ## Temporäre Arbeitsbereiche {#temporary-workspaces}
 
 1. Wählen Sie **Temporär** im Schnellstarter oder **Neue temporäre Instanz** auf der Startseite.
 2. Arbeiten Sie im leeren, von CodeNomad verwalteten Ordner; Git wird nicht automatisch initialisiert.
-3. Wählen Sie beim Schließen des Tabs **Behalten**, **Verwerfen** oder **Abbrechen**. Nach **Behalten** schließt sich der Tab wie ein normaler Projekt-Tab. Das Tab-Menü bietet auch **Als Projekt behalten**.
+3. Wählen Sie beim Schließen des Tabs **Behalten**, **Verwerfen** oder **Abbrechen**. Das Tab-Menü bietet auch **Als Projekt behalten**.
 
 | Auswahl | Wirkung | Wiederherstellung |
 | --- | --- | --- |
-| Behalten | Behält Ordner und Unterhaltungen, entfernt den temporären Status und fügt ein zuletzt verwendetes Projekt hinzu | Über zuletzt verwendete Einträge erneut öffnen; der Ordner wird nicht verschoben |
+| Behalten | Schließt das Projekt in CodeNomad, behält Ordner und Unterhaltungen, entfernt den temporären Status und fügt ein zuletzt verwendetes Projekt hinzu | Über zuletzt verwendete Einträge erneut öffnen; der Ordner wird nicht verschoben |
 | Verwerfen | Löscht Unterhaltungen und Dateien des temporären Arbeitsbereichs | Nicht rückgängig zu machen; benötigte Inhalte vorher anderswo sichern |
 | Abbrechen | Lässt den temporären Arbeitsbereich geöffnet | Weiterarbeiten oder später entscheiden |
 

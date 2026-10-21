@@ -8,7 +8,7 @@
 
 Le flux est enregistré dans la configuration du serveur CodeNomad et change seulement les versions proposées. Il ne change ni profils de données de bureau, brouillons, fenêtres, sessions OpenCode ou configuration du service. Sans sélection explicite, les distributions marquées comme préversions utilisent les préversions par défaut, les autres les versions stables.
 
-Stable sélectionne la dernière version finale. Préversion suit l’ordre de publication car les distributions de développement peuvent partager un numéro de version de base ; ne comparez pas seulement leurs numéros. Les paquets de préversion s’adressent aux utilisateurs prêts à tester un comportement préalable à la sortie ; lisez les notes et protégez les brouillons importants avant de redémarrer.
+Stable sélectionne la dernière version finale. Préversion suit l’ordre de publication car les distributions de développement peuvent partager un numéro de version de base ; ne comparez pas seulement leurs numéros. Une préversion n’est proposée qu’une fois toutes ses distributions publiées. Les paquets de préversion s’adressent aux utilisateurs prêts à tester un comportement préalable à la sortie ; lisez les notes et protégez les brouillons importants avant de redémarrer.
 
 ## Mettre à jour une installation de bureau {#desktop-update}
 
@@ -28,7 +28,7 @@ Dans les fenêtres d’application Tauri et les fenêtres natives de **Préfére
 
 Le menu Tauri **Aide → Rechercher des mises à jour…** lance la procédure de mise à jour dans la fenêtre d’application qui a le focus. Depuis les Préférences ou une fenêtre distante, il ramène au premier plan la fenêtre d’application utilisée le plus récemment pour lancer la vérification ; il n’installe pas via la fenêtre distante. Si aucune fenêtre d’application ne peut recevoir l’action, notamment lorsque la fenêtre ciblée affiche un écran de chargement, de connexion ou d’appairage, le menu ouvre la page de version à la place.
 
-Tauri ne propose que les versions ayant un manifeste de mise à jour publié pour le flux/la cible choisis. Une version juste annoncée peut ne pas encore être installable ; la notification peut ouvrir sa page à la place. La vérification native de signature est requise avant installation. Les signatures de mise à jour sont distinctes des garanties de notarisation/signature de code du système.
+Tauri n’installe que les versions ayant un manifeste de mise à jour publié pour le flux/la cible choisis. Si une version annoncée ne peut pas encore être installée, la notification ouvre sa page à la place. La vérification native de signature est requise avant installation. Les signatures de mise à jour sont distinctes des garanties de notarisation/signature de code du système.
 
 L’installation vide les écritures en attente de toutes les fenêtres et arrête le backend CodeNomad détenu avant de remplacer/redémarrer l’application. Le démon OpenCode détenu indépendamment ne fait pas partie de cet arrêt. Fermer CodeNomad retire malgré tout les fonctions dépendantes du backend jusqu’à son retour ; une session OpenCode qui continue ne garantit pas des services d’interface ininterrompus.
 

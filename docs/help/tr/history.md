@@ -9,7 +9,7 @@ Saklanan geçmiş, konuşma dökümünün şu anda görüntüledikleri ve modeli
 3. Okunabilir metnin yanı sıra teknik içeriğe de ihtiyacınız varsa **Araçları ve düşünceleri dahil et** öğesini etkinleştirin.
 4. Bir alıntı seçin veya mevcut sayfanın ötesine geçmek için **Sonraki sonuçlar** öğesini kullanın.
 
-Arama, yalnızca ekranda oluşturulmuş konuşma satırlarında değil, saklanan geçmişte düz metin olarak ve büyük/küçük harfe duyarsız yapılır. Çalışma alanı kapsamı, OpenCode hizmetindeki her projeyi değil, açılan projenin yetkili dizin ağacını ve çalışma ağaçlarını izler. Dosya/görüntü eki baytları ile sağlayıcının opak durumu aranabilir metin değildir.
+Arama, yalnızca ekranda oluşturulmuş konuşma satırlarında değil, saklanan geçmişte düz metin olarak ve büyük/küçük harfe duyarsız yapılır. Çalışma alanı kapsamı, OpenCode hizmetindeki her projeyi değil, açılan projenin yetkili dizin ağacını ve çalışma ağaçlarını izler; sonuçları konuşmaya göre gruplanır ve her grup, konuşmanın başlığıyla ve onu şu anda barındıran çalışma ağacıyla adlandırılır. Dosya/görüntü eki baytları ile sağlayıcının opak durumu aranabilir metin değildir.
 
 **Bu sayfa: … sonuç · … mesaj tarandı** ilerleme satırı, çalışma alanı toplamlarını değil, bu sonuç sayfasını açıklar. Sonuçlar gruplar halinde gelir. Atlanan büyük boyutlu veya desteklenmeyen mesajlar raporlanır; bir isabetin olmaması bu mesajların eşleşme içermediğini kanıtlamaz. Tarama sırasında gelen yeni iletilerin tutarlı bir şekilde dahil edilebilmesi için yeni bir aramaya ihtiyaç vardır.
 
@@ -18,10 +18,12 @@ Boş arama açmak geçmişi taramaz. Sorguyu/kapsamı değiştirmek, pencereyi k
 ## Sonuçları açın ve zaman çizelgesini kullanın {#timeline-navigation}
 
 1. Çevresindeki pasaja atlamak için geçerli oturum arama sonucunu seçin.
-2. Söz konusu mesajın ayrı bir önizlemesini açmak için başka bir oturumdan bir sonuç seçin.
+2. Söz konusu mesajın ayrı bir önizlemesini açmak için başka bir oturumdan bir sonuç seçin; o konuşmaya isabetin olduğu yerde gitmek için **Oturumda aç** öğesini kullanın.
 3. **Mesaj zaman çizelgesi** bölümünde bir alıntı için işaretçinin üzerine gelin veya odaklanın, ardından gezinmek için onu seçin. Saklanan geçmişin sonuna dönmek için ilk/en son mesaj kontrollerini kullanın.
 
-Zaman çizelgesi, konuşma dökümü yalnızca sınırlı bir pasaj içerdiğinde bile tam oturum yapısını temsil eder. Atlamalar, araya giren her mesajı getirmek yerine hedefi yükler. Diğer oturum arama önizlemeleri o oturumun tüm metnini yüklemez veya sessizce seçmez.
+Zaman çizelgesi, konuşma dökümü yalnızca sınırlı bir pasaj içerdiğinde bile tam oturum yapısını temsil eder. Atlamalar, araya giren her mesajı getirmek yerine hedefi yükler. Diğer oturum arama önizlemeleri o oturumun tüm metnini yüklemez veya onu seçmez; konuşmayı yalnızca **Oturumda aç** değiştirir.
+
+Araç işaretçileri **Mesaj içeriği** ayarlarını izler: orada gizlenen bir araç türünün işaretçisi olmaz (**Hiçbir şey** ile hiç işaretçi olmaz); izin bekleyen bir araç bunun istisnasıdır. Yalnızca araç çalıştıran bir adım, boş bir ajan işaretçisi olmadan yalnızca araç işaretçilerini gösterir.
 
 Atlama yüklenirken eski bölüm görünür kalır. Yeni atlama veya konuşma dökümüne elle müdahale, eski gezinmeyi geçersiz kılar; başarısız atlama görünür bölümü korur. Tüm projeyi tekrar tekrar yüklemek yerine hedefi yeniden deneyin. Geçmişi okumak ileti düzenleyicisindeki ajan/model seçimini değiştirmez.
 
@@ -38,7 +40,7 @@ Konuşma çok dar olduğunda (420 CSS pikselinin altında) zaman çizelgesi gizl
 | Oturumu sil | Oturum satırı **Session'ı sil** veya seçilen oturumun silinmesi | Onaylandıktan sonra yerel konuşmayı ve onun alt oturumlarını/geçmişini yinelemeli olarak siler; geri alma yok |
 | Session'ları Temizle | Komut paleti | Görüntüleme veya bağlam boyutu ayarı değil, daha kapsamlı oturum silme |
 
-**Mesaj içeriği** konuşmalar genelinde geçerlidir. Araçları gizlemek araçları devre dışı bırakmaz, izinleri değiştirmez veya saklanan çıktıyı kaldırmaz. Çok büyük mesajlarda arayüzün akıcı kalması için atlanan bölümün yerinde **… tane daha göster** kontrolü bulunabilir; bu bölümü genişletmek silinmiş içeriği kurtarmaz.
+**Mesaj içeriği** konuşmalar genelinde geçerlidir. Üst kısmından veya **Ayarlar → Sohbet** bölümünden bir hazır ayar (**Hiçbir şey**, **Minimal**, **Dengeli** veya **Her şey**) seçin, ardından satırları tek tek ayarlayın; **Mesaj içeriği** hazır ayar menüsü bundan sonra **Özel** gösterir. Araçları gizlemek araçları devre dışı bırakmaz, izinleri değiştirmez veya saklanan çıktıyı kaldırmaz. Arayüzün akıcı kalması için çok büyük mesajlar atlanan bölümün yerinde **… tane daha göster** kontrolünü gösterir; çok uzun metin veya araç çıktısı ise **Tümünü göster** ile birlikte **Bu mesajın akıcı kalması için … karakter daha gizlendi** satırında durur. İkisini de açmak yalnızca görüntülemeyi etkiler ve silinmiş içeriği kurtarmaz.
 
 ## Bir oturumu sıkıştırın {#compact-session}
 

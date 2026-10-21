@@ -9,7 +9,7 @@ Gespeicherter Verlauf, aktuell angezeigter Gesprächsverlauf und komprimierter M
 3. Aktivieren Sie **Werkzeuge und Denkblöcke einbeziehen**, wenn Sie neben lesbarem Text auch technische Inhalte benötigen.
 4. Wählen Sie einen Auszug oder verwenden Sie **Weitere Ergebnisse**, um nach der aktuellen Seite fortzufahren.
 
-Die Suche ist wörtlich und unabhängig von Groß-/Kleinschreibung; sie durchsucht den gespeicherten Verlauf, nicht nur eingeblendete Zeilen. Der Arbeitsbereichsumfang folgt dem autorisierten Verzeichnisbaum und den Worktrees des geöffneten Projekts, nicht jedem Projekt des OpenCode-Dienstes. Datei-/Bildanhangsbytes und undurchsichtiger Anbieterzustand sind kein durchsuchbarer Text.
+Die Suche ist wörtlich und unabhängig von Groß-/Kleinschreibung; sie durchsucht den gespeicherten Verlauf, nicht nur eingeblendete Zeilen. Der Arbeitsbereichsumfang folgt dem autorisierten Verzeichnisbaum und den Worktrees des geöffneten Projekts, nicht jedem Projekt des OpenCode-Dienstes; seine Ergebnisse sind nach Unterhaltung gruppiert, jeweils benannt nach ihrem Titel und dem Worktree, der sie derzeit enthält. Datei-/Bildanhangsbytes und undurchsichtiger Anbieterzustand sind kein durchsuchbarer Text.
 
 Die Fortschrittszeile **Diese Seite: … Ergebnisse · … Nachrichten durchsucht** beschreibt diese Ergebnisseite, keine Arbeitsbereichssummen. Ergebnisse kommen stapelweise. Übersprungene übergroße oder nicht unterstützte Nachrichten werden gemeldet; fehlende Treffer beweisen nicht, dass diese Nachrichten keinen Treffer enthalten. Neue Nachrichten während eines Suchlaufs benötigen eine neue Suche, um konsistent berücksichtigt zu werden.
 
@@ -18,10 +18,12 @@ Das Öffnen einer leeren Suche durchsucht keinen Verlauf. Änderungen an Begriff
 ## Ergebnisse öffnen und Timeline nutzen {#timeline-navigation}
 
 1. Wählen Sie ein Suchergebnis der aktuellen Sitzung, um zur umgebenden Passage zu springen.
-2. Wählen Sie ein Ergebnis einer anderen Sitzung, um eine separate Vorschau dieser Nachricht zu öffnen.
+2. Wählen Sie ein Ergebnis einer anderen Sitzung, um eine separate Vorschau dieser Nachricht zu öffnen; verwenden Sie **In Sitzung öffnen**, um an der Trefferstelle zu dieser Unterhaltung zu wechseln.
 3. Zeigen Sie in **Nachrichten-Timeline** auf eine Markierung oder fokussieren Sie sie für einen Auszug und wählen Sie sie dann zur Navigation. Über die Bedienelemente für erste/neueste Nachricht gelangen Sie zu den Enden des gespeicherten Verlaufs.
 
-Die Timeline stellt die gesamte Sitzungsstruktur dar, auch wenn die Verlaufsanzeige nur eine begrenzte Passage enthält. Sprünge laden das Ziel, nicht jede dazwischenliegende Nachricht. Suchvorschauen anderer Sitzungen laden weder deren gesamten Verlauf noch wählen sie diese stillschweigend aus.
+Die Timeline stellt die gesamte Sitzungsstruktur dar, auch wenn die Verlaufsanzeige nur eine begrenzte Passage enthält. Sprünge laden das Ziel, nicht jede dazwischenliegende Nachricht. Suchvorschauen anderer Sitzungen laden weder deren gesamten Verlauf noch wählen sie diese aus; nur **In Sitzung öffnen** wechselt die Unterhaltung.
+
+Werkzeugmarkierungen folgen **Nachrichteninhalt**: Ein dort ausgeblendeter Werkzeugtyp hat keine Markierung (bei **Nichts** gar keine), außer einem Werkzeug, das auf eine Berechtigung wartet. Ein Schritt, der nur Werkzeuge ausgeführt hat, zeigt nur seine Werkzeugmarkierungen, ohne leere Agentenmarkierung.
 
 Während ein Sprung lädt, bleibt die alte Passage sichtbar. Ein neuerer Sprung oder manueller Eingriff in den Verlauf ersetzt veraltete Navigation; ein fehlgeschlagener Sprung lässt die sichtbare Passage unverändert. Versuchen Sie das Ziel erneut, statt wiederholt das ganze Projekt neu zu laden. Historisches Lesen ändert nicht die Agenten-/Modellauswahl des Eingabefelds.
 
@@ -38,7 +40,7 @@ Bei zu schmaler Unterhaltung (unter 420 CSS-Pixeln) ist die Timeline ausgeblende
 | Sitzung löschen | Sitzungszeile **Sitzung löschen** oder Löschung ausgewählter Sitzungen | Löscht die native Unterhaltung und ihre nachgeordneten Untersitzungen/Verläufe nach Bestätigung rekursiv; nicht rückgängig zu machen |
 | Sitzungen bereinigen | Befehlspalette | Weiter gefasste Sitzungslöschung, keine Anzeige- oder Kontextgrößeneinstellung |
 
-**Nachrichteninhalt** gilt unterhaltungsübergreifend. Werkzeuge auszublenden deaktiviert sie nicht, ändert keine Berechtigungen und entfernt keine gespeicherten Ausgaben. Sehr große Einzelnachrichten können an einer Auslassung auch **… weitere anzeigen** anzeigen, damit die Darstellung reaktionsfähig bleibt; das Aufklappen stellt keine gelöschten Inhalte wieder her.
+**Nachrichteninhalt** gilt unterhaltungsübergreifend. Wählen Sie oben darin oder in **Einstellungen → Chat** eine Voreinstellung (**Nichts**, **Minimal**, **Ausgewogen** oder **Alles**) und passen Sie dann einzelne Zeilen an; das Voreinstellungsmenü von **Nachrichteninhalt** zeigt dann **Benutzerdefiniert**. Werkzeuge auszublenden deaktiviert sie nicht, ändert keine Berechtigungen und entfernt keine gespeicherten Ausgaben. Damit die Darstellung reaktionsfähig bleibt, zeigen sehr große Nachrichten an einer Auslassung **… weitere anzeigen**, und sehr langer Text oder sehr lange Werkzeugausgabe endet an einer Zeile **… weitere Zeichen ausgeblendet** mit **Alles anzeigen**. Beides einzublenden betrifft nur die Anzeige und stellt keine gelöschten Inhalte wieder her.
 
 ## Sitzung komprimieren {#compact-session}
 

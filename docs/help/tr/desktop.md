@@ -6,17 +6,19 @@
 2. Ayrı bir uygulama penceresi için yerel **Pencere → Yeni pencere** (`Ctrl+Shift+N` veya `Cmd+Shift+N`) kullanın.
 3. **Ayarlar → Gelişmiş** bölümünde, başka bir başlatmanın yeni bir pencere açmak yerine en son kullanılan pencereye odaklanması gerekiyorsa **İkinci başlatmada mevcut pencereye odaklan** öğesini etkinleştirin.
 
-Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode oturumları/mesajları paylaşılan yerel OpenCode hizmetine aittir: aynı konuşmayı başka bir pencere görebilir. Sekmeyi kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda bulunur. Pencereyi kapatmak da hizmeti durdurmaz; bkz. [Projeler](projects.md). Kapanan pencereleri bir temsilcinin veya planlanmış Görevin durduğunun kanıtı olarak kullanmayın.
+Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode oturumları/mesajları paylaşılan yerel OpenCode hizmetine aittir: aynı konuşmayı başka bir pencere görebilir. Proje sekmesini kapatmak projeyi CodeNomad'de kapatır, OpenCode oturumlarını kapatmaz; onları yeniden bulmak için projeyi tekrar açın. Aynı proje bağlantısını gösteren başka bir pencere de sekmesini kapatır ve bir bildirim gösterir; aynı klasörün ayrı açılmış sekmeleri etkilenmez. Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını geri yükleme için korur; bkz. [Projeler](projects.md). Kapanan pencereleri bir temsilcinin veya planlanmış Görevin durduğunun kanıtı olarak kullanmayın.
+
+Yerel uygulama menüleri, bir pencere yüklendikten sonra CodeNomad'ın arayüz dilini kullanır; o zamana kadar İngilizce görünür. **Yardım → CodeNomad hakkında** (macOS uygulama menüsünde de bulunur), sürüm, güncellemeler ve tanılamayla birlikte **Ayarlar → Bilgi** bölümünü açar.
 
 ## Tercihler ve başlangıç geri yüklemesi {#preferences-startup}
 
 1. Yapılandırmak istediğiniz pencereden Ayarlar'ı açın. Yerel masaüstü giriş noktaları, açıcının projesi/Location ile tek yerel Tercihler penceresine odaklanır.
-2. **Genel → Başlangıç** bölümünde **Önceki durumu geri yükle** öğesini etkinleştirin veya devre dışı bırakın.
-3. Bu pencerenin kayıtlı düzenini unutmak için sonuçlarını okuduktan sonra **Kayıtlı durumu temizle** öğesini kullanın.
+2. **Genel** bölümünde **Önceki durumu geri yükle** öğesini açın veya kapatın.
+3. Bu pencerenin kayıtlı düzenini unutmak için **Kaydedilen başlangıç durumunu temizle** öğesini kullanın. Onay istemeden hemen uygulanır.
 
 Geri yükleme, çalışma alanı/SideCar sekmelerini ve etkin oturumları, gönderilmemiş metni, kaydırma konumlarını, panelleri, pencere yerleşimini ve yakınlaştırmayı yeniden açabilir. Bu, yerel konuşma veritabanının bir kopyası değil, pencere başına istemci durumudur. Temizlendiğinde kayıtlı sekmeler, taslaklar ve düzen kaldırılır; CodeNomad yapılandırmasını veya OpenCode konuşmalarını silmez. Gönderilmemiş önemli taslakları önce başka bir yere kaydedin.
 
-Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: Başlangıç, kendisini açan pencereyi hedefler. Bu pencere kapanmışsa veya Tercihler başlangıçta yeniden açıldığı için bilinmiyorsa, Başlangıç en son kullanılan pencereyi izler; başka bir pencere için hazırlanan değişiklik asla uygulanmaz, kontroller önce yeni pencerenin değerini gösterir. Belirli bir pencereyi yapılandırmak için Tercihler'i o pencereden açın. Proje kapsamlı ayarlar aynı şekilde açıcının Location'sini kullanır; biri olmadan kullanılamaz durumda kalırlar.
+Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: bu kontroller, Tercihler'i açan pencereyi hedefler. Bu pencere kapanmışsa veya Tercihler başlangıçta yeniden açıldığı için bilinmiyorsa, kontroller en son kullanılan pencereyi izler; başka bir pencere için hazırlanan değişiklik asla uygulanmaz, kontroller önce yeni pencerenin değerini gösterir. Belirli bir pencereyi yapılandırmak için Tercihler'i o pencereden açın. Proje kapsamlı ayarlar aynı şekilde açıcının Location'sini kullanır; biri olmadan kullanılamaz durumda kalırlar. Tercihler başlangıçta yeniden açıldığında, bu ayarlar ilgili proje açılmayı bitirince yeniden bağlanır; klasör hâlâ başlatılırken veya birkaç sekmede açıkken, Tercihler'i amaçlanan pencereden açana kadar kullanılamaz kalırlar.
 
 Tarayıcı ve uzak istemci ayarları, ikinci bir native Preferences sahibi açmak yerine istemciye gömülüdür. Native Preferences açılış hatası bildirilir; bunun yerine gizli bir gömülü ayar ekranı açıldığını varsaymayın.
 
@@ -46,13 +48,13 @@ macOS Tauri'de kapsamlı profiller sistem WebKit depolama alanını, oturum açm
 
 ## Diğer kayıtlı profilleri sil {#delete-profiles}
 
-1. Yerel **Ayarlar → Genel → Başlangıç** bölümünde **Diğer kayıtlı profiller** öğesini bulun. Yalnızca makinede başka profiller mevcut olduğunda görünür.
+1. Yerel **Ayarlar → Genel** bölümünde, **Önceki durumu geri yükle** öğesinin altında **Diğer kayıtlı profiller** öğesini bulun. Yalnızca makinede başka profiller mevcut olduğunda görünür.
 2. Gerekirse listeyi yenileyin, **Sil…** öğesini seçin ve listelenen hedefleri ve atlanan profilleri okuyun.
 3. Yalnızca ihtiyacınız olan taslakları/oturum açma bilgilerini koruduktan sonra onaylayın. Yeniden denemeden önce eksik kaldırma raporlarını inceleyin.
 
 Silme işlemi, başka bir yapılandırmadan listelenen profiller de dahil olmak üzere diğer profillerin kayıtlı sekmelerini, taslaklarını, düzenini ve sahip olunan web depolama/önbellek/oturum açma bilgilerini kaldırır. Açık profili, OpenCode konuşmalarını ve proje dosyalarını korur. Açık veya bilinmeyen durum profilleri atlanır; Açıkça yenileyip yeniden denemeden önce ilgili CodeNomad pencerelerini kapatın. Tanınmayan içerik, genel olarak silinmek yerine saklanır ve raporlanır.
 
-macOS Tauri'nin ortak WebKit deposu korunur; silinmesi diğer profilleri etkilerdi. Bu temizlik geri alınamaz: korunan OpenCode konuşması, silinmiş gönderilmemiş taslağı geri getirmez. Yalnızca güncel pencereyi sıfırlamak istiyorsanız **Kayıtlı durumu temizle** daha dar kapsamlı eylemdir.
+macOS Tauri'nin ortak WebKit deposu korunur; silinmesi diğer profilleri etkilerdi. Bu temizlik geri alınamaz: korunan OpenCode konuşması, silinmiş gönderilmemiş taslağı geri getirmez. Yalnızca güncel pencereyi sıfırlamak istiyorsanız **Kaydedilen başlangıç durumunu temizle** daha dar kapsamlı eylemdir.
 
 ## Yakınlaştırma ve panel geometrisi {#zoom-panels}
 

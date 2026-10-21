@@ -54,6 +54,8 @@
 
 `--workspace-root` 限制可打开的工作区，`--unrestricted-root` 放宽浏览。两者都不是操作系统隔离区、容器、文件系统沙箱，也不限制已授权原生工具能做什么。智能体、Shell 命令、插件和 MCP 工具使用执行主机权限及各自配置的凭据操作。
 
+[SideCar](browser-sidecars.md) 是可信的附加组件。CodeNomad 不会向 SideCar 服务提供自身的登录 cookie 和配对设备 cookie，但 SideCar 页面与 CodeNomad 在同一源中加载，其脚本可以凭借你的登录会话执行操作。只注册你像信任 CodeNomad 本身一样信任的服务。
+
 需要真正隔离时，使用操作系统账户、容器/虚拟机和上游权限配置。不要仅因预期设备只看得到一个标签页就授予访问。服务器配置和共享 OpenCode 服务可能影响其他对话/项目；各自边界请参阅 [OpenCode 设置](opencode.md)、[权限](permissions.md)和[扩展](extensions.md)。
 
 ## 保持凭据和诊断信息私密 {#privacy}

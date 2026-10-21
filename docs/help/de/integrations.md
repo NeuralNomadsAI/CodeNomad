@@ -7,7 +7,7 @@ CodeNomad stellt OpenCodes native MCP-Verbindungen, Plugin-Aktivierung, Skills u
 | Integration | Wo handeln | Was die Steuerung ändert |
 | --- | --- | --- |
 | MCP-Server | **Status → MCP-Server** | Native Verbindung an der angezeigten Location; installiert keinen Server. |
-| Natives Plugin | **Status → Plugins** | Dauerhafte Aktivierungsregel **Global** oder **Projekt**; installiert/aktualisiert/entfernt das Paket nicht. |
+| Natives Plugin | **Status → Plugins** | Dauerhafte Aktivierungsregel **Global** oder **Projekt**; bei einem Paket-Plugin eine ausdrückliche Prüfung oder Aktualisierung dieses Pakets. Installiert oder entfernt keine Pakete. |
 | Skill | `@`-Menü im Eingabefeld | Expliziter Anhang an den nächsten Prompt in der Location der Unterhaltung. |
 | Benutzerdefinierter Befehl | `/`-Menü im Eingabefeld | Führt einen von OpenCode für diese Location angebotenen Befehl aus. |
 
@@ -28,10 +28,13 @@ Erscheint kein Server, prüfen Sie aktive Location und native Konfiguration. Pr�
 1. Installieren/deklarieren Sie das native Plugin mit OpenCode; öffnen Sie dann **Status → Plugins**.
 2. Zeigen Sie auf den Namen oder fokussieren Sie ihn, um Quelle, Laufzeitfehler und Konfigurationszieldetails zu prüfen.
 3. Schalten Sie **Global** oder **Projekt** bewusst um. Warten Sie den Schreibvorgang ab und verwenden Sie bei unklarem Zustand **Plugin-Steuerung aktualisieren**.
+4. Verwenden Sie bei einem aus einem Paket installierten Plugin das Symbol neben seinem Namen. Sein Menü nennt den genauen Vorgang: **Updates für … prüfen** für das Paket oder **… aktualisieren**, sobald eine neuere Version gefunden wurde.
 
 Global zielt auf die gefundene globale Konfiguration des verbundenen Daemons. Projekt zielt auf die Konfiguration innerhalb der aktiven Location, nicht auf eine geerbte übergeordnete Datei. Eine spätere Projektregel kann Global übersteuern; der globale Schalter zeigt weiterhin die globale Regel, statt den endgültigen Projektzustand vorzutäuschen. Ohne Projektregel erbt Projekt den aufgelösten globalen Zustand.
 
 Diese Schalter ergänzen exakte Aktivierungsregeln und bewahren Quelldeklarationen sowie unabhängige Konfiguration. Sie bearbeiten keine Plugin-Optionen, installieren keine Pakete und entfernen keine Dateien. Integrierte OpenCode-Plugins werden nicht als Benutzeraktivierungsschalter angeboten. Projekt ist deaktiviert, wenn sein Ziel nicht sicher von Global getrennt werden kann oder die aktive Location verlassen würde.
+
+Eine Paketaktualisierung ändert dieses Paket im gemeinsamen Cache von OpenCode für jede Location, die es verwendet, wie sein Tooltip angibt; sie ändert keine Aktivierungsregeln, startet OpenCode nicht neu und lädt keine Konfiguration neu. Lokale, integrierte und vom SDK bereitgestellte Plugins haben keine Paketaktion. Ein Paket, das vor dem Melden seiner Plugin-ID scheitert, wird unter seinem Paketnamen aufgeführt, mit dem Fehler in seinem Tooltip und Prüf-/Aktualisierungsaktionen, aber ohne Aktivierungsschalter. Eine fehlgeschlagene Prüfung oder Aktualisierung wird gemeldet und nie automatisch wiederholt.
 
 Die Oberfläche behält im verborgenen Zustand ihren letzten Schnappschuss und prüft beim Anzeigen, nach nativen Änderungen/Wiederverbindung und expliziter Aktualisierung erneut. Gespeicherte Regel und aktuelle Laufzeitverfügbarkeit können kurzzeitig abweichen. Bleibt ein Plugin nicht verfügbar, prüfen Sie Tooltip und native Konfiguration vor **OpenCode-Konfiguration neu laden**; dies betrifft alle geladenen Locations, nicht nur dieses Plugin. Fehlerhafte Konfiguration oder gleichzeitige Bearbeitung wird nicht stillschweigend überschrieben: Beheben Sie das Problem, aktualisieren Sie und wiederholen Sie ausdrücklich.
 

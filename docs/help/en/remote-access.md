@@ -29,10 +29,12 @@ This changes the host's direct listening mode, not one project and not Remote Co
 
 | Launch/mode | HTTP binds to | HTTPS binds to |
 | --- | --- | --- |
-| Standalone, HTTPS only (default) | Not enabled | `--host` |
+| Standalone, HTTPS only (default) | Private loopback listener only (see below) | `--host` |
 | Standalone, HTTP only | **`--host`**, including a LAN/wildcard address | Not enabled |
 | Standalone, both listeners | `127.0.0.1` regardless of `--host` | `--host` |
 | Native desktop backend | Its HTTP listener stays on `127.0.0.1`, including its host-internal listener | `--host` when HTTPS is enabled |
+
+Every backend also keeps an HTTP listener on `127.0.0.1` for CodeNomad's own bundled OpenCode plugins, such as Missions. When HTTP was not requested, or the requested HTTP listener is bound to an address other than `127.0.0.1` or `0.0.0.0`, the backend adds a private HTTP listener on a random `127.0.0.1` port. It is never printed or offered as a connection address, is not reachable from other machines, and serves the same authenticated application.
 
 A concrete LAN address need not accept loopback connections. `0.0.0.0` means all IPv4 interfaces; `::` is the dual-stack wildcard listener. Use an actual reachable address in a browser, not a wildcard. IPv6 zone identifiers are not supported in `--host`.
 
@@ -48,7 +50,7 @@ For loopback-only HTTP, for example behind a local trusted proxy:
 codenomad --host 127.0.0.1 --https=false --http=true
 ```
 
-Do not assume port 9898 or 9899: omitted ports can fall back when busy. An explicit nonzero `--https-port` or `--http-port` pins the port and fails if it cannot bind; `0` asks the OS to assign one. The printed **Local Connection URL** and **Remote Connection URL**, and refreshed **Reachable addresses**, are authoritative for that run. See the complete [server CLI reference](server.md).
+Do not assume port 9898 or 9899: omitted ports can fall back when busy. An explicit nonzero `--https-port`, or `--http-port` with HTTP enabled, pins the port and fails if it cannot bind; `0` asks the OS to assign one. The printed **Local Connection URL** and **Remote Connection URL**, and refreshed **Reachable addresses**, are authoritative for that run. See the complete [server CLI reference](server.md).
 
 ## Configure trusted TLS {#tls}
 
@@ -81,10 +83,10 @@ If a client reports a certificate warning, stop and check the hostname, SANs, tr
 
 ## Save a remote server {#saved-servers}
 
-1. In the desktop home page, select **Servers**, then **Connect to Server**.
-2. Enter **Server name** and **Server URL** using a trusted HTTPS origin. Leave **Skip TLS verification for self-signed certificates.** unchecked; establish trust instead.
+1. On the desktop home page, choose **Connect CodeNomad Server**. The same button appears on an empty **Servers** tab and in **Settings → Remote Access → Servers**.
+2. In **Connect to Server**, enter **Server name** and **Server URL** using a trusted HTTPS origin. Leave **Skip TLS verification for self-signed certificates.** unchecked; establish trust instead.
 3. Choose **Save** to bookmark, or **Connect** to save and open it. Sign in on that server.
 
-Bookmarks belong to this CodeNomad configuration, not the remote server's projects. Saving a URL does not start the server or grant access. **Remove saved server** removes the bookmark, not remote conversations, the backend or its credentials.
+Select a saved server on the home page's **Servers** tab to open it again. Bookmarks belong to this CodeNomad configuration, not the remote server's projects. Saving a URL does not start the server or grant access. **Remove saved server** removes the bookmark, not remote conversations, the backend or its credentials.
 
 For Remote Control, paste a fresh pairing link into **Server URL** instead. The bookmark retains only the tunnel origin, never the one-use pairing code; see [Remote Control](remote-control.md) for re-pairing after device-cookie loss.

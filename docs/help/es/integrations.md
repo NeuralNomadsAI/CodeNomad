@@ -7,7 +7,7 @@ CodeNomad expone las conexiones MCP nativas, la activación de plugins, las habi
 | Integración | Dónde actuar | Qué cambia el control |
 | --- | --- | --- |
 | Servidor MCP | **Estado → Servidores MCP** | Conexión nativa en la Location mostrada; no instala un servidor. |
-| Plugin nativo | **Estado → Plugins** | Regla persistente de activación **Global** o **Proyecto**; no instala/actualiza/elimina el paquete. |
+| Plugin nativo | **Estado → Plugins** | Regla persistente de activación **Global** o **Proyecto**; para un plugin de paquete, una comprobación o actualización explícita de ese paquete. No instala ni elimina paquetes. |
 | Habilidad | Menú `@` del editor | Adjunto explícito al siguiente mensaje en la Location de la conversación. |
 | Comando personalizado | Menú `/` del editor | Ejecuta un comando expuesto por OpenCode para esa Location. |
 
@@ -28,10 +28,13 @@ Si no aparece ningún servidor, verifica la Location activa y su configuración 
 1. Instala/declara el plugin nativo con OpenCode; después abre **Estado → Plugins**.
 2. Pasa el puntero o enfoca su nombre para inspeccionar el origen, los fallos de ejecución y los detalles del destino de configuración.
 3. Cambia deliberadamente **Global** o **Proyecto**. Espera la escritura y usa **Actualizar controles de plugins** si el estado no está claro.
+4. Para un plugin instalado desde un paquete, usa el icono junto a su nombre. Su menú indica la operación exacta: **Buscar actualizaciones de** ese paquete, o **Actualizar** el paquete cuando se encuentre una versión más reciente.
 
 Global apunta a la configuración global descubierta del daemon conectado. Proyecto apunta a la configuración dentro de la Location activa, no a un archivo de un antecesor heredado. Una regla posterior de Proyecto puede prevalecer sobre Global; el interruptor Global sigue mostrando la regla Global en lugar de fingir que es el estado final del Proyecto. Sin regla de Proyecto, Proyecto hereda el estado Global resuelto.
 
 Estos interruptores añaden reglas exactas de activación conservando las declaraciones de origen y la configuración no relacionada. No editan opciones de plugins, instalan paquetes ni eliminan archivos. Los plugins integrados de OpenCode no se ofrecen como interruptores de activación del usuario. Proyecto se desactiva cuando su destino no puede separarse de Global con seguridad o saldría de la Location activa.
+
+Una actualización de paquete cambia ese paquete en la caché compartida de OpenCode para todas las Locations que lo usan, como indica su ayuda emergente; no cambia las reglas de activación, no reinicia OpenCode ni recarga la configuración. Los plugins locales, integrados y proporcionados por el SDK no tienen acción de paquete. Un paquete que falla antes de informar del ID de su plugin aparece con su nombre de paquete, con el fallo en su ayuda emergente y las acciones de comprobar/actualizar, pero sin interruptores de activación. Una comprobación o actualización fallida se notifica y nunca se reintenta automáticamente.
 
 La superficie conserva su última instantánea mientras está oculta y se revalida al mostrarse, tras cambios nativos/reconexión y al actualizar explícitamente. Una regla guardada y la disponibilidad real en ejecución pueden diferir brevemente. Si un plugin sigue sin estar disponible, inspecciona su ayuda emergente y la configuración nativa antes de elegir **Recargar la configuración de OpenCode**; esa acción afecta a todas las Locations cargadas, no solo a ese plugin. Una configuración mal formada o una edición concurrente no se sobrescriben silenciosamente: resuélvelas, actualiza y reintenta explícitamente.
 

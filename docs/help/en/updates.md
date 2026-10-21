@@ -8,7 +8,7 @@
 
 The feed is saved in CodeNomad server configuration and only changes which releases are offered. It does not change desktop data profiles, drafts, windows, OpenCode sessions or service configuration. Without an explicit selection, preview-labelled builds default to previews, other builds to stable.
 
-Stable selects the latest final release. Preview follows publication order because development builds can share a base version number; do not compare only their numeric versions. Preview packages are for users willing to test prerelease behavior; inspect release notes and protect important drafts before restarting.
+Stable selects the latest final release. Preview follows publication order because development builds can share a base version number; do not compare only their numeric versions. A preview release is offered only once all of its builds are published. Preview packages are for users willing to test prerelease behavior; inspect release notes and protect important drafts before restarting.
 
 ## Update a desktop installation {#desktop-update}
 
@@ -28,7 +28,7 @@ In Tauri application and native **Preferences** windows, the Updates section sho
 
 The Tauri **Help → Get Updates...** menu runs the update flow in the focused application window. From Preferences or a remote window, it brings the most recently used application window forward to run the check; it does not install through the remote window. If no application window can receive the action, including a targeted loading, login or pairing screen, the menu opens the release page instead.
 
-Tauri offers only releases with a published update manifest for the chosen feed/target. A newly announced release may not be installable yet; the notification can open its release page instead. Native signature verification is required before installation. Updater signatures are distinct from OS notarization/code-signing assurances.
+Tauri installs only releases with a published update manifest for the chosen feed/target. If an announced release cannot be installed yet, the notification opens its release page instead. Native signature verification is required before installation. Updater signatures are distinct from OS notarization/code-signing assurances.
 
 Installation flushes all application windows and stops the owned CodeNomad backend before replacing/restarting the app. The independently owned OpenCode daemon is not part of this shutdown. Closing CodeNomad still removes backend-dependent features until it returns; do not infer uninterrupted UI services from a continuing OpenCode session.
 

@@ -7,10 +7,10 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 1. Abre **Misiones** en el panel derecho y elige **Crear misión**.
 2. Completa **¿Qué debe hacer la misión?** y comprueba el **Título**, rellenado a partir de la primera frase (hasta 60 caracteres).
 3. En **Cuándo**, selecciona **Una vez** o **Cada día a las**. Para trabajo diario, verifica la zona horaria mostrada; **Cambiar** permite indicar una zona IANA.
-4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, descripciones guardadas y conversaciones seguidas opcionales.
+4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
 5. Elige **Crear**. Selecciona la entrada nueva y usa su acción ▶ independiente cuando esté lista: **Iniciar misión** para trabajo puntual o **Iniciar programación {id}** para una programación diaria.
 
-**Crear nunca inicia el trabajo.** Una misión puntual queda preparada; una programación diaria queda pausada. Ni la creación ni guardar una descripción activan un temporizador. La creación tiene el ámbito del proyecto/Location seleccionado y fija los perfiles solicitados y la política de sesiones de tareas. La validación aparece junto al campo afectado; un rechazo que indique que no se envió nada deja el borrador disponible para corregirlo.
+**Crear nunca inicia el trabajo.** Una misión puntual queda preparada; una programación diaria queda pausada. Ni la creación ni guardar una descripción activan un temporizador. La creación tiene el ámbito del proyecto/Location seleccionado y fija los perfiles solicitados y la política de sesiones de tareas. La validación aparece junto al campo afectado; un rechazo que indique que no se envió nada deja el borrador disponible para corregirlo. Un coordinador también puede preparar una misión independiente para ti, como un seguimiento: aparece en la lista como **Preparada** y, como cualquier misión, solo se inicia desde su acción ▶.
 
 ### Guiones {#playbooks}
 
@@ -20,6 +20,9 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 | Depuración | Diagnóstico, implementación, revisión independiente de normas/especificación y validación nueva; la resolución continúa con el implementador. |
 | Exploración | Traza las incertidumbres y avanza mediante decisiones acotadas con preguntas a personas. |
 | Entrega de producto | Coordina los roles de análisis de producto, arquitectura, implementación y calidad. |
+| Comparar dos modelos | Ejecuta la misma tarea con encargos idénticos en **Modelo A** y **Modelo B**; después, un **Juez a ciegas** puntúa ambos con etiquetas neutras y emite un veredicto: **Gana el modelo A**, **Gana el modelo B**, **Equivalentes** o **No concluyente**. |
+
+Para **Comparar dos modelos**, ambos modelos son obligatorios y deben ser distintos; un nivel de **Razonamiento** diferente por sí solo no es un modelo distinto. Salvo que elijas uno, el juez usa el modelo del coordinador; el formulario avisa cuando coincide con A o B, lo que puede sesgar la comparación. La vista general muestra el veredicto, los nombres de ambos modelos y las puntuaciones por criterio.
 
 El guion orienta la coordinación; no elude los permisos nativos ni garantiza el éxito. Responde las preguntas de decisión de Exploración mediante el panel de interrupciones de CodeNomad para que se registre una respuesta explícita de la interfaz, en lugar de pedir a un agente que suplante una aprobación.
 
@@ -36,10 +39,11 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 | Activa | Se observó actividad nativa. |
 | En espera | Las dependencias declaradas aún no se cumplen. |
 | Bloqueada | Se informó de un bloqueo, no necesariamente una pregunta para ti. |
-| Te necesita | Un formulario/pregunta nativo abierto o un permiso necesita respuesta. |
+| Espera tu respuesta | Un formulario/pregunta nativo abierto o un permiso necesita respuesta; aparece en **Te necesita**. |
 | Completada | Se registró un resultado de tarea; inspecciona sus evidencias y cualquier trabajo nativo restante. |
+| Fallida / Retirada | La tarea falló, o el coordinador la sustituyó o la abandonó. |
 
-El gráfico incluye trabajo completado y retirado. Retirar una tarea no detiene por sí solo su conversación. **En curso** es el estado del ciclo de vida de la misión, no demuestra que su coordinador esté ejecutándose. El texto completo pertenece al lector central, no a la lista de tareas del panel; **Detalles técnicos** pliega los identificadores y la información de ejecución solicitada.
+El gráfico incluye trabajo completado y retirado. Retirar una tarea no detiene por sí solo su conversación; el coordinador puede detener por separado las conversaciones propias de una tarea retirada, sin tocar las demás tareas. **En curso** es el estado del ciclo de vida de la misión, no demuestra que su coordinador esté ejecutándose. El texto completo pertenece al lector central, no a la lista de tareas del panel; **Detalles técnicos** pliega los identificadores y la información de ejecución solicitada.
 
 ### Informes de situación y solicitudes de actualización {#briefings}
 
@@ -50,9 +54,10 @@ Usa **Pedir una actualización** debajo de la barra de herramientas para solicit
 ## Perfiles, delegación y profundidad {#profiles}
 
 1. Usa el engranaje de Misiones o **Configuración → Misiones** para editar **Valores para nuevas misiones**.
-2. Elige valores globales y excepciones por guion y pulsa **Guardar**. Durante la creación, usa **Opciones → Agentes y modelos** para solicitar perfiles específicos.
-3. Elige **Sesiones de tareas** independientemente de **Guion**.
-4. Para límites de recursión nativa, usa por separado **Profundidad de OpenCode → Profundidad máxima → Guardar profundidad de ubicación**.
+2. En **Aplicar a**, elige **Todas las misiones** o un guion; después establece **Sesiones de tareas** y, en **Agentes y modelos**, una fila por rol (el coordinador y luego los roles del guion). Cada elección se guarda de inmediato; no hay botón Guardar.
+3. En el ámbito de un guion, las filas muestran los valores globales marcados como **Global**. Cambiar un campo personaliza ese rol a partir de ellos; su icono de revertir vuelve a usar los valores globales. **Restablecer** (tras confirmar) borra solo los agentes y modelos del ámbito mostrado.
+4. Durante la creación, usa **Opciones → Agentes y modelos** para solicitar perfiles específicos; **Usar valores predeterminados guardados** restaura los guardados.
+5. Para límites de recursión nativa, edita **Profundidad de anidamiento de subsesiones → Profundidad impuesta para el proyecto**. Pulsar Enter o salir del campo guarda un valor válido modificado; **Heredar** guarda de inmediato; Escape descarta un valor sin guardar.
 
 | Ajuste | Ámbito y efecto |
 | --- | --- |
@@ -60,11 +65,11 @@ Usa **Pedir una actualización** debajo de la barra de herramientas para solicit
 | Agente / Modelo / Razonamiento | Selecciones solicitadas para coordinador/roles registradas al crear; un actor ocupado no se cambia silenciosamente para atender trabajo posterior. Las ejecuciones diarias reutilizan los perfiles solicitados fijados. |
 | Subagentes nativos | Las sesiones de tareas usan agentes nativos subagent/all bajo el coordinador. |
 | Sesiones independientes | Las sesiones de tareas declaradas usan agentes primary/all y conversaciones independientes; esto no desactiva los ayudantes nativos internos. |
-| Profundidad de OpenCode | Configuración de Location/proyecto para **todas** las conversaciones de allí, no solo Misiones. Vacío hereda. Guardar no recarga OpenCode ni cambia las conversaciones en ejecución. |
+| Profundidad de anidamiento de subsesiones | Configuración del proyecto para **todas** las conversaciones de OpenCode de allí, no solo Misiones. Vacío hereda. Guardar no recarga OpenCode ni cambia las conversaciones en ejecución. |
 
-**Valor nativo predeterminado** y **Heredar valores predeterminados globales** son distintos: el primero solicita valores nativos predeterminados; el segundo usa el perfil global configurado. Se comprueba la disponibilidad del catálogo; un perfil solicitado no demuestra qué perfil usa actualmente una conversación. Los permisos nativos y la profundidad configurada siguen rigiendo las llamadas a ayudantes internos en ambos modos de tareas.
+**Valor nativo predeterminado** y **Global** son distintos: el primero solicita los valores predeterminados propios de OpenCode; el segundo hereda la elección global; elegir los valores nativos en el ámbito de un guion sigue siendo una excepción explícita. Se comprueba la disponibilidad del catálogo; un perfil solicitado no demuestra qué perfil usa actualmente una conversación. Los permisos nativos y la profundidad configurada siguen rigiendo las llamadas a ayudantes internos en ambos modos de tareas.
 
-Si el guardado de valores/profundidad no está confirmado, conserva el borrador y usa **Recargar** para los valores o **Actualizar profundidad de ubicación** antes de otro cambio. No interpretes **Profundidad efectiva desconocida** como cero o desactivada.
+Una elección rechazada o sin confirmar nunca se reenvía: se vuelven a mostrar los valores guardados, y **Recargar** solo aparece cuando no se pueden leer. Si un cambio de profundidad no está confirmado, tu valor se conserva; usa **Actualizar profundidad del proyecto** antes de otro cambio. No interpretes **Profundidad efectiva de OpenCode desconocida** como cero o desactivada.
 
 ## Reutilizar una descripción guardada {#saved-briefs}
 
@@ -72,7 +77,7 @@ Si el guardado de valores/profundidad no está confirmado, conserva el borrador 
 2. Revisa el objetivo, las notas, el guion, los perfiles y la delegación copiados antes de **Crear**.
 3. Usa **Guardar como descripción** para dar nombre a un borrador reutilizable. Una misión puntual seleccionada, incluso terminada, también ofrece **Guardar como descripción**.
 
-Las descripciones guardan instrucciones y elecciones solicitadas, no planes de tareas, resultados, conversaciones, relojes de programación ni autoridad de ejecución. Cargar una rellena un borrador de creación normal; no inicia ni programa nada. Eliminar una descripción conserva las misiones/conversaciones existentes. **Configuración → Misiones → Descripciones guardadas** gestiona la biblioteca; restablecerla explícitamente elimina las descripciones guardadas, no las ejecuciones. Las programaciones no tienen acción para guardarlas como descripción.
+Las descripciones guardan instrucciones y elecciones solicitadas, no planes de tareas, resultados, conversaciones, relojes de programación ni autoridad de ejecución. Cargar una rellena un borrador de creación normal; no inicia ni programa nada. Eliminar una descripción conserva las misiones/conversaciones existentes. **Configuración → Misiones → Descripciones guardadas** gestiona la biblioteca; si la biblioteca deja de poder leerse, **Restablecer la biblioteca guardada** (tras confirmar) elimina las descripciones guardadas, no las ejecuciones. Las programaciones no tienen acción para guardarlas como descripción.
 
 ## Hora diaria, recuperación de días y conversaciones seguidas {#daily-schedules}
 
@@ -95,13 +100,22 @@ La fecha de creación también limita el trabajo diario elegible; iniciar una pr
 
 | Componente | Qué significa cerrarlo |
 | --- | --- |
-| Pestaña de proyecto de CodeNomad | Cierra el proyecto en CodeNomad; el trabajo nativo sigue en OpenCode y vuelve a aparecer al reabrir el proyecto. |
-| Ventana de CodeNomad | Desconecta la vista; no detiene el trabajo nativo ni el servicio OpenCode. |
+| Pestaña de proyecto de CodeNomad | Cierra el proyecto en CodeNomad; las sesiones nativas siguen en OpenCode. Vuelve a abrir el proyecto para encontrarlas. |
+| Ventana entera, salir de la aplicación o recargar el renderer | Conserva las conexiones de proyecto para restaurarlas; no detiene el trabajo nativo ni el servicio OpenCode. |
 | Backend de CodeNomad | No detiene OpenCode. La coordinación puntual de CodeNomad depende de la presencia del backend; no supongas que se pueden seguir enviando/controlando tareas puntuales mientras está cerrado. |
 | Programación diaria en ejecución | Su reloj y la ejecución de sus pasadas se ejecutan en el plugin/servicio OpenCode, incluso con la interfaz y el backend de CodeNomad cerrados. El equipo de ejecución y el servicio OpenCode deben seguir funcionando. |
 | Reinicio del servicio OpenCode | Pierde los trabajos de programación locales del proceso. Una programación que debía ejecutarse pasa a **Interrumpido** hasta una **Reanudar** explícita; reabrir CodeNomad no la reactiva. |
 
 Tras un reinicio, inspecciona la ejecución pendiente y elige **Reanudar** cuando estés listo. Reanudar reconcilia la ejecución existente sin enviar dos veces la entrada de su coordinador; no promete continuar un turno nativo interrumpido. Un turno cortado por un reinicio puede resolverse como terminado sin informe, con **Interrumpida por un reinicio**. No uses un reinicio para reintentar efectos secundarios de herramientas.
+
+Las Misiones funcionan con las aplicaciones de escritorio y con un [servidor](server.md) CodeNomad independiente. Cuando el panel muestra **Control de misión no está disponible**, su mensaje indica la causa:
+
+| Causa | Qué hacer |
+| --- | --- |
+| El espacio de trabajo de OpenCode no está listo | Vuelve a conectar el proyecto y actualiza. |
+| OpenCode no ha cargado el plugin de Misiones | Actualiza en un momento; si persiste, usa **Recargar la configuración de OpenCode** en **Configuración → OpenCode**. |
+| OpenCode no pudo cargar el plugin de Misiones | Lee su error en la lista de plugins y actualiza cuando esté corregido. |
+| El servidor CodeNomad no pudo abrir su conexión local para las Misiones (127.0.0.1) | Revisa el registro del servidor; recargar OpenCode no ayuda. |
 
 ## Pausa, detención y resultados inciertos {#controls-recovery}
 

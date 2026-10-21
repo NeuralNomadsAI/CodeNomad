@@ -41,8 +41,8 @@ Si no puede verificarse un worktree propio o la ubicación de una conversación,
 
 ## Entorno de ejecución OpenCode y WSL {#opencode-runtime}
 
-1. Abre **Preferencias → OpenCode** y comprueba el ejecutable seleccionado, la versión instalada y el estado del servicio en ejecución.
-2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.1.0**; recomendado/verificado: **2.1.0**.
+1. Abre **Preferencias → OpenCode** y comprueba la tarjeta **Versión de OpenCode** (versión instalada y estado del servicio en ejecución) y después el ejecutable seleccionado en **Binario de OpenCode**.
+2. Usa la acción compatible de instalación/actualización si falta el entorno requerido. Mínimo actual: **2.1.0**; recomendado/verificado: **2.1.1**.
 3. Si la CLI instalada difiere del servicio en ejecución, decide explícitamente si reiniciar el servicio compartido.
 
 **Reiniciar servicio OpenCode** está disponible en **Solución de problemas** y requiere confirmación. Interrumpe el trabajo activo de todos los clientes conectados, pero conserva el historial de sesiones. Recargar la configuración es una acción separada: mantiene el proceso, pero reconstruye las Locations cargadas y cancela preguntas/permisos pendientes. Ninguna es una actualización inofensiva.
@@ -79,6 +79,7 @@ Los enlaces de emparejamiento son de un solo uso y corta duración; la contrase�
 | OAuth externo caducado | Vuelve a iniciar sesión mediante OpenCode, Claude Code o el propietario correspondiente de la credencial. CodeNomad no intercambia sus tokens de actualización. |
 | La rotación automática no cambia de cuenta | Comprueba la elegibilidad de la opción y si la cuenta actual tiene realmente agotada su cuota. Es una política previa a la admisión, no conmutación durante la solicitud ni repetición de mensajes. |
 | El estado del plugin parece obsoleto | Usa **Actualizar controles de plugins** e inspecciona el ámbito/destino en su ayuda emergente; la activación en ejecución puede esperar una actualización nativa. No alternes repetidamente una escritura incierta. |
+| **Control de misión no está disponible** | Sigue la causa que indica. Si OpenCode no ha cargado el plugin de Misiones, actualiza y, si persiste, usa **Recargar la configuración de OpenCode**; si el plugin no pudo cargarse, lee su error en la lista de plugins; si el servidor no pudo abrir su conexión local para las Misiones, revisa el registro del servidor, porque recargar OpenCode no ayudará. Las Misiones también funcionan en el servidor independiente. |
 | Falta una extensión instalada | Comprueba su única casilla de activación en personalización del panel. La instalación/reemplazo la deja desactivada hasta que la actives explícitamente y apruebes el consentimiento requerido. |
 | Recursos de extensión denegados | Confirma el consentimiento de lectura de recursos de API 2 para la sesión montada actual. Instalar una extensión no da permiso para leer archivos/historial arbitrarios. |
 
@@ -88,7 +89,7 @@ Consulta [Proveedores](providers.md), [Integraciones](integrations.md) y [Extens
 
 La búsqueda en todo el historial no se limita a las filas de transcripción cargadas actualmente. Un filtro de visualización oculta contenido sin eliminarlo; usa [Historial](history.md) para distinguir búsqueda, compactación, limpieza técnica y eliminación.
 
-Si la recuperación de solicitudes pendientes es incompleta, CodeNomad conserva las colas conocidas y los borradores de respuestas en lugar de tratar la cobertura ausente como una cola vacía. Tras dos recuperaciones incompletas consecutivas avisa mediante notificaciones normales; los fallos transitorios se reintentan con la comprobación de actividad. Un aplazamiento relacionado con la compactación no significa que la solicitud se cancelara. Deja intacto el borrador, verifica la conexión al servicio y usa el estado actual de la solicitud antes de volver a responder.
+Si la recuperación de solicitudes pendientes es incompleta, CodeNomad conserva las colas conocidas y los borradores de respuestas en lugar de tratar la cobertura ausente como una cola vacía. Tras dos recuperaciones incompletas consecutivas avisa una vez, indicando el proyecto, la causa, las carpetas y las sesiones afectadas; el aviso pertenece a la categoría de notificaciones **Proyectos y pestañas** (en pantalla y en el historial por defecto; consulta **Configuración → Notificaciones**). Los fallos transitorios se reintentan con la comprobación de actividad. Un aplazamiento relacionado con la compactación no significa que la solicitud se cancelara. Deja intacto el borrador, verifica la conexión al servicio y usa el estado actual de la solicitud antes de volver a responder.
 
 Para limpieza cancelada o parcial, lee su progreso/comprobantes antes de iniciar otra eliminación. Cancelar no deshace un lote ya enviado. No repares el historial editando la base de datos nativa. Ante incertidumbre de Misiones, usa su recuperación **Comprobar estado**/actualización en lugar de crear otra ejecución o repetir automáticamente trabajo; [Misiones](missions.md) explica los límites de reinicio y duración.
 

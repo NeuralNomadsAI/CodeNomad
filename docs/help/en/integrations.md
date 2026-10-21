@@ -7,7 +7,7 @@ CodeNomad exposes OpenCode's native MCP connections, plugin activation, skills a
 | Integration | Where to act | What the control changes |
 | --- | --- | --- |
 | MCP server | **Status → MCP Servers** | Native connection at the displayed Location; does not install a server. |
-| Native plugin | **Status → Plugins** | Persistent **Global** or **Project** activation rule; does not install/update/remove the package. |
+| Native plugin | **Status → Plugins** | Persistent **Global** or **Project** activation rule; for a package plugin, an explicit check or update of that package. Does not install or remove packages. |
 | Skill | Composer `@` menu | Explicit attachment to the next prompt in the conversation's Location. |
 | Custom command | Composer `/` menu | Runs a command exposed by OpenCode for that Location. |
 
@@ -28,10 +28,13 @@ If no server appears, verify the active Location and its native configuration. I
 1. Install/declare the native plugin with OpenCode; then open **Status → Plugins**.
 2. Hover or focus its name to inspect source, runtime failure and configuration-target details.
 3. Toggle **Global** or **Project** deliberately. Wait for the write and use **Refresh plugin controls** if the state is unclear.
+4. For a plugin installed from a package, use the icon beside its name. Its menu names the exact operation: **Check updates for** the package, or **Update** it once a newer version is found.
 
 Global targets the connected daemon's discovered global configuration. Project targets configuration within the active Location, not an inherited ancestor file. A later Project rule can override Global; the Global switch still shows the Global rule rather than pretending to be the final Project state. With no Project rule, Project inherits the resolved Global state.
 
 These switches append exact activation rules while preserving source declarations and unrelated configuration. They do not edit plugin options, install packages or remove files. Built-in OpenCode plugins are not offered as user activation switches. Project is disabled when its target cannot be safely separated from Global or would escape the active Location.
+
+A package update changes that package in OpenCode's shared cache for every Location using it, as its tooltip states; it does not change activation rules, restart OpenCode or reload configuration. Local, built-in and SDK-provided plugins have no package action. A package that fails before reporting its plugin ID is listed by its package name, with the failure in its tooltip and check/update actions but no activation switches. A failed check or update is reported and never retried automatically.
 
 The surface retains its last snapshot while hidden and revalidates when shown, on native changes/reconnect and on explicit refresh. A saved rule and live runtime availability can briefly differ. If a plugin remains unavailable, inspect its tooltip and native configuration before choosing **Reload OpenCode configuration**; that action affects all loaded Locations, not just this plugin. Malformed configuration or a concurrent edit is not silently overwritten: resolve it, refresh and retry explicitly.
 

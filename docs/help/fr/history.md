@@ -9,7 +9,7 @@ L’historique enregistré, ce que la transcription affiche actuellement et le c
 3. Activez **Inclure les outils et réflexions** si vous avez besoin du contenu technique en plus du texte lisible.
 4. Sélectionnez un extrait ou utilisez **Résultats suivants** pour dépasser la page actuelle.
 
-La recherche est littérale et insensible à la casse, sur l’historique enregistré plutôt que les seules lignes de transcription montées. La portée de l’espace de travail suit l’arborescence autorisée et les worktrees du projet ouvert, pas tous les projets du service OpenCode. Les octets des pièces jointes fichier/image et l’état opaque du fournisseur ne sont pas du texte recherchable.
+La recherche est littérale et insensible à la casse, sur l’historique enregistré plutôt que les seules lignes de transcription montées. La portée de l’espace de travail suit l’arborescence autorisée et les worktrees du projet ouvert, pas tous les projets du service OpenCode ; ses résultats sont regroupés par conversation, chacune nommée par son titre et le worktree qui la contient actuellement. Les octets des pièces jointes fichier/image et l’état opaque du fournisseur ne sont pas du texte recherchable.
 
 La ligne de progression **Cette page : … résultats · … messages parcourus** décrit cette page de résultats, pas les totaux de l’espace de travail. Les résultats arrivent par lots. Les messages trop volumineux ou non pris en charge ignorés sont signalés ; l’absence de résultat ne prouve pas qu’ils ne contiennent aucune correspondance. Les nouveaux messages arrivant pendant un parcours nécessitent une nouvelle recherche pour être inclus de façon cohérente.
 
@@ -18,10 +18,12 @@ Ouvrir une recherche vide ne parcourt pas l’historique. Changer la requête/la
 ## Ouvrir les résultats et utiliser la chronologie {#timeline-navigation}
 
 1. Choisissez un résultat de la session actuelle pour atteindre le passage qui l’entoure.
-2. Choisissez un résultat d’une autre session pour ouvrir un aperçu distinct de ce message.
+2. Choisissez un résultat d’une autre session pour ouvrir un aperçu distinct de ce message ; utilisez **Ouvrir dans la session** pour aller à cette conversation, à l’emplacement du résultat.
 3. Dans **Chronologie des messages**, survolez ou focalisez un marqueur pour un extrait, puis sélectionnez-le pour naviguer. Utilisez les commandes premier/dernier message pour revenir aux extrémités de l’historique enregistré.
 
-La chronologie représente toute la structure de session même si la transcription ne contient qu’un passage borné. Les sauts chargent la destination sans récupérer tous les messages intermédiaires. Les aperçus de résultats d’autres sessions ne chargent pas leur transcription entière et ne les sélectionnent pas silencieusement.
+La chronologie représente toute la structure de session même si la transcription ne contient qu’un passage borné. Les sauts chargent la destination sans récupérer tous les messages intermédiaires. Les aperçus de résultats d’autres sessions ne chargent pas leur transcription entière et ne les sélectionnent pas ; seul **Ouvrir dans la session** change de conversation.
+
+Les marqueurs d’outils suivent **Contenu des messages** : un type d’outil masqué là n’a pas de marqueur (aucun avec **Rien**), sauf un outil en attente d’une autorisation. Une étape qui n’a exécuté que des outils n’affiche que ses marqueurs d’outils, sans marqueur d’agent vide.
 
 Pendant un saut, l’ancien passage reste visible. Un saut plus récent ou une interaction manuelle avec la transcription remplace la navigation obsolète ; un saut échoué laisse le passage visible intact. Réessayez la destination plutôt que de recharger sans cesse tout le projet. La lecture historique ne modifie pas la sélection agent/modèle de la zone de saisie.
 
@@ -38,7 +40,7 @@ La chronologie est masquée si la conversation est trop étroite (moins de 420 p
 | Supprimer une session | Ligne de session **Supprimer la session**, ou suppression des sessions sélectionnées | Supprime récursivement la conversation native, ses sous-sessions descendantes et leur historique après confirmation ; aucune annulation |
 | Nettoyer les sessions | Palette de commandes | Suppression plus large de sessions, pas un réglage d’affichage ou de taille du contexte |
 
-**Contenu des messages** s’applique à toutes les conversations. Masquer les outils ne désactive pas les outils, ne change pas les autorisations et ne retire pas les sorties enregistrées. Les messages individuels très volumineux peuvent aussi afficher **Afficher … de plus** dans un intervalle omis pour préserver la fluidité ; développer cet intervalle ne récupère pas du contenu supprimé.
+**Contenu des messages** s’applique à toutes les conversations. Choisissez un préréglage (**Rien**, **Minimal**, **Équilibré** ou **Tout**) en haut de cette fenêtre ou dans **Paramètres → Chat**, puis ajustez les lignes individuelles ; le menu de préréglage de **Contenu des messages** affiche alors **Personnalisé**. Masquer les outils ne désactive pas les outils, ne change pas les autorisations et ne retire pas les sorties enregistrées. Pour préserver la fluidité de l’affichage, les messages très volumineux affichent **Afficher … de plus** dans un intervalle omis, et les textes ou sorties d’outils très longs s’arrêtent à une ligne **… caractères de plus masqués** avec **Tout afficher**. Révéler l’un ou l’autre ne concerne que l’affichage et ne récupère pas du contenu supprimé.
 
 ## Compacter une session {#compact-session}
 

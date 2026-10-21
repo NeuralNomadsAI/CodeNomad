@@ -8,7 +8,7 @@
 
 Der Kanal wird in CodeNomads Serverkonfiguration gespeichert und ändert nur angebotene Releases. Er ändert weder Desktop-Datenprofile, Entwürfe, Fenster, OpenCode-Sitzungen noch Dienstkonfiguration. Ohne explizite Auswahl verwenden als Vorschau gekennzeichnete Builds standardmäßig Vorschauen, andere Builds stabile Releases.
 
-Stabil wählt das neueste endgültige Release. Vorschau folgt der Veröffentlichungsreihenfolge, da Entwicklungs-Builds eine Basisversionsnummer teilen können; vergleichen Sie nicht nur numerische Versionen. Vorschaupakete sind für Nutzer gedacht, die Vorabverhalten testen möchten; lesen Sie Release-Hinweise und schützen Sie wichtige Entwürfe vor Neustarts.
+Stabil wählt das neueste endgültige Release. Vorschau folgt der Veröffentlichungsreihenfolge, da Entwicklungs-Builds eine Basisversionsnummer teilen können; vergleichen Sie nicht nur numerische Versionen. Ein Vorschau-Release wird erst angeboten, wenn alle seine Builds veröffentlicht sind. Vorschaupakete sind für Nutzer gedacht, die Vorabverhalten testen möchten; lesen Sie Release-Hinweise und schützen Sie wichtige Entwürfe vor Neustarts.
 
 ## Desktop-Installation aktualisieren {#desktop-update}
 
@@ -28,7 +28,7 @@ In Tauri-Anwendungsfenstern und nativen **Einstellungen**-Fenstern zeigt der Ber
 
 Das Tauri-Menü **Hilfe → Nach Updates suchen…** führt den Update-Ablauf im fokussierten Anwendungsfenster aus. Aus den Einstellungen oder einem Remote-Fenster bringt es das zuletzt verwendete Anwendungsfenster in den Vordergrund, um die Prüfung auszuführen; es installiert nicht über das Remote-Fenster. Wenn kein Anwendungsfenster die Aktion empfangen kann, auch wenn das Zielfenster eine Lade-, Anmelde- oder Kopplungsseite zeigt, öffnet das Menü stattdessen die Release-Seite.
 
-Tauri bietet nur Releases mit veröffentlichtem Update-Manifest für gewählten Kanal/Ziel an. Ein neu angekündigtes Release ist möglicherweise noch nicht installierbar; die Benachrichtigung kann stattdessen dessen Release-Seite öffnen. Vor Installation ist native Signaturprüfung erforderlich. Updater-Signaturen unterscheiden sich von OS-Notarisierung/Code-Signaturzusicherungen.
+Tauri installiert nur Releases mit veröffentlichtem Update-Manifest für gewählten Kanal/Ziel. Kann ein angekündigtes Release noch nicht installiert werden, öffnet die Benachrichtigung stattdessen dessen Release-Seite. Vor Installation ist native Signaturprüfung erforderlich. Updater-Signaturen unterscheiden sich von OS-Notarisierung/Code-Signaturzusicherungen.
 
 Installation sichert den Zustand aller Anwendungsfenster und stoppt das zugehörige CodeNomad-Backend vor Ersetzen/Neustart der App. Der unabhängig verwaltete OpenCode-Daemon gehört nicht zu diesem Herunterfahren. CodeNomad zu schließen entfernt dennoch Backend-abhängige Funktionen bis zur Rückkehr; schließen Sie aus einer weiterlaufenden OpenCode-Sitzung nicht auf ununterbrochene UI-Dienste.
 

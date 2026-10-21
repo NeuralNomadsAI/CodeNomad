@@ -6,17 +6,19 @@
 2. Utilisez le menu natif **Fenêtre → Nouvelle fenêtre** (`Ctrl+Shift+N` ou `Cmd+Shift+N`) pour une fenêtre d’application séparée.
 3. Dans **Paramètres → Avancé**, activez **Focaliser la fenêtre existante au second lancement** si un autre lancement doit focaliser la dernière fenêtre utilisée au lieu d’en ouvrir une nouvelle.
 
-Les onglets de projet, conversations sélectionnées et dispositions appartiennent à une fenêtre. Les sessions/messages OpenCode appartiennent au service natif OpenCode partagé : une autre fenêtre peut voir la même conversation. Fermer une fenêtre ou un onglet n’arrête pas ce service. Fermer un onglet de projet ferme le projet dans CodeNomad ; les sessions continuent dans OpenCode et se retrouvent en rouvrant le projet ; voir [Projets](projects.md). Ne considérez pas la fermeture des fenêtres comme une preuve qu’un agent ou une Mission planifiée s’est arrêté.
+Les onglets de projet, conversations sélectionnées et dispositions appartiennent à une fenêtre. Les sessions/messages OpenCode appartiennent au service natif OpenCode partagé : une autre fenêtre peut voir la même conversation. Fermer un onglet de projet ferme ce projet dans CodeNomad, pas ses sessions OpenCode ; rouvrez-le pour les retrouver. Une autre fenêtre qui affiche la même connexion de projet ferme aussi son onglet et affiche une notification ; les onglets ouverts séparément sur le même dossier ne sont pas concernés. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration ; voir [Projets](projects.md). Ne considérez pas la fermeture des fenêtres comme une preuve qu’un agent ou une Mission planifiée s’est arrêté.
+
+Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics.
 
 ## Préférences et restauration au démarrage {#preferences-startup}
 
 1. Ouvrez les paramètres depuis la fenêtre à configurer. Les points d’entrée du bureau local focalisent l’unique fenêtre native Preferences avec le projet/la Location de cette fenêtre d’origine.
-2. Dans **Général → Démarrage**, activez ou désactivez **Restaurer l’état précédent**.
-3. Pour oublier la disposition enregistrée de cette fenêtre, utilisez **Effacer l’état enregistré** après lecture de ses conséquences.
+2. Dans **Général**, activez ou désactivez **Restaurer l’état précédent**.
+3. Pour oublier la disposition enregistrée de cette fenêtre, utilisez **Effacer l’état de démarrage enregistré**. L’action s’applique immédiatement, sans confirmation.
 
 La restauration peut rouvrir onglets d’espace de travail/SideCar et sessions actives, texte non envoyé, positions de défilement, panneaux, placement et zoom de fenêtre. C’est un état client par fenêtre, pas une copie de la base de conversations natives. L’effacer retire onglets, brouillons et disposition enregistrés ; cela ne supprime ni configuration CodeNomad ni conversations OpenCode. Enregistrez d’abord ailleurs tout brouillon non envoyé important.
 
-La fenêtre Preferences ne possède pas d’état de restauration séparé : Démarrage cible la fenêtre qui l’a ouverte. Si cette fenêtre est fermée, ou inconnue parce que Preferences a été rouvert au lancement, Démarrage suit la dernière fenêtre utilisée ; une modification préparée pour une autre fenêtre n’est jamais appliquée, les commandes affichent d’abord la valeur de la nouvelle fenêtre. Pour régler une fenêtre précise, ouvrez Preferences depuis celle-ci. Les paramètres propres au projet utilisent aussi la Location d’origine ; ils restent indisponibles sans elle.
+La fenêtre Preferences ne possède pas d’état de restauration séparé : ces commandes ciblent la fenêtre qui l’a ouverte. Si cette fenêtre est fermée, ou inconnue parce que Preferences a été rouvert au lancement, elles suivent la dernière fenêtre utilisée ; une modification préparée pour une autre fenêtre n’est jamais appliquée, les commandes affichent d’abord la valeur de la nouvelle fenêtre. Pour régler une fenêtre précise, ouvrez Preferences depuis celle-ci. Les paramètres propres au projet utilisent aussi la Location d’origine ; ils restent indisponibles sans elle. Quand Preferences se rouvre au lancement, ils se reconnectent une fois ce projet ouvert ; tant que le dossier démarre encore, ou s’il est ouvert dans plusieurs onglets, ils restent indisponibles jusqu’à ce que vous ouvriez Preferences depuis la fenêtre voulue.
 
 Les paramètres navigateur et distants sont intégrés, plutôt qu’un second propriétaire natif de Preferences. Une erreur d’ouverture des préférences natives est signalée ; elle ne permet pas de supposer qu’un écran intégré caché s’est ouvert à la place.
 
@@ -46,13 +48,13 @@ Sur Tauri macOS, les profils délimités partagent le stockage WebKit système, 
 
 ## Supprimer les autres profils enregistrés {#delete-profiles}
 
-1. Dans les paramètres natifs **Paramètres → Général → Démarrage**, trouvez **Autres profils enregistrés**. Cette section apparaît seulement si d’autres profils existent sur la machine.
+1. Dans les paramètres natifs **Paramètres → Général**, trouvez **Autres profils enregistrés** sous **Restaurer l’état précédent**. Cette section apparaît seulement si d’autres profils existent sur la machine.
 2. Actualisez la liste au besoin, choisissez **Supprimer…** et lisez les cibles listées et profils ignorés.
 3. Confirmez seulement après préservation des brouillons/connexions nécessaires. Inspectez tout rapport de suppression incomplète avant de réessayer.
 
 La suppression retire onglets, brouillons, disposition et stockage web/cache/connexions détenus des autres profils, y compris ceux listés depuis une autre configuration. Elle préserve le profil ouvert, les conversations OpenCode et les fichiers de projet. Les profils ouverts ou d’état inconnu sont ignorés ; fermez les fenêtres CodeNomad concernées avant d’actualiser explicitement et réessayer. Le contenu non reconnu est conservé et signalé plutôt que supprimé largement.
 
-Le stockage WebKit partagé de Tauri macOS est conservé, car le supprimer affecterait les autres profils. Ce nettoyage n’est pas annulable : une conversation native survivante ne restaure pas un brouillon non envoyé supprimé. **Effacer l’état enregistré** est l’action plus limitée pour seulement réinitialiser la fenêtre actuelle.
+Le stockage WebKit partagé de Tauri macOS est conservé, car le supprimer affecterait les autres profils. Ce nettoyage n’est pas annulable : une conversation native survivante ne restaure pas un brouillon non envoyé supprimé. **Effacer l’état de démarrage enregistré** est l’action plus limitée pour seulement réinitialiser la fenêtre actuelle.
 
 ## Zoom et géométrie des panneaux {#zoom-panels}
 

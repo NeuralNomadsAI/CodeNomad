@@ -12,7 +12,7 @@ Parcourir un serveur distant signifie parcourir son système de fichiers, pas vo
 
 Le clonage écrit un dépôt dans la destination. **Supprimer d'abord le dossier de destination s'il existe deja.** est destructeur : n’activez cette option que si tout ce qui s’y trouve peut être supprimé. Dans le doute, utilisez une nouvelle destination. Un échec de clonage n’est pas une raison de supprimer un projet existant ; vérifiez la destination et l’erreur signalées avant de réessayer.
 
-Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** change son nom affiché ; **Retirer des récents** retire le raccourci, pas ses fichiers ni ses conversations. Un projet récent déjà ouvert peut basculer vers son onglet existant.
+Les entrées récentes sont des raccourcis. **Renommer l'espace de travail** change son nom affiché ; **Retirer des récents** retire le raccourci, pas ses fichiers ni ses conversations. Cliquer sur un projet récent déjà ouvert ouvre un nouvel onglet ; son bouton **Ouvert** (**Basculer vers le projet ouvert**) sélectionne plutôt l’onglet existant.
 
 ## Utiliser le lanceur de nouvelle instance {#new-instance-launcher}
 
@@ -23,26 +23,28 @@ Un clic normal ouvre toujours l’accueil complet. Le lanceur est un raccourci, 
 
 ## Fermer un onglet de projet {#close-stop}
 
-1. Utilisez le bouton de fermeture de l’onglet ou **Fermer l'onglet** dans la palette de commandes pour fermer le projet dans CodeNomad. CodeNomad cesse de suivre cette instance ouverte du projet.
-2. Les sessions continuent de s’exécuter dans OpenCode ; les fichiers du projet et l’historique natif sont conservés.
-3. Rouvrez le dossier via Parcourir ou les dossiers récents pour retrouver les sessions.
+1. Utilisez le bouton de fermeture de l’onglet ou **Fermer l'onglet** dans la palette de commandes (`Ctrl/Cmd+W` dans le moteur de rendu).
+2. Fermer l’onglet ferme ce projet dans CodeNomad : il cesse de suivre ses événements et ses demandes. Les sessions continuent de s’exécuter dans OpenCode.
+3. Rouvrez le dossier via Parcourir ou les dossiers récents pour retrouver ces conversations.
 
 | Action | Portée et effet | Ce qu’elle ne fait pas |
 | --- | --- | --- |
-| Fermer l’onglet | Ferme cette instance ouverte du projet dans CodeNomad | Ne supprime ni fichiers ni sessions natives et n’arrête ni la génération ni le service OpenCode partagé |
+| Fermer l’onglet | Retire la connexion de projet CodeNomad de cet onglet ; un autre onglet ouvert séparément sur le même dossier n’est pas affecté | Ne supprime ni les fichiers du projet ni l’historique natif, n’arrête pas les sessions et ne décharge pas la Location d’OpenCode |
 | Arrêter la session | Exécution de la conversation sélectionnée | Ne ferme pas le projet et ne supprime pas son historique |
 
-Un autre onglet du même dossier ouvert séparément n’est pas affecté. Si une autre fenêtre affiche la même instance ouverte du projet, son onglet se ferme aussi et cette fenêtre affiche une notification. CodeNomad ne décharge pas la Location native OpenCode. Arrêtez explicitement les exécutions concernées avant de fermer si vous souhaitez les terminer. La maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
+Si une autre fenêtre affiche la même connexion de projet, son onglet se ferme aussi et cette fenêtre affiche une notification. La fenêtre à l’origine de la fermeture n’en affiche pas. La fermeture est immédiate ; si le backend ne peut pas fermer le projet, une erreur apparaît et **Basculer vers le projet ouvert** sur l’accueil permet encore d’y accéder. Il n’y a pas de nouvel essai automatique. Les brouillons non envoyés de l’onglet fermé ne sont pas conservés par la restauration au démarrage.
+
+Fermer une fenêtre entière, quitter ou recharger ne ferme pas ses connexions de projet ; la restauration normale au démarrage s’applique toujours. Arrêtez explicitement les exécutions concernées si vous devez vérifier qu’elles sont terminées. CodeNomad ne décharge jamais les Locations natives ; la maintenance du service partagé est décrite dans [Configuration d’OpenCode](opencode.md).
 
 ## Espaces de travail temporaires {#temporary-workspaces}
 
 1. Choisissez **Temporaire** dans le lanceur ou **Nouvelle instance temporaire** sur l’accueil.
 2. Travaillez dans le dossier vide géré par CodeNomad ; Git n’est pas initialisé automatiquement.
-3. À la fermeture de l’onglet, choisissez **Garder**, **Jeter** ou **Annuler**. Après **Garder**, l’onglet se ferme comme un onglet de projet ordinaire. Le menu de l’onglet propose aussi **Garder comme projet**.
+3. À la fermeture de l’onglet, choisissez **Garder**, **Jeter** ou **Annuler**. Le menu de l’onglet propose aussi **Garder comme projet**.
 
 | Choix | Effet | Récupération |
 | --- | --- | --- |
-| Garder | Conserve le dossier et les conversations, retire son statut temporaire et ajoute un projet récent | Rouvrir depuis les dossiers récents ; le dossier n’est pas déplacé |
+| Garder | Ferme le projet dans CodeNomad, conserve le dossier et les conversations, retire son statut temporaire et ajoute un projet récent | Rouvrir depuis les dossiers récents ; le dossier n’est pas déplacé |
 | Jeter | Supprime les conversations et fichiers de l’espace de travail temporaire | Aucune annulation ; enregistrez d’abord ailleurs ce dont vous avez besoin |
 | Annuler | Laisse l’espace de travail temporaire ouvert | Continuer à travailler ou décider plus tard |
 

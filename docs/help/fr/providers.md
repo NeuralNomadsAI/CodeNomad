@@ -4,10 +4,10 @@ L’authentification des fournisseurs appartient au service OpenCode connecté, 
 
 ## Connecter un fournisseur de modèles ou de recherche {#connect}
 
-1. Ouvrez un espace de travail, puis **Paramètres → Fournisseurs**.
-2. Dans **Modèles** ou **Recherche web**, choisissez **Sélectionner un fournisseur**, puis **Connecter**.
-3. Effectuez la **Méthode d'authentification** native proposée : clé API, OAuth ou commande. Pour OAuth, utilisez **Ouvrir la page d'autorisation** et ne soumettez un code d’autorisation que si demandé.
-4. Vérifiez la ligne du fournisseur configuré après la fin ; utilisez **Actualiser** si le résultat est flou.
+1. Ouvrez un espace de travail, puis **Paramètres → Fournisseurs**. **Modèles** est déplié au départ ; dépliez **Recherche web** pour les fournisseurs de recherche.
+2. Dans ce groupe, choisissez **Sélectionner un fournisseur**, puis **Connecter**.
+3. Pour un fournisseur de modèles, effectuez la **Méthode d'authentification** native proposée : clé API, OAuth ou commande. Pour OAuth, utilisez **Ouvrir la page d'autorisation** et ne soumettez un code d’autorisation que si demandé. Les fournisseurs de recherche se connectent avec une clé API.
+4. Vérifiez la ligne du fournisseur configuré après la fin. **Modèles** relit l’état après les connexions, les changements de compte et les reconnexions ; **Recherche web** dispose aussi d’**Actualiser**.
 
 Les intégrations de recherche seules apparaissent sous **Recherche web**, pas **Modèles**. Enregistrer l’authentification ne choisit pas un modèle et ne change pas le fournisseur de recherche par défaut. Le serveur OpenCode actif enregistre les clés API et identifiants OAuth. Le navigateur reçoit des métadonnées de connexion, pas les secrets enregistrés. Une connexion issue de variables d’environnement est en lecture seule ici : modifiez son environnement propriétaire au lieu de tenter de la déconnecter ici.
 
@@ -17,9 +17,9 @@ Si la fenêtre d’autorisation est bloquée, utilisez **Ouvrir la page d'autori
 
 1. Dans la ligne du fournisseur, utilisez **Compte actif** pour sélectionner un identifiant enregistré.
 2. Utilisez **Ajouter un compte** pour authentifier une autre connexion.
-3. Pour gérer un autre compte enregistré, sélectionnez-le d’abord, puis utilisez **Renommer le compte** ou **Supprimer le compte**. Le renommage utilise **Nom du compte** et **Enregistrer**.
+3. Pour gérer un autre compte enregistré, sélectionnez-le d’abord, puis utilisez **Renommer le compte** ou **Supprimer le compte**. Le renommage utilise **Nom du compte** et **Enregistrer** ; **Supprimer le compte** agit immédiatement, sans confirmation.
 
-La sélection, le renommage et la suppression affectent cette intégration dans tout le service OpenCode, y compris d’autres projets et clients. Retirer un identifiant peut les priver d’authentification ; cela ne supprime pas l’historique et ne révoque pas le compte distant du fournisseur. Les connexions d’environnement ne peuvent pas être sélectionnées comme identifiants enregistrés modifiables ni retirées ici. Si une opération échoue, actualisez et réconciliez **Compte actif** avant d’agir à nouveau.
+La sélection, le renommage et la suppression affectent cette intégration dans tout le service OpenCode, y compris d’autres projets et clients. Retirer un identifiant peut les priver d’authentification ; cela ne supprime pas l’historique et ne révoque pas le compte distant du fournisseur. Les connexions d’environnement ne peuvent pas être sélectionnées comme identifiants enregistrés modifiables ni retirées ici. Si une opération échoue, CodeNomad relit les comptes : vérifiez de nouveau **Compte actif** avant d’agir.
 
 ### Limites de la sélection automatique {#automatic-selection}
 
@@ -27,7 +27,7 @@ Avec plusieurs identifiants enregistrés sur une intégration prise en charge, *
 
 | Intégration admissible | Type de compte admissible |
 | --- | --- |
-| OpenAI / Codex | Comptes d’abonnement Codex OAuth, pas les clés OpenAI à l’usage. |
+| OpenAI / Codex | Comptes d’abonnement Codex OAuth par navigateur/appareil, pas les clés OpenAI à l’usage ni la méthode de connexion ChatGPT dont OpenAI ne fournit pas l’utilisation. |
 | OpenCode Go | Clé Go, ou connexion/clé OpenCode Console utilisée pour le **fournisseur Go uniquement**, pas les crédits Zen à l’usage. |
 | Anthropic | Connexion OAuth Claude Pro/Max d’OpenCode, **pas** la connexion Claude Code. |
 | GitHub Copilot | OAuth avec quota de requêtes premium lisible ; les identifiants de points d’accès d’entreprise ne sont pas des candidats lisibles. |
@@ -48,7 +48,9 @@ La visibilité et les favoris organisent les sélecteurs de CodeNomad ; ils ne d
 
 ## Utilisation, comptes de tokens et connexions expirées {#usage}
 
-Utilisez **Utilisation** dans le panneau droit pour les fenêtres de quota du fournisseur de la conversation active, leurs réinitialisations et les soldes pris en charge. Ces lectures diffèrent des **Tokens** par message et des estimations de coût : un quota d’abonnement n’est pas une facture calculée sur la transcription visible. Une lecture manquante, périmée ou inconnue n’est ni une utilisation nulle ni une preuve de capacité restante. **Solde de crédits du fournisseur** dans les paramètres Chat contrôle l’affichage complémentaire du solde.
+Utilisez **Utilisation** dans le panneau droit pour les fenêtres de quota du fournisseur de la conversation active, leurs réinitialisations et les soldes pris en charge. Ces lectures diffèrent des **Tokens** par message et des estimations de coût : un quota d’abonnement n’est pas une facture calculée sur la transcription visible. Une lecture manquante, périmée ou inconnue n’est ni une utilisation nulle ni une preuve de capacité restante. **Solde de crédits du fournisseur** dans **Paramètres → Avancé** contrôle l’affichage complémentaire du solde.
+
+OpenAI ne fournit pas l’utilisation pour l’une des méthodes de connexion ChatGPT : Utilisation l’indique au lieu d’afficher les fenêtres de quota. Le chat fonctionne toujours, et reconnecter la même connexion ne rétablit pas la lecture.
 
 L’utilisation suit l’identifiant natif sélectionné. Claude via `anthropic`/`claude` utilise l’OAuth Anthropic d’OpenCode. Le fournisseur `claude-code` utilise la connexion Claude Code sur l’hôte du démon, y compris sa distribution WSL : `CLAUDE_CODE_OAUTH_TOKEN`, puis la connexion enregistrée, avec `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` ou `~/.claude` déterminant le stockage fichier ; macOS local peut utiliser le Trousseau. CodeNomad ne remplace pas une connexion Claude par l’autre.
 
@@ -71,10 +73,10 @@ Gardez les jetons/cookies hors de l’historique shell, des captures et des rapp
 
 ## Recherche web par défaut et remplacement Projet {#web-search}
 
-1. Dans **Paramètres → Fournisseurs → Recherche web**, connectez l’intégration de recherche si elle nécessite une authentification.
+1. Dans **Paramètres → Fournisseurs**, dépliez **Recherche web** et connectez l’intégration de recherche avec sa clé API si elle en nécessite une.
 2. Choisissez **Recherche par défaut** pour la configuration Global.
-3. Utilisez **Pour le projet courant** pour la remplacer dans la Location active. Vérifiez **Recherche dans ce projet** pour le résultat effectif.
+3. Utilisez **Pour le projet courant** pour la remplacer dans la Location active. Survolez ou focalisez ce sélecteur pour voir **Recherche dans ce projet** avec le résultat effectif.
 
-Les changements s’enregistrent automatiquement. **Par défaut / hérité** utilise la configuration héritée ou le choix natif enregistré ; un remplacement Projet l’emporte sur Global. **Désactivé** coupe la recherche à la portée sélectionnée ; **Fournisseur automatique** demande la sélection automatique native. Un choix issu de l’environnement est affiché en lecture seule.
+Les changements s’enregistrent automatiquement. **Par défaut / hérité** utilise la configuration héritée ou le choix natif enregistré ; un remplacement Projet l’emporte sur Global. **Désactivé** coupe la recherche à la portée sélectionnée ; **Fournisseur automatique** demande la sélection automatique native. **Recherche web** ne charge ses connexions et ses choix que lorsque ce groupe est déplié. **Déconnecter** retire une clé de recherche enregistrée ; une connexion fournie par une variable d’environnement est indiquée en lecture seule et n’a pas de **Déconnecter**.
 
 Les identifiants de recherche restent globaux au service même si le choix du fournisseur est propre au Projet. Enregistrer une clé ne la sélectionne pas comme recherche par défaut. Si la lecture/l’enregistrement échoue, actualisez avant de réessayer ; ne remplacez pas la configuration aveuglément. Pour la configuration native, voir la [documentation OpenCode](https://opencode.ai/v2/docs/) et la [configuration d’OpenCode](opencode.md).

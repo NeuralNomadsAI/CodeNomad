@@ -4,10 +4,12 @@ CodeNomad stellt native OpenCode-Sitzungen als Unterhaltungen dar, mit einer Hie
 
 Nachrichten stellen Markdown, Code, Diffs und unterstützte Bilder aus Werkzeugergebnissen dar. Textkopie, Vollverlaufssuche und Sprachausgabe verwenden Textprojektionen, keine eingebetteten Bildbytes. **Nachrichteninhalt** ändert die Sichtbarkeit, ohne gespeicherte Teile zu löschen; [Verlauf](history.md#operation-reference) unterscheidet Anzeigeeinstellungen und Bereinigung.
 
+Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt gedauert hat, und zählen live mit, solange er läuft; Dauern unter einer Sekunde werden nicht angezeigt. Wenn **Tokens** in **Nachrichteninhalt** angezeigt wird (die Voreinstellung **Alles** zeigt sie), endet jede Agentennachricht nach ihrem letzten Text mit einer Token- und Kostenzeile. Diese Zeile summiert die Nachricht und die Nachrichten mit den Werkzeugen und Denkprozessen, die ihre Aktion **Tools und Denkprozesse aus dieser Antwort entfernen** abdeckt, innerhalb des geladenen Verlaufs; klappen Sie sie für Denk- und Cache-Zähler auf. Schritte, die nur Werkzeuge ausgeführt haben, haben keine eigene Zeile.
+
 ## Unterhaltungen finden und navigieren {#navigate-conversations}
 
 1. Wählen Sie eine Zeile unter **Sitzungen** oder verwenden Sie **Neue Sitzung**, um eine übergeordnete Unterhaltung zu beginnen.
-2. Klappen Sie den Pfeil einer übergeordneten Sitzung auf, um deren Untersitzungen zu sehen. Ein eingeklappter Pfeil kann arbeitende oder auf Eingaben wartende Nachfahren anzeigen.
+2. Klappen Sie den Pfeil einer übergeordneten Sitzung auf, um deren Untersitzungen zu sehen. Ein eingeklappter Pfeil zeigt den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet oder kürzlich beendet (untätig); sein Tooltip zählt sie.
 3. Grenzen Sie die Liste mit **Sitzungen suchen...**, **Hauptsitzungen** / **Untersitzungen**, dem Worktree-Filter und der Sortierung nach **Aktivität**, **Name** oder **Worktree** ein.
 4. Verwenden Sie **Zurück** und **Vorwärts** in der Seitenleiste, um zuvor angezeigte Unterhaltungen erneut aufzurufen.
 
@@ -21,12 +23,14 @@ Zurück/Vorwärts ist ein Besuchsverlauf pro Projekt-Tab und Fenster, nicht die 
 2. Falls das Modell Varianten anbietet, wählen Sie den Aufwand unter **Denken**; **Standard** verwendet weiterhin den nativen Standard.
 3. Senden Sie den nächsten Prompt und prüfen Sie zur Diagnose eines Ergebnisses die Agenten-/Modellmetadaten der Antwort.
 
+Eine neue Unterhaltung beginnt mit dem Agenten, den OpenCode als Standard auflöst und den ein Plugin festlegen kann, sofern Sie keinen anderen wählen. Die Tooltips der Auswahlfelder zeigen ihre Tastenkürzel.
+
 Dies sind Ausführungsentscheidungen für spätere Eingaben, keine Änderungen an früheren Antworten. Das Lesen einer alten Timeline-Passage ersetzt die aktuelle Auswahl im Eingabefeld nicht durch historische Metadaten. Modellsichtbarkeit, Favoriten und Anbieterverbindungen werden unter [Anbieter](providers.md) verwaltet.
 
 ## Entwürfe und Anhänge {#drafts-attachments}
 
 1. Schreiben Sie in der ausgewählten Unterhaltung. Ein Unterhaltungswechsel behält deren Entwurf, statt ihn zu senden.
-2. Wählen Sie **Datei anhängen…** für Dateien dieses Geräts oder geben Sie `@` ein, um Projektdateien, Agenten oder Skills auszuwählen.
+2. Wählen Sie für Dateien dieses Geräts **Datei anhängen…** im Menü **Weitere Aktionen** des Eingabefelds oder legen Sie sie ab bzw. fügen Sie sie ein; oder geben Sie `@` ein, um Projektdateien, Agenten oder Skills auszuwählen.
 3. Prüfen Sie die Anhang-Chips und entfernen Sie alles, was nicht zur nächsten Eingabe gehören soll.
 
 | Eingabe | Quelle und Wirkung |
@@ -39,6 +43,8 @@ Dies sind Ausführungsentscheidungen für spätere Eingaben, keine Änderungen a
 Gerätedateien müssen lesbar sein und ins Anhangsbudget passen: höchstens je 5 MiB, 10 Dateien und insgesamt 20 MiB. Eine abgelehnte Datei wird nicht angehängt; prüfen Sie den Hinweis, statt den Erfolg der gesamten Auswahl anzunehmen.
 
 Die Auswahl eines Skills entfernt das `@query`-Token und fügt einen Chip hinzu. Senden leert diese Auswahl im Eingabefeld, nicht die von OpenCode bereits mit der gesendeten Nachricht gespeicherten Anweisungen. Historische Nachrichten behalten Skill-Bezeichnungen. Ein beim Bearbeiten eines wartenden Prompts entfernter Skill bleibt auch beim ersetzenden Senden entfernt.
+
+Auf dem Desktop verschiebt Senden den Tastaturfokus in die Unterhaltung, sodass Pfeiltasten, Bildlauftasten und Leertaste sie scrollen; das Tippen eines Zeichens kehrt mit diesem Zeichen zum Eingabefeld zurück. **Prompt-Text löschen** in **Weitere Aktionen** (Standard **Ctrl/Cmd+K**) leert den Entwurf des Eingabefelds.
 
 Entwürfe sind clientseitiger Arbeitszustand, keine gemeinsamen nativen Nachrichten. Die Startwiederherstellung kann unterstützten Eingabezustand behalten; behandeln Sie einen ungesendeten Entwurf oder Anhang aber nicht als Sicherung und nehmen Sie nicht an, dass er auf einem anderen Gerät erscheint. Sichern Sie wichtigen Text vor dem Löschen von Startdaten oder dem Schließen eines Clients mit deaktivierter Wiederherstellung; siehe [Desktop](desktop.md).
 
@@ -54,8 +60,8 @@ Der Shell-Modus führt eine native Sitzungs-Shell-Anfrage aus, statt das Modell 
 
 ## Folgeprompts steuern, einreihen und bearbeiten {#follow-ups}
 
-1. Wählen Sie unter **Einstellungen → Allgemein → Folgeprompt-Verhalten** zwischen **Steuern** und **Warteschlange**.
-2. Senden Sie während einer beschäftigten Sitzung einen Folgeprompt mit diesem Verhalten. Das alternative Sendetastenkürzel verwendet das jeweils andere Verhalten; prüfen Sie seine aktuelle Belegung unter [Tastenkürzel](shortcuts.md).
+1. Aktivieren Sie unter **Einstellungen → Allgemein** die Option **Gesendete Prompts in die Warteschlange stellen**, um während einer beschäftigten Sitzung gesendete Folgeprompts einzureihen; lassen Sie sie deaktiviert (Standard), um die laufende Aufgabe zu steuern.
+2. Senden Sie während einer beschäftigten Sitzung einen Folgeprompt mit diesem Verhalten. Für das andere Verhalten wählen Sie **Nachricht einreihen** oder **Jetzt einschieben** im Menü **Weitere Aktionen** des Eingabefelds oder verwenden das alternative Sendetastenkürzel (Standard **Alt+Enter** unter Windows und Linux, **Cmd+Shift+Return** unter macOS; siehe [Tastenkürzel](shortcuts.md)).
 3. Verwenden Sie in der Prompt-Warteschlange **Jetzt einschieben**, **In Warteschlange verschieben**, **Prompt bearbeiten** oder **Prompt entfernen**, solange der Eintrag noch wartet.
 
 | Zustellung | Wirkung |
@@ -63,7 +69,7 @@ Der Shell-Modus führt eine native Sitzungs-Shell-Anfrage aus, statt das Modell 
 | Steuern | Native steuernde Eingabe für die laufende Ausführung |
 | Warteschlange | Nativer Folgeprompt in der Warteschlange, zurückgehalten für spätere Verarbeitung |
 
-Im Ruhezustand verwendet normales Senden unabhängig von der Einstellung für beschäftigte Sitzungen den unmittelbaren Standardweg. Bearbeiten stellt einen wartenden Prompt samt entfernbaren Anhängen im Eingabefeld wieder her; **Bearbeitung abbrechen** verlässt die Bearbeitung. Ein bereits von OpenCode verarbeiteter Prompt ist kein bearbeitbarer wartender Eintrag mehr. Das Entfernen eines Eintrags macht bereits ausgeführte Arbeit nicht rückgängig.
+Im Ruhezustand verwendet normales Senden unabhängig von diesem Schalter den unmittelbaren Standardweg, und die Alternative in **Weitere Aktionen** ist nicht verfügbar. Bearbeiten stellt einen wartenden Prompt samt entfernbaren Anhängen im Eingabefeld wieder her; **Bearbeitung abbrechen** verlässt die Bearbeitung. Ein bereits von OpenCode verarbeiteter Prompt ist kein bearbeitbarer wartender Eintrag mehr. Das Entfernen eines Eintrags macht bereits ausgeführte Arbeit nicht rückgängig.
 
 Schlägt eine Warteschlangenänderung fehl, prüfen Sie vor dem Wiederholen die aktuelle Warteschlange. Die Annahme beweist nicht, dass das Modell einen Folgeprompt bereits verarbeitet hat, und eine Wiederverbindung berechtigt nicht zum erneuten Senden.
 
@@ -85,4 +91,4 @@ Schließen bricht die wartende Nebenanfrage ab, ohne die Hauptsitzung zu unterbr
 
 Abzweigen kopiert den Unterhaltungskontext bis zum ausgewählten Punkt; es erzeugt keinen Git-Worktree und isoliert keine Dateien. Zurücksetzen ist nicht bloß Navigation. Prüfen Sie vor dem Fortfahren Dateiauswirkungen und Rücknahmegrenze; nutzen Sie einen Fork für eine alternative Diskussion ohne Umschreiben des ursprünglichen Verlaufs.
 
-Ein fehlgeschlagenes Senden stellt den versuchten Entwurf und die Anhänge wieder her, sofern dadurch keine neueren Eingaben überschrieben werden. Ein fehlgeschlagener Lauf kann bereits Werkzeuge ausgeführt haben: Prüfen Sie vor dem Wiederholen [Dateien](files.md), offene [Anfragen](permissions.md) und native Aktivität. **Nachrichten neu laden** oder **Sitzung neu laden** liest den Zustand; beides ist keine Anweisung, eine Änderung zu wiederholen. **Sitzung stoppen** unterbricht die Ausführung, macht aber keine Datei- oder externen Dienständerungen rückgängig.
+Ein Status **Wiederholung** mit Countdown bedeutet, dass OpenCode einen Anbieterfehler selbstständig erneut versucht; warten Sie darauf oder stoppen Sie die Sitzung, statt erneut zu senden. Ein fehlgeschlagenes Senden stellt den versuchten Entwurf und die Anhänge wieder her, sofern dadurch keine neueren Eingaben überschrieben werden. Ein fehlgeschlagener Lauf kann bereits Werkzeuge ausgeführt haben: Prüfen Sie vor dem Wiederholen [Dateien](files.md), offene [Anfragen](permissions.md) und native Aktivität. **Nachrichten neu laden** oder **Sitzung neu laden** liest den Zustand; beides ist keine Anweisung, eine Änderung zu wiederholen. **Sitzung stoppen** unterbricht die Ausführung, macht aber keine Datei- oder externen Dienständerungen rückgängig.

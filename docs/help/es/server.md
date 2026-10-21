@@ -2,13 +2,13 @@
 
 Ejecuta CodeNomad donde estén tus proyectos y herramientas y usa después su interfaz de navegador local o remotamente. El backend proporciona acceso al sistema de archivos, operaciones Git, autenticación y entrega de eventos. El servicio compartido de OpenCode es propietario de las conversaciones y la ejecución; no es un servidor hijo que deba detenerse cuando se desconecta un navegador.
 
-La misma interfaz admite [varias pestañas de proyecto y worktrees](projects.md), [familias de conversaciones y actividad en segundo plano](conversations.md), [carga acotada de historial, búsqueda y navegación por línea de tiempo](history.md) y una [paleta de comandos y atajos](shortcuts.md). El acceso desde navegador y tableta no traslada la ejecución fuera del anfitrión.
+La misma interfaz admite [varias pestañas de proyecto y worktrees](projects.md), [familias de conversaciones y actividad en segundo plano](conversations.md), [carga acotada de historial, búsqueda y navegación por línea de tiempo](history.md), una [paleta de comandos y atajos](shortcuts.md) y [Misiones](missions.md). El acceso desde navegador y tableta no traslada la ejecución fuera del anfitrión.
 
 ## Preparar el equipo anfitrión {#prerequisites}
 
 1. Instala Node.js 24 LTS y npm; el entorno de compilación fijado por el repositorio es 24.20.0. Los paquetes de escritorio incluyen Node/npm.
 2. Pon Git en el **PATH del proceso del backend**. Git solo dentro de WSL no satisface a un backend Windows.
-3. Instala o selecciona OpenCode: el mínimo requerido es **2.1.0**, con **2.1.0** como objetivo recomendado de verificación. Las compilaciones más nuevas o personalizadas pasan comprobaciones de compatibilidad, no una lista de versiones probadas permitidas. Consulta [configuración de OpenCode](opencode.md).
+3. Instala o selecciona OpenCode: el mínimo requerido es **2.1.0**, con **2.1.1** como objetivo recomendado de verificación. Las compilaciones más nuevas o personalizadas pasan comprobaciones de compatibilidad, no una lista de versiones probadas permitidas. Consulta [configuración de OpenCode](opencode.md).
 4. Elige la carpeta desde la que iniciar el servidor o pasa `--workspace-root` explícitamente.
 
 Sin Git, las conversaciones siguen disponibles solo en la carpeta física abierta explícitamente; las operaciones Git y worktree fallan. Instala Git y reinicia el backend tras cambiar PATH. Una raíz de espacio de trabajo limita la apertura/exploración, no la ejecución del agente: consulta [Seguridad](security.md).
@@ -45,13 +45,15 @@ npx codenomad --generate-token --launch
 
 Los comandos se ejecutan en primer plano. Cerrar la terminal o enviar Ctrl+C detiene ese backend y su conexión de Control remoto. `--launch` solo abre un navegador; no convierte el servidor en un daemon. Para disponibilidad desatendida, ejecuta el mismo comando bajo el gestor de procesos/servicios del sistema operativo con configuración, directorio de trabajo, entorno y política de reinicio explícitos. No pongas secretos en registros de servicio ni en un archivo público de unidad.
 
-Cerrar un navegador no detiene un backend independiente que se ejecuta por separado. Cerrar una pestaña de proyecto cierra el proyecto en CodeNomad, que deja de seguirlo; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto. No se descarga la Location nativa ni se detiene el daemon compartido. Apagar el backend también deja el servicio OpenCode en ejecución. Las funciones dependientes del backend no están disponibles hasta que vuelva CodeNomad; consulta [Misiones](missions.md) para la duración separada de la programación nativa.
+Cerrar un navegador no detiene un backend independiente que se ejecuta por separado. Cerrar una pestaña de proyecto retira la conexión de CodeNomad de ese proyecto, pero las sesiones siguen en OpenCode; vuelve a abrir el proyecto para encontrarlas. CodeNomad nunca descarga su Location nativa. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas. Apagar el backend también deja el servicio OpenCode en ejecución. Las funciones dependientes del backend no están disponibles hasta que vuelva CodeNomad; consulta [Misiones](missions.md) para la duración separada de la programación nativa.
 
 ## Direcciones y puertos {#addresses}
 
 Al iniciar se indica **Local Connection URL**, y **Remote Connection URL** cuando hay una disponible, además de **Other Accessible URLs** cuando corresponde. Usa el esquema y el puerto indicados, no una dirección adivinada. Una URL loopback solo es accesible en ese equipo; una dirección LAN indicada sigue requiriendo enrutamiento y acceso del cortafuegos.
 
 HTTPS prefiere el puerto **9898** y HTTP, **9899**. Sin un valor de puerto explícito, un puerto preferido ocupado se sustituye por uno asignado por el sistema operativo. Un puerto explícito distinto de cero no cambia a otro; `0` solicita un puerto asignado por el sistema operativo. Los puertos aceptan enteros de 0 a 65535.
+
+El backend también puede abrir un listener HTTP autenticado y no anunciado en un puerto aleatorio de `127.0.0.1` para sus propios plugins de OpenCode, como Misiones. No se muestra y no es una dirección de cliente.
 
 Para exposición de listeners, certificados, VPN/SSH y proxies inversos, usa [Acceso remoto directo](remote-access.md). Para acceso sin puerto entrante, usa [Control remoto](remote-control.md).
 

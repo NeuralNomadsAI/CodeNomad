@@ -4,10 +4,10 @@ Sağlayıcı kimlik doğrulaması, tarayıcı cihazına veya bir CodeNomad proje
 
 ## Bir modeli veya arama sağlayıcısını bağlayın {#connect}
 
-1. Çalışma alanı açıp **Ayarlar → Provider'lar** yoluna gidin.
-2. **Modeller** veya **Web araması** bölümünde **Provider seç** öğesini, ardından **Bağlan** öğesini seçin.
-3. Sunulan yerel **Kimlik doğrulama yöntemi** öğesini tamamlayın: API anahtarı, OAuth veya komut. OAuth için **Yetkilendirme sayfasını aç** öğesini kullanın ve yalnızca istendiğinde bir yetkilendirme kodu gönderin.
-4. Tamamlandıktan sonra yapılandırılmış sağlayıcı satırını kontrol edin; sonuç net değilse **Yenile** kullanın.
+1. Çalışma alanı açıp **Ayarlar → Provider'lar** yoluna gidin. **Modeller** açık olarak başlar; arama sağlayıcıları için **Web araması** bölümünü genişletin.
+2. O grupta **Provider seç** öğesini, ardından **Bağlan** öğesini seçin.
+3. Model sağlayıcısı için sunulan yerel **Kimlik doğrulama yöntemi** öğesini tamamlayın: API anahtarı, OAuth veya komut. OAuth için **Yetkilendirme sayfasını aç** öğesini kullanın ve yalnızca istendiğinde bir yetkilendirme kodu gönderin. Arama sağlayıcıları API anahtarıyla bağlanır.
+4. Tamamlandıktan sonra yapılandırılmış sağlayıcı satırını kontrol edin. **Modeller** bağlantılardan, hesap değişikliklerinden ve yeniden bağlanmalardan sonra yeniden okunur; **Web araması** bölümünde ayrıca **Yenile** vardır.
 
 Yalnızca arama entegrasyonları **Modeller** altında değil, **Web araması** altında görünür. Kimlik doğrulamanın kaydedilmesi bir model seçmez veya varsayılan arama sağlayıcısını değiştirmez. API anahtarları ve OAuth kimlik bilgileri, etkin OpenCode sunucusu tarafından kaydedilir. Tarayıcı, kayıtlı kimlik bilgisi sırlarını değil, bağlantı meta verilerini alır. Ortam değişkenlerinden kaynaklanan bir bağlantı bu kullanıcı arayüzünde salt okunurdur: bağlantıyı burada kesmeye çalışmak yerine sahibi olduğu ortamı değiştirin.
 
@@ -17,9 +17,9 @@ Yetkilendirme penceresi engellenmişse akıştan **Yetkilendirme sayfasını aç
 
 1. Sağlayıcının satırında, kayıtlı bir kimlik bilgisini seçmek için **Etkin hesap** öğesini kullanın.
 2. Başka bir bağlantının kimliğini doğrulamak için **Hesap ekle** öğesini kullanın.
-3. Farklı bir kayıtlı hesabı yönetmek için önce hesabı seçin, ardından **Hesabı yeniden adlandır** veya **Hesabı kaldır** öğesini kullanın. Yeniden adlandırma **Hesap adı** ve **Kaydet** öğesini kullanır.
+3. Farklı bir kayıtlı hesabı yönetmek için önce hesabı seçin, ardından **Hesabı yeniden adlandır** veya **Hesabı kaldır** öğesini kullanın. Yeniden adlandırma **Hesap adı** ve **Kaydet** öğesini kullanır; **Hesabı kaldır** onay istemeden hemen uygulanır.
 
-Seçme, yeniden adlandırma ve kaldırma, diğer projeler ve istemciler de dahil olmak üzere OpenCode hizmeti genelindeki entegrasyonu etkiler. Bir kimlik bilgisinin kaldırılması, bu istemcilerin kimlik doğrulaması olmadan kalmasına neden olabilir; konuşma geçmişini silmez veya sağlayıcının uzak hesabını iptal etmez. Ortam bağlantıları, yazılabilir kayıtlı kimlik bilgileri olarak seçilemez veya buradan kaldırılamaz. Bir işlem başarısız olursa, tekrar harekete geçmeden önce **Etkin hesap** öğesini yenileyin ve uzlaştırın.
+Seçme, yeniden adlandırma ve kaldırma, diğer projeler ve istemciler de dahil olmak üzere OpenCode hizmeti genelindeki entegrasyonu etkiler. Bir kimlik bilgisinin kaldırılması, bu istemcilerin kimlik doğrulaması olmadan kalmasına neden olabilir; konuşma geçmişini silmez veya sağlayıcının uzak hesabını iptal etmez. Ortam bağlantıları, yazılabilir kayıtlı kimlik bilgileri olarak seçilemez veya buradan kaldırılamaz. Bir işlem başarısız olursa CodeNomad hesapları yeniden okur: tekrar harekete geçmeden önce **Etkin hesap** öğesini yeniden kontrol edin.
 
 ### Otomatik seçim sınırları {#automatic-selection}
 
@@ -27,7 +27,7 @@ Desteklenen entegrasyonda birden fazla kayıtlı kimlik bilgisi varsa **Hesabı 
 
 | Uygun entegrasyon | Uygun hesap türü |
 | --- | --- |
-| OpenAI / Codex | OpenAI kullandıkça öde anahtarları değil, Codex OAuth abonelik hesapları. |
+| OpenAI / Codex | Codex tarayıcı/cihaz OAuth abonelik hesapları; OpenAI kullandıkça öde anahtarları veya kullanım verisini OpenAI'ın sağlamadığı ChatGPT oturum açma yöntemi değil. |
 | OpenCode Go | Go anahtarı veya **yalnızca Go sağlayıcısı** için kullanılan OpenCode Console girişi/anahtarı; Zen kullandıkça öde kredileri için değil. |
 | Anthropic | OpenCode'un Claude Pro/Max OAuth girişi; Claude Code girişi **değil**. |
 | GitHub Copilot | Okunabilir premium istek kotasına sahip OAuth; kurumsal uç nokta kimlik bilgileri okunabilir aday değildir. |
@@ -48,7 +48,9 @@ Görünürlük ve sık kullanılanlar, CodeNomad'in seçicilerini düzenler; mod
 
 ## Kullanım, belirteç sayıları ve süresi dolmuş oturum açma bilgileri {#usage}
 
-Etkin görüşmenin sağlayıcı planı pencereleri, sıfırlama süreleri ve desteklenen bakiyeler için sağ paneldeki **Kullanım** öğesini kullanın. Bu sağlayıcı okumaları, mesaj başına **Tokenlar** ve maliyet tahminlerinden farklıdır: abonelik kotası, görünür konuşma dökümünden hesaplanan bir fatura değildir. Eksik, eski veya bilinmeyen bir okuma, sıfır kullanım veya kalan kapasitenin kanıtı değildir. Sohbet ayarlarındaki **Sağlayıcı kredi bakiyesi** ek bakiye ekranını kontrol eder.
+Etkin görüşmenin sağlayıcı planı pencereleri, sıfırlama süreleri ve desteklenen bakiyeler için sağ paneldeki **Kullanım** öğesini kullanın. Bu sağlayıcı okumaları, mesaj başına **Tokenlar** ve maliyet tahminlerinden farklıdır: abonelik kotası, görünür konuşma dökümünden hesaplanan bir fatura değildir. Eksik, eski veya bilinmeyen bir okuma, sıfır kullanım veya kalan kapasitenin kanıtı değildir. **Ayarlar → Gelişmiş** içindeki **Sağlayıcı kredi bakiyesi** ek bakiye ekranını kontrol eder.
+
+OpenAI, ChatGPT oturum açma yöntemlerinden biri için kullanım verisi sağlamaz: Kullanım, kota pencereleri göstermek yerine bunu belirtir. Sohbet etmek yine çalışır ve aynı girişle yeniden bağlanmak bu okumayı geri getirmez.
 
 Kullanım, seçili OpenCode kimlik bilgisini izler. Claude, `anthropic`/`claude` üzerinden OpenCode Anthropic OAuth girişini kullanır. `claude-code` sağlayıcısı, WSL dağıtımı dahil daemon ana bilgisayarındaki Claude Code girişini kullanır: önce `CLAUDE_CODE_OAUTH_TOKEN`, sonra kayıtlı giriş; dosya deposunu `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` veya `~/.claude` belirler; native macOS Keychain kullanılabilir. CodeNomad bir Claude girişini diğerinin yerine kullanmaz.
 
@@ -71,10 +73,10 @@ Belirteçleri/çerezleri kabuk geçmişinden, ekran görüntülerinden ve raporl
 
 ## Web araması varsayılanı ve Proje geçersiz kılma {#web-search}
 
-1. **Ayarlar → Provider'lar → Web araması** bölümünde, kimlik doğrulaması gerekiyorsa arama entegrasyonunu bağlayın.
+1. **Ayarlar → Provider'lar** bölümünde **Web araması** grubunu genişletin ve gerekiyorsa arama entegrasyonunu API anahtarıyla bağlayın.
 2. Genel yapılandırma için **Varsayılan arama** öğesini seçin.
-3. Etkin Location için geçersiz kılmak üzere **Geçerli proje için** öğesini kullanın. Etkili sonuç için **Bu projede arama** öğesini kontrol edin.
+3. Etkin Location için geçersiz kılmak üzere **Geçerli proje için** öğesini kullanın. Etkili sonucu içeren **Bu projede arama** bilgisini görmek için bu seçicinin üzerine gelin veya odaklanın.
 
-Değişiklikler otomatik olarak kaydedilir. **Varsayılan / devralınan**, devralınan yapılandırmayı veya kaydedilen yerel seçimi kullanır; Proje geçersiz kılma Global'e galip gelir. **Devre dışı** seçilen kapsamda aramayı kapatır; **Otomatik sağlayıcı**, yerel otomatik sağlayıcı seçimi talep ediyor. Ortam kaynaklı bir seçim salt okunur olarak görüntülenir.
+Değişiklikler otomatik olarak kaydedilir. **Varsayılan / devralınan**, devralınan yapılandırmayı veya kaydedilen yerel seçimi kullanır; Proje geçersiz kılma Global'e galip gelir. **Devre dışı** seçilen kapsamda aramayı kapatır; **Otomatik sağlayıcı**, yerel otomatik sağlayıcı seçimi talep ediyor. **Web araması** bağlantılarını ve seçimlerini yalnızca genişletildiğinde yükler. **Bağlantıyı kes** kayıtlı bir arama anahtarını kaldırır; bir ortam değişkeninden sağlanan bağlantı salt okunur olarak etiketlenir ve **Bağlantıyı kes** eylemi yoktur.
 
 Arama kimlik bilgileri, sağlayıcı seçimi Proje kapsamında olsa bile hizmet geneli olarak kalır. Bir anahtarın kaydedilmesi, onu arama varsayılanı olarak seçmez. Okuma/kaydetme işlemi başarısız olursa, yeniden denemeden önce yenileyin; konfigürasyonu körü körüne değiştirmeyin. Yerel yapılandırma ayrıntıları için, bkz. [OpenCode belgeleri](https://opencode.ai/v2/docs/) ve [OpenCode kurulumu](opencode.md).

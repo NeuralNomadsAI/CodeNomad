@@ -8,15 +8,17 @@
 
 Project tabs, selected conversations and layout belong to a window. OpenCode sessions/messages belong to the shared native OpenCode service: another window can see the same conversation. Closing a project tab closes that project in CodeNomad, not its OpenCode sessions; reopen it to find them again. Another window displaying the same project connection also closes its tab and shows a notification; separately opened tabs of the same folder are unaffected. Closing a whole window, quitting or reloading preserves project connections for restoration; see [Projects](projects.md). Do not use closing windows as proof that an agent or scheduled Mission has stopped.
 
+Native application menus use CodeNomad's interface language once a window has loaded; they show English until then. **Help → About CodeNomad** (also in the macOS application menu) opens **Settings → Info** with the version, updates and diagnostics.
+
 ## Preferences and startup restore {#preferences-startup}
 
 1. Open Settings from the window you want to configure. Local desktop entry points focus the single native Preferences window with that opener's project/Location.
-2. In **General → Startup**, enable or disable **Restore previous state**.
-3. To forget that window's saved layout, use **Clear saved state** after reading its consequences.
+2. In **General**, turn **Restore previous state** on or off.
+3. To forget that window's saved layout, use **Clear saved startup state**. It applies immediately, without a confirmation.
 
 Restore can reopen workspace/SideCar tabs and active sessions, unsent text, scroll positions, panels, window placement and zoom. It is per-window client state, not a copy of the native conversation database. Clearing it removes saved tabs, drafts and layout; it does not delete CodeNomad configuration or OpenCode conversations. Save any important unsent draft elsewhere first.
 
-The Preferences window does not own a separate restore state: Startup targets the window that opened it. When that window has closed, or is unknown because Preferences reopened at launch, Startup follows the most recently used window instead; a change prepared for another window is never applied, and the controls first show the new window's value. To configure a specific window, open Preferences from it. Project-scoped settings likewise use the opener's Location; they stay unavailable without one.
+The Preferences window does not own a separate restore state: these controls target the window that opened it. When that window has closed, or is unknown because Preferences reopened at launch, they follow the most recently used window instead; a change prepared for another window is never applied, and the controls first show the new window's value. To configure a specific window, open Preferences from it. Project-scoped settings likewise use the opener's Location; they stay unavailable without one. When Preferences reopens at launch, they reconnect once that project has finished opening; while the folder is still starting, or open in several tabs, they stay unavailable until you open Preferences from the intended window.
 
 Browser and remote settings are embedded rather than a second native Preferences owner. A native Preferences opening error is reported; it is not a reason to assume a hidden embedded settings screen was opened instead.
 
@@ -46,13 +48,13 @@ On macOS Tauri, scoped profiles share system WebKit storage, sign-ins and cache;
 
 ## Delete other saved profiles {#delete-profiles}
 
-1. In native **Settings → General → Startup**, find **Other saved profiles**. It appears only when other profiles are present on the machine.
+1. In native **Settings → General**, find **Other saved profiles** below **Restore previous state**. It appears only when other profiles are present on the machine.
 2. Refresh the list if needed, choose **Delete…**, and read the listed targets and skipped profiles.
 3. Confirm only after preserving any drafts/sign-ins you need. Inspect any incomplete-removal report before retrying.
 
 Deletion removes other profiles' saved tabs, drafts, layout and owned web storage/cache/sign-ins, including listed profiles from another configuration. It preserves the open profile, OpenCode conversations and project files. Open or unknown-state profiles are skipped; close the relevant CodeNomad windows before explicitly refreshing and retrying. Unrecognized content is retained and reported rather than broadly deleted.
 
-macOS Tauri's shared WebKit store is kept because deleting it would affect other profiles. This is not an undoable cleanup: a surviving native conversation does not restore a deleted unsent draft. **Clear saved state** is the smaller action when you only want to reset the current window.
+macOS Tauri's shared WebKit store is kept because deleting it would affect other profiles. This is not an undoable cleanup: a surviving native conversation does not restore a deleted unsent draft. **Clear saved startup state** is the smaller action when you only want to reset the current window.
 
 ## Zoom and panel geometry {#zoom-panels}
 

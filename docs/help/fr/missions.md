@@ -7,10 +7,10 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 1. Ouvrez **Missions** dans le panneau droit et choisissez **Créer une mission**.
 2. Remplissez **Que doit faire la mission ?** et vérifiez **Titre**, prérempli depuis la première phrase (jusqu’à 60 caractères).
 3. Sous **Quand**, sélectionnez **Une fois** ou **Chaque jour à**. Pour un travail quotidien, vérifiez le fuseau affiché ; **Modifier** permet un fuseau IANA.
-4. Développez **Options** pour **Scénario**, **Notes**, **Agents et modèles**, **Sessions des tâches**, les consignes enregistrées et les conversations suivies facultatives.
+4. Développez **Options** pour **Scénario**, **Notes**, **Agents et modèles**, **Sessions des tâches**, les consignes enregistrées et les conversations suivies facultatives. Avec **Comparer deux modèles**, les sélecteurs **Modèle A** et **Modèle B** apparaissent dans le formulaire principal.
 5. Choisissez **Créer**. Sélectionnez la nouvelle entrée, puis utilisez son action ▶ distincte lorsque vous êtes prêt : **Démarrer la mission** pour un travail ponctuel, ou **Démarrer le programme {id}** pour un programme quotidien.
 
-**Créer ne démarre jamais le travail.** Une mission ponctuelle est préparée ; un programme quotidien est en pause. Ni la création ni l’enregistrement d’une consigne n’arment un minuteur. La création est limitée au projet/à la Location sélectionné et fige les profils demandés ainsi que la politique des sessions de tâches. La validation se trouve près du champ concerné ; un refus indiquant que rien n’a été envoyé laisse le brouillon disponible pour correction.
+**Créer ne démarre jamais le travail.** Une mission ponctuelle est préparée ; un programme quotidien est en pause. Ni la création ni l’enregistrement d’une consigne n’arment un minuteur. La création est limitée au projet/à la Location sélectionné et fige les profils demandés ainsi que la politique des sessions de tâches. La validation se trouve près du champ concerné ; un refus indiquant que rien n’a été envoyé laisse le brouillon disponible pour correction. Un coordinateur peut aussi préparer pour vous une mission distincte, par exemple une suite : elle apparaît dans la liste comme **Préparée** et, comme toute mission, ne démarre que par son action ▶.
 
 ### Scénarios {#playbooks}
 
@@ -20,6 +20,9 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 | Débogage | Diagnostic, mise en œuvre, revue séparée des normes/spécifications et nouvelle validation ; la résolution poursuit avec l’implémenteur. |
 | Exploration | Cartographie les incertitudes et traite des décisions délimitées avec des questions humaines. |
 | Livraison de produit | Coordonne les rôles d’analyse produit, d’architecture, de mise en œuvre et de qualité. |
+| Comparer deux modèles | Exécute la même tâche avec des consignes identiques sur **Modèle A** et **Modèle B**, puis un **Juge à l’aveugle** note les deux sous des étiquettes neutres et rend un verdict : **Le modèle A l’emporte**, **Le modèle B l’emporte**, **Équivalents** ou **Non concluant**. |
+
+Pour **Comparer deux modèles**, les deux modèles sont obligatoires et doivent différer ; un niveau de **Réflexion** différent ne suffit pas à en faire un autre modèle. Sauf si vous en choisissez un, le juge utilise le modèle du coordinateur ; le formulaire avertit lorsqu’il correspond à A ou B, ce qui peut biaiser la comparaison. La vue d’ensemble affiche le verdict, le nom des deux modèles et les notes par critère.
 
 Le scénario guide la coordination ; il ne contourne pas les autorisations natives et ne garantit pas le succès. Répondez aux questions de décision d’Exploration via le dock d’interruption CodeNomad pour enregistrer une réponse explicite de l’interface, plutôt que de demander à un agent d’imiter une approbation.
 
@@ -32,14 +35,15 @@ Le scénario guide la coordination ; il ne contourne pas les autorisations nativ
 
 | Indicateur | Ce qu’il établit |
 | --- | --- |
-| Attribuée | Une entrée a été admise ; la consommation par le modèle/le travail/la fin ne sont pas prouvés. |
-| Active | Une activité native a été observée. |
+| Assignée | Une entrée a été admise ; la consommation par le modèle/le travail/la fin ne sont pas prouvés. |
+| En cours | Une activité native a été observée. |
 | En attente | Les dépendances déclarées ne sont pas encore satisfaites. |
 | Bloquée | Un blocage a été signalé, pas nécessairement une question pour vous. |
-| Votre réponse est attendue | Un Form/une question ou autorisation native ouverte attend une réponse. |
+| Attend votre réponse | Un Form/une question ou autorisation native ouverte attend une réponse ; elle figure sous **Votre réponse est attendue**. |
 | Terminée | Un résultat de tâche a été enregistré ; vérifiez ses preuves et le travail natif restant. |
+| Échec / Retirée | La tâche a échoué, ou le coordinateur l’a remplacée ou abandonnée. |
 
-Le graphe inclut les travaux terminés et retirés. Retirer une tâche n’arrête pas en soi sa conversation. **En cours** est l’état du cycle de vie de la mission, pas une preuve que son coordinateur travaille actuellement. Les textes complets se lisent dans le lecteur central, pas dans la liste des tâches ; **Détails techniques** replie les identifiants et les informations d’exécution demandées.
+Le graphe inclut les travaux terminés et retirés. Retirer une tâche n’arrête pas en soi sa conversation ; le coordinateur peut arrêter séparément les conversations propres à une tâche retirée, sans toucher aux autres tâches. **En cours** est l’état du cycle de vie de la mission, pas une preuve que son coordinateur travaille actuellement. Les textes complets se lisent dans le lecteur central, pas dans la liste des tâches ; **Détails techniques** replie les identifiants et les informations d’exécution demandées.
 
 ### Points de situation et demandes de mise à jour {#briefings}
 
@@ -50,9 +54,10 @@ Utilisez **Demander un point** sous la barre d’outils pour une nouvelle évalu
 ## Profils, délégation et profondeur {#profiles}
 
 1. Utilisez l’engrenage des Missions ou **Paramètres → Missions** pour modifier **Défauts des nouvelles missions**.
-2. Choisissez les valeurs globales et exceptions de scénario, puis **Enregistrer**. À la création, utilisez **Options → Agents et modèles** pour les profils demandés spécifiques.
-3. Choisissez **Sessions des tâches** indépendamment de **Scénario**.
-4. Pour les limites de récursion native, utilisez séparément **Profondeur OpenCode → Profondeur maximale → Enregistrer la profondeur du lieu**.
+2. Sous **Appliquer à**, choisissez **Toutes les missions** ou un scénario, puis réglez **Sessions des tâches** et, sous **Agents et modèles**, une ligne par rôle (coordinateur, puis les rôles du scénario). Chaque choix est enregistré immédiatement ; il n’y a pas de bouton Enregistrer.
+3. Dans la portée d’un scénario, les lignes affichent les valeurs globales marquées **Global**. Modifier un champ personnalise ce rôle à partir de ces valeurs ; son icône de retour réutilise les valeurs globales. **Réinitialiser** (après confirmation) efface seulement les agents et modèles de la portée affichée.
+4. À la création, utilisez **Options → Agents et modèles** pour des profils demandés spécifiques ; **Utiliser les réglages enregistrés** rétablit ceux qui sont enregistrés.
+5. Pour les limites de récursion native, modifiez **Profondeur d’imbrication des sous-sessions → Profondeur imposée pour le projet**. Appuyer sur Entrée ou quitter le champ enregistre une valeur valide modifiée ; **Hériter** enregistre aussitôt ; Échap abandonne une valeur non enregistrée.
 
 | Réglage | Portée et effet |
 | --- | --- |
@@ -60,11 +65,11 @@ Utilisez **Demander un point** sous la barre d’outils pour une nouvelle évalu
 | Agent / Modèle / Réflexion | Sélections demandées du coordinateur/des rôles enregistrées à la création ; un acteur occupé ne change pas silencieusement pour un travail ultérieur. Les exécutions quotidiennes réutilisent leurs profils demandés figés. |
 | Sous-agents natifs | Les sessions de tâches utilisent les agents natifs subagent/all sous le coordinateur. |
 | Sessions indépendantes | Les sessions de tâches déclarées utilisent les agents primary/all et des conversations indépendantes ; cela ne désactive pas les assistants natifs internes. |
-| Profondeur OpenCode | Configuration de Location/projet pour **toutes** les conversations qui s’y trouvent, pas seulement les Missions. Vide hérite. Enregistrer ne recharge pas OpenCode et ne change pas les conversations actives. |
+| Profondeur d’imbrication des sous-sessions | Configuration de projet pour **toutes** les conversations OpenCode qui s’y trouvent, pas seulement les Missions. Vide hérite. L’enregistrement ne recharge pas OpenCode et ne change pas les conversations actives. |
 
-**Valeur native par défaut** et **Hériter des réglages globaux** diffèrent : le premier demande les valeurs natives, le second utilise le profil global configuré. La disponibilité du catalogue est vérifiée ; un profil demandé ne prouve pas celui qu’utilise actuellement une conversation. Les autorisations natives et la profondeur configurée régissent toujours les appels d’assistants internes dans les deux modes de tâches.
+**Valeur native par défaut** et **Global** diffèrent : le premier demande les valeurs par défaut propres à OpenCode, le second hérite du choix global ; choisir les valeurs natives par défaut dans la portée d’un scénario reste une exception explicite. La disponibilité du catalogue est vérifiée ; un profil demandé ne prouve pas celui qu’utilise actuellement une conversation. Les autorisations natives et la profondeur configurée régissent toujours les appels d’assistants internes dans les deux modes de tâches.
 
-Si l’enregistrement des valeurs/profondeurs n’est pas confirmé, gardez le brouillon et utilisez **Recharger** pour les valeurs par défaut ou **Actualiser la profondeur du lieu** avant un autre changement. N’interprétez pas **Profondeur effective inconnue** comme zéro ou désactivée.
+Un choix refusé ou non confirmé n’est jamais renvoyé : les valeurs enregistrées sont réaffichées, et **Recharger** n’apparaît que lorsqu’elles ne peuvent pas être lues. Si un changement de profondeur n’est pas confirmé, votre valeur est conservée ; utilisez **Actualiser la profondeur du projet** avant un autre changement. N’interprétez pas **Profondeur OpenCode effective inconnue** comme zéro ou désactivée.
 
 ## Réutiliser une consigne enregistrée {#saved-briefs}
 
@@ -72,7 +77,7 @@ Si l’enregistrement des valeurs/profondeurs n’est pas confirmé, gardez le b
 2. Vérifiez l’objectif, les notes, le scénario, les profils et la délégation copiés avant **Créer**.
 3. Utilisez **Enregistrer comme consigne** pour nommer un brouillon réutilisable. Une mission ponctuelle sélectionnée, même terminée, propose aussi **Enregistrer comme consigne**.
 
-Les consignes stockent les instructions et choix demandés, pas les plans de tâches, résultats, conversations, horaires de programme ou autorité d’exécution. En charger une remplit un brouillon de création ordinaire ; cela ne démarre ni ne planifie rien. Retirer une consigne conserve les missions/conversations existantes. **Paramètres → Missions → Consignes enregistrées** gère la bibliothèque ; une réinitialisation explicite de celle-ci retire les consignes, pas les exécutions. Les programmes eux-mêmes n’ont pas d’action d’enregistrement comme consigne.
+Les consignes stockent les instructions et choix demandés, pas les plans de tâches, résultats, conversations, horaires de programme ou autorité d’exécution. En charger une remplit un brouillon de création ordinaire ; cela ne démarre ni ne planifie rien. Retirer une consigne conserve les missions/conversations existantes. **Paramètres → Missions → Consignes enregistrées** gère la bibliothèque ; si celle-ci devient illisible, **Réinitialiser la bibliothèque enregistrée** (après confirmation) retire les consignes enregistrées, pas les exécutions. Les programmes eux-mêmes n’ont pas d’action d’enregistrement comme consigne.
 
 ## Heure quotidienne, rattrapage et conversations suivies {#daily-schedules}
 
@@ -95,13 +100,22 @@ La date de création limite aussi les jours admissibles ; démarrer un nouveau p
 
 | Composant | Ce que signifie sa fermeture |
 | --- | --- |
-| Onglet de projet CodeNomad | Ferme le projet dans CodeNomad ; le travail natif continue dans OpenCode et se retrouve en rouvrant le projet. |
-| Fenêtre CodeNomad | Détache la vue ; n’arrête pas le travail natif ni le service OpenCode. |
+| Onglet de projet CodeNomad | Ferme le projet dans CodeNomad ; les sessions natives continuent dans OpenCode. Rouvrez le projet pour les retrouver. |
+| Fenêtre entière, fermeture de l’application ou rechargement du moteur de rendu | Conserve les connexions de projet pour la restauration ; n’arrête pas le travail natif ni le service OpenCode. |
 | Backend CodeNomad | N’arrête pas OpenCode. La coordination ponctuelle CodeNomad dépend de sa présence ; ne supposez pas que de nouvelles affectations/commandes ponctuelles restent disponibles lorsqu’il est fermé. |
 | Programme quotidien actif | Son horloge et l’exécution des passages fonctionnent dans le plugin/service OpenCode, y compris avec l’interface et le backend CodeNomad fermés. L’hôte d’exécution et le service OpenCode doivent rester actifs. |
 | Redémarrage du service OpenCode | Perd les tâches de planification propres au processus. Un programme censé être actif devient **Interrompue** jusqu’à un **Reprendre** explicite ; rouvrir CodeNomad ne le réarme pas. |
 
 Après un redémarrage, inspectez l’exécution en attente et choisissez **Reprendre** lorsque vous êtes prêt. La reprise réconcilie l’exécution existante sans envoyer deux fois l’entrée au coordinateur ; elle ne promet pas de poursuivre un tour natif interrompu. Un tour coupé par un redémarrage peut se régler comme terminé sans rapport, avec **Interrompue par un redémarrage**. N’utilisez pas le redémarrage pour réessayer les effets d’outils.
+
+Les Missions fonctionnent avec les applications de bureau et avec un [serveur](server.md) CodeNomad autonome. Lorsque le panneau affiche **Le centre de mission est indisponible**, son message en nomme la cause :
+
+| Cause | Que faire |
+| --- | --- |
+| L’espace de travail OpenCode n’est pas prêt | Reconnectez le projet, puis actualisez. |
+| OpenCode n’a pas chargé le plugin Missions | Actualisez dans un instant ; si cela persiste, utilisez **Recharger la configuration OpenCode** dans **Paramètres → OpenCode**. |
+| OpenCode n’a pas pu charger le plugin Missions | Lisez son erreur dans la liste des plugins, puis actualisez une fois le problème corrigé. |
+| Le serveur CodeNomad n’a pas pu ouvrir sa connexion locale pour les Missions (127.0.0.1) | Consultez le journal du serveur ; recharger OpenCode n’y change rien. |
 
 ## Pause, arrêt et résultats incertains {#controls-recovery}
 

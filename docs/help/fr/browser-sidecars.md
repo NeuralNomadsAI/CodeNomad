@@ -2,8 +2,8 @@
 
 ## Ouvrir un navigateur de session {#session-browser}
 
-1. Dans la barre d’outils d’une conversation, ouvrez son aperçu web/navigateur.
-2. Saisissez une URL `http://` ou `https://` sans identifiants. Utilisez la barre d’outils pour naviguer, actualiser et aller en arrière/en avant.
+1. Dans la barre d’outils d’une conversation, choisissez **Ouvrir l'aperçu web**.
+2. Saisissez une **URL de l'aperçu** `http://` ou `https://` sans identifiants, puis choisissez **Ouvrir l'aperçu**. Utilisez la barre d’outils pour naviguer, actualiser et aller en arrière/en avant.
 3. Utilisez le bouton de fermeture de l’aperçu pour revenir au chat. Rouvrez-le dans cette conversation pour poursuivre.
 
 Chaque aperçu appartient à son dossier de projet et sa session. Changer de conversation, projet, Info ou chat masque un invité natif explicitement ouvert sans abandonner son document/historique actif. Les invités masqués ne sont pas des cibles d’automatisation. Fermer le projet/la fenêtre ou redémarrer le moteur de rendu termine le document actif.
@@ -21,7 +21,7 @@ Les aperçus natifs partagent cookies, connexions et stockage de site entre proj
 | Tauri macOS/Linux | Iframe en bac à sable | Pas d’automatisation navigateur native | Dimensions seules |
 | Navigateur ordinaire/vue distante | Iframe de repli | Aucune cible locale d’aperçu natif | Dimensions seules |
 
-Il n’y a pas de commutateur Mode développeur ni de redémarrage d’activation supplémentaire. L’automatisation native est préparée au démarrage du bureau et utilise l’outil `codenomad.browser` lié à la session pour ouvrir, naviguer, capturer l’état, cliquer, saisir et prendre une capture. La disponibilité d’un outil n’autorise pas toutes les fenêtres : l’exécution vérifie le backend propriétaire, les capacités natives, la session et la cible visible. Le contenu des pages reste non fiable. Une iframe peut échouer si la cible interdit l’intégration ; utilisez un navigateur externe plutôt que d’affaiblir ses protections.
+Il n’y a pas de commutateur Mode développeur ni de redémarrage d’activation supplémentaire. L’automatisation native est préparée au démarrage du bureau et utilise l’outil `codenomad.browser` lié à la session pour ouvrir, naviguer, capturer l’état, prendre une capture d’écran et agir sur la page : cliquer, saisir, sélectionner, survoler, glisser, faire défiler, appuyer sur des touches et attendre un texte. La disponibilité d’un outil n’autorise pas toutes les fenêtres : l’exécution vérifie le backend propriétaire, les capacités natives, la session et la cible visible. Une action dont la page a été masquée, remplacée ou a changé d’adresse entre-temps est refusée plutôt qu’envoyée à une autre page, et une action n’est jamais répétée automatiquement. Le contenu des pages reste non fiable. Une iframe peut échouer si la cible interdit l’intégration ; utilisez un navigateur externe plutôt que d’affaiblir ses protections.
 
 ## Choisir parmi six modèles de zone d’affichage {#templates}
 
@@ -56,7 +56,9 @@ Les modèles mobiles natifs définissent identité Android/Chromium, orientation
 
 L’enregistrement est une configuration serveur partagée par ses clients ; il n’installe ni ne démarre le service. Le port est sur l’hôte du backend, pas votre portable ou téléphone. **En cours d'exécution** indique l’accessibilité, pas le bon état de l’application/authentification de l’outil. Retirer l’enregistrement n’arrête pas le processus lancé séparément. Fermer son onglet ne l’arrête pas non plus.
 
-Si le service est inaccessible, vérifiez le processus et le port sur le backend. Si HTML charge mais pas les ressources/WebSockets, vérifiez le chemin de base et le mode de préfixe. Recréez un enregistrement erroné avec les paramètres voulus ; n’exposez pas l’amont publiquement pour contourner une erreur de proxy. Les applications SideCar peuvent exposer un terminal ou des fichiers avec l’autorité du compte serveur ; faites confiance à leurs utilisateurs et configuration. Le Contrôle à distance n’expose pas le trafic proxy des applications SideCar ; utilisez le chemin direct approprié décrit dans [Accès distant](remote-access.md) et [Contrôle à distance](remote-control.md).
+Si le service est inaccessible, vérifiez le processus et le port sur le backend. Si HTML charge mais pas les ressources/WebSockets, vérifiez le chemin de base et le mode de préfixe. Recréez un enregistrement erroné avec les paramètres voulus ; n’exposez pas l’amont publiquement pour contourner une erreur de proxy. Les applications SideCar peuvent exposer un terminal ou des fichiers avec l’autorité du compte serveur ; faites confiance à leurs utilisateurs et configuration.
+
+Un SideCar est une extension de confiance de CodeNomad, pas un aperçu en bac à sable : sa page s’exécute avec l’origine même de CodeNomad, si bien que ses scripts peuvent utiliser CodeNomad avec votre accès connecté. N’enregistrez que des services dont vous jugez le code fiable. CodeNomad ne transmet pas ses propres cookies de connexion au service, tandis que les cookies propres au service sont conservés. Le Contrôle à distance n’expose pas le trafic proxy des applications SideCar ; utilisez le chemin direct approprié décrit dans [Accès distant](remote-access.md) et [Contrôle à distance](remote-control.md).
 
 ## Recette OpenVSCode Server {#openvscode}
 

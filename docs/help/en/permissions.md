@@ -73,6 +73,6 @@ Turning Yolo off does not revoke a decision already accepted or roll back file/n
 
 1. Check the connection indicator and reconnect to the same backend/project.
 2. Let recovery reconcile pending native requests; known requests and drafts are retained if coverage is incomplete.
-3. If a **questions and permissions not fully recovered** warning appears, its message names the cause, the folders and the affected sessions. Resolve that cause (for example a deleted worktree, or a session working outside this project); the next recovery pass retries automatically.
+3. If a **questions and permissions not fully recovered** warning appears, it names the project, the cause, the folders and the affected sessions. Resolve that cause (for example a deleted worktree, or a session working outside this project); the next recovery pass retries automatically.
 
 Recovery does not load every inactive worktree just to enumerate requests. An incomplete response is not an authoritative empty queue, and the warning is not permission to repeat a prompt, answer or approval. Configuration reload can cancel native Forms/permissions; do not use it as a routine request-refresh button. See [Troubleshooting](troubleshooting.md) and [OpenCode setup](opencode.md).

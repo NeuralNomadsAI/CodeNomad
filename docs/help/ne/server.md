@@ -2,13 +2,13 @@
 
 project र tool भएको ठाउँमा CodeNomad चलाएर स्थानीय वा remote browser UI प्रयोग गर्नुहोस्। backend ले filesystem पहुँच, Git कार्य, authentication र event delivery दिन्छ। साझा OpenCode सेवाले कुराकानी र execution स्वामित्व राख्छ; browser disconnect हुँदा रोक्ने child server होइन।
 
-उही UI ले [धेरै project tab र worktree](projects.md), [conversation परिवार र background activity](conversations.md), [bounded history loading, search र timeline navigation](history.md), र [command palette र shortcut](shortcuts.md) समर्थन गर्छ। browser र tablet पहुँचले execution host बाहिर सार्दैन।
+उही UI ले [धेरै project tab र worktree](projects.md), [conversation परिवार र background activity](conversations.md), [bounded history loading, search र timeline navigation](history.md), [command palette र shortcut](shortcuts.md), र [मिसन](missions.md) समर्थन गर्छ। browser र tablet पहुँचले execution host बाहिर सार्दैन।
 
 ## host तयार गर्नुहोस् {#prerequisites}
 
 1. Node.js 24 LTS र npm स्थापना गर्नुहोस्; repository को pinned build runtime 24.20.0 हो। desktop package मा Node/npm हुन्छ।
 2. Git लाई **backend प्रक्रियाको PATH** मा राख्नुहोस्। WSL भित्रको Git मात्र Windows backend का लागि पुग्दैन।
-3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.1.0**, सिफारिस qualification लक्ष्य **2.1.0**। नयाँ/custom build मा compatibility जाँच हुन्छ, tested-version allowlist होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
+3. OpenCode स्थापना वा चयन गर्नुहोस्: आवश्यक न्यूनतम **2.1.0**, सिफारिस qualification लक्ष्य **2.1.1**। नयाँ/custom build मा compatibility जाँच हुन्छ, tested-version allowlist होइन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
 4. server सुरु गर्ने फोल्डर रोज्नुहोस्, वा `--workspace-root` स्पष्ट दिनुहोस्।
 
 Git बिना स्पष्ट खोलिएको physical folder मा मात्र कुराकानी उपलब्ध हुन्छन्; Git र worktree कार्य असफल हुन्छन्। Git स्थापना र PATH परिवर्तनपछि backend restart गर्नुहोस्। workspace root ले opening/browsing सीमित गर्छ, agent execution होइन: [सुरक्षा](security.md) हेर्नुहोस्।
@@ -45,13 +45,15 @@ npx codenomad --generate-token --launch
 
 आदेश foreground मा चल्छन्। terminal बन्द वा Ctrl+C गर्दा backend र Remote Control जडान रोकिन्छ। `--launch` ले browser मात्र खोल्छ; server daemonize गर्दैन। unattended उपलब्धतामा स्पष्ट configuration, working directory, environment र restart policy सहित OS process/service manager अन्तर्गत उही आदेश चलाउनुहोस्। service log वा सार्वजनिक unit file मा secret नराख्नुहोस्।
 
-browser बन्द गर्दा छुट्टै चलिरहेको standalone backend रोकिँदैन। project tab बन्द गर्दा त्यो परियोजना CodeNomad मा बन्द हुन्छ र CodeNomad ले त्यो जडान पछ्याउन छोड्छ। OpenCode Location हट्दैन र सत्र चलिरहन्छन्; परियोजना फेरि खोल्दा ती भेटिन्छन्। backend shutdown ले पनि OpenCode चलिरहन्छ। CodeNomad नफर्केसम्म backend-dependent सुविधा अनुपलब्ध हुन्छन्; छुट्टै native scheduling आयुका लागि [मिसन](missions.md) हेर्नुहोस्।
+browser बन्द गर्दा छुट्टै चलिरहेको standalone backend रोकिँदैन। project tab बन्द गर्दा त्यो परियोजनाको CodeNomad जडान हट्छ, तर सत्र OpenCode मा चलिरहन्छन्; परियोजना फेरि खोल्दा ती भेटिन्छन्। CodeNomad ले आफ्नो नेटिभ Location कहिल्यै unload गर्दैन। पूरै विन्डो बन्द गर्दा, एप बन्द गर्दा वा reload गर्दा परियोजना जडान पुनर्स्थापनाका लागि राखिन्छन्। backend shutdown ले पनि OpenCode सेवा चलिरहन्छ। CodeNomad नफर्केसम्म backend-dependent सुविधा अनुपलब्ध हुन्छन्; छुट्टै native scheduling आयुका लागि [मिसन](missions.md) हेर्नुहोस्।
 
 ## ठेगाना र port {#addresses}
 
 startup ले **Local Connection URL**, उपलब्ध भए **Remote Connection URL**, र लागू भए **Other Accessible URLs** छाप्छ। अनुमान होइन छापिएको scheme र port प्रयोग गर्नुहोस्। loopback URL त्यही machine बाट मात्र पुगिन्छ; छापिएको LAN ठेगानालाई अझै routing र firewall पहुँच चाहिन्छ।
 
 HTTPS ले **9898** र HTTP ले **9899** प्राथमिकता दिन्छ। port override नहुँदा व्यस्त preferred port OS-assigned port मा फर्कन्छ। स्पष्ट nonzero port fallback हुँदैन; `0` ले OS-assigned माग्छ। port 0 देखि 65535 सम्म integer हुन्छन्।
+
+backend ले Missions जस्ता आफ्नै OpenCode plugin का लागि अनियमित `127.0.0.1` port मा अघोषित, प्रमाणीकृत HTTP listener पनि खोल्न सक्छ। यो छापिँदैन र client ठेगाना होइन।
 
 listener exposure, certificate, VPN/SSH र reverse proxy का लागि [प्रत्यक्ष रिमोट पहुँच](remote-access.md) हेर्नुहोस्। inbound port बिनाको पहुँचका लागि [Remote Control](remote-control.md) प्रयोग गर्नुहोस्।
 

@@ -2,13 +2,13 @@
 
 在项目和工具所在位置运行 CodeNomad，然后在本地或远程使用浏览器界面。后端提供文件系统访问、Git 操作、认证和事件交付。OpenCode 共享服务管理对话和执行；它不是浏览器断开后就应停止的子服务器。
 
-同一界面支持[多个项目标签页和工作树](projects.md)、[对话族和后台活动](conversations.md)、[有界历史加载、搜索和时间线导航](history.md)，以及[命令面板和快捷键](shortcuts.md)。浏览器和平板访问不会将执行移离主机。
+同一界面支持[多个项目标签页和工作树](projects.md)、[对话族和后台活动](conversations.md)、[有界历史加载、搜索和时间线导航](history.md)、[命令面板和快捷键](shortcuts.md)，以及[任务](missions.md)。浏览器和平板访问不会将执行移离主机。
 
 ## 准备主机 {#prerequisites}
 
 1. 安装 Node.js 24 LTS 和 npm；仓库固定构建运行时为 24.20.0。桌面包包含 Node/npm。
 2. 将 Git 加入**后端进程的 PATH**。仅 WSL 内的 Git 不满足 Windows 后端。
-3. 安装或选择 OpenCode：必需最低版本为 **2.1.0**，推荐验证目标为 **2.1.0**。更新或自定义构建会接受兼容检查，而非已测试版本白名单。参阅 [OpenCode 设置](opencode.md)。
+3. 安装或选择 OpenCode：必需最低版本为 **2.1.0**，推荐验证目标为 **2.1.1**。更新或自定义构建会接受兼容检查，而非已测试版本白名单。参阅 [OpenCode 设置](opencode.md)。
 4. 选择启动服务器的文件夹，或显式传入 `--workspace-root`。
 
 没有 Git 时，对话仅在显式打开的物理文件夹内可用；Git 和工作树操作失败。安装 Git，更改 PATH 后重启后端。工作区根目录限制打开/浏览，而非智能体执行：参阅[安全](security.md)。
@@ -52,6 +52,8 @@ npx codenomad --generate-token --launch
 启动时打印 **Local Connection URL**，可用时还打印 **Remote Connection URL**，适用时另有 **Other Accessible URLs**。请使用打印的协议和端口，不要猜地址。回环 URL 仅在该机器可达；打印的局域网地址仍需要路由和防火墙访问。
 
 HTTPS 首选端口 **9898**，HTTP 首选 **9899**。没有端口覆盖时，首选端口被占用会回退到操作系统分配端口。显式非零端口不回退；`0` 请求操作系统分配。端口接受 0 至 65535 的整数。
+
+后端还可能在随机的 `127.0.0.1` 端口上打开一个不公布、需认证的 HTTP 监听器，供其自身的 OpenCode 插件（如任务）使用。它不会被打印，也不是客户端地址。
 
 监听器暴露、证书、VPN/SSH 和反向代理请参阅[直接远程访问](remote-access.md)。无需入站端口的访问请使用[远程控制](remote-control.md)。
 

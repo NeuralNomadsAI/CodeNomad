@@ -12,7 +12,7 @@ Browsing a remote server means browsing that server's filesystem, not your phone
 
 Cloning writes a repository to the destination. **Remove the destination folder first if it already exists.** is destructive: enable it only when everything already there can be deleted. Use a fresh destination if unsure. A failed clone is not a reason to delete an existing project; inspect the reported destination and error before retrying.
 
-Recent entries are shortcuts. **Rename workspace** changes its displayed name; **Remove from recent** removes the shortcut, not its files or conversations. Clicking an already-open recent project opens a new tab; its **Switch to open project** button selects the existing tab instead.
+Recent entries are shortcuts. **Rename workspace** changes its displayed name; **Remove from recent** removes the shortcut, not its files or conversations. Clicking an already-open recent project opens a new tab; its **Open** button (**Switch to open project**) selects the existing tab instead.
 
 ## Use the new-instance launcher {#new-instance-launcher}
 

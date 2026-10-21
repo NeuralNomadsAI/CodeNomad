@@ -2,8 +2,8 @@
 
 ## Abrir el navegador de una sesión {#session-browser}
 
-1. En la barra de herramientas de una conversación, abre su vista previa web/de navegador.
-2. Introduce una URL `http://` o `https://` sin credenciales. Usa la barra de herramientas para navegar, actualizar e ir Atrás/Adelante.
+1. En la barra de herramientas de una conversación, elige **Abrir vista previa web**.
+2. Introduce una **URL de vista previa** `http://` o `https://` sin credenciales y elige **Abrir vista previa**. Usa la barra de herramientas para navegar, actualizar e ir Atrás/Adelante.
 3. Usa el botón de cierre de la vista previa para volver al chat. Ábrela de nuevo en esa conversación para continuar.
 
 Cada vista previa pertenece a su carpeta de proyecto y sesión. Cambiar de conversación, proyecto, Info o chat oculta un navegador invitado nativo abierto explícitamente sin descartar su documento/historial activo. Los navegadores invitados ocultos no son objetivos de automatización. Cerrar el proyecto/ventana o reiniciar el renderer termina el documento activo.
@@ -21,7 +21,7 @@ Las vistas previas nativas comparten cookies, inicios de sesión y almacenamient
 | Tauri para macOS/Linux | Iframe aislado | Sin automatización nativa de navegador | Solo dimensiones |
 | Navegador normal/vista remota | Alternativa iframe | Sin objetivo local de vista previa nativa | Solo dimensiones |
 
-No hay interruptor de modo desarrollador ni reinicio adicional de activación. La automatización nativa se prepara al iniciar el escritorio y usa la herramienta `codenomad.browser` vinculada a la sesión para abrir, navegar, obtener una instantánea, hacer clic, escribir y capturar pantalla. Que una herramienta esté disponible no autoriza todas las ventanas: la ejecución comprueba el backend propietario, las capacidades nativas, la sesión y el objetivo visible. El contenido de las páginas sigue sin ser fiable. Un iframe puede fallar porque el destino prohíbe incrustarlo; usa un navegador externo en lugar de debilitar sus protecciones.
+No hay interruptor de modo desarrollador ni reinicio adicional de activación. La automatización nativa se prepara al iniciar el escritorio y usa la herramienta `codenomad.browser` vinculada a la sesión para abrir, navegar, obtener una instantánea, capturar pantalla y realizar acciones en la página: hacer clic, escribir, seleccionar, pasar el cursor, arrastrar, desplazarse, pulsar teclas y esperar un texto. Que una herramienta esté disponible no autoriza todas las ventanas: la ejecución comprueba el backend propietario, las capacidades nativas, la sesión y el objetivo visible. Una acción cuya página se ocultó, se sustituyó o navegó mientras tanto se rechaza en lugar de enviarse a otra página, y una acción nunca se repite automáticamente. El contenido de las páginas sigue sin ser fiable. Un iframe puede fallar porque el destino prohíbe incrustarlo; usa un navegador externo en lugar de debilitar sus protecciones.
 
 ## Elegir una de seis plantillas de área visible {#templates}
 
@@ -56,7 +56,9 @@ Las plantillas móviles nativas establecen identidad Android/Chromium, orientaci
 
 El registro es configuración del servidor, compartida por sus clientes; no instala ni inicia el servicio. El puerto está en el equipo del backend, no en el portátil o teléfono desde el que miras. **En ejecución** indica accesibilidad, no que la aplicación/autenticación de la herramienta funcione correctamente. Eliminar el registro no detiene el proceso iniciado por separado. Cerrar su pestaña tampoco lo detiene.
 
-Si no es accesible, comprueba el proceso y el puerto en el backend. Si carga el HTML pero fallan los recursos/WebSockets, comprueba la ruta base y el modo de prefijo de la herramienta. Recrea un registro incorrecto con los ajustes previstos; no expongas públicamente el destino solo para eludir un error de proxy. Las aplicaciones SideCar pueden exponer una terminal o archivos con la autoridad de la cuenta del servidor; confía en sus usuarios y configuración. Control remoto no expone el tráfico proxy de aplicaciones SideCar; usa la vía adecuada de acceso directo descrita en [Acceso remoto](remote-access.md) y [Control remoto](remote-control.md).
+Si no es accesible, comprueba el proceso y el puerto en el backend. Si carga el HTML pero fallan los recursos/WebSockets, comprueba la ruta base y el modo de prefijo de la herramienta. Recrea un registro incorrecto con los ajustes previstos; no expongas públicamente el destino solo para eludir un error de proxy. Las aplicaciones SideCar pueden exponer una terminal o archivos con la autoridad de la cuenta del servidor; confía en sus usuarios y configuración.
+
+Un SideCar es una extensión de confianza de CodeNomad, no una vista previa aislada: su página se ejecuta con el propio origen de CodeNomad, por lo que sus scripts pueden usar CodeNomad con tu acceso de sesión iniciada. Registra solo servicios cuyo código sea de tu confianza. CodeNomad no reenvía al servicio sus propias cookies de inicio de sesión, mientras que las cookies propias del servicio se conservan. Control remoto no expone el tráfico proxy de aplicaciones SideCar; usa la vía adecuada de acceso directo descrita en [Acceso remoto](remote-access.md) y [Control remoto](remote-control.md).
 
 ## Ejemplo de OpenVSCode Server {#openvscode}
 

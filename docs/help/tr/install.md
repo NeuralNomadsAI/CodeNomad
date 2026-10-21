@@ -45,7 +45,7 @@ Electron Debian kurulumu, Chromium'un korumalı alanını yapılandırır. Kurul
 
 | Gereksinim | Nerede bulunması gerektiği | Mevcut gereksinim |
 | --- | --- | --- |
-| OpenCode CLI | Geçerli olduğu yerde seçilen WSL dağıtımı da dahil olmak üzere seçilen yürütme ana bilgisayarı | Minimum **2.1.0**; **2.1.0** önerilen/uygun hedeftir. Daha yeni veya özel sürümler, test edilmemiş sürüm yasağı yerine sözleşme doğrulamasından geçer. |
+| OpenCode CLI | Geçerli olduğu yerde seçilen WSL dağıtımı da dahil olmak üzere seçilen yürütme ana bilgisayarı | Minimum **2.1.0**; **2.1.1** önerilen/uygun hedeftir. Daha yeni veya özel sürümler, test edilmemiş sürüm yasağı yerine sözleşme doğrulamasından geçer. |
 | Git | CodeNomad arka uç hesabının `PATH`'si | Depo kimliği, Git işlemleri ve çalışma ağaçları için gereklidir. |
 | Node.js/npm | Bağımsız sunucu ve kaynak derleme ana bilgisayarı | Node.js 24 LTS; tekrarlanabilir kaynak derlemeleri `.node-version` (**24.20.0**) kullanır. Masaüstü çalışma zamanı/kurulum kaynaklarına dahildir. |
 | Çalışma alanı klasörü | Arka uçtan erişilebilen disk | Uzak bir tarayıcı tarafından çıkarılan yerel cihaz klasörü değil, açıkça açılmış bir fiziksel klasör. |
@@ -62,7 +62,7 @@ Git olmadan, yine de fiziksel bir klasörü açabilir ve aracıdan kurulum yard�
 2. Bir projeyi açmadan önce çalışma zamanı durumunu doğrulayın.
 3. Yürütülebilir dosyayı, kurulumu ve paylaşılan hizmeti ayrı ayrı yönetmek için **Preferences → OpenCode** öğesini tekrar ziyaret edin.
 
-CodeNomad, `PATH` üzerinde uyumlu yürütülebilir dosyaları tercih eder ve açıkça seçilmiş bir yürütülebilir dosyayı destekler. CLI'nin kurulması/güncellenmesi, halihazırda çalışan bir paylaşılan hizmeti sessizce yeniden başlatmaz. Yeniden başlatma/yeniden yükleme sonuçları, WSL ve oturum ortamı için bkz. [OpenCode kurulumu](opencode.md).
+CodeNomad, `PATH` üzerinde uyumlu yürütülebilir dosyaları tercih eder ve açıkça seçilmiş bir yürütülebilir dosyayı destekler. `PATH` daha eski bir OpenCode başlatıyorsa kurulum, npm ile kurulmuş bir OpenCode 1.x'i onaydan sonra değiştirmeyi ya da başka bir yolla yapılmış bir kurulumun yanına, ona hiç dokunmadan CodeNomad için OpenCode 2 kurmayı önerir; bkz. [OpenCode kurulumu](opencode.md#select-cli). CLI'nin kurulması/güncellenmesi, halihazırda çalışan bir paylaşılan hizmeti sessizce yeniden başlatmaz. Yeniden başlatma/yeniden yükleme sonuçları, WSL ve oturum ortamı için bkz. [OpenCode kurulumu](opencode.md).
 
 ## Bunun yerine bir tarayıcı kullanın {#browser-install}
 

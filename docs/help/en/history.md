@@ -9,7 +9,7 @@ Stored history, what the transcript currently displays and the model's compacted
 3. Enable **Include tools and thinking** if you need technical content as well as readable text.
 4. Select an excerpt, or use **Next results** to continue beyond the current page.
 
-Search is literal and case-insensitive, over stored history rather than only mounted transcript rows. Workspace scope follows the opened project's authorized directory tree and worktrees, not every project on the OpenCode service. File/image attachment bytes and opaque provider state are not searchable text.
+Search is literal and case-insensitive, over stored history rather than only mounted transcript rows. Workspace scope follows the opened project's authorized directory tree and worktrees, not every project on the OpenCode service; its results are grouped by conversation, each named by its title and the worktree that currently holds it. File/image attachment bytes and opaque provider state are not searchable text.
 
 The progress line **This page: … results · … messages scanned** describes this result page, not workspace totals. Results arrive in batches. Skipped oversized or unsupported messages are reported; absence of a hit does not prove those messages contain no match. New messages arriving during a scan need a fresh search to be included consistently.
 
@@ -18,10 +18,12 @@ Opening an empty search does not scan history. Changing query/scope, closing the
 ## Open results and use the timeline {#timeline-navigation}
 
 1. Choose a current-session search result to jump to its surrounding passage.
-2. Choose a result from another session to open a separate preview of that message.
+2. Choose a result from another session to open a separate preview of that message; use **Open in session** to go to that conversation at the hit.
 3. In **Message timeline**, hover or focus a marker for an excerpt, then select it to navigate. Use the first/latest message controls to return to the ends of stored history.
 
-The timeline represents full session structure even when the transcript holds only a bounded passage. Jumps load the destination rather than fetching every intervening message. Other-session search previews do not load that session's entire transcript or silently select it.
+The timeline represents full session structure even when the transcript holds only a bounded passage. Jumps load the destination rather than fetching every intervening message. Other-session search previews do not load that session's entire transcript or select it; only **Open in session** switches conversations.
+
+Tool markers follow **Message content**: a tool type hidden there has no marker (none with **Nothing**), except a tool waiting for a permission. A step that only ran tools shows just its tool markers, without an empty agent marker.
 
 While a jump loads, the old passage stays visible. A newer jump or manual transcript interaction supersedes obsolete navigation; a failed jump leaves the visible passage intact. Retry the destination rather than repeatedly reloading the whole project. Historical reading does not change the composer agent/model selection.
 
@@ -38,7 +40,7 @@ The timeline is hidden when the conversation is too narrow (below 420 CSS pixels
 | Delete session | Session row **Delete session**, or selected-session delete | Recursively deletes the native conversation and its descendant subsessions/history after confirmation; no undo |
 | Scrub Sessions | Command palette | Broader session deletion, not a display or context-size setting |
 
-**Message content** applies across conversations. Hiding tools does not disable tools, change permissions or remove stored output. Very large individual messages may also show **Show … more** at an omitted gap to keep rendering responsive; expanding that gap does not recover deleted content.
+**Message content** applies across conversations. Choose a preset (**Nothing**, **Minimal**, **Balanced** or **Everything**) at its top or in **Settings → Chat**, then adjust individual rows; the **Message content** preset menu then shows **Custom**. Hiding tools does not disable tools, change permissions or remove stored output. To keep rendering responsive, very large messages show **Show … more** at an omitted gap, and very long text or tool output stops at a **… more characters hidden** line with **Show all**. Revealing either is display-only and does not recover deleted content.
 
 ## Compact a session {#compact-session}
 

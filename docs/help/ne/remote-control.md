@@ -11,12 +11,12 @@ Remote Control ले paired browser वा desktop client लाई inbound net
 
 link **पाँच मिनेट** मान्य हुन्छ र **एकपटक** सफल हुन्छ। credential झैं लिनुहोस्: प्रयोग गर्ने जोकोही paired device बन्न सक्छ। code URL fragment मा हुन्छ, query string मा होइन। **नयाँ जोडी लिंक बनाउनुहोस्** ले अघिल्लो unused link तुरुन्त अमान्य गर्छ। Stop, backend shutdown र tunnel failure ले बाँकी pairing link रद्द गर्छन्।
 
-अर्को desktop CodeNomad pair गर्न **सर्भरहरू → सर्भरमा जडान गर्नुहोस्** खोली **सर्भर URL** मा link paste गरी **जडान गर्नुहोस्** रोज्नुहोस्। bookmark मा tunnel origin मात्र बचत हुन्छ; code रहँदैन। pairing link मा TLS verification enabled रहन्छ।
+अर्को desktop CodeNomad pair गर्न त्यसको गृह पृष्ठमा **CodeNomad सर्भर जडान गर्नुहोस्** रोजी **सर्भर URL** मा link paste गरेर **जडान गर्नुहोस्** रोज्नुहोस्। pairing link **बचत गर्नुहोस्** बाट पनि आफ्नो विन्डो खोल्छ, किनकि खोल्दा नै code खपत हुन्छ। bookmark मा tunnel origin मात्र बचत हुन्छ; code रहँदैन। pairing link मा TLS verification enabled रहन्छ।
 
 ## paired device व्यवस्थापन {#paired-devices}
 
 1. host मा **सेटिङहरू → रिमोट पहुँच → रिमोट कन्ट्रोल** फर्कनुहोस्।
-2. **जोडिएका उपकरणहरू** र तिनको **अन्तिम पटक:** समय समीक्षा गर्नुहोस्।
+2. **जोडिएका उपकरणहरू** र तिनको **अन्तिम पटक:** समय समीक्षा गर्नुहोस्। हरेक device लाई त्यसलाई pair गर्ने platform र browser अनुसार नाम दिइन्छ, जस्तै `iPhone · Safari`।
 3. अब जोडिन नहुने device का लागि **हटाउनुहोस्** रोज्नुहोस्।
 
 revocation ले हालका HTTP/SSE जडान र भावी पहुँच दुवै अन्त्य गर्छ। पहुँच फर्काउन नयाँ link बाट pair गर्नुहोस्। device **30 दिन प्रयोग नभएपछि** expire हुन्छ। **32-device सीमा** मा नयाँ pairing ले सबैभन्दा पुरानो last-seen device बदल्छ र त्यसका जडान बन्द गर्छ।
@@ -27,9 +27,9 @@ direct-access password बदल्दा device revoke **हुँदैनन�
 
 ### आफ्नो ठाउँ नगुमाई पुनःpair {#re-pair}
 
-1. client ले device अब paired छैन भने त्यो पृष्ठ खुलै राख्नुहोस्।
+1. client ले **यो उपकरण फेरि जोड्नुहोस्** देखाए त्यो पृष्ठ खुलै राख्नुहोस्।
 2. host मा **नयाँ जोडी लिंक बनाउनुहोस्** रोजी **उही client browser/profile** मा खोल्नुहोस्। saved desktop server मा विद्यमान remote-window storage पुनःप्रयोग गर्न नयाँ pairing link बाट reconnect गर्नुहोस्।
-3. पर्खिरहेको पृष्ठमा फर्केर authentication फेरि जाँच्नुहोस्।
+3. पर्खिरहेको पृष्ठमा फर्केर **जडान जाँच्नुहोस्** रोज्नुहोस्; पृष्ठमा फेरि focus आउँदा पनि यसले फेरि जाँच्छ।
 
 recovery ले खुला पृष्ठ र मस्यौदा जोगाउँछ; असफल कार्य replay गर्दैन। retry अघि send, answer वा delete लागू भयो कि जाँच्नुहोस्। direct-access password ले Remote Control pairing पुनःप्राप्त गर्न सक्दैन।
 
@@ -42,7 +42,7 @@ recovery ले खुला पृष्ठ र मस्यौदा जोग
 | Remote Control रोक्ने | पहुँच disconnect र automatic launch-resume हटाउँछ; device record राख्छ। |
 | backend shutdown / अन्तिम desktop window बन्द भई app quit | Remote Control offline हुन्छ। shared OpenCode सेवा चलिरहन सक्छ, तर रोकिएको backend बाट यो UI दिन सक्दैन। |
 | Remote Control started छोडेपछि launch | नयाँ pairing link नदिई background मा reconnect हुन्छ। कहिल्यै start नगरिएका installation आफैं enabled हुँदैनन्। |
-| resume असफल वा fatal tunnel error | सम्झिएको चयन रहन्छ; host मा **रिफ्रेस** जाँच्नुहोस्। **रिमोट कन्ट्रोल रोक्नुहोस्** ले हटाउँछ; enabled रहे पछिको launch ले retry गर्छ। |
+| resume असफल वा fatal tunnel error | सम्झिएको चयन रहन्छ र host ले त्रुटि देखाउँछ; Remote Control card को refresh icon ले यसको अवस्था फेरि पढ्छ। **रिमोट कन्ट्रोल सुरु गर्नुहोस्** ले अहिले नै retry गर्छ; **रिमोट कन्ट्रोल रोक्नुहोस्** ले चयन हटाउँछ। अन्यथा पछिको launch ले retry गर्छ। |
 
 automatic launch-resume प्रति configuration directory एउटा backend मा सीमित छ। थप tunnel क्षमताका लागि उही configuration मा प्रतिस्पर्धी host नचलाउनुहोस्। desktop exit पछि पनि पुग्नुपर्ने host का लागि छुट्टै व्यवस्थापित [standalone server](server.md) राख्नुहोस्; Remote Control स्वतन्त्र daemon होइन।
 

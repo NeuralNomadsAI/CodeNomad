@@ -54,6 +54,8 @@ Check the [binding matrix and TLS procedures](remote-access.md), especially stan
 
 `--workspace-root` restricts which workspaces can be opened, and `--unrestricted-root` relaxes browsing. Neither is an OS jail, container, filesystem sandbox or restriction on what an authorized native tool can do. Agents, shell commands, plugins and MCP tools act with the execution host's permissions and their own configured credentials.
 
+[SideCars](browser-sidecars.md) are trusted additions. CodeNomad withholds its sign-in and paired-device cookies from the SideCar service, but the SideCar page loads in the same origin as CodeNomad and its scripts can act with your signed-in session. Register only services you trust as much as CodeNomad itself.
+
 Use OS accounts, containers/VMs and upstream permission configuration where actual isolation is required. Do not grant a device access merely because you expect it to see only one tab. Server configuration and the shared OpenCode service can affect other conversations/projects; see [OpenCode setup](opencode.md), [Permissions](permissions.md) and [Extensions](extensions.md) for their separate boundaries.
 
 ## Keep credentials and diagnostics private {#privacy}

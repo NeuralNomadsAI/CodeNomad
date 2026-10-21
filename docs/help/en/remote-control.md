@@ -11,12 +11,12 @@ Remote Control lets a paired browser or desktop client use your running CodeNoma
 
 The link is valid for **five minutes** and succeeds **once**. Treat it as a credential: anyone who consumes it can become a paired device. The code lives in the URL fragment, not the query string. **Create new pairing link** immediately invalidates the preceding unused link. Stop, backend shutdown and tunnel failure cancel outstanding pairing links.
 
-To pair another desktop CodeNomad, open **Servers → Connect to Server**, paste the link into **Server URL**, and choose **Connect**. Only the tunnel origin is saved as the bookmark; the code is not retained. TLS verification stays enabled for pairing links.
+To pair another desktop CodeNomad, choose **Connect CodeNomad Server** on its home page, paste the link into **Server URL**, and choose **Connect**. A pairing link opens its window even from **Save**, because opening it consumes the code. Only the tunnel origin is saved as the bookmark; the code is not retained. TLS verification stays enabled for pairing links.
 
 ## Manage paired devices {#paired-devices}
 
 1. On the host, return to **Settings → Remote Access → Remote Control**.
-2. Review **Paired devices** and their **Last seen** time.
+2. Review **Paired devices** and their **Last seen** time. Each device is named after the platform and browser that paired it, such as `iPhone · Safari`.
 3. Choose **Revoke** for a device that should no longer connect.
 
 Revocation ends that device's current HTTP/SSE connections as well as future access. Pair again with a new link to restore access. A device expires after **30 days without use**. At the **32-device limit**, a new pairing replaces the least recently seen device and closes its connections.
@@ -27,9 +27,9 @@ Changing the direct-access password does **not** revoke devices. **Stop Remote C
 
 ### Re-pair without losing your place {#re-pair}
 
-1. If the client reports that the device is no longer paired, leave that page open.
+1. If the client shows **Pair this device again**, leave that page open.
 2. On the host, choose **Create new pairing link** and open it in the **same client browser/profile**. For a saved desktop server, reconnect using the fresh pairing link so its existing remote-window storage is reused.
-3. Return to the waiting page and check authentication again.
+3. Return to the waiting page and choose **Check connection**; it also checks again when the page regains focus.
 
 Recovery preserves the open page and drafts; it does not replay a failed action. Check whether a send, answer or delete took effect before retrying it. A direct-access password cannot recover Remote Control pairing.
 
@@ -42,7 +42,7 @@ Recovery preserves the open page and drafts; it does not replay a failed action.
 | Stop Remote Control | Disconnects access and clears automatic launch-resume; keeps device records. |
 | Backend shutdown / last desktop window closes and the app quits | Remote Control goes offline. OpenCode's shared service can remain running, but cannot serve this UI through a stopped backend. |
 | Launch after leaving Remote Control started | Reconnects in the background without issuing a new pairing link. Installations never started do not enable themselves. |
-| Failed resume or fatal tunnel error | The remembered choice remains; inspect **Refresh** on the host. **Stop Remote Control** clears it; a later launch retries if it remains enabled. |
+| Failed resume or fatal tunnel error | The remembered choice remains and the host shows the error; the Remote Control card's refresh icon rereads its state. **Start Remote Control** retries now; **Stop Remote Control** clears the choice. Otherwise a later launch retries. |
 
 Automatic launch-resume is limited to one backend per configuration directory. Do not start competing hosts with the same configuration to obtain extra tunnel capacity. For a host that must stay reachable after a desktop exit, deploy a separately managed [standalone server](server.md); Remote Control is not an independent daemon.
 

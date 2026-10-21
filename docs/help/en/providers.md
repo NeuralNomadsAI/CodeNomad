@@ -4,10 +4,10 @@ Provider authentication belongs to the connected OpenCode service, not to the br
 
 ## Connect a model or search provider {#connect}
 
-1. Open a workspace, then **Settings → Providers**.
-2. In **Models** or **Web search**, choose **Select provider**, then **Connect**.
-3. Complete the native **Authentication method** offered: API key, OAuth or command. For OAuth, use **Open authorization page** and submit an authorization code only when requested.
-4. Check the configured-provider row after completion; use **Refresh** if the result is unclear.
+1. Open a workspace, then **Settings → Providers**. **Models** starts expanded; expand **Web search** for search providers.
+2. In that group, choose **Select provider**, then **Connect**.
+3. For a model provider, complete the native **Authentication method** offered: API key, OAuth or command. For OAuth, use **Open authorization page** and submit an authorization code only when requested. Search providers connect with an API key.
+4. Check the configured-provider row after completion. **Models** rereads after connections, account changes and reconnects; **Web search** also has **Refresh**.
 
 Search-only integrations appear under **Web search**, not **Models**. Saving authentication does not choose a model or change the default search provider. API keys and OAuth credentials are saved by the active OpenCode server. The browser receives connection metadata, not saved credential secrets. A connection sourced from environment variables is read-only in this UI: change its owning environment rather than trying to disconnect it here.
 
@@ -17,9 +17,9 @@ If the authorization window is blocked, use **Open authorization page**, **Open 
 
 1. In the provider's row, use **Active account** to select a saved credential.
 2. Use **Add account** to authenticate another connection.
-3. To manage a different saved account, select it first, then use **Rename account** or **Remove account**. Renaming uses **Account label** and **Save**.
+3. To manage a different saved account, select it first, then use **Rename account** or **Remove account**. Renaming uses **Account label** and **Save**; **Remove account** acts immediately, without a confirmation.
 
-Selection, renaming and removal affect that integration across the OpenCode service, including other projects and clients. Removing a credential can leave those clients without authentication; it does not delete conversation history or revoke the provider's remote account. Environment connections cannot be selected as writable saved credentials or removed here. If an operation fails, refresh and reconcile **Active account** before acting again.
+Selection, renaming and removal affect that integration across the OpenCode service, including other projects and clients. Removing a credential can leave those clients without authentication; it does not delete conversation history or revoke the provider's remote account. Environment connections cannot be selected as writable saved credentials or removed here. If an operation fails, CodeNomad rereads the accounts: check **Active account** again before acting.
 
 ### Automatic selection limits {#automatic-selection}
 
@@ -27,7 +27,7 @@ With multiple saved credentials on a supported integration, **Auto-select accoun
 
 | Eligible integration | Eligible account type |
 | --- | --- |
-| OpenAI / Codex | Codex OAuth subscription accounts, not OpenAI pay-as-you-go keys. |
+| OpenAI / Codex | Codex browser/device OAuth subscription accounts, not OpenAI pay-as-you-go keys or the ChatGPT sign-in method whose usage OpenAI does not provide. |
 | OpenCode Go | Go key, or OpenCode Console sign-in/key used for the **Go provider only**, not Zen pay-as-you-go credits. |
 | Anthropic | OpenCode's Claude Pro/Max OAuth login, **not** the Claude Code login. |
 | GitHub Copilot | OAuth with readable premium-request quota; enterprise-endpoint credentials are not readable candidates. |
@@ -48,7 +48,9 @@ Visibility and favorites organize CodeNomad's selectors; they do not uninstall m
 
 ## Usage, token counts and expired logins {#usage}
 
-Use **Usage** in the right panel for the active conversation's provider-plan windows, reset times and supported balances. These provider readings are different from per-message **Tokens** and cost estimates: a subscription quota is not a bill calculated from the visible transcript. A missing, stale or unknown reading is not zero usage or proof of remaining capacity. **Provider credit balance** in Chat settings controls supplemental balance display.
+Use **Usage** in the right panel for the active conversation's provider-plan windows, reset times and supported balances. These provider readings are different from per-message **Tokens** and cost estimates: a subscription quota is not a bill calculated from the visible transcript. A missing, stale or unknown reading is not zero usage or proof of remaining capacity. **Provider credit balance** in **Settings → Advanced** controls supplemental balance display.
+
+OpenAI does not provide usage for one ChatGPT sign-in method: Usage says so instead of showing quota windows. Chatting still works, and reconnecting the same login does not restore the reading.
 
 Usage follows the selected native credential. Claude through `anthropic`/`claude` uses OpenCode's Anthropic OAuth. The `claude-code` provider uses the Claude Code login on the daemon's host, including its WSL distribution: `CLAUDE_CODE_OAUTH_TOKEN`, then the stored login, with `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` or `~/.claude` determining file storage; local macOS can use Keychain. CodeNomad does not substitute one Claude login for the other.
 
@@ -71,10 +73,10 @@ Keep tokens/cookies out of shell history, screenshots and reports. Optional read
 
 ## Web-search default and Project override {#web-search}
 
-1. In **Settings → Providers → Web search**, connect the search integration if it needs authentication.
+1. In **Settings → Providers**, expand **Web search** and connect the search integration with its API key if it needs one.
 2. Choose **Default search** for Global configuration.
-3. Use **For the current project** to override it for the active Location. Check **Search in this project** for the effective result.
+3. Use **For the current project** to override it for the active Location. Hover or focus that selector to see **Search in this project** with the effective result.
 
-Changes save automatically. **Default / inherited** uses inherited configuration or the saved native choice; a Project override wins over Global. **Disabled** turns search off at the selected scope; **Automatic provider** requests native automatic provider selection. An environment-sourced choice is displayed as read-only.
+Changes save automatically. **Default / inherited** uses inherited configuration or the saved native choice; a Project override wins over Global. **Disabled** turns search off at the selected scope; **Automatic provider** requests native automatic provider selection. **Web search** loads its connections and choices only while expanded. **Disconnect** removes a saved search key; a connection supplied by an environment variable is labelled read-only and has no **Disconnect**.
 
 Search credentials remain service-global even when the provider choice is Project-scoped. Saving a key does not select it as the search default. If reading/saving fails, refresh before retrying; do not replace configuration blindly. For native configuration details, see [OpenCode documentation](https://opencode.ai/v2/docs/) and [OpenCode setup](opencode.md).

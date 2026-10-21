@@ -4,14 +4,16 @@ CodeNomad connects to a shared OpenCode service on the execution host. Selecting
 
 ## Select or install the CLI {#select-cli}
 
-1. Open **Settings → OpenCode** and use **OpenCode Binary** to select the executable.
-2. Leave automatic selection enabled to prefer the server's PATH, then its user npm installation; or use **Browse for Binary…** or enter a path and choose **Add**.
+1. Open **Settings → OpenCode** and use the **OpenCode Binary** card, below **OpenCode version**, to select the executable.
+2. Leave the automatic entry selected to prefer the server's PATH, unless it holds an older OpenCode, then its user npm OpenCode 2 installation; or use **Browse for Binary…** or enter a path and choose **Add**.
 3. Use **Check status and updates**. If OpenCode is missing, choose **Install and start OpenCode**; review the host and installation scope first.
 4. If setup offers **Connect and continue**, use it after resolving the reported problem.
 
 Installation uses bundled Node/npm for a standard user installation shared with other clients. **Install for the user and configure PATH** changes that user's terminal setup; open a new terminal afterward. A browser connects to the CodeNomad server: its file picker and executable selection concern that server, not the browsing device.
 
-The installed executable and the running service can have different versions. Check **Version details** rather than assuming that selecting another executable has replaced the live daemon. If installation is busy or the executable is locked, wait for the installer or process to release it and check status before retrying; do not run competing installers.
+When an older OpenCode comes first on PATH, the offered action depends on how it was installed. For OpenCode 1.x installed with npm, **Replace OpenCode {version} with OpenCode 2** asks for confirmation, removes that npm package and installs OpenCode 2 in the same npm folder; the OpenCode data folder is kept, and OpenCode 2 imports 1.x conversations itself. An older or unusable OpenCode installed another way (winget, Homebrew, manual) is never modified: **Install OpenCode 2 for CodeNomad** installs OpenCode 2 in the user npm folder beside it, and CodeNomad then uses that copy. A terminal's `opencode` command may still start the older version. An explicitly selected custom executable is never replaced.
+
+The installed executable and the running service can have different versions. Compare **Installed version** with **Running service** in the **OpenCode version** card rather than assuming that selecting another executable has replaced the live daemon; **Version details** lists the minimum and recommended versions. If installation is busy or the executable is locked, wait for the installer or process to release it and check status before retrying; do not run competing installers.
 
 ## Required, recommended and unverified versions {#versions}
 
@@ -42,12 +44,12 @@ OpenCode owns its global service registration, sessions, messages and database. 
 | Restart service | Replaces the shared process and interrupts active work in all connected OpenCode clients; session history remains. | Reconnect and inspect conversations and scheduled Missions; a restart is not automatic continuation. |
 | Reload OpenCode configuration | Keeps the process but rebuilds **every loaded Location** for all clients. Cancels pending permissions/Forms and closes terminals/background commands; active work may be interrupted. | Recheck resources and pending work after reload. Do not repeat a prompt or mutation merely because its reply was lost. |
 
-Use **Reload OpenCode configuration** explicitly when a saved configuration or installed plugin remains unavailable and the disruption is acceptable. It is not a harmless display refresh. CodeNomad will not use an older selected CLI to downgrade a newer running daemon.
+Use **Reload OpenCode configuration**, under **Troubleshooting** when the running service supports it, explicitly when a saved configuration or installed plugin remains unavailable and the disruption is acceptable. It is not a harmless display refresh. CodeNomad will not use an older selected CLI to downgrade a newer running daemon.
 
 ## Session environment {#session-environment}
 
-1. Open **Settings → Advanced → Environment Variables**.
-2. Add, change or remove the profile's overrides.
+1. Open **Settings → Advanced** and expand **Environment Variables**.
+2. Add, change or remove the profile's overrides; each change is saved immediately.
 3. Send the next prompt, custom command or session shell request through CodeNomad to apply the current environment to that conversation.
 
 This is a configuration-profile setting, applied server-side before each send. Merely opening/reading a conversation or saving settings does not alter a native session. Removing an override restores the execution host's inherited value, or removes it if absent there. Failure to apply the environment blocks the send instead of using stale values.

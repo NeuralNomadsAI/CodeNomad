@@ -28,7 +28,7 @@ If installation is missing, first confirm HTTPS trust and browser support, then 
 
 Use **Left panel** and **Right panel** controls to open navigation and tools. On narrow layouts, panels overlay the conversation rather than forcing a desktop-width canvas; opening one floating panel closes the other. Conversation-header actions move into their overflow menu when space is limited.
 
-The composer keeps Agent, Model and Thinking in its footer. The field resizes with the visible conversation, including the on-screen keyboard; long drafts remain scrollable. Opening an interruption temporarily compacts the composer without changing its saved height or draft. Answer permissions/questions in the dock above it, keeping the dock's action footer reachable. See [Conversations](conversations.md) and [Permissions](permissions.md).
+The composer keeps Agent, Model and Thinking in its footer. The field resizes with the visible conversation, including the on-screen keyboard; long drafts remain scrollable. On touch-only devices, sending does not reopen the on-screen keyboard, so you can read the reply; tap the composer to continue. While a session runs, the composer's **More actions** menu offers **Queue message** or **Steer now**, whichever your normal send does not do, without needing a hardware-keyboard shortcut. Opening an interruption temporarily compacts the composer without changing its saved height or draft. Answer permissions/questions in the dock above it, keeping the dock's action footer reachable. See [Conversations](conversations.md) and [Permissions](permissions.md).
 
 ## Capability and connectivity limits {#limits}
 

@@ -117,7 +117,8 @@ code/key chords isolate LTR, and selected rows follow the app's 40%/50% accent-i
 ## Application entry points
 
 Electron and both Tauri Help-menu branches put **CodeNomad Help** first, before
-the existing update/About items. Native menu labels remain English. The hosts
+the existing update/About items. Native menu labels follow the UI locale once a
+window reports them (English until then). The hosts
 send `open-help` to the primary renderer; its existing palette-command dispatch
 executes the localized **Open help** command and uses the current UI locale.
 Browser and remote users can run the same command from the palette.

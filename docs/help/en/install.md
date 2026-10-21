@@ -45,7 +45,7 @@ The Electron Debian installation configures Chromium's sandbox. Do not disable t
 
 | Requirement | Where it must be available | Current requirement |
 | --- | --- | --- |
-| OpenCode CLI | Selected execution host, including the selected WSL distribution where applicable | Minimum **2.1.0**; **2.1.0** is the recommended/qualified target. Newer or custom versions undergo contract validation rather than an untested-version ban. |
+| OpenCode CLI | Selected execution host, including the selected WSL distribution where applicable | Minimum **2.1.0**; **2.1.1** is the recommended/qualified target. Newer or custom versions undergo contract validation rather than an untested-version ban. |
 | Git | CodeNomad backend account's `PATH` | Required for repository identity, Git operations and worktrees. |
 | Node.js/npm | Standalone-server and source-build host | Node.js 24 LTS; reproducible source builds use `.node-version` (**24.20.0**). Bundled with desktop runtime/installation resources. |
 | Workspace folder | Backend-accessible disk | An explicitly opened physical folder, not a device-local folder inferred by a remote browser. |
@@ -62,7 +62,7 @@ Without Git, you can still open a physical folder and use directory-only convers
 2. Verify the runtime status before opening a project.
 3. Revisit **Preferences → OpenCode** to manage the executable, installation and shared service separately.
 
-CodeNomad prefers compatible executables on `PATH` and supports an explicitly selected executable. Installing/updating a CLI does not silently restart an already running shared service. See [OpenCode setup](opencode.md) for restart/reload consequences, WSL and session environment.
+CodeNomad prefers compatible executables on `PATH` and supports an explicitly selected executable. If `PATH` starts an older OpenCode, setup offers to replace an npm-installed OpenCode 1.x after confirmation, or to install OpenCode 2 for CodeNomad beside an installation made another way, which it never modifies; see [OpenCode setup](opencode.md#select-cli). Installing/updating a CLI does not silently restart an already running shared service. See [OpenCode setup](opencode.md) for restart/reload consequences, WSL and session environment.
 
 ## Use a browser instead {#browser-install}
 
