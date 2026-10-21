@@ -794,10 +794,14 @@ export default function MessageBlock(props: MessageBlockProps) {
       }
     }
 
-    // One usage line per agent response, summed over its cleanup scope's steps.
+    // One usage line after every agent message, summed since the previous one,
+    // right after its text and before tools this step calls, so the line never
+    // splits those tools from the next steps' technical group.
     const usageLine = props.usageLine?.()
     if (usageLine) {
-      items.push({ type: "usage", key: `${current.id}:usage`, messageInfo: usageLine.info, accentColor: lastAccentColor || defaultAccentColor })
+      const lastContent = items.map((item) => item.type).lastIndexOf("content")
+      items.splice(lastContent < 0 ? items.length : lastContent + 1, 0,
+        { type: "usage", key: `${current.id}:usage`, messageInfo: usageLine.info, accentColor: defaultAccentColor })
     }
 
     const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.hiddenCount > 0 }

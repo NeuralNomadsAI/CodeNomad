@@ -68,17 +68,8 @@ export function hasVisibleUsage(messageInfo: MessageInfo | undefined, usageVisib
 }
 
 /** A transcript record in order; prompts and native end-of-turn records end the turn. */
-export interface UsageStep { messageId: string; endsTurn?: boolean; info?: MessageInfo; endsWithResponse?: boolean }
+export interface UsageStep { messageId: string; endsTurn?: boolean; info?: MessageInfo; hasResponseText?: boolean }
 
-/** Whether a step's last cleanup item (tool, reasoning or response text) is response text. */
-export function endsWithResponseText(parts: readonly ClientPart[]): boolean {
-  for (let index = parts.length - 1; index >= 0; index--) {
-    const part = parts[index]
-    if (isResponseTextPart(part)) return true
-    if (part.type === "tool" || part.type === "reasoning") return false
-  }
-  return false
-}
 export interface UsageLine {
   /** The summed usage, shown with the response's own message metadata. */
   info: MessageInfo
@@ -86,12 +77,13 @@ export interface UsageLine {
 }
 
 /**
- * One usage line per agent response, with the scope of its "delete tools and
- * reasoning" cleanup: a settled step ending with response text shows the sum of
- * itself and every settled step since the previous such step or prompt. A step
- * whose response text is followed by tools passes its usage on to the next
- * response, so no usage line splits a technical group. A turn ending without a
- * response, or whose last step failed, shows none.
+ * One usage line after every agent message: a settled step with response text
+ * shows the sum of itself and every settled step since the previous line or
+ * prompt, so tool-only steps count toward the next message. The line follows
+ * the text, before tools the same step calls, so it never splits a technical
+ * group. A model call cannot be split, so a step that writes text and then
+ * calls tools counts entirely toward that text. A failed step, or a turn
+ * ending without a message, shows none.
  */
 export function projectUsageLines(steps: readonly UsageStep[]): Map<string, UsageLine> {
   const lines = new Map<string, UsageLine>()
@@ -103,7 +95,7 @@ export function projectUsageLines(steps: readonly UsageStep[]): Map<string, Usag
     }
     if (!hasVisibleUsage(step.info, true)) continue
     pending.push(step.info!)
-    if (step.endsWithResponse && !step.info!.error) {
+    if (step.hasResponseText && !step.info!.error) {
       lines.set(step.messageId, sumUsage(pending))
       pending = []
     }

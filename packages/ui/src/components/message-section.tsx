@@ -44,7 +44,7 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../s
 import type { SessionInboxUser } from "@opencode/client"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { endsWithResponseText, getTechnicalCleanupParts, getTechnicalGroupKind, hasVisibleUsage, isResponseTextPart, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, projectUsageLines, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem, type UsageLine, type UsageStep } from "../lib/message-part-grouping"
+import { getTechnicalCleanupParts, getTechnicalGroupKind, hasVisibleUsage, isResponseTextPart, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, projectUsageLines, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem, type UsageLine, type UsageStep } from "../lib/message-part-grouping"
 
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
@@ -198,7 +198,7 @@ export default function MessageSection(props: MessageSectionProps) {
       if (record.role === "user" || info?.nativeType === "idle") return [{ messageId, endsTurn: true }]
       // Only settled steps count; skip their display data otherwise (this reruns per streamed token).
       if (!hasVisibleUsage(info, true)) return []
-      return [{ messageId, info, endsWithResponse: endsWithResponseText(buildRecordDisplayData(props.instanceId, record).orderedParts) }]
+      return [{ messageId, info, hasResponseText: buildRecordDisplayData(props.instanceId, record).orderedParts.some(isResponseTextPart) }]
     }))
   })
   const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
