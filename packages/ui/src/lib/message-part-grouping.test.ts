@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { getTechnicalCleanupParts, groupTechnicalParts, hasVisibleUsage, projectTranscriptTechnicalGroups, segmentExplorationItems, technicalPartKey, type TechnicalCleanupTranscriptItem } from "./message-part-grouping.ts"
+import { endsWithResponseText, getTechnicalCleanupParts, groupTechnicalParts, hasVisibleUsage, projectTranscriptTechnicalGroups, projectUsageLines, segmentExplorationItems, technicalPartKey, type TechnicalCleanupTranscriptItem, type UsageStep } from "./message-part-grouping.ts"
 import type { ClientPart, MessageInfo } from "../types/message.ts"
 
 const part = (id: string, type: ClientPart["type"], tool?: string) => ({ id, type, ...(tool ? { tool } : {}) }) as ClientPart
@@ -128,5 +128,31 @@ describe("message technical part grouping", () => {
     assert.equal(hasVisibleUsage(info("assistant", { input: 1 }), true), true)
     assert.equal(hasVisibleUsage(info("assistant", { input: 1 }), false), false)
     assert.equal(hasVisibleUsage(info("user", { input: 1 }), true), false)
+  })
+
+  it("sums each agent response's cleanup scope into one usage line", () => {
+    const step = (messageId: string, input?: number, endsWithResponse = false): UsageStep => ({ messageId, endsWithResponse,
+      info: { id: messageId, sessionID: "s", role: "assistant", time: { created: 1 }, cost: input,
+        ...(input === undefined ? {} : { tokens: { input, output: 1, cache: { read: 2 } } }) } })
+    const end = (messageId: string): UsageStep => ({ messageId, endsTurn: true })
+    const lines = (steps: UsageStep[]) => Object.fromEntries([...projectUsageLines(steps)].map(([id, line]) =>
+      [id, [line.info.tokens?.input, line.info.tokens?.output, line.info.tokens?.cache?.read, line.info.cost]]))
+
+    assert.deepEqual(lines([end("prompt"), step("looking-then-read", 10), step("read", 20), step("grep", 30), step("answer", 40, true), end("idle")]),
+      { answer: [100, 4, 8, 100] }, "steps whose text is followed by tools fold into the next response's line")
+    assert.deepEqual(lines([end("prompt"), step("answer", 10, true), step("read", 20), end("idle")]), { answer: [10, 1, 2, 10] },
+      "a turn ending without a response shows no line for its last steps")
+    assert.deepEqual(lines([end("prompt"), step("read", 20), step("streaming", undefined, true)]), {},
+      "an open turn shows nothing until its response settles")
+    assert.deepEqual(lines([step("read", 20), end("next-prompt"), step("answer", 40, true)]), { answer: [40, 1, 2, 40] },
+      "a prompt drops the previous turn's unanswered steps")
+  })
+
+  it("closes a usage line only on a step whose last cleanup item is response text", () => {
+    const text = (id: string, value: string) => ({ id, type: "text", text: value }) as ClientPart
+    assert.equal(endsWithResponseText([text("t", "Looking"), part("read", "tool", "read")]), false)
+    assert.equal(endsWithResponseText([part("read", "tool", "read"), text("t", "There are three files")]), true)
+    assert.equal(endsWithResponseText([part("read", "tool", "read"), text("error", "")]), false, "an error placeholder is no response")
+    assert.equal(endsWithResponseText([part("r", "reasoning")]), false)
   })
 })

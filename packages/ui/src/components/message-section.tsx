@@ -21,7 +21,7 @@ import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ScrollSnapshot } from "../stores/message-v2/types"
-import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
+import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts } from "../stores/message-v2/record-display-cache"
 import { isDuplicateRunFailure } from "../stores/message-v2/run-failure"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
@@ -44,7 +44,7 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../s
 import type { SessionInboxUser } from "@opencode/client"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { getTechnicalCleanupParts, getTechnicalGroupKind, hasVisibleUsage, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
+import { endsWithResponseText, getTechnicalCleanupParts, getTechnicalGroupKind, isResponseTextPart, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, projectUsageLines, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem, type UsageLine, type UsageStep } from "../lib/message-part-grouping"
 
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
@@ -176,15 +176,25 @@ export default function MessageSection(props: MessageSectionProps) {
         if (part.type === "tool" || part.type === "reasoning") {
           return [{ messageId, partId, type: part.type }]
         }
-        if ((part.type === "text" || part.type === "file") && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)) {
-          return [{ messageId, partId, type: "boundary" as const }]
-        }
+        if (isResponseTextPart(part)) return [{ messageId, partId, type: "boundary" as const }]
         return []
       })
       // Omitted parts may hold boundaries: never select a cleanup run across them.
       if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
       return projected.flat()
     })
+  })
+  const usageLines = createMemo(() => {
+    sessionRevision()
+    if (usageMetricsVisibility() === "hidden") return new Map<string, UsageLine>()
+    const resolvedStore = store()
+    return projectUsageLines(messageIds().flatMap<UsageStep>((messageId) => {
+      const record = resolvedStore.getMessage(messageId)
+      if (!record) return []
+      const info = resolvedStore.getMessageInfo(messageId)
+      if (record.role === "user" || info?.nativeType === "idle") return [{ messageId, endsTurn: true }]
+      return [{ messageId, info, endsWithResponse: endsWithResponseText(buildRecordDisplayData(props.instanceId, record).orderedParts) }]
+    }))
   })
   const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
     technicalCleanupTranscript(),
@@ -239,9 +249,8 @@ export default function MessageSection(props: MessageSectionProps) {
         }]
       })
       // Technical groups never span omitted parts; the gap renders between them.
+      // A step's usage line does not end its group: it folds with the group's tools.
       if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
-      // Nor a step's usage line, which closes its message.
-      if (hasVisibleUsage(messageInfo, usageMetricsVisibility() !== "hidden")) projected.push([null])
       return projected.flat()
     })
     return projectTranscriptTechnicalGroups(items)
@@ -1445,6 +1454,7 @@ export default function MessageSection(props: MessageSectionProps) {
               pendingFormToolTargets={pendingFormToolTargets}
               technicalGroupForPart={technicalGroupForPart}
               technicalGroupingSignature={() => technicalGroupingSignature(messageId)}
+              usageLine={() => usageLines().get(messageId)}
               technicalCleanupParts={technicalCleanupParts}
               technicalCleanupPartKeys={technicalCleanupPartKeys}
               onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}

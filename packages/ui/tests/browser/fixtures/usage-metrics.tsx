@@ -24,6 +24,11 @@ const nativeMessages: any[] = [
     content: [{ type: "text", text: "Looking at the tree" }, { type: "tool", id: "call_read", name: "read", time: { created: 2 },
       state: { status: "completed", input: { path: "a.ts" }, content: [{ type: "text", text: "file" }] } }],
     time: { created: 2, completed: 3 } },
+  // A tool-only step: its usage joins the next response's line, so both reads stay one group.
+  { id: "msg_02b", type: "assistant", agent: "build", model, finish: "tool-calls", cost: 0.25, tokens: usage(700, 8),
+    content: [{ type: "tool", id: "call_read_b", name: "read", time: { created: 3 },
+      state: { status: "completed", input: { path: "b.ts" }, content: [{ type: "text", text: "file" }] } }],
+    time: { created: 3, completed: 4 } },
   { id: "msg_03", type: "assistant", agent: "build", model, finish: "stop", cost: 0.5, tokens: usage(1300, 12),
     content: [{ type: "text", text: "There are three files" }], time: { created: 4, completed: 5 } },
   { id: "msg_04", type: "idle", outcome: "succeeded", time: { created: 6 } },

@@ -48,7 +48,7 @@ import { showAlertDialog } from "../stores/alerts"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { groupTechnicalParts, hasVisibleUsage, isTechnicalGroupingVisiblePart, segmentExplorationItems, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
+import { groupTechnicalParts, isTechnicalGroupingVisiblePart, segmentExplorationItems, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup, type UsageLine } from "../lib/message-part-grouping"
 import { MessageUsage, NO_STEP_BORDER } from "./message-usage"
 
 const USER_BORDER_COLOR = "var(--message-user-border)"
@@ -522,6 +522,8 @@ interface MessageBlockProps {
   pendingFormToolTargets?: Accessor<ReadonlySet<string>>
   technicalGroupForPart?: (messageId: string, partId: string) => TranscriptTechnicalGroup | undefined
   technicalGroupingSignature?: Accessor<string>
+  /** This message's agent-response usage line, summed over its steps (projectUsageLines). */
+  usageLine?: Accessor<UsageLine | undefined>
   technicalCleanupParts?: (messageId: string, partId: string) => TechnicalCleanupPart[]
   technicalCleanupPartKeys?: Accessor<ReadonlySet<string>>
   onTechnicalCleanupHoverChange?: (messageId: string, partId: string, hovered: boolean) => void
@@ -592,6 +594,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       props.usageMetricsVisibility(),
       props.systemMessagesVisibility?.() ?? "hidden",
       props.technicalGroupingSignature?.() ?? "",
+      props.usageLine?.()?.signature ?? "",
     ].join("|")
 
     // Removing and rehydrating a record can reuse revision/info version zero.
@@ -791,9 +794,10 @@ export default function MessageBlock(props: MessageBlockProps) {
       }
     }
 
-    // A native assistant message is one model step; its settled usage closes it.
-    if (hasVisibleUsage(info, props.usageMetricsVisibility() !== "hidden")) {
-      items.push({ type: "usage", key: `${current.id}:usage`, messageInfo: info!, accentColor: lastAccentColor || defaultAccentColor })
+    // One usage line per agent response, summed over its cleanup scope's steps.
+    const usageLine = props.usageLine?.()
+    if (usageLine) {
+      items.push({ type: "usage", key: `${current.id}:usage`, messageInfo: usageLine.info, accentColor: lastAccentColor || defaultAccentColor })
     }
 
     const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.hiddenCount > 0 }
