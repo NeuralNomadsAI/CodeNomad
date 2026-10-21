@@ -21,6 +21,7 @@ import { applyUiSettings } from "./ui-settings"
 import { openFilePreview, getFilePreview } from "../../../src/stores/files-preview"
 import { updateMissionProjectView, missionProjectView } from "../../../src/stores/mission-view-state"
 import { getQuestionToolSearchText } from "../../../src/components/tool-call/search-text"
+import { reloadWorktrees, getWorktrees } from "../../../src/stores/worktrees"
 import "../../../src/index.css"
 import { installActivationFrameGate } from "./activation-frame-gate"
 
@@ -140,6 +141,18 @@ const store = messageStoreBus.getOrCreate(instanceId)
   focusHandled: () => focusHandled,
   replies, replyOptions, windows,
   notifications: getToastHistory,
+  prepareRemovedWorktreeHistory: async (directory: string) => {
+    await reloadWorktrees(instanceId)
+    setSessions(previous => {
+      const next = new Map(previous), entries = new Map(next.get(instanceId))
+      entries.set("deleted-history", { ...entries.get(sessionId)!, id: "deleted-history", title: "Deleted checkout history", location: { directory }, status: "idle" })
+      next.set(instanceId, entries)
+      return next
+    })
+  },
+  recoverCurrent: () => syncPendingRequests(instanceId),
+  recoveryState: () => ({ forms: getFormQueue(instanceId), permissions: getPermissionQueue(instanceId),
+    worktrees: getWorktrees(instanceId), historicalDirectory: sessions().get(instanceId)?.get("deleted-history")?.location.directory }),
   invalidateRecovery: () => { clearReloadableInstanceState(instanceId); invalidatePendingRequestSync(instanceId) },
   theme: setThemePreference,
   ask: () => emit("form.created", { form: form() }),

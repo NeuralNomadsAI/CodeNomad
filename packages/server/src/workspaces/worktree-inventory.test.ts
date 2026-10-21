@@ -1,7 +1,13 @@
 import assert from "node:assert/strict"
 import { it } from "node:test"
+import { execFileSync } from "node:child_process"
+import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { tmpdir } from "node:os"
+import path from "node:path"
+import type { OpenCodeClient } from "@opencode/client"
 import type { WorktreeListResponse } from "../api-types"
 import { WorktreeInventory } from "./worktree-inventory"
+import { listNativeWorktrees } from "./native-worktrees"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -165,4 +171,39 @@ it("waits for the post-mutation inventory instead of returning a pre-create disp
   f.scans[1].resolve(created)
   assert.deepEqual(await read, created)
   assert.deepEqual(f.changes, ["repo"])
+})
+
+it("fresh native inventory reconciles external removals despite warm display and stale native registration", async () => {
+  const parent = process.platform === "win32" ? path.join(tmpdir(), "opencode") : tmpdir()
+  await mkdir(parent, { recursive: true })
+  const owned = await mkdtemp(path.join(parent, "removed-worktree-inventory-"))
+  const repo = path.join(owned, "main"), linked = path.join(repo, ".codenomad", "worktrees", "linked")
+  const git = (...args: string[]) => execFileSync("git", ["-C", repo, ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim()
+  try {
+    await mkdir(repo)
+    git("init", "--initial-branch=main")
+    git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-m", "initial")
+    git("worktree", "add", "--detach", linked)
+    // A stale native registration is not filesystem authority. No real daemon,
+    // user database, config or project is accessed by this native transport stub.
+    let refreshes = 0
+    const client = {
+      location: { get: async () => ({ directory: repo, project: { id: "isolated", directory: repo, canonical: repo } }) },
+      worktree: { refresh: async () => { refreshes++ }, list: async () => [{ directory: repo }, { directory: linked }] },
+    } as unknown as OpenCodeClient
+    const changes: string[] = []
+    const inventory = new WorktreeInventory({ now: () => 1,
+      load: () => listNativeWorktrees({ client, workspacePath: repo, location: { directory: repo }, toHost: async directory => directory }),
+      changed: id => { changes.push(id) }, failed: (_id, error) => { throw error },
+    })
+    const before = await inventory.read("isolated")
+    assert.equal(before.worktrees.length, 2)
+    git("worktree", "remove", linked)
+    assert.equal(git("worktree", "list", "--porcelain").includes(linked.replaceAll("\\", "/")), false)
+    assert.equal(await inventory.read("isolated"), before, "display snapshots deliberately retain removed descriptors within their TTL")
+    const after = await inventory.read("isolated", "fresh")
+    assert.deepEqual(after.worktrees.map(entry => entry.kind), ["root"])
+    assert.deepEqual(changes, ["isolated"])
+    assert.equal(refreshes, 2)
+  } finally { await rm(owned, { recursive: true, force: true }) }
 })

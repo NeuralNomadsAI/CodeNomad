@@ -40,6 +40,8 @@ const WorktreeSessionMoveSchema = z.object({
 
 export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get<{ Params: { id: string } }>("/api/workspaces/:id/worktrees", async (request, reply) => {
+    const query = z.object({ fresh: z.enum(["true", "false"]).optional() }).strict().safeParse(request.query)
+    if (!query.success) return reply.code(400).send({ error: "Invalid worktree query" })
     const workspace = deps.workspaceManager.get(request.params.id)
     if (!workspace) {
       reply.code(404)
@@ -47,7 +49,7 @@ export function registerWorktreeRoutes(app: FastifyInstance, deps: RouteDeps) {
     }
 
     try {
-      const response: WorktreeListResponse = await deps.workspaceManager.getWorktrees(workspace.id)
+      const response: WorktreeListResponse = await deps.workspaceManager.getWorktrees(workspace.id, query.data.fresh === "true" ? "fresh" : "cached")
       return response
     } catch (error) {
       return handleError(error, reply)

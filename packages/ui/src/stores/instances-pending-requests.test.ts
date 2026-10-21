@@ -14,12 +14,14 @@ import {
 } from "./instances"
 import { getFormQueue, type FormWithLocation } from "./forms"
 import { markFormSettled } from "./form-settlements"
-import { sessions, setSessions } from "./session-state"
+import { sessions, seedRestoredSessionSelection, setSessions } from "./session-state"
 import { createClientSession } from "../types/session"
-import { reloadWorktrees } from "./worktrees"
+import { captureWorktreeMoveReconciliation, getPendingWorktreeLocations, getPendingWorktreeSlug, getWorktrees, reloadWorktrees, setWorktreeSlugForParentSession } from "./worktrees"
 import { sseManager } from "../lib/sse-manager"
 import { getToastHistory } from "../lib/notifications"
 import { tGlobal } from "../lib/i18n"
+import { fetchSessions } from "./session-api"
+import { setInstanceMetadata } from "./instance-metadata"
 
 const permission = (id: string): PermissionRequest => ({ id, sessionID: "background", action: "read", resources: ["file"] })
 const form = (id: string, sessionID = "global") => ({
@@ -204,6 +206,199 @@ test("known permission/Form authority and active sessions cannot be excluded as 
     assert.deepEqual(getPermissionQueue(h.id).map((request) => request.id), ["known"])
     assert.deepEqual(h.calls, [])
   } finally { h.cleanup() }
+})
+
+test("recovery reconciles stale inventoried worktrees before warning about removed idle history", async () => {
+  const h = harness()
+  const original = serverApi.fetchWorktrees
+  const deleted = `${h.directory}/deleted-worktree`
+  try {
+    serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "deleted", directory: deleted, kind: "worktree" }] })
+    await reloadWorktrees(h.id)
+    const history = createClientSession({ id: "history", title: "Preserved history", location: { directory: deleted }, time: { created: 1, updated: 1 } } as any, h.id)
+    setSessions(previous => new Map(previous).set(h.id, new Map([[history.id, history]])))
+    let refreshes = 0, reads = 0
+    serverApi.fetchWorktrees = async (_id, fresh) => {
+      assert.equal(fresh, true, "recovery must bypass the warm server display cache")
+      refreshes++
+      return { worktrees: [{ slug: "root", directory: h.directory, kind: "root" }] }
+    }
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      reads++
+      return { supported: true, directories: directories.map(directory => directory === deleted
+        ? optional?.includes(directory) ? { directory, status: "excluded" as const } : { directory, status: "error" as const, reason: "missing" as const }
+        : { directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [permission("other")], forms: [form("other")] }] }) }
+    }
+    const before = recoveryWarnings().length
+    await syncPendingRequests(h.id)
+    await syncPendingRequests(h.id)
+    assert.equal(refreshes, 1)
+    assert.equal(reads, 3, "only the changed inventory warrants one new loaded-only snapshot")
+    assert.equal(incompletePendingRecovery().has(h.id), false)
+    assert.equal(recoveryWarnings().length, before)
+    assert.equal(sessions().get(h.id)?.get(history.id)?.location.directory, deleted)
+    assert.equal(sessions().get(h.id)?.get(history.id)?.title, history.title)
+    assert.deepEqual(getWorktrees(h.id).map(entry => entry.slug), ["root"])
+    assert.deepEqual(getPermissionQueue(h.id).map(entry => entry.id), ["other"])
+    assert.deepEqual(getFormQueue(h.id).map(entry => entry.id), ["other"])
+    assert.deepEqual(h.calls, [])
+  } finally { serverApi.fetchWorktrees = original; h.cleanup() }
+})
+
+for (const unsupported of [false, true]) test(`a failed inventory-only retry preserves sibling recovery (unsupported=${unsupported})`, async () => {
+  const h = harness(), original = serverApi.fetchWorktrees
+  const deleted = `${h.directory}/removed-inventory-only`
+  try {
+    serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "deleted", directory: deleted, kind: "worktree" }] })
+    await reloadWorktrees(h.id)
+    serverApi.fetchWorktrees = async () => ({ worktrees: [] })
+    let reads = 0
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      if (++reads === 2) {
+        assert.deepEqual(directories, [deleted], "retry only the reclassified failure, not every historical directory")
+        assert.deepEqual(optional, [deleted])
+        if (unsupported) return { supported: false }
+        throw new Error("native reader unavailable")
+      }
+      return { supported: true, directories: [
+        { directory: h.directory, status: "ok", locations: [{ location: { directory: h.directory }, permissions: [permission("sibling")], forms: [form("sibling")] }] },
+        { directory: deleted, status: "error", reason: "missing" },
+      ] }
+    }
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(reads, 2)
+    assert.deepEqual(getPermissionQueue(h.id).map(entry => entry.id), ["sibling"])
+    assert.deepEqual(getFormQueue(h.id).map(entry => entry.id), ["sibling"])
+  } finally { serverApi.fetchWorktrees = original; h.cleanup() }
+})
+
+for (const provenance of ["selected", "working", "permission", "form"] as const) {
+  test(`missing inventoried ${provenance} locations remain required without inventory-driven exclusion`, async () => {
+    const h = harness(), original = serverApi.fetchWorktrees
+    const deleted = `${h.directory}/required-worktree`
+    try {
+      serverApi.fetchWorktrees = async () => ({ worktrees: [{ slug: "deleted", directory: deleted, kind: "worktree" }] })
+      await reloadWorktrees(h.id)
+      const session = createClientSession({ id: "required", title: "Required", location: { directory: deleted }, time: { created: 1, updated: 1 } } as any, h.id, "", undefined, provenance === "working" ? "working" : "idle")
+      setSessions(previous => new Map(previous).set(h.id, new Map([[session.id, session]])))
+      if (provenance === "selected") seedRestoredSessionSelection(h.id, session.id, session.id)
+      if (provenance === "permission") addPermissionToQueue(h.id, permission("known"), deleted)
+      if (provenance === "form") addPendingForm(h.id, form("known"), deleted)
+      const queuedForm = getFormQueue(h.id)[0]
+      let refreshes = 0
+      serverApi.fetchWorktrees = async () => { refreshes++; return { worktrees: [] } }
+      serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+        assert.ok(!optional?.includes(deleted))
+        return { supported: true, directories: directories.map(directory => directory === deleted
+          ? { directory, status: "error" as const, reason: "missing" as const }
+          : { directory, status: "ok" as const, locations: [emptyLocation(directory)] }) }
+      }
+      await assert.rejects(syncPendingRequests(h.id))
+      await assert.rejects(syncPendingRequests(h.id))
+      assert.equal(refreshes, 0)
+      assert.equal(incompletePendingRecovery().has(h.id), true)
+      if (provenance === "permission") assert.equal(getPermissionQueue(h.id)[0]?.id, "known")
+      if (provenance === "form") assert.equal(getFormQueue(h.id)[0], queuedForm)
+      assert.deepEqual(h.calls, [])
+    } finally { serverApi.fetchWorktrees = original; h.cleanup() }
+  })
+}
+
+for (const outcome of ["failed", "unchanged", "permission-arrival", "form-arrival"] as const) {
+  test(`inventory reconciliation remains non-authoritative after ${outcome}`, async () => {
+    const h = harness(), original = serverApi.fetchWorktrees
+    const deleted = `${h.directory}/removed-worktree`
+    const stale = { worktrees: [{ slug: "deleted", directory: deleted, kind: "worktree" as const }] }
+    try {
+      serverApi.fetchWorktrees = async () => stale
+      await reloadWorktrees(h.id)
+      let refreshes = 0, reads = 0
+      let queuedForm: FormWithLocation | undefined
+      serverApi.fetchWorktrees = async () => {
+        refreshes++
+        if (outcome === "failed") throw new Error("inventory unavailable")
+        if (outcome === "unchanged") return stale
+        if (outcome === "permission-arrival") addPermissionToQueue(h.id, permission("arrived"), deleted)
+        if (outcome === "form-arrival") { addPendingForm(h.id, form("arrived"), deleted); queuedForm = getFormQueue(h.id)[0] }
+        return { worktrees: [] }
+      }
+      serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+        reads++
+        assert.ok(!optional?.includes(deleted))
+        return { supported: true, directories: directories.map(directory => directory === deleted
+          ? { directory, status: "error" as const, reason: "missing" as const }
+          : { directory, status: "ok" as const, locations: [emptyLocation(directory)] }) }
+      }
+      await assert.rejects(syncPendingRequests(h.id))
+      assert.equal(refreshes, 1)
+      assert.ok(reads <= 2, "a mutation fence may restart once, never replay indefinitely")
+      assert.equal(incompletePendingRecovery().has(h.id), true)
+      if (outcome === "permission-arrival") assert.equal(getPermissionQueue(h.id)[0]?.id, "arrived")
+      if (outcome === "form-arrival") assert.equal(getFormQueue(h.id)[0], queuedForm)
+      assert.deepEqual(h.calls, [])
+    } finally { serverApi.fetchWorktrees = original; h.cleanup() }
+  })
+}
+
+test("a failed partial family move retains source/target authority until complete post-move native reconciliation", async () => {
+  const h = harness(), original = serverApi.fetchWorktrees
+  const originalClient = sdkManager.createClient
+  const deleted = `${h.directory}/move-target`
+  try {
+    serverApi.fetchWorktrees = async () => ({ worktrees: [
+      { slug: "root", directory: h.directory, kind: "root" }, { slug: "target", directory: deleted, kind: "worktree" },
+    ] })
+    await reloadWorktrees(h.id)
+    const root = createClientSession({ id: "move-root", location: { directory: h.directory }, time: { created: 1, updated: 1 } } as any, h.id)
+    const child = createClientSession({ id: "move-child", parentID: root.id, location: { directory: h.directory }, time: { created: 1, updated: 1 } } as any, h.id)
+    setSessions(previous => new Map(previous).set(h.id, new Map([[root.id, root], [child.id, child]])))
+    let mutations = 0, refreshes = 0
+    const preMoveRead = captureWorktreeMoveReconciliation(h.id)
+    await assert.rejects(setWorktreeSlugForParentSession(h.id, child.id, "target", {
+      moveFamily: async () => {
+        mutations++
+        // Native may have moved only one member before a lost reply/failed rollback.
+        setSessions(previous => new Map(previous).set(h.id, new Map([[root.id, root], [child.id, { ...child, location: { directory: deleted } }]])))
+        captureWorktreeMoveReconciliation(h.id)(new Set([root.id, child.id]))
+        assert.equal(getPendingWorktreeLocations(h.id).length, 2, "a read started during native effects cannot settle the move")
+        throw new Error("partial move; rollback state unavailable")
+      },
+      refreshSessions: async () => { refreshes++; throw new Error("native reconciliation unavailable") },
+    }))
+    assert.equal(mutations, 1)
+    assert.equal(refreshes, 2)
+    assert.equal(getPendingWorktreeSlug(h.id, child.id), "target")
+    preMoveRead(new Set([root.id, child.id]))
+    captureWorktreeMoveReconciliation(h.id)(new Set([root.id]))
+    assert.equal(getPendingWorktreeLocations(h.id).length, 2, "old or incomplete inventories cannot settle unknown family effects")
+    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: h.directory, kind: "root" }] })
+    await reloadWorktrees(h.id)
+    serverApi.getPendingRequests = async (_id, directories, _signal, optional) => {
+      assert.ok(directories.includes(deleted), "an uncertain target survives descriptor removal")
+      assert.ok(!optional?.includes(deleted), "an apparently idle child is not settled move authority")
+      return { supported: true, directories: directories.map(directory => directory === deleted
+        ? { directory, status: "error" as const, reason: "missing" as const }
+        : { directory, status: "ok" as const, locations: [emptyLocation(directory)] }) }
+    }
+    await assert.rejects(syncPendingRequests(h.id))
+    assert.equal(mutations, 1, "recovery never replays the move")
+    let activityFails = true
+    const nativeFamily = [root, child].map(session => ({ id: session.id, parentID: session.parentId ?? undefined,
+      projectID: "move-project", title: session.id, location: { directory: h.directory }, time: { created: 1, updated: 2 } }))
+    setInstanceMetadata(h.id, { project: { id: "move-project" } as any })
+    sdkManager.createClient = () => ({ session: { list: async () => ({ data: nativeFamily, cursor: {} }),
+      active: async () => { if (activityFails) throw new Error("activity unavailable"); return {} },
+    } }) as unknown as OpenCodeClient
+    await fetchSessions(h.id, { reset: true, strictStatus: true })
+    assert.equal(getPendingWorktreeLocations(h.id).length, 2, "history alone cannot settle a move when fresh activity failed")
+    activityFails = false
+    await fetchSessions(h.id, { reset: true, strictStatus: true })
+    assert.deepEqual(getPendingWorktreeLocations(h.id), [])
+    assert.equal(getPendingWorktreeSlug(h.id, child.id), undefined)
+    serverApi.getPendingRequests = async () => snapshot(h.directory)
+    await syncPendingRequests(h.id)
+    assert.equal(incompletePendingRecovery().has(h.id), false)
+  } finally { serverApi.fetchWorktrees = original; sdkManager.createClient = originalClient; h.cleanup() }
 })
 
 test("the recovery warning needs consecutive incomplete attempts and a success re-arms it", async () => {
