@@ -217,3 +217,9 @@ obsolete reads unless a newer request, cancellation or disposal owns recovery.
 Runtime-status responses cannot block list publication or overwrite newer SSE and
 local admission state. Pending-request liveness refreshes the status map rather
 than repeatedly traversing the entire historical session inventory.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- The browser opens only a few connections to the CodeNomad server. The selected transcript and its metadata read directly; secondary panel and timeline reads (plugin controls, outlines/previews) go through `secondaryRead` in `lib/api-client.ts`, sharing the bounded `backgroundReads` budget. Provider usage stays direct (superseded reads are fenced, not cancelled), and so does the OpenCode status read awaited by Restart/Start, so daemon-bound reads in the shared budget can never hold it. Startup effects must not track app-wide state they only await (`untrack` readiness gates), or every restored workspace update restarts and requeues the transcript read. Search visibility must be value-diffed before its close effect: reactive instance metadata can change while search stays closed, and running search cleanup then would cancel the initial transcript read. Restore tests must exercise reactive identity accessors and assert visible messages, not only request counts.

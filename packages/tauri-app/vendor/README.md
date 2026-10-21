@@ -106,3 +106,11 @@ included), selected through the workspace's `[patch.crates-io]`.
 Extraction, signature checks, NSIS arguments, installer restart and Unix install
 paths remain upstream. Remove this override when a published plugin provides the
 same success-only handoff; rerun the regression and signed installer trial first.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- Tauri's Tao Windows input backport lives in `packages/tauri-app/vendor/`; preserve upstream provenance and avoid message pumping under input mutexes. Run `node scripts/test-tauri-input-deadlock.mjs --baseline` on Windows when changing it. See `packages/tauri-app/vendor/README.md` for provenance and override removal criteria.
+- The pinned Tauri runtime clones native handles on worker threads, including Tao's Windows event-loop target. Its internal runner counter must remain atomic; this does not authorize off-main-thread access to the runner state or make Tao's target Send/Sync. Run `node scripts/test-tauri-runner-refcount.mjs --baseline` after changes to this compatibility fix. The isolated regression uses the actual Wry runtime without an application profile or OpenCode; see `dev-docs/TAURI_WINDOWS_RUNNER_REFCOUNT.md` and the vendor provenance (the referenced upstream proposal was not merged).
+- Tao's macOS zoom getter must remain read-only: synchronous temporary style-mask changes on borderless windows generate geometry-event feedback and can starve startup navigation. Keep the exact upstream tao#1182 backport beside the Windows fix, with its provenance in `packages/tauri-app/vendor/README.md`. Run `node scripts/test-tauri-macos-window.mjs --baseline` in a graphical macOS session and retain the ARM64 CI regression. Do not disable window persistence or change the application chrome as a workaround.

@@ -187,3 +187,9 @@ node --import tsx --test --test-name-pattern="human answer origin" tests/browser
 
 No private/live native fixture, OpenCode modification, shared-daemon mutation,
 install, NSIS build, commit, push or write to another worktree was performed.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- Wayfinder human gates in one-time and recurring missions accept only native Forms with the backend's simple UI-answer mark `{ formID, sessionID, answeredAt, via: "ui" }`, recorded when answered through `InterruptionDock` by an explicit bridge principal: a local auth-enabled cookie session or a live paired Remote Control device (never a device ID posing as a cookie), revalidated across native I/O. Family membership is root `codenomad.mission` metadata or, for attached existing coordinators, exact durable one-time journal coordinator membership confirmed by the plugin; marks live under `codenomad-missions/human-marks-v1`. Native OpenCode has no Form answerer identity; no signatures or reserved/replied/settled answer receipts. This mark is provenance under native permissions/OS isolation, not protection against an unrestricted shell reading the service password or kv database; in-process signatures would not provide that protection either. A native decision readout may omit its artifact: the gate's `discover` derives candidates only from exact native structure (a fresh `subagent` call carrying the exact assignment, its child's confirmed marks) and keeps those its own `verify` accepts; only a complete discovery (no bound reached, pending mark or unverifiable answer) with exactly one candidate is used, never text or timing inference.

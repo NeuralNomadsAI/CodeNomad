@@ -77,3 +77,9 @@ uses the real WorkspaceManager, proxy and native shells; checks two conversation
 settings changes/removal, read-only behavior and an unchanged daemon PID; and
 stops only that isolated service. Windows also exercises Git Bash at its standard
 installation path. No provider call or existing conversation is used.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- Profile environment variables are applied server-side before each native session prompt, custom command or session shell request, after ownership and worktree-mutation admission. Build a complete execution-host snapshot with `workspaces/session-environment.ts`; never send the profile environment through the browser or skip the per-send write using a cache. Reads and settings edits do not mutate native sessions. Keep native environment failures fail-closed and redact SDK request bodies. See `dev-docs/SESSION_ENVIRONMENT.md`.

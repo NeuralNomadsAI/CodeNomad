@@ -156,3 +156,12 @@ Do not lowercase paths globally (including case-sensitive hosts) or broaden
 project authority to hide native directory-filter discrepancies. When diagnosing an absent
 conversation, compare `session.get`, the actual directory-scoped list and the
 authorized workspace spelling before changing UI state.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- Event ownership uses registered-only native worktree snapshots, isolated from display/request discovery scans (`ownsDirectory` / `ownsLocation` with the `event` purpose). Never run native strategy refresh from routing or join its pending inventory. Keep physical Git identity, nested-folder/WSL projection, native registration, invalidation and disposal checks shared with ordinary ownership; ordinary requests and explicit worktree discovery retain refresh semantics. Regression: `instance-event-ownership.test.ts` and the isolated native worktree fixture.
+- Worktree discovery/create/remove use `workspaces/native-worktrees.ts` and the native OpenCode worktree API. CodeNomad supplies the `.codenomad/worktrees` default, named-branch policy and verified family transactions. Git common-directory identity scopes the native inventory to the opened local repository; opaque worktree identifiers are separate from mutable branch labels. Validate through `scripts/test-opencode-location-native.mjs` with an isolated CLI and `tests/browser/worktrees.test.ts` for selector gestures.
+- Worktree inventory snapshots live in `workspaces/worktree-inventory.ts`: display reads serve cached data and lazily revalidate, directory authorization uses validated reads, and family transactions force fresh reads. Invalidation retains display data and fences pending scans; `workspace.worktreesChanged` refreshes existing UI consumers after a changed snapshot is published. Keep selector opening independent of refresh completion and suppress duplicate selection events during inventory reconciliation.
+- Worktree branch/HEAD annotations use one NUL-delimited Git worktree snapshot, intersected with native inventory and verified Git identities; effective checkout roots must respect Git configuration as well as administrative backlinks. Pending move targets belong to the store's instance/family request identity and survive selector navigation/remounts until native reconciliation settles.

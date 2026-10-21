@@ -140,3 +140,9 @@ latency claim. Larger metadata/search batches additionally reduce RPC round trip
 The global timeline and current-session search now use direct bounded anchor
 windows. See [SESSION_HISTORY_NAVIGATION.md](SESSION_HISTORY_NAVIGATION.md) for
 the read contract, navigation/restore fences and scrollbar geometry.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- Full-history search/counts use the bundled pruning plugin's bounded queries, outside the transcript store. Current-session results and the global timeline navigate through bounded anchor windows; other-session previews fetch one native message only. Search/results/progress styles live in `styles/components/history-search.css`. Workspace results group by session with its title and current worktree badge via `components/history-search-results.tsx`; unloaded labels and "Open in session" live in `stores/history-search-sessions.ts` (bounded display reads, targeted hydration, transcript anchor). Never show raw native IDs in results. See `dev-docs/SESSION_HISTORY_QUERIES.md` for scope, snapshot and cleanup semantics.

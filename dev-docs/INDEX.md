@@ -2,7 +2,7 @@
 
 Start with [README](../README.md) for installation and usage, then
 [architecture](architecture.md) for ownership boundaries and code locations.
-[AGENTS.md](../AGENTS.md) defines contribution, styling and i18n conventions.
+[AGENTS.md](../AGENTS.md) defines the rules that apply everywhere (styling, i18n, contribution) and indexes the area documents whose **Agent conventions** sections hold each area's binding contracts.
 
 ## Runtime and ownership
 
@@ -21,6 +21,12 @@ Start with [README](../README.md) for installation and usage, then
 
 ## UI and extensions
 
+- [UI conventions](UI_CONVENTIONS.md): dialogs, utility windows, icon toggles, surfaces and scrollbars.
+- [Application shell](UI_SHELL.md): panel toggles, drawers, tabs, session sidebar and native menus.
+- [Composer](COMPOSER.md): context selectors, height, focus, delivery, attachments and mentions.
+- [Transcript rendering](TRANSCRIPT.md): Message content presets, token lines, tool renderers and lifecycle signals.
+- [Settings and Preferences](SETTINGS.md): settings rows, the Preferences window, Providers/Web search, Stats and notifications.
+- [Projects and tabs](PROJECTS.md): closing tabs, temporary workspaces, the new-instance launcher and Git-unavailable mode.
 - [Public user help](USER_HELP.md): multilingual static site, stable anchors, local search, app entry points and Pages validation.
 - [Files panel](FILES_PANEL.md): workspace editing, Git changes/history and preview lifecycle.
 - [Native interruptions](NATIVE_INTERRUPTION_UX.md): permissions/Forms dock, drafts and pending-request recovery.

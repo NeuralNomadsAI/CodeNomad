@@ -37,3 +37,9 @@ The audit job has read-only repository permissions. A separate trusted proposal
 job requests `contents: write` and `pull-requests: write`; no personal token or
 automatic approval is configured.
 Run `npm run check:runtime` locally for the same read-only assessment.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- Bundled runtime maintenance keeps `.node-version` exact and proposes only same-major LTS upgrades as regular, non-draft PRs without automatic merge. The scheduled npm CLI/dependency audit is warning-only: never independently replace bundled npm, auto-fix dependencies, merge or publish from that check. Audit failure is not a clean assessment; application runtime changes require reviewed builds/releases. See `dev-docs/RUNTIME_MAINTENANCE.md`.

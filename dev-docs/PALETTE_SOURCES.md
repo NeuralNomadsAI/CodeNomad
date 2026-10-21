@@ -72,3 +72,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- Soft palette families live in `packages/ui/src/lib/soft-color-schemes.ts`, with references in `dev-docs/PALETTE_SOURCES.md`. Keep selection independent of participant identity, and keep transcript/composer surfaces distinct. Run `palette-quality.test.ts` and inspect real rendered captures when changing palette colors or their token mapping.
+- Palette settings follow the resolved appearance in Auto mode. Keep the picker, square swatches and trailing actions on one line while they fit at their natural width, measured by `settings/palette-strip-fit.ts` rather than a breakpoint because the actions change with edits; otherwise the swatch strip moves below the picker and its actions (`data-stacked`) and wraps onto further lines instead of scrolling. Swatch names use tooltips and accessible input labels. Swatch styles live in `styles/components/theme-scheme-swatches.css`.

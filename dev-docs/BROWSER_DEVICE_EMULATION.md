@@ -77,3 +77,9 @@ window or visual viewport changes. The 44 px floor never overwrites that
 proportion. Legacy pixel heights convert on the first valid measurement.
 Pointer and keyboard
 resizing share the same minimum and maximum.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- Browser preview retains its six original fixed templates (responsive, desktop, tablet portrait/landscape, mobile portrait/landscape), without a separate rotation button. Mobile templates automatically use native Android/Chromium touch emulation; iframe fallback changes dimensions only. Profiles share `packages/ui/src/lib/native/browser-emulation.json`; only owned native guests may receive device overrides, and returning to dimensions clears them before reloading. Main local/remote desktop content minimums are 390 × 600 CSS pixels: multiply by application zoom, not monitor DPI, and round up native logical dimensions. Restore uses the saved zoom; keyboard/wheel/menu changes update constraints without shrinking larger windows, with monitor-work-area caps at extreme zoom. Electron handles outer-frame offsets in `window-state.ts`; Tauri uses `window_constraints.rs`. Preferences and native preview children retain their separate sizing contracts.

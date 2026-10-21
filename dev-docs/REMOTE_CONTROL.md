@@ -118,3 +118,10 @@ upstream affects Bun only.
 - Open topics: atomic identity writes with a provisioning lock, an in-process
   connection target (no loopback hop, preserved peer address) and
   per-connection flow control. The repository now accepts issues only.
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- Remote Access settings put Remote Control first. Direct/LAN access (listening mode, server password, reachable addresses) sits in one collapsed disclosure that opens by itself while the server listens beyond localhost. Its texts refer to direct connections only, because Remote Control pairs devices and needs neither a password nor an open port. It uses the shared `.settings-disclosure` (`styles/components/settings-disclosure.css`).
+- Remote Control uses the OpenTunnel SDK through `packages/remote-tunnel`, bundled into the server build (`build:remote-tunnel`) with its own backend-side Effect runtime, separate from OpenCode's native plugin graph. Claim only CodeNomad's own route on the device's shared identity and never delete that identity. Ingress sockets are remote by membership: grant local privileges only through `isLocalRequest()`/`isLoopbackRequest()`, never peer addresses or headers. Pairing, devices and admission live in `server/src/remote-control/`. Start is remembered until an explicit Stop and resumes at launch without a pairing code, in one backend per config directory (`owner-lease.ts`); never auto-start an installation that was not started. Run `remote-surface.test.ts` and `manager.test.ts`, plus the opt-in hosted-relay `scripts/remote-control-live.test.ts` when changing the transport. See `dev-docs/REMOTE_CONTROL.md`.

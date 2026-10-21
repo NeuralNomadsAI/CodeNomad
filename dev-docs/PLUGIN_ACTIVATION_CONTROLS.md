@@ -205,3 +205,11 @@ fall back to guessed paths.
 - real Solid UI, full stylesheet, dual explicit scope switches, lazy visibility,
   shared rounded geometry, mutation, and native event dispatcher:
   `packages/ui/tests/browser/plugin-controls.test.ts`
+
+## Agent conventions
+
+These rules moved here from `AGENTS.md`, which indexes this document; they bind every change in this area.
+
+- V2 plugin activation controls use the shared rounded SUID switch geometry in `styles/components/switches.css`. Present Global and Project as separate per-plugin columns so every mutation has an explicit scope. Cache display snapshots by instance and worktree directory, and refresh them only while the plugin surface is visible.
+- Keep the Plugins surface minimal: plugin names, a compact package check/update icon when applicable, and Global/Project switches. Activating the icon opens a menu that names the exact package operation (check or update with its native target) instead of firing blindly; put source/status/target details and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary. The compact Refresh icon occupies the name-column header and spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and menu chrome is shared with `action-overflow-menu`.
+- Plugin packages that fail before exporting an ID remain visible by their native target with check/update actions and failure details in the name tooltip. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds.
