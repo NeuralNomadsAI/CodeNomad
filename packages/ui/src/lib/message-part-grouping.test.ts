@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { getTechnicalCleanupParts, groupTechnicalParts, hasVisibleUsage, isResponseTextPart, projectTranscriptTechnicalGroups, projectUsageLines, segmentExplorationItems, technicalPartKey, type TechnicalCleanupTranscriptItem, type UsageStep } from "./message-part-grouping.ts"
+import { getTechnicalCleanupParts, groupTechnicalParts, isResponseTextPart, projectTranscriptTechnicalGroups, segmentExplorationItems, sumMessageUsage, technicalPartKey, type TechnicalCleanupTranscriptItem } from "./message-part-grouping.ts"
 import type { ClientPart, MessageInfo } from "../types/message.ts"
 
 const part = (id: string, type: ClientPart["type"], tool?: string) => ({ id, type, ...(tool ? { tool } : {}) }) as ClientPart
@@ -121,34 +121,14 @@ describe("message technical part grouping", () => {
     ])
   })
 
-  it("shows usage only for settled assistant steps while the preference is visible", () => {
-    const info = (role: MessageInfo["role"], tokens?: MessageInfo["tokens"]) => ({ id: "m", sessionID: "s", role, time: { created: 1 }, tokens }) as MessageInfo
-    assert.equal(hasVisibleUsage(undefined, true), false)
-    assert.equal(hasVisibleUsage(info("assistant"), true), false, "a running step has no usage yet")
-    assert.equal(hasVisibleUsage(info("assistant", { input: 1 }), true), true)
-    assert.equal(hasVisibleUsage(info("assistant", { input: 1 }), false), false)
-    assert.equal(hasVisibleUsage(info("user", { input: 1 }), true), false)
-  })
-
-  it("shows one usage line after every agent message, summed since the previous one", () => {
-    const step = (messageId: string, input?: number, hasResponseText = false): UsageStep => ({ messageId, hasResponseText,
-      info: { id: messageId, sessionID: "s", role: "assistant", time: { created: 1 }, cost: input,
-        ...(input === undefined ? {} : { tokens: { input, output: 1, cache: { read: 2 } } }) } })
-    const end = (messageId: string): UsageStep => ({ messageId, endsTurn: true })
-    const lines = (steps: UsageStep[]) => Object.fromEntries([...projectUsageLines(steps)].map(([id, line]) =>
-      [id, [line.info.tokens?.input, line.info.tokens?.output, line.info.tokens?.cache?.read, line.info.cost]]))
-
-    assert.deepEqual(lines([end("prompt"), step("looking-then-read", 10, true), step("read", 20), step("grep", 30), step("answer", 40, true), end("idle")]),
-      { "looking-then-read": [10, 1, 2, 10], answer: [90, 3, 6, 90] }, "tool-only steps count toward the next message")
-    assert.deepEqual(lines([end("prompt"), step("answer", 10, true), step("read", 20), end("idle")]), { answer: [10, 1, 2, 10] },
-      "a turn ending without a message shows no line for its last steps")
-    assert.deepEqual(lines([end("prompt"), step("read", 20), step("streaming", undefined, true)]), {},
-      "an open turn shows nothing until its response settles")
-    assert.deepEqual(lines([step("read", 20), end("next-prompt"), step("answer", 40, true)]), { answer: [40, 1, 2, 40] },
-      "a prompt drops the previous turn's unanswered steps")
-    const failed = step("partial-answer", 30, true)
-    failed.info!.error = { name: "MessageAbortedError", type: "aborted", message: "Interrupted" } as MessageInfo["error"]
-    assert.deepEqual(lines([end("prompt"), step("read", 20), failed, end("idle")]), {}, "a failed step shows no line, even after some text")
+  it("adds up the native usage of the messages a response's line covers", () => {
+    const info = (id: string, input?: number) => ({ id, sessionID: "s", role: "assistant", time: { created: 1 }, cost: input,
+      ...(input === undefined ? {} : { tokens: { input, output: 1, reasoning: 2, cache: { read: 3, write: 4 } } }) }) as MessageInfo
+    const own = info("answer", 40)
+    const sum = sumMessageUsage(own, [own, info("read", 20), info("streaming"), undefined])
+    assert.equal(sum.id, "answer", "the line keeps the response's own metadata")
+    assert.deepEqual(sum.tokens, { input: 60, output: 2, reasoning: 4, cache: { read: 6, write: 8 } }, "unsettled or missing messages add nothing")
+    assert.equal(sum.cost, 60)
   })
 
   it("counts only visible, non-synthetic text as an agent message", () => {

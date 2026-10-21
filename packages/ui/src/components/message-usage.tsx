@@ -5,11 +5,8 @@ import type { VisibilityPreference } from "../stores/preferences"
 import { formatTokenTotal } from "../lib/formatters"
 import { useI18n } from "../lib/i18n"
 
-/** Marks a usage line that follows tools, which draw no message border. */
-export const NO_STEP_BORDER = "none"
-
 interface MessageUsageProps {
-  /** The agent response's usage, summed over the steps of its cleanup scope (projectUsageLines). */
+  /** An agent message's usage, added up with its "delete tools and reasoning" selection's messages. */
   messageInfo: MessageInfo
   usageVisibility: VisibilityPreference
   borderColor?: string
@@ -53,9 +50,7 @@ export function MessageUsage(props: MessageUsageProps) {
       {(entry) => <span class="message-step-usage-chip" data-label={entry.label} title={`${entry.label}: ${entry.full}`}>{entry.value}</span>}
     </For>
   )
-  const style = () => props.borderColor === NO_STEP_BORDER
-    ? { "border-inline-start": "none" }
-    : props.borderColor ? { "border-left-color": props.borderColor } : undefined
+  const style = () => props.borderColor ? { "border-left-color": props.borderColor } : undefined
 
   let reported = false
   createEffect(() => {

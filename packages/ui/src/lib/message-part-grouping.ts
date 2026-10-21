@@ -62,58 +62,18 @@ export function isResponseTextPart(part: ClientPart): boolean {
   return (part.type === "text" || part.type === "file") && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)
 }
 
-/** Each native assistant message is one model step; its settlement records the step's usage. */
-export function hasVisibleUsage(messageInfo: MessageInfo | undefined, usageVisible: boolean): boolean {
-  return usageVisible && messageInfo?.role === "assistant" && Boolean(messageInfo.tokens)
-}
-
-/** A transcript record in order; prompts and native end-of-turn records end the turn. */
-export interface UsageStep { messageId: string; endsTurn?: boolean; info?: MessageInfo; hasResponseText?: boolean }
-
-export interface UsageLine {
-  /** The summed usage, shown with the response's own message metadata. */
-  info: MessageInfo
-  signature: string
-}
-
-/**
- * One usage line after every agent message: a settled step with response text
- * shows the sum of itself and every settled step since the previous line or
- * prompt, so tool-only steps count toward the next message. The line follows
- * the text, before tools the same step calls, so it never splits a technical
- * group. A model call cannot be split, so a step that writes text and then
- * calls tools counts entirely toward that text. A failed step, or a turn
- * ending without a message, shows none.
- */
-export function projectUsageLines(steps: readonly UsageStep[]): Map<string, UsageLine> {
-  const lines = new Map<string, UsageLine>()
-  let pending: MessageInfo[] = []
-  for (const step of steps) {
-    if (step.endsTurn) {
-      pending = []
-      continue
-    }
-    if (!hasVisibleUsage(step.info, true)) continue
-    pending.push(step.info!)
-    if (step.hasResponseText && !step.info!.error) {
-      lines.set(step.messageId, sumUsage(pending))
-      pending = []
-    }
-  }
-  return lines
-}
-
-function sumUsage(steps: MessageInfo[]): UsageLine {
+/** Adds up native usage of distinct messages; `base` supplies the line's own metadata. */
+export function sumMessageUsage(base: MessageInfo, messages: ReadonlyArray<MessageInfo | undefined>): MessageInfo {
+  const settled = messages.filter((info): info is MessageInfo => Boolean(info?.tokens))
   const total = (read: (tokens: NonNullable<MessageInfo["tokens"]>) => number | undefined) =>
-    steps.reduce((sum, step) => sum + (read(step.tokens ?? {}) ?? 0), 0)
-  const tokens = {
-    input: total(tokens => tokens.input), output: total(tokens => tokens.output), reasoning: total(tokens => tokens.reasoning),
-    cache: { read: total(tokens => tokens.cache?.read), write: total(tokens => tokens.cache?.write) },
-  }
-  const cost = steps.reduce((sum, step) => sum + (step.cost ?? 0), 0)
+    settled.reduce((sum, info) => sum + (read(info.tokens!) ?? 0), 0)
   return {
-    info: { ...steps.at(-1)!, tokens, cost },
-    signature: [steps.length, tokens.input, tokens.output, tokens.reasoning, tokens.cache.read, tokens.cache.write, cost].join(":"),
+    ...base,
+    tokens: {
+      input: total(tokens => tokens.input), output: total(tokens => tokens.output), reasoning: total(tokens => tokens.reasoning),
+      cache: { read: total(tokens => tokens.cache?.read), write: total(tokens => tokens.cache?.write) },
+    },
+    cost: settled.reduce((sum, info) => sum + (info.cost ?? 0), 0),
   }
 }
 

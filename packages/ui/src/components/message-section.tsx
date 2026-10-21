@@ -44,7 +44,7 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../s
 import type { SessionInboxUser } from "@opencode/client"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { getTechnicalCleanupParts, getTechnicalGroupKind, hasVisibleUsage, isResponseTextPart, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, projectUsageLines, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem, type UsageLine, type UsageStep } from "../lib/message-part-grouping"
+import { getTechnicalCleanupParts, getTechnicalGroupKind, isResponseTextPart, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
 
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
@@ -183,23 +183,6 @@ export default function MessageSection(props: MessageSectionProps) {
       if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
       return projected.flat()
     })
-  })
-  const usageLines = createMemo(() => {
-    sessionRevision()
-    if (usageMetricsVisibility() === "hidden") return new Map<string, UsageLine>()
-    const resolvedStore = store()
-    // Queued prompts render after the running turn, so they do not split its line.
-    const ids = messageIds(), queued = props.pendingPrompts
-    const ordered = queued?.size ? [...ids.filter((id) => !queued.has(id)), ...ids.filter((id) => queued.has(id))] : ids
-    return projectUsageLines(ordered.flatMap<UsageStep>((messageId) => {
-      const record = resolvedStore.getMessage(messageId)
-      if (!record) return []
-      const info = resolvedStore.getMessageInfo(messageId)
-      if (record.role === "user" || info?.nativeType === "idle") return [{ messageId, endsTurn: true }]
-      // Only settled steps count; skip their display data otherwise (this reruns per streamed token).
-      if (!hasVisibleUsage(info, true)) return []
-      return [{ messageId, info, hasResponseText: buildRecordDisplayData(props.instanceId, record).orderedParts.some(isResponseTextPart) }]
-    }))
   })
   const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
     technicalCleanupTranscript(),
@@ -1458,7 +1441,6 @@ export default function MessageSection(props: MessageSectionProps) {
               pendingFormToolTargets={pendingFormToolTargets}
               technicalGroupForPart={technicalGroupForPart}
               technicalGroupingSignature={() => technicalGroupingSignature(messageId)}
-              usageLine={() => usageLines().get(messageId)}
               technicalCleanupParts={technicalCleanupParts}
               technicalCleanupPartKeys={technicalCleanupPartKeys}
               onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}
