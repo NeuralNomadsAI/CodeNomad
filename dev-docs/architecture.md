@@ -15,7 +15,7 @@ CodeNomad's bundled native plugins (automation, see [BROWSER_AUTOMATION.md](BROW
 
 ## Shared Service And Locations
 
-`packages/server/src/workspaces/opencode-service.ts` runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle, validates the authenticated loopback endpoint, and pins that identity while active. It connects to one externally owned global daemon and never stops it on backend shutdown.
+`packages/server/src/workspaces/opencode-service.ts` runs the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle, validates the authenticated loopback endpoint, and pins that identity while active. It connects to one externally owned global daemon and never stops it on backend shutdown. An acquisition more than 30 seconds after the last check repeats discovery: a different discovered daemon (URL, PID, version or credentials) replaces the connection, while a discovery that fails or finds no service keeps it until the next interval. The connection's own failed requests and ended event streams retire it.
 
 OpenCode owns the daemon's standard state and database. Configured allowed environment variables and `NODE_EXTRA_CA_CERTS` apply only if CodeNomad starts a missing daemon; a running daemon keeps its environment. `OPENCODE_DB` and `XDG_STATE_HOME` never reach the daemon or session environments (`workspaces/host-opencode-service.ts`, `workspaces/session-environment.ts`). WSL support requires Windows localhost forwarding and executes the Linux CLI lifecycle inside the selected distribution without cross-namespace PID operations.
 

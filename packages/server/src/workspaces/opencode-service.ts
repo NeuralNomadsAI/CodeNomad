@@ -183,18 +183,22 @@ export class OpenCodeSharedService {
       return Promise.resolve(current)
     }
     const generation = this.generation
+    // Only a different discovered daemon replaces a working connection. A recheck
+    // that fails (a slow CLI or status probe past the caller's deadline) or finds
+    // no service is inconclusive: the connection's own failed requests and ended
+    // streams retire it. Keep it and retry at the next interval.
+    const keepCurrent = () => {
+      this.connectionValidatedAt = this.now()
+      return current
+    }
     const check = this.lifecycle().discover(deadlineAt).then((endpoint) => {
       if (generation !== this.generation || this.connected !== current) return this.connectService(undefined, deadlineAt)
-      if (endpoint && this.sameEndpoint(endpoint, current.endpoint)) {
-        this.connectionValidatedAt = this.now()
-        return current
-      }
+      if (!endpoint || this.sameEndpoint(endpoint, current.endpoint)) return keepCurrent()
       this.invalidateConnection(current)
-      return endpoint ? this.createConnection(endpoint, this.generation) : this.startConnection(deadlineAt)
+      return this.createConnection(endpoint, this.generation)
     }, () => {
       if (generation !== this.generation || this.connected !== current) return this.connectService(undefined, deadlineAt)
-      this.invalidateConnection(current)
-      return this.startConnection(deadlineAt)
+      return keepCurrent()
     })
     const healthCheck = check.finally(() => {
       if (this.healthCheck === healthCheck) this.healthCheck = undefined
