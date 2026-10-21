@@ -433,9 +433,21 @@ export default function MessageSection(props: MessageSectionProps) {
   }
   let retryAnchorRestore: (() => void) | null = null
   const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
+  // The list cannot raise a message near the end to its top, so the last jump's
+  // target, while loading or shown, stays the reference for the next jump.
+  let userMessageJumpTarget: string | null = null
+  // A jump that finds nothing resident waits for the index it requested.
+  let deferredUserMessageJump: UserMessageJumpDirection | null = null
+
+  /** Another navigation or a scroll gesture now owns the position. */
+  function forgetUserMessageJump() {
+    userMessageJumpTarget = null
+    deferredUserMessageJump = null
+  }
 
   /** `positioning`: the caller positions the list at once, so it leaves no restore pending. */
   function cancelWindowNavigation(positioning = false) {
+    forgetUserMessageJump()
     const nav = navigation()
     if (nav.kind === "paging") {
       nav.controller.abort()
@@ -802,20 +814,12 @@ export default function MessageSection(props: MessageSectionProps) {
     else if (match === previous || !messageIds().includes(match.messageId)) navigateToMessage(match.messageId, match.id)
   }
 
-  // The list cannot raise a message near the end to its top, so the last jump's
-  // target, while loading or shown, stays the reference until another navigation
-  // or a scroll gesture.
-  let userMessageJumpTarget: string | null = null
-  // A jump that finds nothing resident waits for the index it requested.
-  let deferredUserMessageJump: UserMessageJumpDirection | null = null
-
   /**
    * Places a message at the top, first paging in its history window when it is
    * not resident. A search navigation then reveals its occurrence once.
    */
   function navigateToMessage(messageId: string, searchMatchId?: string) {
-    userMessageJumpTarget = null
-    deferredUserMessageJump = null
+    forgetUserMessageJump()
     if (messageIds().includes(messageId)) placeResidentMessage(messageId, searchMatchId)
     else void pageWindow("around", api => placeMessage(api, messageId, searchMatchId), messageId)
   }
@@ -1357,8 +1361,7 @@ export default function MessageSection(props: MessageSectionProps) {
           onScrollIntent={(direction) => {
             setRevealActiveToken(value => value + 1)
             claimSearchReveal()
-            userMessageJumpTarget = null
-            deferredUserMessageJump = null
+            forgetUserMessageJump()
             // An opposite directional gesture supersedes pending history paging
             // before it can position; taps and the requesting gesture do not.
             const nav = navigation()

@@ -1283,26 +1283,53 @@ test("Shift+Up/Down jump between user messages across history windows, never fro
   } finally { await f.close() }
 })
 
+/**
+ * With the timeline hidden and its index held, resident jumps climb to 1300,
+ * the mixed window's first user message; one more jump then waits for the index.
+ */
+async function deferJumpBeyondWindow(f: Awaited<ReturnType<typeof fixture>>) {
+  assert.equal(f.outlines.length, 0, "a hidden timeline requests no index")
+  const release = f.holdIndex()
+  await f.page.locator(".message-stream").focus()
+  for (let press = 0; press < 60 && Math.abs(await rowOffset(f.page, 1300) ?? Infinity) > 2; press++) {
+    await f.page.keyboard.press("Shift+ArrowUp")
+    await waitFrames(f.page, 4)
+  }
+  await assertPassageAtTop(f.page, 1300)
+  assert.ok(f.outlines.length > 0, "the first jump requests the index")
+  await f.page.keyboard.press("Shift+ArrowUp")
+  await assertPassageAtTop(f.page, 1300)
+  assert.equal(f.windows.length, 0, "nothing resident precedes the first user message")
+  return release
+}
+
 test("with the timeline hidden, a user message jump beyond the resident window waits for the index it requests", async () => {
   const f = await fixture(true, false, false, false, true)
   try {
-    assert.equal(f.outlines.length, 0, "a hidden timeline requests no index")
-    const release = f.holdIndex()
-    await f.page.locator(".message-stream").focus()
-    // Resident jumps climb to 1300, the window's first user message, while the index is held.
-    for (let press = 0; press < 60 && Math.abs(await rowOffset(f.page, 1300) ?? Infinity) > 2; press++) {
-      await f.page.keyboard.press("Shift+ArrowUp")
-      await waitFrames(f.page, 4)
-    }
-    await assertPassageAtTop(f.page, 1300)
-    assert.ok(f.outlines.length > 0, "the first jump requests the index")
-    await f.page.keyboard.press("Shift+ArrowUp")
-    await assertPassageAtTop(f.page, 1300)
-    assert.equal(f.windows.length, 0, "nothing resident precedes the first user message")
+    const release = await deferJumpBeyondWindow(f)
     release()
     await assertPassageAtTop(f.page, 1295)
     assert.ok(f.windows.some(target => target.messageID === navigationMessageId(1295)), JSON.stringify(f.windows))
     assert.equal(await f.page.locator(".message-timeline").count(), 0)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+test("an explicit Latest drops a user message jump still waiting for the index", async () => {
+  const f = await fixture(true, false, false, false, true)
+  try {
+    const release = await deferJumpBeyondWindow(f)
+    await f.page.getByRole("button", { name: "Scroll to latest message" }).click()
+    const atBottom = () => f.page.locator(".message-stream").evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop < 2)
+    await f.page.waitForFunction(() => {
+      const stream = document.querySelector(".message-stream")!
+      return stream.scrollHeight - stream.clientHeight - stream.scrollTop < 2
+    })
+    release()
+    await f.page.waitForFunction(() => Boolean((window as any).fixture.index()))
+    await waitFrames(f.page, 30)
+    assert.ok(await atBottom(), "the index's arrival leaves the reader at the latest message")
+    assert.ok(!f.windows.some(target => target.messageID === navigationMessageId(1295)), JSON.stringify(f.windows))
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })
