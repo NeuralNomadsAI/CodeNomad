@@ -28,10 +28,11 @@ test("a registered worktree whose Git layout is being removed is omitted without
     assert.equal(registered.length, 4)
     // `git worktree remove` deletes `.git` first and the rest of the folder later.
     await rm(path.join(removing, ".git"), { force: true })
-    // An interrupted removal can also leave the administrative directory gone
-    // while the folder and its `.git` pointer remain.
+    // A removal can also delete the administrative directory between Git's
+    // annotation snapshot and the entry's inspection, leaving the `.git` pointer.
     const admin = git(orphaned, "rev-parse", "--absolute-git-dir")
-    await rm(admin, { recursive: true, force: true })
+    const orphanedHost = await realpath(orphaned)
+    let raced = false
 
     const client = {
       location: { get: async ({ location }: { location: { directory: string } }) => {
@@ -45,7 +46,15 @@ test("a registered worktree whose Git layout is being removed is omitted without
       },
     } as unknown as OpenCodeClient
     const inventory = await listNativeWorktrees({ client, workspacePath: repo, location: { directory: repo },
-      toHost: async directory => directory }, { refresh: false })
+      toHost: async directory => {
+        // Inspection translates each entry after the annotation snapshot was read.
+        if (!raced && await realpath(directory).catch(() => undefined) === orphanedHost) {
+          raced = true
+          await rm(admin, { recursive: true, force: true })
+        }
+        return directory
+      } }, { refresh: false })
+    assert.equal(raced, true, "the administrative directory disappeared during inspection")
 
     const listed = await Promise.all(inventory.worktrees.map(entry => realpath(entry.registeredDirectory ?? entry.directory)))
     assert.deepEqual(new Set(listed), new Set([await realpath(repo), await realpath(healthy)]))
