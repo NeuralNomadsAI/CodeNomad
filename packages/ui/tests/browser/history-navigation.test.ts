@@ -31,8 +31,12 @@ before(async () => {
 })
 after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 
-async function fixture(mixed = false, pausePreviews = false, holdMessages = false, deep = false, hiddenTimeline = false) {
+async function fixture(mixed = false, pausePreviews = false, holdMessages = false, deep = false, hiddenTimeline = false,
+  options: { missionPicker?: boolean; mac?: boolean } = {}) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
+  // Default shortcuts follow `navigator.platform`. A string, like `waitFrames`: the
+  // test transpiler's helpers do not exist in the page.
+  if (options.mac) await page.addInitScript({ content: 'Object.defineProperty(navigator, "platform", { get: () => "MacIntel", configurable: true })' })
   const databaseDirectory = await mkdtemp(path.join(os.tmpdir(), "codenomad-outline-browser-"))
   const databasePath = path.join(databaseDirectory, "history.sqlite")
   const db = new DatabaseSync(databasePath)
@@ -100,7 +104,7 @@ async function fixture(mixed = false, pausePreviews = false, holdMessages = fals
     }
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(response) }).catch(() => {})
   })
-  await page.goto(url + `?${mixed ? "mixed&" : ""}${deep ? "deep&" : ""}${hiddenTimeline ? "hiddenTimeline&" : ""}${holdMessages ? "holdMessages" : ""}`)
+  await page.goto(url + `?${mixed ? "mixed&" : ""}${deep ? "deep&" : ""}${hiddenTimeline ? "hiddenTimeline&" : ""}${options.missionPicker ? "missionPicker&" : ""}${holdMessages ? "holdMessages" : ""}`)
   await page.waitForFunction(() => Boolean((window as any).fixture))
   // The deep fixture's tool rows contribute extra segments.
   if (deep) await page.waitForFunction(() => Number(document.querySelector(".message-timeline")?.getAttribute("data-segment-count")) >= 1500)
@@ -1291,6 +1295,28 @@ test("Alt+Up/Down jump between user messages across history windows, from the co
     await composer.press("Alt+ArrowUp")
     await waitFrames(f.page, 10)
     await assertPassageAtTop(f.page, 1300)
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
+for (const mac of [false, true]) test(`${mac ? "Cmd+Option" : "Alt"}+Up/Down move the mission picker search's option, not the conversation`, async () => {
+  const f = await fixture(true, false, false, false, false, { missionPicker: true, mac })
+  const jump = (key: "ArrowUp" | "ArrowDown") => `${mac ? "Meta+Alt" : "Alt"}+${key}`
+  try {
+    await clickTimeline(f.page, 1300)
+    await assertPassageAtTop(f.page, 1300)
+    await f.page.locator(".message-stream").focus()
+    await f.page.keyboard.press(jump("ArrowDown"))
+    await assertPassageAtTop(f.page, 1305)
+    await f.page.locator(".mission-picker-field").click()
+    const search = f.page.locator(".mission-picker-search")
+    await search.focus()
+    await f.page.keyboard.press("ArrowDown")
+    const before = await search.getAttribute("aria-activedescendant")
+    await f.page.keyboard.press(jump("ArrowDown"))
+    assert.notEqual(await search.getAttribute("aria-activedescendant"), before, "the picker moves its active option")
+    await waitFrames(f.page, 10)
+    await assertPassageAtTop(f.page, 1305)
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
 })

@@ -1,6 +1,7 @@
 import { createEffect, createRoot, createSignal, Show } from "solid-js"
 import { render } from "solid-js/web"
 import SessionView from "../../../src/components/session/session-view"
+import { MissionPicker } from "../../../src/components/mission-picker"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { transcriptPresetPatch } from "../../../src/components/transcript-visibility"
 import { setSessionSearchOpen } from "../../../src/stores/session-search"
@@ -89,8 +90,17 @@ if (savedIndexes) {
 if (location.search.includes("hiddenTimeline")) await applyUiSettings({ locale: "en", showMessageTimeline: false })
 const [visible, setVisible] = createSignal(true)
 const store = messageStoreBus.getOrCreate(instanceId)
+// A field-driven list beside the conversation: its search moves the active option with every arrow key.
+const missionPicker = location.search.includes("missionPicker")
+const missionEntries = Array.from({ length: 40 }, (_, index) => ({ key: `mission:${index}`, title: `Mission ${index}`, status: "In progress", mark: "running" }))
+const [missionsExpanded, setMissionsExpanded] = createSignal(false)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}>
   <SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={true} />
+</Show><Show when={missionPicker}>
+  <div class="mission-control" style={{ position: "fixed", top: "0", left: "0", width: "280px", "z-index": "10" }}>
+    <MissionPicker entries={missionEntries} expanded={missionsExpanded()} onExpandedChange={setMissionsExpanded}
+      onSelect={() => {}} onCreate={() => {}} createDisabled />
+  </div>
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   id: navigationMessageId,

@@ -67,6 +67,8 @@ describe("user message jump keys", () => {
     assert.equal(keyAllowsUserMessageJump(key(element("SELECT", ["select"]))), false)
     assert.equal(keyAllowsUserMessageJump(key(element("BUTTON", ["[aria-haspopup]:not([aria-haspopup='false'])"]))), false)
     assert.equal(keyAllowsUserMessageJump(key(element("DIV", ["[role='listbox']"]))), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("INPUT", ["[aria-activedescendant]"], "search"))), false)
+    assert.equal(keyAllowsUserMessageJump(key(element("INPUT", ["input[aria-controls]"], "search"))), false)
     assert.equal(keyAllowsUserMessageJump(key(element("INPUT", [], "number"))), false)
     assert.equal(keyAllowsUserMessageJump(key(element("TEXTAREA"), { isComposing: true })), false)
     assert.equal(keyAllowsUserMessageJump(key(element("DIV"), { keyCode: 229 })), false)

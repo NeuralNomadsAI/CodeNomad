@@ -64,9 +64,11 @@ export function findUserMessageJumpTarget(input: {
   return null
 }
 
-// Modified arrows move lines in the code editor, reach the terminal's program and
-// open selects and popup buttons (Alt+Down).
-const MODIFIED_ARROW_TARGETS = ".monaco-editor, .xterm, select, [aria-haspopup]:not([aria-haspopup='false'])"
+// Modified arrows move lines in the code editor, reach the terminal's program,
+// open selects and popup buttons (Alt+Down) and move the active option of a list
+// driven from a field, such as the mission picker's search.
+const MODIFIED_ARROW_TARGETS = [".monaco-editor", ".xterm", "select", "[aria-haspopup]:not([aria-haspopup='false'])",
+  "[aria-activedescendant]", "input[aria-controls]"].join(", ")
 const TEXT_INPUT_TYPES = new Set(["text", "search", "email", "url", "tel", "password"])
 
 /**
