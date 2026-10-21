@@ -206,7 +206,6 @@
 
 ## Multi-Language Support (i18n)
 
-- A PR that changes user-visible behavior (labels, controls, steps, defaults, limitations) updates the affected help pages in the same PR, English first, then the nine translations using each locale's UI labels; the help publishes from `dev`, and CI checks structure and links, not whether the text still matches the UI.
 - Public help uses `docs/help/<locale>/*.md` for the ten app locales, `site.json` for the eight sections/25 approved pages and `i18n/*.json` for complete non-empty chrome. Preserve ordered explicit ASCII (level, id) heading pairs across translations; H1 is the single title without an id. Absent translations build with a visible English fallback but fail `npm run test:help` (use `-- --locale en` while translating); heading drift is always fatal. Rebuilds remove only recorded owned output files. Images require repository real-path containment. `help.css` owns square, responsive, logical-property chrome with CSS-exclusive desktop navigation/outline and collapsed narrow disclosures, local table/code scrolling and LTR inline commands. Only the root redirect and first-party `help-search.js` introduce JavaScript; search reads the current locale's generated anchor-validated index, remains hidden without JS, preserves IME/browser find, and uses localized states and 44px touch controls. Native Help and the palette use `lib/help-url.ts` (reject malformed tags) and the external opener with failure feedback, never renderer navigation. GitHub Pages publishes `dist/help`; see `dev-docs/USER_HELP.md`.
 
 Tauri remote help opening stays in the owned native new-window/navigation policy: only credential-free HTTPS URLs under `https://neuralnomadsai.github.io/CodeNomad/` on port 443 reach the system browser; no remote opener IPC/native capability or native guest. Electron's host external opener reports asynchronous failures visibly, without replay. Public search hides the native cancel affordance and keeps one labelled 44px Clear control.
@@ -255,6 +254,10 @@ Behavior for agents:
 ## V2 Runtime Launch
 - Native automation instrumentation starts automatically; no Developer Mode toggle or activation restart is required. Do not configure a fixed CDP port or a manual WebView2 profile.
 - Rebuild Electron before calling `codenomad.act({ action: "restart" })`. For Windows Tauri, stop and relaunch the release executable only when the linker cannot replace it; never stop the shared OpenCode daemon.
+
+## Pull Requests
+- A PR that changes user-visible behavior (labels, controls, steps, defaults, limitations) updates the affected help pages in the same PR: English first, then the nine translations using each locale's UI labels (`dev-docs/USER_HELP.md`). The help publishes from `dev`; CI checks its structure and links, not whether the text still matches the UI.
+- The non-blocking `help-update-reminder.yml` workflow comments on a PR that changes English UI messages without touching `docs/help`, and removes the comment once help changes. Answer it before merging: update the help, or confirm nothing user-facing is documented there.
 
 ## Commit Message Guidelines
 - When creating commits, use detailed commit messages: a concise conventional-style subject followed by body paragraphs that explain the user-visible behavior change, the implementation approach, important edge cases or platform considerations, and the validation or test coverage added.

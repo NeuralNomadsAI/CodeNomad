@@ -157,5 +157,7 @@ trigger the workflow. No extra hosting secret is needed.
 The full multilingual check intentionally blocks publishing incomplete translations.
 
 The site follows `dev`, not a versioned archive. Update the guide alongside
-user-visible behavior changes. Documentation hosting remains separate from
+user-visible behavior changes, in the same PR. `.github/workflows/help-update-reminder.yml`
+comments (without blocking) on a PR that changes English UI messages but no help
+page, and removes its comment once the help changes. Documentation hosting remains separate from
 desktop updater work.
