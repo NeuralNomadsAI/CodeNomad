@@ -38,17 +38,22 @@ function run(fixed, count) {
       crashes++
     } else {
       // A refcount race can leak rather than free early. One surviving process
-      // is not a clean baseline; the bounded negative-control series must crash.
+      // is not a clean baseline; the series looks for a crash below.
       assert.match(result.stdout, /PASS: 800000 runtime handle clones and clean teardown/)
     }
-    console.log(`${fixed ? "fixed PASS" : result.status === 0 ? "negative control survived" : "negative control crash reproduced"} ${index + 1}/${count}: 0x${(result.status >>> 0).toString(16)}`)
+    console.log(`${fixed ? "fixed PASS" : result.status === 0 ? "negative control survived" : "negative control crash reproduced"} ${index + 1}/${count}: 0x${(result.status >>> 0).toString(16)} (${machine})`)
     // One crash proves the reverted counter races on this machine.
     if (!fixed && crashes) return
   }
-  // The race is timing-dependent and some CI machines never hit it. Warn instead
-  // of failing; the corrected build's runs remain the regression check.
-  if (!fixed) console.log(`::warning::Negative control did not reproduce the native race in ${count} processes on this machine`)
+  if (fixed) return
+  // The race is timing-dependent: some GitHub runners never hit it, so CI only
+  // warns. The counter-boundary and vendored-Tao checks still guard the fix, but
+  // corrected runs on such a machine are no timing evidence. Locally it fails.
+  const message = `Negative control did not reproduce the native race in ${count} processes (${machine})`
+  if (process.env.GITHUB_ACTIONS === "true") console.log(`::warning::${message}; corrected runs here are no timing evidence`)
+  else assert.fail(message)
 }
+const machine = `${os.cpus()[0]?.model.trim() ?? "unknown CPU"}, ${os.availableParallelism()} threads`
 function replaceOnce(source, before, after) {
   assert.equal(source.split(before).length, 2, `Expected one counter boundary: ${before}`)
   return source.replace(before, after)
