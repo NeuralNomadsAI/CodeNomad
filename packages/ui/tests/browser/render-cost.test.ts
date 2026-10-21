@@ -414,10 +414,8 @@ test("timeline exact extent, bounded DOM and active highlight updates do not mou
     const marker = document.querySelector<HTMLElement>(".timeline-measure button")!
     const gap = document.querySelector<HTMLElement>(".timeline-measure div")!
     const markerHeight = parseFloat(getComputedStyle(marker).height), gapHeight = parseFloat(getComputedStyle(gap).height)
-    // Each 3-marker group has a double gap before its tool and following user.
-    let units = 0
-    for (let index = 1; index < 10000; index++) units += index % 3 === 2 ? 1 : 2
-    return { extent: parseFloat(content.style.height), expected: markerHeight * 10000 + gapHeight * units, mounted: document.querySelectorAll(".timeline-virtual-row").length }
+    // One uniform gap between consecutive markers, whatever their message.
+    return { extent: parseFloat(content.style.height), expected: markerHeight * 10000 + gapHeight * 9999, mounted: document.querySelectorAll(".timeline-virtual-row").length }
   })
   console.log("timeline-geometry", geometry)
   // CSS serialization and native scroll extents round at this magnitude.

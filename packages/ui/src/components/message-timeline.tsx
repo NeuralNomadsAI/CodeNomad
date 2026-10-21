@@ -446,15 +446,6 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     onCleanup(() => { observer.disconnect(); window.removeEventListener("resize", clearHoverPreview) })
   })
 
-  // Messages with at least one tool segment, for the group spacing below.
-  const messagesWithTools = createMemo(() => {
-    const set = new Set<string>()
-    for (const s of props.segments) {
-      if (s.type === "tool") set.add(s.messageId)
-    }
-    return set
-  })
-
   const segmentStates = createMemo(() => {
     const resolvedStore = store()
     const result = new Map<string, TimelineSegmentState>()
@@ -507,46 +498,9 @@ const MessageTimeline: Component<MessageTimelineProps> = (props) => {
     const messageId = messageBySegmentId().get(id)
     return messageId === undefined ? null : firstVisibleByMessage().get(messageId) ?? null
   })
-  const segmentSpacerHeights = createMemo(() => {
-    const states = segmentStates()
-    const result = new Map<string, number>()
-    let previousVisible: TimelineSegment | null = null
-
-    for (let index = 0; index < props.segments.length; index += 1) {
-      const segment = props.segments[index]
-      const state = states.get(segment.id)
-
-      if (state?.hidden) {
-        result.set(segment.id, 0)
-        continue
-      }
-
-      if (!previousVisible) {
-        result.set(segment.id, 0)
-        previousVisible = segment
-        continue
-      }
-
-      const previousRaw = index > 0 ? props.segments[index - 1] : null
-      const startsVisibleToolGroup = segment.type === "tool"
-        && (previousVisible.type !== "tool" || previousVisible.messageId !== segment.messageId)
-      const startsCollapsedToolGroup = segment.type === "assistant"
-        && previousVisible.messageId !== segment.messageId
-        && messagesWithTools().has(segment.messageId)
-        && previousRaw?.type === "tool"
-        && previousRaw.messageId === segment.messageId
-      const followsVisibleGroupParent = (segment.type === "user" || segment.type === "compaction")
-        && previousVisible.type === "assistant"
-        && messagesWithTools().has(previousVisible.messageId)
-
-      const gapUnits = 1 + (startsVisibleToolGroup || startsCollapsedToolGroup || followsVisibleGroupParent ? 1 : 0)
-      result.set(segment.id, gapUnits)
-
-      previousVisible = segment
-    }
-
-    return result
-  })
+  // One uniform gap between visible markers, none before the first. V2 records
+  // each model call as its own message, so message-based group gaps were noise.
+  const segmentSpacerHeights = createMemo(() => new Map(visibleSegments().map((segment, index) => [segment.id, index ? 1 : 0])))
 
   return (
     <div class="message-timeline-container">
