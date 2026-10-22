@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils } = require("electron")
+const { contextBridge, ipcRenderer, webFrame, webUtils } = require("electron")
 
 function resolveWindowContext() {
   const prefix = "--codenomad-window-context="
@@ -48,6 +48,8 @@ const localElectronAPI = {
     return () => ipcRenderer.removeListener("menu:action", handler)
   },
   showTitlebarMenu: (menu, x, y) => ipcRenderer.invoke("menu:popup", menu, x, y),
+  // The page zoom the window applies; the macOS title bar undoes it.
+  getZoomFactor: () => webFrame.getZoomFactor(),
   getPathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file)
@@ -102,6 +104,7 @@ const preferencesElectronAPI = {
   openDialog: localElectronAPI.openDialog,
   showNotification: localElectronAPI.showNotification,
   openRemoteWindow: localElectronAPI.openRemoteWindow,
+  getZoomFactor: localElectronAPI.getZoomFactor,
   getPreferencesSection: () => ipcRenderer.invoke("preferences:getSection"),
   getPreferencesRequest: () => ipcRenderer.invoke("preferences:getSection"),
   preferencesReady: () => ipcRenderer.invoke("preferences:ready"),

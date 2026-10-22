@@ -52,19 +52,20 @@ test("Preferences preload exposes only section and frame controls", () => {
     invoke(channel: string) { invoked.push(channel); return Promise.resolve() },
   }
   vm.runInNewContext(readFileSync(new URL("./index.cjs", import.meta.url), "utf8"), {
-    require: () => ({ contextBridge: { exposeInMainWorld: (name: string, value: unknown) => exposed.set(name, value) }, ipcRenderer, webUtils: {} }),
+    require: () => ({ contextBridge: { exposeInMainWorld: (name: string, value: unknown) => exposed.set(name, value) }, ipcRenderer, webFrame: { getZoomFactor: () => 1.5 }, webUtils: {} }),
     process: { argv: ["--codenomad-window-context=preferences"] },
   })
 
   const api = exposed.get("electronAPI") as Record<string, Function>
   assert.deepEqual(Object.keys(api), [
-    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow",
+    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow", "getZoomFactor",
     "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
     "openerStartupState", "listOtherDataProfiles", "deleteOtherDataProfiles", "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
     "minimizeWindow", "toggleMaximizeWindow", "closeWindow",
   ])
   assert.equal(exposed.get("__CODENOMAD_WINDOW_CONTEXT__"), "preferences")
   assert.equal(exposed.get("__CODENOMAD_WINDOW_ID__"), null)
+  assert.equal(api.getZoomFactor(), 1.5, "the frame's own zoom factor")
   api.getPreferencesSection()
   api.getPreferencesRequest()
   api.preferencesReady()
@@ -122,6 +123,10 @@ test("native titlebar controls remain local and obsolete automation toggles are 
   assert.equal(expose(["--codenomad-window-context=remote"]).showTitlebarMenu, undefined)
   assert.equal(expose(["--codenomad-window-context=preferences"]).getDeveloperMode, undefined)
   assert.equal(expose(["--codenomad-window-context=preferences"]).showTitlebarMenu, undefined)
+  // Only windows drawing their own title bar read the page zoom.
+  assert.equal(typeof expose([]).getZoomFactor, "function")
+  assert.equal(typeof expose(["--codenomad-window-context=preferences"]).getZoomFactor, "function")
+  assert.equal(expose(["--codenomad-window-context=remote"]).getZoomFactor, undefined)
   // Data-profile cleanup belongs to local and Preferences windows, never remote content.
   assert.equal(typeof expose([]).listOtherDataProfiles, "function")
   assert.equal(typeof expose([]).deleteOtherDataProfiles, "function")

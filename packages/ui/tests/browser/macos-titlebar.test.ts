@@ -27,16 +27,18 @@ after(async () => { await browser?.close(); await server?.close(); await cache?.
 
 const WIDTH = 1100
 
-/** `pageZoom` stands for the host's page zoom, which makes the window wider than the page. */
+/** `pageZoom` is the zoom factor Electron's preload reports for the page. */
 async function prepare(platform: string, pageZoom = 1) {
   const page = await browser.newPage({ viewport: { width: WIDTH, height: 500 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
-  // A local desktop window on the given OS, without any real host or user state. A source
-  // string keeps the transpiler's function-name helpers out of the page.
+  // A local desktop window on the given OS, without any real host or user state, whose
+  // window is twice as wide as the page, as with docked DevTools. A source string keeps
+  // the transpiler's function-name helpers out of the page.
   await page.addInitScript(`
     Object.defineProperty(Navigator.prototype, "platform", { get() { return ${JSON.stringify(platform)} } })
-    Object.defineProperty(window, "outerWidth", { get() { return Math.round(window.innerWidth * ${pageZoom}) } })
+    Object.defineProperty(window, "outerWidth", { get() { return window.innerWidth * 2 } })
+    window.electronAPI = { getZoomFactor() { return ${pageZoom} } }
     window.__CODENOMAD_RUNTIME_HOST__ = "electron"
     window.__CODENOMAD_WINDOW_CONTEXT__ = "local"
   `)
@@ -77,20 +79,22 @@ test("macOS leaves menus and window controls native and holds the app actions in
   } finally { await page.close() }
 })
 
-test("the macOS title bar keeps the traffic lights' native geometry under page zoom", async () => {
-  const { page, errors } = await prepare("MacIntel", 0.5)
-  try {
-    // At 50 % the page's CSS pixels are half a window point: 56 px make the 28-point bar.
-    const bar = (await page.locator(".native-titlebar").boundingBox())!
-    assert.equal(bar.height, 56)
-    assert.ok((await page.locator(".native-titlebar-logo").boundingBox())!.x >= 120, "the mark clears the 60-point traffic lights")
-    await page.locator(".native-titlebar-actions").getByRole("button", { name: "Notification History", exact: true }).click()
-    const panel = (await page.locator(".toast-history-panel").boundingBox())!
-    assert.ok(panel.width <= 380, "the history keeps the page zoom")
-    assert.ok(panel.y >= bar.y + bar.height, "the history opens below the title bar")
-    assert.deepEqual(errors, [])
-  } finally { await page.close() }
-})
+for (const pageZoom of [0.5, 5]) {
+  test(`the macOS title bar keeps the traffic lights' native geometry at ${pageZoom * 100} % page zoom`, async () => {
+    const { page, errors } = await prepare("MacIntel", pageZoom)
+    try {
+      // A page CSS pixel is `pageZoom` window points: 28 / pageZoom px make the 28-point bar.
+      const bar = (await page.locator(".native-titlebar").boundingBox())!
+      assert.ok(Math.abs(bar.height - 28 / pageZoom) < 0.1, `bar height ${bar.height}`)
+      assert.ok((await page.locator(".native-titlebar-logo").boundingBox())!.x >= 60 / pageZoom, "the mark clears the 60-point traffic lights")
+      await page.locator(".native-titlebar-actions").getByRole("button", { name: "Notification History", exact: true }).click()
+      const panel = (await page.locator(".toast-history-panel").boundingBox())!
+      assert.ok(panel.y >= bar.y + bar.height - 0.1, "the history opens below the title bar")
+      assert.ok(Math.abs(panel.width - 380) < 1, `the history keeps the page zoom (width ${panel.width})`)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+}
 
 test("Windows keeps the in-window menus, window controls and the tab bar's app actions", async () => {
   const { page, errors } = await prepare("Win32")

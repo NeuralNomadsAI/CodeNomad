@@ -30,12 +30,13 @@ export const appActionsInTitlebar = hasNativeTitlebar && macOS
 /**
  * The traffic lights never zoom, so the macOS bar undoes the host's page zoom from
  * `--host-page-zoom`/`--host-page-unzoom`. Tauri's WebKit hides the zoom, so its host
- * publishes them (`title_bar.rs`); Chromium's is the window's width over the page's.
+ * publishes them (`title_bar.rs`); Electron's preload reports the frame's zoom factor,
+ * re-read on resize because a zoom change resizes the page.
  */
 function publishElectronPageZoom() {
   const update = () => {
-    const ratio = window.outerWidth / window.innerWidth
-    const zoom = Number.isFinite(ratio) && ratio > 0.2 && ratio < 5 ? Math.round(ratio * 100) / 100 : 1
+    const factor = window.electronAPI?.getZoomFactor?.()
+    const zoom = typeof factor === "number" && Number.isFinite(factor) && factor > 0 ? factor : 1
     document.documentElement.style.setProperty("--host-page-zoom", String(zoom))
     document.documentElement.style.setProperty("--host-page-unzoom", String(1 / zoom))
   }
