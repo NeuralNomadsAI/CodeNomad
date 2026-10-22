@@ -344,7 +344,8 @@ export function createOpenCodeUpdateService(
       return {
         ...(plan.prefix && plan.legacy ? { legacyReplacement: { path: plan.legacy.command, version: plan.legacy.version } } : {}),
         ...(plan.foreign ? { foreignInstallation: { path: plan.foreign.command, source: plan.foreign.source,
-          ...(plan.foreign.version ? { version: plan.foreign.version } : {}), ...(plan.foreign.packageId ? { packageId: plan.foreign.packageId } : {}) } } : {}),
+          ...(plan.foreign.version ? { version: plan.foreign.version } : {}), ...(plan.foreign.packageId ? { packageId: plan.foreign.packageId } : {}),
+          ...(plan.foreign.blocked ? { blocked: plan.foreign.blocked } : {}) } } : {}),
       }
     },
     upgradeBinary: async (_binary, version, options) => {

@@ -68,6 +68,8 @@ export const settingsMessages = {
   "settings.opencode.setup.foreign.unusable": "Не удалось запустить OpenCode, найденный в {path}. CodeNomad не изменяет эту установку.",
   "settings.opencode.setup.foreign.winget": "Эта старая версия установлена через winget.",
   "settings.opencode.setup.foreign.alongside": "OpenCode 2 устанавливается для CodeNomad в пользовательскую папку npm рядом со старой версией.",
+  "settings.opencode.setup.foreign.blocked.occupied": "OpenCode 2 нельзя установить для CodeNomad, пока {path} занимает имя команды opencode в пользовательской папке npm. Переместите или переименуйте эту команду, затем выберите «Проверить состояние и обновления».",
+  "settings.opencode.setup.foreign.blocked.unwritable": "OpenCode 2 нельзя установить для CodeNomad: пользовательская папка npm {path} недоступна для записи.",
   "settings.opencode.setup.foreign.terminal": "В зависимости от порядка PATH команда opencode в терминале может по-прежнему запускать старую версию.",
   "settings.opencode.setup.foreign.wingetUninstall": "Если она больше не нужна, вы можете удалить её самостоятельно командой:",
   "settings.opencode.setup.foreign.install": "Установить OpenCode 2 для CodeNomad",

@@ -20,6 +20,9 @@ export function OpenCodeInstallationNotice(props: { status: OpenCodeUpdateStatus
         <Show when={props.status.canUpgrade && props.status.installationSource !== "managed"}>
           <p class="settings-toggle-caption">{t("settings.opencode.setup.foreign.alongside")}</p>
         </Show>
+        <Show when={!props.status.canUpgrade && foreign().blocked}>
+          {blocked => <p class="settings-toggle-caption break-all">{t(`settings.opencode.setup.foreign.blocked.${blocked().reason}`, { path: blocked().path })}</p>}
+        </Show>
         <p class="settings-toggle-caption">{t("settings.opencode.setup.foreign.terminal")}</p>
         <Show when={foreign().packageId}>
           {packageId => <p class="settings-toggle-caption">{t("settings.opencode.setup.foreign.wingetUninstall")} <code>winget uninstall {packageId()}</code></p>}

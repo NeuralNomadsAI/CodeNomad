@@ -1043,6 +1043,24 @@ test("an outdated foreign OpenCode 2 is described by the minimum version, not as
   } finally { await page.close() }
 })
 
+test("an older OpenCode occupying the user npm folder explains why OpenCode 2 cannot be installed beside it", async () => {
+  const page = await browser.newPage()
+  const occupying = "/home/fixture/.local/bin/opencode"
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "1.17.18", latestVersion: "2.1.2",
+    updateAvailable: true, canUpgrade: false, minimumVersion: "2.1.2", recommendedVersion: "2.1.2", binaryPath: occupying, installationSource: "path",
+    foreignInstallation: { path: occupying, version: "1.17.18", source: "other", blocked: { reason: "occupied", path: occupying } },
+    versionAssessment: "incompatible", target: "host", canRestart: false } }))
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    const notice = panel.getByRole("note")
+    await notice.getByText(`OpenCode 2 cannot be installed for CodeNomad while ${occupying} uses the opencode command name in your user npm folder. Move or rename that command, then choose Check status and updates.`, { exact: true }).waitFor()
+    assert.equal(await panel.getByRole("button", { name: "Install OpenCode 2 for CodeNomad", exact: true }).count(), 0)
+    assert.equal(await notice.getByText(/alongside the older version/).count(), 0)
+    await panel.getByRole("button", { name: "Check status and updates", exact: true }).waitFor()
+  } finally { await page.close() }
+})
+
 test("user npm PATH repair is available at the current version and installation conflicts retain explicit retry", async () => {
   const page = await browser.newPage({ viewport: { width: 420, height: 900 } })
   let migrated = false, attempts = 0, connects = 0

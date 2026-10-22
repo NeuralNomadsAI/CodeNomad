@@ -68,6 +68,8 @@ export const settingsMessages = {
   "settings.opencode.setup.foreign.unusable": "לא ניתן היה להפעיל את OpenCode שנמצא ב-{path}. CodeNomad אינו משנה התקנה זו.",
   "settings.opencode.setup.foreign.winget": "הגרסה הישנה הזו הותקנה באמצעות winget.",
   "settings.opencode.setup.foreign.alongside": "OpenCode 2 מותקן עבור CodeNomad בתיקיית ה-npm של המשתמש, לצד הגרסה הישנה.",
+  "settings.opencode.setup.foreign.blocked.occupied": "לא ניתן להתקין את OpenCode 2 עבור CodeNomad כל עוד {path} תופס את שם הפקודה opencode בתיקיית ה-npm של המשתמש. העבירו את הפקודה הזו או שנו את שמה, ואז בחרו בדיקת מצב ועדכונים.",
+  "settings.opencode.setup.foreign.blocked.unwritable": "לא ניתן להתקין את OpenCode 2 עבור CodeNomad כי אין הרשאת כתיבה לתיקיית ה-npm של המשתמש {path}.",
   "settings.opencode.setup.foreign.terminal": "בהתאם לסדר ה-PATH, הפקודה opencode במסוף עשויה עדיין להפעיל את הגרסה הישנה.",
   "settings.opencode.setup.foreign.wingetUninstall": "אם אינך צריך אותה עוד, ניתן להסיר אותה בעצמך באמצעות:",
   "settings.opencode.setup.foreign.install": "התקנת OpenCode 2 עבור CodeNomad",

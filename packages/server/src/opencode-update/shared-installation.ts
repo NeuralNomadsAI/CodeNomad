@@ -33,6 +33,10 @@ export interface ForeignOpenCode {
   version?: string
   source: "winget" | "other"
   packageId?: string
+  /** Why OpenCode 2 cannot be installed beside it: a non-npm command already
+   * holds OpenCode's name in the user npm bin directory, or that prefix cannot
+   * be written. `path` is the occupying command or the prefix. */
+  blocked?: { reason: "occupied" | "unwritable"; path: string }
 }
 
 export interface SharedInstallationPlan {
@@ -214,8 +218,11 @@ export function sharedInstallationPlan(host: InstallationHost = {}): SharedInsta
   if (target) return target
   const foreign = supersededForeign(command, host)
   if (!foreign) return {}
-  if (!userCommand) return writable(userPrefix, true) ? { prefix: userPrefix, foreign } : { foreign }
-  return { ...npmTarget(userCommand, userPrefix, userPrefix, platform), foreign }
+  const unwritable = { ...foreign, blocked: { reason: "unwritable" as const, path: userPrefix } }
+  if (!userCommand) return writable(userPrefix, true) ? { prefix: userPrefix, foreign } : { foreign: unwritable }
+  const userTarget = npmTarget(userCommand, userPrefix, userPrefix, platform)
+  if (userTarget?.prefix) return { ...userTarget, foreign }
+  return { foreign: userTarget ? unwritable : { ...foreign, blocked: { reason: "occupied", path: userCommand } } }
 }
 
 export function sharedInstallPrefix(host: InstallationHost = {}): string | undefined {

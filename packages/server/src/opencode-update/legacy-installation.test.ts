@@ -250,6 +250,39 @@ test("valid foreign OpenCode 2 keeps PATH precedence; unusable foreign commands 
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
+test("an older foreign command in the user npm bin directory reports why OpenCode 2 cannot go beside it", async () => {
+  const { home, env, host, prefix } = await environment("foreign-occupied-")
+  try {
+    // A curl-installed OpenCode 1.x, also linked into the user npm bin directory (~/.local/bin).
+    const installed = path.join(home, ".opencode", "bin", windows ? "opencode.exe" : "opencode")
+    await mkdir(path.dirname(installed), { recursive: true })
+    await writeFile(installed, "1.17.18", { mode: 0o755 })
+    const directory = npmCommandDirectory(prefix)
+    await mkdir(directory, { recursive: true })
+    const occupying = path.join(directory, windows ? "opencode.exe" : "opencode")
+    await (windows ? writeFile(occupying, "1.17.18") : symlink(installed, occupying))
+    const probeForeign = () => ({ valid: true, version: "1.17.18" })
+    env.PATH = directory
+    const blocked = sharedInstallationPlan({ ...host, probeForeign })
+    assert.equal(blocked.prefix, undefined, "never links OpenCode 2 over the foreign command")
+    assert.deepEqual(blocked.foreign?.blocked, { reason: "occupied", path: occupying })
+    // Its ordinary layout, only on PATH through ~/.opencode/bin, still installs beside it.
+    await rm(occupying)
+    env.PATH = path.dirname(installed)
+    const beside = sharedInstallationPlan({ ...host, probeForeign })
+    assert.equal(beside.prefix, prefix)
+    assert.equal(beside.foreign?.blocked, undefined)
+    // Root can write anywhere, so only an ordinary user observes a read-only prefix.
+    if (!windows && process.getuid?.() !== 0) {
+      await chmod(prefix, 0o555)
+      try {
+        assert.deepEqual(sharedInstallationPlan({ ...host, probeForeign }).foreign?.blocked, { reason: "unwritable", path: prefix })
+      } finally { await chmod(prefix, 0o755) }
+    }
+    assert.equal(await readFile(installed, "utf8"), "1.17.18")
+  } finally { await rm(home, { recursive: true, force: true }) }
+})
+
 /** opencode-ai 1.0-1.15.0: a Node launcher bin, a bin/.opencode copy and the
  * native executable in a nested platform package. */
 async function launcherFixture(prefix: string, version = "1.15.0") {

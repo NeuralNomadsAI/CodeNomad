@@ -68,6 +68,8 @@ export const settingsMessages = {
   "settings.opencode.setup.foreign.unusable": "{path} で見つかった OpenCode を起動できませんでした。CodeNomad はこのインストールを変更しません。",
   "settings.opencode.setup.foreign.winget": "この古いバージョンは winget でインストールされています。",
   "settings.opencode.setup.foreign.alongside": "OpenCode 2 は CodeNomad 用に、古いバージョンと並べてユーザーの npm フォルダーへインストールされます。",
+  "settings.opencode.setup.foreign.blocked.occupied": "{path} がユーザーの npm フォルダーで opencode コマンド名を使用しているため、CodeNomad 用に OpenCode 2 をインストールできません。このコマンドを移動するか名前を変更してから、「状態と更新を確認」を選択してください。",
+  "settings.opencode.setup.foreign.blocked.unwritable": "ユーザーの npm フォルダー {path} に書き込めないため、CodeNomad 用に OpenCode 2 をインストールできません。",
   "settings.opencode.setup.foreign.terminal": "PATH の順序によっては、ターミナルの opencode コマンドが引き続き古いバージョンを起動する場合があります。",
   "settings.opencode.setup.foreign.wingetUninstall": "不要であれば、次のコマンドでご自身で削除できます:",
   "settings.opencode.setup.foreign.install": "CodeNomad 用に OpenCode 2 をインストール",

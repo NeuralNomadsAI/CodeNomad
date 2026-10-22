@@ -624,8 +624,11 @@ export interface OpenCodeUpdateStatus {
   needsSharedInstallation?: boolean
   /** OpenCode 1.x npm package that the install action replaces after explicit confirmation. */
   legacyReplacement?: { path: string; version: string }
-  /** Older or unusable OpenCode found on PATH; CodeNomad never modifies it. */
-  foreignInstallation?: { path: string; version?: string; source: "winget" | "other"; packageId?: string }
+  /** Older or unusable OpenCode found on PATH; CodeNomad never modifies it. `blocked` says why
+   * OpenCode 2 cannot be installed beside it: `path` is the command occupying the user npm bin
+   * directory, or the unwritable user npm prefix. */
+  foreignInstallation?: { path: string; version?: string; source: "winget" | "other"; packageId?: string
+    blocked?: { reason: "occupied" | "unwritable"; path: string } }
   daemonVersion?: string
   serviceState?: "stopped" | "ready" | "restart_required" | "restart_available" | "incompatible" | "error"
   canReload?: boolean

@@ -96,7 +96,14 @@ OpenCode 2 server imports 1.x sessions from the same `opencode.db` at startup
 
 For a foreign installation below the minimum or unusable, resolution prefers
 the verified side-by-side npm installation (`installationSource: "managed"`);
-the UI says the terminal `opencode` may still start the older version. winget
+the UI says the terminal `opencode` may still start the older version. The user
+npm prefix cannot take that installation when a non-npm command already holds
+OpenCode's name in its bin directory (on macOS/Linux the prefix is `~/.local`,
+so a `~/.local/bin/opencode` link to a curl installation qualifies, and npm
+would refuse to link over it) or when the prefix is not writable. The plan then
+reports `foreignInstallation.blocked` (`occupied` with that command, or
+`unwritable` with the prefix), installation is not offered, and the panel says
+how to clear the obstacle before an explicit Check. winget
 portable packages are identified from default locations only:
 `%LOCALAPPDATA%\Microsoft\WinGet\Links` or `%ProgramFiles%\WinGet\Links`
 (symlink, or hardlink/copy fallback), or a target under a default `WinGet\Packages`

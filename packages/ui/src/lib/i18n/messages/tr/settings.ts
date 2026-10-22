@@ -68,6 +68,8 @@ export const settingsMessages = {
   "settings.opencode.setup.foreign.unusable": "{path} konumunda bulunan OpenCode başlatılamadı. CodeNomad bu kurulumu değiştirmez.",
   "settings.opencode.setup.foreign.winget": "Bu eski sürüm winget ile kurulmuş.",
   "settings.opencode.setup.foreign.alongside": "OpenCode 2, CodeNomad için kullanıcı npm klasörünüze eski sürümün yanına kurulur.",
+  "settings.opencode.setup.foreign.blocked.occupied": "{path} kullanıcı npm klasörünüzde opencode komut adını kullandığı sürece OpenCode 2, CodeNomad için kurulamaz. Bu komutu taşıyın veya yeniden adlandırın, ardından Durumu ve güncellemeleri denetle seçeneğini seçin.",
+  "settings.opencode.setup.foreign.blocked.unwritable": "Kullanıcı npm klasörünüz {path} yazılabilir olmadığı için OpenCode 2, CodeNomad için kurulamaz.",
   "settings.opencode.setup.foreign.terminal": "PATH sırasına bağlı olarak terminaldeki opencode komutu hâlâ eski sürümü başlatabilir.",
   "settings.opencode.setup.foreign.wingetUninstall": "Artık gerekmiyorsa şu komutla kendiniz kaldırabilirsiniz:",
   "settings.opencode.setup.foreign.install": "CodeNomad için OpenCode 2 kur",

@@ -68,6 +68,8 @@ export const settingsMessages = {
   "settings.opencode.setup.foreign.unusable": "无法启动在 {path} 找到的 OpenCode。CodeNomad 不会修改此安装。",
   "settings.opencode.setup.foreign.winget": "此旧版本是通过 winget 安装的。",
   "settings.opencode.setup.foreign.alongside": "OpenCode 2 将为 CodeNomad 安装到你的用户 npm 文件夹中，与旧版本并存。",
+  "settings.opencode.setup.foreign.blocked.occupied": "{path} 占用了你的用户 npm 文件夹中的 opencode 命令名，因此无法为 CodeNomad 安装 OpenCode 2。请移动或重命名该命令，然后选择“检查状态和更新”。",
+  "settings.opencode.setup.foreign.blocked.unwritable": "你的用户 npm 文件夹 {path} 不可写，因此无法为 CodeNomad 安装 OpenCode 2。",
   "settings.opencode.setup.foreign.terminal": "根据 PATH 顺序，终端中的 opencode 命令可能仍会启动旧版本。",
   "settings.opencode.setup.foreign.wingetUninstall": "如果不再需要，可以自行使用以下命令删除：",
   "settings.opencode.setup.foreign.install": "为 CodeNomad 安装 OpenCode 2",
