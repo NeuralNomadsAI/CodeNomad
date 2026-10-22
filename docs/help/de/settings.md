@@ -2,7 +2,7 @@
 
 ## Einstellungen öffnen und Geltungsbereich erkennen {#open-settings}
 
-1. Öffnen Sie **Einstellungen** über das Zahnrad **Einstellungen öffnen** in der Tab-Leiste (in der macOS-Desktop-App in der Titelleiste) oder auf der Startseite. Direktzugänge wie **Anbieter verwalten** in der Modellauswahl, das Zahnrad des Missionspanels oder **Einstellungen** im Benachrichtigungsverlauf öffnen direkt den passenden Abschnitt.
+1. Öffnen Sie **Einstellungen** über das Zahnrad **Einstellungen öffnen** in der Tab-Leiste (in der macOS-Desktop-App in der Titelleiste) oder auf der Startseite. Direktzugänge wie **Anbieter verwalten** in der Modellauswahl, das Zahnrad des Missionspanels oder das Zahnrad **Einstellungen** im Benachrichtigungsverlauf öffnen direkt den passenden Abschnitt.
 2. Wählen Sie einen Abschnitt. Lokale Electron-/Tauri-Fenster öffnen oder fokussieren ein natives Einstellungsfenster; Browser-/Remote-Ansichten verwenden die eingebettete Einstellungsseite.
 3. Prüfen Sie vor dem Verlassen den Geltungsbereich und mögliche **Speichern**-Aktionen.
 

@@ -2,7 +2,7 @@
 
 ## Open settings and identify the scope {#open-settings}
 
-1. Open **Settings** with the **Open settings** gear in the tab bar (the title bar in the macOS desktop app) or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or **Settings** in the notification history open the matching section directly.
+1. Open **Settings** with the **Open settings** gear in the tab bar (the title bar in the macOS desktop app) or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or the **Settings** gear in the notification history open the matching section directly.
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
 

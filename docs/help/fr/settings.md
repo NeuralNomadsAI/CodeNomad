@@ -2,7 +2,7 @@
 
 ## Ouvrir les paramètres et identifier leur portée {#open-settings}
 
-1. Ouvrez **Paramètres** avec l’engrenage **Ouvrir les paramètres** de la barre d’onglets (de la barre de titre dans l’application de bureau macOS) ou de l’accueil. Des raccourcis comme **Gérer les fournisseurs** dans le sélecteur de modèle, l’engrenage du panneau Missions ou **Paramètres** dans l’historique des notifications ouvrent directement la section correspondante.
+1. Ouvrez **Paramètres** avec l’engrenage **Ouvrir les paramètres** de la barre d’onglets (de la barre de titre dans l’application de bureau macOS) ou de l’accueil. Des raccourcis comme **Gérer les fournisseurs** dans le sélecteur de modèle, l’engrenage du panneau Missions ou l’engrenage **Paramètres** de l’historique des notifications ouvrent directement la section correspondante.
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
 

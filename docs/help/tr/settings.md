@@ -2,7 +2,7 @@
 
 ## Ayarları açın ve kapsamını belirleyin {#open-settings}
 
-1. Sekme çubuğundaki (macOS masaüstü uygulamasında başlık çubuğundaki) veya ana sayfadaki **Ayarları aç** dişli simgesiyle **Ayarlar** öğesini açın. Model seçicideki **Provider'ları yönet**, Görevler panelinin dişli simgesi veya bildirim geçmişindeki **Ayarlar** gibi kısayollar ilgili bölümü doğrudan açar.
+1. Sekme çubuğundaki (macOS masaüstü uygulamasında başlık çubuğundaki) veya ana sayfadaki **Ayarları aç** dişli simgesiyle **Ayarlar** öğesini açın. Model seçicideki **Provider'ları yönet**, Görevler panelinin dişli simgesi veya bildirim geçmişindeki **Ayarlar** dişli simgesi gibi kısayollar ilgili bölümü doğrudan açar.
 2. Bir bölüm seçin. Yerel Electron ve Tauri pencereleri bir yerel Tercihler penceresini açar veya odaklar; tarayıcı ve uzak görünümler yerleşik ayarlar ekranını kullanır.
 3. Ayrılmadan önce ayarın kapsamını ve herhangi bir **Kaydet** eylemini kontrol edin.
 
