@@ -2,7 +2,7 @@
 
 ## Abrir la configuración e identificar el ámbito {#open-settings}
 
-1. Abre **Configuración** con el engranaje **Abrir configuración** de la barra de pestañas o de la página de inicio. Accesos directos como **Gestionar proveedores** en el selector de modelos, el engranaje del panel Misiones o **Configuración** en el historial de notificaciones abren directamente la sección correspondiente.
+1. Abre **Configuración** con el engranaje **Abrir configuración** de la barra de pestañas (la barra de título en macOS) o de la página de inicio. Accesos directos como **Gestionar proveedores** en el selector de modelos, el engranaje del panel Misiones o **Configuración** en el historial de notificaciones abren directamente la sección correspondiente.
 2. Selecciona una sección. Las ventanas locales de Electron y Tauri abren o enfocan una única ventana nativa de Preferencias; las vistas de navegador y remotas usan la pantalla de configuración integrada.
 3. Comprueba el ámbito del ajuste y cualquier acción de **Guardar** antes de salir.
 
@@ -53,7 +53,7 @@ La altura del editor sigue la conversación visible, incluido el teclado en pant
 
 ## Notificaciones e indicadores {#notifications}
 
-1. Abre **Notificaciones**. Para cada tipo de notificación, marca dónde aparece: **En pantalla** (una burbuja temporal), **Historial** (se conserva en el historial de notificaciones de la campana de la barra de pestañas) y **Sistema** (una notificación del sistema operativo).
+1. Abre **Notificaciones**. Para cada tipo de notificación, marca dónde aparece: **En pantalla** (una burbuja temporal), **Historial** (se conserva en el historial de notificaciones de la campana de la barra de pestañas, o de la barra de título en macOS) y **Sistema** (una notificación del sistema operativo).
 2. Marcar una casilla **Sistema** pide permiso si hace falta. En **Notificaciones del sistema**, **Solicitar** vuelve a pedirlo mientras falte el permiso.
 3. Activa **Notificar cuando la app tenga el foco** para conservar las notificaciones del sistema mientras esta ventana está visible.
 

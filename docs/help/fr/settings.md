@@ -2,7 +2,7 @@
 
 ## Ouvrir les paramètres et identifier leur portée {#open-settings}
 
-1. Ouvrez **Paramètres** avec l’engrenage **Ouvrir les paramètres** de la barre d’onglets ou de l’accueil. Des raccourcis comme **Gérer les fournisseurs** dans le sélecteur de modèle, l’engrenage du panneau Missions ou **Paramètres** dans l’historique des notifications ouvrent directement la section correspondante.
+1. Ouvrez **Paramètres** avec l’engrenage **Ouvrir les paramètres** de la barre d’onglets (de la barre de titre sur macOS) ou de l’accueil. Des raccourcis comme **Gérer les fournisseurs** dans le sélecteur de modèle, l’engrenage du panneau Missions ou **Paramètres** dans l’historique des notifications ouvrent directement la section correspondante.
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
 
@@ -53,7 +53,7 @@ La hauteur de saisie suit la conversation visible, y compris le clavier logiciel
 
 ## Notifications et badges {#notifications}
 
-1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets) et **Système** (une notification du système d’exploitation).
+1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre sur macOS) et **Système** (une notification du système d’exploitation).
 2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander** relance la demande tant que l’autorisation manque.
 3. Activez **Notifier lorsque l'application est au premier plan** pour garder les notifications système pendant que cette fenêtre est visible.
 

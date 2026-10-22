@@ -26,6 +26,7 @@ mod preferences_window;
 mod profile_selection_dialog;
 mod profile_transition;
 mod shutdown;
+mod title_bar;
 mod update_releases;
 mod updater_support;
 mod view_menu;

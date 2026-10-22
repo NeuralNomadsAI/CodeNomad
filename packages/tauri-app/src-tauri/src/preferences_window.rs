@@ -357,13 +357,12 @@ fn open_preferences(
     } else {
         builder
     };
-    let preferences_window = crate::window_zoom::configure(builder)
+    let preferences_window = crate::title_bar::configure(crate::window_zoom::configure(builder))
         .title("Preferences")
         .inner_size(1100.0, 760.0)
         .min_inner_size(760.0, 560.0)
         .resizable(true)
         .fullscreen(false)
-        .decorations(false)
         .background_color(tauri::window::Color(26, 26, 26, 255))
         .visible(false)
         .build()

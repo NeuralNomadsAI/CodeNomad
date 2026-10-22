@@ -381,13 +381,12 @@ pub(crate) fn create_local_window(
     } else {
         builder
     };
-    let result = crate::window_zoom::configure(builder)
+    let result = crate::title_bar::configure(crate::window_zoom::configure(builder))
         .title("CodeNomad")
         .inner_size(1400.0, 900.0)
         .min_inner_size(client_state::MIN_WINDOW_WIDTH as f64, 600.0)
         .resizable(true)
         .fullscreen(false)
-        .decorations(false)
         .background_color(tauri::window::Color(26, 26, 26, 255))
         .visible(false)
         .build();

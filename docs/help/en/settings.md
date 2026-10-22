@@ -2,7 +2,7 @@
 
 ## Open settings and identify the scope {#open-settings}
 
-1. Open **Settings** with the **Open settings** gear in the tab bar or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or **Settings** in the notification history open the matching section directly.
+1. Open **Settings** with the **Open settings** gear in the tab bar (the title bar on macOS) or on the home page. Shortcuts such as **Manage Providers** in the model selector, the Missions panel gear or **Settings** in the notification history open the matching section directly.
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
 
@@ -53,7 +53,7 @@ Composer height follows the visible conversation, including the software keyboar
 
 ## Notifications and badges {#notifications}
 
-1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the tab-bar bell's notification history) and **System** (an operating-system notification).
+1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar, or the title bar on macOS) and **System** (an operating-system notification).
 2. Checking a **System** box asks for permission if needed. Under **System notifications**, **Request** asks again while permission is missing.
 3. Enable **Notify when the app is focused** to keep system notifications while this window is visible.
 

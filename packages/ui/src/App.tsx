@@ -14,7 +14,7 @@ import InstanceTabs from "./components/instance-tabs"
 import InstanceDisconnectedModal from "./components/instance-disconnected-modal"
 import InstanceShell from "./components/instance/instance-shell2"
 import { SettingsScreen } from "./components/settings-screen"
-import { NativeTitlebar } from "./components/native-titlebar"
+import { NativeTitlebar, hasNativeTitlebar } from "./components/native-titlebar"
 import { SideCarPickerDialog } from "./components/sidecar-picker-dialog"
 import { SideCarView } from "./components/sidecar-view"
 import { InstanceMetadataProvider } from "./lib/contexts/instance-metadata-context"
@@ -770,8 +770,8 @@ const App: Component = () => {
         </Dialog.Portal>
       </Dialog>
       <div class="h-screen w-screen flex flex-col" style={{ height: "100dvh", "padding-bottom": "var(--keyboard-offset, 0px)" }}>
-        <Show when={runtimeEnv.windowContext === "local" && runtimeEnv.host !== "web"}>
-          <NativeTitlebar title={t("window.title.main")} logo menus />
+        <Show when={hasNativeTitlebar}>
+          <NativeTitlebar title={t("window.title.main")} logo menus actions />
         </Show>
         <Show when={mobileFullscreenMode()}>
           <div class="mobile-fullscreen-exit-wrapper">

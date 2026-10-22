@@ -41,6 +41,10 @@ import { openExternalWithFeedback } from "./open-external"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
+// The UI draws local application and Preferences title bars. On macOS the native
+// traffic lights keep their standard place at its left and the menus stay in the
+// global menu bar; elsewhere windows are frameless.
+const applicationWindowChrome = isMac ? { titleBarStyle: "hidden" as const } : { frame: false }
 
 function resolveStoragePaths(baseUserDataPath: string, profileKey: string) {
   const scope = resolveStorageScope({
@@ -330,7 +334,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const window = new BrowserWindow({
       width: bounds?.width ?? DEFAULT_WINDOW_WIDTH, height: bounds?.height ?? DEFAULT_WINDOW_HEIGHT,
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}), useContentSize: true, minWidth: minimum.width, minHeight: minimum.height,
-      frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(),
+      ...applicationWindowChrome, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(),
       webPreferences: {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, webviewTag: true,
         ...(saved ? { zoomFactor: saved.zoomFactor } : {}),
@@ -607,7 +611,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const window = new BrowserWindow({
       width: bounds?.width ?? 1100, height: bounds?.height ?? 760, minWidth: 760, minHeight: 560,
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}), show: false,
-      useContentSize: true, frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(), title: "Preferences",
+      useContentSize: true, ...applicationWindowChrome, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(), title: "Preferences",
       webPreferences: {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac,
         additionalArguments: ["--codenomad-window-context=preferences"],

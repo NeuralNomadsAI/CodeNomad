@@ -1,0 +1,25 @@
+/* macOS draws its traffic lights at their standard place: centred in a 28 px
+   title bar and ending about 60 px from the physical left edge in every writing
+   direction. The bar takes that height and leaves that width clear. */
+.native-titlebar--macos {
+  flex-basis: 28px;
+  height: 28px;
+  padding-left: 60px;
+}
+
+/* App actions at the right end of the macOS main window (`appActionsInTitlebar`):
+   flush on the bar like its other controls. */
+.native-titlebar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  padding-inline: var(--space-xs);
+  --new-tab-bg: transparent;
+  --new-tab-hover-bg: var(--surface-interactive-hover);
+  -webkit-app-region: no-drag;
+}
+
+.native-titlebar-actions .new-tab-button {
+  width: 28px;
+  height: 28px;
+}
