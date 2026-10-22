@@ -15,10 +15,6 @@
   @apply text-center max-w-sm;
 }
 
-.session-center-column[data-session-center-width="narrow"] .empty-state-logo {
-  height: 9rem;
-}
-
 .session-center-column[data-session-center-width="narrow"] .empty-state-brand-title {
   font-size: 1.5rem;
   line-height: 2rem;

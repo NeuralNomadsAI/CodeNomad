@@ -106,7 +106,7 @@ function LoadingApp() {
 
   return (
     <div class="loading-wrapper" role="status" aria-live="polite">
-      <img src={iconUrl} alt={tGlobal("loadingScreen.logoAlt")} class="loading-logo" width="180" height="180" />
+      <img src={iconUrl} alt={tGlobal("loadingScreen.logoAlt")} class="loading-logo" width="128" height="128" />
       <div class="loading-heading">
         <h1 class="loading-title">CodeNomad</h1>
         <Show when={statusKey()}>

@@ -17,7 +17,7 @@ const BrandedEmptyState: Component<BrandedEmptyStateProps> = (props) => {
     <div class={`empty-state ${props.class ?? ""}`.trim()}>
       <div class="empty-state-content">
         <div class="flex flex-col items-center gap-3 mb-6">
-          <img src={codeNomadLogo} alt={t("messageSection.empty.logoAlt")} class="empty-state-logo h-48 w-auto" loading="lazy" />
+          <img src={codeNomadLogo} alt={t("messageSection.empty.logoAlt")} class="empty-state-logo h-32 w-auto" loading="lazy" />
           <h1 class="empty-state-brand-title text-3xl font-semibold text-primary">{t("messageSection.empty.brandTitle")}</h1>
         </div>
         {props.title ? <h3>{props.title}</h3> : null}

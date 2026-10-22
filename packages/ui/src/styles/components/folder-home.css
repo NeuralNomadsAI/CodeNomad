@@ -19,6 +19,7 @@
   margin-bottom: 1.5rem;
 }
 
+/* Large logos keep one size (8rem) and never grow with the window. */
 .folder-home-logo {
   height: 8rem;
 }
@@ -141,18 +142,8 @@
 
 }
 
-@media (min-width: 640px) and (min-height: 721px) {
-  .folder-home-logo {
-    height: 12rem;
-  }
-}
-
 @media (max-height: 720px) and (min-width: 1024px) {
   .folder-home-hero {
     margin-bottom: var(--space-md);
-  }
-
-  .folder-home-logo {
-    height: 8rem;
   }
 }
