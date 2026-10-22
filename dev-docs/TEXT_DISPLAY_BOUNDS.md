@@ -70,9 +70,11 @@ per character:
 ## Native-content readers
 
 Copy actions, search (native history queries) and the timeline read native
-content. Tool speech has its own 10 000-character bound. Reasoning text is
-extracted with a separate 10 000-character bound
-(`REASONING_RENDER_CHARACTER_LIMIT`) and shows only that prefix.
+content. Tool speech has its own 10 000-character bound. Completed reasoning
+text is extracted with a separate 10 000-character bound
+(`REASONING_RENDER_CHARACTER_LIMIT`) and shows only that prefix; a reasoning
+part still streaming (`time.completed` absent) renders its whole text so the
+live thinking panel keeps updating past the bound (`tests/browser/reasoning-stream.test.ts`).
 
 ## Validation
 

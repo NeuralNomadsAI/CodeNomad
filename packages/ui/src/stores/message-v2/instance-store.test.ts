@@ -14,8 +14,8 @@ import {
   revealHiddenRecordParts,
   revealHiddenRecordText,
 } from "./record-display-cache.ts"
-import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
-import type { MessageInfo } from "../../types/message"
+import { getSessionMessageRenderCache, purgeMessageRenderCache, REASONING_RENDER_CHARACTER_LIMIT } from "../../lib/message-render-cache.ts"
+import type { MessageInfo, ClientPart } from "../../types/message"
 import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
 
 it("keeps the beginning and final response when bounding message parts", () => {
@@ -170,6 +170,30 @@ describe("message display cache authority", () => {
     const source = readFileSync(new URL("../../components/message-block.tsx", import.meta.url), "utf8")
     assert.match(source, /cachedBlock\.signature === cacheSignature && cachedBlock\.displayData === displayData/)
     assert.match(source, /messageBlocks\.set\(current\.id, \{\s*signature: cacheSignature,\s*displayData,/)
+  })
+
+  it("keeps streaming reasoning text whole and bounds it once the part completes", () => {
+    const longText = `${"t".repeat(REASONING_RENDER_CHARACTER_LIMIT)}ail beyond the bound`
+    const reasoning = (completed?: number): { id: string; revision: number; data: ClientPart } => ({
+      id: "reasoning", revision: 1,
+      data: {
+        id: "reasoning", type: "reasoning", text: longText,
+        time: { created: 1, ...(completed !== undefined ? { completed } : {}) },
+      } as ClientPart,
+    })
+    const recordFor = (part: { id: string; revision: number; data: ClientPart }, status: "streaming" | "complete") => ({
+      id: "message", sessionId: "session", role: "assistant" as const, status,
+      createdAt: 1, updatedAt: 1, revision: 1, partIds: ["reasoning"], parts: { reasoning: part },
+    })
+
+    const streaming = buildRecordDisplayData("reasoning-stream", recordFor(reasoning(), "streaming"))
+    assert.equal((streaming.orderedParts[0] as any).text, longText,
+      "a live reasoning stream must keep showing new text past the render bound")
+
+    clearRecordDisplayCacheForInstance("reasoning-stream")
+    const completed = buildRecordDisplayData("reasoning-stream", recordFor(reasoning(2), "complete"))
+    assert.equal((completed.orderedParts[0] as any).text.length, REASONING_RENDER_CHARACTER_LIMIT,
+      "a completed reasoning part keeps its bounded prefix")
   })
 })
 

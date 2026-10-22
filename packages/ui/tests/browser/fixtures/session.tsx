@@ -10,6 +10,7 @@ import { sessions, setSessions, setActiveSession, setProviders } from "../../../
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
 import { loadMessages } from "../../../src/stores/session-api"
+import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
 // Real SessionView, prompt action and native SSE dispatcher; only HTTP is fake.
@@ -100,6 +101,15 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     emit("session.text.started", { assistantMessageID: assistantId })
   },
   delta: (delta: string) => emit("session.text.delta", { assistantMessageID: assistantId, ordinal: 0, delta }),
+  /** Starts a live step that streams model reasoning instead of reply text. */
+  startReasoning: () => {
+    emit("session.step.started", { assistantMessageID: assistantId, agent: "build", model })
+    emit("session.reasoning.started", { assistantMessageID: assistantId })
+  },
+  reasoningDelta: (delta: string) => emit("session.reasoning.delta", { assistantMessageID: assistantId, delta }),
+  endReasoning: (text: string) => emit("session.reasoning.ended", { assistantMessageID: assistantId, text }),
+  /** Shows thinking rows (hidden by default) expanded, reactively after mount. */
+  revealThinking: () => applyUiSettings({ showThinkingBlocks: true, thinkingBlocksExpansion: "expanded" }),
   appendTextPart: (text: string) => {
     emit("session.text.started", { assistantMessageID: assistantId })
     emit("session.text.delta", { assistantMessageID: assistantId, ordinal: 1, delta: text })

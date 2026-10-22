@@ -50,6 +50,11 @@ function makeCacheKey(instanceId: string, messageId: string) {
   return `${instanceId}:${messageId}`
 }
 
+/** Matches the part-timing helpers: a positive finite timestamp, never 0/NaN. */
+function isPositiveNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value > 0
+}
+
 function makeTextRevealKey(target: RecordTextRevealTarget) {
   return `${makeCacheKey(target.instanceId, target.messageId)}:${target.partId}:${target.section}`
 }
@@ -115,7 +120,11 @@ export function buildRecordDisplayData(instanceId: string, record: MessageRecord
         orderedParts.push({
           id: part.id,
           type: "reasoning",
-          text: extractReasoningTextForRender(part),
+          // A live reasoning stream must keep growing past the render bound:
+          // deltas keep arriving, so a capped prefix would visibly freeze the
+          // thinking panel (while still re-rendering) until the part completes.
+          // The whole text stays a reference to the store's string, not a copy.
+          text: isPositiveNumber(time?.completed) ? extractReasoningTextForRender(part) : part.text,
           time: time ? { created: time.created, completed: time.completed } : undefined,
           revision: entry.revision,
         } as ClientPartWithRevision)
