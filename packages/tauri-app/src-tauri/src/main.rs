@@ -16,6 +16,7 @@ mod launch;
 mod linux_tls;
 mod local_windows;
 mod managed_node;
+mod menu_bar;
 mod menu_labels;
 mod native_request;
 mod native_service_start;
@@ -1484,9 +1485,7 @@ fn toggle_fullscreen_window(app_handle: &AppHandle) {
         let window = webview.window();
         let next_fullscreen = !window.is_fullscreen().unwrap_or(false);
         let _ = window.set_fullscreen(next_fullscreen);
-        if cfg!(not(target_os = "macos")) {
-            let _ = window.hide_menu();
-        }
+        menu_bar::hide(&window);
     }
 }
 

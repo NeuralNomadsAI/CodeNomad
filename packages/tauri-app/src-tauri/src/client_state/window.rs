@@ -400,9 +400,7 @@ pub fn setup_local_window(
         }
         if saved_window.fullscreen {
             let _ = window.set_fullscreen(true);
-            if cfg!(not(target_os = "macos")) {
-                let _ = window.hide_menu();
-            }
+            crate::menu_bar::hide(&window.as_ref().window());
         }
     }
 

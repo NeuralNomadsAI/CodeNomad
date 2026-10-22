@@ -399,8 +399,7 @@ pub(crate) fn create_local_window(
             return Err(error.to_string());
         }
     };
-    #[cfg(not(target_os = "macos"))]
-    let _ = window.hide_menu();
+    crate::menu_bar::hide(&window.as_ref().window());
     if let Err(error) = client_state::setup_local_window(app, &window, &id, persisted) {
         app.state::<LocalWindows>().remove_runtime(&record.label);
         if let Some(state) = app.try_state::<ClientState>() {

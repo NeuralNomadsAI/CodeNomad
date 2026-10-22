@@ -527,6 +527,7 @@ dependencies = [
  "base64 0.22.1",
  "dirs 5.0.1",
  "fs2",
+ "gtk",
  "keepawake",
  "libc",
  "parking_lot",

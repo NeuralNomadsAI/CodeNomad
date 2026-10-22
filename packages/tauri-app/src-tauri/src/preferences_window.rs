@@ -368,8 +368,7 @@ fn open_preferences(
         .visible(false)
         .build()
         .map_err(|error| error.to_string())?;
-    #[cfg(not(target_os = "macos"))]
-    let _ = preferences_window.hide_menu();
+    crate::menu_bar::hide(&preferences_window.as_ref().window());
 
     if let Err(error) =
         crate::client_state::setup_local_window(app, &preferences_window, LABEL, true)
