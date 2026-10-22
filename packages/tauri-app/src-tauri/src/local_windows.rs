@@ -363,6 +363,10 @@ pub(crate) fn create_local_window(
                 if payload.event() == tauri::webview::PageLoadEvent::Started {
                     crate::notification_badge::page_started(window.as_ref(), badge_binding);
                 }
+                if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                    let zoom = client_state::local_window_zoom(window.app_handle(), window.label());
+                    crate::title_bar::publish_page_zoom(window.as_ref(), zoom);
+                }
             });
     #[cfg(windows)]
     let developer_browser_arguments = app

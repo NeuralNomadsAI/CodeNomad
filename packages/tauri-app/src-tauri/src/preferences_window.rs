@@ -342,7 +342,13 @@ fn open_preferences(
     let data_directory = app_state.webview_data_directory.join("local");
     let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("loading.html".into()))
         .data_directory(data_directory)
-        .initialization_script(CONTEXT_SCRIPT);
+        .initialization_script(CONTEXT_SCRIPT)
+        .on_page_load(|window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let zoom = crate::client_state::local_window_zoom(window.app_handle(), LABEL);
+                crate::title_bar::publish_page_zoom(window.as_ref(), zoom);
+            }
+        });
     #[cfg(windows)]
     let developer_browser_arguments = app_state.developer_browser_arguments.clone();
     #[cfg(windows)]

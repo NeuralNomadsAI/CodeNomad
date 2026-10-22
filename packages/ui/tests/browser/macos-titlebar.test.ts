@@ -27,7 +27,8 @@ after(async () => { await browser?.close(); await server?.close(); await cache?.
 
 const WIDTH = 1100
 
-async function prepare(platform: string) {
+/** `pageZoom` stands for the host's page zoom, which makes the window wider than the page. */
+async function prepare(platform: string, pageZoom = 1) {
   const page = await browser.newPage({ viewport: { width: WIDTH, height: 500 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -35,6 +36,7 @@ async function prepare(platform: string) {
   // string keeps the transpiler's function-name helpers out of the page.
   await page.addInitScript(`
     Object.defineProperty(Navigator.prototype, "platform", { get() { return ${JSON.stringify(platform)} } })
+    Object.defineProperty(window, "outerWidth", { get() { return Math.round(window.innerWidth * ${pageZoom}) } })
     window.__CODENOMAD_RUNTIME_HOST__ = "electron"
     window.__CODENOMAD_WINDOW_CONTEXT__ = "local"
   `)
@@ -68,8 +70,24 @@ test("macOS leaves menus and window controls native and holds the app actions in
     const panel = (await page.locator(".toast-history-panel").boundingBox())!
     assert.ok(panel.y >= bar.y + bar.height, "the history opens below the title bar")
     assert.ok(panel.x >= 0 && panel.x + panel.width <= WIDTH, "the history stays in the window")
+    assert.equal(await page.locator(".toast-history-panel").evaluate(element => getComputedStyle(element).userSelect), "text", "history text stays selectable")
     await page.keyboard.press("Escape")
     await page.locator(".toast-history-panel").waitFor({ state: "detached" })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("the macOS title bar keeps the traffic lights' native geometry under page zoom", async () => {
+  const { page, errors } = await prepare("MacIntel", 0.5)
+  try {
+    // At 50 % the page's CSS pixels are half a window point: 56 px make the 28-point bar.
+    const bar = (await page.locator(".native-titlebar").boundingBox())!
+    assert.equal(bar.height, 56)
+    assert.ok((await page.locator(".native-titlebar-logo").boundingBox())!.x >= 120, "the mark clears the 60-point traffic lights")
+    await page.locator(".native-titlebar-actions").getByRole("button", { name: "Notification History", exact: true }).click()
+    const panel = (await page.locator(".toast-history-panel").boundingBox())!
+    assert.ok(panel.width <= 380, "the history keeps the page zoom")
+    assert.ok(panel.y >= bar.y + bar.height, "the history opens below the title bar")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

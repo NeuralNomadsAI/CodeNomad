@@ -1,5 +1,5 @@
 import { Maximize2, Minus, X } from "lucide-solid"
-import { For, Show, type Component } from "solid-js"
+import { For, Show, onCleanup, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { isMac } from "../lib/keyboard-utils"
 import { runtimeEnv } from "../lib/runtime-env"
@@ -27,9 +27,27 @@ export const hasNativeTitlebar = runtimeEnv.windowContext === "local" && runtime
 /** On macOS the main window's title bar, otherwise empty, holds the app actions instead of the project tab bar. */
 export const appActionsInTitlebar = hasNativeTitlebar && macOS
 
+/**
+ * The traffic lights never zoom, so the macOS bar undoes the host's page zoom from
+ * `--host-page-zoom`/`--host-page-unzoom`. Tauri's WebKit hides the zoom, so its host
+ * publishes them (`title_bar.rs`); Chromium's is the window's width over the page's.
+ */
+function publishElectronPageZoom() {
+  const update = () => {
+    const ratio = window.outerWidth / window.innerWidth
+    const zoom = Number.isFinite(ratio) && ratio > 0.2 && ratio < 5 ? Math.round(ratio * 100) / 100 : 1
+    document.documentElement.style.setProperty("--host-page-zoom", String(zoom))
+    document.documentElement.style.setProperty("--host-page-unzoom", String(1 / zoom))
+  }
+  update()
+  window.addEventListener("resize", update)
+  onCleanup(() => window.removeEventListener("resize", update))
+}
+
 export const NativeTitlebar: Component<NativeTitlebarProps> = (props) => {
   const { t } = useI18n()
   const close = () => props.onClose ? props.onClose() : runNativeWindowAction("close")
+  if (macOS && runtimeEnv.host === "electron") publishElectronPageZoom()
 
   return (
     <header

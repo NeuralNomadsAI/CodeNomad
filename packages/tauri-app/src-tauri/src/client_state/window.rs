@@ -442,6 +442,7 @@ pub fn set_local_window_zoom(app: &AppHandle, window_label: &str, next_zoom: f64
     if webview.set_zoom(normalized).is_err() {
         return;
     }
+    crate::title_bar::publish_page_zoom(&webview, normalized);
     crate::window_constraints::apply(&webview.window(), normalized);
     let Some(client_state) = app.try_state::<ClientState>() else {
         return;
