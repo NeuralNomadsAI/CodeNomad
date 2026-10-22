@@ -8,7 +8,7 @@ import { ThemeProvider } from "../../../src/lib/theme"
 import { serverApi } from "../../../src/lib/api-client"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { addInstance } from "../../../src/stores/instances"
-import { sessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
+import { sessions, setActiveSession, setAgents, setProviders } from "../../../src/stores/session-state"
 import { fetchSessions } from "../../../src/stores/session-api"
 import { sseManager } from "../../../src/lib/sse-manager"
 import "../../../src/index.css"
@@ -52,7 +52,8 @@ serverApi.patchConfigOwner = async (_owner, patch: any) => {
 serverApi.fetchStateOwner = async () => ({} as any)
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
 addInstance({ id: instanceId, folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client })
-setProviders(prev => new Map(prev).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
+setProviders(prev => new Map(prev).set(instanceId, [{ id: "fixture", name: "Fixture", models: [{ id: "fixture", name: "Fixture Model", providerId: "fixture", limit: { context: 10000, output: 1000 }, cost: { input: 0, output: 0 } }] }]))
+setAgents(prev => new Map(prev).set(instanceId, [{ id: "build", name: "Build", description: "", mode: "primary" }]))
 await fetchSessions(instanceId)
 setActiveSession(instanceId, sessionId)
 const [width, setWidth] = createSignal(900)
