@@ -283,6 +283,25 @@ test("an older foreign command in the user npm bin directory reports why OpenCod
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
+// Root can write anywhere, so only an ordinary POSIX user observes a read-only prefix.
+test("an npm OpenCode 1.x in an unwritable user prefix is reported as unwritable, never as an occupying command",
+  { skip: windows || process.getuid?.() === 0 }, async () => {
+    const { home, env, host, prefix } = await environment("foreign-legacy-unwritable-")
+    try {
+      await legacyFixture(prefix)
+      const foreign = path.join(home, "tools", "opencode")
+      await mkdir(path.dirname(foreign), { recursive: true })
+      await writeFile(foreign, "foreign", { mode: 0o755 })
+      env.PATH = [path.dirname(foreign), npmCommandDirectory(prefix)].join(path.delimiter)
+      await chmod(prefix, 0o555)
+      try {
+        const plan = sharedInstallationPlan({ ...host, probeForeign: () => ({ valid: true, version: "1.17.18" }) })
+        assert.equal(plan.prefix, undefined)
+        assert.deepEqual(plan.foreign?.blocked, { reason: "unwritable", path: prefix })
+      } finally { await chmod(prefix, 0o755) }
+    } finally { await rm(home, { recursive: true, force: true }) }
+  })
+
 /** opencode-ai 1.0-1.15.0: a Node launcher bin, a bin/.opencode copy and the
  * native executable in a nested platform package. */
 async function launcherFixture(prefix: string, version = "1.15.0") {

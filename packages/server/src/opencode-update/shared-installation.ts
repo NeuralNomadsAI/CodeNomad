@@ -222,7 +222,10 @@ export function sharedInstallationPlan(host: InstallationHost = {}): SharedInsta
   if (!userCommand) return writable(userPrefix, true) ? { prefix: userPrefix, foreign } : { foreign: unwritable }
   const userTarget = npmTarget(userCommand, userPrefix, userPrefix, platform)
   if (userTarget?.prefix) return { ...userTarget, foreign }
-  return { foreign: userTarget ? unwritable : { ...foreign, blocked: { reason: "occupied", path: userCommand } } }
+  // A recognized npm installation there only lacks write access; any other command holds OpenCode's name.
+  const npmInstallation = userTarget !== undefined
+    || Boolean(legacyNpmInstallation(userCommand, userPrefix, npmCommandDirectory(userPrefix, platform), platform))
+  return { foreign: npmInstallation ? unwritable : { ...foreign, blocked: { reason: "occupied", path: userCommand } } }
 }
 
 export function sharedInstallPrefix(host: InstallationHost = {}): string | undefined {
