@@ -55,12 +55,12 @@ import {
 import { messageStoreBus } from "./message-v2/bus"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
-import { createCompactionNoticeClaims } from "./compaction-notice"
+import { createCompactionNoticeClaims, createSessionBubbles } from "./compaction-notice"
 
 const log = getLogger("sse")
 const claimCompactionNotice = createCompactionNoticeClaims()
-// One bubble per session: a later compaction notice replaces the one still shown.
-const compactionToasts = new Map<string, ToastHandle>()
+const compactionBubbles = createSessionBubbles()
+const COMPACTION_TOAST_MS = 10000
 const pendingSessionFetches = new Map<string, {
   status: SessionStatus
   retry?: SessionRetryState | null
@@ -602,12 +602,11 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   const instanceName = instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
   const displayLabel = label ? `"${label}"` : sessionID
 
-  compactionToasts.get(sessionID)?.dismiss()
-  compactionToasts.set(sessionID, showToastNotification({ category: "sessions",
+  compactionBubbles.show(sessionID, COMPACTION_TOAST_MS, () => showToastNotification({ category: "sessions",
     title: instanceName,
     message: tGlobal("sessionEvents.sessionCompactedToast", { label: displayLabel }),
     variant: "info",
-    duration: 10000,
+    duration: COMPACTION_TOAST_MS,
   }))
 }
 

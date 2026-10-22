@@ -1,3 +1,5 @@
+import type { ToastHandle } from "../lib/notifications"
+
 /** Enough recent compactions to cover replays; older identities are forgotten first. */
 const REMEMBERED_COMPACTIONS = 256
 
@@ -22,5 +24,25 @@ export function createCompactionNoticeClaims(limit = REMEMBERED_COMPACTIONS) {
     claimed.add(key)
     if (claimed.size > limit) claimed.delete(claimed.values().next().value!)
     return true
+  }
+}
+
+/**
+ * One bubble per session: a later notice replaces the one still shown. Each is
+ * forgotten when it expires, unless a newer one replaced it; a notice routed
+ * away from the screen leaves nothing to replace.
+ */
+export function createSessionBubbles(schedule: (expire: () => void, ms: number) => void = (expire, ms) => { setTimeout(expire, ms) }) {
+  const shown = new Map<string, ToastHandle>()
+  return {
+    show(sessionID: string, durationMs: number, notify: () => ToastHandle) {
+      shown.get(sessionID)?.dismiss()
+      shown.delete(sessionID)
+      const handle = notify()
+      if (!handle.id) return
+      shown.set(sessionID, handle)
+      schedule(() => { if (shown.get(sessionID) === handle) shown.delete(sessionID) }, durationMs)
+    },
+    get size() { return shown.size },
   }
 }
