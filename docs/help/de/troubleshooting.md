@@ -6,7 +6,7 @@ Prüfen Sie zur Wiederherstellung zuerst die zuständige Komponente des fehlgesc
 
 ### macOS-Quarantäne {#macos-quarantine}
 
-Bei einem aus dem offiziellen Repository heruntergeladenen und überprüften Release kann macOS wegen Quarantäne-/Notarisierungsprüfungen melden, die Anwendung sei beschädigt.
+Die macOS-Releases von CodeNomad sind nicht von Apple notarisiert. macOS blockiert daher den ersten Start einer heruntergeladenen Kopie, auch einer aus dem offiziellen Repository überprüften: Es meldet **"CodeNomad" Not Opened** (Apple konnte nicht überprüfen, ob sie frei von Schadsoftware ist) oder dass die Anwendung beschädigt ist.
 
 1. Prüfen Sie Download-Herkunft und installierten App-Pfad.
 2. Ist die App im folgenden Pfad installiert, entfernen Sie ihr Quarantäneattribut:
@@ -15,7 +15,7 @@ Bei einem aus dem offiziellen Repository heruntergeladenen und überprüften Rel
 xattr -dr com.apple.quarantine /Applications/CodeNomad.app
 ```
 
-3. Starten Sie erneut; prüfen Sie auf Intel-Macs außerdem **System Settings → Privacy & Security** für die Erststartentscheidung.
+3. Starten Sie erneut. Bei der Meldung **Not Opened** können Sie nach dem blockierten Start stattdessen in **System Settings → Privacy & Security** für CodeNomad **Open Anyway** wählen und mit Ihrem Administratorpasswort bestätigen.
 
 Dies ändert das macOS-Quarantäneattribut dieser Anwendung. Es repariert keinen beschädigten Download und macht keine unbekannte Programmdatei vertrauenswürdig.
 

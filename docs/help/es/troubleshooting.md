@@ -6,7 +6,7 @@ Para recuperarte, comprueba primero quién controla la operación fallida: naveg
 
 ### Cuarentena de macOS {#macos-quarantine}
 
-Para una versión que hayas descargado del repositorio oficial y verificado, macOS puede indicar que la aplicación está dañada debido a comprobaciones de cuarentena/notarización.
+Las versiones de CodeNomad para macOS no están notarizadas por Apple, así que macOS bloquea el primer inicio de una copia descargada, incluso una que hayas verificado desde el repositorio oficial: muestra **"CodeNomad" Not Opened** (Apple no pudo verificar que esté libre de malware) o indica que la aplicación está dañada.
 
 1. Comprueba el origen de la descarga y la ruta de la aplicación instalada.
 2. Si la aplicación está instalada en la siguiente ruta, retira su atributo de cuarentena:
@@ -15,7 +15,7 @@ Para una versión que hayas descargado del repositorio oficial y verificado, mac
 xattr -dr com.apple.quarantine /Applications/CodeNomad.app
 ```
 
-3. Vuelve a iniciar; en Mac Intel comprueba también **System Settings → Privacy & Security** para la decisión del primer inicio.
+3. Vuelve a iniciar. Con el mensaje **Not Opened** también puedes, tras el inicio bloqueado, elegir **Open Anyway** para CodeNomad en **System Settings → Privacy & Security** y confirmar con tu contraseña de administrador.
 
 Esto cambia el atributo de cuarentena de macOS en esa aplicación. No repara una descarga corrupta ni convierte un binario desconocido en fiable.
 

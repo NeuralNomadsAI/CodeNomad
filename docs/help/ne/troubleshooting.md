@@ -6,7 +6,7 @@
 
 ### macOS quarantine {#macos-quarantine}
 
-आधिकारिक repository बाट download र verify गरेको release मा पनि quarantine/notarization जाँचले macOS मा app damaged छ भन्न सक्छ।
+CodeNomad का macOS release हरू Apple द्वारा notarize गरिएका छैनन्, त्यसैले आधिकारिक repository बाट verify गरेको भए पनि download गरिएको प्रतिलिपिको पहिलो launch macOS ले रोक्छ: यसले **"CodeNomad" Not Opened** (Apple ले malware-मुक्त भएको पुष्टि गर्न सकेन) देखाउँछ, वा app damaged छ भन्छ।
 
 1. download स्रोत र installed app path जाँच्नुहोस्।
 2. तलको path मा app स्थापित भए quarantine attribute हटाउनुहोस्:
@@ -15,7 +15,7 @@
 xattr -dr com.apple.quarantine /Applications/CodeNomad.app
 ```
 
-3. फेरि launch गर्नुहोस्; Intel Mac मा first-launch निर्णयका लागि **System Settings → Privacy & Security** पनि जाँच्नुहोस्।
+3. फेरि launch गर्नुहोस्। **Not Opened** सन्देशका लागि, रोकिएको launch पछि **System Settings → Privacy & Security** मा CodeNomad का लागि **Open Anyway** रोजेर administrator password ले पुष्टि गर्न पनि सकिन्छ।
 
 यसले त्यही app को macOS quarantine attribute बदल्छ। corrupted download मर्मत वा अज्ञात binary विश्वसनीय बनाउँदैन।
 

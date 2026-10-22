@@ -6,7 +6,7 @@
 
 ### macOS の隔離属性 {#macos-quarantine}
 
-公式リポジトリからダウンロードして検証したリリースでも、macOS の隔離／公証チェックにより、アプリが壊れていると表示される場合があります。
+CodeNomad の macOS 版は Apple の公証を受けていないため、公式リポジトリからダウンロードして検証したコピーでも、初回起動は macOS によってブロックされます。**"CodeNomad" Not Opened**（Apple がマルウェアを含まないことを確認できなかった）と表示されるか、アプリが壊れていると表示されます。
 
 1. ダウンロード元と、インストール済みアプリのパスを確認します。
 2. 次のパスにインストールされている場合は、隔離属性を削除します。
@@ -15,7 +15,7 @@
 xattr -dr com.apple.quarantine /Applications/CodeNomad.app
 ```
 
-3. 再度起動します。Intel Mac では、初回起動の判断について **System Settings → Privacy & Security** も確認してください。
+3. 再度起動します。**Not Opened** のメッセージの場合は、起動がブロックされた後に **System Settings → Privacy & Security** で CodeNomad の **Open Anyway** を選び、管理者パスワードで確定する方法もあります。
 
 これは、そのアプリの macOS 隔離属性を変更します。破損したダウンロードの修復や、未知のバイナリを信頼できるものにする操作ではありません。
 

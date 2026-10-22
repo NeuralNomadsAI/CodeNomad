@@ -6,7 +6,7 @@
 
 ### macOS karantinası {#macos-quarantine}
 
-Resmi depodan indirdiğiniz ve doğruladığınız bir sürüm için macOS, uygulamanın karantina/noter onay kontrolleri nedeniyle zarar gördüğünü bildirebilir.
+CodeNomad'ın macOS sürümleri Apple tarafından noter onayından (notarization) geçirilmez; bu nedenle macOS, resmi depodan doğruladığınız bir kopya bile olsa indirilen kopyanın ilk açılışını engeller: **"CodeNomad" Not Opened** iletisini (Apple kötü amaçlı yazılım içermediğini doğrulayamadı) gösterir veya uygulamanın zarar gördüğünü bildirir.
 
 1. İndirmenin kaynağını ve yüklü uygulama yolunu kontrol edin.
 2. Uygulama aşağıdaki yola yüklendiyse karantina özelliğini kaldırın:
@@ -15,7 +15,7 @@ Resmi depodan indirdiğiniz ve doğruladığınız bir sürüm için macOS, uygu
 xattr -dr com.apple.quarantine /Applications/CodeNomad.app
 ```
 
-3. Tekrar başlatın; Intel Mac'lerde ilk lansman kararı için **System Settings → Privacy & Security** öğesini de kontrol edin.
+3. Tekrar başlatın. **Not Opened** iletisinde bunun yerine, engellenen açılıştan sonra **System Settings → Privacy & Security** içinde CodeNomad için **Open Anyway** seçeneğini seçip yönetici parolanızla onaylayabilirsiniz.
 
 Bu, söz konusu uygulamadaki macOS karantina özelliğini değiştirir. Bozuk bir indirmeyi onarmaz veya bilinmeyen bir ikili dosyayı güvenilir hale getirmez.
 
