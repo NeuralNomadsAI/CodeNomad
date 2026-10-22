@@ -11,7 +11,7 @@ import MessageBlock from "./message-block"
 import PermissionReceipts from "./permission-receipts"
 import { getMessageAnchorId } from "./message-anchors"
 import MessageTimeline, { type TimelineSegment } from "./message-timeline"
-import { buildTimelineSegments, getTimelineRecordSignature, timelineRunStart } from "./message-timeline-projection"
+import { buildTimelineSegments, getTimelineRecordSignature, parseTimelineSegmentId, timelineRunStart } from "./message-timeline-projection"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
 import { isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
@@ -32,7 +32,7 @@ import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
-import { findTimelineSegmentBlock, readingLineSegmentId } from "./timeline-transcript-blocks"
+import { findTimelineSegmentBlock, readingLineSegment } from "./timeline-transcript-blocks"
 import { JUMP_USER_MESSAGE_EVENT, findUserMessageJumpTarget, keyAllowsUserMessageJump, type JumpUserMessageDetail, type UserMessageJumpDirection } from "./user-message-navigation"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
@@ -897,15 +897,19 @@ export default function MessageSection(props: MessageSectionProps) {
     scheduleReadingLineSegment()
   }
 
+  function readingLinePosition() {
+    const scroller = streamElement()
+    return scroller ? readingLineSegment(scroller, timelineSegmentsByMessage()) : null
+  }
+
   function scheduleReadingLineSegment() {
     if (readingLineFrame !== undefined || !readerOwnsActiveSegment) return
     readingLineFrame = requestAnimationFrame(() => {
       readingLineFrame = undefined
       // Intermediate positions while a window loads must not move the rail.
-      const scroller = streamElement()
-      if (!readerOwnsActiveSegment || navigation().kind === "paging" || !scroller) return
-      const id = readingLineSegmentId(scroller, timelineSegmentsByMessage())
-      if (id) setActiveSegmentId(current => (current === id ? current : id))
+      if (!readerOwnsActiveSegment || navigation().kind === "paging") return
+      const position = readingLinePosition()
+      if (position) setActiveSegmentId(current => (current === position.id ? current : position.id))
     })
   }
 
@@ -920,9 +924,12 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!api || !isActive()) return
     setOutlineDemanded(true)
     const pending = userMessageJumpTarget
+    const highlighted = activeSegmentId()
+    // Advance from the marker the reader sees (selected, or last published at
+    // the reading line), falling back to that same line before its first frame.
     const current = pending && (navigation().kind === "paging" || isMessageRowShown(pending))
       ? pending
-      : api.captureScrollSnapshot()?.anchorKey ?? listState()?.activeKey() ?? null
+      : (highlighted ? parseTimelineSegmentId(highlighted)?.messageId : undefined) ?? readingLinePosition()?.messageId ?? null
     const segments = timelineSegments()
     const target = findUserMessageJumpTarget({ markers: segments, resident: visibleMessageIds(), current, direction })
     if (!target) {

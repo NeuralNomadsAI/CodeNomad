@@ -47,7 +47,7 @@ export function findTimelineSegmentBlock(scroller: HTMLElement, segment: Timelin
 }
 
 /** The marker of the first marked block reaching below the reading line, from the mounted rows only. */
-export function readingLineSegmentId(scroller: HTMLElement, segmentsByMessage: ReadonlyMap<string, readonly TimelineSegment[]>): string | null {
+export function readingLineSegment(scroller: HTMLElement, segmentsByMessage: ReadonlyMap<string, readonly TimelineSegment[]>): TimelineSegment | null {
   const line = scroller.getBoundingClientRect().top + READING_LINE_OFFSET_PX
   const rows = Array.from(scroller.querySelectorAll<HTMLElement>("[data-virtual-follow-key]"), row => ({ row, rect: row.getBoundingClientRect() }))
     .filter(({ rect }) => rect.height > 0 && rect.bottom > line)
@@ -60,7 +60,7 @@ export function readingLineSegmentId(scroller: HTMLElement, segmentsByMessage: R
       const rect = block.getBoundingClientRect()
       if (rect.height === 0 || rect.bottom <= line) continue
       const segment = segmentForBlock(messageId, segments, block)
-      if (segment) return segment.id
+      if (segment) return segment
     }
   }
   return null

@@ -1373,10 +1373,52 @@ test("an explicit Latest drops a user message jump still waiting for the index",
   } finally { await f.close() }
 })
 
+for (const composer of [false, true]) test(`user message jumps follow the highlighted message with a row clipped to 2 px (${composer ? "composer" : "conversation"})`, async () => {
+  const f = await fixture()
+  try {
+    for (const [key, expected] of [["Alt+ArrowDown", 202], ["Alt+ArrowUp", 200]] as const) {
+      await clickTimeline(f.page, 200)
+      await waitFrames(f.page, 35)
+      const stream = f.page.locator(".message-stream")
+      await stream.hover()
+      // A real gesture releases the selected marker and any pending jump target.
+      await f.page.mouse.wheel(0, 1)
+      await waitFrames(f.page, 12)
+      await f.page.evaluate(id => {
+        const stream = document.querySelector<HTMLElement>(".message-stream")!
+        const row = stream.querySelector<HTMLElement>(`[data-virtual-follow-key="${id}"]`)!
+        stream.scrollTop += row.getBoundingClientRect().bottom - stream.getBoundingClientRect().top - 2
+      }, navigationMessageId(200))
+      await waitFrames(f.page, 20)
+      const clipped = await f.page.evaluate(id => {
+        const stream = document.querySelector<HTMLElement>(".message-stream")!
+        const row = stream.querySelector<HTMLElement>(`[data-virtual-follow-key="${id}"]`)!
+        return row.getBoundingClientRect().bottom - stream.getBoundingClientRect().top
+      }, navigationMessageId(200))
+      assert.ok(Math.abs(clipped - 2) < 1, `message 200 ends 2 px below the top (${clipped})`)
+      const active = () => f.page.locator('.message-timeline-segment[aria-current="true"]').getAttribute("data-message-id")
+      assert.equal(await active(), navigationMessageId(201), "the 4 px reading line highlights message 201")
+      await (composer ? f.page.locator(".prompt-input-container textarea").first() : stream).focus()
+      await f.page.keyboard.press(key)
+      await waitFrames(f.page, 35)
+      assert.equal(await active(), navigationMessageId(expected), `${key} moves exactly one message from the highlighted 201`)
+    }
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 test("repeated user message jumps advance through prompts the list cannot raise to its top", async () => {
   // Every message is a user message, and the reader starts at the end.
   const f = await fixture()
   try {
+    // Capture the reference only after initial restoration has published its
+    // actual bottom: an in-flight restore can change it before the key fires.
+    await f.page.waitForFunction(() => {
+      const saved = (window as any).fixture.snapshot().scroll
+      const stream = document.querySelector<HTMLElement>(".message-stream")!
+      return saved?.atBottom && saved.followModeType === "following"
+        && stream.scrollHeight - stream.clientHeight - stream.scrollTop < 2
+    })
     const active = () => f.page.evaluate(() => document.querySelector('.message-timeline-segment[aria-current="true"]')?.getAttribute("data-message-id"))
     const waitActive = (index: number) => f.page.waitForFunction(id =>
       document.querySelector('.message-timeline-segment[aria-current="true"]')?.getAttribute("data-message-id") === id, navigationMessageId(index), { timeout: 5000 })
