@@ -336,6 +336,7 @@ jobs:
           packages/ui/src/stores/client-state-codec.test.ts
           packages/ui/src/stores/client-state-partitions.test.ts
           packages/ui/src/stores/client-state.test.ts
+          packages/ui/src/stores/compaction-notice.test.ts
           packages/ui/src/stores/form-settlements.test.ts
           packages/ui/src/stores/instance-invalidation.test.ts
           packages/ui/src/stores/plugin-controls.test.ts

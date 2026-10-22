@@ -55,8 +55,12 @@ import {
 import { messageStoreBus } from "./message-v2/bus"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
+import { createCompactionNoticeClaims } from "./compaction-notice"
 
 const log = getLogger("sse")
+const claimCompactionNotice = createCompactionNoticeClaims()
+// One bubble per session: a later compaction notice replaces the one still shown.
+const compactionToasts = new Map<string, ToastHandle>()
 const pendingSessionFetches = new Map<string, {
   status: SessionStatus
   retry?: SessionRetryState | null
@@ -590,6 +594,7 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
   else ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory)
 
+  if (!claimCompactionNotice(event)) return
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
   const label = session?.title?.trim() ? session.title : sessionID
@@ -597,12 +602,13 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   const instanceName = instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
   const displayLabel = label ? `"${label}"` : sessionID
 
-  showToastNotification({ category: "sessions",
+  compactionToasts.get(sessionID)?.dismiss()
+  compactionToasts.set(sessionID, showToastNotification({ category: "sessions",
     title: instanceName,
     message: tGlobal("sessionEvents.sessionCompactedToast", { label: displayLabel }),
     variant: "info",
     duration: 10000,
-  })
+  }))
 }
 
 function handleSessionError(instanceId: string, event: SessionExecutionFailed): void {
