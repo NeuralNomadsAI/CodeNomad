@@ -92,10 +92,9 @@ test("every agent message shows one token and cost line adding up its cleanup se
   }), 1, "while width allows, the expanded metrics stay on one line beside the chevron")
 }))
 
-test("an agent message header names its agent and model like the composer and keeps the identifiers in its tooltip", async () => open(async page => {
+test("an agent message header names its agent and model like the composer", async () => open(async page => {
   const label = page.locator(".message-speaker-label[data-role='assistant']").first()
   assert.equal((await label.innerText()).trim(), "Build • Fixture Model")
-  assert.match((await label.getAttribute("title")) ?? "", /^build • fixture\/fixture$/m)
 }))
 
 test("the Tokens filter hides, collapses and expands every usage line", async () => open(async page => {

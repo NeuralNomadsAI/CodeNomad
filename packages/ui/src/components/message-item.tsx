@@ -16,7 +16,7 @@ import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing
 import SpeechActionButton from "./speech-action-button"
 import { getUserMessageMenuState, isMessageTextStreaming, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
 import { deleteMessageTechnicalParts } from "../stores/session-actions"
-import { messageProfileLabel } from "./message-profile-label"
+import { agents, providers } from "../stores/session-state"
 import { showAlertDialog, showConfirmDialog } from "../stores/alerts"
 import type { TechnicalCleanupPart } from "../lib/message-part-grouping"
 
@@ -373,13 +373,46 @@ export default function MessageItem(props: MessageItemProps) {
       ? "message-item-base bg-[var(--message-user-bg)] border-l border-[var(--message-user-border)]"
       : "message-item-base assistant-message border-l border-[var(--message-assistant-border)]"
 
-  const agentMeta = createMemo(() =>
-    messageProfileLabel(props.instanceId, isUser() || !props.showAgentMeta ? undefined : props.messageInfo),
-  )
+  const agentIdentifier = () => {
+    if (isUser()) return ""
+    const info = props.messageInfo
+    if (!info || info.role !== "assistant") return ""
+    // Same names as the composer footer, falling back to the identifier.
+    return agents().get(props.instanceId)?.find((agent) => agent.id === info.mode)?.name || info.mode || ""
+  }
+
+  const modelIdentifier = () => {
+    if (isUser()) return ""
+    const info = props.messageInfo
+    if (!info || info.role !== "assistant") return ""
+    const modelID = info.modelID || ""
+    const providerID = info.providerID || ""
+
+    const name = providers().get(props.instanceId)?.find((provider) => provider.id === providerID)?.models.find((model) => model.id === modelID)?.name
+    const base = name || (modelID && providerID ? `${providerID}/${modelID}` : modelID)
+    if (!base) return ""
+
+    const variant = info.variant
+    if (typeof variant === "string" && variant.trim().length > 0) {
+      return `${base} • ${variant.trim()}`
+    }
+
+    return base
+  }
+
+  const agentMeta = () => {
+    if (isUser() || !props.showAgentMeta) return ""
+    const segments: string[] = []
+    const agent = agentIdentifier()
+    const model = modelIdentifier()
+    if (agent) segments.push(agent)
+    if (model) segments.push(model)
+    return segments.join(" • ")
+  }
 
   const speakerLabel = () => {
     if (isUser()) return t("messageItem.speaker.you")
-    return agentMeta().text || t("messageItem.speaker.assistant")
+    return agentMeta() || t("messageItem.speaker.assistant")
   }
 
   const workedDurationTooltip = () => {
@@ -536,7 +569,7 @@ export default function MessageItem(props: MessageItemProps) {
         <div class="message-item-header-row message-item-header-row--top" ref={(el) => { topRowEl = el; observeActionOverflow(el) }}>
           <div class="message-header-left">
             <div class="message-speaker-primary" ref={(el) => (speakerPrimaryEl = el)}>
-              <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"} title={[workedDurationTooltip(), agentMeta().exact === agentMeta().text ? "" : agentMeta().exact].filter(Boolean).join("\n") || undefined}>
+              <span class="message-speaker-label" data-role={isUser() ? "user" : "assistant"} title={workedDurationTooltip() || undefined}>
                 <Show when={isUser()} fallback={
                   <span class="inline-flex items-center gap-1">
                     <Bot class="w-3.5 h-3.5 shrink-0" aria-hidden="true" />

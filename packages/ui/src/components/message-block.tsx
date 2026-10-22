@@ -44,7 +44,6 @@ import { accountSessionTranscript } from "../stores/session-transcript-memory"
 import { parseReasoningSummary } from "../lib/reasoning-summary"
 import { getFormQueue } from "../stores/forms"
 import { backgroundSession, deleteMessagePart, deleteTechnicalPartGroup } from "../stores/session-actions"
-import { messageProfileLabel } from "./message-profile-label"
 import { showAlertDialog } from "../stores/alerts"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { Markdown } from "./markdown"
@@ -1545,6 +1544,21 @@ function ReasoningCard(props: ReasoningCardProps) {
     }
   })
 
+  const agentIdentifier = () => {
+    const info = props.messageInfo
+    if (!info || info.role !== "assistant") return ""
+    return info.mode || ""
+  }
+
+  const modelIdentifier = () => {
+    const info = props.messageInfo
+    if (!info || info.role !== "assistant") return ""
+    const modelID = info.modelID || ""
+    const providerID = info.providerID || ""
+    if (modelID && providerID) return `${providerID}/${modelID}`
+    return modelID
+  }
+
   const reasoningText = () => getReasoningText(props.part)
 
   const reasoningSummary = createMemo(() => parseReasoningSummary(reasoningText()))
@@ -1557,8 +1571,12 @@ function ReasoningCard(props: ReasoningCardProps) {
   const reasoningTitle = () => extractedTitle() || t("messageBlock.reasoning.thoughtsFallback")
 
   const reasoningMetaTooltip = () => {
-    const profile = messageProfileLabel(props.instanceId, props.messageInfo)
-    return [thoughtDurationTitle(), profile.text, profile.exact === profile.text ? "" : profile.exact].filter(Boolean).join("\n")
+    const parts: string[] = [thoughtDurationTitle()]
+    const agent = agentIdentifier()
+    const model = modelIdentifier()
+    if (agent) parts.push(agent)
+    if (model) parts.push(model)
+    return parts.join("\n")
   }
 
   const toggle = () => {
