@@ -6,7 +6,7 @@ Pour récupérer, vérifiez d’abord le propriétaire de l’opération défail
 
 ### Quarantaine macOS {#macos-quarantine}
 
-Les versions macOS de CodeNomad ne sont pas notarisées par Apple : macOS bloque donc le premier lancement d’une copie téléchargée, même vérifiée depuis le dépôt officiel, et affiche **"CodeNomad" Not Opened** (Apple n’a pas pu vérifier l’absence de logiciel malveillant), ou indique que l’application est endommagée.
+Les versions macOS de CodeNomad ne sont pas notarisées par Apple : macOS peut donc bloquer le premier lancement d’une copie téléchargée, même vérifiée depuis le dépôt officiel, en affichant **"CodeNomad" Not Opened** (Apple n’a pas pu vérifier l’absence de logiciel malveillant) ou en indiquant que l’application est endommagée.
 
 1. Vérifiez l’origine du téléchargement et le chemin de l’application installée.
 2. Si l’application est installée au chemin suivant, retirez son attribut de quarantaine :

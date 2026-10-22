@@ -6,7 +6,7 @@
 
 ### macOS karantinası {#macos-quarantine}
 
-CodeNomad'ın macOS sürümleri Apple tarafından noter onayından (notarization) geçirilmez; bu nedenle macOS, resmi depodan doğruladığınız bir kopya bile olsa indirilen kopyanın ilk açılışını engeller: **"CodeNomad" Not Opened** iletisini (Apple kötü amaçlı yazılım içermediğini doğrulayamadı) gösterir veya uygulamanın zarar gördüğünü bildirir.
+CodeNomad'ın macOS sürümleri Apple tarafından noter onayından (notarization) geçirilmez; bu nedenle macOS, resmi depodan doğruladığınız bir kopya bile olsa indirilen kopyanın ilk açılışını engelleyebilir: **"CodeNomad" Not Opened** iletisini (Apple kötü amaçlı yazılım içermediğini doğrulayamadı) gösterebilir veya uygulamanın zarar gördüğünü bildirebilir.
 
 1. İndirmenin kaynağını ve yüklü uygulama yolunu kontrol edin.
 2. Uygulama aşağıdaki yola yüklendiyse karantina özelliğini kaldırın:

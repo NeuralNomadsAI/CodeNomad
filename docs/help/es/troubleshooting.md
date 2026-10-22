@@ -6,7 +6,7 @@ Para recuperarte, comprueba primero quién controla la operación fallida: naveg
 
 ### Cuarentena de macOS {#macos-quarantine}
 
-Las versiones de CodeNomad para macOS no están notarizadas por Apple, así que macOS bloquea el primer inicio de una copia descargada, incluso una que hayas verificado desde el repositorio oficial: muestra **"CodeNomad" Not Opened** (Apple no pudo verificar que esté libre de malware) o indica que la aplicación está dañada.
+Las versiones de CodeNomad para macOS no están notarizadas por Apple, así que macOS puede bloquear el primer inicio de una copia descargada, incluso una que hayas verificado desde el repositorio oficial: puede mostrar **"CodeNomad" Not Opened** (Apple no pudo verificar que esté libre de malware) o indicar que la aplicación está dañada.
 
 1. Comprueba el origen de la descarga y la ruta de la aplicación instalada.
 2. Si la aplicación está instalada en la siguiente ruta, retira su atributo de cuarentena:

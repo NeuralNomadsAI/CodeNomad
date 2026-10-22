@@ -6,7 +6,7 @@ Prüfen Sie zur Wiederherstellung zuerst die zuständige Komponente des fehlgesc
 
 ### macOS-Quarantäne {#macos-quarantine}
 
-Die macOS-Releases von CodeNomad sind nicht von Apple notarisiert. macOS blockiert daher den ersten Start einer heruntergeladenen Kopie, auch einer aus dem offiziellen Repository überprüften: Es meldet **"CodeNomad" Not Opened** (Apple konnte nicht überprüfen, ob sie frei von Schadsoftware ist) oder dass die Anwendung beschädigt ist.
+Die macOS-Releases von CodeNomad sind nicht von Apple notarisiert. macOS kann daher den ersten Start einer heruntergeladenen Kopie blockieren, auch einer aus dem offiziellen Repository überprüften: Es kann **"CodeNomad" Not Opened** melden (Apple konnte nicht überprüfen, ob sie frei von Schadsoftware ist) oder dass die Anwendung beschädigt ist.
 
 1. Prüfen Sie Download-Herkunft und installierten App-Pfad.
 2. Ist die App im folgenden Pfad installiert, entfernen Sie ihr Quarantäneattribut:

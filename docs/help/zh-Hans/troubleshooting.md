@@ -6,7 +6,7 @@
 
 ### macOS 隔离 {#macos-quarantine}
 
-CodeNomad 的 macOS 发行版未经 Apple 公证，因此即使是从官方仓库下载并已验证的副本，macOS 也会阻止其首次启动：显示 **"CodeNomad" Not Opened**（Apple 无法验证其不含恶意软件），或提示应用已损坏。
+CodeNomad 的 macOS 发行版未经 Apple 公证，因此即使是从官方仓库下载并已验证的副本，macOS 也可能阻止其首次启动：可能显示 **"CodeNomad" Not Opened**（Apple 无法验证其不含恶意软件），或提示应用已损坏。
 
 1. 检查下载来源和已安装应用路径。
 2. 如果应用安装在以下路径，请移除其隔离属性：

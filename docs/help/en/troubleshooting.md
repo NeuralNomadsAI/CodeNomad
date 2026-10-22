@@ -6,7 +6,7 @@ Recover by checking the owner of the failing operation first: browser, CodeNomad
 
 ### macOS quarantine {#macos-quarantine}
 
-CodeNomad's macOS releases are not notarized by Apple, so macOS blocks the first launch of a downloaded copy, even one you verified from the official repository: it reports **"CodeNomad" Not Opened** (Apple could not verify that it is free of malware), or that the application is damaged.
+CodeNomad's macOS releases are not notarized by Apple, so macOS can block the first launch of a downloaded copy, even one you verified from the official repository: it can report **"CodeNomad" Not Opened** (Apple could not verify that it is free of malware), or that the application is damaged.
 
 1. Check the download's origin and the installed app path.
 2. If the app is installed at the following path, remove its quarantine attribute:
