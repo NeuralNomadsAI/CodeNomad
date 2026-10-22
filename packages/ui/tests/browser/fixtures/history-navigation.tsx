@@ -128,6 +128,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
   },
   // Timeline tool markers follow Message content: Everything shows them, Nothing hides them.
   tools: (visible: boolean) => updatePreferences(transcriptPresetPatch(visible ? "everything" : "nothing")),
+  pruneTool: (index: number) => store.removeMessagePart(navigationMessageId(index), `${navigationMessageId(index)}-tool`, sessionId),
   status: (status: 'idle' | 'working') => setSessions(previous => {
     const next = new Map(previous), group = new Map(next.get(instanceId)!)
     group.set(sessionId, { ...group.get(sessionId)!, status })

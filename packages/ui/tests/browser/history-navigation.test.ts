@@ -1407,6 +1407,39 @@ for (const composer of [false, true]) test(`user message jumps follow the highli
   } finally { await f.close() }
 })
 
+test("a vanished selected tool step falls back to the reading line for the next user jump", async () => {
+  const f = await fixture(false, false, false, true)
+  try {
+    await clickTimeline(f.page, 601)
+    await waitFrames(f.page, 35)
+    assert.equal(await f.page.locator('.message-timeline-segment[aria-current="true"]').getAttribute("data-message-id"), navigationMessageId(601))
+    // The completed step has only this tool. Pruning it hides its message from
+    // the resident rows and rail while the raw selected id still names it.
+    await f.page.evaluate(() => (window as any).fixture.pruneTool(601))
+    await waitFrames(f.page, 35)
+    assert.equal(await f.page.locator(`.message-timeline-segment[data-message-id="${navigationMessageId(601)}"]`).count(), 0)
+    assert.equal(await f.page.locator('.message-timeline-segment[aria-current="true"]').count(), 0)
+    // Place the reading line on the following message without a gesture that
+    // would release the raw selection and hide the stale-reference bug.
+    await f.page.evaluate(id => {
+      const stream = document.querySelector<HTMLElement>(".message-stream")!
+      const row = stream.querySelector<HTMLElement>(`[data-virtual-follow-key="${id}"]`)!
+      stream.scrollTop += row.getBoundingClientRect().top - stream.getBoundingClientRect().top
+    }, navigationMessageId(602))
+    await waitFrames(f.page, 10)
+    const offset = await f.page.locator(`[data-virtual-follow-key="${navigationMessageId(602)}"]`).evaluate(row =>
+      row.getBoundingClientRect().top - document.querySelector(".message-stream")!.getBoundingClientRect().top)
+    assert.ok(Math.abs(offset) < 2, `message 602 is at the reading line (${offset})`)
+    await f.page.locator(".message-stream").focus()
+    await f.page.keyboard.press("Alt+ArrowDown")
+    await waitFrames(f.page, 35)
+    const active = await f.page.evaluate(() => document.querySelector('.message-timeline-segment[aria-current="true"]')?.getAttribute("data-message-id") ?? null)
+    assert.equal(active, navigationMessageId(603),
+      "Alt+Down advances from the reading-line message 602 after selected step 601 disappears")
+    assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 test("repeated user message jumps advance through prompts the list cannot raise to its top", async () => {
   // Every message is a user message, and the reader starts at the end.
   const f = await fixture()

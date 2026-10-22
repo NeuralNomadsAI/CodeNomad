@@ -925,11 +925,14 @@ export default function MessageSection(props: MessageSectionProps) {
     setOutlineDemanded(true)
     const pending = userMessageJumpTarget
     const highlighted = activeSegmentId()
+    const highlightedMessageId = highlighted ? parseTimelineSegmentId(highlighted)?.messageId : undefined
     // Advance from the marker the reader sees (selected, or last published at
-    // the reading line), falling back to that same line before its first frame.
+    // the reading line) while its message remains in the jump order; otherwise
+    // use that same reading line.
     const current = pending && (navigation().kind === "paging" || isMessageRowShown(pending))
       ? pending
-      : (highlighted ? parseTimelineSegmentId(highlighted)?.messageId : undefined) ?? readingLinePosition()?.messageId ?? null
+      : highlightedMessageId && (timelineSegmentsByMessage().has(highlightedMessageId) || visibleMessageIds().includes(highlightedMessageId))
+        ? highlightedMessageId : readingLinePosition()?.messageId ?? null
     const segments = timelineSegments()
     const target = findUserMessageJumpTarget({ markers: segments, resident: visibleMessageIds(), current, direction })
     if (!target) {

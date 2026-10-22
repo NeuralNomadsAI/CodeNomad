@@ -148,7 +148,9 @@ line. Otherwise the active
 marker is the first marked block reaching more than 4 px below the transcript top,
 re-read once per frame on scroll and content rendering from the mounted rows only.
 Previous/next user-message jumps advance from that highlighted marker's message,
-including a selected marker. Before the first highlight, they use the same
+including a selected marker, while it has a timeline marker or remains in the
+visible resident order. A vanished reference, or the first jump before a
+highlight, uses the same
 reading-line probe (`readingLinePosition` / `readingLineSegment`), which returns
 both marker and message identity. A pending jump's target stays the reference
 while paging or shown, so repeated jumps advance even near a clamped bottom;
