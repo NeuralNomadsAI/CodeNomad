@@ -2161,7 +2161,7 @@ fn main() {
                 shutdown::request(app_handle.clone());
             }
             #[cfg(target_os = "linux")]
-            tauri::RunEvent::Exit => appimage_exit::stop_mounted_descendants(),
+            tauri::RunEvent::Exit => appimage_exit::stop_mounted_children(),
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, .. }),

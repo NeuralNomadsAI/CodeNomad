@@ -160,10 +160,11 @@ The AppImage runtime unmounts the bundle as soon as the main process exits, whil
 WebKit's helper processes started from it can outlive that process briefly; a
 helper that then touches the vanished mount dies with SIGBUS and the desktop
 reports a crash. On `RunEvent::Exit`, including updater restarts, the AppImage
-host therefore stops its descendants that still run from the mount
-(`appimage_exit.rs`): SIGTERM through pidfds, which pin each process against PID
-reuse, then SIGKILL, within two seconds in total. Descendants running from
-elsewhere, such as the shared OpenCode service and terminals, keep running.
+host therefore stops its child processes that still run from the mount
+(`appimage_exit.rs`): each is pinned with a pidfd and checked again as our child
+running from the mount, then receives SIGTERM, and SIGKILL if it has not exited
+after 1.5 s; waiting for exits stops after two seconds in total. Children running
+from elsewhere, such as the shared OpenCode service, keep running.
 
 ## Validation
 
@@ -178,7 +179,7 @@ elsewhere, such as the shared OpenCode service and terminals, keep running.
 - Shutdown regressions verify all-window flushing, cancellation, atomic restart
   admission, conflict with an existing quit and Windows logout.
 - The vendored Windows launch regression checks success-only ownership release.
-- On Linux, `appimage_exit.rs` tests stop a descendant running from a temporary
+- On Linux, `appimage_exit.rs` tests stop a child running from a temporary
   mount while sparing one running elsewhere. A real AppImage must quit without
   leaving WebKit helpers or a crash report in `/var/crash`.
 - Browser tests exercise the real update store and toast actions, explicit install,

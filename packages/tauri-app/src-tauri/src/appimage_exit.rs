@@ -1,12 +1,11 @@
 //! Linux AppImage exit. The AppImage runtime serves its mounted bundle only while
 //! this process lives, but WebKit's helper processes, started from that mount, can
 //! outlive it briefly: their next page fault in the vanished mount raises SIGBUS
-//! and the desktop reports a crash. Just before exiting, terminate the descendants
-//! that still run from the mount and wait for them. Other installations, and
-//! descendants running from elsewhere (the shared OpenCode service, terminals),
-//! are left alone.
+//! and the desktop reports a crash. Just before exiting, terminate the child
+//! processes that still run from the mount and wait for them. Other installations,
+//! and children running from elsewhere (the shared OpenCode service), are left
+//! alone.
 
-use std::collections::{HashMap, HashSet};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -16,9 +15,9 @@ const KILL_GRACE: Duration = Duration::from_millis(500);
 
 /// Called from `RunEvent::Exit`, after the backend has stopped and right before the
 /// process exits or restarts.
-pub(crate) fn stop_mounted_descendants() {
+pub(crate) fn stop_mounted_children() {
     if let Some(mount) = appimage_mount() {
-        stop_descendants_under(&mount);
+        stop_children_under(&mount);
     }
 }
 
@@ -31,15 +30,16 @@ fn appimage_mount() -> Option<PathBuf> {
     std::fs::canonicalize(appdir).ok()
 }
 
-fn stop_descendants_under(mount: &Path) {
-    let parents = process_parents();
-    let mut targets: Vec<OwnedFd> = descendants(std::process::id() as i32, &parents)
+fn stop_children_under(mount: &Path) {
+    let me = std::process::id() as i32;
+    let mut targets: Vec<OwnedFd> = child_pids(me)
         .into_iter()
         .filter_map(|pid| {
-            // The pidfd pins this exact process, so a reused PID is never signalled;
-            // checking the executable after opening it confirms the process we pinned.
+            // Signals go through the pidfd, so they reach only the process it pins.
+            // Checking parentage and executable once it is open rejects a process
+            // that reused the PID after the listing.
             let pidfd = pidfd_open(pid)?;
-            runs_from(pid, mount).then_some(pidfd)
+            (parent_of(pid) == Some(me) && runs_from(pid, mount)).then_some(pidfd)
         })
         .collect();
     for signal in [libc::SIGTERM, libc::SIGKILL] {
@@ -64,18 +64,19 @@ fn stop_descendants_under(mount: &Path) {
     }
 }
 
-fn process_parents() -> HashMap<i32, i32> {
+fn child_pids(parent: i32) -> Vec<i32> {
     let Ok(entries) = std::fs::read_dir("/proc") else {
-        return HashMap::new();
+        return Vec::new();
     };
     entries
         .flatten()
-        .filter_map(|entry| {
-            let pid = entry.file_name().to_str()?.parse::<i32>().ok()?;
-            let stat = std::fs::read_to_string(entry.path().join("stat")).ok()?;
-            Some((pid, parent_from_stat(&stat)?))
-        })
+        .filter_map(|entry| entry.file_name().to_str()?.parse::<i32>().ok())
+        .filter(|&pid| parent_of(pid) == Some(parent))
         .collect()
+}
+
+fn parent_of(pid: i32) -> Option<i32> {
+    parent_from_stat(&std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?)
 }
 
 /// The parent PID from `/proc/<pid>/stat`, whose command name may hold spaces or
@@ -86,21 +87,6 @@ fn parent_from_stat(stat: &str) -> Option<i32> {
         .nth(1)?
         .parse()
         .ok()
-}
-
-fn descendants(root: i32, parents: &HashMap<i32, i32>) -> Vec<i32> {
-    let mut found = Vec::new();
-    let mut seen = HashSet::from([root]);
-    let mut frontier = vec![root];
-    while let Some(parent) = frontier.pop() {
-        for (&pid, &ppid) in parents {
-            if ppid == parent && seen.insert(pid) {
-                found.push(pid);
-                frontier.push(pid);
-            }
-        }
-    }
-    found
 }
 
 fn runs_from(pid: i32, mount: &Path) -> bool {
@@ -180,14 +166,6 @@ mod tests {
         assert_eq!(parent_from_stat("garbage"), None);
     }
 
-    #[test]
-    fn descendants_follow_the_whole_tree_only() {
-        let parents = HashMap::from([(10, 1), (11, 10), (12, 11), (13, 10), (20, 1), (21, 20)]);
-        let mut found = descendants(10, &parents);
-        found.sort();
-        assert_eq!(found, vec![11, 12, 13]);
-    }
-
     fn sleeper(program: &Path) -> Child {
         Command::new(program)
             .arg("30")
@@ -207,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn only_descendants_running_from_the_mount_are_stopped() {
+    fn only_children_running_from_the_mount_are_stopped() {
         let mount = tempfile::tempdir().expect("mount directory");
         let mounted = mount.path().join("sleep");
         std::fs::copy("/bin/sleep", &mounted).expect("copy sleep into the mount");
@@ -215,7 +193,8 @@ mod tests {
 
         let mut inside = sleeper(&mounted);
         let mut outside = sleeper(Path::new("/bin/sleep"));
-        stop_descendants_under(&mount);
+        assert!(child_pids(std::process::id() as i32).contains(&(inside.id() as i32)));
+        stop_children_under(&mount);
 
         assert!(
             exited_within(&mut inside, Duration::from_secs(2)),
@@ -223,7 +202,7 @@ mod tests {
         );
         assert!(
             outside.try_wait().expect("outside status").is_none(),
-            "other descendants keep running"
+            "other children keep running"
         );
         outside.kill().expect("stop outside sleeper");
         outside.wait().expect("reap outside sleeper");
