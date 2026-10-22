@@ -3,7 +3,7 @@ import test from "node:test"
 import { OpenCodeUpdateService, OpenCodeUpdateError,
   resolveLatestOpenCodeVersion, compareOpenCodeVersionStrings,
   type OpenCodeUpdateServiceDeps, type UpgradeOptions } from "./service"
-import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
+import { MINIMUM_OPENCODE_VERSION as minimum, RECOMMENDED_OPENCODE_VERSION as recommended } from "../opencode/runtime-support"
 import { rememberRuntime } from "../opencode/compatibility/runtime"
 import type { Endpoint } from "@opencode/client/service"
 import { probeBinaryVersion } from "../workspaces/spawn"
@@ -468,10 +468,10 @@ test("the native contract floor admits current and newer runtimes without a test
     }))
     const status = await service.start()
     assert.equal(status.minimumVersion, "2.1.2")
-    assert.equal(status.recommendedVersion, "2.1.2")
+    assert.equal(status.recommendedVersion, "2.1.3")
     assert.equal(status.state, "ready")
     assert.equal(status.serviceState, "ready")
-    assert.equal(status.versionAssessment, version === "2.1.2" ? "tested" : "untested", "only the current recommendation is release-qualified")
+    assert.equal(status.versionAssessment, version === "2.1.3" ? "tested" : "untested", "only the current recommendation is release-qualified")
     assert.equal(status.incompatibilityReason, undefined)
     assert.equal(status.canUpgrade, version === "2.1.2", "offer an optional upgrade below the target; never downgrade current or newer runtimes")
     assert.equal(status.canRestart, false)
@@ -497,7 +497,7 @@ test("older daemons require native replay and correct Code Mode ordering without
 
 test("a current daemon remains usable through an older selected discovery CLI", async () => {
   const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
-  rememberRuntime(endpoint, { version: minimum, pid: 123, discovery: "info" })
+  rememberRuntime(endpoint, { version: recommended, pid: 123, discovery: "info" })
   const service = new OpenCodeUpdateService(deps({
     probeBinary: () => ({ valid: true, version: "2.0.3" }),
     lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),

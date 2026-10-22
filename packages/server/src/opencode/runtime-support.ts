@@ -12,7 +12,7 @@
  */
 export const MINIMUM_OPENCODE_VERSION = "2.1.2"
 /** Qualification target, independent of the technically required minimum. */
-export const RECOMMENDED_OPENCODE_VERSION = "2.1.2"
+export const RECOMMENDED_OPENCODE_VERSION = "2.1.3"
 export const OPENCODE_UPDATE_REQUIRED = "opencode_update_required"
 
 export function isBelowOpenCodeMinimum(version: string): boolean {

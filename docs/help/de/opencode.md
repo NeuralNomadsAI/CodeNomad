@@ -20,7 +20,7 @@ Installierte Programmdatei und laufender Dienst können unterschiedliche Version
 | Einstufung | Aktuelle Anforderung | Bedeutung |
 | --- | --- | --- |
 | Minimum | OpenCode **2.1.2** | Korrekte Reihenfolge von JavaScript-Jobs in Code Mode sowie das native Wiedergabe- und Komprimierungsformat von 2.1; mit früheren Versionen gespeicherte Unterhaltungen bleiben nach dem Update lesbar. |
-| Empfohlen | OpenCode **2.1.2** | Qualifiziertes Ziel, getrennt vom technischen Minimum. |
+| Empfohlen | OpenCode **2.1.3** | Qualifiziertes Ziel, getrennt vom technischen Minimum. |
 | Ungeprüft | Neuere oder angepasste, nicht vollständig validierte Version | Nicht allein wegen fehlender Tests abgelehnt; geprüft werden die tatsächlichen API-Verträge des verbundenen Dienstes. |
 
 Auch die erforderlichen Verträge für Sitzungen, Berechtigungen, Forms, Posteingang und Sitzungsumgebung müssen verfügbar sein. Eine Programmversion allein beweist nicht deren Unterstützung durch den verbundenen Dienst. Meldet die Einrichtung einen nicht unterstützten laufenden Dienst, wählen/installieren Sie eine unterstützte CLI und führen Sie bei Bereitschaft den expliziten Neustart des gemeinsamen Dienstes aus.
