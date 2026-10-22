@@ -34,11 +34,13 @@ async function until(check: () => boolean) {
 }
 const originalPending = serverApi.getPendingRequests, originalWorktrees = serverApi.fetchWorktrees
 const originalClient = sdkManager.createClient
-const originalToast = toast.custom
+const originalToast = toast.custom, originalDismiss = toast.dismiss
 let sequence = 0, brokerReads = 0
 const fixtures: ReturnType<typeof harness>[] = []
 beforeEach(() => {
   toast.custom = () => "fixture-toast"
+  // A later compaction end replaces the session's earlier bubble.
+  toast.dismiss = () => {}
   brokerReads = 0
   serverApi.getPendingRequests = async (id, directories) => {
     brokerReads++
@@ -51,6 +53,7 @@ beforeEach(() => {
 })
 afterEach(() => {
   toast.custom = originalToast
+  toast.dismiss = originalDismiss
   for (const h of fixtures.splice(0)) {
     removeInstance(h.id, { authoritative: false })
     setSessions((previous) => { const next = new Map(previous); next.delete(h.id); return next })
