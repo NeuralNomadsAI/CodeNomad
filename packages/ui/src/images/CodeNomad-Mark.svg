@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="40 51 512 270">
+  <!-- images/CodeNomad-Icon.svg cropped to the mark, for inline placements such as the title bar -->
+  <g fill="#0088ad">
+    <path d="M287.36 94.88 A142.01 134.77 0 1 0 287.81 276.44 L248.56 239.23 A86.91 84.22 0 1 1 248.05 132.01 Z"/>
+    <path d="M210 173.5 H313 Q320 173.5 320 166.5 H330 V205.5 H320 Q320 198.5 313 198.5 H210 Z"/>
+    <path d="M320 57 H374 V314 H320 Z"/>
+    <path d="M495 57 H551 V314 H495 Z"/>
+    <path d="M320 57 H374 L551 305 V314 H495 L320 69 Z"/>
+  </g>
+  <circle cx="182" cy="186" r="28" fill="none" stroke="#f7970e" stroke-width="18"/>
+</svg>

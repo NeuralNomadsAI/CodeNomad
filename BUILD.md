@@ -237,6 +237,7 @@ See [electron-builder docs](https://www.electron.build/) for details.
 
 - `images/CodeNomad-Icon.svg` — vector source of the logo: the bare CN mark on a transparent square canvas
 - `images/CodeNomad-Icon.png` — its 1024×1024 transparent export: primary asset for in-app logo placements (copied to `packages/ui/src/images/`) and the master icon used to generate packaged app icons
+- `packages/ui/src/images/CodeNomad-Mark.svg` — the same mark cropped to its bounds for the main window's title bar; keep its shapes in sync with the source
 
 To update the binaries:
 

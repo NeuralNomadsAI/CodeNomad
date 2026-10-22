@@ -5,11 +5,14 @@ import { runNativeWindowAction, showNativeTitlebarMenu, startNativeWindowDrag, t
 
 interface NativeTitlebarProps {
   title: string
+  /** Show the CodeNomad mark instead of the title text; the title remains its accessible name. */
+  logo?: boolean
   menus?: boolean
   onClose?: () => void | Promise<void>
 }
 
 const menus: NativeTitlebarMenu[] = ["file", "edit", "view", "window", "help"]
+const codeNomadMark = new URL("../images/CodeNomad-Mark.svg", import.meta.url).href
 
 export const NativeTitlebar: Component<NativeTitlebarProps> = (props) => {
   const { t } = useI18n()
@@ -26,7 +29,9 @@ export const NativeTitlebar: Component<NativeTitlebarProps> = (props) => {
       }}
     >
       <div class="native-titlebar-brand">
-        <span class="native-titlebar-title">{props.title}</span>
+        <Show when={props.logo} fallback={<span class="native-titlebar-title">{props.title}</span>}>
+          <img src={codeNomadMark} alt={props.title} class="native-titlebar-logo" draggable={false} />
+        </Show>
       </div>
       <Show when={props.menus}>
         <nav class="native-titlebar-menu" aria-label={t("window.menu.ariaLabel")} data-titlebar-interactive>
