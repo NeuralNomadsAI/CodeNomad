@@ -1,5 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+#[cfg(target_os = "linux")]
+mod appimage_exit;
 mod browser_controller;
 #[allow(dead_code)]
 mod cert_manager;
@@ -2158,6 +2160,8 @@ fn main() {
                 api.prevent_exit();
                 shutdown::request(app_handle.clone());
             }
+            #[cfg(target_os = "linux")]
+            tauri::RunEvent::Exit => appimage_exit::stop_mounted_descendants(),
             tauri::RunEvent::WindowEvent {
                 label,
                 event: tauri::WindowEvent::DragDrop(tauri::DragDropEvent::Enter { paths, .. }),

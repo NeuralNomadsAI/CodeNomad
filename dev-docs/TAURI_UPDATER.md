@@ -156,6 +156,15 @@ Verification extracts via an absolute artifact path, checks `AppRun` and
 ELF dependencies against bundled library directories and reports the binary's
 glibc floor.
 
+The AppImage runtime unmounts the bundle as soon as the main process exits, while
+WebKit's helper processes started from it can outlive that process briefly; a
+helper that then touches the vanished mount dies with SIGBUS and the desktop
+reports a crash. On `RunEvent::Exit`, including updater restarts, the AppImage
+host therefore stops its descendants that still run from the mount
+(`appimage_exit.rs`): SIGTERM through pidfds, which pin each process against PID
+reuse, then SIGKILL, within two seconds in total. Descendants running from
+elsewhere, such as the shared OpenCode service and terminals, keep running.
+
 ## Validation
 
 - Node tests exercise configuration, the four payload formats, manifest
@@ -169,6 +178,9 @@ glibc floor.
 - Shutdown regressions verify all-window flushing, cancellation, atomic restart
   admission, conflict with an existing quit and Windows logout.
 - The vendored Windows launch regression checks success-only ownership release.
+- On Linux, `appimage_exit.rs` tests stop a descendant running from a temporary
+  mount while sparing one running elsewhere. A real AppImage must quit without
+  leaving WebKit helpers or a crash report in `/var/crash`.
 - Browser tests exercise the real update store and toast actions, explicit install,
   duplicate gestures, failure recovery (including after a reload), feed
   forwarding and unsigned/Electron/remote fallback.
