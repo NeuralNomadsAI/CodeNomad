@@ -235,13 +235,15 @@ See [electron-builder docs](https://www.electron.build/) for details.
 
 ## Brand Assets
 
-- `images/CodeNomad-Icon.png` — primary asset for in-app logo placements and the 1024×1024 master icon used to generate packaged app icons
+- `images/CodeNomad-Icon.svg` — vector source of the logo: the bare CN mark on a transparent square canvas
+- `images/CodeNomad-Icon.png` — its 1024×1024 transparent export: primary asset for in-app logo placements (copied to `packages/ui/src/images/`) and the master icon used to generate packaged app icons
 
 To update the binaries:
 
-1. Run `node scripts/generate-icons.js images/CodeNomad-Icon.png electron/resources` to round the corners and emit fresh `icon.icns`, `icon.ico`, and `icon.png` files.
-2. (Optional) Pass `--radius` to tweak the corner curvature or `--name` to change the filename prefix.
-3. If you prefer manual control, export `images/CodeNomad-Icon.png` with your tool of choice and place the generated files in `electron/resources/`.
+1. Export `images/CodeNomad-Icon.svg` at 1024×1024 with a transparent background to `images/CodeNomad-Icon.png` and `packages/ui/src/images/CodeNomad-Icon.png`.
+2. From `packages/electron-app`, run `node scripts/generate-icons.js ../../images/CodeNomad-Icon.png electron/resources` to round the corners and emit fresh `icon.icns`, `icon.ico`, and `icon.png` files, then copy them to `packages/tauri-app/src-tauri/`.
+3. Export the SVG at 32, 48, 64, 128, 256 and 512 px to `packages/tauri-app/src-tauri/icons/linux/<size>x<size>.png`.
+4. (Optional) Pass `--radius` to tweak the corner curvature or `--name` to change the filename prefix.
 
 ## Clean Build
 
