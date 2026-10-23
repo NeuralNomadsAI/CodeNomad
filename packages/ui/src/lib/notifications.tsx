@@ -361,10 +361,15 @@ const variantAccent: Record<
 
 const noToast: ToastHandle = { id: "", dismiss: () => {} }
 
-/** System delivery is skipped while this window is visible unless the user allowed it. */
+/**
+ * System delivery is skipped while this window is focused unless the user allowed it.
+ * Visibility alone is not focus: an open window behind another application or on
+ * another screen stays visible.
+ */
 function sendSystemNotification(payload: ToastPayload): void {
   if (typeof document === "undefined") return
-  if (!untrack(() => preferences().osNotificationsAllowWhenVisible) && document.visibilityState === "visible") return
+  const focused = document.visibilityState === "visible" && document.hasFocus()
+  if (!untrack(() => preferences().osNotificationsAllowWhenVisible) && focused) return
   void sendOsNotification({ title: payload.title ?? "CodeNomad", body: payload.message }).catch((error) => {
     console.warn("[notifications] failed to send system notification", error)
   })

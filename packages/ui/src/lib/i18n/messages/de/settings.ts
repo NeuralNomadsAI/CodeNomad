@@ -397,7 +397,7 @@ export const settingsMessages = {
   "settings.notifications.requestPermission.subtitle": "Erlauben Sie der App, Benachrichtigungen auf diesem Gerät zu senden.",
   "settings.notifications.requestPermission.action": "Anfordern",
   "settings.notifications.allowVisible.title": "Benachrichtigen, wenn die App im Fokus ist",
-  "settings.notifications.allowVisible.subtitle": "Warnungen auch dann aktiviert lassen, wenn dieses Fenster sichtbar ist.",
+  "settings.notifications.allowVisible.subtitle": "Warnungen auch dann aktiviert lassen, wenn dieses Fenster im Fokus ist.",
   "settings.notifications.unsupportedNote": "Systembenachrichtigungen werden in dieser Umgebung nicht unterstützt. Die Spalte System bleibt deaktiviert.",
   "settings.notifications.routing.caption": "Wo jede Benachrichtigung erscheint",
   "settings.notifications.routing.category": "Benachrichtigung",

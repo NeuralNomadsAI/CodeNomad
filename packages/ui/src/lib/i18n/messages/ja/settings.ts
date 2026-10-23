@@ -397,7 +397,7 @@ export const settingsMessages = {
   "settings.notifications.requestPermission.subtitle": "このデバイスでアプリから通知を送信できるようにします。",
   "settings.notifications.requestPermission.action": "リクエスト",
   "settings.notifications.allowVisible.title": "アプリにフォーカスがあるときも通知",
-  "settings.notifications.allowVisible.subtitle": "このウィンドウが表示中でも通知を有効のままにします。",
+  "settings.notifications.allowVisible.subtitle": "このウィンドウにフォーカスがあっても通知を有効のままにします。",
   "settings.notifications.unsupportedNote": "この環境ではシステム通知はサポートされていません。「システム」列は無効のままです。",
   "settings.notifications.routing.caption": "各通知の表示先",
   "settings.notifications.routing.category": "通知",

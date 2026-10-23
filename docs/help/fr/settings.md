@@ -55,7 +55,7 @@ La hauteur de saisie suit la conversation visible, y compris le clavier logiciel
 
 1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation).
 2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander** relance la demande tant que l’autorisation manque.
-3. Activez **Notifier lorsque l'application est au premier plan** pour garder les notifications système pendant que cette fenêtre est visible.
+3. Activez **Notifier lorsque l'application est au premier plan** pour garder les notifications système pendant que cette fenêtre est au premier plan. Sinon, elles s’affichent dès qu’elle ne l’est pas, même si elle reste ouverte à l’écran.
 
 Par défaut, **Une session attend votre réponse** et **Une session est terminée** vont uniquement vers Système, afin que les états passagers des sessions ne s’accumulent pas dans l’Historique ; elles concernent les sessions principales, pas les sous-agents, et une session que vous arrêtez vous-même n’est pas annoncée. Les erreurs apparaissent toujours à l’écran et dans l’Historique, quoi qu’indique le tableau, et les courts messages de progression restent uniquement à l’écran.
 

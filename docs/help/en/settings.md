@@ -55,7 +55,7 @@ Composer height follows the visible conversation, including the software keyboar
 
 1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar, or the title bar in the macOS desktop app) and **System** (an operating-system notification).
 2. Checking a **System** box asks for permission if needed. Under **System notifications**, **Request** asks again while permission is missing.
-3. Enable **Notify when the app is focused** to keep system notifications while this window is visible.
+3. Enable **Notify when the app is focused** to keep system notifications while this window is focused. Otherwise they appear whenever it is not, even if it stays open on screen.
 
 By default, **A session needs your answer** and **A session finished** go to System only, so passing session states do not pile up in History; they concern main sessions, not subagents, and a session you stop yourself is not announced. Errors always appear on screen and in History, whatever the table says, and short progress messages stay on screen only.
 

@@ -397,7 +397,7 @@ export const settingsMessages = {
   "settings.notifications.requestPermission.subtitle": "Разрешите приложению отправлять уведомления на этом устройстве.",
   "settings.notifications.requestPermission.action": "Запросить",
   "settings.notifications.allowVisible.title": "Уведомлять, когда приложение в фокусе",
-  "settings.notifications.allowVisible.subtitle": "Оставлять оповещения включёнными, даже когда это окно видно.",
+  "settings.notifications.allowVisible.subtitle": "Оставлять оповещения включёнными, даже когда это окно в фокусе.",
   "settings.notifications.unsupportedNote": "Системные уведомления не поддерживаются в этой среде. Столбец «Система» остаётся отключённым.",
   "settings.notifications.routing.caption": "Где появляется каждое уведомление",
   "settings.notifications.routing.category": "Уведомление",

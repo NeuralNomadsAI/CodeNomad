@@ -397,7 +397,7 @@ export const settingsMessages = {
   "settings.notifications.requestPermission.subtitle": "אפשר לאפליקציה לשלוח התראות במכשיר זה.",
   "settings.notifications.requestPermission.action": "בקש",
   "settings.notifications.allowVisible.title": "התרע כאשר האפליקציה ממוקדת",
-  "settings.notifications.allowVisible.subtitle": "שמור על התראות פעילות גם כאשר חלון זה גלוי.",
+  "settings.notifications.allowVisible.subtitle": "שמור על התראות פעילות גם כאשר חלון זה ממוקד.",
   "settings.notifications.unsupportedNote": "התראות מערכת אינן נתמכות בסביבה זו. העמודה מערכת נשארת מושבתת.",
   "settings.notifications.routing.caption": "היכן מופיעה כל התראה",
   "settings.notifications.routing.category": "התראה",

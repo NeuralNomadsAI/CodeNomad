@@ -389,7 +389,7 @@ export const settingsMessages = {
   "settings.notifications.requestPermission.subtitle": "Uygulamanın bu cihazda bildirim göndermesine izin ver.",
   "settings.notifications.requestPermission.action": "İste",
   "settings.notifications.allowVisible.title": "Uygulama odaktayken bildir",
-  "settings.notifications.allowVisible.subtitle": "Bu pencere görünür olsa bile uyarıları etkin tut.",
+  "settings.notifications.allowVisible.subtitle": "Bu pencere odaktayken bile uyarıları etkin tut.",
   "settings.notifications.unsupportedNote": "Sistem bildirimleri bu ortamda desteklenmiyor. Sistem sütunu devre dışı kalır.",
   "settings.notifications.routing.caption": "Her bildirimin göründüğü yer",
   "settings.notifications.routing.category": "Bildirim",

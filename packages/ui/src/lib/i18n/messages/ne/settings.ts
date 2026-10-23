@@ -397,7 +397,7 @@ export const settingsMessages = {
   "settings.notifications.requestPermission.subtitle": "एपलाई यस उपकरणमा सूचनाहरू पठाउन अनुमति दिनुहोस्।",
   "settings.notifications.requestPermission.action": "अनुरोध",
   "settings.notifications.allowVisible.title": "एप फोकसमा हुँदा पनि सूचित गर्नुहोस्",
-  "settings.notifications.allowVisible.subtitle": "यो विन्डो देखिने हुँदा पनि अलर्टहरू सक्षम राख्नुहोस्।",
+  "settings.notifications.allowVisible.subtitle": "यो विन्डो फोकसमा हुँदा पनि अलर्टहरू सक्षम राख्नुहोस्।",
   "settings.notifications.unsupportedNote": "यस वातावरणमा प्रणाली सूचनाहरू समर्थित छैनन्। प्रणाली स्तम्भ निष्क्रिय रहन्छ।",
   "settings.notifications.routing.caption": "प्रत्येक सूचना कहाँ देखिन्छ",
   "settings.notifications.routing.category": "सूचना",

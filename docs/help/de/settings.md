@@ -55,7 +55,7 @@ Die Eingabehöhe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtas
 
 1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste, in der macOS-Desktop-App in der Titelleiste, aufbewahrt) und **System** (eine Betriebssystembenachrichtigung).
 2. Das Markieren eines **System**-Kästchens fragt bei Bedarf nach der Berechtigung. Unter **Systembenachrichtigungen** fragt **Anfordern** erneut, solange die Berechtigung fehlt.
-3. Aktivieren Sie **Benachrichtigen, wenn die App im Fokus ist**, um Systembenachrichtigungen auch zu erhalten, während dieses Fenster sichtbar ist.
+3. Aktivieren Sie **Benachrichtigen, wenn die App im Fokus ist**, um Systembenachrichtigungen auch zu erhalten, während dieses Fenster im Fokus ist. Sonst erscheinen sie, sobald es nicht im Fokus ist, auch wenn es geöffnet auf dem Bildschirm bleibt.
 
 Standardmäßig gehen **Eine Sitzung wartet auf Ihre Antwort** und **Eine Sitzung ist beendet** nur an System, damit sich vorübergehende Sitzungszustände nicht im Verlauf stapeln; sie betreffen Hauptsitzungen, keine Subagenten, und eine Sitzung, die Sie selbst stoppen, wird nicht gemeldet. Fehler erscheinen unabhängig von der Tabelle immer auf dem Bildschirm und im Verlauf, und kurze Fortschrittsmeldungen bleiben nur auf dem Bildschirm.
 

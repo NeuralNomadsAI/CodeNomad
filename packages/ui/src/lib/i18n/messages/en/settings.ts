@@ -398,7 +398,7 @@ export const settingsMessages = {
   "settings.notifications.requestPermission.subtitle": "Allow the app to send notifications on this device.",
   "settings.notifications.requestPermission.action": "Request",
   "settings.notifications.allowVisible.title": "Notify when the app is focused",
-  "settings.notifications.allowVisible.subtitle": "Keep alerts enabled even while this window is visible.",
+  "settings.notifications.allowVisible.subtitle": "Keep alerts enabled even while this window is focused.",
   "settings.notifications.unsupportedNote": "System notifications are not supported in this environment. The System column stays disabled.",
   "settings.notifications.routing.caption": "Where each notification appears",
   "settings.notifications.routing.category": "Notification",

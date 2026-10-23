@@ -397,7 +397,7 @@ export const settingsMessages = {
   "settings.notifications.requestPermission.subtitle": "允许应用在此设备上发送通知。",
   "settings.notifications.requestPermission.action": "请求",
   "settings.notifications.allowVisible.title": "应用获得焦点时也通知",
-  "settings.notifications.allowVisible.subtitle": "即使此窗口可见，也保持提醒启用。",
+  "settings.notifications.allowVisible.subtitle": "即使此窗口获得焦点，也保持提醒启用。",
   "settings.notifications.unsupportedNote": "此环境不支持系统通知。“系统”列将保持禁用。",
   "settings.notifications.routing.caption": "每条通知的显示位置",
   "settings.notifications.routing.category": "通知",

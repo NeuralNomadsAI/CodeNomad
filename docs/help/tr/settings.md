@@ -55,7 +55,7 @@ Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, 
 
 1. **Bildirimler** öğesini açın. Her bildirim türü için nerede görüneceğini işaretleyin: **Ekranda** (geçici bir baloncuk), **Geçmiş** (sekme çubuğundaki, macOS masaüstü uygulamasında başlık çubuğundaki zilin bildirim geçmişinde saklanır) ve **Sistem** (işletim sistemi bildirimi).
 2. Bir **Sistem** kutusunu işaretlemek gerekirse izin ister. **Sistem bildirimleri** altında, izin eksikken **İste** yeniden izin ister.
-3. Bu pencere görünürken de sistem bildirimlerini almak için **Uygulama odaktayken bildir** seçeneğini etkinleştirin.
+3. Bu pencere odaktayken de sistem bildirimlerini almak için **Uygulama odaktayken bildir** seçeneğini etkinleştirin. Aksi halde pencere ekranda açık kalsa bile odakta olmadığında bildirimler görünür.
 
 Varsayılan olarak **Bir oturum yanıtınızı bekliyor** ve **Bir oturum tamamlandı** yalnızca Sistem'e gider; böylece geçici oturum durumları Geçmiş'te birikmez. Bunlar alt ajanları değil ana oturumları ilgilendirir ve sizin durdurduğunuz bir oturum duyurulmaz. Hatalar, tablo ne gösterirse göstersin her zaman ekranda ve Geçmiş'te görünür; kısa ilerleme mesajları ise yalnızca ekranda kalır.
 

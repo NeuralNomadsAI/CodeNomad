@@ -397,7 +397,7 @@ export const settingsMessages = {
   "settings.notifications.requestPermission.subtitle": "Autoriser l'application à envoyer des notifications sur cet appareil.",
   "settings.notifications.requestPermission.action": "Demander",
   "settings.notifications.allowVisible.title": "Notifier lorsque l'application est au premier plan",
-  "settings.notifications.allowVisible.subtitle": "Garder les alertes activées même lorsque cette fenêtre est visible.",
+  "settings.notifications.allowVisible.subtitle": "Garder les alertes activées même lorsque cette fenêtre est au premier plan.",
   "settings.notifications.unsupportedNote": "Les notifications système ne sont pas prises en charge dans cet environnement. La colonne Système reste désactivée.",
   "settings.notifications.routing.caption": "Où s'affiche chaque notification",
   "settings.notifications.routing.category": "Notification",
