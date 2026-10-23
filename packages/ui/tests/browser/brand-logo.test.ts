@@ -67,7 +67,7 @@ test("the logo turns black on light palettes and white on dark ones", async () =
     await apply("light")
     await page.waitForFunction(() => document.documentElement.dataset.theme === "light")
     // The title bar's logo, then the home page's, which follows its text-3xl title.
-    assert.deepEqual(await shownLogos(page), [{ shown: ["black"], height: 16 }, { shown: ["black"], height: 64 }])
+    assert.deepEqual(await shownLogos(page), [{ shown: ["black"], height: 20 }, { shown: ["black"], height: 64 }])
 
     await apply("classic")
     await page.waitForFunction(() => document.documentElement.dataset.theme === "dark")
