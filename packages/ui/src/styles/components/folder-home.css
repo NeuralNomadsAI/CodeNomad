@@ -19,9 +19,10 @@
   margin-bottom: 1.5rem;
 }
 
-/* Large logos keep one size (8rem) and never grow with the window. */
+/* Brand logos are 3.2 times their title's font size (6rem beside text-3xl) and never
+   grow with the window. */
 .folder-home-logo {
-  height: 8rem;
+  height: 6rem;
 }
 
 .folder-home-content,

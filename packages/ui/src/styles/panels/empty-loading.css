@@ -20,6 +20,11 @@
   line-height: 2rem;
 }
 
+/* The logo follows its title: 3.2 times the narrow title's 1.5rem. */
+.session-center-column[data-session-center-width="narrow"] .empty-state-logo {
+  height: 4.8rem;
+}
+
 .empty-state-content h3 {
   font-size: var(--font-size-xl);
   margin-bottom: 12px;
