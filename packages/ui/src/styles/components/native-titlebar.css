@@ -36,9 +36,7 @@
 }
 
 .native-titlebar-logo {
-  display: block;
-  height: 14px;
-  width: auto;
+  height: 16px;
 }
 
 .native-titlebar-controls {

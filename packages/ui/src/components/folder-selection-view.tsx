@@ -6,6 +6,7 @@ import ProjectRenameDialog from "./project-rename-dialog"
 import { useFolderDrop } from "../lib/hooks/use-folder-drop"
 import VersionPill from "./version-pill"
 import { DiscordSymbolIcon, GitHubMarkIcon } from "./brand-icons"
+import { BrandLogo } from "./brand-logo"
 import { githubStars } from "../stores/github-stars"
 import { formatCompactCount } from "../lib/formatters"
 import { useI18n } from "../lib/i18n"
@@ -20,7 +21,6 @@ import { createNewInstanceDialogs } from "./new-instance-dialogs"
 import { useRemoteServerProfiles } from "../lib/hooks/use-remote-server-profiles"
 import { formatRelativeTime, getDisplayPath, getProjectDisplayName } from "../lib/recent-folder-display"
 
-const codeNomadLogo = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
 const GITHUB_URL = "https://github.com/NeuralNomadsAI/CodeNomad"
 const DISCORD_URL = "https://discord.com/channels/1391832426048651334/1458412028325793887/1464701235683917945"
 
@@ -384,7 +384,7 @@ const FolderSelectionView: Component<FolderSelectionViewProps> = (props) => {
           </div>
           <div class="folder-home-hero text-center shrink-0">
             <div class="mb-3 flex justify-center">
-              <img src={codeNomadLogo} alt={t("folderSelection.logoAlt")} class="folder-home-logo w-auto" loading="lazy" />
+              <BrandLogo alt={t("folderSelection.logoAlt")} class="folder-home-logo" />
             </div>
             <h1 class="mb-2 text-3xl font-semibold text-primary">CodeNomad</h1>
             <div class="mt-3 flex justify-center gap-2">

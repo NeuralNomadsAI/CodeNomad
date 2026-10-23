@@ -12,6 +12,7 @@
 @import "./components/native-titlebar.css";
 @import "./components/native-titlebar-macos.css";
 @import "./components/badges.css";
+@import "./components/brand-logo.css";
 @import "./components/folder-home.css";
 @import "./components/folder-drop.css";
 @import "./components/folder-loading.css";

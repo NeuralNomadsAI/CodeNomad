@@ -1,0 +1,31 @@
+/* components/brand-logo.tsx: the appearance that selects the palette's tokens
+   (styles/tokens.css) picks the black or the white hexagon. */
+.brand-logo {
+  display: inline-flex;
+  flex: none;
+}
+
+.brand-logo > img {
+  display: block;
+  height: 100%;
+  width: auto;
+}
+
+.brand-logo > .brand-logo-on-dark,
+:root[data-theme="dark"] .brand-logo > .brand-logo-on-light {
+  display: none;
+}
+
+:root[data-theme="dark"] .brand-logo > .brand-logo-on-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) .brand-logo > .brand-logo-on-light {
+    display: none;
+  }
+
+  :root:not([data-theme]) .brand-logo > .brand-logo-on-dark {
+    display: block;
+  }
+}

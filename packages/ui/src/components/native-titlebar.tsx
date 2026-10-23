@@ -5,6 +5,7 @@ import { isMac } from "../lib/keyboard-utils"
 import { runtimeEnv } from "../lib/runtime-env"
 import { runNativeWindowAction, showNativeTitlebarMenu, startNativeWindowDrag, type NativeTitlebarMenu } from "../lib/native/window-controls"
 import AppActions from "./app-actions"
+import { BrandLogo } from "./brand-logo"
 
 interface NativeTitlebarProps {
   title: string
@@ -17,7 +18,6 @@ interface NativeTitlebarProps {
 }
 
 const menus: NativeTitlebarMenu[] = ["file", "edit", "view", "window", "help"]
-const codeNomadMark = new URL("../images/CodeNomad-Mark.svg", import.meta.url).href
 // macOS keeps the menus in its global menu bar and the window controls in the native
 // traffic lights, which the host places over the left end of this bar.
 const macOS = isMac()
@@ -63,7 +63,7 @@ export const NativeTitlebar: Component<NativeTitlebarProps> = (props) => {
     >
       <div class="native-titlebar-brand">
         <Show when={props.logo} fallback={<span class="native-titlebar-title">{props.title}</span>}>
-          <img src={codeNomadMark} alt={props.title} class="native-titlebar-logo" draggable={false} />
+          <BrandLogo alt={props.title} class="native-titlebar-logo" />
         </Show>
       </div>
       <Show when={props.menus && !macOS}>

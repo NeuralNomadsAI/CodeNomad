@@ -1,8 +1,7 @@
 import { Component } from "solid-js"
 import { Loader2 } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-
-const codeNomadIcon = new URL("../images/CodeNomad-Icon.png", import.meta.url).href
+import { BrandLogo } from "./brand-logo"
 
 interface EmptyStateProps {
   onSelectFolder: () => void
@@ -16,7 +15,7 @@ const EmptyState: Component<EmptyStateProps> = (props) => {
     <div class="flex h-full w-full items-center justify-center bg-surface-secondary">
       <div class="max-w-[500px] px-8 py-12 text-center">
         <div class="mb-8 flex justify-center">
-          <img src={codeNomadIcon} alt={t("emptyState.logoAlt")} class="h-[5.55rem] w-auto" loading="lazy" />
+          <BrandLogo alt={t("emptyState.logoAlt")} class="h-16" />
         </div>
 
         <h1 class="mb-3 text-3xl font-semibold text-primary">{t("emptyState.brandTitle")}</h1>

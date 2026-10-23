@@ -235,16 +235,13 @@ See [electron-builder docs](https://www.electron.build/) for details.
 
 ## Brand Assets
 
-- `images/CodeNomad-Icon.svg` — vector source of the logo: the bare CN mark on a transparent square canvas
-- `images/CodeNomad-Icon.png` — its 1024×1024 transparent export: primary asset for in-app logo placements (copied to `packages/ui/src/images/`) and the master icon used to generate packaged app icons
-- `packages/ui/src/images/CodeNomad-Mark.svg` — the same mark cropped to its bounds for the main window's title bar; keep its shapes in sync with the source
+The logo is a hexagon framing a C and an n, drawn in equal bands: ring, gap, letter strokes and counters share one width.
 
-To update the binaries:
+- `images/CodeNomad-Icon.svg` - the app icon's vector source: white ring and letters with black gaps on a transparent square canvas, so one icon reads on light and dark taskbars, docks and tabs
+- `packages/ui/src/images/CodeNomad-Logo-OnDark.svg` - the same hexagon cropped to its bounds, for dark palettes and the loading screen
+- `packages/ui/src/images/CodeNomad-Logo-OnLight.svg` - its negative (black ring and letters, white gaps) for light palettes
 
-1. Export `images/CodeNomad-Icon.svg` at 1024×1024 with a transparent background to `images/CodeNomad-Icon.png` and `packages/ui/src/images/CodeNomad-Icon.png`.
-2. From `packages/electron-app`, run `node scripts/generate-icons.js ../../images/CodeNomad-Icon.png electron/resources` to round the corners and emit fresh `icon.icns`, `icon.ico`, and `icon.png` files, then copy them to `packages/tauri-app/src-tauri/`.
-3. Export the SVG at 32, 48, 64, 128, 256 and 512 px to `packages/tauri-app/src-tauri/icons/linux/<size>x<size>.png`.
-4. (Optional) Pass `--radius` to tweak the corner curvature or `--name` to change the filename prefix.
+After changing `images/CodeNomad-Icon.svg`, run `node scripts/generate-icons.mjs` from the repository root (it needs Playwright's Chromium: `npx playwright install chromium`). It renders every size straight from the SVG, never shrinking a larger bitmap, and writes `images/CodeNomad-Icon.png` and its copy in `packages/ui/src/images/` (1024 px; the web app icons, the help site logo and the Windows notification icon derive from it), `icon.png`, `icon.ico` (16 to 256 px) and `icon.icns` in `packages/electron-app/electron/resources/` and `packages/tauri-app/src-tauri/`, and the Linux sizes in `packages/tauri-app/src-tauri/icons/linux/`.
 
 ## Clean Build
 
