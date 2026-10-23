@@ -13,6 +13,8 @@ export interface FollowScrollHelpers {
   handleScroll: (event: Event & { currentTarget: HTMLDivElement }) => void
   renderSentinel: (options?: { disableTracking?: boolean }) => JSXElement | null
   restoreAfterRender: () => void
+  /** Leaves follow mode like an upward gesture, e.g. before content grows above the reader. */
+  stopFollowing: () => void
   autoScroll: Accessor<boolean>
 }
 
@@ -58,12 +60,19 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     // event; a downward gesture reaching the bottom resumes follow (shared rule).
     const result = scrollController.userGesture(direction, now + USER_SCROLL_INTENT_WINDOW_MS, container ? getMetrics(container) : null, distance)
     setAutoScroll(isAutoFollowing(result.state.mode))
-    if (direction === "up") {
-      suppressNextScrollHandling = false
-      if (pendingScrollFrame !== null) cancelAnimationFrame(pendingScrollFrame)
-      if (pendingAnchorScroll !== null) cancelAnimationFrame(pendingAnchorScroll)
-      pendingScrollFrame = pendingAnchorScroll = null
-    }
+    if (direction === "up") cancelFollowFrames()
+  }
+
+  function cancelFollowFrames() {
+    suppressNextScrollHandling = false
+    if (pendingScrollFrame !== null) cancelAnimationFrame(pendingScrollFrame)
+    if (pendingAnchorScroll !== null) cancelAnimationFrame(pendingAnchorScroll)
+    pendingScrollFrame = pendingAnchorScroll = null
+  }
+
+  const stopFollowing = () => {
+    setAutoScroll(isAutoFollowing(scrollController.setFollow(false).state.mode))
+    cancelFollowFrames()
   }
 
   function attachScrollIntentListeners(element: HTMLDivElement) {
@@ -226,6 +235,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     handleScroll,
     renderSentinel,
     restoreAfterRender,
+    stopFollowing,
     autoScroll,
   }
 }

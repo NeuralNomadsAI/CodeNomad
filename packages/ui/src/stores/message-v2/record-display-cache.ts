@@ -1,6 +1,6 @@
 import { createStore, produce } from "solid-js/store"
 import type { ClientPart } from "../../types/message"
-import { extractReasoningTextForRender } from "../../lib/message-render-cache"
+import { extractWholeReasoningText } from "../../lib/message-render-cache"
 import type { MessageRecord } from "./types"
 import { MESSAGE_DISPLAY_HEAD, MESSAGE_DISPLAY_LIMIT, MESSAGE_DISPLAY_TAIL } from "../../../../server/src/opencode/session-pruning/navigation-contract"
 
@@ -120,11 +120,9 @@ export function buildRecordDisplayData(instanceId: string, record: MessageRecord
         orderedParts.push({
           id: part.id,
           type: "reasoning",
-          // A live reasoning stream must keep growing past the render bound:
-          // deltas keep arriving, so a capped prefix would visibly freeze the
-          // thinking panel (while still re-rendering) until the part completes.
-          // The whole text stays a reference to the store's string, not a copy.
-          text: isPositiveNumber(time?.completed) ? extractReasoningTextForRender(part) : part.text,
+          // The whole native text, a reference to the store's string: the card
+          // renders a bounded window of it with an exact reveal of the rest.
+          text: extractWholeReasoningText(part),
           time: time ? { created: time.created, completed: time.completed } : undefined,
           revision: entry.revision,
         } as ClientPartWithRevision)

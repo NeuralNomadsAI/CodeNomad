@@ -172,7 +172,7 @@ describe("message display cache authority", () => {
     assert.match(source, /messageBlocks\.set\(current\.id, \{\s*signature: cacheSignature,\s*displayData,/)
   })
 
-  it("keeps streaming reasoning text whole and bounds it once the part completes", () => {
+  it("projects whole reasoning text, streaming or completed, for the card's display window", () => {
     const longText = `${"t".repeat(REASONING_RENDER_CHARACTER_LIMIT)}ail beyond the bound`
     const reasoning = (completed?: number): { id: string; revision: number; data: ClientPart } => ({
       id: "reasoning", revision: 1,
@@ -187,13 +187,11 @@ describe("message display cache authority", () => {
     })
 
     const streaming = buildRecordDisplayData("reasoning-stream", recordFor(reasoning(), "streaming"))
-    assert.equal((streaming.orderedParts[0] as any).text, longText,
-      "a live reasoning stream must keep showing new text past the render bound")
+    assert.equal((streaming.orderedParts[0] as any).text, longText, "a live stream reaches the card whole")
 
     clearRecordDisplayCacheForInstance("reasoning-stream")
     const completed = buildRecordDisplayData("reasoning-stream", recordFor(reasoning(2), "complete"))
-    assert.equal((completed.orderedParts[0] as any).text.length, REASONING_RENDER_CHARACTER_LIMIT,
-      "a completed reasoning part keeps its bounded prefix")
+    assert.equal((completed.orderedParts[0] as any).text, longText, "completion keeps what the reader could reveal")
   })
 })
 

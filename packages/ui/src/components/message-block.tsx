@@ -38,8 +38,13 @@ import {
   getSessionMessageRenderCache,
   peekSessionMessageRenderCache,
   purgeMessageRenderCache,
-  extractReasoningTextForCopy,
+  extractReasoningTextForRender,
+  extractWholeReasoningText,
+  REASONING_RENDER_CHARACTER_LIMIT,
 } from "../lib/message-render-cache"
+import { STREAMING_INSTANT_RENDER_CHARACTER_LIMIT, STREAMING_RENDER_INTERVAL_MS } from "../lib/render-text-window"
+import { createTextWindow, HiddenTextNotice } from "./hidden-text"
+import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { accountSessionTranscript } from "../stores/session-transcript-memory"
 import { parseReasoningSummary } from "../lib/reasoning-summary"
 import { getFormQueue } from "../stores/forms"
@@ -1391,27 +1396,37 @@ function ReasoningGroupCard(props: {
     if (props.activePartId && props.parts.some((item) => item.partId === props.activePartId)) setExpanded(true)
   })
 
-  const renderCard = (item: ReasoningDisplayPart) => (
-    <ReasoningCard
-      part={item.part}
-      copyText={() => extractReasoningTextForCopy(
-        messageStoreBus.getOrCreate(props.instanceId).getMessage(item.messageId)?.parts[item.partId]?.data,
-      )}
-      messageInfo={item.messageInfo}
-      durationMs={item.durationMs}
-      instanceId={props.instanceId}
-      sessionId={props.sessionId}
-      messageId={item.messageId}
-      status={props.status}
-      showAgentMeta={props.showAgentMeta}
-      defaultExpanded={summaryParts().length > 1 || props.defaultExpanded}
-      forceExpanded={props.activePartId === item.partId}
-      technicalCleanupSelected={() => props.technicalCleanupPartKeys().has(technicalPartKey(item.messageId, item.partId))}
-    />
-  )
+  // Keyed by part: each projection of a streaming part is a new object, and keying
+  // by object would mount a new card (and its text) on every delta.
+  const partKey = (item: ReasoningDisplayPart) => technicalPartKey(item.messageId, item.partId)
+  // When the transcript item stops being reasoning (thinking hidden), its parts
+  // are absent until this card is disposed.
+  const partKeys = () => (props.parts ?? []).map(partKey)
+  const renderCard = (key: string) => {
+    let last: ReasoningDisplayPart | undefined
+    const item = () => (last = props.parts?.find((candidate) => partKey(candidate) === key) ?? last)!
+    return (
+      <ReasoningCard
+        part={item().part}
+        copyText={() => extractWholeReasoningText(
+          messageStoreBus.getOrCreate(props.instanceId).getMessage(item().messageId)?.parts[item().partId]?.data,
+        )}
+        messageInfo={item().messageInfo}
+        durationMs={item().durationMs}
+        instanceId={props.instanceId}
+        sessionId={props.sessionId}
+        messageId={item().messageId}
+        status={props.status}
+        showAgentMeta={props.showAgentMeta}
+        defaultExpanded={summaryParts().length > 1 || props.defaultExpanded}
+        forceExpanded={props.activePartId === item().partId}
+        technicalCleanupSelected={() => props.technicalCleanupPartKeys().has(key)}
+      />
+    )
+  }
 
   return (
-    <Show when={summaryParts().length > 1} fallback={<For each={props.parts}>{renderCard}</For>}>
+    <Show when={summaryParts().length > 1} fallback={<For each={partKeys()}>{renderCard}</For>}>
     <div
       class="message-technical-group message-reasoning-group"
       data-group-part-ids={props.parts.map((item) => item.partId).join(" ")}
@@ -1457,7 +1472,7 @@ function ReasoningGroupCard(props: {
       </Show>
       <Show when={expanded()}>
         <div class="message-technical-group-parts message-reasoning-group-parts">
-          <For each={props.parts}>{renderCard}</For>
+          <For each={partKeys()}>{renderCard}</For>
         </div>
       </Show>
     </div>
@@ -1480,8 +1495,17 @@ interface ReasoningCardProps {
   technicalCleanupSelected: Accessor<boolean>
 }
 
+/**
+ * The reasoning text's display window (`render-text-window`) with its exact
+ * reveal line. While the part streams, a window longer than
+ * STREAMING_INSTANT_RENDER_CHARACTER_LIMIT keeps its last render and re-renders
+ * at most every STREAMING_RENDER_INTERVAL_MS (the streaming Markdown interval)
+ * with the latest text, immediately on a reveal and once the stream ends.
+ */
 function ReasoningStreamOutput(props: {
   text: Accessor<string>
+  streaming: Accessor<boolean>
+  revealTarget: Accessor<RecordTextRevealTarget | undefined>
   scrollTopSnapshot: Accessor<number>
   setScrollTopSnapshot: (next: number) => void
   ariaLabel: string
@@ -1494,10 +1518,37 @@ function ReasoningStreamOutput(props: {
     sentinelClassName: "reasoning-scroll-sentinel",
   })
 
+  const bounded = createTextWindow({ source: props.text, limit: () => REASONING_RENDER_CHARACTER_LIMIT, target: props.revealTarget })
+  const [shown, setShown] = createSignal(untrack(() => bounded.window().text))
+  let pendingRender: ReturnType<typeof setTimeout> | undefined
+  let lastRenderAt = 0
+  let renderedSteps = untrack(bounded.steps)
+  const renderLatest = () => {
+    pendingRender = undefined
+    lastRenderAt = performance.now()
+    renderedSteps = untrack(bounded.steps)
+    setShown(untrack(() => bounded.window().text))
+  }
+  createEffect(() => {
+    const next = bounded.window().text
+    // A reveal renders with its notice change: deferred, the block would shrink
+    // by the removed reveal line and move the reader.
+    if (bounded.steps() !== renderedSteps || !props.streaming() || next.length <= STREAMING_INSTANT_RENDER_CHARACTER_LIMIT) {
+      clearTimeout(pendingRender)
+      renderLatest()
+      return
+    }
+    // A pending render reads the latest window when it runs.
+    if (pendingRender === undefined) {
+      pendingRender = setTimeout(renderLatest, Math.max(0, lastRenderAt + STREAMING_RENDER_INTERVAL_MS - performance.now()))
+    }
+  })
+  onCleanup(() => clearTimeout(pendingRender))
+
   // The transcript's ResizeObserver handles any height change: a frame-delayed
   // notification always arrived after it.
   createEffect(() => {
-    const nextText = props.text()
+    const nextText = shown()
     if (preRef && preRef.textContent !== nextText) {
       preRef.textContent = nextText
     }
@@ -1516,12 +1567,16 @@ function ReasoningStreamOutput(props: {
         ref={(element) => {
           preRef = element || undefined
           if (preRef) {
-            preRef.textContent = props.text() || ""
+            preRef.textContent = shown() || ""
           }
         }}
         class="message-reasoning-text"
         dir="auto"
       />
+      <Show when={bounded.window().hidden > 0}>
+        {/* The revealed text grows below the reader; following would skip past it. */}
+        <HiddenTextNotice window={bounded.window()} onReveal={() => { followScroll.stopFollowing(); bounded.reveal() }} />
+      </Show>
       {followScroll.renderSentinel()}
     </div>
   )
@@ -1583,12 +1638,19 @@ function ReasoningCard(props: ReasoningCardProps) {
     if (reasoningBody()) setExpanded((prev) => !prev)
   }
 
+  // Speech keeps its own bound; the card renders a window of the whole text.
+  const speechText = () => extractReasoningTextForRender(props.part)
   const speech = useSpeech({
     id: () => `${props.instanceId}:${props.sessionId}:${props.messageId}:${props.part.id || "reasoning"}`,
-    text: reasoningText,
+    text: speechText,
   })
 
-  const canSpeakReasoning = () => reasoningText().trim().length > 0 && speech.canUseSpeech()
+  const canSpeakReasoning = () => speechText().trim().length > 0 && speech.canUseSpeech()
+  const partId = () => (typeof props.part.id === "string" ? props.part.id : "")
+  const revealTarget = createMemo(() => partId()
+    ? { instanceId: props.instanceId, messageId: props.messageId, partId: partId(), section: "reasoning" }
+    : undefined)
+  const streaming = () => (props.status === "streaming" || props.status === "sending") && !getPartEndedAt(props.part)
 
   const handleCopyReasoning = async () => {
     const text = props.copyText()
@@ -1698,6 +1760,8 @@ function ReasoningCard(props: ReasoningCardProps) {
           <div class="message-reasoning-body">
             <ReasoningStreamOutput
               text={reasoningBody}
+              streaming={streaming}
+              revealTarget={revealTarget}
               scrollTopSnapshot={scrollTopSnapshot}
               setScrollTopSnapshot={setScrollTopSnapshot}
               ariaLabel={t("messageBlock.reasoning.detailsAriaLabel")}

@@ -13,7 +13,8 @@ const renderCaches = new Map<string, MessageRenderCache>()
 export const REASONING_RENDER_CHARACTER_LIMIT = 10_000
 export const REASONING_TITLE_CHARACTER_LIMIT = 384
 
-// Native reasoning text is a string; rendering is bounded, copying is not.
+// Native reasoning text is a string. The card windows the whole text with an
+// exact reveal (`render-text-window`); speech and markers read a bounded prefix.
 function extractReasoningText(part: unknown, characterLimit: number): string {
   const text = (part as { text?: unknown } | null)?.text
   if (typeof text !== "string") return ""
@@ -25,7 +26,8 @@ export function extractReasoningTextForRender(part: unknown): string {
   return extractReasoningText(part, REASONING_RENDER_CHARACTER_LIMIT)
 }
 
-export function extractReasoningTextForCopy(part: unknown): string {
+/** The whole native text, for copy and for the card's display window. */
+export function extractWholeReasoningText(part: unknown): string {
   return extractReasoningText(part, Number.POSITIVE_INFINITY)
 }
 
