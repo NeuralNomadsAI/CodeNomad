@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isTauriHost } from "./runtime-env"
 import { getLogger } from "./logger"
 
@@ -81,7 +82,9 @@ async function getTauriPermission(): Promise<OsNotificationPermission> {
   const mod = await getTauriNotificationModule()
   if (!mod) return "unsupported"
   try {
-    const granted = await mod.isPermissionGranted()
+    // Ask the native plugin: its page script reports "denied" on Windows until the
+    // page requests permission, though Windows never asks.
+    const granted = await invoke<boolean | null>("plugin:notification|is_permission_granted")
     return granted ? "granted" : "default"
   } catch (error) {
     log.warn("[os-notifications] failed to check tauri notification permission", error)
