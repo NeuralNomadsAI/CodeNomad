@@ -25,12 +25,13 @@ fn key_path(identifier: &str) -> String {
     format!(r"Software\Classes\AppUserModelId\{identifier}")
 }
 
-/// The square app icon the bundled UI ships beside the executable.
+/// The web app's icon, which the bundled server's UI build always ships (its manifest
+/// references it; `scripts/smoke-packaged-resources.cjs` checks it).
 fn toast_icon() -> Option<PathBuf> {
     let icon = std::env::current_exe()
         .ok()?
         .parent()?
-        .join(r"resources\ui-loading\pwa-192x192.png");
+        .join(r"resources\server\public\pwa-192x192.png");
     icon.is_file().then_some(icon)
 }
 
@@ -97,7 +98,7 @@ mod tests {
     fn registers_the_identifier_with_a_name_and_icon_under_the_current_user() {
         let identifier = format!("ai.neuralnomads.codenomad.test.s{}", std::process::id());
         let path = key_path(&identifier);
-        let icon = Path::new(r"C:\CodeNomad\resources\ui-loading\pwa-192x192.png");
+        let icon = Path::new(r"C:\CodeNomad\resources\server\public\pwa-192x192.png");
         write(&path, Some(icon)).unwrap();
         let key = format!(r"HKCU\{path}");
         let query = Command::new("reg").args(["query", &key]).output().unwrap();
