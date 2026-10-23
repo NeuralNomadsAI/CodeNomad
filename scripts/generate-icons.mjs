@@ -12,8 +12,8 @@ const at = (path) => join(root, path)
 
 // Windows picks the entry nearest each display scale: 100 % to 200 % taskbars, lists and tiles.
 const ICO_SIZES = [16, 20, 24, 30, 32, 36, 40, 48, 60, 64, 72, 80, 96, 128, 256]
-// Each macOS slot names its pixel size; the @2x slots reuse the larger renders.
-const ICNS_SLOTS = [["icp4", 16], ["icp5", 32], ["icp6", 64], ["ic07", 128], ["ic08", 256], ["ic09", 512], ["ic10", 1024], ["ic11", 32], ["ic12", 64], ["ic13", 256], ["ic14", 512]]
+// The slots iconutil writes for a standard iconset; the @2x slots reuse the larger renders.
+const ICNS_SLOTS = [["icp4", 16], ["icp5", 32], ["ic07", 128], ["ic08", 256], ["ic09", 512], ["ic10", 1024], ["ic11", 32], ["ic12", 64], ["ic13", 256], ["ic14", 512]]
 const LINUX_SIZES = [32, 48, 64, 128, 256, 512]
 
 async function render(svg, sizes) {
