@@ -48,7 +48,10 @@ export type OpenCodeDataEventAdmission = {
 }
 
 type TranscriptEntry = {
+  /** Replaced only through replaceTranscriptEntry, which bumps entryRevision. */
   entry: DataEntry
+  /** Tracked by reactive readers of `entry` (the inbox), which a replacement must rebind. */
+  entryRevision: ReturnType<typeof createSignal<number>>
   directory: string
   generation: number
   rotating: boolean
@@ -269,6 +272,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
   if (existing) return existing
   const transcript: TranscriptEntry = {
     entry: createDataEntry(instanceId, directory),
+    entryRevision: createSignal(0),
     directory,
     generation: getOpenCodeInstanceGeneration(instanceId),
     rotating: false,
@@ -284,6 +288,15 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
   }
   transcriptEntries.set(key, transcript)
   return transcript
+}
+
+/** Disposes the transcript's reducer for `next`. Readers still bound to the old
+ * one would keep its last state, e.g. a delivered prompt shown as queued. */
+function replaceTranscriptEntry(transcript: TranscriptEntry, next: DataEntry): void {
+  const previous = transcript.entry
+  transcript.entry = next
+  previous.dispose()
+  transcript.entryRevision[1]((value) => value + 1)
 }
 
 function getOpenCodeFullDataRevision(instanceId: string, sessionId: string): number {
@@ -443,15 +456,13 @@ async function resyncAuthoritativeTranscript(
       return
     }
 
-    const previous = transcript.entry
-    transcript.entry = fresh
     transcript.freshEntry = undefined
     transcript.needsAuthoritativeResync = false
     transcript.reconnectResync = false
     transcript.resyncing = false
     transcript.retryCount = 0
     swapped = true
-    previous.dispose()
+    replaceTranscriptEntry(transcript, fresh)
 
     transcript.onResynced?.(fresh.data)
     if (!isTranscriptCurrent(instanceId, sessionId, transcript) || transcript.entry !== fresh) return
@@ -751,8 +762,7 @@ export function invalidateOpenCodeSessionContent(instanceId: string, sessionId: 
   // Discard both pending rotations and the old SDK projection. Invalidating
   // just the visible page allows the next native event to restore stale parts.
   invalidateTranscript(transcript)
-  transcript.entry.dispose()
-  transcript.entry = createDataEntry(instanceId, transcript.directory)
+  replaceTranscriptEntry(transcript, createDataEntry(instanceId, transcript.directory))
   // The pruning handler (or the next session open) reloads the native UI page
   // together with its cursors. SDK reconciliation still repairs its independent
   // projection, but its 20-message seed cannot replace that 200-message page.
@@ -766,7 +776,9 @@ export function getOpenCodeMutationRevision(instanceId: string, sessionId: strin
 
 export function getOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string) {
   instanceDataRevision(instanceId)[0]()
-  return ensureTranscript(instanceId, sessionId, directory).entry.data.session.pending.list(sessionId)
+  const transcript = ensureTranscript(instanceId, sessionId, directory)
+  transcript.entryRevision[0]()
+  return transcript.entry.data.session.pending.list(sessionId)
 }
 
 export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string): Promise<void> {

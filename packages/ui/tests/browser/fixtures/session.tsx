@@ -20,6 +20,8 @@ let time = Date.now(), calls = 0
 let delayPrompt = false, admittedPrompt: any
 let releasePrompt: (() => void) | undefined
 const nativeMessages: any[] = []
+/** Prompts parked in the native inbox, as an authoritative resync lists them. */
+const nativeInbox: any[] = []
 const model = { providerID: "fixture", id: "fixture" }
 const emit = (type: string, data: any) => (sseManager as any).handleEvent(instanceId, {
   id: `ev_${++time}`, type, created: time, location: { directory: "/fixture" },
@@ -27,7 +29,8 @@ const emit = (type: string, data: any) => (sseManager as any).handleEvent(instan
 })
 const client: any = {
   session: {
-    active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
+    active: async () => ({}), inbox: { list: async () => nativeInbox.map(item => ({ ...item })) },
+    form: { list: async () => [] },
     get: async () => ({ id: sessionId, title: "fixture", location: { directory: "/fixture" }, time: { created: 1, updated: 1 } }),
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
     switchAgent: async (data: any) => emit("session.agent.selected", data),
@@ -46,6 +49,7 @@ const client: any = {
     },
   },
   model: { default: async () => ({ data: model }) },
+  permission: { list: async () => [] },
   message: { list: async ({ cursor, limit = 200 }: { cursor?: string; limit?: number } = {}) => {
     calls++
     const offset = Number(cursor ?? 0), messages = nativeMessages.slice().reverse()
@@ -79,6 +83,19 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     emit("session.inbox.delivered", { inboxID: admittedPrompt.id })
   },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
+  /** Parks a follow-up in the native inbox while a turn runs (follow-up behaviour "queue"). */
+  queueFollowUp: (id: string, text: string) => {
+    nativeInbox.push({ id, sessionID: sessionId, type: "user", payload: { text }, delivery: "queue", time: { created: ++time } })
+    emit("session.inbox.enqueued", { inboxID: id, item: { type: "user", payload: { text }, delivery: "queue" } })
+  },
+  /** The engine starts the parked follow-up: its native row persists and it leaves the inbox. */
+  deliverQueued: (id: string) => {
+    const [item] = nativeInbox.splice(nativeInbox.findIndex(entry => entry.id === id), 1)
+    nativeMessages.push({ type: "user", text: item.payload.text, id, time: { created: ++time } })
+    emit("session.inbox.delivered", { inboxID: id })
+  },
+  /** A history rewrite (pruning) replaces the session's reducer and reloads the page. */
+  prune: () => emit("rpc.codenomad.session-pruning.pruned", { messageID: assistantId, revision: "a".repeat(64) }),
   admitted: () => admittedPrompt?.id,
   seedHistory: async (count = 60) => {
     for (let i = 0; i < count; i++) {

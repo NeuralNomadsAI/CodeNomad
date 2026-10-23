@@ -518,6 +518,23 @@ test("a real send stays rendered across delayed admission, inbox echo and author
   })
 })
 
+test("a queued follow-up loses its badge when delivered after a history rewrite, while the turn still runs", async () => {
+  await open("session", async page => {
+    const marker = "Queued follow-up outlives a history rewrite"
+    await page.evaluate(() => (window as any).fixture.start())
+    await page.evaluate(text => (window as any).fixture.queueFollowUp("msg_followup", text), marker)
+    const badge = page.locator(".message-stream-block").filter({ hasText: marker }).locator(".message-queued-badge")
+    await badge.waitFor()
+    // Pruning replaces the session's reducer; the follow-up is still parked natively.
+    await page.evaluate(() => (window as any).fixture.prune())
+    await page.waitForTimeout(500)
+    await badge.waitFor()
+    await page.evaluate(() => (window as any).fixture.deliverQueued("msg_followup"))
+    await badge.waitFor({ state: "detached", timeout: 3000 })
+    assert.equal(await page.locator(".message-stream-block").filter({ hasText: marker }).count(), 1, "the delivered follow-up stays rendered")
+  })
+})
+
 test("SessionView retains an escaped position inside a long assistant reply on return", async () => {
   await open("session", async page => {
     const prompt = page.locator("textarea:visible").first()
