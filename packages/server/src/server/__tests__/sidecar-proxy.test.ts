@@ -19,7 +19,7 @@ const apps: FastifyInstance[] = []
 const upstreams: http.Server[] = []
 const upstreamSocketCleanups: Array<() => void> = []
 const sockets: net.Socket[] = []
-type UpstreamOptions = { cookies?: string[]; fragmented?: boolean; denied?: boolean }
+type UpstreamOptions = { cookies?: string[]; fragmented?: boolean; denied?: boolean; html?: boolean }
 
 afterEach(async () => {
   for (const socket of sockets.splice(0)) socket.destroy()
@@ -44,6 +44,11 @@ async function startSideCarUpstream(options: UpstreamOptions = {}) {
   const connections = new Set<net.Socket>()
   const upstream = http.createServer((request, response) => {
     requests.push(request.headers)
+    if (options.html) {
+      response.writeHead(200, { "content-type": "text/html" })
+      response.end("<html><body>preview fixture</body></html>")
+      return
+    }
     if (options.cookies) response.setHeader("Set-Cookie", options.cookies)
     response.writeHead(200, { "content-type": "application/json" })
     response.end("{\"ok\":true}")
@@ -246,6 +251,51 @@ it("opaque-origin frames cannot reach SideCar routes while same-origin frames ca
     })
     assert.equal(sameOrigin.statusCode, 200)
     assert.equal(sameOrigin.body, "{\"ok\":true}")
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("path-proxied loopback HTML previews load same-origin and never forward cookies", async () => {
+  const server = await startServer({ html: true })
+  try {
+    const response = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { origin: server.origin, cookie: `${server.cookie}; devkit_session=secret` },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.match(String(response.headers["content-security-policy"]), /sandbox/)
+    assert.match(String(response.headers["content-security-policy"]), /allow-same-origin/)
+    assert.equal(server.requests.at(-1)?.cookie, undefined)
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("capability-host preview responses stay untouched by the origin tier", async () => {
+  const server = await startServer({ html: true })
+  try {
+    const response = await server.app.inject({
+      url: "/",
+      headers: { host: `${server.preview.token}.preview.localhost:${server.port}`, cookie: server.cookie },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.headers["content-security-policy"], undefined)
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("non-HTML path-proxied preview responses carry no sandbox CSP", async () => {
+  const server = await startServer()
+  try {
+    const response = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { origin: server.origin, cookie: `${server.cookie}; devkit_session=secret` },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.headers["content-security-policy"], undefined)
+    assert.equal(server.requests.at(-1)?.cookie, undefined)
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
   }

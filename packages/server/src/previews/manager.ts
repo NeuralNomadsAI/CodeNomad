@@ -8,6 +8,22 @@ interface PreviewRecord {
   createdAt: string
 }
 
+/** Loopback hosts can only be reached from the machine running the backend, so
+ * they are the user's own services: the tier trusted to share the app origin.
+ * Keep in sync with the UI predicate in browser-frame-security.ts. */
+export function isLoopbackHostname(hostname: string): boolean {
+  const value = hostname.toLowerCase()
+  return value === "localhost" || value === "0.0.0.0" || value === "::1" || value === "[::1]" || /^127(?:\.|$)/.test(value)
+}
+
+/** Document sandbox injected on path-proxied preview HTML as the response
+ * `Content-Security-Policy`. Mirrors the iframe FRAME_SANDBOX in
+ * packages/ui/src/components/browser-frame-security.ts. */
+export function previewDocumentSandbox(allowSameOrigin: boolean): string {
+  const flags = "allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+  return `sandbox ${allowSameOrigin ? `${flags} allow-same-origin` : flags}`
+}
+
 export class PreviewManager {
   private readonly previews = new Map<string, PreviewRecord>()
 
@@ -57,7 +73,7 @@ export class PreviewManager {
     } catch {
       // Invalid implicit URLs are rejected below.
     }
-    const loopback = implicitHostname === "localhost" || implicitHostname === "0.0.0.0" || implicitHostname === "::1" || /^127(?:\.|$)/.test(implicitHostname)
+    const loopback = isLoopbackHostname(implicitHostname)
     if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !explicitHttp && !loopback) {
       throw new Error("Preview URL must use HTTP or HTTPS")
     }

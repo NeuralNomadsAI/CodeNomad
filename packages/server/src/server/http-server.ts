@@ -68,7 +68,7 @@ import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import { sidecarRequestCookies, sidecarResponseCookies } from "../sidecars/proxy-cookies"
 import { proxyWebSocket } from "./proxy-websocket"
-import type { PreviewManager } from "../previews/manager"
+import { isLoopbackHostname, previewDocumentSandbox, type PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
@@ -565,7 +565,7 @@ function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps
     previewApp.all("/", { constraints: { host: capabilityHost } }, hostHandler)
     previewApp.all("/*", { constraints: { host: capabilityHost } }, hostHandler)
     previewApp.all("/previews/:token", async (request: FastifyRequest<{ Params: { token: string } }>, reply) => {
-      await proxyPreviewRequest({ request, reply, previewManager: deps.previewManager, logger: deps.logger, pathSuffix: "" })
+      await proxyPreviewRequest({ request, reply, previewManager: deps.previewManager, logger: deps.logger, pathSuffix: "", enforceDocumentSandbox: true })
     })
     previewApp.all("/previews/:token/*", async (request: FastifyRequest<{ Params: { token: string; "*": string } }>, reply) => {
       await proxyPreviewRequest({
@@ -574,6 +574,7 @@ function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps
         previewManager: deps.previewManager,
         logger: deps.logger,
         pathSuffix: request.params["*"] ?? "",
+        enforceDocumentSandbox: true,
       })
     })
   })
@@ -2019,6 +2020,10 @@ async function proxyPreviewRequest(args: {
   token?: string
   publicBase?: string
   pathSuffix?: string
+  /** Path-proxied documents are served from the app origin: enforce the
+   * loopback/external origin tier on the response, so a stale or hostile
+   * frame sandbox attribute cannot hand external content the app origin. */
+  enforceDocumentSandbox?: boolean
 }) {
   const token = args.token ?? (args.request.params as { token?: string }).token ?? ""
   const preview = args.previewManager.get(token)
@@ -2039,6 +2044,11 @@ async function proxyPreviewRequest(args: {
     return
   }
 
+  let documentSandbox: string | undefined
+  if (args.enforceDocumentSandbox) {
+    documentSandbox = previewDocumentSandbox(isLoopbackHostname(new URL(preview.targetUrl).hostname))
+  }
+
   args.logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying request to preview")
   await proxyPreviewTargetRequest({
     request: args.request,
@@ -2049,6 +2059,7 @@ async function proxyPreviewRequest(args: {
     publicBase,
     logContext: { previewToken: token },
     errorMessage: "Preview proxy failed",
+    documentSandbox,
     rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, token, targetUrl.origin, publicBase),
   })
 }
@@ -2093,12 +2104,17 @@ async function proxyPreviewTargetRequest(args: {
   publicBase: string
   logContext: Record<string, unknown>
   errorMessage: string
+  /** Set for path-proxied documents: injected as the response CSP sandbox. */
+  documentSandbox?: string
   rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
 }) {
   let responseKind: "html" | "css" | "js" | null = null
   await args.reply.from(args.targetUrl, {
     rewriteRequestHeaders: (_originalRequest, headers) => {
       const next = sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin)
+      // The previewed service never sees the app's cookies: a same-origin
+      // loopback frame would otherwise forward the CodeNomad session cookie.
+      delete next["cookie"]
       delete next["accept-encoding"]
       return next
     },
@@ -2109,6 +2125,9 @@ async function proxyPreviewTargetRequest(args: {
       if (responseKind) {
         delete next["content-length"]
         delete next["content-encoding"]
+      }
+      if (responseKind === "html" && args.documentSandbox) {
+        next["content-security-policy"] = args.documentSandbox
       }
       if (args.request.headers.origin === "null") {
         next["access-control-allow-origin"] = "null"
