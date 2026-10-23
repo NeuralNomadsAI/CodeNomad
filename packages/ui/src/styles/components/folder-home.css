@@ -19,10 +19,9 @@
   margin-bottom: 1.5rem;
 }
 
-/* Brand logos are 3.2 times their title's font size (6rem beside text-3xl) and never
-   grow with the window. */
+/* Brand logos follow their title, never the window (dev-docs/UI_CONVENTIONS.md). */
 .folder-home-logo {
-  height: 6rem;
+  height: 5.55rem;
 }
 
 .folder-home-content,
