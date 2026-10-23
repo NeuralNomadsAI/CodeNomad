@@ -37,6 +37,8 @@ mod window_constraints;
 mod window_zoom;
 #[cfg(windows)]
 mod windows_browser_accelerators;
+#[cfg(windows)]
+mod windows_notification_identity;
 mod workspace_open;
 
 use cli_manager::{CliProcessManager, CliStatus};
@@ -1556,6 +1558,7 @@ fn set_windows_app_user_model_id(identifier: &str) {
     if result < 0 {
         eprintln!("[tauri] failed to set AppUserModelID: {result}");
     }
+    windows_notification_identity::register(identifier);
 }
 
 #[cfg(not(windows))]
