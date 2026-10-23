@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify"
 import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { navigationWindowInputSchema, navigationWindowResultSchema, outlineInputSchema, outlineLayoutResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema } from "../../opencode/session-pruning/navigation-contract"
 import { locationRequestOptions, readLocationRef, sameLocation } from "../../opencode/compatibility/location"
+import { deferToolMedia, wantsDeferredMedia } from "../../opencode/session-media"
 import type { HistoryRouteDeps } from "./session-history"
 
 // The native SDK throws the declared RPC error body as the error's own fields.
@@ -44,6 +45,10 @@ export function registerSessionNavigationRoutes(app: FastifyInstance, deps: Pick
           || JSON.stringify(current.revert) !== JSON.stringify(session.revert)
           || !await deps.workspaceManager.ownsLocation(request.params.id, current.location, client)) {
           return { status: "blocked", reason: "conflict" }
+        }
+        // A window is a transcript page: large tool images load on demand, as from the message list.
+        if (method === "window" && output.status === "window" && wantsDeferredMedia(request.headers)) {
+          deferToolMedia(output.messages, { workspaceId: request.params.id, sessionId: parsed.data.sessionID })
         }
         return output
       } catch {

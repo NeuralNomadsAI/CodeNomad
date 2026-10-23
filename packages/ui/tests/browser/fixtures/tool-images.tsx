@@ -47,8 +47,12 @@ function image(mime: string, color: string, name?: string) {
 }
 const png = image("image/png", "#355e76", "generated.png")
 const jpeg = image("image/jpeg", "#695342")
+/** A large image a transcript page deferred: CodeNomad's session-media route serves it. */
+const deferredUri = (digit = "a") => `/api/workspaces/${instanceId}/session-media/${sessionId}/${messageId}/0/0/${digit.repeat(64)}`
 function content(kind: string) {
   if (kind === "only") return [png]
+  if (kind === "deferred") return [{ ...png, uri: deferredUri() }]
+  if (kind === "deferred-missing") return [{ ...png, uri: deferredUri("b") }]
   if (kind === "empty") return [{ type: "text", text: "Text-only result" }]
   if (kind === "broken") return [{ ...png, uri: "data:image/png;base64,broken" }]
   if (kind === "unsafe") return [{ ...png, uri: "javascript:window.unexpectedNavigation=true" }]
@@ -82,6 +86,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     emit("session.tool.success", { id: "tool", content: content("mixed"), executed: true })
   },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
+  deferred: () => ({ path: deferredUri(), base64: png.uri.slice(png.uri.indexOf(",") + 1) }),
   execute: async (phase: string) => {
     const input = { code: "const results = await Promise.all([tools.paint({ prompt: 'sky' }), tools.fail({})]);\nreturn results" }
     const metadata = { toolCalls: [

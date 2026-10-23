@@ -79,6 +79,7 @@ import { missionLifecycleRequest } from "./mission-lifecycle-request"
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 import { backgroundReads } from "./background-read-queue"
+import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
@@ -220,6 +221,8 @@ export const serverApi = {
   fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
       method: "POST", body: JSON.stringify({ sessionID, target }), signal,
+      // A transcript page, like the native message list: large tool images load on demand.
+      headers: { [DEFERRED_MEDIA_HEADER]: DEFERRED_MEDIA_VALUE },
     })
   },
   fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number, known?: OutlineCheckpoint[]): Promise<OutlineResult> {

@@ -64,6 +64,20 @@ test("a start-up timeline read waits for the plugin to register before calling i
   } finally { await f.app.close() }
 })
 
+test("an opted-in history window defers large tool images like the message list", async () => {
+  const f = fixture()
+  const uri = `data:image/png;base64,${"A".repeat(64 * 1024)}`
+  f.plugin("window", () => ({ status: "window", older: null, newer: null, resume: { kind: "latest" }, latest: true,
+    messages: [{ id: "m", type: "assistant", time: { created: 1 }, content: [{ type: "tool", id: "t", name: "read",
+      state: { status: "completed", content: [{ type: "file", mime: "image/png", uri }] } }] }] }))
+  const read = async (headers: Record<string, string>) => (await f.app.inject({ method: "POST", url: "/api/workspaces/w/session-history/window",
+    headers, payload: { sessionID: "s", target: { kind: "latest" } } })).json().messages[0].content[0].state.content[0].uri
+  try {
+    assert.match(await read({ "x-codenomad-media": "deferred" }), /^\/api\/workspaces\/w\/session-media\/s\/m\/0\/0\/[a-f0-9]{64}$/)
+    assert.equal(await read({}), uri)
+  } finally { await f.app.close() }
+})
+
 for (const method of ["outline", "window", "outlinePreview"]) test(`${method} validates ownership and fences location, project, revert and inventory changes`, async () => {
   const f = fixture(), url = `/api/workspaces/w/session-history/${method}`
   const payload = { sessionID: "s", ...(method === "window" ? { target: { kind: "around", messageID: "m" } }

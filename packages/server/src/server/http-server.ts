@@ -28,6 +28,7 @@ import { registerYoloRoutes } from "./routes/yolo"
 import { registerPermissionReceiptRoutes } from "./routes/permission-receipts"
 import type { PermissionReceipts } from "../permissions/receipts"
 import { registerSessionPruningRoutes } from "./routes/session-pruning"
+import { registerSessionMediaRoutes } from "./routes/session-media"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerPendingRequestRoutes } from "./routes/pending-requests"
 import { registerSpeechRoutes } from "./routes/speech"
@@ -74,6 +75,7 @@ import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaS
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { requestAdmission } from "./request-admission"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext } from "../opencode/compatibility/location"
+import { DEFERRED_MEDIA_HEADER, deferToolMedia, wantsDeferredMedia } from "../opencode/session-media"
 import { decodeSessionListScope, prepareLocationImport, readRequestLocations, type SessionListScope } from "../opencode/compatibility/proxy-locations"
 import type { RemoteProxySessionManager } from "./remote-proxy"
 import { createOpenCodeUpdateService } from "../opencode-update/service"
@@ -395,6 +397,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerYoloRoutes(app, { yoloManager: deps.yoloManager })
   if (deps.permissionReceipts) registerPermissionReceiptRoutes(app, deps.permissionReceipts)
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
+  registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, permissionReceipts: deps.permissionReceipts,
     humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
       remoteDevices: deps.remoteControlManager } })
@@ -1169,7 +1172,13 @@ async function proxyWorkspaceAdmission(args: InstanceProxyRequestArgs, admission
       if (globalFormLocation) headers["x-opencode-directory"] = encodeURIComponent(translatedDirectories.get(globalFormLocation.directory)!)
       const runtimeFetch = connection?.fetch ?? await wait(workspaceManager.getSharedServiceFetch!())
       signal.throwIfAborted()
+      // A transcript page read by the UI: large tool images load on demand.
+      const deferMedia = request.method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(pathname)
+        && wantsDeferredMedia(request.headers)
       return await forwardRuntimeRequest({
+        transform: deferMedia && sessionId
+          ? body => deferToolMedia((body as { data?: unknown } | null)?.data, { workspaceId, sessionId })
+          : undefined,
         request, reply, url: targetUrl.toString(), body, headers,
         fetch: confirmPermission || confirmDeletion ? async (input, init) => {
           const response = await runtimeFetch(input, init)
@@ -1286,6 +1295,7 @@ function sanitizeInstanceProxyRequestHeaders(
     "x-forwarded-for", "x-forwarded-host", "x-forwarded-port", "x-forwarded-proto",
     LOCATION_CONTEXT_HEADER,
     HUMAN_ANSWER_HEADER,
+    DEFERRED_MEDIA_HEADER,
   ])
   const connection = headers.connection
   for (const name of (Array.isArray(connection) ? connection.join(",") : connection ?? "").split(",")) blocked.add(name.trim().toLowerCase())

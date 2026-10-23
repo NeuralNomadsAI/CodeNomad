@@ -421,6 +421,7 @@ jobs:
           packages/ui/src/components/session/provider-usage-panel.test.ts
           packages/ui/src/lib/hooks/use-active-session-message-load.test.ts
           packages/ui/src/lib/sdk-manager.test.ts
+          packages/ui/src/lib/tool-content.test.ts
           packages/ui/src/lib/background-read-queue.test.ts
           packages/ui/src/lib/prioritized-read.test.ts
           packages/ui/src/stores/instance-startup-priority.test.ts

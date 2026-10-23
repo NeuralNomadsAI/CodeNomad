@@ -60,6 +60,12 @@ async function harness(
       markDelayedUpstreamStarted()
       await new Promise<void>((resolve) => { releaseDelayedUpstream = resolve })
     }
+    if (request.headers["x-test-message-list"] === "1") {
+      const uri = `data:image/png;base64,${"A".repeat(64 * 1024)}`
+      return { data: [{ id: "msg_1", type: "assistant", content: [{ type: "tool", id: "call", name: "read",
+        state: { status: "completed", content: [{ type: "file", mime: "image/png", uri }] } }] }], cursor: {},
+        forwarded: request.headers["x-codenomad-media"] ?? null }
+    }
     reply.header("set-cookie", "upstream_session=secret; Path=/")
     reply.header("www-authenticate", 'Basic realm="OpenCode"')
     reply.header("proxy-authenticate", 'Basic realm="OpenCode proxy"')
@@ -305,6 +311,18 @@ describe("instance proxy location enforcement", () => {
     manager.ownsLocation = async () => false
     const denied = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/session/message" })
     assert.equal(denied.statusCode, 403)
+  })
+
+  it("defers large tool images only in opted-in transcript list reads, never forwarding the opt-in", async () => {
+    const { app } = await harness()
+    const read = async (path: string, optIn: boolean) => (await app.inject({ url: `/workspaces/workspace/instance/api/session/session/${path}`,
+      headers: { "x-test-message-list": "1", ...(optIn ? { "x-codenomad-media": "deferred" } : {}) } })).json()
+    const uri = (body: any) => body.data[0].content[0].state.content[0].uri as string
+    const deferred = await read("message?limit=200&order=desc", true)
+    assert.match(uri(deferred), /^\/api\/workspaces\/workspace\/session-media\/session\/msg_1\/0\/0\/[a-f0-9]{64}$/)
+    assert.equal(deferred.forwarded, null)
+    assert.match(uri(await read("message?limit=200", false)), /^data:image\/png;base64,/)
+    assert.match(uri(await read("message/msg_1", true)), /^data:image\/png;base64,/, "a single message read stays whole")
   })
 
   it("forwards native execution settlement only for a session owned by the workspace", async () => {

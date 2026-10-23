@@ -89,6 +89,25 @@ test("failed and unsupported image sources have a fallback and a later replaceme
   assert.equal(await page.evaluate(() => (window as any).unexpectedNavigation), undefined)
 }))
 
+test("a tool image deferred by its transcript page loads from CodeNomad's session-media route", async () => withPage(async page => {
+  const { path, base64 } = await page.evaluate(() => (window as any).fixture.deferred()) as { path: string; base64: string }
+  const requested: string[] = []
+  await page.route("**/session-media/**", route => {
+    const pathname = new URL(route.request().url()).pathname
+    requested.push(pathname)
+    return pathname === path ? route.fulfill({ contentType: "image/png", body: Buffer.from(base64, "base64") })
+      : route.fulfill({ status: 404, contentType: "application/json", body: "{}" })
+  })
+  await page.evaluate(() => (window as any).fixture.history("deferred", "read"))
+  await decodedImages(page, 1)
+  assert.deepEqual(requested, [path])
+  assert.equal(await page.getByRole("img", { name: "generated.png", exact: true }).count(), 1)
+  // An image CodeNomad can no longer serve (pruned, undone) gets the fallback.
+  await page.evaluate(() => (window as any).fixture.history("deferred-missing", "read"))
+  await page.getByText("Unable to display this image.", { exact: true }).waitFor()
+  assert.equal(requested.length, 2)
+}))
+
 test("Code Mode renders native progress, nested errors, script, images and historical output", async () => withPage(async page => {
   await page.evaluate(() => (window as any).fixture.execute("running"))
   await page.locator(".execute-calls").waitFor()

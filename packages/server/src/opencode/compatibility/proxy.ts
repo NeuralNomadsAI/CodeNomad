@@ -10,6 +10,8 @@ export async function forwardRuntimeRequest(args: {
   fetch: typeof fetch
   release?: () => void
   invalidate: () => void
+  /** Rewrites a successful JSON response in place before it is relayed whole. */
+  transform?: (body: unknown) => void
 }) {
   const controller = new AbortController()
   let released = false
@@ -47,6 +49,19 @@ export async function forwardRuntimeRequest(args: {
       if (value !== null) args.reply.header(name, value)
     }
     if (!response.body) { release(); return args.reply.send() }
+    if (args.transform && response.ok && /^application\/json\b/i.test(response.headers.get("content-type") ?? "")) {
+      let text: string
+      try { text = await response.text() } catch {
+        // Like an interrupted stream: the connection stays; only this response failed.
+        release()
+        return args.reply.code(502).send({ error: "OpenCode response was interrupted" })
+      }
+      release()
+      let value: unknown
+      try { value = JSON.parse(text) } catch { return args.reply.send(text) }
+      args.transform(value)
+      return args.reply.send(JSON.stringify(value))
+    }
     const stream = Readable.fromWeb(response.body as import("node:stream/web").ReadableStream)
     stream.once("end", release).once("close", release).once("error", release)
     return args.reply.send(stream)

@@ -53,3 +53,12 @@ test("image loading permits image data and HTTP sources but rejects local/execut
   }
   assert.equal(isToolImageContent({ type: "text", text: file.uri }), false)
 })
+
+test("a deferred tool image loads from CodeNomad's session-media route on the API base", () => {
+  const uri = `/api/workspaces/w/session-media/ses_1/msg_1/2/0/${"a".repeat(64)}`
+  assert.equal(toolImageSource({ ...file, uri }, "https://codenomad.example/"), `https://codenomad.example${uri}`)
+  assert.equal(toolImageSource({ ...file, uri }, undefined), uri)
+  for (const forged of [`${uri}?x=1`, uri.replace("session-media", "panel-extensions"), `/api/workspaces/w/session-media/ses_1/msg_1/2/0/${"a".repeat(63)}`, `//evil.example${uri}`]) {
+    assert.equal(toolImageSource({ ...file, uri: forged }, "https://codenomad.example"), undefined)
+  }
+})
