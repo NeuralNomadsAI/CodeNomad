@@ -6,11 +6,29 @@
 2. Introduce una **URL de vista previa** `http://` o `https://` sin credenciales y elige **Abrir vista previa**. Usa la barra de herramientas para navegar, actualizar e ir Atrás/Adelante.
 3. Usa el botón de cierre de la vista previa para volver al chat. Ábrela de nuevo en esa conversación para continuar.
 
-Pulsar un enlace `localhost` o `127.0.0.1` en una conversación lo abre automáticamente en la vista previa de esa sesión, en cualquier cliente: el servidor usa un proxy para las vistas previas de loopback, por lo que también funcionan desde un navegador normal en otra máquina. Las vistas previas de loopback con proxy se ejecutan same-origin con la app; los enlaces externos siguen abriéndose en una pestaña nueva del navegador.
+Pulsar un enlace `localhost` o `127.0.0.1` en una conversación lo abre automáticamente en la vista previa de esa sesión, en cualquier cliente: el servidor usa un proxy para las vistas previas de loopback, por lo que también funcionan desde un navegador normal en otra máquina. Las vistas previas de loopback con proxy siguen **Configuración → Vista previa**; el modo opaco predeterminado las aísla de CodeNomad. Los enlaces externos siguen abriéndose en una pestaña nueva del navegador.
 
 Cada vista previa pertenece a su carpeta de proyecto y sesión. Cambiar de conversación, proyecto, Info o chat oculta un navegador invitado nativo abierto explícitamente sin descartar su documento/historial activo. Los navegadores invitados ocultos no son objetivos de automatización. Cerrar el proyecto/ventana o reiniciar el renderer termina el documento activo.
 
 El historial guardado solo se restaura cuando vuelves a abrir explícitamente el navegador de esa sesión, no al iniciar/seleccionar una sesión. Guarda URL y un cursor, no formularios sin enviar, DOM, cuerpos POST ni memoria JavaScript. El historial se limita a 32 URL por sesión y a un presupuesto compartido de disposición; pueden recortarse las entradas antiguas. Restaurar una URL puede realizar una carga nueva de página; no es una repetición de transacciones.
+
+## Orígenes y permisos de las vistas previas {#preview-origins}
+
+Las vistas previas permanecen en la conversación; CodeNomad no abre una ventana de vista previa separada. **Configuración → Vista previa** establece una política para todo el servidor CodeNomad. Se aplica a las vistas previas de las vistas de navegador y remota. Las vistas previas locales de escritorio usan en su lugar un origen aislado por token, y las vistas web nativas de Electron y Tauri en Windows conservan su propio comportamiento de permisos, descargas y ventanas emergentes.
+
+| Modo de origen | Efecto |
+| --- | --- |
+| Opaco (recomendado) | Ninguna vista previa comparte origen con CodeNomad ni con otra vista previa. El almacenamiento, las cookies, los service workers y las API del navegador ligadas al origen no están disponibles, así que algunas aplicaciones web pueden no funcionar. |
+| Mismo origen que CodeNomad | Las vistas previas de loopback se ejecutan en el origen de CodeNomad; las externas siguen siendo opacas. |
+| Origen de vista previa dedicado | Las vistas previas de loopback se ejecutan en el origen que configures; las externas siguen siendo opacas. |
+
+**Mismo origen que CodeNomad significa confianza total.** El código de la vista previa puede leer y cambiar el almacenamiento, la transcripción y el DOM de CodeNomad, llamar a API de la aplicación con tu sesión y registrar service workers que persisten después de cerrar la vista previa. Úsalo solo en un servidor que controles y en el que confíes, nunca en un servidor compartido o remoto. CodeNomad pide confirmación antes de activarlo.
+
+Para **Origen de vista previa dedicado**, usa un nombre de host distinto de todos los orígenes desde los que se sirve CodeNomad y enruta `/previews/*`, incluidas las actualizaciones WebSocket, al mismo servidor. Conserva la cabecera `Host`, las cabeceras de respuesta y la política de seguridad de contenido inyectada, y sirve el origen por TLS para las API de contexto seguro. CodeNomad no puede comprobar si el origen es accesible; una ruta rota hace fallar las vistas previas. Los Workers y service workers con rutas relativas a la raíz que evitan el espacio de nombres reescrito `/previews/<token>/...` no son compatibles con un origen dedicado. Un nombre de host distinto, no otro puerto, separa las cookies.
+
+Los interruptores de **Sandbox** permiten formularios, diálogos modales, ventanas emergentes y descargas en las vistas previas iframe; los scripts siempre son necesarios. Los de **Funciones del navegador** solo permiten que una vista previa solicite cámara, micrófono, lectura/escritura del portapapeles, geolocalización, notificaciones o pantalla completa. El navegador seguirá pidiendo permiso, y la configuración del sitio en el navegador sigue siendo la autoridad final: un interruptor de CodeNomad no puede anular un bloqueo del navegador, y un permiso del navegador no puede restaurar una función desactivada. Las vistas web nativas de Electron y Tauri en Windows no siguen estos interruptores de iframe.
+
+Cambiar el modo de origen, el origen dedicado, el sandbox o la política de funciones recarga una vista previa abierta, para que un documento más confiable no siga vivo tras una reducción de confianza.
 
 ## Inicios de sesión compartidos y límites de automatización {#signins-automation}
 

@@ -29,6 +29,7 @@ Start with [README](../README.md) for installation and usage, then
 - [Composer](COMPOSER.md): context selectors, height, focus, delivery, attachments and mentions.
 - [Transcript rendering](TRANSCRIPT.md): Message content presets, token lines, tool renderers and lifecycle signals.
 - [Settings and Preferences](SETTINGS.md): settings rows, the Preferences window, Providers/Web search, Stats and notifications.
+- [Preview origins and permissions](PREVIEWS.md): token capabilities, origin modes, server CSP sandbox and the iframe frame contract.
 - [Projects and tabs](PROJECTS.md): closing tabs, temporary workspaces, the new-instance launcher and Git-unavailable mode.
 - [Public user help](USER_HELP.md): multilingual static site, stable anchors, local search, app entry points and Pages validation.
 - [Files panel](FILES_PANEL.md): workspace editing, Git changes/history and preview lifecycle.

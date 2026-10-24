@@ -6,11 +6,29 @@
 2. Geben Sie eine `http://`- oder `https://`-**Vorschau-URL** ohne Zugangsdaten ein und wählen Sie dann **Vorschau öffnen**. Verwenden Sie die Symbolleiste für Navigation, Aktualisieren sowie Zurück/Vorwärts.
 3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie in dieser Unterhaltung zum Fortsetzen erneut.
 
-Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn auf jedem Client automatisch in der Vorschau dieser Sitzung: der Server leitet Loopback-Vorschauen weiter, sodass sie auch aus einem gewöhnlichen Browser auf einem anderen Rechner funktionieren. Weitergeleitete Loopback-Vorschauen laufen same-origin mit der App; externe Links werden weiterhin in einem neuen Browser-Tab geöffnet.
+Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn auf jedem Client automatisch in der Vorschau dieser Sitzung: der Server leitet Loopback-Vorschauen weiter, sodass sie auch aus einem gewöhnlichen Browser auf einem anderen Rechner funktionieren. Weitergeleitete Loopback-Vorschauen folgen **Einstellungen → Vorschau**; der standardmäßige Opaque-Modus isoliert sie von CodeNomad. Externe Links werden weiterhin in einem neuen Browser-Tab geöffnet.
 
 Jede Vorschau gehört zu ihrem Projektordner und ihrer Sitzung. Wechsel von Unterhaltung, Projekt, Info oder Chat verbirgt einen ausdrücklich geöffneten nativen Gast, ohne dessen aktives Dokument/Verlauf zu verwerfen. Verborgene Gäste sind keine Automatisierungsziele. Projekt-/Fensterschließen oder Renderer-Neustart beendet das aktive Dokument.
 
 Gespeicherter Verlauf wird nur wiederhergestellt, wenn Sie den Sitzungsbrowser ausdrücklich erneut öffnen, nicht beim Start/bei Sitzungsauswahl. Er speichert URLs und einen Zeiger, keine ungesendeten Formulare, DOM, POST-Inhalte oder JavaScript-Speicher. Verlauf ist auf 32 URLs pro Sitzung und ein gemeinsames Layoutbudget begrenzt; ältere Einträge können gekürzt werden. URL-Wiederherstellung kann eine frische Seite laden; sie ist keine Transaktionswiederholung.
+
+## Vorschau-Origins und Berechtigungen {#preview-origins}
+
+Vorschauen bleiben in der Unterhaltung; CodeNomad öffnet kein separates Vorschaufenster. **Einstellungen → Vorschau** legt eine Richtlinie für den gesamten CodeNomad-Server fest. Sie gilt für Vorschauen in Browser- und Remote-Ansichten. Lokale Desktop-Vorschauen verwenden stattdessen einen isolierten Origin pro Token, und native Webviews in Electron und Windows Tauri behalten ihr eigenes Berechtigungs-, Download- und Pop-up-Verhalten.
+
+| Origin-Modus | Wirkung |
+| --- | --- |
+| Opaque (empfohlen) | Keine Vorschau teilt einen Origin mit CodeNomad oder einer anderen Vorschau. Speicher, Cookies, Service Worker und origin-gebundene Browser-APIs sind nicht verfügbar, daher funktionieren manche Web-Apps möglicherweise nicht. |
+| Gleicher Origin wie CodeNomad | Loopback-Vorschauen laufen unter dem CodeNomad-Origin; externe Vorschauen bleiben opaque. |
+| Eigener Vorschau-Origin | Loopback-Vorschauen laufen unter dem konfigurierten Origin; externe Vorschauen bleiben opaque. |
+
+**Gleicher Origin wie CodeNomad bedeutet volles Vertrauen.** Vorschau-Code kann CodeNomad-Speicher, das Transkript und das DOM lesen und ändern, App-APIs mit Ihrer Sitzung aufrufen und Service Worker registrieren, die nach dem Schließen der Vorschau bestehen bleiben. Verwenden Sie dies nur auf einem Server, den Sie kontrollieren und dem Sie vertrauen, niemals auf einem gemeinsam genutzten oder entfernten Server. CodeNomad fragt vor dem Aktivieren nach einer Bestätigung.
+
+Verwenden Sie für **Eigener Vorschau-Origin** einen Hostnamen, der sich von jedem Origin unterscheidet, unter dem CodeNomad bereitgestellt wird, und leiten Sie `/previews/*` einschließlich WebSocket-Upgrades an denselben Server. Bewahren Sie den `Host`-Header, die Antwort-Header und die injizierte Content-Security-Policy und stellen Sie den Origin per TLS bereit, damit sichere Kontext-APIs funktionieren. CodeNomad kann die Erreichbarkeit des Origins nicht prüfen; eine fehlerhafte Route lässt Vorschauen scheitern. Root-relative Worker und Service Worker, die den umgeschriebenen Namensraum `/previews/<token>/...` umgehen, werden unter einem eigenen Origin nicht unterstützt. Cookies trennt ein anderer Hostname, nicht ein anderer Port.
+
+**Sandbox**-Schalter erlauben Formulare, modale Dialoge, Pop-ups und Downloads in iframe-Vorschauen; Skripte sind immer erforderlich. **Browser-Funktionen** erlauben einer Vorschau nur, Kamera, Mikrofon, Zwischenablage lesen/schreiben, Standort, Benachrichtigungen oder Vollbild anzufordern. Der Browser fragt weiterhin nach, und die Website-Einstellungen im Browser bleiben maßgeblich: Ein CodeNomad-Schalter kann eine Browser-Sperre nicht aufheben, und eine Browser-Erlaubnis kann eine deaktivierte Funktion nicht wiederherstellen. Native Webviews in Electron und Windows Tauri folgen diesen iframe-Schaltern nicht.
+
+Eine Änderung von Origin-Modus, eigenem Origin, Sandbox- oder Funktionsrichtlinie lädt eine offene Vorschau neu, damit nach einer Herabstufung kein vertrauenswürdigeres Dokument weiterlebt.
 
 ## Geteilte Anmeldungen und Automatisierungsgrenzen {#signins-automation}
 

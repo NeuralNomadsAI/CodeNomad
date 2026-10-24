@@ -6,11 +6,29 @@
 2. Enter a credential-free `http://` or `https://` **Preview URL**, then **Open preview**. Use the toolbar to navigate, refresh and go Back/Forward.
 3. Use the preview's close button to return to chat. Reopen it in that conversation to continue.
 
-Clicking a `localhost` or `127.0.0.1` link in a conversation opens it in that session's preview automatically, on every client: the server proxies loopback previews, so they also work from a plain browser on another machine. Proxied loopback previews run same-origin with the app; external links keep opening in a new browser tab.
+Clicking a `localhost` or `127.0.0.1` link in a conversation opens it in that session's preview automatically, on every client: the server proxies loopback previews, so they also work from a plain browser on another machine. Proxied loopback previews follow **Settings → Preview**; the default opaque mode isolates them from CodeNomad. External links keep opening in a new browser tab.
 
 Each preview belongs to its project folder and session. Switching conversation, project, Info or chat hides an explicitly opened native guest without discarding its live document/history. Hidden guests are not automation targets. Closing the project/window or restarting the renderer ends the live document.
 
 Saved history restores only when you explicitly reopen that session's browser, not at startup/session selection. It stores URLs and a cursor, not unsent forms, DOM, POST bodies or JavaScript memory. History is bounded to 32 URLs per session and a shared layout budget; older entries may be trimmed. Restoring a URL may perform a fresh page load; it is not transaction replay.
+
+## Preview origins and permissions {#preview-origins}
+
+Previews stay inside the conversation; CodeNomad opens no separate preview window. **Settings → Preview** sets one policy for the entire CodeNomad server. It applies to previews shown in browser and remote views. Desktop local previews use an isolated per-token origin instead, and Electron and Windows Tauri native webviews keep their own permission, download and popup behavior.
+
+| Origin mode | What it does |
+| --- | --- |
+| Opaque (recommended) | No preview shares an origin with CodeNomad or another preview. Storage, cookies, service workers and origin-scoped browser APIs are unavailable, so some web apps may not work. |
+| CodeNomad same-origin | Loopback previews run at the CodeNomad origin; external previews stay opaque. |
+| Dedicated preview origin | Loopback previews run at the origin you configure; external previews stay opaque. |
+
+**CodeNomad same-origin is full trust.** Preview code can read and change CodeNomad storage, the transcript and the DOM, call app APIs with your session, and register service workers that persist after the preview closes. Use it only on a server you control and trust, never on a shared or remote server. CodeNomad asks for confirmation before enabling it.
+
+For **Dedicated preview origin**, use a hostname distinct from every origin CodeNomad is served from and route `/previews/*`, including WebSocket upgrades, to the same server. Preserve the `Host` header, response headers and the injected content security policy, and serve the origin over TLS for secure-context APIs. CodeNomad cannot test that the origin is reachable; a broken route makes previews fail. Root-relative Workers and service workers that bypass the rewritten `/previews/<token>/...` namespace are unsupported at a dedicated origin. A different hostname, not another port, separates cookies.
+
+**Sandbox** toggles allow forms, modal dialogs, popups and downloads in iframe previews; scripts are always required. **Browser features** toggles only let a preview ask for camera, microphone, clipboard read/write, geolocation, notifications or fullscreen. The browser still prompts, and browser site settings remain the final authority: a CodeNomad toggle cannot override a browser block, and a browser allowance cannot restore a disabled feature. Electron and Windows Tauri native webviews do not follow these iframe toggles.
+
+Changing the origin mode, custom origin, sandbox or feature policy reloads an open preview, so a more trusted document does not stay alive after a downgrade.
 
 ## Shared sign-ins and automation boundaries {#signins-automation}
 

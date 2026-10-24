@@ -6,11 +6,29 @@
 2. credential नभएको `http://` वा `https://` **पूर्वावलोकन URL** भर्नुहोस्, त्यसपछि **पूर्वावलोकन खोल्नुहोस्** रोज्नुहोस्। नेभिगेट, refresh र Back/Forward का लागि toolbar प्रयोग गर्नुहोस्।
 3. chat मा फर्कन पूर्वावलोकनको close बटन प्रयोग गर्नुहोस्। जारी राख्न त्यही कुराकानीमा फेरि खोल्नुहोस्।
 
-कुराकानीमा `localhost` वा `127.0.0.1` लिङ्क क्लिक गर्दा हरेक client मा त्यो सत्रको पूर्वावलोकनमा स्वतः खुल्छ: सर्भरले loopback पूर्वावलोकन proxy गर्छ, त्यसैले अर्को मेसिनको सामान्य browser बाट पनि काम गर्छ। Proxy गरिएका loopback पूर्वावलोकन app सँग same-origin चल्छन्; बाह्य लिङ्कहरू अझै नयाँ browser ट्याबमा खुल्छन्।
+कुराकानीमा `localhost` वा `127.0.0.1` लिङ्क क्लिक गर्दा हरेक client मा त्यो सत्रको पूर्वावलोकनमा स्वतः खुल्छ: सर्भरले loopback पूर्वावलोकन proxy गर्छ, त्यसैले अर्को मेसिनको सामान्य browser बाट पनि काम गर्छ। Proxy गरिएका loopback पूर्वावलोकन **सेटिङहरू → पूर्वावलोकन** पछ्याउँछन्; पूर्वनिर्धारित opaque मोडले तिनलाई CodeNomad बाट अलग राख्छ। बाह्य लिङ्कहरू अझै नयाँ browser ट्याबमा खुल्छन्।
 
 प्रत्येक पूर्वावलोकन आफ्नो परियोजना फोल्डर र सत्रको हो। कुराकानी, परियोजना, Info वा chat बदल्दा स्पष्ट खोलिएको नेटिभ guest को live document/history नहटाई लुक्छ। लुकेका guest automation target होइनन्। परियोजना/विन्डो बन्द वा renderer restart गर्दा live document सकिन्छ।
 
 सुरक्षित इतिहास startup/session चयनमा होइन, त्यस सत्रको ब्राउजर स्पष्ट फेरि खोल्दा मात्र फर्किन्छ। यसले URL र cursor राख्छ, नपठाइएका form, DOM, POST body वा JavaScript memory होइन। इतिहास प्रति सत्र 32 URL र साझा layout budget मा सीमित छ; पुराना प्रविष्टि काटिन सक्छन्। URL पुनर्स्थापनाले नयाँ page load गर्न सक्छ; यो transaction replay होइन।
+
+## पूर्वावलोकन origin र अनुमतिहरू {#preview-origins}
+
+पूर्वावलोकन कुराकानीभित्रै रहन्छन्; CodeNomad ले छुट्टै पूर्वावलोकन विन्डो खोल्दैन। **सेटिङहरू → पूर्वावलोकन** ले सम्पूर्ण CodeNomad सर्भरका लागि एउटै policy तय गर्छ। यो browser र remote दृश्यका पूर्वावलोकनमा लागू हुन्छ। Desktop का स्थानीय पूर्वावलोकनले यसको सट्टा प्रति token छुट्टै origin प्रयोग गर्छन्, र Electron तथा Windows Tauri का native webview ले आफ्नै permission, download र popup व्यवहार कायम राख्छन्।
+
+| Origin मोड | प्रभाव |
+| --- | --- |
+| Opaque (सिफारिस गरिएको) | कुनै पनि पूर्वावलोकनले CodeNomad वा अर्को पूर्वावलोकनसँग origin साझा गर्दैन। Storage, cookie, service worker र origin-सम्बन्धित browser API उपलब्ध हुँदैनन्, त्यसैले केही वेब एप काम नगर्न सक्छन्। |
+| CodeNomad सँगै origin | Loopback पूर्वावलोकन CodeNomad origin मा चल्छन्; बाह्य पूर्वावलोकन opaque नै रहन्छन्। |
+| समर्पित पूर्वावलोकन origin | Loopback पूर्वावलोकन तपाईंले कन्फिगर गरेको origin मा चल्छन्; बाह्य पूर्वावलोकन opaque नै रहन्छन्। |
+
+**CodeNomad सँगै origin भन्नाले पूर्ण विश्वास हो।** पूर्वावलोकन कोडले CodeNomad storage, transcript र DOM पढ्न र बदल्न, तपाईंको session सँग app API कल गर्न, र पूर्वावलोकन बन्द भएपछि पनि रहिरहने service worker दर्ता गर्न सक्छ। यो आफूले नियन्त्रण गर्ने र विश्वास गर्ने सर्भरमा मात्र प्रयोग गर्नुहोस्, साझा वा रिमोट सर्भरमा कहिल्यै नगर्नुहोस्। CodeNomad ले सक्षम गर्नुअघि पुष्टि माग्छ।
+
+**समर्पित पूर्वावलोकन origin** का लागि CodeNomad उपलब्ध गराइने हरेक origin भन्दा फरक hostname प्रयोग गर्नुहोस् र `/previews/*` तथा यसका WebSocket upgrade यही सर्भरमा route गर्नुहोस्। `Host` header, response header र inject गरिएको content security policy कायम राख्नुहोस्, र secure-context API का लागि origin TLS मा उपलब्ध गराउनुहोस्। CodeNomad ले origin पुग्न सकिने हो कि होइन जाँच्न सक्दैन; बिग्रिएको route ले पूर्वावलोकन असफल बनाउँछ। Rewrite गरिएको `/previews/<token>/...` namespace बाइपास गर्ने root-relative Worker र service worker समर्पित origin मा समर्थित छैनन्। Cookie अलग गर्ने कुरा अर्को hostname हो, अर्को port होइन।
+
+**Sandbox** टगलले iframe पूर्वावलोकनमा form, modal dialog, popup र download अनुमति दिन्छन्; script सधैं आवश्यक हुन्छ। **Browser सुविधा** टगलले पूर्वावलोकनलाई camera, microphone, clipboard पढ्ने/लेख्ने, geolocation, सूचना वा fullscreen माग्न मात्र दिन्छ। Browser ले अझै अनुमति माग्छ, र browser को साइट सेटिङ अन्तिम अधिकार हो: CodeNomad को टगलले browser को रोक हटाउन सक्दैन, र browser को अनुमतिले अक्षम सुविधा फर्काउन सक्दैन। Electron र Windows Tauri का native webview यी iframe टगल पछ्याउँदैनन्।
+
+Origin मोड, समर्पित origin, sandbox वा सुविधा policy बदल्दा खुला पूर्वावलोकन पुनः लोड हुन्छ, ताकि विश्वास घटाएपछि अझ विश्वासिलो document सक्रिय रहिरहन नपाओस्।
 
 ## साझा sign-in र automation सीमा {#signins-automation}
 
