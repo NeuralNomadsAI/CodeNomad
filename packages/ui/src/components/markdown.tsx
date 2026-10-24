@@ -393,7 +393,9 @@ export function Markdown(props: MarkdownProps) {
       if (anchor && props.instanceId && props.sessionId) {
         const href = anchor.getAttribute("href") ?? ""
         const mouseEvent = event as MouseEvent
-        const plainClick = !mouseEvent.ctrlKey && !mouseEvent.metaKey && !mouseEvent.shiftKey && !mouseEvent.altKey
+        // Firefox fires `click` for the middle button too; only a primary
+        // left click without modifiers opens the preview.
+        const plainClick = mouseEvent.button === 0 && !mouseEvent.ctrlKey && !mouseEvent.metaKey && !mouseEvent.shiftKey && !mouseEvent.altKey
         if (plainClick && isLoopbackHttpUrl(href)) {
           event.preventDefault()
           openLoopbackPreview(props.instanceId, props.sessionId, href)

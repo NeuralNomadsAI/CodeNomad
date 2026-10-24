@@ -36,6 +36,12 @@ test("plain loopback link clicks open the session preview; external and modified
 
     await page.locator('#markdown-root a[href="https://example.com/"]').click()
     await page.locator('#markdown-root a[href="http://localhost:9999/"]').click({ modifiers: ["Meta"] })
+    // Firefox fires `click` for the middle button; Chromium only fires
+    // `auxclick`, so the Firefox behavior is reproduced with a synthetic
+    // button=1 click event through the real handler.
+    await page.locator('#markdown-root a[href="http://localhost:9999/"]').evaluate((anchor) => {
+      anchor.dispatchEvent(new MouseEvent("click", { button: 1, bubbles: true, cancelable: true }))
+    })
     assert.deepEqual(
       await page.evaluate(() => (window as any).fixture.created()),
       [{ sessionId: "session-link", url: "http://localhost:3000/" }],
