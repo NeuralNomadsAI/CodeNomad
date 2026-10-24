@@ -24,7 +24,7 @@ Kararlı akış en son nihai sürümü seçer. Geliştirme derlemeleri aynı tem
 | Linux x64 AppImage | AppImage paket işaretçisi ve boş olmayan bir `APPIMAGE` yolunun yanı sıra imzalı güncelleme desteği gerektirir. `APPRUN` tek başına yetersizdir. |
 | Debian/RPM, bağımsız Windows yürütülebilir dosyası, imzasız/anahtarsız derleme | Uygulama içi yükleme yerine sürüm sayfasını açar. |
 
-Tauri uygulama pencerelerinde ve yerel **Tercihler** pencerelerinde, bir sürüm sunulduğunda Güncellemeler bölümü **Güncellemeyi yükle** düğmesini gösterir. Seçilen akışı kontrol eder ve uygulama içi güncelleme mevcutsa **Yükle ve yeniden başlat** seçeneğini sunar; aksi halde bölümde gösterilen sürüm sayfasını açar. Electron, web ve uzak pencereler ise yerel güncelleyici kontrolü olmadan **Güncellemeyi indir** bağlantısını gösterir.
+Tauri uygulama pencerelerinde ve yerel **Tercihler** pencerelerinde, bir sürüm sunulduğunda Güncellemeler kartı **Güncellemeyi yükle** düğmesini gösterir. Seçilen akışı kontrol eder ve uygulama içi güncelleme mevcutsa **Yükle ve yeniden başlat** seçeneğini sunar; aksi halde kartta gösterilen sürüm sayfasını açar. Electron, web ve uzak pencereler ise yerel güncelleyici kontrolü olmadan **Güncellemeyi indir** bağlantısını gösterir.
 
 Tauri'nin **Yardım → Güncellemeleri denetle…** menüsü güncelleme akışını odaktaki uygulama penceresinde çalıştırır. Tercihler veya uzak bir pencereden kullanıldığında, kontrolü çalıştırmak için en son kullanılan uygulama penceresini öne getirir; uzak pencere üzerinden kurulum yapmaz. Hedeflenen pencerenin yükleme, oturum açma veya eşleştirme ekranı göstermesi dahil, eylemi alabilecek bir uygulama penceresi yoksa menü bunun yerine sürüm sayfasını açar.
 

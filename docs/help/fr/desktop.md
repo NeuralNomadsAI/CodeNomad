@@ -28,7 +28,7 @@ Sans profil explicite, les lancements empaquetés réutilisent le profil mémori
 
 1. Pour une isolation volontaire du bureau, définissez `CODENOMAD_PROFILE` avant de lancer l’exécutable.
 2. Utilisez un nom de 1 à 64 lettres/chiffres ASCII, points, traits de soulignement ou d’union, commençant par une lettre ou un chiffre. Les noms sont normalisés en minuscules ; `default` ou `stable` sélectionne le profil par défaut.
-3. Vérifiez **Paramètres → Info → Profil de données** pour un profil nommé. Un nom invalide empêche le lancement au lieu de sélectionner un autre profil.
+3. Vérifiez **Paramètres → Général → Restaurer l’état précédent → Profil de données** pour un profil nommé. Un nom invalide empêche le lancement au lieu de sélectionner un autre profil.
 
 Par exemple, dans PowerShell, avant de lancer l’exécutable de bureau voulu :
 

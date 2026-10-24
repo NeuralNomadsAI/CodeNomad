@@ -35,7 +35,7 @@ The alias uses each host's own normalization (Electron lowercases Unicode and tu
 
 Non-ASCII config paths on Windows: each host folds the config identity's case differently (Electron uses Unicode lowercase, Tauri ASCII lowercase), so for a path such as `C:\Users\Émile\…` the two hosts compute different scope hashes. Keep this divergence: changing either fold would move scoped folders. The choices file uses one shared fold (see below).
 
-The host passes `CODENOMAD_DESKTOP_PROFILE=<name>` to its backend for non-default profiles; Settings → Info then shows a "Data profile" row. The default profile is never announced in that row. Separately, every backend launch (the default profile included, as key `stable`) receives the resolved scope that the backend uses as its Mission profile scope: `CODENOMAD_UPDATE_CHANNEL=<profile key>`, `CODENOMAD_PROFILE_CONFIG_IDENTITY=<config identity>` and the selected `CLI_CONFIG`. Tauri applies these only to the backend `Command`, never through a process-wide `set_var`. They are backend-only: the backend strips them, `CODENOMAD_PROFILE`, `CODENOMAD_DESKTOP_PROFILE` and the private hand-offs from the environment of the shared OpenCode daemon it starts (`workspaces/host-opencode-service.ts`), so agent shells never pin a desktop launched from them to this profile.
+The host passes `CODENOMAD_DESKTOP_PROFILE=<name>` to its backend for non-default profiles; Settings → General's startup card (**Restore previous state**) then shows a "Data profile" row above the other saved profiles (`components/settings/current-profile-settings-row.tsx`). The default profile is never announced in that row. Separately, every backend launch (the default profile included, as key `stable`) receives the resolved scope that the backend uses as its Mission profile scope: `CODENOMAD_UPDATE_CHANNEL=<profile key>`, `CODENOMAD_PROFILE_CONFIG_IDENTITY=<config identity>` and the selected `CLI_CONFIG`. Tauri applies these only to the backend `Command`, never through a process-wide `set_var`. They are backend-only: the backend strips them, `CODENOMAD_PROFILE`, `CODENOMAD_DESKTOP_PROFILE` and the private hand-offs from the environment of the shared OpenCode daemon it starts (`workspaces/host-opencode-service.ts`), so agent shells never pin a desktop launched from them to this profile.
 
 ## One-time transition
 
@@ -85,6 +85,6 @@ Known limits: the Tauri singleton itself is not file-based; a Tauri instance is 
 
 - Electron: `data-profile.test.ts`, `profile-transition.test.ts` (including unwritable choices/lock and question-folder sweep), `startup.test.ts`, `data-profile-cleanup.test.ts`, `data-profile-cleanup-ipc.test.ts`.
 - Tauri: `data_profile`, `profile_transition`, `profile_selection_dialog`, `client_state::restorable`, `identity`, `data_profile_cleanup` tests.
-- UI: `tests/browser/server-info.test.ts` (Data profile row), `tests/browser/other-profiles.test.ts` (other profiles row in Preferences and inline).
+- UI: `tests/browser/other-profiles.test.ts` (Data profile and other profiles rows in Preferences and inline).
 
 The real native dialogs (Electron relaunch flow, rfd on Windows/macOS/Linux) need manual checks. Profile deletion is tested against temporary roots, with Chromium singleton files simulated at the location derived from main.ts ordering; a running second host needs a manual check.

@@ -28,7 +28,7 @@ Açık profil seçilmediyse paketlenmiş başlatmalar o yapılandırma için hat
 
 1. Kasıtlı masaüstü izolasyonu için, yürütülebilir dosyayı başlatmadan önce `CODENOMAD_PROFILE`'yi ayarlayın.
 2. Bir harf veya rakamla başlayan, 1-64 arası ASCII harf/rakam, nokta, alt çizgi veya kısa çizgiden oluşan bir ad kullanın. Adlar küçük harfe göre normalleştirilmiştir; `default` veya `stable` varsayılan profili seçer.
-3. Adlandırılmış bir profil için **Ayarlar → Bilgi → Veri profili** öğesini kontrol edin. Geçersiz bir ad, başka bir profil seçmek yerine başlatmayı engelliyor.
+3. Adlandırılmış bir profil için **Ayarlar → Genel → Önceki durumu geri yükle → Veri profili** öğesini kontrol edin. Geçersiz bir ad, başka bir profil seçmek yerine başlatmayı engelliyor.
 
 Örneğin, PowerShell'de istenen masaüstü yürütülebilir dosyasını başlatmadan önce:
 

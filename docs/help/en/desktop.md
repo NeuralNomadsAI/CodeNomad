@@ -28,7 +28,7 @@ Without an explicit profile, packaged launches reuse the remembered profile for 
 
 1. For deliberate desktop isolation, set `CODENOMAD_PROFILE` before launching the executable.
 2. Use a name of 1–64 ASCII letters/digits, dots, underscores or hyphens, starting with a letter or digit. Names are normalized to lowercase; `default` or `stable` selects the default profile.
-3. Check **Settings → Info → Data profile** for a named profile. An invalid name prevents launch instead of selecting another profile.
+3. Check **Settings → General → Restore previous state → Data profile** for a named profile. An invalid name prevents launch instead of selecting another profile.
 
 For example, in PowerShell, before launching the desired desktop executable:
 

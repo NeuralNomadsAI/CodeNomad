@@ -1,5 +1,6 @@
 import type { Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
+import { CurrentProfileSettingsRow } from "./current-profile-settings-row"
 import { OtherProfilesSettingsRow } from "./other-profiles-settings-row"
 import { SettingsSwitch } from "./settings-switch"
 
@@ -28,7 +29,8 @@ export const StartupStateSettingsView: Component<StartupStateSettingsViewProps> 
       </div>
       <div class="settings-stack">
 
-        <div class="flex justify-end">
+        {/* The rows below open with a separator: keep the button off it. */}
+        <div class="flex justify-end pb-[var(--space-sm)]">
           <button
             type="button"
             class="selector-button selector-button-secondary w-auto"
@@ -39,6 +41,7 @@ export const StartupStateSettingsView: Component<StartupStateSettingsViewProps> 
           </button>
         </div>
 
+        <CurrentProfileSettingsRow />
         <OtherProfilesSettingsRow />
       </div>
     </div>

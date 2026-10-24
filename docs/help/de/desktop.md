@@ -28,7 +28,7 @@ Ohne explizites Profil verwenden paketierte Starts das für diese Konfiguration 
 
 1. Setzen Sie für bewusste Desktop-Isolation `CODENOMAD_PROFILE` vor dem Programmstart.
 2. Verwenden Sie einen Namen mit 1–64 ASCII-Buchstaben/Ziffern, Punkten, Unterstrichen oder Bindestrichen, beginnend mit Buchstabe/Ziffer. Namen werden kleingeschrieben; `default` oder `stable` wählt das Standardprofil.
-3. Prüfen Sie **Einstellungen → Info → Datenprofil** auf ein benanntes Profil. Ein ungültiger Name verhindert den Start, statt ein anderes Profil zu wählen.
+3. Prüfen Sie **Einstellungen → Allgemein → Vorherigen Zustand wiederherstellen → Datenprofil** auf ein benanntes Profil. Ein ungültiger Name verhindert den Start, statt ein anderes Profil zu wählen.
 
 Beispielsweise in PowerShell vor dem Start der gewünschten Desktop-Programmdatei:
 

@@ -24,7 +24,7 @@ Stable ले नवीनतम final release चयन गर्छ। Preview
 | Linux x64 AppImage | AppImage bundle marker र nonempty `APPIMAGE` path, साथै signed update समर्थन चाहिन्छ। `APPRUN` मात्र पुग्दैन। |
 | Debian/RPM, loose Windows executable, unsigned/keyless build | in-app install को सट्टा release page खोल्छ। |
 
-Tauri application र native **प्राथमिकताहरू** window मा release प्रस्ताव हुँदा अपडेटहरू section ले **अपडेट स्थापना गर्नुहोस्** देखाउँछ। यसले चयनित feed जाँच्छ र in-app update उपलब्ध हुँदा **स्थापना गरी पुनः सुरु गर्नुहोस्** प्रस्ताव गर्छ; अन्यथा section मा देखाइएको release page खोल्छ। Electron, web र remote window ले यसको सट्टा **अपडेट डाउनलोड गर्नुहोस्** link देखाउँछन्, native updater check गर्दैनन्।
+Tauri application र native **प्राथमिकताहरू** window मा release प्रस्ताव हुँदा अपडेटहरू card ले **अपडेट स्थापना गर्नुहोस्** देखाउँछ। यसले चयनित feed जाँच्छ र in-app update उपलब्ध हुँदा **स्थापना गरी पुनः सुरु गर्नुहोस्** प्रस्ताव गर्छ; अन्यथा card मा देखाइएको release page खोल्छ। Electron, web र remote window ले यसको सट्टा **अपडेट डाउनलोड गर्नुहोस्** link देखाउँछन्, native updater check गर्दैनन्।
 
 Tauri को **मद्दत → अपडेटहरू जाँच गर्नुहोस्…** menu ले focus भएको application window मा update flow चलाउँछ। प्राथमिकताहरू वा remote window बाट प्रयोग गर्दा, यसले सबैभन्दा हाल प्रयोग गरिएको application window अगाडि ल्याएर check चलाउँछ; remote window मार्फत install गर्दैन। लक्षित loading, login वा pairing screen लगायत कुनै application window ले कार्य ग्रहण गर्न नसके menu ले यसको सट्टा release page खोल्छ।
 

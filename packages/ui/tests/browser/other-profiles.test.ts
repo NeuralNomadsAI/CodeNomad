@@ -56,7 +56,7 @@ const HOST_SCRIPT = (profiles: FixtureProfile[], outcomes: Record<string, unknow
   }
 `
 
-async function open(kind: "preferences" | "inline", host: "electron" | "tauri" | "web", profiles: FixtureProfile[], outcomes: Record<string, unknown> = {}, shared = false) {
+async function open(kind: "preferences" | "inline", host: "electron" | "tauri" | "web", profiles: FixtureProfile[], outcomes: Record<string, unknown> = {}, shared = false, desktopProfile?: string) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 900 }, locale: "en-US" })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -98,9 +98,13 @@ async function open(kind: "preferences" | "inline", host: "electron" | "tauri" |
       w.__TAURI_EVENT_PLUGIN_INTERNALS__ = { unregisterListener() {} }
     }
   }` })
-  await page.route("**/api/**", route => new URL(route.request().url()).pathname.startsWith("/api/")
-    ? route.fulfill({ json: new URL(route.request().url()).pathname === "/api/storage/config/ui" ? { settings: { locale: "en" } } : {} })
-    : route.continue())
+  await page.route("**/api/**", route => {
+    const path = new URL(route.request().url()).pathname
+    if (!path.startsWith("/api/")) return route.continue()
+    // The host names an explicit non-default data profile in the server metadata.
+    const json = path === "/api/storage/config/ui" ? { settings: { locale: "en" } } : path === "/api/meta" && desktopProfile ? { desktopProfile } : {}
+    return route.fulfill({ json })
+  })
   if (kind === "preferences") {
     await page.goto(`${origin}/preferences?preferences=general`)
     await page.waitForFunction(() => (window as any).fixtureReady)
@@ -123,6 +127,26 @@ for (const host of ["electron", "tauri"] as const) {
       await page.waitForFunction(() => (window as any).profileHost.lists === 1)
       await page.waitForTimeout(100)
       assert.equal(await row(page).count(), 0)
+      // The default profile is never named.
+      assert.equal(await page.getByTestId("settings-data-profile").count(), 0)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  })
+
+  test(`${host} Preferences names the running data profile above the other saved profiles`, async () => {
+    const { page, errors } = await open("preferences", host, SEVERAL, {}, false, "dev-v2")
+    try {
+      const current = page.getByTestId("settings-data-profile")
+      await current.waitFor()
+      await row(page).waitFor()
+      assert.equal(await current.getByText("dev-v2", { exact: true }).count(), 1)
+      const [clearBox, currentBox, otherBox] = await Promise.all([
+        page.getByRole("button", { name: "Clear saved startup state", exact: true }).boundingBox(),
+        current.boundingBox(),
+        row(page).boundingBox(),
+      ])
+      assert.ok(currentBox!.y < otherBox!.y, "the running profile comes first")
+      assert.ok(currentBox!.y - (clearBox!.y + clearBox!.height) >= 4, "the clear button keeps off the row separator")
       assert.deepEqual(errors, [])
     } finally { await page.close() }
   })
