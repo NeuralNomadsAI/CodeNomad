@@ -4,6 +4,7 @@ import path from "node:path"
 import { describe, it } from "node:test"
 import { SettingsService } from "./service"
 import { resolveConfigLocation } from "../config/location"
+import { DEFAULT_PREVIEW_SETTINGS } from "../previews/policy"
 
 function serviceWithStore(store: Record<string, unknown>) {
   const service = Object.create(SettingsService.prototype) as SettingsService
@@ -80,6 +81,27 @@ describe("SettingsService config persistence", () => {
       else process.env.CODENOMAD_PROFILE_CONFIG_IDENTITY = oldIdentity
     }
   })
+  it("normalizes a stored server preview policy when it is read back", () => {
+    const service = serviceWithStore({
+      get: () => ({
+        server: {
+          preview: {
+            originMode: "custom",
+            customOrigin: "https://preview.example.com/path",
+            sandbox: { forms: false },
+          },
+        },
+      }),
+      replace: (value: unknown) => value,
+    })
+
+    assert.deepEqual(service.getOwner("config", "server").preview, {
+      ...DEFAULT_PREVIEW_SETTINGS,
+      originMode: "custom",
+      sandbox: { ...DEFAULT_PREVIEW_SETTINGS.sandbox, forms: false },
+    })
+  })
+
   it("normalizes and persists a document patch once", () => {
     let writes = 0
     const service = serviceWithStore({
@@ -93,7 +115,10 @@ describe("SettingsService config persistence", () => {
 
     const result = service.mergePatchDoc("config", { ui: { theme: "dark" } })
     assert.equal(writes, 1)
-    assert.deepEqual(result, { server: { logLevel: "INFO" }, ui: { theme: "dark" } })
+    assert.deepEqual(result, {
+      server: { logLevel: "INFO", preview: DEFAULT_PREVIEW_SETTINGS },
+      ui: { theme: "dark" },
+    })
   })
 
   it("normalizes and persists a server-owner patch once", () => {
@@ -109,7 +134,12 @@ describe("SettingsService config persistence", () => {
 
     const result = service.mergePatchOwner("config", "server", { sidecars: [{ id: "one" }] })
     assert.equal(writes, 1)
-    assert.deepEqual(result, { logLevel: "INFO", opencodeBinary: "opencode2", sidecars: [{ id: "one" }] })
+    assert.deepEqual(result, {
+      logLevel: "INFO",
+      opencodeBinary: "opencode2",
+      sidecars: [{ id: "one" }],
+      preview: DEFAULT_PREVIEW_SETTINGS,
+    })
   })
 
   it("keeps only known update feeds", () => {
@@ -117,10 +147,11 @@ describe("SettingsService config persistence", () => {
       getOwner: () => ({}),
       replaceOwner: (_owner: string, value: unknown) => value,
     }).mergePatchOwner("config", "server", { updateFeed })
-    assert.deepEqual(owner("preview"), { updateFeed: "preview" })
-    assert.deepEqual(owner("stable"), { updateFeed: "stable" })
-    assert.deepEqual(owner("dev"), {})
-    assert.deepEqual(owner(null), {})
+    const withDefaults = (value: Record<string, unknown>) => ({ ...value, preview: DEFAULT_PREVIEW_SETTINGS })
+    assert.deepEqual(owner("preview"), withDefaults({ updateFeed: "preview" }))
+    assert.deepEqual(owner("stable"), withDefaults({ updateFeed: "stable" }))
+    assert.deepEqual(owner("dev"), withDefaults({}))
+    assert.deepEqual(owner(null), withDefaults({}))
   })
 
   it("does not report a persisted patch as failed when an event listener throws", () => {

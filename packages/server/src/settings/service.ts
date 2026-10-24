@@ -9,6 +9,7 @@ import { sanitizeConfigOwner } from "./public-config"
 import { applyMergePatch } from "./merge-patch"
 import { readAdmissionEnvironment } from "./admission-environment"
 import { canonicalScope } from "../host-lifetime/protocol"
+import { normalizePreviewSettings } from "../previews/policy"
 import { createHash } from "node:crypto"
 import path from "node:path"
 
@@ -51,6 +52,7 @@ function normalizeServerConfigOwner(value: SettingsDoc): SettingsDoc {
   if (next.opencodeBinary === "opencode") {
     next.opencodeBinary = "opencode2"
   }
+  next.preview = normalizePreviewSettings(next.preview)
   return next
 }
 

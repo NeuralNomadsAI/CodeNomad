@@ -68,6 +68,69 @@ export function normalizePreviewSettings(value: unknown): PreviewSettings {
   }
 }
 
+/** Resolve a stored policy against every origin CodeNomad itself is served
+ * from. A custom origin needs a hostname of its own: an empty, invalid or
+ * app-owned origin degrades to the default opaque policy, even when only the
+ * port differs. */
+export function resolvePreviewSettings(value: unknown, appOrigins: Iterable<string>): PreviewSettings {
+  const settings = normalizePreviewSettings(value)
+  if (settings.originMode !== "custom") return settings
+  const customHostname = originHostname(settings.customOrigin)
+  if (!customHostname) return normalizePreviewSettings(undefined)
+  for (const appOrigin of appOrigins) {
+    if (originHostname(appOrigin) === customHostname) return normalizePreviewSettings(undefined)
+  }
+  return settings
+}
+
+/** The response sandbox for a path-proxied preview. `app` mode trusts loopback
+ * targets, while `custom` mode also requires the request to have arrived at
+ * the configured custom origin; an invalid target or a missing `Host` stays
+ * opaque. */
+export function previewDocumentSandboxForTarget(
+  targetUrl: string,
+  settings: PreviewSettings,
+  requestHost: string,
+): string {
+  let targetHostname = ""
+  try {
+    targetHostname = new URL(targetUrl).hostname
+  } catch {
+    // Unknown targets stay in the untrusted tier.
+  }
+  const targetIsLoopback = isLoopbackHostname(targetHostname)
+  const customHost = settings.originMode === "custom" ? hostPort(settings.customOrigin) : ""
+  const customOriginMatches = customHost.length > 0 && customHost === normalizeHostPort(requestHost)
+  const allowSameOrigin = settings.originMode === "app"
+    ? targetIsLoopback
+    : settings.originMode === "custom"
+      ? targetIsLoopback && customOriginMatches
+      : false
+  return previewDocumentSandbox(allowSameOrigin, settings.sandbox)
+}
+
+function originHostname(origin: string): string {
+  if (!origin) return ""
+  try {
+    return new URL(origin).hostname.toLowerCase()
+  } catch {
+    return ""
+  }
+}
+
+/** The configured origin's host and port; `URL` already drops the default port. */
+function hostPort(origin: string): string {
+  try {
+    return new URL(origin).host.toLowerCase()
+  } catch {
+    return ""
+  }
+}
+
+function normalizeHostPort(host: string): string {
+  return host.trim().toLowerCase()
+}
+
 function normalizeCustomOrigin(value: unknown): string {
   if (typeof value !== "string") return ""
   let url: URL

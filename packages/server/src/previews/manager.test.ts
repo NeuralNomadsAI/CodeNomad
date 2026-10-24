@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { PreviewManager, previewDocumentSandboxForTarget } from "./manager"
-import { DEFAULT_PREVIEW_SETTINGS, isLoopbackHostname, previewDocumentSandbox } from "./policy"
+import { PreviewManager } from "./manager"
+import {
+  DEFAULT_PREVIEW_SETTINGS,
+  isLoopbackHostname,
+  previewDocumentSandbox,
+  previewDocumentSandboxForTarget,
+} from "./policy"
 
 describe("PreviewManager", () => {
   it("defaults loopback previews to HTTP and public hosts to HTTPS", () => {
@@ -47,11 +52,12 @@ describe("PreviewManager", () => {
   })
 
   it("maps a preview target URL to its response sandbox tier", () => {
-    const sandbox = DEFAULT_PREVIEW_SETTINGS.sandbox
-    assert.equal(previewDocumentSandboxForTarget("http://localhost:3000/app"), previewDocumentSandbox(true, sandbox))
-    assert.equal(previewDocumentSandboxForTarget("http://127.0.0.1:8080"), previewDocumentSandbox(true, sandbox))
-    assert.equal(previewDocumentSandboxForTarget("https://example.com/page"), previewDocumentSandbox(false, sandbox))
-    assert.equal(previewDocumentSandboxForTarget("http://[::1]:5173/"), previewDocumentSandbox(true, sandbox))
-    assert.equal(previewDocumentSandboxForTarget("http://192.168.1.5:3000/"), previewDocumentSandbox(false, sandbox))
+    const settings = { ...DEFAULT_PREVIEW_SETTINGS, originMode: "app" as const }
+    const sandbox = settings.sandbox
+    assert.equal(previewDocumentSandboxForTarget("http://localhost:3000/app", settings, ""), previewDocumentSandbox(true, sandbox))
+    assert.equal(previewDocumentSandboxForTarget("http://127.0.0.1:8080", settings, ""), previewDocumentSandbox(true, sandbox))
+    assert.equal(previewDocumentSandboxForTarget("https://example.com/page", settings, ""), previewDocumentSandbox(false, sandbox))
+    assert.equal(previewDocumentSandboxForTarget("http://[::1]:5173/", settings, ""), previewDocumentSandbox(true, sandbox))
+    assert.equal(previewDocumentSandboxForTarget("http://192.168.1.5:3000/", settings, ""), previewDocumentSandbox(false, sandbox))
   })
 })

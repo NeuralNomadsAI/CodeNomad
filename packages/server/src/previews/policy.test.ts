@@ -5,6 +5,8 @@ import {
   isLoopbackHostname,
   normalizePreviewSettings,
   previewDocumentSandbox,
+  previewDocumentSandboxForTarget,
+  resolvePreviewSettings,
 } from "./policy"
 
 describe("preview policy", () => {
@@ -45,5 +47,53 @@ describe("preview policy", () => {
       "sandbox allow-scripts allow-modals allow-downloads")
     assert.equal(previewDocumentSandbox(true, { forms: false, modals: true, popups: false, downloads: true }),
       "sandbox allow-scripts allow-modals allow-downloads allow-same-origin")
+  })
+
+  it("never trusts an app origin as a custom origin", () => {
+    assert.equal(resolvePreviewSettings(
+      { originMode: "custom", customOrigin: "https://app.example.com" },
+      ["https://app.example.com"],
+    ).originMode, "opaque")
+    assert.equal(resolvePreviewSettings(
+      { originMode: "custom", customOrigin: "https://preview.example.com" },
+      ["https://app.example.com"],
+    ).originMode, "custom")
+    assert.equal(resolvePreviewSettings(
+      { originMode: "custom", customOrigin: "https://app.example.com:8443" },
+      ["https://app.example.com"],
+    ).originMode, "opaque")
+  })
+
+  it("degrades an unusable custom mode to the opaque default", () => {
+    assert.deepEqual(
+      resolvePreviewSettings({ originMode: "custom", customOrigin: "" }, ["https://app.example.com"]),
+      DEFAULT_PREVIEW_SETTINGS,
+    )
+    assert.deepEqual(
+      resolvePreviewSettings(
+        { originMode: "custom", customOrigin: "https://preview.example.com/path", sandbox: { forms: false } },
+        [],
+      ),
+      DEFAULT_PREVIEW_SETTINGS,
+    )
+    assert.deepEqual(
+      resolvePreviewSettings({ originMode: "custom", customOrigin: "https://app.example.com" }, ["https://app.example.com"]),
+      DEFAULT_PREVIEW_SETTINGS,
+    )
+  })
+
+  it("uses the request host for custom-origin trust", () => {
+    const settings = resolvePreviewSettings(
+      { originMode: "custom", customOrigin: "https://preview.example.com" },
+      ["https://app.example.com"],
+    )
+    assert.match(previewDocumentSandboxForTarget("http://127.0.0.1:3000/", settings, "preview.example.com"), /allow-same-origin/)
+    assert.doesNotMatch(previewDocumentSandboxForTarget("http://127.0.0.1:3000/", settings, "app.example.com"), /allow-same-origin/)
+    assert.doesNotMatch(previewDocumentSandboxForTarget("https://example.com/", settings, "preview.example.com"), /allow-same-origin/)
+  })
+
+  it("keeps opaque mode independent of the target and host", () => {
+    assert.doesNotMatch(previewDocumentSandboxForTarget("http://localhost:3000/", DEFAULT_PREVIEW_SETTINGS, "localhost"), /allow-same-origin/)
+    assert.doesNotMatch(previewDocumentSandboxForTarget("https://example.com/", DEFAULT_PREVIEW_SETTINGS, "localhost"), /allow-same-origin/)
   })
 })

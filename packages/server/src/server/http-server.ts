@@ -68,7 +68,8 @@ import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import { sidecarRequestCookies, sidecarResponseCookies } from "../sidecars/proxy-cookies"
 import { proxyWebSocket } from "./proxy-websocket"
-import { previewDocumentSandboxForTarget, type PreviewManager } from "../previews/manager"
+import { DEFAULT_PREVIEW_SETTINGS, previewDocumentSandboxForTarget } from "../previews/policy"
+import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
@@ -2046,7 +2047,11 @@ async function proxyPreviewRequest(args: {
 
   let documentSandbox: string | undefined
   if (args.enforceDocumentSandbox) {
-    documentSandbox = previewDocumentSandboxForTarget(preview.targetUrl)
+    documentSandbox = previewDocumentSandboxForTarget(
+      preview.targetUrl,
+      { ...DEFAULT_PREVIEW_SETTINGS, originMode: "app" },
+      args.request.headers.host ?? "",
+    )
   }
 
   args.logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying request to preview")
@@ -2095,7 +2100,13 @@ async function proxyPreviewAssetRequest(args: {
     // A fallback document is still served from the app origin: keep the
     // origin tier enforced so an absolute-path link in a previewed page
     // cannot deliver external HTML same-origin.
-    documentSandbox: preview ? previewDocumentSandboxForTarget(preview.targetUrl) : undefined,
+    documentSandbox: preview
+      ? previewDocumentSandboxForTarget(
+          preview.targetUrl,
+          { ...DEFAULT_PREVIEW_SETTINGS, originMode: "app" },
+          args.request.headers.host ?? "",
+        )
+      : undefined,
     rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, args.token, targetUrl.origin),
   })
 }
