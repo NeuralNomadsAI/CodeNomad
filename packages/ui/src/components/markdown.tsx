@@ -13,6 +13,10 @@ import {
 } from "../lib/render-text-window"
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
+import { isLoopbackHttpUrl } from "./browser-frame-security"
+import { openSessionPreview } from "../stores/session-previews"
+import { instances } from "../stores/instances"
+import { showAlertDialog } from "../stores/alerts"
 
 const log = getLogger("session")
 
@@ -127,6 +131,20 @@ interface MarkdownProps {
 
 export function Markdown(props: MarkdownProps) {
   const { t } = useI18n()
+
+  // A loopback link click opens the session preview on the instance owning
+  // the session; failures surface through the shared alert dialog.
+  const openLoopbackPreview = (instanceId: string, sessionId: string, url: string) => {
+    const folder = instances().get(instanceId)?.folder ?? ""
+    void openSessionPreview(sessionId, url, folder).catch((error) => {
+      showAlertDialog(t("sessionPreview.open.title"), {
+        title: t("sessionPreview.open.title"),
+        detail: error instanceof Error ? error.message : String(error),
+        variant: "error",
+      })
+    })
+  }
+
   const [html, setHtml] = createSignal("")
   // Whether `html` is the Markdown render rather than its plain-text fallback. The
   // reveal line waits for it, so a reveal's anchor never sits on a prefix that re-lays out.
@@ -368,6 +386,22 @@ export function Markdown(props: MarkdownProps) {
   onMount(() => {
     const handleClick = async (event: Event) => {
       const target = event.target as HTMLElement
+      // A plain click on a loopback URL opens the session preview instead of
+      // a dead browser tab: browser-accessed frontends cannot reach the
+      // backend host's localhost. Modified clicks keep browser defaults.
+      const anchor = target.closest("a[href]") as HTMLAnchorElement | null
+      if (anchor && props.instanceId && props.sessionId) {
+        const href = anchor.getAttribute("href") ?? ""
+        const mouseEvent = event as MouseEvent
+        // Firefox fires `click` for the middle button too; only a primary
+        // left click without modifiers opens the preview.
+        const plainClick = mouseEvent.button === 0 && !mouseEvent.ctrlKey && !mouseEvent.metaKey && !mouseEvent.shiftKey && !mouseEvent.altKey
+        if (plainClick && isLoopbackHttpUrl(href)) {
+          event.preventDefault()
+          openLoopbackPreview(props.instanceId, props.sessionId, href)
+          return
+        }
+      }
       const wrapButton = target.closest(".code-block-wrap") as HTMLButtonElement
       if (wrapButton) {
         event.preventDefault()

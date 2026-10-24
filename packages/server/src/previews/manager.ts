@@ -1,5 +1,6 @@
 import { randomUUID } from "crypto"
 import type { PreviewSession } from "../api-types"
+import { isLoopbackHostname } from "./policy"
 
 interface PreviewRecord {
   token: string
@@ -57,7 +58,7 @@ export class PreviewManager {
     } catch {
       // Invalid implicit URLs are rejected below.
     }
-    const loopback = implicitHostname === "localhost" || implicitHostname === "0.0.0.0" || implicitHostname === "::1" || /^127(?:\.|$)/.test(implicitHostname)
+    const loopback = isLoopbackHostname(implicitHostname)
     if (/^[a-z][a-z0-9+.-]*:/i.test(trimmed) && !explicitHttp && !loopback) {
       throw new Error("Preview URL must use HTTP or HTTPS")
     }

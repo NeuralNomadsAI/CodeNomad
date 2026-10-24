@@ -1,6 +1,12 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { PreviewManager } from "./manager"
+import {
+  DEFAULT_PREVIEW_SETTINGS,
+  isLoopbackHostname,
+  previewDocumentSandbox,
+  previewDocumentSandboxForTarget,
+} from "./policy"
 
 describe("PreviewManager", () => {
   it("defaults loopback previews to HTTP and public hosts to HTTPS", () => {
@@ -27,5 +33,31 @@ describe("PreviewManager", () => {
 
     assert.equal(manager.buildTargetUrl(preview.token, `/previews/${preview.token}/`)?.href, "http://localhost:3000/")
     assert.equal(manager.buildTargetUrl(preview.token, `/previews/${preview.token}//127.0.0.1:9000/private`)?.href, "http://localhost:3000/127.0.0.1:9000/private")
+  })
+
+  it("recognizes loopback hostnames case-insensitively", () => {
+    for (const hostname of ["localhost", "LOCALHOST", "127.0.0.1", "127.1.2.3", "0.0.0.0", "::1", "[::1]"]) {
+      assert.equal(isLoopbackHostname(hostname), true, hostname)
+    }
+    for (const hostname of ["example.com", "sub.localhost", "localhost.evil.com", "127.evil.com", "127.0.0.1.example.com", "192.168.1.5", ""]) {
+      assert.equal(isLoopbackHostname(hostname), false, hostname)
+    }
+  })
+
+  it("the document sandbox keeps the app origin only for loopback targets", () => {
+    const external = previewDocumentSandbox(false, DEFAULT_PREVIEW_SETTINGS.sandbox)
+    assert.equal(external, "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads")
+    assert.equal(external.includes("allow-same-origin"), false)
+    assert.equal(previewDocumentSandbox(true, DEFAULT_PREVIEW_SETTINGS.sandbox), `${external} allow-same-origin`)
+  })
+
+  it("maps a preview target URL to its response sandbox tier", () => {
+    const settings = { ...DEFAULT_PREVIEW_SETTINGS, originMode: "app" as const }
+    const sandbox = settings.sandbox
+    assert.equal(previewDocumentSandboxForTarget("http://localhost:3000/app", settings, ""), previewDocumentSandbox(true, sandbox))
+    assert.equal(previewDocumentSandboxForTarget("http://127.0.0.1:8080", settings, ""), previewDocumentSandbox(true, sandbox))
+    assert.equal(previewDocumentSandboxForTarget("https://example.com/page", settings, ""), previewDocumentSandbox(false, sandbox))
+    assert.equal(previewDocumentSandboxForTarget("http://[::1]:5173/", settings, ""), previewDocumentSandbox(true, sandbox))
+    assert.equal(previewDocumentSandboxForTarget("http://192.168.1.5:3000/", settings, ""), previewDocumentSandbox(false, sandbox))
   })
 })

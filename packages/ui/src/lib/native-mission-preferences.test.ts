@@ -14,16 +14,29 @@ function sourceSections(path: string, declaration: RegExp): string[] {
   return [...block.matchAll(/"([a-z-]+)"/g)].map(match => match[1])
 }
 
+/** The embedded Settings nav lists every section id in its nav items. */
+function embeddedSettingsSections(path: string): string[] {
+  const source = readFileSync(new URL(path, import.meta.url), "utf8")
+  const block = source.match(/const sections = createMemo\(\(\) => \{([\s\S]*?)\n  \}\)/)?.[1]
+  assert.ok(block, `embedded Settings nav declaration in ${path}`)
+  return [...block.matchAll(/\{ id: "([a-z-]+)"/g)].map(match => match[1])
+}
+
 describe("Native Preferences section parity", () => {
   it("keeps renderer, Electron, Tauri and the Settings union on the exact same allowlist", () => {
     const renderer = sourceSections("./native/preferences-window.ts", /const sections = new Set<SettingsSectionId>\(\[([\s\S]*?)\]\)/)
     const tauri = sourceSections("../../../tauri-app/src-tauri/src/preferences_window.rs", /const SECTIONS: &\[&str\] = &\[([\s\S]*?)\];/)
     const settings = sourceSections("../stores/settings-screen.ts", /export type SettingsSectionId =([\s\S]*?)(?=\nconst |\nexport )/)
+    const embedded = embeddedSettingsSections("../components/settings-screen.tsx")
     const expected = [...PREFERENCES_SECTIONS].sort()
     assert.ok(expected.includes(providersSection))
     assert.ok(expected.includes("missions") && renderer.includes("missions") && settings.includes("missions"), "Mission preferences are a Settings section")
     assert.ok(expected.includes("hotkeys"), "Keyboard shortcuts are a native Preferences section")
-    for (const [name, sections] of Object.entries({ renderer, tauri, settings })) {
+    assert.ok(
+      expected.includes("preview") && renderer.includes("preview") && tauri.includes("preview") && settings.includes("preview") && embedded.includes("preview"),
+      "Preview origin and permission settings are a Settings section",
+    )
+    for (const [name, sections] of Object.entries({ renderer, tauri, settings, embedded })) {
       assert.equal(new Set(sections).size, sections.length, `${name} has no duplicate sections`)
       assert.deepEqual(sections.sort(), expected, `${name} matches Electron`)
     }

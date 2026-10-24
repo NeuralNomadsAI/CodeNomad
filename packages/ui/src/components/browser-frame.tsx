@@ -82,6 +82,18 @@ interface BrowserFrameProps {
    * arbitrary web previews must never set this.
    */
   trustedSameOrigin?: boolean
+  /** Iframe `sandbox` tokens for this frame's content; trusted frames also get
+   * `allow-same-origin` through the shared policy. Native webviews are not
+   * sandboxed. */
+  sandboxFlags?: string
+  /** Iframe `allow` attribute for the content's browser features. */
+  allow?: string
+  /** Expected `event.origin` for the preview comment/location bridge; an
+   * opaque frame reports `"null"`. Defaults to `"null"`. */
+  expectedMessageOrigin?: string
+  /** Identity of the frame policy. Changing it re-attaches bridge listeners so
+   * listeners never compare against a stale origin. */
+  policyKey?: string
   lockedBaseLabel?: string
   labels: BrowserFrameLabels
   addressMode?: "path" | "url"
@@ -202,8 +214,11 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
-  const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin })
-  const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
+  const framePolicy = createMemo(() => getBrowserFramePolicy(runtimeEnv, {
+    trustedSameOrigin: props.trustedSameOrigin,
+    sandboxFlags: props.sandboxFlags,
+  }))
+  const canComment = createMemo(() => !nativeMode() && (framePolicy().canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
   const viewport = createMemo(() => VIEWPORT_PRESETS[viewportPreset()])
   const isResponsiveViewport = createMemo(() => viewportPreset() === "responsive")
   const selectedViewportOption = createMemo(() => VIEWPORT_OPTIONS.find((option) => option.id === viewportPreset()) ?? VIEWPORT_OPTIONS[0])
@@ -318,10 +333,11 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
 
     if (!iframeRef?.contentWindow || !frameWrapRef) return
     const frameWindow = iframeRef.contentWindow
-    if (props.commentBridge && !framePolicy.canInspectDom) {
+    if (props.commentBridge && !framePolicy().canInspectDom) {
       frameWindow.postMessage({ type: "codenomad-preview-comment-mode", enabled: Boolean(props.commentMode) }, "*")
+      const expectedOrigin = props.expectedMessageOrigin ?? "null"
       const handleMessage = (event: MessageEvent) => {
-        if (event.source !== frameWindow || event.origin !== "null") return
+        if (event.source !== frameWindow || event.origin !== expectedOrigin) return
         if (event.data?.type === "codenomad-preview-location") {
           const path = event.data.path
           if (typeof path !== "string" || path.length > 4_096 || !path.startsWith("/")) return
@@ -351,7 +367,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       return
     }
     if (!props.commentMode) return
-    if (!framePolicy.canInspectDom || !iframeRef.contentDocument) return
+    if (!framePolicy().canInspectDom || !iframeRef.contentDocument) return
     const doc = iframeRef.contentDocument
 
     const handleMove = (event: MouseEvent) => {
@@ -722,6 +738,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
 
   createEffect(() => {
     props.commentMode
+    props.policyKey
     attachCommentListeners()
   })
 
@@ -959,7 +976,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
                 margin: viewport().width ? "0 auto" : "0",
               }}
               referrerPolicy="same-origin"
-              sandbox={framePolicy.sandbox}
+              sandbox={framePolicy().sandbox}
+              allow={props.allow}
               onLoad={syncPathInputFromFrame}
             />
           </Show>

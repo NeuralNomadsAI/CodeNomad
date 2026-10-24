@@ -2,7 +2,7 @@ import { Dialog } from "@kobalte/core/dialog"
 import { Select } from "@kobalte/core/select"
 import useMediaQuery from "@suid/material/useMediaQuery"
 import type { LocationRef } from "@opencode/client"
-import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, Keyboard, MessageSquare, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
+import { Settings, Bell, ChevronDown, FileCog, Flag, Globe, Info, Keyboard, MessageSquare, MonitorPlay, MonitorUp, PlugZap, SlidersHorizontal, Terminal, Volume2, X } from "lucide-solid"
 import { createEffect, createMemo, createSignal, For, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import {
@@ -19,6 +19,7 @@ import { InfoSettingsSection } from "./settings/info-settings-section"
 import { NotificationsSettingsSection } from "./settings/notifications-settings-section"
 import { SpeechSettingsSection } from "./settings/speech-settings-section"
 import { ProvidersSettingsSection } from "./settings/providers-settings-section"
+import { PreviewSettingsSection } from "./settings/preview-settings-section"
 import { UsageSettingsSection } from "./settings/usage-settings-section"
 import { BarChart3 } from "lucide-solid"
 import { OpenCodeSettingsSection } from "./settings/opencode-settings-section"
@@ -62,6 +63,7 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
       { id: "speech", icon: Volume2, label: t("settings.nav.speech") },
       { id: "opencode", icon: Terminal, label: t("settings.nav.opencode") },
       { id: "providers", icon: PlugZap, label: t("settings.nav.providers") },
+      { id: "preview", icon: MonitorPlay, label: t("settings.nav.preview") },
       { id: "missions", icon: Flag, label: t("settings.nav.missions") },
       { id: "usage", icon: BarChart3, label: t("settings.usage.title") },
       { id: "sidecars", icon: Globe, label: t("settings.nav.sidecars") },
@@ -99,6 +101,8 @@ export const SettingsScreen: Component<SettingsScreenProps> = (props) => {
         return <OpenCodeSettingsSection />
       case "providers":
         return <ProvidersSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
+      case "preview":
+        return <PreviewSettingsSection />
       case "missions":
         return <MissionsSettingsSection instanceId={props.providerContext?.instanceId} location={props.providerContext?.location} />
       case "usage":

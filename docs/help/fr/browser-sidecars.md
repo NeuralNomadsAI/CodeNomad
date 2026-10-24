@@ -6,9 +6,31 @@
 2. Saisissez une **URL de l'aperçu** `http://` ou `https://` sans identifiants, puis choisissez **Ouvrir l'aperçu**. Utilisez la barre d’outils pour naviguer, actualiser et aller en arrière/en avant.
 3. Utilisez le bouton de fermeture de l’aperçu pour revenir au chat. Rouvrez-le dans cette conversation pour poursuivre.
 
+Cliquer sur un lien `localhost` ou `127.0.0.1` dans une conversation l’ouvre automatiquement dans l’aperçu de cette session, sur tout client : le serveur sert de proxy aux aperçus loopback, ils fonctionnent donc aussi depuis un navigateur simple sur une autre machine. Les aperçus loopback passés par le proxy suivent **Paramètres → Aperçu** ; le mode opaque par défaut les isole de CodeNomad. Les liens externes continuent de s’ouvrir dans un nouvel onglet du navigateur.
+
 Chaque aperçu appartient à son dossier de projet et sa session. Changer de conversation, projet, Info ou chat masque un invité natif explicitement ouvert sans abandonner son document/historique actif. Les invités masqués ne sont pas des cibles d’automatisation. Fermer le projet/la fenêtre ou redémarrer le moteur de rendu termine le document actif.
 
 L’historique enregistré se restaure seulement à la réouverture explicite du navigateur de cette session, pas au démarrage/à la sélection de session. Il stocke des URL et un curseur, pas les formulaires non envoyés, le DOM, les corps POST ou la mémoire JavaScript. L’historique est borné à 32 URL par session et à un budget de disposition partagé ; les anciennes entrées peuvent être retirées. Restaurer une URL peut recharger la page ; ce n’est pas un rejeu de transaction.
+
+## Origines et autorisations des aperçus {#preview-origins}
+
+Les aperçus restent dans la conversation ; CodeNomad n’ouvre pas de fenêtre d’aperçu séparée. **Paramètres → Aperçu** définit une politique pour l’ensemble du serveur CodeNomad. Elle s’applique aux aperçus des vues navigateur et distante. Tauri sous macOS et Linux utilise une iframe : elle conserve une origine isolée par jeton lorsque la fenêtre locale est servie via loopback, sinon elle utilise l’origine de chemin sélectionnée, et elle suit ces interrupteurs. Les vues web natives Electron et Tauri sous Windows conservent leur propre comportement d’autorisation, de téléchargement et de fenêtres surgissantes.
+
+| Mode d’origine | Effet |
+| --- | --- |
+| Opaque (recommandé) | Aucun aperçu ne partage d’origine avec CodeNomad ou un autre aperçu. Le stockage, les cookies, les service workers et les API de navigateur liées à l’origine sont indisponibles ; certaines applications web peuvent donc ne pas fonctionner. |
+| Même origine que CodeNomad | Les aperçus loopback s’exécutent sur l’origine CodeNomad ; les aperçus externes restent opaques. |
+| Origine d’aperçu dédiée | Les aperçus loopback s’exécutent sur l’origine que vous configurez ; les aperçus externes restent opaques. |
+
+**Même origine que CodeNomad signifie une confiance totale.** Le code de l’aperçu peut lire et modifier le stockage, la transcription et le DOM de CodeNomad, appeler des API de l’application avec votre session et enregistrer des service workers qui persistent après la fermeture de l’aperçu. Ne l’utilisez que sur un serveur que vous contrôlez et auquel vous faites confiance, jamais sur un serveur partagé ou distant. CodeNomad demande une confirmation avant de l’activer.
+
+Pour **Origine d’aperçu dédiée**, utilisez un nom d’hôte distinct de toutes les origines servant CodeNomad et acheminez `/previews/*`, y compris les mises à niveau WebSocket, vers le même serveur. Conservez l’en-tête `Host`, les en-têtes de réponse et la politique de sécurité du contenu injectée, et servez l’origine en TLS pour les API de contexte sécurisé. CodeNomad ne peut pas vérifier que l’origine est joignable ; une route défaillante fait échouer les aperçus. Les Workers et service workers relatifs à la racine qui contournent l’espace de noms réécrit `/previews/<token>/...` ne sont pas pris en charge sur une origine dédiée. C’est un autre nom d’hôte, et non un autre port, qui sépare les cookies.
+
+CodeNomad sépare les cookies propres d’une origine d’aperçu dédiée de celles de l’origine CodeNomad. Si l’origine d’aperçu est un sous-domaine frère, elle reste de même site : le navigateur envoie donc le cookie de session `SameSite=Lax` de CodeNomad avec les requêtes vers CodeNomad ; CodeNomad refuse les requêtes d’API de l’application (`/api/`, `/workspaces/`, `/sidecars/`) qui portent cette origine dans `Origin` ou `Referer`. Utilisez un autre site lorsqu’une isolation stricte des cookies est requise.
+
+Les interrupteurs **Bac à sable** autorisent les formulaires, les boîtes de dialogue modales, les fenêtres surgissantes et les téléchargements dans les aperçus iframe ; les scripts sont toujours requis. Ceux des **Fonctionnalités du navigateur** permettent seulement à un aperçu de demander la caméra, le microphone, la lecture/écriture du presse-papiers, la géolocalisation ou le plein écran. Le navigateur demande toujours l’autorisation, et les paramètres de site du navigateur restent l’autorité finale : un interrupteur CodeNomad ne peut pas contourner un blocage du navigateur, et une autorisation du navigateur ne peut pas rétablir une fonctionnalité désactivée. Les vues web natives Electron et Tauri sous Windows ne suivent pas ces interrupteurs iframe.
+
+Modifier le mode d’origine, l’origine dédiée, le bac à sable ou la politique de fonctionnalités recharge un aperçu ouvert, afin qu’un document plus fiable ne reste pas actif après une réduction de confiance.
 
 ## Connexions partagées et limites d’automatisation {#signins-automation}
 

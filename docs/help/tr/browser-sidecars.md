@@ -6,9 +6,31 @@
 2. Kimlik bilgisi içermeyen bir `http://` veya `https://` **Önizleme URL'si** girin, ardından **Önizlemeyi aç** öğesini seçin. Gezinmek, yenilemek ve Geri/İleri gitmek için araç çubuğunu kullanın.
 3. Sohbete geri dönmek için önizlemenin kapat düğmesini kullanın. Devam etmek için bu görüşmede tekrar açın.
 
+Bir görüşmedeki `localhost` veya `127.0.0.1` bağlantısına tıklamak, her istemcide o oturumun önizlemesinde otomatik olarak açar: sunucu loopback önizlemelerini proxy'den geçirir, bu yüzden başka bir makinedeki sıradan bir tarayıcıdan da çalışır. Proxy'den geçen loopback önizlemeleri **Ayarlar → Önizleme** ayarına uyar; varsayılan opak mod bunları CodeNomad'dan yalıtır. Harici bağlantılar yeni bir tarayıcı sekmesinde açılmaya devam eder.
+
 Her önizleme kendi proje klasörüne ve oturumuna aittir. Konuşma, proje, Bilgi veya sohbet arasında geçiş yapmak, açıkça açılmış native tarayıcıyı canlı belgesini/geçmişini atmadan gizler. Gizli tarayıcılar otomasyon hedefi değildir. Projeyi/pencereyi kapatmak veya arayüzü yeniden başlatmak canlı belgeyi sonlandırır.
 
 Kaydedilen geçmiş, başlangıç/oturum seçiminde değil, yalnızca o oturumun tarayıcısını açıkça yeniden açtığınızda geri yüklenir. Gönderilmemiş formları, DOM, POST gövdelerini veya JavaScript belleğini değil, URL'leri ve imleci saklar. Geçmiş, oturum başına 32 URL ve paylaşılan düzen bütçesiyle sınırlıdır; eski girişler kırpılabilir. Bir URL'nin geri yüklenmesi yeni bir sayfa yüklemesi gerçekleştirebilir; işlem tekrarı değildir.
+
+## Önizleme origin'leri ve izinleri {#preview-origins}
+
+Önizlemeler görüşmenin içinde kalır; CodeNomad ayrı bir önizleme penceresi açmaz. **Ayarlar → Önizleme** tüm CodeNomad sunucusu için tek bir politika belirler. Bu politika tarayıcı ve uzak görünümlerdeki önizlemelere uygulanır. macOS ve Linux'ta Tauri bir iframe kullanır: yerel pencere loopback üzerinden sunulduğunda token başına yalıtılmış bir origin kullanır, aksi halde seçilen yol origin'ini kullanır ve bu anahtarlara uyar. Electron ve Windows Tauri yerel webview'ları kendi izin, indirme ve açılır pencere davranışlarını korur.
+
+| Origin modu | Etkisi |
+| --- | --- |
+| Opak (önerilir) | Hiçbir önizleme CodeNomad veya başka bir önizlemeyle origin paylaşmaz. Depolama, çerezler, service worker'lar ve origin'e bağlı tarayıcı API'leri kullanılamaz; bu nedenle bazı web uygulamaları çalışmayabilir. |
+| CodeNomad ile aynı origin | Loopback önizlemeleri CodeNomad origin'inde çalışır; harici önizlemeler opak kalır. |
+| Ayrılmış önizleme origin'i | Loopback önizlemeleri yapılandırdığınız origin'de çalışır; harici önizlemeler opak kalır. |
+
+**CodeNomad ile aynı origin tam güven demektir.** Önizleme kodu CodeNomad depolamasını, transkriptini ve DOM'unu okuyup değiştirebilir, oturumunuzla uygulama API'lerini çağırabilir ve önizleme kapandıktan sonra da kalan service worker'lar kaydedebilir. Bunu yalnızca kontrol ettiğiniz ve güvendiğiniz bir sunucuda, asla paylaşılan veya uzak bir sunucuda kullanmayın. CodeNomad etkinleştirmeden önce onay ister.
+
+**Ayrılmış önizleme origin'i** için CodeNomad'ın sunulduğu tüm origin'lerden farklı bir ana bilgisayar adı kullanın ve `/previews/*` ile WebSocket yükseltmelerini aynı sunucuya yönlendirin. `Host` başlığını, yanıt başlıklarını ve enjekte edilen içerik güvenliği politikasını koruyun; güvenli bağlam API'leri için origin'i TLS üzerinden sunun. CodeNomad origin'e ulaşılıp ulaşılamadığını test edemez; bozuk bir yol önizlemeleri başarısız kılar. Yeniden yazılmış `/previews/<token>/...` ad alanını atlayan kök göreli Worker'lar ve service worker'lar ayrılmış bir origin'de desteklenmez. Çerezleri ayıran şey başka bir port değil, başka bir ana bilgisayar adıdır.
+
+CodeNomad, ayrılmış önizleme origin'inin kendi çerezlerini CodeNomad origin'inden ayrı tutar. Önizleme origin'i kardeş bir alt alan adıysa yine aynı site olur; bu nedenle tarayıcı CodeNomad'a yapılan isteklerle `SameSite=Lax` CodeNomad oturum çerezini gönderir. CodeNomad, `Origin` veya `Referer` içinde bu origin'i taşıyan uygulama API isteklerini (`/api/`, `/workspaces/`, `/sidecars/`) reddeder. Katı çerez yalıtımı gerekiyorsa farklı bir site kullanın.
+
+**Sandbox** anahtarları iframe önizlemelerinde formlara, modal iletişim kutularına, açılır pencerelere ve indirmelere izin verir; betikler her zaman gereklidir. **Tarayıcı özellikleri** anahtarları yalnızca önizlemenin kamera, mikrofon, pano okuma/yazma, konum veya tam ekran istemesine izin verir. Tarayıcı yine de izin ister ve tarayıcı site ayarları nihai yetki olarak kalır: bir CodeNomad anahtarı tarayıcı engelini aşamaz ve tarayıcı izni devre dışı bir özelliği geri getiremez. Electron ve Windows Tauri yerel webview'ları bu iframe anahtarlarına uymaz.
+
+Origin modunu, ayrılmış origin'i, sandbox'ı veya özellik politikasını değiştirmek açık bir önizlemeyi yeniden yükler; böylece güven azaltıldıktan sonra daha güvenilir bir belge açık kalmaz.
 
 ## Paylaşılan oturum açma işlemleri ve otomasyon sınırları {#signins-automation}
 

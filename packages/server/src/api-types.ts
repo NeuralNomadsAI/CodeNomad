@@ -556,6 +556,31 @@ export interface SideCar {
   updatedAt: string
 }
 
+export type PreviewOriginMode = "opaque" | "app" | "custom"
+
+export interface PreviewSandboxSettings {
+  forms: boolean
+  modals: boolean
+  popups: boolean
+  downloads: boolean
+}
+
+export interface PreviewFeatureSettings {
+  camera: boolean
+  microphone: boolean
+  clipboardRead: boolean
+  clipboardWrite: boolean
+  geolocation: boolean
+  fullscreen: boolean
+}
+
+export interface PreviewSettings {
+  originMode: PreviewOriginMode
+  customOrigin: string
+  sandbox: PreviewSandboxSettings
+  features: PreviewFeatureSettings
+}
+
 export interface PreviewSession {
   token: string
   sessionId: string
