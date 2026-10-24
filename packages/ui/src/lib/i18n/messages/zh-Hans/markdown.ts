@@ -6,4 +6,6 @@ export const markdownMessages = {
   "markdown.codeBlock.wrap.disable": "禁用自动换行",
 
   "markdown.copy": "复制",
+
+  "markdown.link.previewOpens": "在网页预览中打开。Ctrl+点击（macOS 上为 ⌘+点击）或鼠标中键点击可在浏览器中打开。",
 } as const

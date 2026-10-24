@@ -18,11 +18,27 @@ export function getBrowserFramePolicy(
   }
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "0.0.0.0" || hostname === "[::1]" || /^127(?:\.|$)/.test(hostname)
+}
+
 export function isLoopbackPreviewUrl(rawUrl: string): boolean {
   try {
     const target = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `http://${rawUrl}`)
-    const hostname = target.hostname.toLowerCase()
-    return hostname === "localhost" || hostname === "0.0.0.0" || hostname === "[::1]" || /^127(?:\.|$)/.test(hostname)
+    return isLoopbackHostname(target.hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+/** Strict anchor-href check for conversation links: only an explicit http(s)
+ * URL on a loopback host is routed through the session preview. Anything
+ * else (relative, schemed non-loopback, bare hostnames) keeps default link
+ * behavior. */
+export function isLoopbackHttpUrl(rawUrl: string): boolean {
+  if (!/^https?:\/\//i.test(rawUrl)) return false
+  try {
+    return isLoopbackHostname(new URL(rawUrl).hostname.toLowerCase())
   } catch {
     return false
   }
