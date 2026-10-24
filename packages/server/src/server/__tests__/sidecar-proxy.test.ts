@@ -232,6 +232,25 @@ it("preview WebSocket capabilities keep working through the shared transport wit
   } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
 })
 
+it("preview HTTP requests never forward the app's cookies to the previewed site", async () => {
+  const server = await startServer({ cookies: ["codenomad_session=poison; Path=/", "preview_cookie=value; Path=/"] })
+  try {
+    const cookie = `${server.cookie}; service_login=secret`
+    const token = server.preview.token
+    // The path proxy, the per-token capability host and the session's root-relative asset fallback.
+    for (const request of [
+      { url: `/previews/${token}/page`, headers: { cookie } },
+      { url: "/page", headers: { cookie, host: `${token}.preview.localhost` } },
+      { url: "/assets/app.js", headers: { cookie, referer: `${server.origin}/previews/${token}/page` } },
+    ]) {
+      const response = await server.app.inject({ method: "GET", ...request })
+      assert.equal(response.statusCode, 200, request.url)
+      assert.equal(response.headers["set-cookie"], undefined, request.url)
+    }
+    assert.deepEqual(server.requests.map(request => request.cookie), [undefined, undefined, undefined])
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
 it("opaque-origin frames cannot reach SideCar routes while same-origin frames can", async () => {
   const server = await startServer()
   try {

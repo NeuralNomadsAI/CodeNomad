@@ -2105,6 +2105,9 @@ async function proxyPreviewTargetRequest(args: {
     rewriteRequestHeaders: (_originalRequest, headers) => {
       const next = sanitizeSideCarProxyRequestHeaders(headers as Record<string, string | string[] | undefined>, args.targetOrigin)
       delete next["accept-encoding"]
+      // Like preview upgrades, forward no cookies: a frame's document request
+      // carries the app's own (CodeNomad session, SideCar service cookies).
+      delete next.cookie
       return next
     },
     rewriteHeaders: (headers) => {
