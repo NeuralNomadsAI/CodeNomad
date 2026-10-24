@@ -53,7 +53,7 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   tunnel `Host` and the public `Origin` on mutations, and strips forwarding
   headers. It accepts origin-form targets only (no absolute-form, leading `//`
   or fragment, which the router would reinterpret) and judges the path the
-  router routes: percent-decoded and cut at `;`. It denies host-only paths: login and token
+  router routes (`server/routed-path.ts`). It denies host-only paths: login and token
   bootstrap, Remote Control management, remote windows/proxy, SideCars,
   previews and the automation bridge. Static UI bundle files stay public, as
   on local listeners, because browsers fetch the PWA manifest without cookies.
