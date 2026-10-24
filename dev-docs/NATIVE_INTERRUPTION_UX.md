@@ -32,8 +32,10 @@ whole instead of clipping controls, and field scrolling can chain into it.
 - Only the dock submits replies; transcript tools never register permission
   shortcuts, render response forms or keep interruption reveal state.
 - Replies/cancellations go through the native stores, with their mutation error
-  handling, pending-request reconciliation and global location headers. A failed
-  request remains editable. Never replay a mutation automatically.
+  handling, pending-request reconciliation and global location headers. A global
+  Form keeps the location of its live event or recovery snapshot, which those
+  headers address. A failed request remains editable. Never replay a mutation
+  automatically.
 - Large permission diffs use bounded source access and the usual approval rules. Request/diff identity fences late clipboard completions.
 
 ## Transcript history

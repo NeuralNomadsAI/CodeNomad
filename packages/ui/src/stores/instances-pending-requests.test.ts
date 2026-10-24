@@ -9,7 +9,7 @@ import { sdkManager } from "../lib/sdk-manager"
 import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, invalidatePendingRequestSync,
   addPermissionToQueue, getPermissionQueue, markPermissionReplied,
-  addPendingForm, sendFormReply,
+  addPendingForm, sendFormReply, sendFormCancel,
   incompletePendingRecovery, clearReloadableInstanceState,
 } from "./instances"
 import { getFormQueue, type FormWithLocation } from "./forms"
@@ -663,6 +663,32 @@ test("real SSE background permissions and Forms use cold native authority, not W
       } finally { h.cleanup() }
     }
   } finally { sdkManager.createClient = originalClient }
+})
+
+test("a live global Form keeps its event location, so replies and cancellations reach that location", async () => {
+  const h = harness()
+  const originalClient = sdkManager.createClient
+  const sent: { input: unknown; options?: { headers?: Record<string, string> } }[] = []
+  try {
+    const record = async (input: unknown, options?: { headers?: Record<string, string> }) => { sent.push({ input, options }) }
+    sdkManager.createClient = () => ({ ...h.client, session: { form: { reply: record, cancel: record } } }) as unknown as OpenCodeClient
+    // An MCP elicitation in a worktree: only the event knows where the Form lives.
+    const worktree = `${h.directory}/worktree`
+    for (const id of ["elicitation-reply", "elicitation-cancel"]) {
+      sseManager["handleEvent"](h.id, { id: `event-${id}`, created: Date.now(), type: "form.created", location: { directory: worktree }, data: { form: form(id) } })
+    }
+    assert.deepEqual(getFormQueue(h.id).map((entry) => entry.location?.directory), [worktree, worktree])
+    await sendFormReply(h.id, "elicitation-reply", { answer: "stable" })
+    await sendFormCancel(h.id, "elicitation-cancel")
+    assert.deepEqual(sent.map((call) => call.input), [
+      { sessionID: "global", formID: "elicitation-reply", answer: { answer: "stable" } },
+      { sessionID: "global", formID: "elicitation-cancel" },
+    ])
+    assert.deepEqual(sent.map((call) => call.options?.headers?.["x-opencode-directory"]), [encodeURIComponent(worktree), encodeURIComponent(worktree)])
+  } finally {
+    sdkManager.createClient = originalClient
+    h.cleanup()
+  }
 })
 
 test("long escaped directory candidates are batched below the GET query budget without dropping candidates", async () => {
