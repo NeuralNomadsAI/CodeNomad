@@ -6,6 +6,8 @@
 2. Introduce una **URL de vista previa** `http://` o `https://` sin credenciales y elige **Abrir vista previa**. Usa la barra de herramientas para navegar, actualizar e ir Atrás/Adelante.
 3. Usa el botón de cierre de la vista previa para volver al chat. Ábrela de nuevo en esa conversación para continuar.
 
+Pulsar un enlace `localhost` o `127.0.0.1` en una conversación lo abre automáticamente en la vista previa de esa sesión, en cualquier cliente: el servidor usa un proxy para las vistas previas de loopback, por lo que también funcionan desde un navegador normal en otra máquina. Las vistas previas de loopback con proxy se ejecutan same-origin con la app; los enlaces externos siguen abriéndose en una pestaña nueva del navegador.
+
 Cada vista previa pertenece a su carpeta de proyecto y sesión. Cambiar de conversación, proyecto, Info o chat oculta un navegador invitado nativo abierto explícitamente sin descartar su documento/historial activo. Los navegadores invitados ocultos no son objetivos de automatización. Cerrar el proyecto/ventana o reiniciar el renderer termina el documento activo.
 
 El historial guardado solo se restaura cuando vuelves a abrir explícitamente el navegador de esa sesión, no al iniciar/seleccionar una sesión. Guarda URL y un cursor, no formularios sin enviar, DOM, cuerpos POST ni memoria JavaScript. El historial se limita a 32 URL por sesión y a un presupuesto compartido de disposición; pueden recortarse las entradas antiguas. Restaurar una URL puede realizar una carga nueva de página; no es una repetición de transacciones.

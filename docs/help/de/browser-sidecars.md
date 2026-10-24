@@ -6,6 +6,8 @@
 2. Geben Sie eine `http://`- oder `https://`-**Vorschau-URL** ohne Zugangsdaten ein und wählen Sie dann **Vorschau öffnen**. Verwenden Sie die Symbolleiste für Navigation, Aktualisieren sowie Zurück/Vorwärts.
 3. Verwenden Sie die Schließen-Schaltfläche der Vorschau, um zum Chat zurückzukehren. Öffnen Sie sie in dieser Unterhaltung zum Fortsetzen erneut.
 
+Ein Klick auf einen `localhost`- oder `127.0.0.1`-Link in einer Unterhaltung öffnet ihn auf jedem Client automatisch in der Vorschau dieser Sitzung: der Server leitet Loopback-Vorschauen weiter, sodass sie auch aus einem gewöhnlichen Browser auf einem anderen Rechner funktionieren. Weitergeleitete Loopback-Vorschauen laufen same-origin mit der App; externe Links werden weiterhin in einem neuen Browser-Tab geöffnet.
+
 Jede Vorschau gehört zu ihrem Projektordner und ihrer Sitzung. Wechsel von Unterhaltung, Projekt, Info oder Chat verbirgt einen ausdrücklich geöffneten nativen Gast, ohne dessen aktives Dokument/Verlauf zu verwerfen. Verborgene Gäste sind keine Automatisierungsziele. Projekt-/Fensterschließen oder Renderer-Neustart beendet das aktive Dokument.
 
 Gespeicherter Verlauf wird nur wiederhergestellt, wenn Sie den Sitzungsbrowser ausdrücklich erneut öffnen, nicht beim Start/bei Sitzungsauswahl. Er speichert URLs und einen Zeiger, keine ungesendeten Formulare, DOM, POST-Inhalte oder JavaScript-Speicher. Verlauf ist auf 32 URLs pro Sitzung und ein gemeinsames Layoutbudget begrenzt; ältere Einträge können gekürzt werden. URL-Wiederherstellung kann eine frische Seite laden; sie ist keine Transaktionswiederholung.

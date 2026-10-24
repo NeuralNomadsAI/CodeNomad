@@ -6,6 +6,8 @@
 2. Kimlik bilgisi içermeyen bir `http://` veya `https://` **Önizleme URL'si** girin, ardından **Önizlemeyi aç** öğesini seçin. Gezinmek, yenilemek ve Geri/İleri gitmek için araç çubuğunu kullanın.
 3. Sohbete geri dönmek için önizlemenin kapat düğmesini kullanın. Devam etmek için bu görüşmede tekrar açın.
 
+Bir görüşmedeki `localhost` veya `127.0.0.1` bağlantısına tıklamak, her istemcide o oturumun önizlemesinde otomatik olarak açar: sunucu loopback önizlemelerini proxy'den geçirir, bu yüzden başka bir makinedeki sıradan bir tarayıcıdan da çalışır. Proxy'den geçen loopback önizlemeleri uygulamayla same-origin çalışır; harici bağlantılar yeni bir tarayıcı sekmesinde açılmaya devam eder.
+
 Her önizleme kendi proje klasörüne ve oturumuna aittir. Konuşma, proje, Bilgi veya sohbet arasında geçiş yapmak, açıkça açılmış native tarayıcıyı canlı belgesini/geçmişini atmadan gizler. Gizli tarayıcılar otomasyon hedefi değildir. Projeyi/pencereyi kapatmak veya arayüzü yeniden başlatmak canlı belgeyi sonlandırır.
 
 Kaydedilen geçmiş, başlangıç/oturum seçiminde değil, yalnızca o oturumun tarayıcısını açıkça yeniden açtığınızda geri yüklenir. Gönderilmemiş formları, DOM, POST gövdelerini veya JavaScript belleğini değil, URL'leri ve imleci saklar. Geçmiş, oturum başına 32 URL ve paylaşılan düzen bütçesiyle sınırlıdır; eski girişler kırpılabilir. Bir URL'nin geri yüklenmesi yeni bir sayfa yüklemesi gerçekleştirebilir; işlem tekrarı değildir.

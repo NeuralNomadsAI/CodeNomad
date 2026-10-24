@@ -6,6 +6,8 @@
 2. Saisissez une **URL de l'aperçu** `http://` ou `https://` sans identifiants, puis choisissez **Ouvrir l'aperçu**. Utilisez la barre d’outils pour naviguer, actualiser et aller en arrière/en avant.
 3. Utilisez le bouton de fermeture de l’aperçu pour revenir au chat. Rouvrez-le dans cette conversation pour poursuivre.
 
+Cliquer sur un lien `localhost` ou `127.0.0.1` dans une conversation l’ouvre automatiquement dans l’aperçu de cette session, sur tout client : le serveur sert de proxy aux aperçus loopback, ils fonctionnent donc aussi depuis un navigateur simple sur une autre machine. Les aperçus loopback passés par le proxy tournent en same-origin avec l’application ; les liens externes continuent de s’ouvrir dans un nouvel onglet du navigateur.
+
 Chaque aperçu appartient à son dossier de projet et sa session. Changer de conversation, projet, Info ou chat masque un invité natif explicitement ouvert sans abandonner son document/historique actif. Les invités masqués ne sont pas des cibles d’automatisation. Fermer le projet/la fenêtre ou redémarrer le moteur de rendu termine le document actif.
 
 L’historique enregistré se restaure seulement à la réouverture explicite du navigateur de cette session, pas au démarrage/à la sélection de session. Il stocke des URL et un curseur, pas les formulaires non envoyés, le DOM, les corps POST ou la mémoire JavaScript. L’historique est borné à 32 URL par session et à un budget de disposition partagé ; les anciennes entrées peuvent être retirées. Restaurer une URL peut recharger la page ; ce n’est pas un rejeu de transaction.
