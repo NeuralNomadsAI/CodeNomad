@@ -1,9 +1,16 @@
-import { createSignal, type Component } from "solid-js"
+import { Show, createMemo, createSignal, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
-import { getPreviewFrameSource, isLoopbackPreviewUrl } from "./browser-frame-security"
+import {
+  getPreviewFrameSource,
+  getPreviewMessageOrigin,
+  isCapabilityPreviewFrame,
+  isTrustedPreviewSameOrigin,
+  previewAllowAttribute,
+  previewSandboxFlags,
+} from "./browser-frame-security"
 import { useConfig } from "../stores/preferences"
 import { runtimeEnv } from "../lib/runtime-env"
 
@@ -43,8 +50,26 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
     })
   }
 
+  const previewSettings = () => config.serverSettings().preview
   const frameSource = (preview: SessionPreviewRecord = props.preview) =>
-    getPreviewFrameSource(runtimeEnv, preview, window.location.href, config.serverSettings().preview)
+    getPreviewFrameSource(runtimeEnv, preview, window.location.href, previewSettings())
+  const trustedSameOrigin = (preview: SessionPreviewRecord = props.preview) =>
+    isCapabilityPreviewFrame(runtimeEnv, frameSource(preview))
+    || isTrustedPreviewSameOrigin(preview.targetUrl, previewSettings())
+  const sandboxFlags = createMemo(() => previewSandboxFlags(previewSettings().sandbox))
+  const allow = createMemo(() => previewAllowAttribute(previewSettings().features))
+  const expectedMessageOrigin = createMemo(() =>
+    getPreviewMessageOrigin(runtimeEnv, frameSource(), props.preview.targetUrl, previewSettings(), window.location.origin))
+  // Remount the frame whenever its policy changes: lowering the trust tier must
+  // not leave a live same-origin document behind. Only the derived trust tier
+  // is part of the key, so ordinary in-page navigation does not reload it.
+  const policyKey = createMemo(() => JSON.stringify([
+    previewSettings().originMode,
+    previewSettings().customOrigin,
+    sandboxFlags(),
+    allow(),
+    trustedSameOrigin(),
+  ]))
 
   async function handleCommentTarget(elementTarget: BrowserFrameElementTarget) {
     const comment = await showPromptDialog(t("sessionPreview.comment.prompt"), {
@@ -60,47 +85,55 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
 
   return (
     <div class="window-shell flex flex-1 min-h-0 flex-col bg-surface-canvas" style={{ display: props.active === false ? "none" : "flex" }} inert={props.active === false} aria-hidden={props.active === false}>
-      <BrowserFrame
-        active={props.active}
-        onClose={() => showSessionChat(props.preview.storageKey)}
-        sessionId={props.preview.sessionId}
-        title={t("sessionPreview.title")}
-        initialUrl={frameSource()}
-        initialAddress={props.preview.targetUrl}
-        initialHistory={props.preview.history}
-        onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
-        onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
-        proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
-        addressMode="url"
-        trustedSameOrigin={isLoopbackPreviewUrl(props.preview.targetUrl)}
-        onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder))}
-        onNavigationError={showNavigationError}
-        onFrameLocation={(path) => {
-          const target = new URL(path, props.preview.targetUrl)
-          updateSessionPreviewLocation(props.preview.storageKey, target.href)
-          return target.href
-        }}
-        commentBridge
-        labels={{
-          back: t("sidecars.back"),
-          forward: t("sessionPreview.forward"),
-          refresh: t("sidecars.refresh"),
-          path: t("sessionPreview.open.label"),
-          invalidUrl: t("sessionPreview.open.invalidUrl"),
-          go: t("sidecars.go"),
-          viewport: t("browserFrame.viewport"),
-          viewportResponsive: t("browserFrame.viewport.responsive"),
-          viewportDesktop: t("browserFrame.viewport.desktop"),
-          viewportTablet: t("browserFrame.viewport.tablet"),
-          viewportTabletLandscape: t("browserFrame.viewport.tabletLandscape"),
-          viewportMobile: t("browserFrame.viewport.mobile"),
-          viewportMobileLandscape: t("browserFrame.viewport.mobileLandscape"),
-          commentMode: t("sessionPreview.comment.mode"),
-        }}
-        commentMode={commentMode()}
-        onToggleCommentMode={() => setCommentMode((value) => !value)}
-        onCommentTarget={(target) => void handleCommentTarget(target)}
-      />
+      <Show when={policyKey()} keyed>
+        {(_policyKey) => (
+          <BrowserFrame
+            active={props.active}
+            onClose={() => showSessionChat(props.preview.storageKey)}
+            sessionId={props.preview.sessionId}
+            title={t("sessionPreview.title")}
+            initialUrl={frameSource()}
+            initialAddress={props.preview.targetUrl}
+            initialHistory={props.preview.history}
+            onHistoryChange={(history) => updateSessionPreviewHistory(props.preview.storageKey, history)}
+            onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
+            proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
+            addressMode="url"
+            trustedSameOrigin={trustedSameOrigin()}
+            sandboxFlags={sandboxFlags()}
+            allow={allow()}
+            expectedMessageOrigin={expectedMessageOrigin()}
+            policyKey={policyKey()}
+            onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder))}
+            onNavigationError={showNavigationError}
+            onFrameLocation={(path) => {
+              const target = new URL(path, props.preview.targetUrl)
+              updateSessionPreviewLocation(props.preview.storageKey, target.href)
+              return target.href
+            }}
+            commentBridge
+            labels={{
+              back: t("sidecars.back"),
+              forward: t("sessionPreview.forward"),
+              refresh: t("sidecars.refresh"),
+              path: t("sessionPreview.open.label"),
+              invalidUrl: t("sessionPreview.open.invalidUrl"),
+              go: t("sidecars.go"),
+              viewport: t("browserFrame.viewport"),
+              viewportResponsive: t("browserFrame.viewport.responsive"),
+              viewportDesktop: t("browserFrame.viewport.desktop"),
+              viewportTablet: t("browserFrame.viewport.tablet"),
+              viewportTabletLandscape: t("browserFrame.viewport.tabletLandscape"),
+              viewportMobile: t("browserFrame.viewport.mobile"),
+              viewportMobileLandscape: t("browserFrame.viewport.mobileLandscape"),
+              commentMode: t("sessionPreview.comment.mode"),
+            }}
+            commentMode={commentMode()}
+            onToggleCommentMode={() => setCommentMode((value) => !value)}
+            onCommentTarget={(target) => void handleCommentTarget(target)}
+          />
+        )}
+      </Show>
     </div>
   )
 }
