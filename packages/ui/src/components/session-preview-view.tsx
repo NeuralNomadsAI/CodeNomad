@@ -3,7 +3,7 @@ import { useI18n } from "../lib/i18n"
 import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
-import { getPreviewFrameSource } from "./browser-frame-security"
+import { getPreviewFrameSource, isLoopbackPreviewUrl } from "./browser-frame-security"
 import { runtimeEnv } from "../lib/runtime-env"
 
 interface SessionPreviewViewProps {
@@ -70,6 +70,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
         onCancelNavigation={() => cancelSessionPreviewNavigation(props.preview.storageKey)}
         proxyBasePath={`/previews/${encodeURIComponent(props.preview.token)}`}
         addressMode="url"
+        trustedSameOrigin={isLoopbackPreviewUrl(props.preview.targetUrl)}
         onNavigate={async (address) => frameSource(await openSessionPreview(props.preview.sessionId, address, props.preview.instanceFolder))}
         onNavigationError={showNavigationError}
         onFrameLocation={(path) => {

@@ -202,8 +202,8 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
     }
   }
 
-  const framePolicy = getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin })
-  const canComment = createMemo(() => !nativeMode() && (framePolicy.canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
+  const framePolicy = createMemo(() => getBrowserFramePolicy(runtimeEnv, { trustedSameOrigin: props.trustedSameOrigin }))
+  const canComment = createMemo(() => !nativeMode() && (framePolicy().canInspectDom || props.commentBridge) && Boolean(props.onToggleCommentMode && props.onCommentTarget))
   const viewport = createMemo(() => VIEWPORT_PRESETS[viewportPreset()])
   const isResponsiveViewport = createMemo(() => viewportPreset() === "responsive")
   const selectedViewportOption = createMemo(() => VIEWPORT_OPTIONS.find((option) => option.id === viewportPreset()) ?? VIEWPORT_OPTIONS[0])
@@ -318,7 +318,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
 
     if (!iframeRef?.contentWindow || !frameWrapRef) return
     const frameWindow = iframeRef.contentWindow
-    if (props.commentBridge && !framePolicy.canInspectDom) {
+    if (props.commentBridge && !framePolicy().canInspectDom) {
       frameWindow.postMessage({ type: "codenomad-preview-comment-mode", enabled: Boolean(props.commentMode) }, "*")
       const handleMessage = (event: MessageEvent) => {
         if (event.source !== frameWindow || event.origin !== "null") return
@@ -351,7 +351,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       return
     }
     if (!props.commentMode) return
-    if (!framePolicy.canInspectDom || !iframeRef.contentDocument) return
+    if (!framePolicy().canInspectDom || !iframeRef.contentDocument) return
     const doc = iframeRef.contentDocument
 
     const handleMove = (event: MouseEvent) => {
@@ -959,7 +959,7 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
                 margin: viewport().width ? "0 auto" : "0",
               }}
               referrerPolicy="same-origin"
-              sandbox={framePolicy.sandbox}
+              sandbox={framePolicy().sandbox}
               onLoad={syncPathInputFromFrame}
             />
           </Show>
