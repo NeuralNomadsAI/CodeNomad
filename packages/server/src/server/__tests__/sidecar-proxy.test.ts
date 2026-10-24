@@ -10,7 +10,7 @@ import pino from "pino"
 import type { FastifyInstance } from "fastify"
 import type { SideCar } from "../../api-types"
 import { AuthManager } from "../../auth/manager"
-import { PreviewManager } from "../../previews/manager"
+import { PreviewManager, previewDocumentSandbox } from "../../previews/manager"
 import { createHttpServer } from "../http-server"
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -45,7 +45,7 @@ async function startSideCarUpstream(options: UpstreamOptions = {}) {
   const upstream = http.createServer((request, response) => {
     requests.push(request.headers)
     if (options.html) {
-      response.writeHead(200, { "content-type": "text/html" })
+      response.writeHead(200, { "content-type": "text/html", "content-security-policy": "default-src *" })
       response.end("<html><body>preview fixture</body></html>")
       return
     }
@@ -264,8 +264,23 @@ it("path-proxied loopback HTML previews load same-origin and never forward cooki
       headers: { origin: server.origin, cookie: `${server.cookie}; devkit_session=secret` },
     })
     assert.equal(response.statusCode, 200)
-    assert.match(String(response.headers["content-security-policy"]), /sandbox/)
-    assert.match(String(response.headers["content-security-policy"]), /allow-same-origin/)
+    // Exactly the injected tier policy: the target's own CSP is overridden.
+    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(true))
+    assert.equal(server.requests.at(-1)?.cookie, undefined)
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("referer fallback documents carry the same origin tier as their preview", async () => {
+  const server = await startServer({ html: true })
+  try {
+    const response = await server.app.inject({
+      url: "/fallback-document",
+      headers: { origin: server.origin, cookie: server.cookie, referer: `${server.origin}${server.preview.proxyUrl}` },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(true))
     assert.equal(server.requests.at(-1)?.cookie, undefined)
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })

@@ -68,7 +68,7 @@ import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import { sidecarRequestCookies, sidecarResponseCookies } from "../sidecars/proxy-cookies"
 import { proxyWebSocket } from "./proxy-websocket"
-import { isLoopbackHostname, previewDocumentSandbox, type PreviewManager } from "../previews/manager"
+import { previewDocumentSandboxForTarget, type PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
@@ -2046,7 +2046,7 @@ async function proxyPreviewRequest(args: {
 
   let documentSandbox: string | undefined
   if (args.enforceDocumentSandbox) {
-    documentSandbox = previewDocumentSandbox(isLoopbackHostname(new URL(preview.targetUrl).hostname))
+    documentSandbox = previewDocumentSandboxForTarget(preview.targetUrl)
   }
 
   args.logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying request to preview")
@@ -2080,6 +2080,7 @@ async function proxyPreviewAssetRequest(args: {
     args.reply.code(404).send({ error: "Preview not found" })
     return
   }
+  const preview = args.previewManager.get(args.token)
 
   args.logger.debug({ previewToken: args.token, targetUrl: targetUrl.toString() }, "Proxying preview fallback asset")
   await proxyPreviewTargetRequest({
@@ -2091,6 +2092,10 @@ async function proxyPreviewAssetRequest(args: {
     publicBase: args.previewManager.buildProxyBasePath(args.token),
     logContext: { previewToken: args.token, previewFallback: true },
     errorMessage: "Preview proxy failed",
+    // A fallback document is still served from the app origin: keep the
+    // origin tier enforced so an absolute-path link in a previewed page
+    // cannot deliver external HTML same-origin.
+    documentSandbox: preview ? previewDocumentSandboxForTarget(preview.targetUrl) : undefined,
     rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, args.token, targetUrl.origin),
   })
 }

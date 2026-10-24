@@ -24,6 +24,18 @@ export function previewDocumentSandbox(allowSameOrigin: boolean): string {
   return `sandbox ${allowSameOrigin ? `${flags} allow-same-origin` : flags}`
 }
 
+/** The response sandbox tier for a preview target URL: loopback targets share
+ * the app origin, every other target is forced to an opaque origin. */
+export function previewDocumentSandboxForTarget(targetUrl: string): string {
+  let hostname = ""
+  try {
+    hostname = new URL(targetUrl).hostname
+  } catch {
+    // Unknown targets stay in the untrusted tier.
+  }
+  return previewDocumentSandbox(isLoopbackHostname(hostname))
+}
+
 export class PreviewManager {
   private readonly previews = new Map<string, PreviewRecord>()
 

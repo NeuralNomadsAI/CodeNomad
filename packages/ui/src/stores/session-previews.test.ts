@@ -29,7 +29,8 @@ describe("session preview persistence", () => {
       await closeSessionPreview(storageKey)
     } finally { serverApi.createPreview = create; serverApi.deletePreview = remove }
   })
-  it("a pending browser open cannot steal a later mission reader gesture", async () => {    const create = serverApi.createPreview, remove = serverApi.deletePreview
+  it("a pending browser open cannot steal a later mission reader gesture", async () => {
+    const create = serverApi.createPreview, remove = serverApi.deletePreview
     let resolve!: (value: any) => void
     const deleted: string[] = []
     serverApi.createPreview = () => new Promise(yes => { resolve = yes })
