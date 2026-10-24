@@ -19,7 +19,7 @@ before(async () => {
       })
       s.middlewares.use("/previews/fixture-session-external", (_req: unknown, res: { setHeader(k: string, v: string): void; end(body: string): void }) => {
         res.setHeader("Content-Type", "text/html")
-        res.end("<html><body>External preview fixture</body></html>")
+        res.end('<html><body>External preview fixture<script>parent.postMessage({type:"codenomad-preview-location",path:"/bridge-location"},"*")</script></body></html>')
       })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, allowedHosts: ["insecure.test"], hmr: false, watch: null },
@@ -63,6 +63,11 @@ test("the default opaque policy keeps both preview frames out of the web origin"
 
     assert.equal(await frameSource(page, "#loopback-preview-root"), "/previews/fixture-session-loopback/")
     assert.equal(await frameSource(page, "#external-preview-root"), "/previews/fixture-session-external/")
+
+    // Opaque frames report "null", which is the expected origin for the
+    // default policy; their location bridge must keep the address in sync.
+    await page.waitForFunction(() =>
+      document.querySelector("#received-locations")?.getAttribute("data-external") === "https://example.com/bridge-location")
   } finally {
     await page.close()
   }
@@ -158,7 +163,10 @@ test("the location bridge accepts the expected origin and ignores foreign ones",
       "http://localhost:3000/bridge-location",
     )
 
-    // The external frame is opaque, so a message claiming the app origin is not expected.
+    // The external frame is opaque: its genuine "null"-origin post is accepted,
+    // but a message claiming the app origin is not expected.
+    await page.waitForFunction(() =>
+      document.querySelector("#received-locations")?.getAttribute("data-external") === "https://example.com/bridge-location")
     await page.evaluate(() => {
       const frame = document.querySelector("#external-preview-root iframe") as HTMLIFrameElement
       window.dispatchEvent(new MessageEvent("message", {
@@ -169,7 +177,7 @@ test("the location bridge accepts the expected origin and ignores foreign ones",
     })
     assert.equal(
       await page.locator("#received-locations").getAttribute("data-external"),
-      "https://example.com/",
+      "https://example.com/bridge-location",
     )
   } finally {
     await page.close()
