@@ -5,7 +5,7 @@ import { basename, dirname, join, posix, resolve, win32 } from "node:path"
 import { isPidAlive } from "./client-state-process"
 import { DEFAULT_PROFILE_KEY, parseProfileName, profileDisplayName, profileScope } from "./data-profile"
 import {
-  choiceKey, defaultProfileStateFiles, forgetChoices, rememberedChoice, rememberNextLaunch, scopeStateFile, selectionDirectory,
+  choiceKey, defaultProfileStateFiles, forgetChoices, rememberedKey, rememberNextLaunch, scopeStateFile, selectionDirectory,
   stateLastModified, type ForgetChoicesOutcome, type NextLaunchOutcome,
 } from "./profile-transition"
 
@@ -458,6 +458,14 @@ async function profileDates(candidate: Candidate, platform: NodeJS.Platform): Pr
   return { createdAt, lastUsedAt: stateLastModified(candidate.stateFiles) }
 }
 
+/** The remembered profile the next launch opens, checked as the launch checks it; null when it decides again. */
+function nextLaunchProfile(roots: ProfileRoots, current: CurrentProfile): string | null {
+  const key = rememberedKey(selectionDirectory(roots.electronBase), {
+    configIdentity: current.configIdentity, defaultIdentity: current.defaultIdentity, userDataBase: roots.electronBase,
+  })
+  return key === undefined ? null : profileDisplayName(key)
+}
+
 export async function listOtherProfiles(
   roots: ProfileRoots,
   current: CurrentProfile,
@@ -485,7 +493,7 @@ export async function listOtherProfiles(
   return {
     current: { name: profileDisplayName(current.key), sizeBytes: openSize.bytes, sizeComplete: openSize.complete, ...openDates },
     profiles,
-    nextLaunch: rememberedChoice(selectionDirectory(roots.electronBase), current.configIdentity),
+    nextLaunch: nextLaunchProfile(roots, current),
     pinned: current.pinned,
     sharedWebKitStorage: platform === "darwin",
   }

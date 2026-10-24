@@ -88,7 +88,7 @@ export interface OtherDataProfilesListing {
   current: CurrentDataProfile
   /** Every other profile on this machine. */
   profiles: OtherDataProfile[]
-  /** The profile the next launch opens as remembered for this configuration, or null when none is. */
+  /** The remembered profile the next launch of this configuration opens, or null when it decides again. */
   nextLaunch: string | null
   /** `CODENOMAD_PROFILE`, its alias or a development run decides every launch: a choice cannot apply. */
   pinned: boolean

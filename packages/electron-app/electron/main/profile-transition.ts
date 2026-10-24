@@ -213,14 +213,15 @@ export function rememberedChoice(directory: string, configIdentity: string): str
   return name === undefined ? null : profileDisplayName(parseProfileName(name))
 }
 
-function rememberedKey(directory: string, context: TransitionContext): string | undefined {
+/** The remembered profile a launch of this config opens, or undefined when it decides again (none, missing or unavailable). */
+export function rememberedKey(directory: string, context: ChoiceContext): string | undefined {
   const name = rememberedChoice(directory, context.configIdentity)
   if (name === null) return undefined
   const key = parseProfileName(name)
   return rememberedProfileState(key, context) === "present" ? key : undefined
 }
 
-type ChoiceContext = Pick<TransitionContext, "configIdentity" | "defaultIdentity" | "userDataBase">
+export type ChoiceContext = Pick<TransitionContext, "configIdentity" | "defaultIdentity" | "userDataBase">
 
 /**
  * The choices with `key` remembered for this config, or undefined when the file must stay as it is: a

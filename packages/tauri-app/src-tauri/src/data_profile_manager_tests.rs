@@ -222,7 +222,7 @@ fn dates_are_unknown_without_the_folder_or_any_state_file() {
 }
 
 #[test]
-fn the_next_launch_is_the_name_remembered_for_this_configuration() {
+fn the_next_launch_is_the_remembered_profile_this_configurations_launch_opens() {
     let fixture = Fixture::new();
     let next = |pinned: bool| {
         let open = CurrentProfile {
@@ -235,12 +235,21 @@ fn the_next_launch_is_the_name_remembered_for_this_configuration() {
     assert_eq!(next(false), (None, false));
     write_choices(&fixture, json!({ choice_key(OTHER_CONFIG): "team" }));
     assert_eq!(next(true), (None, true));
-    // Reported as stored, whether or not the profile's folder still exists.
     write_choices(
         &fixture,
         json!({ choice_key(CONFIG): "Team", choice_key(OTHER_CONFIG): "dev" }),
     );
+    // Checked as the launch checks it: a profile whose folder is gone is not opened.
+    assert_eq!(next(false).0, None);
+    fs::create_dir_all(fixture.electron_scope("team", CONFIG)).unwrap();
     assert_eq!(next(false), (Some("team".to_string()), false));
+    // Nor is one linked to a missing drive, although its choice is kept.
+    write_choices(&fixture, json!({ choice_key(CONFIG): "gone" }));
+    link_directory(
+        &fixture.roots.electron_base.join("missing-drive"),
+        &fixture.electron_scope("gone", CONFIG),
+    );
+    assert_eq!(next(false).0, None);
     write_choices(&fixture, json!({ choice_key(CONFIG): "stable" }));
     assert_eq!(next(false).0.as_deref(), Some("default"));
     for raw in ["{ not json", r#"{"version":2,"choices":{}}"#] {

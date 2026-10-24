@@ -262,7 +262,9 @@ pub(crate) fn chosen_key(directory: &Path, config_identity: &str) -> Option<Stri
     parse_profile_name(choices.get(&choice_key(config_identity))?.as_str()?).ok()
 }
 
-fn remembered_key(directory: &Path, context: &TransitionContext) -> Option<String> {
+/// The remembered profile a launch of this configuration opens; `None` when it decides again (no
+/// usable entry, or the profile is missing or unavailable).
+pub(crate) fn remembered_key(directory: &Path, context: &TransitionContext) -> Option<String> {
     let key = chosen_key(directory, &context.config_identity)?;
     (remembered_profile_state(&key, context) == RememberedProfileState::Present).then_some(key)
 }

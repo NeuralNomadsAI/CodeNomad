@@ -10,7 +10,7 @@ use crate::data_profile::{
 };
 use crate::identity::STABLE_IDENTIFIER;
 use crate::profile_transition::{
-    choice_key, choose_next_launch, chosen_key, default_profile_state_files, forget_choices,
+    choice_key, choose_next_launch, default_profile_state_files, forget_choices, remembered_key,
     scope_state_file, selection_directory, ForgetOutcome, ForgottenChoices, NextLaunchOutcome,
     TransitionContext,
 };
@@ -807,9 +807,10 @@ pub(crate) fn list_other_profiles(
             size_complete,
         },
         profiles,
-        next_launch: chosen_key(
+        // Checked as the launch checks it, so a choice the launch would not open is not shown.
+        next_launch: remembered_key(
             &selection_directory(&roots.electron_base),
-            &current.config_identity,
+            &transition_context(roots, current),
         )
         .map(|key| profile_display_name(&key).to_string()),
         pinned: current.pinned,
@@ -995,14 +996,18 @@ pub(crate) fn set_next_launch(
             outcome: NextLaunchOutcome::Invalid,
         };
     };
-    let context = TransitionContext {
+    NextLaunch {
+        outcome: choose_next_launch(&transition_context(roots, current), &key, now),
+    }
+}
+
+/// The open configuration's view of the remembered choices, as its launch resolves them.
+fn transition_context(roots: &ProfileRoots, current: &CurrentProfile) -> TransitionContext {
+    TransitionContext {
         config_identity: current.config_identity.clone(),
         default_identity: current.default_identity.clone(),
         user_data_base: roots.electron_base.clone(),
         default_state_files: roots.default_state_files.clone(),
-    };
-    NextLaunch {
-        outcome: choose_next_launch(&context, &key, now),
     }
 }
 

@@ -220,6 +220,11 @@ test("the listing reports the next launch's remembered profile and whether a cho
     assert.equal((await list()).nextLaunch, "default")
     writeFileSync(choices, JSON.stringify({ version: 2, choices: { [choiceKey(CONFIG)]: "dev" } }))
     assert.equal((await list()).nextLaunch, null)
+    // A choice the launch would not open is not the next launch's: its folder is gone, or links to a missing drive.
+    writeFileSync(choices, JSON.stringify({ version: 1, choices: { [choiceKey(CONFIG)]: "gone" } }))
+    assert.equal((await list()).nextLaunch, null)
+    symlinkSync(join(context.roots.electronBase, "missing-drive"), join(context.roots.electronBase, "scopes", context.scope("gone").scopeName), "junction")
+    assert.equal((await list()).nextLaunch, null)
     assert.equal((await list()).pinned, false)
     assert.equal((await list({ ...current("dev"), pinned: true })).pinned, true)
   } finally {
