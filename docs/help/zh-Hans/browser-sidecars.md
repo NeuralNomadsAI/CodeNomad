@@ -14,7 +14,7 @@
 
 ## 预览源与权限 {#preview-origins}
 
-预览始终留在对话内；CodeNomad 不会打开单独的预览窗口。**设置 → 预览**为整个 CodeNomad 服务器设置一项策略。它适用于浏览器和远程视图中的预览。在 iframe 中显示的桌面预览改用按令牌隔离的源；Electron 和 Windows Tauri 原生 WebView 保留各自的原生权限、下载和弹出窗口行为，Linux 上的 Tauri 使用该 iframe 并遵循这些开关。
+预览始终留在对话内；CodeNomad 不会打开单独的预览窗口。**设置 → 预览**为整个 CodeNomad 服务器设置一项策略。它适用于浏览器和远程视图中的预览。macOS 和 Linux 上的 Tauri 使用 iframe：当本地窗口通过环回地址提供时，它保留按令牌隔离的源；否则使用所选的路径源，并遵循这些开关。Electron 和 Windows Tauri 原生 WebView 保留各自的原生权限、下载和弹出窗口行为。
 
 | 源模式 | 作用 |
 | --- | --- |

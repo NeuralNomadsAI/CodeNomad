@@ -733,7 +733,7 @@ export const settingsMessages = {
   "settings.preview.title": "Önizleme",
   "settings.preview.subtitle": "Tarayıcı önizlemeleri CodeNomad içinde web sayfaları gösterir. Bu sunucu genelindeki ayarlar, hangi origin üzerinde çalışacaklarını ve neleri kullanabileceklerini belirler.",
   "settings.preview.origin.title": "Origin",
-  "settings.preview.origin.subtitle": "Tarayıcı önizlemelerinin CodeNomad origin'iyle ilişkisini seçin. Masaüstü yerel önizlemeleri token başına yalıtılmış origin'lerini korur.",
+  "settings.preview.origin.subtitle": "Tarayıcı önizlemelerinin CodeNomad origin'iyle ilişkisini seçin. Electron ve Windows Tauri webview'ları yerel davranışlarını korur; macOS ve Linux'ta Tauri iframe'leri yerel pencere loopback üzerinden sunulduğunda token başına yalıtılmış bir origin kullanır.",
   "settings.preview.origin.mode.opaque": "Opak (önerilir)",
   "settings.preview.origin.mode.app": "CodeNomad ile aynı origin",
   "settings.preview.origin.mode.custom": "Ayrılmış önizleme origin'i",
@@ -774,6 +774,6 @@ export const settingsMessages = {
   "settings.preview.serviceWorkers.opaque": "Kullanılamaz. Opak önizlemelerin origin'i yoktur, bu yüzden service worker kaydedemezler.",
   "settings.preview.serviceWorkers.custom": "Service worker'lar CodeNomad'a değil, ayrılmış önizleme origin'ine kapsanır. Kök düzeyinde bir service worker, yeniden yazılmış /previews/<token>/ ad alanı altında erişilemiyorsa desteklenmez.",
   "settings.preview.serviceWorkers.app": "Service worker'lar CodeNomad origin'ini kullanır, CodeNomad sayfalarını kontrol edebilir ve önizleme kapandıktan sonra da kalabilir. Aynı origin onayı bu riski kapsar.",
-  "settings.preview.nativeNote": "Bu seçenekler uygulama penceresindeki tarayıcı önizlemeleri için geçerlidir. Electron ve Windows Tauri webview'ları kendi yerel izin, indirme ve açılır pencere davranışlarını korur. Masaüstü önizlemeleri token başına yalıtılmış bir origin kullanır; Linux'ta Tauri bu önizleme çerçevesini kullanır ve bu seçeneklere uyar.",
+  "settings.preview.nativeNote": "Bu seçenekler uygulama penceresindeki tarayıcı önizlemeleri için geçerlidir. Electron ve Windows Tauri webview'ları kendi yerel izin, indirme ve açılır pencere davranışlarını korur. macOS ve Linux'ta Tauri bir iframe kullanır: yerel pencere loopback üzerinden sunulduğunda token başına yalıtılmış bir origin'de çalışır ve bu sandbox ile tarayıcı özelliği seçeneklerine uyar.",
   "settings.preview.saveError": "Önizleme ayarları kaydedilemedi. Bağlantıyı kontrol edip yeniden deneyin.",
 } as const

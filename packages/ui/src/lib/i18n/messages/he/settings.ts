@@ -746,7 +746,7 @@ export const settingsMessages = {
   "settings.preview.title": "תצוגה מקדימה",
   "settings.preview.subtitle": "תצוגות מקדימות של דפדפן מציגות דפי אינטרנט בתוך CodeNomad. הגדרות אלו ברמת השרת קובעות באיזה מקור הן פועלות ומה מותר להן להשתמש.",
   "settings.preview.origin.title": "מקור",
-  "settings.preview.origin.subtitle": "בחרו כיצד תצוגות מקדימה של דפדפן מתייחסות למקור של CodeNomad. תצוגות מקדימות מקומיות בשולחן העבודה שומרות על מקור מבודד לכל אסימון.",
+  "settings.preview.origin.subtitle": "בחרו כיצד תצוגות מקדימה של דפדפן מתייחסות למקור של CodeNomad. תצוגות אינטרנט של Electron ו-Tauri ב-Windows שומרות על התנהגותן המקורית; iframe של Tauri ב-macOS וב-Linux שומר על מקור מבודד לכל אסימון כאשר החלון המקומי מוגש דרך loopback.",
   "settings.preview.origin.mode.opaque": "אטום (מומלץ)",
   "settings.preview.origin.mode.app": "אותו מקור כמו CodeNomad",
   "settings.preview.origin.mode.custom": "מקור תצוגה מקדימה ייעודי",
@@ -787,6 +787,6 @@ export const settingsMessages = {
   "settings.preview.serviceWorkers.opaque": "לא זמין. לתצוגות מקדימות אטומות אין מקור, ולכן הן אינן יכולות לרשום Service Workers.",
   "settings.preview.serviceWorkers.custom": "Service Workers מוגבלים למקור התצוגה המקדימה הייעודי, ולא ל-CodeNomad. Service Worker ברמת השורש אינו נתמך אלא אם הוא נגיש תחת מרחב השמות שנכתב מחדש /previews/<token>/.",
   "settings.preview.serviceWorkers.app": "Service Workers משתמשים במקור של CodeNomad ויכולים לשלוט בעמודי CodeNomad ולהתמיד לאחר סגירת התצוגה המקדימה. אישור אותו מקור מכסה את הסיכון הזה.",
-  "settings.preview.nativeNote": "אפשרויות אלה חלות על תצוגות מקדימה של דפדפן בחלון האפליקציה. תצוגות אינטרנט מקוריות של Electron ו-Tauri ב-Windows שומרות על התנהגות ההרשאות, ההורדות והחלונות הקופצים שלהן. תצוגות מקדימות בשולחן העבודה משתמשות במקור מבודד לכל אסימון; Tauri ב-Linux משתמש במסגרת התצוגה המקדימה הזו ופועל לפי אפשרויות אלה.",
+  "settings.preview.nativeNote": "אפשרויות אלה חלות על תצוגות מקדימה של דפדפן בחלון האפליקציה. תצוגות אינטרנט מקוריות של Electron ו-Tauri ב-Windows שומרות על התנהגות ההרשאות, ההורדות והחלונות הקופצים שלהן. Tauri ב-macOS וב-Linux משתמש ב-iframe: כאשר החלון המקומי מוגש דרך loopback, הוא פועל במקור מבודד לכל אסימון ופועל לפי אפשרויות ארגז החול ותכונות הדפדפן האלה.",
   "settings.preview.saveError": "לא ניתן היה לשמור את הגדרות התצוגה המקדימה. בדקו את החיבור ונסו שוב.",
 } as const

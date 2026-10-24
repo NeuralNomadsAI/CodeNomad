@@ -746,7 +746,7 @@ export const settingsMessages = {
   "settings.preview.title": "プレビュー",
   "settings.preview.subtitle": "ブラウザープレビューは CodeNomad 内に Web ページを表示します。このサーバー全体の設定で、実行されるオリジンと利用できる機能を決めます。",
   "settings.preview.origin.title": "オリジン",
-  "settings.preview.origin.subtitle": "ブラウザープレビューと CodeNomad のオリジンの関係を選びます。デスクトップのローカルプレビューはトークンごとの分離されたオリジンを維持します。",
+  "settings.preview.origin.subtitle": "ブラウザープレビューと CodeNomad のオリジンの関係を選びます。Electron と Windows Tauri の WebView はネイティブの動作を維持し、macOS と Linux の Tauri の iframe は、ローカルウィンドウが loopback で配信される場合にトークンごとの分離されたオリジンを維持します。",
   "settings.preview.origin.mode.opaque": "不透明（推奨）",
   "settings.preview.origin.mode.app": "CodeNomad と同じオリジン",
   "settings.preview.origin.mode.custom": "専用プレビューオリジン",
@@ -787,6 +787,6 @@ export const settingsMessages = {
   "settings.preview.serviceWorkers.opaque": "利用できません。不透明なプレビューにはオリジンがないため、Service Worker を登録できません。",
   "settings.preview.serviceWorkers.custom": "Service Worker は CodeNomad ではなく専用プレビューオリジンに限定されます。ルートレベルの Service Worker は、書き換えられた /previews/<token>/ 名前空間の下で到達できない限りサポートされません。",
   "settings.preview.serviceWorkers.app": "Service Worker は CodeNomad のオリジンを使用し、CodeNomad のページを制御でき、プレビューを閉じた後も残ります。同じオリジンの確認がこのリスクを対象とします。",
-  "settings.preview.nativeNote": "これらのオプションはアプリウィンドウ内のブラウザープレビューに適用されます。Electron と Windows Tauri の WebView は、ネイティブの権限、ダウンロード、ポップアップの動作を維持します。デスクトッププレビューはトークンごとの分離されたオリジンを使用し、Linux の Tauri はこのプレビューフレームを使用してこれらのオプションに従います。",
+  "settings.preview.nativeNote": "これらのオプションはアプリウィンドウ内のブラウザープレビューに適用されます。Electron と Windows Tauri の WebView は、ネイティブの権限、ダウンロード、ポップアップの動作を維持します。macOS と Linux の Tauri は iframe を使用します。ローカルウィンドウが loopback で配信される場合はトークンごとの分離されたオリジンで実行され、これらのサンドボックスとブラウザー機能のオプションに従います。",
   "settings.preview.saveError": "プレビュー設定を保存できませんでした。接続を確認して再試行してください。",
 } as const

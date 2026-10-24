@@ -746,7 +746,7 @@ export const settingsMessages = {
   "settings.preview.title": "预览",
   "settings.preview.subtitle": "浏览器预览在 CodeNomad 内显示网页。这些服务器级设置决定预览运行在哪个源（origin）上，以及可以使用哪些功能。",
   "settings.preview.origin.title": "源",
-  "settings.preview.origin.subtitle": "选择浏览器预览与 CodeNomad 源的关系。桌面本地预览保留各自隔离的按令牌源。",
+  "settings.preview.origin.subtitle": "选择浏览器预览与 CodeNomad 源的关系。Electron 和 Windows Tauri WebView 保留原生行为；当本地窗口通过环回地址提供时，macOS 和 Linux 上的 Tauri iframe 保留按令牌隔离的源。",
   "settings.preview.origin.mode.opaque": "不透明（推荐）",
   "settings.preview.origin.mode.app": "与 CodeNomad 同源",
   "settings.preview.origin.mode.custom": "专用预览源",
@@ -787,6 +787,6 @@ export const settingsMessages = {
   "settings.preview.serviceWorkers.opaque": "不可用。不透明预览没有源，因此无法注册 Service Worker。",
   "settings.preview.serviceWorkers.custom": "Service Worker 的作用域是专用预览源，而不是 CodeNomad。根级 Service Worker 不受支持，除非能通过重写后的 /previews/<token>/ 命名空间访问。",
   "settings.preview.serviceWorkers.app": "Service Worker 使用 CodeNomad 源，可以控制 CodeNomad 页面，并在预览关闭后继续存在。同源确认已涵盖此风险。",
-  "settings.preview.nativeNote": "这些选项适用于应用窗口中的浏览器预览。Electron 和 Windows Tauri WebView 保留其原生权限、下载和弹出窗口行为。桌面预览使用按令牌隔离的源；Linux 上的 Tauri 使用该预览框架并遵循这些选项。",
+  "settings.preview.nativeNote": "这些选项适用于应用窗口中的浏览器预览。Electron 和 Windows Tauri WebView 保留其原生权限、下载和弹出窗口行为。macOS 和 Linux 上的 Tauri 使用 iframe：当本地窗口通过环回地址提供时，它在按令牌隔离的源上运行，并遵循这些沙箱和浏览器功能选项。",
   "settings.preview.saveError": "无法保存预览设置。请检查连接后重试。",
 } as const

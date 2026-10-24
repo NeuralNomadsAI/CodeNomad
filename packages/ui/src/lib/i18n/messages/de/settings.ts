@@ -745,7 +745,7 @@ export const settingsMessages = {
   "settings.preview.title": "Vorschau",
   "settings.preview.subtitle": "Browser-Vorschauen zeigen Webseiten in CodeNomad. Diese serverweiten Einstellungen legen fest, unter welchem Origin sie laufen und was sie verwenden dürfen.",
   "settings.preview.origin.title": "Origin",
-  "settings.preview.origin.subtitle": "Legen Sie fest, wie Browser-Vorschauen zum CodeNomad-Origin stehen. Lokale Desktop-Vorschauen behalten ihren isolierten Origin pro Token.",
+  "settings.preview.origin.subtitle": "Legen Sie fest, wie Browser-Vorschauen zum CodeNomad-Origin stehen. Electron- und Windows-Tauri-Webviews behalten ihr natives Verhalten; Tauri-Iframes unter macOS und Linux behalten einen isolierten Origin pro Token, wenn das lokale Fenster über Loopback bereitgestellt wird.",
   "settings.preview.origin.mode.opaque": "Opaque (empfohlen)",
   "settings.preview.origin.mode.app": "Gleicher Origin wie CodeNomad",
   "settings.preview.origin.mode.custom": "Eigener Vorschau-Origin",
@@ -786,6 +786,6 @@ export const settingsMessages = {
   "settings.preview.serviceWorkers.opaque": "Nicht verfügbar. Opaque Vorschauen haben keinen Origin und können daher keine Service Worker registrieren.",
   "settings.preview.serviceWorkers.custom": "Service Worker sind auf den eigenen Vorschau-Origin beschränkt, nicht auf CodeNomad. Ein Service Worker auf Root-Ebene wird nicht unterstützt, sofern er nicht unter dem umgeschriebenen Namensraum /previews/<token>/ erreichbar ist.",
   "settings.preview.serviceWorkers.app": "Service Worker verwenden den CodeNomad-Origin und können CodeNomad-Seiten steuern und nach dem Schließen der Vorschau bestehen bleiben. Die Same-Origin-Bestätigung deckt dieses Risiko ab.",
-  "settings.preview.nativeNote": "Diese Optionen gelten für Browser-Vorschauen im App-Fenster. Electron- und Windows-Tauri-Webviews behalten ihr natives Berechtigungs-, Download- und Pop-up-Verhalten. Desktop-Vorschauen verwenden einen isolierten Origin pro Token; Tauri unter Linux nutzt diesen Vorschau-Rahmen und folgt diesen Optionen.",
+  "settings.preview.nativeNote": "Diese Optionen gelten für Browser-Vorschauen im App-Fenster. Electron- und Windows-Tauri-Webviews behalten ihr natives Berechtigungs-, Download- und Pop-up-Verhalten. Tauri unter macOS und Linux verwendet einen iframe: Wird das lokale Fenster über Loopback bereitgestellt, läuft er unter einem isolierten Origin pro Token, und er folgt diesen Sandbox- und Browser-Funktionsoptionen.",
   "settings.preview.saveError": "Die Vorschau-Einstellungen konnten nicht gespeichert werden. Prüfen Sie die Verbindung und versuchen Sie es erneut.",
 } as const

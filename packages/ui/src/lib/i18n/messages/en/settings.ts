@@ -747,7 +747,7 @@ export const settingsMessages = {
   "settings.preview.title": "Preview",
   "settings.preview.subtitle": "Browser previews show web pages inside CodeNomad. These server-wide settings decide which origin they run on and what they may use.",
   "settings.preview.origin.title": "Origin",
-  "settings.preview.origin.subtitle": "Choose how browser previews relate to the CodeNomad origin. Desktop local previews keep their isolated per-token origin.",
+  "settings.preview.origin.subtitle": "Choose how browser previews relate to the CodeNomad origin. Electron and Windows Tauri webviews keep their native behavior; Tauri iframes on macOS and Linux keep an isolated per-token origin when the local window is served from loopback.",
   "settings.preview.origin.mode.opaque": "Opaque (recommended)",
   "settings.preview.origin.mode.app": "CodeNomad same-origin",
   "settings.preview.origin.mode.custom": "Dedicated preview origin",
@@ -788,6 +788,6 @@ export const settingsMessages = {
   "settings.preview.serviceWorkers.opaque": "Unavailable. Opaque previews have no origin, so they cannot register service workers.",
   "settings.preview.serviceWorkers.custom": "Service workers are scoped to the dedicated preview origin, not CodeNomad. A root-level service worker is unsupported unless it is reached under the rewritten /previews/<token>/ namespace.",
   "settings.preview.serviceWorkers.app": "Service workers use the CodeNomad origin and can control CodeNomad pages and persist after the preview closes. The same-origin confirmation covers this risk.",
-  "settings.preview.nativeNote": "These options apply to browser previews in the app window. Electron and Windows Tauri webviews keep their native permission, download and popup behavior. Desktop previews use an isolated per-token origin; Tauri on Linux uses that preview frame and follows these options.",
+  "settings.preview.nativeNote": "These options apply to browser previews in the app window. Electron and Windows Tauri webviews keep their native permission, download and popup behavior. Tauri on macOS and Linux uses an iframe: when the local window is served from loopback it runs at an isolated per-token origin, and it follows these sandbox and browser feature options.",
   "settings.preview.saveError": "The preview settings could not be saved. Check the connection and try again.",
 } as const

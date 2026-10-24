@@ -746,7 +746,7 @@ export const settingsMessages = {
   "settings.preview.title": "Vista previa",
   "settings.preview.subtitle": "Las vistas previas de navegador muestran páginas web dentro de CodeNomad. Estas opciones del servidor deciden en qué origen se ejecutan y qué pueden usar.",
   "settings.preview.origin.title": "Origen",
-  "settings.preview.origin.subtitle": "Elige cómo se relacionan las vistas previas con el origen de CodeNomad. Las vistas previas locales de escritorio conservan su origen aislado por token.",
+  "settings.preview.origin.subtitle": "Elige cómo se relacionan las vistas previas con el origen de CodeNomad. Las vistas web de Electron y Tauri en Windows conservan su comportamiento nativo; los iframes de Tauri en macOS y Linux conservan un origen aislado por token cuando la ventana local se sirve por loopback.",
   "settings.preview.origin.mode.opaque": "Opaco (recomendado)",
   "settings.preview.origin.mode.app": "Mismo origen que CodeNomad",
   "settings.preview.origin.mode.custom": "Origen de vista previa dedicado",
@@ -787,6 +787,6 @@ export const settingsMessages = {
   "settings.preview.serviceWorkers.opaque": "No disponible. Las vistas previas opacas no tienen origen, así que no pueden registrar service workers.",
   "settings.preview.serviceWorkers.custom": "Los service workers se limitan al origen dedicado de la vista previa, no a CodeNomad. Un service worker en la raíz no es compatible salvo que se alcance bajo el espacio de nombres reescrito /previews/<token>/.",
   "settings.preview.serviceWorkers.app": "Los service workers usan el origen de CodeNomad y pueden controlar páginas de CodeNomad y persistir después de cerrar la vista previa. La confirmación de mismo origen cubre este riesgo.",
-  "settings.preview.nativeNote": "Estas opciones se aplican a las vistas previas de navegador en la ventana de la aplicación. Las vistas web nativas de Electron y Tauri en Windows conservan su comportamiento nativo de permisos, descargas y ventanas emergentes. Las vistas previas de escritorio usan un origen aislado por token; Tauri en Linux usa ese marco de vista previa y sigue estas opciones.",
+  "settings.preview.nativeNote": "Estas opciones se aplican a las vistas previas de navegador en la ventana de la aplicación. Las vistas web nativas de Electron y Tauri en Windows conservan su comportamiento nativo de permisos, descargas y ventanas emergentes. Tauri en macOS y Linux usa un iframe: cuando la ventana local se sirve por loopback, se ejecuta en un origen aislado por token y sigue estas opciones de sandbox y funciones del navegador.",
   "settings.preview.saveError": "No se pudo guardar la configuración de la vista previa. Comprueba la conexión e inténtalo de nuevo.",
 } as const

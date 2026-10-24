@@ -746,7 +746,7 @@ export const settingsMessages = {
   "settings.preview.title": "Aperçu",
   "settings.preview.subtitle": "Les aperçus de navigateur affichent des pages web dans CodeNomad. Ces réglages propres au serveur déterminent l'origine sur laquelle ils s'exécutent et ce qu'ils peuvent utiliser.",
   "settings.preview.origin.title": "Origine",
-  "settings.preview.origin.subtitle": "Choisissez le rapport entre les aperçus de navigateur et l'origine de CodeNomad. Les aperçus locaux de bureau conservent leur origine isolée par jeton.",
+  "settings.preview.origin.subtitle": "Choisissez le rapport entre les aperçus de navigateur et l'origine de CodeNomad. Les vues web Electron et Tauri sous Windows conservent leur comportement natif ; les iframes de Tauri sous macOS et Linux conservent une origine isolée par jeton lorsque la fenêtre locale est servie via loopback.",
   "settings.preview.origin.mode.opaque": "Opaque (recommandé)",
   "settings.preview.origin.mode.app": "Même origine que CodeNomad",
   "settings.preview.origin.mode.custom": "Origine d'aperçu dédiée",
@@ -787,6 +787,6 @@ export const settingsMessages = {
   "settings.preview.serviceWorkers.opaque": "Indisponibles. Les aperçus opaques n'ont pas d'origine et ne peuvent donc pas enregistrer de service workers.",
   "settings.preview.serviceWorkers.custom": "Les service workers sont limités à l'origine d'aperçu dédiée, pas à CodeNomad. Un service worker à la racine n'est pas pris en charge, sauf s'il est accessible sous l'espace de noms réécrit /previews/<token>/.",
   "settings.preview.serviceWorkers.app": "Les service workers utilisent l'origine CodeNomad et peuvent contrôler des pages CodeNomad et persister après la fermeture de l'aperçu. La confirmation de même origine couvre ce risque.",
-  "settings.preview.nativeNote": "Ces options s'appliquent aux aperçus de navigateur dans la fenêtre de l'application. Les vues web natives Electron et Tauri sous Windows conservent leur comportement natif d'autorisation, de téléchargement et de fenêtres surgissantes. Les aperçus de bureau utilisent une origine isolée par jeton ; Tauri sous Linux utilise ce cadre d'aperçu et suit ces options.",
+  "settings.preview.nativeNote": "Ces options s'appliquent aux aperçus de navigateur dans la fenêtre de l'application. Les vues web natives Electron et Tauri sous Windows conservent leur comportement natif d'autorisation, de téléchargement et de fenêtres surgissantes. Tauri sous macOS et Linux utilise une iframe : lorsque la fenêtre locale est servie via loopback, elle s'exécute sur une origine isolée par jeton et suit ces options de bac à sable et de fonctionnalités du navigateur.",
   "settings.preview.saveError": "Les réglages d'aperçu n'ont pas pu être enregistrés. Vérifiez la connexion et réessayez.",
 } as const

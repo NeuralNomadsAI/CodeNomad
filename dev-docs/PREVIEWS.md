@@ -8,7 +8,7 @@ Session web previews: token capabilities, origin policy, server-enforced documen
 - Path-proxied responses always carry the policy's CSP sandbox. Do not gate it on `Content-Type`: an SVG, XML or untyped body can be rendered as a document, and 304 responses still need the current tier.
 - `allow-same-origin` is produced only by the server and UI policy resolvers. A preview target host, a screenshot fixture or a caller must not add it directly.
 - Keep the server (`previews/policy.ts`) and UI (`stores/preferences.tsx`, `components/browser-frame-security.ts`) normalizers and loopback predicates behaviorally identical; both sets of tests pin the same defaults and rejections.
-- Sandbox and browser-feature controls are iframe settings. Electron and Windows Tauri native webviews keep host behavior; Tauri on Linux uses the capability-host iframe and therefore follows the iframe policy.
+- Sandbox and browser-feature controls are iframe settings. Electron and Windows Tauri native webviews keep host behavior; Tauri on macOS and Linux uses an iframe (the capability host when the local window is served from loopback) and therefore follows the iframe policy.
 - Browser feature toggles only delegate the ability to ask. Browser prompts and browser site settings remain the final authority; never describe a toggle as granting a permission.
 
 ## Token capability
@@ -32,7 +32,7 @@ The proxy strips the app's request cookies before forwarding and strips target `
 
 `localUrl`, `remoteUrl` and the LAN addresses in `serverMeta` are the app origins. `resolvePreviewSettings` validates a stored custom origin against all of them: a matching hostname, or a loopback alias on the app's port, degrades the whole policy to the opaque default. A custom origin must be an absolute `http:`/`https:` origin with no credentials, path, search or hash. Unknown modes, invalid origins, a `custom` mode with no origin, and non-boolean sandbox/feature fields all fall back to the defaults below. The defaults are `opaque`, no custom origin, sandbox forms/modals/popups/downloads enabled, and every browser feature disabled. `allow-scripts` is always present and is not configurable.
 
-The UI normalizer mirrors these defaults and rejects the current `window.location.origin` in the custom-origin field. The server remains authoritative for hand-edited YAML and for any origin the UI does not know about.
+The UI normalizer (`normalizePreviewSettings`) mirrors these defaults and validates the custom-origin shape. `PreviewSettingsSection.saveCustomOrigin` separately rejects the current `window.location.origin`; the UI does not make a stored `custom` value with no valid origin opaque, while the server's `resolvePreviewSettings` does, and Settings shows an inline error. The server remains authoritative for hand-edited YAML and for any origin the UI does not know about.
 
 Storage is the existing `server` config owner and `/api/storage/config/server` API. No preview-specific endpoint or listener exists.
 
@@ -70,7 +70,7 @@ Desktop local capability hosts are resolved first: a local Electron or Tauri win
 
 `previewSandboxFlags` emits `allow-scripts` plus the configured forms/modals/popups/downloads. `getBrowserFramePolicy` appends `allow-same-origin` only when the frame is trusted. A path preview is trusted only for a loopback target in `app` mode, or in `custom` mode with a configured origin; a capability-host preview is trusted by its own origin. Opaque and external targets are never trusted.
 
-`previewAllowAttribute` covers camera, microphone, clipboard read/write, geolocation, notifications and fullscreen. Enabled features are delegated; disabled features are serialized as `'none'` so a same-origin frame cannot inherit the `self` default. The iframe `sandbox` and `allow` attributes are the only consumers: Electron and Windows Tauri native webviews are not sandboxed, while Tauri on Linux uses the capability-host iframe and follows both.
+`previewAllowAttribute` covers camera, microphone, clipboard read/write, geolocation, notifications and fullscreen. Enabled features are delegated; disabled features are serialized as `'none'` so a same-origin frame cannot inherit the `self` default. The iframe `sandbox` and `allow` attributes are the only consumers: Electron and Windows Tauri native webviews are not sandboxed, while Tauri on macOS and Linux uses an iframe and follows both.
 
 ### Comment and location bridge
 
@@ -89,7 +89,7 @@ A mismatch is ignored. This keeps same-origin, custom-origin and capability-host
 
 ## Desktop capability hosts and native webviews
 
-Electron and Windows Tauri local previews use native guests. They keep host permission, download and popup handling and are outside the iframe sandbox/feature policy. Tauri on Linux uses the capability-host iframe: it keeps the isolated per-token origin but follows the sandbox and feature toggles. The path origin mode is irrelevant to desktop capability hosts.
+Electron and Windows Tauri local previews use native guests. They keep host permission, download and popup handling and are outside the iframe sandbox/feature policy. Tauri on macOS and Linux uses an iframe: when the local window is served from loopback it renders the capability host, otherwise it uses the selected path origin, and it always follows the sandbox and feature toggles. The path origin mode is irrelevant to the capability host.
 
 ## Custom-origin deployment contract
 

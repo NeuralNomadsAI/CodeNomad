@@ -14,7 +14,7 @@ Gespeicherter Verlauf wird nur wiederhergestellt, wenn Sie den Sitzungsbrowser a
 
 ## Vorschau-Origins und Berechtigungen {#preview-origins}
 
-Vorschauen bleiben in der Unterhaltung; CodeNomad öffnet kein separates Vorschaufenster. **Einstellungen → Vorschau** legt eine Richtlinie für den gesamten CodeNomad-Server fest. Sie gilt für Vorschauen in Browser- und Remote-Ansichten. Desktop-Vorschauen in einem iframe behalten stattdessen einen isolierten Origin pro Token; native Webviews in Electron und Windows Tauri behalten ihr eigenes Berechtigungs-, Download- und Pop-up-Verhalten, und Tauri unter Linux nutzt diesen iframe und folgt diesen Schaltern.
+Vorschauen bleiben in der Unterhaltung; CodeNomad öffnet kein separates Vorschaufenster. **Einstellungen → Vorschau** legt eine Richtlinie für den gesamten CodeNomad-Server fest. Sie gilt für Vorschauen in Browser- und Remote-Ansichten. Tauri unter macOS und Linux verwendet einen iframe: Er behält einen isolierten Origin pro Token, wenn das lokale Fenster über Loopback bereitgestellt wird, verwendet andernfalls den ausgewählten Pfad-Origin und folgt diesen Schaltern. Native Webviews in Electron und Windows Tauri behalten ihr eigenes Berechtigungs-, Download- und Pop-up-Verhalten.
 
 | Origin-Modus | Wirkung |
 | --- | --- |

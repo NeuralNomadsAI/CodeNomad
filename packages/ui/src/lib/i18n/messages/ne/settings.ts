@@ -745,7 +745,7 @@ export const settingsMessages = {
   "settings.preview.title": "पूर्वावलोकन",
   "settings.preview.subtitle": "ब्राउजर पूर्वावलोकनले CodeNomad भित्र वेब पृष्ठ देखाउँछन्। यी सर्भर-व्यापी सेटिङले तिनीहरू कुन origin मा चल्छन् र के प्रयोग गर्न सक्छन् भन्ने निर्धारण गर्छन्।",
   "settings.preview.origin.title": "Origin",
-  "settings.preview.origin.subtitle": "ब्राउजर पूर्वावलोकनले CodeNomad origin सँग कसरी सम्बन्ध राख्ने भन्ने छान्नुहोस्। डेस्कटपका स्थानीय पूर्वावलोकनले प्रति token छुट्टै origin कायम राख्छन्।",
+  "settings.preview.origin.subtitle": "ब्राउजर पूर्वावलोकनले CodeNomad origin सँग कसरी सम्बन्ध राख्ने भन्ने छान्नुहोस्। Electron र Windows Tauri का webview ले आफ्नै native व्यवहार कायम राख्छन्; macOS र Linux मा Tauri का iframe ले स्थानीय विन्डो loopback बाट उपलब्ध गराइँदा प्रति token छुट्टै origin कायम राख्छन्।",
   "settings.preview.origin.mode.opaque": "Opaque (सिफारिस गरिएको)",
   "settings.preview.origin.mode.app": "CodeNomad सँगै origin",
   "settings.preview.origin.mode.custom": "समर्पित पूर्वावलोकन origin",
@@ -786,6 +786,6 @@ export const settingsMessages = {
   "settings.preview.serviceWorkers.opaque": "उपलब्ध छैन। Opaque पूर्वावलोकनको origin हुँदैन, त्यसैले service worker दर्ता गर्न सक्दैनन्।",
   "settings.preview.serviceWorkers.custom": "Service worker समर्पित पूर्वावलोकन origin मा सीमित हुन्छन्, CodeNomad मा होइन। Root-स्तरको service worker rewrite गरिएको /previews/<token>/ namespace अन्तर्गत पुग्न नसकेसम्म समर्थित छैन।",
   "settings.preview.serviceWorkers.app": "Service worker ले CodeNomad origin प्रयोग गर्छन् र CodeNomad पृष्ठ नियन्त्रण गर्न तथा पूर्वावलोकन बन्द भएपछि पनि रहिरहन सक्छन्। Same-origin पुष्टिले यो जोखिम समेट्छ।",
-  "settings.preview.nativeNote": "यी विकल्प app window भित्रका browser पूर्वावलोकनमा लागू हुन्छन्। Electron र Windows Tauri webview ले आफ्नै native permission, download र popup व्यवहार कायम राख्छन्। Desktop पूर्वावलोकनले प्रति token छुट्टै origin प्रयोग गर्छन्; Linux मा Tauri ले त्यही पूर्वावलोकन frame प्रयोग गरी यी विकल्प पछ्याउँछ।",
+  "settings.preview.nativeNote": "यी विकल्प app window भित्रका browser पूर्वावलोकनमा लागू हुन्छन्। Electron र Windows Tauri webview ले आफ्नै native permission, download र popup व्यवहार कायम राख्छन्। macOS र Linux मा Tauri ले iframe प्रयोग गर्छ: स्थानीय विन्डो loopback बाट उपलब्ध गराइँदा यो प्रति token छुट्टै origin मा चल्छ र यी sandbox तथा browser सुविधा विकल्प पछ्याउँछ।",
   "settings.preview.saveError": "पूर्वावलोकन सेटिङ सुरक्षित गर्न सकिएन। जडान जाँच गरी फेरि प्रयास गर्नुहोस्।",
 } as const

@@ -14,7 +14,7 @@ L’historique enregistré se restaure seulement à la réouverture explicite du
 
 ## Origines et autorisations des aperçus {#preview-origins}
 
-Les aperçus restent dans la conversation ; CodeNomad n’ouvre pas de fenêtre d’aperçu séparée. **Paramètres → Aperçu** définit une politique pour l’ensemble du serveur CodeNomad. Elle s’applique aux aperçus des vues navigateur et distante. Les aperçus de bureau affichés dans une iframe conservent à la place une origine isolée par jeton ; les vues web natives Electron et Tauri sous Windows conservent leur propre comportement d’autorisation, de téléchargement et de fenêtres surgissantes, et Tauri sous Linux utilise cette iframe et suit ces interrupteurs.
+Les aperçus restent dans la conversation ; CodeNomad n’ouvre pas de fenêtre d’aperçu séparée. **Paramètres → Aperçu** définit une politique pour l’ensemble du serveur CodeNomad. Elle s’applique aux aperçus des vues navigateur et distante. Tauri sous macOS et Linux utilise une iframe : elle conserve une origine isolée par jeton lorsque la fenêtre locale est servie via loopback, sinon elle utilise l’origine de chemin sélectionnée, et elle suit ces interrupteurs. Les vues web natives Electron et Tauri sous Windows conservent leur propre comportement d’autorisation, de téléchargement et de fenêtres surgissantes.
 
 | Mode d’origine | Effet |
 | --- | --- |

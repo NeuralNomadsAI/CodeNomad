@@ -14,7 +14,7 @@
 
 ## पूर्वावलोकन origin र अनुमतिहरू {#preview-origins}
 
-पूर्वावलोकन कुराकानीभित्रै रहन्छन्; CodeNomad ले छुट्टै पूर्वावलोकन विन्डो खोल्दैन। **सेटिङहरू → पूर्वावलोकन** ले सम्पूर्ण CodeNomad सर्भरका लागि एउटै policy तय गर्छ। यो browser र remote दृश्यका पूर्वावलोकनमा लागू हुन्छ। iframe मा देखाइने Desktop पूर्वावलोकनले यसको सट्टा प्रति token छुट्टै origin प्रयोग गर्छन्; Electron र Windows Tauri का native webview ले आफ्नै permission, download र popup व्यवहार कायम राख्छन्, र Linux मा Tauri ले त्यही iframe प्रयोग गरी यी टगल पछ्याउँछ।
+पूर्वावलोकन कुराकानीभित्रै रहन्छन्; CodeNomad ले छुट्टै पूर्वावलोकन विन्डो खोल्दैन। **सेटिङहरू → पूर्वावलोकन** ले सम्पूर्ण CodeNomad सर्भरका लागि एउटै policy तय गर्छ। यो browser र remote दृश्यका पूर्वावलोकनमा लागू हुन्छ। macOS र Linux मा Tauri ले iframe प्रयोग गर्छ: स्थानीय विन्डो loopback बाट उपलब्ध गराइँदा यो प्रति token छुट्टै origin कायम राख्छ, अन्यथा चयन गरिएको path origin प्रयोग गर्छ, र यी टगल पछ्याउँछ। Electron र Windows Tauri का native webview ले आफ्नै permission, download र popup व्यवहार कायम राख्छन्।
 
 | Origin मोड | प्रभाव |
 | --- | --- |
