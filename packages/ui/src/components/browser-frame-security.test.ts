@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { getBrowserFramePolicy, getPreviewFrameSource, isLoopbackPreviewUrl, normalizeBrowserPreviewUrl } from "./browser-frame-security.ts"
+import { getBrowserFramePolicy, getPreviewFrameSource, isLoopbackHttpUrl, isLoopbackPreviewUrl, normalizeBrowserPreviewUrl } from "./browser-frame-security.ts"
 
 describe("getBrowserFramePolicy", () => {
   it("isolates local native frames from the parent bridge", () => {
@@ -56,6 +56,24 @@ describe("isLoopbackPreviewUrl", () => {
     assert.equal(isLoopbackPreviewUrl("127.0.0.1:5173/app"), true)
     assert.equal(isLoopbackPreviewUrl("[::1]:4173"), true)
     assert.equal(isLoopbackPreviewUrl("https://github.com/"), false)
+  })
+})
+
+describe("isLoopbackHttpUrl", () => {
+  it("accepts only explicit http(s) URLs whose host is loopback", () => {
+    assert.equal(isLoopbackHttpUrl("http://localhost:3000/app"), true)
+    assert.equal(isLoopbackHttpUrl("http://127.0.0.1:8080"), true)
+    assert.equal(isLoopbackHttpUrl("http://127.1.2.3:80/"), true)
+    assert.equal(isLoopbackHttpUrl("https://localhost/"), true)
+    assert.equal(isLoopbackHttpUrl("http://[::1]:5173/"), true)
+    assert.equal(isLoopbackHttpUrl("http://0.0.0.0:3000/"), true)
+    assert.equal(isLoopbackHttpUrl("https://example.com/"), false)
+    assert.equal(isLoopbackHttpUrl("localhost:3000"), false)
+    assert.equal(isLoopbackHttpUrl("/relative"), false)
+    assert.equal(isLoopbackHttpUrl("#anchor"), false)
+    assert.equal(isLoopbackHttpUrl("mailto:a@b.c"), false)
+    assert.equal(isLoopbackHttpUrl("http://192.168.1.5:3000/"), false)
+    assert.equal(isLoopbackHttpUrl(""), false)
   })
 })
 
