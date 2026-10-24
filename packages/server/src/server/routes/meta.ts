@@ -6,12 +6,14 @@ import { serverOperatingSystemName } from "../os-name"
 
 interface RouteDeps {
   serverMeta: ServerMeta
+  /** Whether the host lets Remote Control serve web previews. */
+  remotePreviewsAllowed: () => boolean
 }
 
 export function registerMetaRoutes(app: FastifyInstance, deps: RouteDeps) {
   app.get("/api/meta", async (request) => ({
     ...buildMetaResponse(deps.serverMeta),
-    ...(isRemoteRequest(request) ? { remoteControl: true as const } : {}),
+    ...(isRemoteRequest(request) && !deps.remotePreviewsAllowed() ? { previewsUnavailable: true as const } : {}),
   }))
 }
 

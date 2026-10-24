@@ -12,6 +12,8 @@ export const remoteControlMessages = {
   "remoteControl.start": "Uzaktan Kontrolü başlat",
   "remoteControl.newLink": "Yeni eşleştirme bağlantısı oluştur",
   "remoteControl.stop": "Uzaktan Kontrolü durdur",
+  "remoteControl.previews.title": "Web önizlemeleri",
+  "remoteControl.previews.caption": "Eşleştirilmiş cihazlar web önizlemesini açabilir. Her önizleme adresi sayfasını eşleştirme olmadan açar; bu yüzden gizli tutun.",
   "remoteControl.pairing.title": "Başka bir cihaz bağla",
   "remoteControl.pairing.description": "QR kodunu tarayın veya tek kullanımlık bağlantıyı diğer cihazda açın.",
   "remoteControl.pairing.qrAlt": "Uzaktan Kontrol eşleştirme QR kodu",

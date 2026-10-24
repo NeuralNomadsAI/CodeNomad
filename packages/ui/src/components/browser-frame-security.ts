@@ -1,6 +1,5 @@
 import type { RuntimeEnvironment } from "../lib/runtime-env"
-
-const FRAME_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+import { PREVIEW_SANDBOX_FLAGS as FRAME_SANDBOX } from "../../../server/src/previews/sandbox"
 
 /**
  * `allow-same-origin` lets a frame's own fetches and WebSocket handshakes stay

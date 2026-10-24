@@ -1,7 +1,8 @@
 import assert from "node:assert/strict"
+import crypto from "node:crypto"
 import http from "node:http"
 import net from "node:net"
-import test from "node:test"
+import test, { type TestContext } from "node:test"
 import { FAKE_TUNNEL_HOST, startRemoteSurface } from "./test-support/surface"
 
 const HOST = FAKE_TUNNEL_HOST
@@ -114,8 +115,8 @@ test("a paired device uses the app without loopback privileges or spoofed metada
   assert.equal(echo.status, 200)
   assert.deepEqual(JSON.parse(echo.body), { loopbackPrivileges: false, forwardedFor: null, remoteControlHeader: null })
   assert.equal(JSON.parse((await send(target(), "/api/auth/status", { headers: { cookie } })).body).authenticated, true)
-  // The UI hides preview entry points, since previews are host-only.
-  assert.equal(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body).remoteControl, true)
+  // Web previews are allowed by default.
+  assert.equal(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body).previewsUnavailable, undefined)
 
   const status = JSON.parse((await send(target(), "/api/remote-control/status", { headers: { cookie } })).body)
   assert.equal(status.manageable, false)
@@ -176,7 +177,7 @@ test("request targets the router would reinterpret cannot reach host-only routes
   }
 })
 
-test("requests must target the tunnel hostname and cannot upgrade", async (t) => {
+test("requests must target the tunnel hostname and cannot upgrade outside web previews", async (t) => {
   const { target, code } = await startRemoteSurface(t)
   const cookie = await pair(target(), code)
   assert.equal((await send(target(), "/api/test/echo", { headers: { cookie, host: "localhost" } })).status, 421)
@@ -190,6 +191,84 @@ test("requests must target the tunnel hostname and cannot upgrade", async (t) =>
     request.end()
   })
   assert.equal(upgrade, 404)
+})
+
+// A previewed dev server: records requests and completes WebSocket upgrades.
+async function startPreviewUpstream(t: TestContext) {
+  const requests: Array<[string | undefined, string | undefined, string | undefined]> = []
+  const sockets = new Set<net.Socket>()
+  const server = http.createServer((request, response) => {
+    requests.push([request.method, request.url, request.headers.cookie])
+    request.resume()
+    response.writeHead(200, { "content-type": "application/json" }).end("{\"ok\":true}")
+  })
+  server.on("upgrade", (request, socket: net.Socket) => {
+    sockets.add(socket)
+    const accept = crypto.createHash("sha1").update(`${request.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64")
+    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`)
+  })
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
+  t.after(() => new Promise<void>((resolve) => {
+    for (const socket of sockets) socket.destroy()
+    server.closeAllConnections()
+    server.close(() => resolve())
+  }))
+  return { url: `http://127.0.0.1:${(server.address() as net.AddressInfo).port}`, requests }
+}
+
+function upgrade(target: string, pathname: string): Promise<{ status: number; socket?: net.Socket }> {
+  const [hostname, port] = target.split(":")
+  return new Promise((resolve, reject) => {
+    const request = http.request({ hostname, port: Number(port), path: pathname, headers: {
+      host: HOST, connection: "Upgrade", upgrade: "websocket", "sec-websocket-version": "13", "sec-websocket-key": crypto.randomBytes(16).toString("base64"),
+    } })
+    request.on("response", (response) => { response.resume(); resolve({ status: response.statusCode ?? 0 }) })
+    request.on("upgrade", (response, socket) => resolve({ status: response.statusCode ?? 0, socket }))
+    request.on("error", reject)
+    request.end()
+  })
+}
+
+test("web previews reach Remote Control through their capability while the host allows them", async (t) => {
+  const { manager, previewManager, target, code } = await startRemoteSurface(t)
+  const cookie = await pair(target(), code)
+  const upstream = await startPreviewUpstream(t)
+  const { token } = previewManager.create("session", upstream.url)
+
+  // A sandboxed preview document sends neither the device cookie nor a usable Origin.
+  const page = await send(target(), `/previews/${token}/page`)
+  assert.equal(page.status, 200, page.body)
+  assert.equal(page.headers["content-security-policy"], "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads")
+  assert.equal(page.headers["referrer-policy"], "same-origin")
+  const form = await send(target(), `/previews/${token}/form`, {
+    method: "POST", headers: { origin: "null", "content-type": "application/x-www-form-urlencoded" }, body: "a=1",
+  })
+  assert.equal(form.status, 200, form.body)
+  assert.equal((await send(target(), `/previews/${crypto.randomUUID()}/page`)).status, 404)
+  // A paired device's root-relative asset resolves through the preview named by its Referer.
+  const asset = () => send(target(), "/assets/probe.json", { headers: { cookie, referer: `${ORIGIN}/previews/${token}/page` } })
+  assert.equal((await asset()).body, "{\"ok\":true}")
+
+  const live = await upgrade(target(), `/previews/${token}/ws`)
+  assert.equal(live.status, 101)
+  for (const pathname of [`/previews/${token}/../../api/test/stream`, "/api/test/stream", `/previews/${crypto.randomUUID()}/ws`]) {
+    assert.equal((await upgrade(target(), pathname)).status, 404, pathname)
+  }
+  assert.equal(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body).previewsUnavailable, undefined)
+  // Only the host changes the choice.
+  const remoteChange = await send(target(), "/api/remote-control/previews", {
+    method: "PUT", headers: { cookie, origin: ORIGIN, "content-type": "application/json" }, body: JSON.stringify({ enabled: false }),
+  })
+  assert.equal(remoteChange.status, 404)
+
+  const closed = new Promise<void>((resolve) => live.socket!.once("close", () => resolve()))
+  assert.equal(manager.setPreviewsAllowed(false).previews, false)
+  await closed
+  assert.equal((await send(target(), `/previews/${token}/page`)).status, 404)
+  assert.equal((await upgrade(target(), `/previews/${token}/ws`)).status, 404)
+  assert.notEqual((await asset()).body, "{\"ok\":true}")
+  assert.equal(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body).previewsUnavailable, true)
+  assert.deepEqual(upstream.requests, [["GET", "/page", undefined], ["POST", "/form", undefined], ["GET", "/assets/probe.json", undefined]])
 })
 
 test("revoking a device ends its live streams and later requests", async (t) => {

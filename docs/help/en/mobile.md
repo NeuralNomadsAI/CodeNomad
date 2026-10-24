@@ -37,7 +37,7 @@ The composer keeps Agent, Model and Thinking in its footer. The field resizes wi
 | Projects, conversations, files and permissions | Operate on the connected backend host, subject to its access controls. Device attachments upload from the phone; project references resolve on the host. |
 | Native desktop windows, OS menus and host-native automation | Not supplied by installing the PWA. |
 | Browser preview | Does not acquire native guest-browser capabilities; fallback rendering remains browser-limited. |
-| SideCar content and WebSockets | Depend on connection path; Remote Control blocks the SideCar content proxy, preview content and WebSocket upgrades. See its [exact restrictions](remote-control.md). |
+| SideCar content and WebSockets | Depend on connection path; Remote Control blocks the SideCar content proxy and serves web previews, with their WebSockets, while the host allows them. See its [exact restrictions](remote-control.md). |
 | Microphone, clipboard, notifications and install prompt | Depend on browser/OS support, secure context and user permissions. |
 | Offline work | No offline backend or cached API history. Static UI assets may be cached, but documents and API responses are not an offline workspace. |
 

@@ -375,6 +375,9 @@ export const serverApi = {
   createRemoteControlPairing(): Promise<RemoteControlPairing> {
     return request<RemoteControlPairing>("/api/remote-control/pairings", { method: "POST" })
   },
+  setRemoteControlPreviews(enabled: boolean): Promise<RemoteControlStatus> {
+    return request<RemoteControlStatus>("/api/remote-control/previews", { method: "PUT", body: JSON.stringify({ enabled }) })
+  },
   fetchRemoteControlDevices(): Promise<{ devices: RemoteControlDevice[] }> {
     return request<{ devices: RemoteControlDevice[] }>("/api/remote-control/devices")
   },

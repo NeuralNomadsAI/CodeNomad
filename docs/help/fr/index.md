@@ -26,7 +26,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projets, conversations, fichiers et historique | Dossiers du backend et sessions natives | Dossiers et sessions du serveur connecté | Surfaces autorisées de l’espace de travail de l’hôte |
 | Préférences natives et fenêtres de bureau | Disponibles | Les paramètres navigateur/distants restent dans le client | Commandes réservées au bureau hôte indisponibles |
-| Aperçu navigateur de session | Natif dans Electron et Tauri Windows ; iframe sur les autres plateformes Tauri | Iframe si disponible | Points d’accès d’aperçu réservés à l’hôte indisponibles |
+| Aperçu navigateur de session | Natif dans Electron et Tauri Windows ; iframe sur les autres plateformes Tauri | Iframe si disponible | Iframe tant que l’hôte autorise les aperçus web (par défaut) |
 | Automatisation native du bureau/navigateur | Fenêtres/aperçus locaux détenus | Ne remplace pas l’automatisation native du bureau | Points d’accès d’automatisation réservés à l’hôte indisponibles |
 | Authentification | Initialisation locale ou session par mot de passe | Session par mot de passe du serveur | Identifiant d’appareil appairé |
 | Installation PWA | Utiliser l’application native ou un navigateur | Selon le navigateur ; contexte sécurisé requis | Selon le navigateur ; appairage toujours requis |

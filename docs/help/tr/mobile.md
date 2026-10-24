@@ -37,7 +37,7 @@ Gezinmeyi ve araçları açmak için **Sol panel** ve **Sağ panel** kontrolleri
 | Projeler, konuşmalar, dosyalar ve izinler | Erişim kontrollerine bağlı olarak bağlı arka uç ana bilgisayarda çalışın. Cihaz ekleri telefondan yüklenir; proje referansları ana bilgisayarda çözümlenir. |
 | Yerel masaüstü pencereleri, işletim sistemi menüleri ve ana makineye özgü otomasyon | PWA kurulduğunda sağlanmaz. |
 | Tarayıcı önizlemesi | Yerel konuk tarayıcı yetenekleri kazanmaz; geri dönüş oluşturma tarayıcıyla sınırlı kalır. |
-| SideCar içeriği ve WebSockets | Bağlantı yoluna bağlıdır; Uzaktan Kontrol SideCar içerik proxy'sini, önizleme içeriğini ve WebSocket yükseltmelerini engeller. [Tüm kısıtlamalara](remote-control.md) bakın. |
+| SideCar içeriği ve WebSockets | Bağlantı yoluna bağlıdır; Uzaktan Kontrol SideCar içerik proxy'sini engeller ve ana makine izin verdiği sürece web önizlemelerini WebSocket bağlantılarıyla birlikte sunar. [Tüm kısıtlamalara](remote-control.md) bakın. |
 | Mikrofon, pano, bildirimler ve yükleme istemi | Tarayıcı/işletim sistemi desteğine, güvenli içeriğe ve kullanıcı izinlerine bağlıdır. |
 | Çevrimdışı çalışma | Çevrimdışı arka uç veya önbelleğe alınmış API geçmişi yok. Statik kullanıcı arayüzü varlıkları önbelleğe alınabilir ancak belgeler ve API yanıtları çevrimdışı bir çalışma alanı değildir. |
 

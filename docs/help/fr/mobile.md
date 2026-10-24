@@ -37,7 +37,7 @@ La zone de saisie garde Agent, Modèle et Réflexion dans son pied. Le champ se 
 | Projets, conversations, fichiers et autorisations | Opèrent sur l’hôte backend connecté, sous ses contrôles d’accès. Les pièces jointes d’appareil sont transférées depuis le téléphone ; les références de projet sont résolues sur l’hôte. |
 | Fenêtres natives de bureau, menus système et automatisation native de l’hôte | Non fournis par l’installation de la PWA. |
 | Aperçu navigateur | N’acquiert pas de capacités natives de navigateur invité ; le rendu de repli reste limité par le navigateur. |
-| Contenu SideCar et WebSockets | Dépendent du chemin de connexion ; le Contrôle à distance bloque le proxy de contenu SideCar, le contenu d’aperçu et les mises à niveau WebSocket. Voir ses [restrictions exactes](remote-control.md). |
+| Contenu SideCar et WebSockets | Dépendent du chemin de connexion ; le Contrôle à distance bloque le proxy de contenu SideCar et sert les aperçus web, avec leurs WebSockets, tant que l’hôte les autorise. Voir ses [restrictions exactes](remote-control.md). |
 | Microphone, presse-papiers, notifications et proposition d’installation | Dépendent de la prise en charge navigateur/système, du contexte sécurisé et des permissions utilisateur. |
 | Travail hors ligne | Aucun backend hors ligne ni historique API en cache. Les ressources d’interface statiques peuvent être en cache, mais les documents et réponses API ne constituent pas un espace de travail hors ligne. |
 

@@ -41,6 +41,25 @@ test("after a failed resume, paired devices stay listed and Stop forgets the cho
   } finally { await page.close() }
 })
 
+test("the host switches web previews for paired devices; paired devices only see the host's setting", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
+  try {
+    await page.goto(`${url}?scenario=connected`)
+    const previews = page.getByRole("switch", { name: "Web previews" })
+    await previews.waitFor()
+    assert.equal(await previews.isChecked(), true)
+    await previews.click()
+    await page.waitForFunction(() => !(document.querySelector('[role="switch"][aria-label="Web previews"]') as HTMLInputElement).checked)
+    await previews.click()
+    await page.waitForFunction(() => (document.querySelector('[role="switch"][aria-label="Web previews"]') as HTMLInputElement).checked)
+    assert.deepEqual(await page.evaluate(() => (window as unknown as { previewChanges: boolean[] }).previewChanges), [false, true])
+
+    await page.goto(`${url}?scenario=remote`)
+    await page.getByText("Ready for remote connections", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("switch", { name: "Web previews" }).count(), 0)
+  } finally { await page.close() }
+})
+
 test("a backend that did not resume offers no Stop that would clear the owner's choice", async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 900 }, locale: "en-US" })
   try {

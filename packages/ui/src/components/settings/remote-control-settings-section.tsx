@@ -5,6 +5,7 @@ import type { RemoteControlDevice, RemoteControlPairing, RemoteControlStatus } f
 import { serverApi } from "../../lib/api-client"
 import { useI18n } from "../../lib/i18n"
 import { getLogger } from "../../lib/logger"
+import { SettingsSwitch } from "./settings-switch"
 
 const log = getLogger("actions")
 // Only while the tunnel is (re)connecting, e.g. when it resumes at launch.
@@ -106,6 +107,15 @@ export const RemoteControlSettingsSection: Component = () => {
     </button>
   )
 
+  const setPreviews = async (enabled: boolean) => {
+    setError(null)
+    try {
+      setStatus(await serverApi.setRemoteControlPreviews(enabled))
+    } catch (cause) {
+      setError(message(cause))
+    }
+  }
+
   const createPairing = async () => {
     setLoading(true)
     setError(null)
@@ -196,6 +206,23 @@ export const RemoteControlSettingsSection: Component = () => {
               {stopButton()}
             </Show>
           </div>
+        </Show>
+
+        <Show when={status()?.manageable ? status() : null}>
+          {(current) => (
+            <div class="settings-toggle-row">
+              <div>
+                <div class="settings-toggle-title">{t("remoteControl.previews.title")}</div>
+                <div class="settings-toggle-caption">{t("remoteControl.previews.caption")}</div>
+              </div>
+              <SettingsSwitch
+                checked={current().previews}
+                label={t("remoteControl.previews.title")}
+                disabled={loading()}
+                onChange={(enabled) => void setPreviews(enabled)}
+              />
+            </div>
+          )}
         </Show>
 
         <Show when={error()}>{(value) => <div class="settings-error-message">{value()}</div>}</Show>

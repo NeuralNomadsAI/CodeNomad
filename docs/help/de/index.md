@@ -26,7 +26,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projekte, Unterhaltungen, Dateien und Verlauf | Ordner und native Sitzungen des Backends | Ordner und Sitzungen des verbundenen Servers | Autorisierte Arbeitsbereichsoberflächen des Hosts |
 | Native Einstellungen und Desktop-Fenster | Verfügbar | Browser-/Remote-Einstellungen bleiben im Client | Nur auf dem Host verfügbare Desktop-Steuerung nicht verfügbar |
-| Browser-Vorschau der Sitzung | Nativ in Electron und Windows-Tauri; iframe auf anderen Tauri-Plattformen | iframe, soweit verfügbar | Nur auf dem Host verfügbare Vorschau-Endpunkte nicht verfügbar |
+| Browser-Vorschau der Sitzung | Nativ in Electron und Windows-Tauri; iframe auf anderen Tauri-Plattformen | iframe, soweit verfügbar | iframe, solange der Host Web-Vorschauen erlaubt (Standard) |
 | Native Desktop-/Browser-Automatisierung | Zugeordnete lokale Fenster/Vorschauen | Kein Ersatz für native Desktop-Automatisierung | Nur auf dem Host verfügbare Automatisierungs-Endpunkte nicht verfügbar |
 | Authentifizierung | Lokale Ersteinrichtung oder Passwortsitzung | Server-Passwortsitzung | Zugangsdaten des gekoppelten Geräts |
 | PWA-Installation | Native App oder Browser verwenden | Browserabhängig; sicherer Kontext erforderlich | Browserabhängig; Kopplung weiterhin erforderlich |

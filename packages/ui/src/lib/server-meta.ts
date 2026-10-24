@@ -4,10 +4,10 @@ import { serverApi } from "./api-client"
 
 let cachedMeta: ServerMeta | null = null
 let pendingMeta: Promise<ServerMeta> | null = null
-const [remoteControlClient, setRemoteControlClient] = createSignal(false)
+const [previewsUnavailable, setPreviewsUnavailable] = createSignal(false)
 
-/** Whether this client reaches the server through Remote Control, which serves no previews. */
-export { remoteControlClient }
+/** Whether this client reaches the server through Remote Control while its host keeps web previews off. */
+export { previewsUnavailable }
 
 export async function getServerMeta(forceRefresh = false): Promise<ServerMeta> {
   if (cachedMeta && !forceRefresh) {
@@ -18,7 +18,7 @@ export async function getServerMeta(forceRefresh = false): Promise<ServerMeta> {
   }
   const request = serverApi.fetchServerMeta().then((meta) => {
     cachedMeta = meta
-    setRemoteControlClient(meta.remoteControl === true)
+    setPreviewsUnavailable(meta.previewsUnavailable === true)
     return meta
   })
   pendingMeta = request

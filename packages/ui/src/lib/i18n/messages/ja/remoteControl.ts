@@ -12,6 +12,8 @@ export const remoteControlMessages = {
   "remoteControl.start": "リモートコントロールを開始",
   "remoteControl.newLink": "新しいペアリングリンクを作成",
   "remoteControl.stop": "リモートコントロールを停止",
+  "remoteControl.previews.title": "Web プレビュー",
+  "remoteControl.previews.caption": "ペアリング済み端末で Web プレビューを開けます。各プレビューのアドレスはペアリングなしでそのページを開くため、他人に知られないようにしてください。",
   "remoteControl.pairing.title": "別の端末を接続",
   "remoteControl.pairing.description": "QR コードをスキャンするか、別の端末で一度限りのリンクを開いてください。",
   "remoteControl.pairing.qrAlt": "リモートコントロールのペアリング QR コード",

@@ -388,26 +388,26 @@ test("header actions collapse below the timeline breakpoint even when the full h
   } finally { await page.close() }
 })
 
-for (const device of ["Pixel 5", "Desktop Chrome"] as const) test(`conversation actions offer the web preview on ${device} except through Remote Control`, async () => {
+for (const device of ["Pixel 5", "Desktop Chrome"] as const) test(`conversation actions offer the web preview on ${device} unless Remote Control keeps previews off`, async () => {
   const mobile = device === "Pixel 5"
-  for (const remoteControl of [false, true]) {
+  for (const previewsOff of [false, true]) {
     const page = await browser.newPage({ ...devices[device], viewport: { width: 390, height: 844 } })
-    await page.route("**/api/**", route => route.fulfill({ json: remoteControl && new URL(route.request().url()).pathname === "/api/meta" ? { remoteControl: true } : {} }))
+    await page.route("**/api/**", route => route.fulfill({ json: previewsOff && new URL(route.request().url()).pathname === "/api/meta" ? { previewsUnavailable: true } : {} }))
     try {
       await page.goto(url)
       await page.waitForFunction(() => Boolean((window as any).fixture))
       await page.getByText("Fixture message", { exact: true }).waitFor()
-      const context = JSON.stringify({ device, remoteControl })
+      const context = JSON.stringify({ device, previewsOff })
       // Inline actions stay mounted while the narrow conversation forces the menu.
       const inline = page.locator(".session-header-expanded-actions")
       const inlinePreview = inline.locator('button[aria-label="Open web preview"]')
-      // Server metadata can arrive after the first render; Remote Control then drops the entry.
-      if (remoteControl) await inlinePreview.waitFor({ state: "detached", timeout: 5000 })
-      assert.equal(await inlinePreview.count(), remoteControl ? 0 : 1, context)
+      // Server metadata can arrive after the first render; the entry then disappears.
+      if (previewsOff) await inlinePreview.waitFor({ state: "detached", timeout: 5000 })
+      assert.equal(await inlinePreview.count(), previewsOff ? 0 : 1, context)
       assert.equal(await inline.locator('button[aria-label="Full screen"]').count(), mobile ? 1 : 0, context)
       await page.locator(".session-header-actions-menu").click()
       await page.getByRole("menuitem", { name: "Message content", exact: true }).waitFor()
-      assert.equal(await page.getByRole("menuitemcheckbox", { name: "Open web preview" }).count(), remoteControl ? 0 : 1, context)
+      assert.equal(await page.getByRole("menuitemcheckbox", { name: "Open web preview" }).count(), previewsOff ? 0 : 1, context)
       assert.equal(await page.getByRole("menuitem", { name: "Full screen" }).count(), mobile ? 1 : 0, context)
     } finally { await page.close() }
   }
