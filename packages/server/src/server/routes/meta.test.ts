@@ -26,6 +26,7 @@ test("metadata reports the backend process platform regardless of client user ag
       assert.equal(response.statusCode, 200)
       assert.deepEqual(response.json().system, expected)
       assert.equal(response.json().workspaceRoot, meta.workspaceRoot)
+      assert.equal(response.json().remoteControl, undefined, "a local request is not a Remote Control client")
     }
     assert.equal(meta.system, undefined, "route must not mutate shared metadata")
     meta.system = { platform: "client-provided-platform", arch: "client-provided-arch", name: "client-provided-name" }

@@ -69,7 +69,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     settings: stub,
     fileSystemBrowser: stub,
     eventBus: stub,
-    serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
+    serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub,
     speechService: stub,
     sidecarManager: stub,
