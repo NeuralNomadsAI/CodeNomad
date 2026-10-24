@@ -71,14 +71,21 @@ export function normalizePreviewSettings(value: unknown): PreviewSettings {
 /** Resolve a stored policy against every origin CodeNomad itself is served
  * from. A custom origin needs a hostname of its own: an empty, invalid or
  * app-owned origin degrades to the default opaque policy, even when only the
- * port differs. */
+ * port differs. A loopback app origin owns every loopback alias on its own
+ * port, so `localhost`, `127.x`, `[::1]` and `0.0.0.0` cannot name the app's
+ * origin. */
 export function resolvePreviewSettings(value: unknown, appOrigins: Iterable<string>): PreviewSettings {
   const settings = normalizePreviewSettings(value)
   if (settings.originMode !== "custom") return settings
-  const customHostname = originHostname(settings.customOrigin)
-  if (!customHostname) return normalizePreviewSettings(undefined)
+  const custom = originAddress(settings.customOrigin)
+  if (!custom.hostname) return normalizePreviewSettings(undefined)
   for (const appOrigin of appOrigins) {
-    if (originHostname(appOrigin) === customHostname) return normalizePreviewSettings(undefined)
+    const app = originAddress(appOrigin)
+    if (!app.hostname) continue
+    if (app.hostname === custom.hostname) return normalizePreviewSettings(undefined)
+    if (app.port === custom.port && isLoopbackHostname(app.hostname) && isLoopbackHostname(custom.hostname)) {
+      return normalizePreviewSettings(undefined)
+    }
   }
   return settings
 }
@@ -114,12 +121,14 @@ export function previewDocumentSandboxForTarget(
   return previewDocumentSandbox(allowSameOrigin, settings.sandbox)
 }
 
-function originHostname(origin: string): string {
-  if (!origin) return ""
+/** An origin's hostname and effective port; `URL` already drops default ports. */
+function originAddress(origin: string): { hostname: string; port: string } {
+  if (!origin) return { hostname: "", port: "" }
   try {
-    return new URL(origin).hostname.toLowerCase()
+    const url = new URL(origin)
+    return { hostname: url.hostname.toLowerCase(), port: url.port }
   } catch {
-    return ""
+    return { hostname: "", port: "" }
   }
 }
 

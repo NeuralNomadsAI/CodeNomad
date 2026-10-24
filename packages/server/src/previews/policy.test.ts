@@ -82,6 +82,31 @@ describe("preview policy", () => {
     )
   })
 
+  it("treats every loopback alias of an app origin's port as app-owned", () => {
+    for (const customOrigin of ["http://localhost:8443", "http://127.0.0.1:8443", "http://[::1]:8443", "http://0.0.0.0:8443"]) {
+      assert.equal(
+        resolvePreviewSettings({ originMode: "custom", customOrigin }, ["http://127.0.0.1:8443"]).originMode,
+        "opaque",
+        customOrigin,
+      )
+    }
+    // An alias at a different port names a distinct preview origin. (The same
+    // hostname is app-owned at any port, which stays the stricter rule.)
+    assert.equal(resolvePreviewSettings(
+      { originMode: "custom", customOrigin: "http://127.0.0.1:9000" },
+      ["http://localhost:8443"],
+    ).originMode, "custom")
+    assert.equal(resolvePreviewSettings(
+      { originMode: "custom", customOrigin: "http://[::1]:9000" },
+      ["http://localhost:8443"],
+    ).originMode, "custom")
+    // Loopback aliasing never widens trust for a non-loopback app origin.
+    assert.equal(resolvePreviewSettings(
+      { originMode: "custom", customOrigin: "https://localhost:8443" },
+      ["https://app.example.com"],
+    ).originMode, "custom")
+  })
+
   it("uses the request host for custom-origin trust", () => {
     const settings = resolvePreviewSettings(
       { originMode: "custom", customOrigin: "https://preview.example.com" },

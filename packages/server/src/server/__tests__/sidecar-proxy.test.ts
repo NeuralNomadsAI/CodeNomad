@@ -434,6 +434,25 @@ it("custom origin mode leaves an app-origin referer fallback opaque", async () =
   }
 })
 
+it("custom origin mode refuses the app's own origin from the stored policy", async () => {
+  const server = await startServer({
+    html: true,
+    preview: { ...DEFAULT_PREVIEW_SETTINGS, originMode: "custom", customOrigin: "http://app.example.com:8443" },
+  })
+  try {
+    const response = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { host: "app.example.com:8443", origin: server.origin, cookie: server.cookie },
+    })
+    assert.equal(response.statusCode, 200)
+    // The app-origin resolve step degrades the custom mode, so the same Host
+    // that would otherwise match stays opaque.
+    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(false, DEFAULT_PREVIEW_SETTINGS.sandbox))
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
 it("capability-host preview responses stay untouched by the origin tier", async () => {
   const server = await startServer({ html: true })
   try {
