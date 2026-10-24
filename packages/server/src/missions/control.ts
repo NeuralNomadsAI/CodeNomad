@@ -18,6 +18,7 @@ import {
 import { buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
+import { isMissionTaskSession, missionCoordinatorSessionID, missionTaskSessionID } from "./session-identity"
 import { nativeDecisionProvenance, resolveDebuggingImplementerSessionID, validateMissionCompletionPolicy, validateMissionDelegationPolicy, validateMissionReportArtifact, validateNativeDecisionArtifact } from "./contracts"
 import type { HumanDecisionDiscovery, NativeHumanAnswerGate } from "./human-answer"
 import { liveContinuations, missionListEntry, missionRelation, taskInterruptionSchema, taskObservationSchema,
@@ -260,7 +261,7 @@ export class MissionControl {
         throw new MissionControlError("Coordinator session already belongs to an active mission", "already-member")
       }
     } else {
-      const sessionID = `ses_${stableToken(`${missionID}\0coordinator`, 26)}`
+      const sessionID = missionCoordinatorSessionID(missionID, this.options.now?.() ?? Date.now())
       try {
         coordinator = await this.options.sessions.get({ sessionID })
       } catch {
@@ -1233,7 +1234,7 @@ export class MissionControl {
     }
     if (mission.actors.length >= MISSION_MAX_ACTORS) throw new MissionControlError("Mission actor limit reached", "actor-limit")
     return {
-      sessionID: `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}`,
+      sessionID: missionTaskSessionID(mission.id, task.id, this.options.now?.() ?? Date.now()),
       title: `Mission · ${task.role}: ${task.title}`.slice(0, 160),
       location: (await this.ownedRootSession(coordinatorID)).location,
       managed: true,
@@ -1241,7 +1242,7 @@ export class MissionControl {
   }
 
   private async ensureActorSession(mission: MissionMap, actor: MissionActor, task: MissionMap["tasks"][number]): Promise<NativeMissionSession> {
-    const ownsCreation = actor.managed && actor.sessionId === `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}`
+    const ownsCreation = actor.managed && isMissionTaskSession(actor.sessionId, mission.id, task.id)
     // Every managed desktop retry consults the held-operation capability, even
     // when a late root is now readable. GET existence cannot settle an ACK loss.
     if (ownsCreation && this.options.createManagedRoot) {
@@ -1253,7 +1254,7 @@ export class MissionControl {
       // later assignment. Reuse requires the original dispatch acknowledgement;
       // mere existence of a late root must not bypass an uncertain create hold.
       const source = mission.tasks.find(candidate => candidate.actorSessionId === actor.sessionId
-        && actor.sessionId === `ses_${stableToken(`${mission.id}\0task\0${candidate.id}`, 26)}`)
+        && isMissionTaskSession(actor.sessionId, mission.id, candidate.id))
       const dispatched = source && await this.journal.event(mission.id, this.eventID(mission.id, `task-${source.key}-dispatched`))
       if (dispatched?.type !== "task.dispatched" || dispatched.taskKey !== source?.key) {
         throw new MissionControlError("Managed root creation has not been acknowledged; retry its original assignment", "invalid-dispatch")

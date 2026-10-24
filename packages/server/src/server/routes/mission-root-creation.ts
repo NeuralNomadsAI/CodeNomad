@@ -6,7 +6,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { CODENOMAD_MISSIONS_RPC } from "../../missions/rpc"
 import { MISSION_SCHEMA_VERSION, type MissionSnapshot } from "../../missions/model"
 import { missionIsRunning } from "../../missions/lifecycle-model"
-import { stableToken } from "../../missions/journal"
+import { isMissionTaskSession } from "../../missions/session-identity"
 import { matchesExecution } from "../../missions/execution"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { prepareMissionRootCreationLocation, type MissionCreationManager } from "./mission-creation-admission"
@@ -48,7 +48,7 @@ export async function createManagedMissionRoot(manager: Manager, fence: Worktree
     if (snapshot.projectID !== coordinator.projectID || !mission || mission.coordinatorSessionId !== coordinatorID
       || !missionIsRunning(mission) || mission.control?.pending.length || task?.status !== "dispatching"
       || !actor?.managed || actor.kind === "coordinator" || !sameLocation(actor.location, coordinator.location)
-      || actor.sessionId !== `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}`) throw new Error("Foreign managed root contract")
+      || !isMissionTaskSession(actor.sessionId, mission.id, task.id)) throw new Error("Foreign managed root contract")
     return { actor, task }
   }
   const contract = await readContract()

@@ -2,6 +2,7 @@ import type { MissionDeleteInput, MissionInputTransport, MissionSessionAdapter }
 import { removeCleanupTarget, type MissionCleanupTarget } from "./native-session-cleanup"
 import { MissionControlError } from "./control-error"
 import { MissionJournal, stableToken } from "./journal"
+import { isMissionTaskSession } from "./session-identity"
 import { MISSION_SCHEMA_VERSION, type MissionDeletedEvent, type MissionEvent, type MissionMap, type MissionSnapshot } from "./model"
 import { cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReceipt, isCleanupReason, projectMissionCleanups } from "./cleanup-projection"
 
@@ -66,7 +67,7 @@ function managedTargets(mission: MissionMap): NonNullable<MissionDeletedEvent["c
   return mission.actors.filter((actor) => actor.kind === "specialist" && actor.managed
     && actor.sessionId !== mission.coordinatorSessionId
     && mission.tasks.some((task) => task.actorSessionId === actor.sessionId
-      && actor.sessionId === `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}`))
+      && isMissionTaskSession(actor.sessionId, mission.id, task.id)))
     .map((actor) => ({ sessionID: actor.sessionId, location: { ...actor.location } }))
 }
 

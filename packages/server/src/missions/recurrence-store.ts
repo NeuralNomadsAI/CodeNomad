@@ -186,7 +186,7 @@ export class NativeMissionRecurrenceStore {
       const due: RecurrenceDue = { kind: "manual", requestID, expectedRevision, at: now }
       const passageID = recurrencePassageID(this.projectToken, id, doc.scheduleRevision, due)
       doc.pending = { passage: { id: passageID, messageID: recurrenceMessageID(passageID), due,
-        coordinatorSessionID: recurrenceCoordinatorSessionID(this.projectID, passageID),
+        coordinatorSessionID: recurrenceCoordinatorSessionID(this.projectID, passageID, now),
         scheduleRevision: doc.scheduleRevision, createdAt: now }, admission: null }
       doc.controls.push({ requestID, expectedRevision, action: "run-now", revision: expectedRevision + 1,
         state: doc.state, controlsComplete: false, targetsKnown: true, targets: [] })
@@ -205,7 +205,7 @@ export class NativeMissionRecurrenceStore {
       // Unacknowledged from the FIRST durable publication. A crash at any point
       // after this write parks the original key; it never authorizes replay.
       doc.pending = { passage: { id: passageID, messageID: recurrenceMessageID(passageID),
-        coordinatorSessionID: recurrenceCoordinatorSessionID(this.projectID, passageID),
+        coordinatorSessionID: recurrenceCoordinatorSessionID(this.projectID, passageID, now),
         scheduleRevision: doc.scheduleRevision, due, createdAt: now }, admission: null }
     })
   }
