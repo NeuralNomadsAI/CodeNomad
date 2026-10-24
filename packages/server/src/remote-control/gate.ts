@@ -2,6 +2,7 @@ import type { Socket } from "node:net"
 import type { FastifyReply, FastifyRequest } from "fastify"
 import { parseCookies, wantsHtml } from "../auth/http-auth"
 import type { RemoteControlDevice } from "../api-types"
+import { routedPath } from "../server/routed-path"
 import { attachRemoteDevice, isRemoteRequest } from "./request-origin"
 
 export const DEVICE_COOKIE_NAME = "__Host-codenomad_device"
@@ -83,22 +84,6 @@ export function deviceCookie(token: string): string {
 // reused keep-alive socket from failing the client's next request.
 function reject(reply: FastifyReply, status: number, error: string): void {
   reply.header("connection", "close").code(status).send({ error })
-}
-
-/**
- * The path the router will route, or null for a target to refuse. Browsers send
- * origin-form targets only; the router also routes absolute-form targets and
- * strips fragments, so those would otherwise be judged as different paths. The
- * result is percent-decoded, so encoding cannot slip past host-only prefixes, and
- * cut at ";", which the router treats as a path-parameter delimiter.
- */
-function routedPath(target: string): string | null {
-  if (!target.startsWith("/") || target.startsWith("//") || target.includes("#")) return null
-  try {
-    return decodeURIComponent(target.split("?")[0]!).split(";")[0]!
-  } catch {
-    return null
-  }
 }
 
 function isStaticBundlePath(pathname: string): boolean {

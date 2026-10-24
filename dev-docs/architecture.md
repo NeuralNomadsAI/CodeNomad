@@ -45,6 +45,8 @@ CodeNomad control APIs live under `/api/*`. Important routes include:
 - `/api/opencode-plugin/automation`, authenticated by a per-process loopback token and restricted to CodeNomad-owned locations
 - `/api/remote-control/*`, managed from the host only; `POST /api/remote-control/pair` and `/remote-pair` answer only through Remote Control ([REMOTE_CONTROL.md](REMOTE_CONTROL.md))
 
+Authentication and Remote Control admission judge `routedPath()` (`server/routed-path.ts`), the path Fastify's router matches (`/%61pi/x` routes as `/api/x`), and refuse targets it would reinterpret. Never base an access decision on the raw request target.
+
 Native OpenCode requests use `/workspaces/:id/instance/api/*`. The Fastify proxy exposes an explicit method/path allowlist, adds shared-service authorization, validates prompt files, defaults safe requests to the workspace location, and rejects locations/directories outside the selected workspace or its worktrees. Session routes also verify `session.location.directory`. Never trust a browser-supplied worktree path: resolve ownership server-side. Upstream additions are exposed only after an explicit proxy review.
 
 Yolo state endpoints live at `/workspaces/:id/yolo/sessions/:sessionId`; Yolo notifications use `/api/events`.

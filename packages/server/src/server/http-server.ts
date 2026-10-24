@@ -71,6 +71,7 @@ import { proxyWebSocket } from "./proxy-websocket"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { routedPath } from "./routed-path"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { requestAdmission } from "./request-admission"
@@ -239,8 +240,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerAuthRoutes(app, { authManager: deps.authManager })
 
   app.addHook("preHandler", (request, reply, done) => {
-    const rawUrl = request.raw.url ?? request.url
-    const pathname = (rawUrl.split("?")[0] ?? "").trim()
+    // Judge the path the router routed: the raw target can differ ("/%61pi" routes as "/api").
+    const pathname = routedPath(request.raw.url ?? request.url)
+    if (pathname === null) {
+      reply.code(400).send({ error: "Invalid request path" })
+      return
+    }
 
     // Pairing routes answer only through the Remote Control ingress.
     const publicApiPaths = new Set(["/api/auth/login", "/api/auth/token", "/api/auth/status", "/api/auth/logout", PAIR_EXCHANGE_PATH])
