@@ -263,7 +263,7 @@ jobs:
         run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
-        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs
+        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/release-pr-notes.test.cjs
 
       - name: Test Electron client state
         env:
