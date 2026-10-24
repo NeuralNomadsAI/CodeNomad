@@ -28,7 +28,7 @@ Sin un perfil explícito, los inicios empaquetados reutilizan el perfil recordad
 
 1. Para un aislamiento deliberado del escritorio, establece `CODENOMAD_PROFILE` antes de iniciar el ejecutable.
 2. Usa un nombre de 1–64 letras/dígitos ASCII, puntos, guiones bajos o guiones, que empiece por letra o dígito. Los nombres se normalizan a minúsculas; `default` o `stable` selecciona el perfil predeterminado.
-3. Comprueba **Configuración → Info → Perfil de datos** para un perfil con nombre. Un nombre inválido impide el inicio en lugar de seleccionar otro perfil.
+3. Comprueba **Configuración → General → Restaurar el estado anterior → Perfil de datos** para un perfil con nombre. Un nombre inválido impide el inicio en lugar de seleccionar otro perfil.
 
 Por ejemplo, en PowerShell, antes de iniciar el ejecutable de escritorio deseado:
 

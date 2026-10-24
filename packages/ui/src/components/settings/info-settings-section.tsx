@@ -221,14 +221,6 @@ export const InfoSettingsSection: Component = () => {
             <span class="settings-info-label">{t("settings.info.runtime.type")}</span>
             <span class="settings-info-value">{runtimeEnv.host}</span>
           </div>
-          <Show when={meta()?.desktopProfile}>
-            {(profile) => (
-              <div class="settings-info-row" data-testid="settings-data-profile">
-                <span class="settings-info-label">{t("settings.info.runtime.dataProfile")}</span>
-                <span class="settings-info-value" dir="ltr">{profile()}</span>
-              </div>
-            )}
-          </Show>
           <div class="settings-info-row">
             <span class="settings-info-label">{t("settings.info.runtime.platform")}</span>
             <span class="settings-info-value">{runtimeEnv.platform}</span>
@@ -239,22 +231,17 @@ export const InfoSettingsSection: Component = () => {
           </div>
         </div>
 
-        <h4 class="settings-card-title">{t("settings.info.updates.title")}</h4>
-        <div class="settings-info-grid">
-          <div class="settings-info-row">
-            <label class="settings-info-label" for="settings-update-feed">{t("settings.info.updates.feed")}</label>
-            <select
-              id="settings-update-feed"
-              class="selector-input w-full max-w-xs"
-              value={meta()?.updateFeed ?? ""}
-              disabled={!meta()?.updateFeed || feedSaving()}
-              aria-describedby="settings-update-feed-help"
-              onChange={(event) => void handleFeedChange(event.currentTarget.value as UpdateFeed)}
-            >
-              <option value="stable">{t("settings.info.updates.feed.stable")}</option>
-              <option value="preview">{t("settings.info.updates.feed.preview")}</option>
-            </select>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div>
+            <h3 class="settings-card-title">{t("settings.info.updates.title")}</h3>
+            <p class="settings-card-subtitle">{t("settings.info.updates.subtitle")}</p>
           </div>
+        </div>
+
+        <div class="settings-info-grid">
           <div class="settings-info-row">
             <span class="settings-info-label">{t("settings.info.updates.latest")}</span>
             <span class="settings-info-value settings-info-value-muted">
@@ -262,10 +249,6 @@ export const InfoSettingsSection: Component = () => {
             </span>
           </div>
         </div>
-        <p id="settings-update-feed-help" class="settings-help-text">{t("settings.info.updates.feed.help")}</p>
-        <Show when={feedSaveFailed()}>
-          <div class="settings-error-message" role="alert">{t("settings.info.updates.feed.saveFailed")}</div>
-        </Show>
 
         <div class="settings-info-actions">
           {showDownloadLink().show && (
@@ -301,6 +284,27 @@ export const InfoSettingsSection: Component = () => {
             {t("settings.info.updates.refresh")}
           </button>
         </div>
+
+        <div class="settings-info-grid">
+          <div class="settings-info-row">
+            <label class="settings-info-label" for="settings-update-feed">{t("settings.info.updates.feed")}</label>
+            <select
+              id="settings-update-feed"
+              class="selector-input w-full max-w-xs"
+              value={meta()?.updateFeed ?? ""}
+              disabled={!meta()?.updateFeed || feedSaving()}
+              aria-describedby="settings-update-feed-help"
+              onChange={(event) => void handleFeedChange(event.currentTarget.value as UpdateFeed)}
+            >
+              <option value="stable">{t("settings.info.updates.feed.stable")}</option>
+              <option value="preview">{t("settings.info.updates.feed.preview")}</option>
+            </select>
+          </div>
+        </div>
+        <p id="settings-update-feed-help" class="settings-help-text">{t("settings.info.updates.feed.help")}</p>
+        <Show when={feedSaveFailed()}>
+          <div class="settings-error-message" role="alert">{t("settings.info.updates.feed.saveFailed")}</div>
+        </Show>
       </div>
 
       <div class="settings-card">

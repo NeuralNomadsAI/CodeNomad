@@ -47,6 +47,16 @@
   flex-wrap: wrap;
 }
 
+/* Rows that resume after actions open with their separator. */
+.settings-info-actions + .settings-info-grid {
+  margin-top: 0.72rem;
+}
+
+.settings-info-actions + .settings-info-grid > .settings-info-row:first-child {
+  border-top: 1px solid var(--border-row);
+  padding-top: 0.72rem;
+}
+
 .settings-info-toast {
   margin-top: 0.75rem;
   padding: 0.625rem 0.875rem;

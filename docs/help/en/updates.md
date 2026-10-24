@@ -24,7 +24,7 @@ Stable selects the latest final release. Preview follows publication order becau
 | Linux x64 AppImage | Requires the AppImage bundle marker and a nonempty `APPIMAGE` path, plus signed update support. `APPRUN` alone is insufficient. |
 | Debian/RPM, loose Windows executable, unsigned/keyless build | Opens the release page rather than installing in-app. |
 
-In Tauri application and native **Preferences** windows, the Updates section shows **Install update** when a release is offered. It checks the selected feed and offers **Install and restart** when an in-app update is available; otherwise it opens the release page it shows. Electron, web and remote windows instead show the **Download update** link, without a native updater check.
+In Tauri application and native **Preferences** windows, the Updates card shows **Install update** when a release is offered. It checks the selected feed and offers **Install and restart** when an in-app update is available; otherwise it opens the release page shown on the card. Electron, web and remote windows instead show the **Download update** link, without a native updater check.
 
 The Tauri **Help → Get Updates...** menu runs the update flow in the focused application window. From Preferences or a remote window, it brings the most recently used application window forward to run the check; it does not install through the remote window. If no application window can receive the action, including a targeted loading, login or pairing screen, the menu opens the release page instead.
 

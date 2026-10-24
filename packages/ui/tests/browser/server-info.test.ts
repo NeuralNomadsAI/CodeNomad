@@ -139,20 +139,16 @@ test("the preview feed never offers an older stable release through the SemVer f
   } finally { await page.close() }
 })
 
-test("the data profile row appears only for an explicit non-default profile", async () => {
+test("Info leaves the data profile to the startup card", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   await setup(page, "electron")
-  let desktopProfile: string | undefined
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json",
-    body: JSON.stringify(new URL(route.request().url()).pathname === "/api/meta" ? { ...baseMeta, desktopProfile } : {}) }))
+    body: JSON.stringify(new URL(route.request().url()).pathname === "/api/meta" ? { ...baseMeta, desktopProfile: "dev-v2" } : {}) }))
   try {
     await page.goto(url)
     await rowValue(page, "Server operating system").waitFor()
     assert.equal(await page.getByTestId("settings-data-profile").count(), 0)
-    desktopProfile = "dev-v2"
-    await page.getByRole("button", { name: "Refresh", exact: true }).click()
-    await page.getByTestId("settings-data-profile").waitFor()
-    assert.equal(await rowValue(page, "Data profile").innerText(), "dev-v2")
+    assert.equal(await page.getByText("dev-v2", { exact: true }).count(), 0)
   } finally { await page.close() }
 })
 
@@ -232,7 +228,7 @@ test("client hints name the Windows release and architecture in Info and the bug
   } finally { await page.close() }
 })
 
-test("About carries the single version and updates, with the network card last", async () => {
+test("About carries the single version, Updates ends with its feed, and the network card is last", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1800 } })
   await setup(page, "tauri")
   let ui = { version: "0.20.0", source: "bundled" }
@@ -242,10 +238,18 @@ test("About carries the single version and updates, with the network card last",
     await page.goto(url)
     await rowValue(page, "Version").waitFor()
     const titles = await page.locator(".settings-section-stack > .settings-card h3.settings-card-title").allInnerTexts()
-    assert.deepEqual(titles, ["About", "Diagnostics", "CodeNomad server connectivity"])
-    const about = page.locator(".settings-section-stack > .settings-card").first()
-    assert.equal(await about.getByRole("heading", { name: "Updates", exact: true }).count(), 1)
-    assert.equal(await about.getByLabel("Update feed", { exact: true }).count(), 1)
+    assert.deepEqual(titles, ["About", "Updates", "Diagnostics", "CodeNomad server connectivity"])
+    const cards = page.locator(".settings-section-stack > .settings-card")
+    assert.equal(await cards.first().getByLabel("Update feed", { exact: true }).count(), 0)
+    // The feed is the Updates card's setting, after its release and actions.
+    const updates = cards.nth(1)
+    assert.equal(await updates.getByLabel("Update feed", { exact: true }).count(), 1)
+    assert.ok(await updates.evaluate((card) => {
+      const refresh = [...card.querySelectorAll("button")].find((button) => button.textContent?.trim() === "Refresh")
+      const feed = card.querySelector("#settings-update-feed")
+      return Boolean(refresh && feed && refresh.compareDocumentPosition(feed) & Node.DOCUMENT_POSITION_FOLLOWING)
+    }), "the feed follows the update actions")
+    assert.equal(await updates.locator(".settings-info-row", { has: page.locator("#settings-update-feed") }).evaluate((row) => getComputedStyle(row).borderTopStyle), "solid", "a separator sets the feed apart from the actions")
     assert.equal(await page.getByText("0.20.0", { exact: true }).count(), 1, "the version is shown once")
     assert.equal(await page.getByText("UI version", { exact: true }).count(), 0)
     // A differing served UI is the only reason to show a second version.
