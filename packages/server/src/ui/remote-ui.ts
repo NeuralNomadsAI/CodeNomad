@@ -49,6 +49,8 @@ const ZIP_TIMEOUT_MS = 30_000
 
 export async function resolveUi(options: RemoteUiOptions): Promise<UiResolution> {
   const manifestUrl = options.manifestUrl ?? DEFAULT_MANIFEST_URL
+  // The version lets the manifest host tell server versions apart.
+  const userAgent = `CodeNomad-CLI/${options.serverVersion}`
 
   if (options.uiDevServerUrl) {
     return {
@@ -84,7 +86,7 @@ export async function resolveUi(options: RemoteUiOptions): Promise<UiResolution>
 
   let manifest: RemoteUiManifest | null = null
   try {
-    manifest = await fetchManifest(manifestUrl, options.logger)
+    manifest = await fetchManifest(manifestUrl, userAgent, options.logger)
   } catch (error) {
     options.logger.debug({ err: error }, "Remote UI manifest unavailable; using cached/bundled UI")
   }
@@ -145,6 +147,7 @@ export async function resolveUi(options: RemoteUiOptions): Promise<UiResolution>
       uiRoot,
       currentDir,
       previousDir,
+      userAgent,
       logger: options.logger,
     })
   } catch (error) {
@@ -321,7 +324,7 @@ async function readUiVersion(uiDir: string): Promise<string | undefined> {
   }
 }
 
-async function fetchManifest(url: string, logger: Logger): Promise<RemoteUiManifest> {
+async function fetchManifest(url: string, userAgent: string, logger: Logger): Promise<RemoteUiManifest> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), MANIFEST_TIMEOUT_MS)
   try {
@@ -329,7 +332,7 @@ async function fetchManifest(url: string, logger: Logger): Promise<RemoteUiManif
       signal: controller.signal,
       headers: {
         Accept: "application/json",
-        "User-Agent": "CodeNomad-CLI",
+        "User-Agent": userAgent,
       },
     })
     if (!response.ok) {
@@ -367,6 +370,7 @@ async function installRemoteUi(args: {
   uiRoot: string
   currentDir: string
   previousDir: string
+  userAgent: string
   logger: Logger
 }) {
   await fsp.mkdir(args.uiRoot, { recursive: true })
@@ -375,7 +379,7 @@ async function installRemoteUi(args: {
   const zipPath = path.join(args.uiRoot, `ui-${args.manifest.latestUIVersion}.zip`)
 
   try {
-    await downloadFile(args.manifest.uiPackageURL, zipPath, args.logger)
+    await downloadFile(args.manifest.uiPackageURL, zipPath, args.userAgent, args.logger)
     const digest = await sha256File(zipPath)
     if (digest.toLowerCase() !== args.manifest.sha256.toLowerCase()) {
       throw new Error(`sha256 mismatch for UI zip (expected ${args.manifest.sha256}, got ${digest})`)
@@ -411,7 +415,7 @@ async function rotateDirs(args: { currentDir: string; previousDir: string; logge
   }
 }
 
-async function downloadFile(url: string, targetPath: string, logger: Logger) {
+async function downloadFile(url: string, targetPath: string, userAgent: string, logger: Logger) {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), ZIP_TIMEOUT_MS)
   try {
@@ -419,7 +423,7 @@ async function downloadFile(url: string, targetPath: string, logger: Logger) {
       signal: controller.signal,
       headers: {
         Accept: "application/octet-stream",
-        "User-Agent": "CodeNomad-CLI",
+        "User-Agent": userAgent,
       },
     })
     if (!response.ok || !response.body) {
