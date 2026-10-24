@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { createServer, type Server } from "node:http"
 import type { EventEmitter } from "node:events"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Page } from "playwright"
 import { observeHeaderFixture } from "./header-fixture-diagnostics"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
@@ -15,6 +16,7 @@ before(async () => {
   await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve))
   url = `http://127.0.0.1:${(server.address() as { port: number }).port}`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await new Promise<void>(resolve => server?.close(() => resolve())) })
 

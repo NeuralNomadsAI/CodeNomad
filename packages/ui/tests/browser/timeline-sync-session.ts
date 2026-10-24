@@ -2,6 +2,8 @@ import { readFile } from "node:fs/promises"
 import { DatabaseSync } from "node:sqlite"
 import { fileURLToPath } from "node:url"
 import { chromium, type Page } from "playwright"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer } from "vite"
 import solid from "vite-plugin-solid"
 import { readNavigationWindow, readSessionOutline } from "../../../server/src/opencode/session-pruning/navigation-store"
@@ -27,8 +29,9 @@ export function createSessionStore(path: string, messages: Array<{ id: string; t
  */
 export async function startTimelineSyncServer(options: { instrument?: boolean } = {}) {
   const cache = await createFixtureCache()
+  const shutdown = createFixtureShutdown(cache)
   const server = await createServer({ configFile: false, cacheDir: cache.cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "timeline-sync", enforce: "pre", async load(id) {
+    plugins: [shutdown.plugin, solid(), { name: "timeline-sync", enforce: "pre", async load(id) {
       const file = id.split("?")[0]
       if (!options.instrument || !file.replaceAll("\\", "/").endsWith("/src/components/message-timeline.tsx")) return
       const source = await readFile(file, "utf8")
@@ -40,9 +43,11 @@ export async function startTimelineSyncServer(options: { instrument?: boolean } 
       res.setHeader("Content-Type", "text/html")
       res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root" style="display:flex;width:100vw;height:100vh"></div><script type="module" src="/tests/browser/fixtures/timeline-sync.tsx"></script></body></html>'))
     }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  shutdown.own(server)
   await server.listen()
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined,
     ignoreDefaultArgs: ["--hide-scrollbars"], args: ["--disable-features=OverlayScrollbar"] })
+  armFixtureNavigationBudget(browser)
   return { browser, url: `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`,
     close: async () => { await browser.close(); await server.close(); await cache.dispose() } }
 }

@@ -1,18 +1,19 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { readFile, mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
 
-let server: ViteDevServer, browser: Browser, url: string, cache: string
+let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
-  cache = await mkdtemp(join(tmpdir(), "codenomad-streaming-outline-vite-"))
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)),
-    logLevel: "error", cacheDir: cache, plugins: [solid(), {
+    logLevel: "error", cacheDir: cache.cacheDir, plugins: [shutdown.plugin, solid(), {
       name: "streaming-outline-fixture", configureServer(server) {
         server.middlewares.use("/fixture", async (_req, res) => {
           res.setHeader("Content-Type", "text/html")
@@ -38,11 +39,13 @@ before(async () => {
       },
     }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close(); if (cache) await rm(cache, { recursive: true, force: true }) })
+after(async () => { await browser?.close(); await server?.close() })
 
 test("real native token deltas do not reproject a 16k outline until resident markers change", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 850 } })

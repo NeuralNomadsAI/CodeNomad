@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
@@ -11,17 +13,20 @@ let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   cache = await createFixtureCache()
+  const shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)),
-    logLevel: "error", cacheDir: cache.cacheDir, plugins: [solid(), { name: "mission-report-delivery", configureServer(s) {
+    logLevel: "error", cacheDir: cache.cacheDir, plugins: [shutdown.plugin, solid(), { name: "mission-report-delivery", configureServer(s) {
       s.middlewares.use("/mission-report-delivery", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/mission-report-delivery", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-report-delivery.tsx"></script></body></html>'))
       })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-report-delivery`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { try { await browser?.close() } finally { try { await server?.close() } finally { await cache?.dispose() } } })
 const replace = (page: Page, patch: unknown) => page.evaluate(patch => (window as any).missionReportDelivery.replace(patch), patch)

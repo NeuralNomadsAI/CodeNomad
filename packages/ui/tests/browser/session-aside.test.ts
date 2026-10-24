@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { ViteDevServer } from "vite"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
@@ -12,6 +13,7 @@ before(async () => {
     run: async () => {
       ;({ server, url } = await startSessionAsideFixture())
       browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+      armFixtureNavigationBudget(browser)
       ready = true
     },
     diagnose: async () => {},

@@ -4,13 +4,14 @@ import { readFile, stat, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { after, before, test } from "node:test"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser } from "playwright"
 import { createFixtureCache } from "./fixture-cache"
 import { headerBootScript } from "./header-fixture-diagnostics"
 import { closeSessionAsideHarness, prepareSessionAsidePage, startSessionAsideFixture } from "./session-aside-harness"
 
 let browser: Browser
-before(async () => { browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined }) })
+before(async () => { browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined }); armFixtureNavigationBudget(browser) })
 after(() => closeSessionAsideHarness(browser))
 async function capture(run: () => Promise<unknown>) {
   try { return { value: await run() } } catch (error) { return { error } }

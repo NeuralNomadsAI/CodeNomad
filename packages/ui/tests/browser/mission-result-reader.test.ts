@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser } from "playwright"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
@@ -14,17 +16,20 @@ let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   cache = await createFixtureCache()
   try {
+    const shutdown = createFixtureShutdown(cache)
     server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-      cacheDir: cache.cacheDir, plugins: [solid(), { name: "mission-result-reader", configureServer(s) {
+      cacheDir: cache.cacheDir, plugins: [shutdown.plugin, solid(), { name: "mission-result-reader", configureServer(s) {
         s.middlewares.use("/mission-result-reader", async (_req, res) => {
           res.setHeader("Content-Type", "text/html")
           res.end(await s.transformIndexHtml("/mission-result-reader", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-result-reader.tsx"></script></body></html>'))
         })
       } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
       server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+    shutdown.own(server)
     await server.listen()
     url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-result-reader`
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
   } catch (error) { try { await server?.close() } finally { await cache.dispose() }; throw error }
 })
 after(async () => { try { await browser?.close() } finally { try { await server?.close() } finally { await cache?.dispose() } } })

@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { createHash } from "node:crypto"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -102,6 +103,7 @@ before(async () => {
     shutdown.own(server); await server.listen()
     url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/native-mission-integration`
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
   } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 })
 after(async () => { try { await browser?.close() } finally { await server?.close() } })

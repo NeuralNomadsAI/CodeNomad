@@ -6,6 +6,9 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import Fastify from "fastify"
@@ -49,9 +52,10 @@ before(async () => {
     } } } }) as any,
   } })
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
     cacheDir: path.join(root, "vite"),
-    plugins: [solid(), { name: "extension-fixture", configureServer(vite) {
+    plugins: [shutdown.plugin, solid(), { name: "extension-fixture", configureServer(vite) {
       vite.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await vite.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/panel-extensions.tsx"></script></body></html>'))
@@ -59,9 +63,11 @@ before(async () => {
     } }], resolve: { dedupe: ["solid-js"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null, proxy: { "/api/panel-extensions": address } },
   })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
   const imagePage = await browser.newPage()
   assetUri = await imagePage.evaluate(() => { const canvas = document.createElement("canvas"); canvas.width = 500; canvas.height = 300; return canvas.toDataURL("image/png") })
   await imagePage.close()

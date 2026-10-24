@@ -4,6 +4,8 @@ import path from "node:path"
 import { before, after, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { SCROLL_REASONS } from "../../src/components/virtual-scroll-trace"
@@ -40,7 +42,8 @@ let server: ViteDevServer, browser: Browser, url: string
 let fixtureCache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   fixtureCache = await createFixtureCache()
-  server = await createServer({ cacheDir: fixtureCache.cacheDir, configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", plugins: [solid(), {
+  const shutdown = createFixtureShutdown(fixtureCache)
+  server = await createServer({ cacheDir: fixtureCache.cacheDir, configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", plugins: [shutdown.plugin, solid(), {
     name: "message-scroll-fixture", configureServer(server) {
       server.middlewares.use("/fixture", async (req, res) => {
         const name = new URL(req.url ?? "", "http://fixture").searchParams.get("name") as FixtureName
@@ -49,9 +52,11 @@ before(async () => {
       })
     },
   }], resolve: { dedupe: ["solid-js"], alias: virtuaCountingAlias }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 // Native thumb drags need classic, visible scrollbars; launched on demand.
 let scrollbarBrowser: Browser | undefined

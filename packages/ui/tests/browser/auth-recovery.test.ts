@@ -2,6 +2,9 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser } from "playwright"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import Fastify, { type FastifyInstance } from "fastify"
@@ -53,8 +56,9 @@ before(async () => {
   backend.all("/api/*", async () => ({}))
   await backend.listen({ host: "127.0.0.1", port: 0 })
   const target = `http://127.0.0.1:${(backend.server.address() as { port: number }).port}`
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "auth-fixture", configureServer(s) {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, solid(), { name: "auth-fixture", configureServer(s) {
       s.middlewares.use("/auth-fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/auth-fixture", '<html><body><div id="root" style="margin:24px"></div><script type="module" src="/tests/browser/fixtures/auth-recovery.tsx"></script></body></html>'))
@@ -62,9 +66,11 @@ before(async () => {
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null, proxy: { "/api": target, "/workspaces": target } },
   })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => {
   await browser?.close()

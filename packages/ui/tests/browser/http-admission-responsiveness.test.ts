@@ -10,6 +10,9 @@ import pino from "pino"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
 import { EventBus } from "../../../server/src/events/bus"
 import { ClientConnectionManager } from "../../../server/src/clients/connection-manager"
 import { createRuntimeFetch } from "../../../server/src/opencode/compatibility/transport"
@@ -20,13 +23,16 @@ import { WorktreeDeletionFence } from "../../../server/src/workspaces/worktree-s
 
 let browser: Browser, assets: ViteDevServer, assetUrl: string
 before(async () => {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   assets = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)),
-    logLevel: "error", plugins: [solid()], resolve: { dedupe: ["solid-js"] },
+    logLevel: "error", cacheDir: cache.cacheDir, plugins: [shutdown.plugin, solid()], resolve: { dedupe: ["solid-js"] },
     server: { host: "127.0.0.1", port: 0, cors: true, hmr: false, watch: null },
   })
+  shutdown.own(assets)
   await assets.listen()
   assetUrl = `http://127.0.0.1:${(assets.httpServer!.address() as { port: number }).port}`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await assets?.close() })
 

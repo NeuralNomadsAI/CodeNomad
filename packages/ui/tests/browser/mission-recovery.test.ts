@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { missionRecoveryMessages as english } from "../../src/lib/i18n/messages/en/mission-recovery"
@@ -11,9 +13,10 @@ let server: ViteDevServer, browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   cache = await createFixtureCache()
+  const shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     cacheDir: cache.cacheDir,
-    plugins: [solid(), { name: "mission-recovery-fixture", configureServer(s) {
+    plugins: [shutdown.plugin, solid(), { name: "mission-recovery-fixture", configureServer(s) {
       s.middlewares.use("/mission-recovery-fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/mission-recovery-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-recovery.tsx"></script></body></html>'))
@@ -21,9 +24,11 @@ before(async () => {
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
   })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-recovery-fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { try { await browser?.close(); await server?.close() } finally { await cache?.dispose() } })
 const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).recoveryFixture[method](arg), { method, arg })

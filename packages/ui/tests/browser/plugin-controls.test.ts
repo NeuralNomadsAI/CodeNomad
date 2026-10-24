@@ -4,17 +4,21 @@ import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { chromium, type Browser } from "playwright"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 
 let server: ViteDevServer, browser: Browser, url: string
 
 before(async () => {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({
     configFile: false,
     root: fileURLToPath(new URL("../..", import.meta.url)),
-    logLevel: "error",
-    plugins: [solid(), { name: "plugin-controls-fixture", configureServer(vite) {
+    logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, solid(), { name: "plugin-controls-fixture", configureServer(vite) {
       vite.middlewares.use("/fixture", async (_request, response) => {
         response.setHeader("Content-Type", "text/html")
         response.end(await vite.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/plugin-controls.tsx"></script></body></html>'))
@@ -24,9 +28,11 @@ before(async () => {
     optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
   })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 
 after(async () => {

@@ -1,4 +1,5 @@
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium } from "playwright"
 import { createServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -17,6 +18,7 @@ export async function startProductFixture(name: string) {
     shutdown.own(server)
     await server.listen()
     const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
     return { browser, url: `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`,
       close: async () => { try { await browser.close() } finally { await server!.close() } } }
   } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }

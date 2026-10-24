@@ -6,6 +6,7 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { createRequire } from "node:module"
 import { build } from "esbuild"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, devices, _electron, type ElectronApplication, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -48,6 +49,7 @@ before(async () => {
     await prepareInterruptionDock(server, "/tests/browser/fixtures/header-windows.tsx")
     url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
   } catch (error) {
     try { await disposeFixture() }
     catch (cleanupError) { throw new AggregateError([error, cleanupError], "Header fixture setup and cleanup failed") }

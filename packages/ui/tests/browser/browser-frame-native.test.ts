@@ -6,6 +6,9 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import electronPath from "electron"
 import { chromium, _electron, type Browser, type Page } from "playwright"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 
@@ -14,8 +17,9 @@ let heldGuestRequested = () => {}
 const heldGuests: Array<() => void> = []
 const guestRequests: string[] = []
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "browser-native-fixture", configureServer(s) {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, solid(), { name: "browser-native-fixture", configureServer(s) {
       s.middlewares.use("/browser-native-fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/browser-native-fixture", '<html><head><style>webview { display: flex }</style></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/browser-frame-native.tsx"></script></body></html>'))
@@ -46,10 +50,12 @@ before(async () => {
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, allowedHosts: ["insecure.test"], hmr: false, watch: null },
   })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/browser-native-fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined,
     args: ["--host-resolver-rules=MAP insecure.test 127.0.0.1", "--no-proxy-server"] })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close() })
 

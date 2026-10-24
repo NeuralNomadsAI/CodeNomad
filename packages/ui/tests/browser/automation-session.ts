@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { mkdtemp, readFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type BrowserContext, type Page } from "playwright"
 import { DeveloperCdp, type DeveloperCdpIdentity } from "../../../server/src/developer-cdp"
 import { parsePageAction } from "../../../server/src/automation/page/parse"
@@ -12,6 +13,7 @@ export async function launchAutomationBrowser() {
   const profile = await mkdtemp(path.join(os.tmpdir(), "codenomad-automation-"))
   const context = await chromium.launchPersistentContext(profile, { executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined, locale: "en-US",
     args: ["--remote-debugging-address=127.0.0.1", "--remote-debugging-port=0"] })
+  armFixtureNavigationBudget(context)
   let port = ""
   for (let attempt = 0; attempt < 100 && !port; attempt++) {
     port = (await readFile(path.join(profile, "DevToolsActivePort"), "utf8").catch(() => "")).split(/\r?\n/, 1)[0]
