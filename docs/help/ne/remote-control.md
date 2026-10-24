@@ -57,7 +57,7 @@ paired device ले समान ownership जाँचअन्तर्गत
 | Remote Control status | paired device ले पढ्न सक्छ; management अनुपलब्ध। Start/Stop, pairing सिर्जना, device सूची र revocation host access path मै रहन्छन्। |
 | desktop remote-window/server management र proxy route | अनुपलब्ध (`/api/remote-servers/`, `/api/remote-proxy/`)। |
 | SideCar **सामग्री proxy** | अनुपलब्ध (`/sidecars/`)। यसको अर्थ सबै SideCar API blocked **होइन**: paired client ले `/api/sidecars` registration API अझै प्रयोग गर्न सक्छन्। |
-| preview सामग्री र automation bridge | अनुपलब्ध (`/previews/`, `/api/opencode-plugin/`)। native desktop क्षमता browser क्षमता बन्दैनन्। |
+| preview सामग्री र automation bridge | अनुपलब्ध (`/previews/`, `/api/opencode-plugin/`)। native desktop क्षमता browser क्षमता बन्दैनन्। कुराकानीका कार्यहरूले **वेब पूर्वावलोकन खोल्नुहोस्** लुकाउँछन्। |
 | WebSocket upgrade | Remote Control ingress मा अनुपलब्ध। |
 
 blocked proxy/WebSocket चाहिने प्रक्रियामा उचित सुरक्षित [प्रत्यक्ष जडान](remote-access.md) प्रयोग गर्नुहोस्। Remote Control त्यसमा स्वतः switch हुँदैन।

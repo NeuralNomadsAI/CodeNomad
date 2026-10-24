@@ -877,6 +877,8 @@ export interface ServerMeta {
   updateFeed?: UpdateFeed
   /** Newest release offered by the preview feed; stable updates use `support`. */
   update?: LatestReleaseInfo | null
+  /** Set when this request arrived through Remote Control, which serves no preview content. */
+  remoteControl?: true
 }
 
 export type {

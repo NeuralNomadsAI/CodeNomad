@@ -57,7 +57,7 @@ Gekoppelte Geräte können normale Projekt-/Unterhaltungs-APIs verwenden, Prompt
 | Fernsteuerungsstatus | Für gekoppelte Geräte lesbar; Verwaltung nicht verfügbar. Start/Stop, Kopplungserstellung, Geräteliste und Widerruf bleiben auf dem Host-Zugriffsweg. |
 | Desktop-Remote-Fenster-/Serververwaltung und Proxy-Routen | Nicht verfügbar (`/api/remote-servers/`, `/api/remote-proxy/`). |
 | SideCar-**Inhaltsproxy** | Nicht verfügbar (`/sidecars/`). Dies bedeutet **nicht**, dass alle SideCar-APIs blockiert sind: Gekoppelte Clients können weiterhin die Registrierungs-APIs `/api/sidecars` nutzen. |
-| Vorschauinhalt und Automatisierungsbrücke | Nicht verfügbar (`/previews/`, `/api/opencode-plugin/`). Native Desktop-Fähigkeiten werden nicht zu Browserfähigkeiten. |
+| Vorschauinhalt und Automatisierungsbrücke | Nicht verfügbar (`/previews/`, `/api/opencode-plugin/`). Native Desktop-Fähigkeiten werden nicht zu Browserfähigkeiten. Die Aktionen der Unterhaltung blenden **Web-Vorschau öffnen** aus. |
 | WebSocket-Upgrades | Am Fernsteuerungseingang nicht verfügbar. |
 
 Verwenden Sie eine entsprechend geschützte [Direktverbindung](remote-access.md), wenn ein Ablauf eine blockierte Proxy-/WebSocket-Oberfläche benötigt. Fernsteuerung wechselt nicht automatisch dorthin.

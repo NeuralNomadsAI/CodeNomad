@@ -57,7 +57,7 @@ Les appareils appairés peuvent utiliser les API ordinaires de projet/conversati
 | État du Contrôle à distance | Lisible par un appareil appairé ; la gestion est indisponible. Démarrage/arrêt, création d’appairage, liste et révocation des appareils restent sur le chemin d’accès de l’hôte. |
 | Gestion des fenêtres distantes/serveurs de bureau et routes proxy | Indisponibles (`/api/remote-servers/`, `/api/remote-proxy/`). |
 | **Proxy de contenu** SideCar | Indisponible (`/sidecars/`). Cela ne signifie **pas** que toutes les API SideCar sont bloquées : les clients appairés peuvent toujours accéder aux API d’enregistrement `/api/sidecars`. |
-| Contenu d’aperçu et pont d’automatisation | Indisponibles (`/previews/`, `/api/opencode-plugin/`). Les capacités natives de bureau ne deviennent pas des capacités navigateur. |
+| Contenu d’aperçu et pont d’automatisation | Indisponibles (`/previews/`, `/api/opencode-plugin/`). Les capacités natives de bureau ne deviennent pas des capacités navigateur. Les actions de la conversation masquent **Ouvrir l'aperçu web**. |
 | Mises à niveau WebSocket | Indisponibles sur l’entrée du Contrôle à distance. |
 
 Utilisez une [connexion directe](remote-access.md) convenablement protégée si un parcours nécessite une surface proxy/WebSocket bloquée. Le Contrôle à distance ne bascule pas automatiquement vers ce chemin.

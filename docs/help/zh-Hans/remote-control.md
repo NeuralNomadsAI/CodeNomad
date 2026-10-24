@@ -57,7 +57,7 @@
 | 远程控制状态 | 配对设备可读；管理不可用。启动/停止、创建配对、设备列表和撤销保留在主机访问路径上。 |
 | 桌面远程窗口/服务器管理及代理路由 | 不可用（`/api/remote-servers/`、`/api/remote-proxy/`）。 |
 | SideCar **内容代理** | 不可用（`/sidecars/`）。这**不**表示所有 SideCar API 都被阻止：配对客户端仍可访问 `/api/sidecars` 注册 API。 |
-| 预览内容和自动化桥接 | 不可用（`/previews/`、`/api/opencode-plugin/`）。原生桌面能力不会变成浏览器能力。 |
+| 预览内容和自动化桥接 | 不可用（`/previews/`、`/api/opencode-plugin/`）。原生桌面能力不会变成浏览器能力。会话操作中不显示 **打开网页预览**。 |
 | WebSocket 升级 | 在远程控制入口不可用。 |
 
 工作流程需要被阻止的代理/WebSocket 界面时，使用妥善保护的[直接连接](remote-access.md)。远程控制不会自动切换到该路径。

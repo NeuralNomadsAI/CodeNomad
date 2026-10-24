@@ -57,7 +57,7 @@ Los dispositivos emparejados pueden usar las API normales de proyectos/conversac
 | Estado de Control remoto | Legible para un dispositivo emparejado; la gestión no está disponible. Iniciar/Detener, crear emparejamientos, la lista de dispositivos y la revocación permanecen en la vía de acceso del anfitrión. |
 | Gestión de ventanas remotas/servidores de escritorio y rutas proxy | No disponible (`/api/remote-servers/`, `/api/remote-proxy/`). |
 | **Proxy de contenido** de SideCar | No disponible (`/sidecars/`). Esto **no** significa que todas las API de SideCar estén bloqueadas: los clientes emparejados pueden seguir accediendo a las API de registro `/api/sidecars`. |
-| Contenido de vistas previas y puente de automatización | No disponible (`/previews/`, `/api/opencode-plugin/`). Las capacidades nativas de escritorio no se convierten en capacidades del navegador. |
+| Contenido de vistas previas y puente de automatización | No disponible (`/previews/`, `/api/opencode-plugin/`). Las capacidades nativas de escritorio no se convierten en capacidades del navegador. Las acciones de la conversación ocultan **Abrir vista previa web**. |
 | Actualizaciones de conexión a WebSocket | No disponibles en la entrada de Control remoto. |
 
 Usa una [conexión directa](remote-access.md) debidamente protegida cuando un flujo requiera una superficie proxy/WebSocket bloqueada. Control remoto no cambia automáticamente a esa vía.

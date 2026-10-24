@@ -87,6 +87,7 @@ import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 import { runtimeEnv } from "../../lib/runtime-env"
+import { getServerMeta, remoteControlClient } from "../../lib/server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
 
 const log = getLogger("session")
@@ -281,6 +282,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     document.addEventListener("pointerdown", handleFloatingDrawerPointerDown, true)
     onCleanup(() => document.removeEventListener("pointerdown", handleFloatingDrawerPointerDown, true))
   })
+
+  // Remote Control serves no previews: its clients hide the preview entry points.
+  onMount(() => { void getServerMeta().catch(() => undefined) })
 
   onMount(() => {
     if (typeof window === "undefined") return
@@ -613,17 +617,19 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     </Show>
   )
 
-  const renderHeaderThirdActionButton = () => runtimeEnv.platform === "mobile" ? (
-    <IconButton
-      color="inherit"
-      onClick={props.onEnterMobileFullscreen}
-      aria-label={t("instanceShell.fullscreen.enter")}
-      title={t("instanceShell.fullscreen.enter")}
-      size="small"
-    >
-      <Maximize2 class="w-5 h-5" aria-hidden="true" />
-    </IconButton>
-  ) : renderPreviewToggleButton()
+  const renderFullscreenButton = () => (
+    <Show when={runtimeEnv.platform === "mobile"}>
+      <IconButton
+        color="inherit"
+        onClick={props.onEnterMobileFullscreen}
+        aria-label={t("instanceShell.fullscreen.enter")}
+        title={t("instanceShell.fullscreen.enter")}
+        size="small"
+      >
+        <Maximize2 class="w-5 h-5" aria-hidden="true" />
+      </IconButton>
+    </Show>
+  )
 
   const handleCommandPaletteClick = () => {
     toggleCommandPalette(props.instance.id)
@@ -653,31 +659,33 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       onSelect: handleCommandPaletteClick,
     }]
     if (showingInfoView()) return items
-    items.push(
-      {
-        key: "search",
-        checked: searchOpen(),
-        label: t("instanceShell.chatSearch.openAriaLabel"),
-        description: hotkeyLabel("session-search") || undefined,
-        icon: <Search class="w-4 h-4" aria-hidden="true" />,
-        onSelect: handleChatSearchClick,
-      },
-      {
-        key: runtimeEnv.platform === "mobile" ? "fullscreen" : "preview",
-        label: runtimeEnv.platform === "mobile" ? t("instanceShell.fullscreen.enter") : previewToggleLabel(),
-        checked: runtimeEnv.platform === "mobile" ? undefined : activeSessionPreview()?.mode === "preview",
-        icon: runtimeEnv.platform === "mobile"
-          ? <Maximize2 class="w-4 h-4" aria-hidden="true" />
-          : <Globe class="w-4 h-4" aria-hidden="true" />,
-        onSelect: runtimeEnv.platform === "mobile" ? props.onEnterMobileFullscreen : handlePreviewButtonClick,
-      },
-      {
-        key: "content",
-        label: t("transcriptFilters.title"),
-        icon: <ListFilter class="w-4 h-4" aria-hidden="true" />,
-        onSelect: () => { setFiltersOpen(true) },
-      },
-    )
+    items.push({
+      key: "search",
+      checked: searchOpen(),
+      label: t("instanceShell.chatSearch.openAriaLabel"),
+      description: hotkeyLabel("session-search") || undefined,
+      icon: <Search class="w-4 h-4" aria-hidden="true" />,
+      onSelect: handleChatSearchClick,
+    })
+    if (!remoteControlClient()) items.push({
+      key: "preview",
+      label: previewToggleLabel(),
+      checked: activeSessionPreview()?.mode === "preview",
+      icon: <Globe class="w-4 h-4" aria-hidden="true" />,
+      onSelect: handlePreviewButtonClick,
+    })
+    if (runtimeEnv.platform === "mobile") items.push({
+      key: "fullscreen",
+      label: t("instanceShell.fullscreen.enter"),
+      icon: <Maximize2 class="w-4 h-4" aria-hidden="true" />,
+      onSelect: props.onEnterMobileFullscreen,
+    })
+    items.push({
+      key: "content",
+      label: t("transcriptFilters.title"),
+      icon: <ListFilter class="w-4 h-4" aria-hidden="true" />,
+      onSelect: () => { setFiltersOpen(true) },
+    })
     return items
   }
 
@@ -1124,7 +1132,8 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           >
                             <Search class="w-5 h-5" aria-hidden="true" />
                           </IconButton>
-                          {renderHeaderThirdActionButton()}
+                          <Show when={!remoteControlClient()}>{renderPreviewToggleButton()}</Show>
+                          {renderFullscreenButton()}
                           <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}
                             overflowAnchor={() => headerActionsCollapsed()
                               ? sessionToolbarEl?.querySelector<HTMLElement>(".session-header-actions-menu") ?? undefined

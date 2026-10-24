@@ -114,6 +114,8 @@ test("a paired device uses the app without loopback privileges or spoofed metada
   assert.equal(echo.status, 200)
   assert.deepEqual(JSON.parse(echo.body), { loopbackPrivileges: false, forwardedFor: null, remoteControlHeader: null })
   assert.equal(JSON.parse((await send(target(), "/api/auth/status", { headers: { cookie } })).body).authenticated, true)
+  // The UI hides preview entry points, since previews are host-only.
+  assert.equal(JSON.parse((await send(target(), "/api/meta", { headers: { cookie } })).body).remoteControl, true)
 
   const status = JSON.parse((await send(target(), "/api/remote-control/status", { headers: { cookie } })).body)
   assert.equal(status.manageable, false)
