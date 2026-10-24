@@ -86,7 +86,12 @@ export function resolvePreviewSettings(value: unknown, appOrigins: Iterable<stri
 /** The response sandbox for a path-proxied preview. `app` mode trusts loopback
  * targets, while `custom` mode also requires the request to have arrived at
  * the configured custom origin; an invalid target or a missing `Host` stays
- * opaque. */
+ * opaque.
+ *
+ * Callers must pass the output of {@link resolvePreviewSettings}: this helper
+ * cannot tell that a stored custom origin is owned by CodeNomad itself, so an
+ * app-owned custom origin reaches the loopback tier unless it was resolved
+ * first. */
 export function previewDocumentSandboxForTarget(
   targetUrl: string,
   settings: PreviewSettings,

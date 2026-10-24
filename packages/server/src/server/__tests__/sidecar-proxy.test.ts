@@ -8,7 +8,7 @@ import path from "node:path"
 import { afterEach, it } from "node:test"
 import pino from "pino"
 import type { FastifyInstance } from "fastify"
-import type { SideCar } from "../../api-types"
+import type { PreviewSettings, SideCar } from "../../api-types"
 import { AuthManager } from "../../auth/manager"
 import { PreviewManager } from "../../previews/manager"
 import { DEFAULT_PREVIEW_SETTINGS, previewDocumentSandbox } from "../../previews/policy"
@@ -20,7 +20,17 @@ const apps: FastifyInstance[] = []
 const upstreams: http.Server[] = []
 const upstreamSocketCleanups: Array<() => void> = []
 const sockets: net.Socket[] = []
-type UpstreamOptions = { cookies?: string[]; fragmented?: boolean; denied?: boolean; html?: boolean }
+type UpstreamOptions = {
+  cookies?: string[]
+  fragmented?: boolean
+  denied?: boolean
+  html?: boolean
+  /** An empty string omits the header, like an upstream that never typed its body. */
+  contentType?: string
+  body?: string
+  permissionsPolicy?: string
+  featurePolicy?: string
+}
 
 afterEach(async () => {
   for (const socket of sockets.splice(0)) socket.destroy()
@@ -45,14 +55,14 @@ async function startSideCarUpstream(options: UpstreamOptions = {}) {
   const connections = new Set<net.Socket>()
   const upstream = http.createServer((request, response) => {
     requests.push(request.headers)
-    if (options.html) {
-      response.writeHead(200, { "content-type": "text/html", "content-security-policy": "default-src *" })
-      response.end("<html><body>preview fixture</body></html>")
-      return
-    }
     if (options.cookies) response.setHeader("Set-Cookie", options.cookies)
-    response.writeHead(200, { "content-type": "application/json" })
-    response.end("{\"ok\":true}")
+    if (options.permissionsPolicy) response.setHeader("Permissions-Policy", options.permissionsPolicy)
+    if (options.featurePolicy) response.setHeader("Feature-Policy", options.featurePolicy)
+    const headers: http.OutgoingHttpHeaders = { "content-security-policy": "default-src *" }
+    const contentType = options.contentType ?? (options.html ? "text/html" : "application/json")
+    if (contentType) headers["content-type"] = contentType
+    response.writeHead(200, headers)
+    response.end(options.body ?? (options.html ? "<html><body>preview fixture</body></html>" : "{\"ok\":true}"))
   })
   upstream.on("connection", (socket) => {
     connections.add(socket)
@@ -114,7 +124,11 @@ function webSocketUpgrade(port: number, pathname: string, headers: Record<string
   })
 }
 
-async function startServer(options: UpstreamOptions & { cookieName?: string; prefixMode?: SideCar["prefixMode"] } = {}) {
+async function startServer(options: UpstreamOptions & {
+  cookieName?: string
+  prefixMode?: SideCar["prefixMode"]
+  preview?: PreviewSettings
+} = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-sidecar-proxy-"))
   const logger = pino({ level: "silent" })
   const authManager = new AuthManager({
@@ -144,12 +158,18 @@ async function startServer(options: UpstreamOptions & { cookieName?: string; pre
     },
   }
   const stub = new Proxy({}, { get: () => () => undefined }) as never
+  const previewSettings = options.preview ?? DEFAULT_PREVIEW_SETTINGS
+  // The preview proxy reads only this owner; every unrelated settings method is a no-op.
+  const settings = new Proxy({
+    getOwner: (kind: string, owner: string) =>
+      kind === "config" && owner === "server" ? { preview: previewSettings } : {},
+  }, { get: (target, property) => Reflect.get(target, property) ?? (() => undefined) }) as never
   const previewManager = new PreviewManager()
   const preview = previewManager.create("fixture", `http://127.0.0.1:${port}`)
   const { instance: app } = createHttpServer({
     bindHost: "127.0.0.1", bindPort: 0, defaultPort: 0, protocol: "http",
-    workspaceManager: stub, settings: stub, fileSystemBrowser: stub, eventBus: stub,
-    serverMeta: { localUrl: "http://localhost:0", eventsUrl: "/api/events", listeningMode: "local", localPort: 0, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
+    workspaceManager: stub, settings, fileSystemBrowser: stub, eventBus: stub,
+    serverMeta: { localUrl: "http://app.example.com:8443", eventsUrl: "/api/events", listeningMode: "local", localPort: 8443, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub, speechService: stub, sidecarManager: sidecarManager as never, previewManager,
     clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
     authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
@@ -257,7 +277,14 @@ it("opaque-origin frames cannot reach SideCar routes while same-origin frames ca
   }
 })
 
-it("path-proxied loopback HTML previews load same-origin and never forward cookies", async () => {
+const appPreviewSettings: PreviewSettings = { ...DEFAULT_PREVIEW_SETTINGS, originMode: "app" }
+const customPreviewSettings: PreviewSettings = {
+  ...DEFAULT_PREVIEW_SETTINGS,
+  originMode: "custom",
+  customOrigin: "http://preview.example.com",
+}
+
+it("path-proxied loopback HTML previews stay opaque under the default policy", async () => {
   const server = await startServer({ html: true })
   try {
     const response = await server.app.inject({
@@ -265,16 +292,121 @@ it("path-proxied loopback HTML previews load same-origin and never forward cooki
       headers: { origin: server.origin, cookie: `${server.cookie}; devkit_session=secret` },
     })
     assert.equal(response.statusCode, 200)
-    // Exactly the injected tier policy: the target's own CSP is overridden.
-    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(true, DEFAULT_PREVIEW_SETTINGS.sandbox))
+    // Exactly the injected policy: the target's own CSP is overridden.
+    const csp = response.headers["content-security-policy"]
+    assert.equal(csp, previewDocumentSandbox(false, DEFAULT_PREVIEW_SETTINGS.sandbox))
+    assert.equal(String(csp).includes("allow-same-origin"), false)
     assert.equal(server.requests.at(-1)?.cookie, undefined)
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
   }
 })
 
-it("referer fallback documents carry the same origin tier as their preview", async () => {
-  const server = await startServer({ html: true })
+it("app origin mode trusts loopback path-proxied documents", async () => {
+  const server = await startServer({ html: true, preview: appPreviewSettings })
+  try {
+    const response = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { origin: server.origin, cookie: server.cookie },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(true, DEFAULT_PREVIEW_SETTINGS.sandbox))
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("custom origin mode trusts a preview only at its configured host", async () => {
+  const server = await startServer({ html: true, preview: customPreviewSettings })
+  try {
+    const atCustomOrigin = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { host: "preview.example.com", origin: server.origin, cookie: server.cookie },
+    })
+    assert.equal(atCustomOrigin.statusCode, 200)
+    assert.equal(atCustomOrigin.headers["content-security-policy"], previewDocumentSandbox(true, DEFAULT_PREVIEW_SETTINGS.sandbox))
+
+    const atAppOrigin = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { host: "app.example.com:8443", origin: server.origin, cookie: server.cookie },
+    })
+    assert.equal(atAppOrigin.statusCode, 200)
+    assert.equal(atAppOrigin.headers["content-security-policy"], previewDocumentSandbox(false, DEFAULT_PREVIEW_SETTINGS.sandbox))
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("path-proxied SVG, XML and untyped responses still carry the policy CSP", async () => {
+  for (const contentType of ["image/svg+xml", "application/xml", ""]) {
+    const server = await startServer({ contentType, body: "<svg xmlns=\"http://www.w3.org/2000/svg\" />" })
+    try {
+      const response = await server.app.inject({
+        url: server.preview.proxyUrl,
+        headers: { origin: server.origin, cookie: server.cookie },
+      })
+      assert.equal(response.statusCode, 200)
+      assert.equal(
+        response.headers["content-security-policy"],
+        previewDocumentSandbox(false, DEFAULT_PREVIEW_SETTINGS.sandbox),
+        `content-type: ${contentType || "<missing>"}`,
+      )
+    } finally {
+      await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+    }
+  }
+})
+
+it("path-proxied non-document responses also carry the policy CSP", async () => {
+  const server = await startServer()
+  try {
+    const response = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { origin: server.origin, cookie: `${server.cookie}; devkit_session=secret` },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(false, DEFAULT_PREVIEW_SETTINGS.sandbox))
+    assert.equal(server.requests.at(-1)?.cookie, undefined)
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("configured sandbox capabilities appear exactly in the enforced CSP", async () => {
+  const sandbox = { ...DEFAULT_PREVIEW_SETTINGS.sandbox, forms: false }
+  const server = await startServer({ html: true, preview: { ...DEFAULT_PREVIEW_SETTINGS, originMode: "app", sandbox } })
+  try {
+    const response = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { origin: server.origin, cookie: server.cookie },
+    })
+    const csp = String(response.headers["content-security-policy"])
+    assert.equal(csp, previewDocumentSandbox(true, sandbox))
+    assert.match(csp, /allow-modals/)
+    assert.doesNotMatch(csp, /allow-forms/)
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("target Permissions-Policy and Feature-Policy never reach the proxied document", async () => {
+  const server = await startServer({ html: true, permissionsPolicy: "camera=()", featurePolicy: "camera 'none'" })
+  try {
+    const response = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { origin: server.origin, cookie: server.cookie },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.headers["permissions-policy"], undefined)
+    assert.equal(response.headers["permissions-policy-report-only"], undefined)
+    assert.equal(response.headers["feature-policy"], undefined)
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("referer fallback documents use the resolved app policy", async () => {
+  const server = await startServer({ html: true, preview: appPreviewSettings })
   try {
     const response = await server.app.inject({
       url: "/fallback-document",
@@ -283,6 +415,20 @@ it("referer fallback documents carry the same origin tier as their preview", asy
     assert.equal(response.statusCode, 200)
     assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(true, DEFAULT_PREVIEW_SETTINGS.sandbox))
     assert.equal(server.requests.at(-1)?.cookie, undefined)
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("custom origin mode leaves an app-origin referer fallback opaque", async () => {
+  const server = await startServer({ html: true, preview: customPreviewSettings })
+  try {
+    const response = await server.app.inject({
+      url: "/fallback-document",
+      headers: { host: "app.example.com:8443", origin: server.origin, cookie: server.cookie, referer: `${server.origin}${server.preview.proxyUrl}` },
+    })
+    assert.equal(response.statusCode, 200)
+    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(false, DEFAULT_PREVIEW_SETTINGS.sandbox))
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
   }
@@ -297,21 +443,6 @@ it("capability-host preview responses stay untouched by the origin tier", async 
     })
     assert.equal(response.statusCode, 200)
     assert.equal(response.headers["content-security-policy"], undefined)
-  } finally {
-    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
-  }
-})
-
-it("non-HTML path-proxied preview responses carry no sandbox CSP", async () => {
-  const server = await startServer()
-  try {
-    const response = await server.app.inject({
-      url: server.preview.proxyUrl,
-      headers: { origin: server.origin, cookie: `${server.cookie}; devkit_session=secret` },
-    })
-    assert.equal(response.statusCode, 200)
-    assert.equal(response.headers["content-security-policy"], undefined)
-    assert.equal(server.requests.at(-1)?.cookie, undefined)
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
   }

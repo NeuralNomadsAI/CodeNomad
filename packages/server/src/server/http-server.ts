@@ -57,7 +57,7 @@ import { registerServiceUsageRoutes } from "./routes/service-usage"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
 import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
-import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
+import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE, type PreviewSettings } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
 import type { AuthManager } from "../auth/manager"
@@ -68,7 +68,7 @@ import { ClientConnectionManager } from "../clients/connection-manager"
 import type { SideCarManager } from "../sidecars/manager"
 import { sidecarRequestCookies, sidecarResponseCookies } from "../sidecars/proxy-cookies"
 import { proxyWebSocket } from "./proxy-websocket"
-import { DEFAULT_PREVIEW_SETTINGS, previewDocumentSandboxForTarget } from "../previews/policy"
+import { previewDocumentSandboxForTarget, resolvePreviewSettings } from "../previews/policy"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
@@ -384,7 +384,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger, authManager: deps.authManager })
-  registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
+  registerPreviewProxyRoutes(app, {
+    previewManager: deps.previewManager,
+    logger: proxyLogger,
+    settings: deps.settings,
+    appOrigins: getSelfOrigins,
+  })
   setupSideCarWebSocketProxy(app, {
     sidecarManager: deps.sidecarManager,
     authManager: deps.authManager,
@@ -405,9 +410,9 @@ export function createHttpServer(deps: HttpServerDeps) {
 
 
   if (deps.uiDevServerUrl) {
-    setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger)
+    setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger, deps.settings, getSelfOrigins)
   } else {
-    setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger)
+    setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger, deps.settings, getSelfOrigins)
   }
 
   return {
@@ -501,13 +506,25 @@ interface SideCarWebSocketProxyDeps extends SideCarProxyDeps {
   authManager: AuthManager
 }
 
-interface PreviewProxyDeps {
+interface PreviewPolicySource {
+  settings: Pick<SettingsService, "getOwner">
+  appOrigins: () => Iterable<string>
+}
+
+interface PreviewProxyDeps extends PreviewPolicySource {
   previewManager: PreviewManager
   logger: Logger
 }
 
-interface PreviewWebSocketProxyDeps extends PreviewProxyDeps {
+interface PreviewWebSocketProxyDeps {
+  previewManager: PreviewManager
+  logger: Logger
   authManager: AuthManager
+}
+
+/** The stored preview policy resolved against the origins CodeNomad is served from. */
+function requestPreviewSettings(source: PreviewPolicySource): PreviewSettings {
+  return resolvePreviewSettings(source.settings.getOwner("config", "server").preview, source.appOrigins())
 }
 
 function registerSideCarProxyRoutes(app: FastifyInstance, deps: SideCarProxyDeps) {
@@ -566,7 +583,14 @@ function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps
     previewApp.all("/", { constraints: { host: capabilityHost } }, hostHandler)
     previewApp.all("/*", { constraints: { host: capabilityHost } }, hostHandler)
     previewApp.all("/previews/:token", async (request: FastifyRequest<{ Params: { token: string } }>, reply) => {
-      await proxyPreviewRequest({ request, reply, previewManager: deps.previewManager, logger: deps.logger, pathSuffix: "", enforceDocumentSandbox: true })
+      await proxyPreviewRequest({
+        request,
+        reply,
+        previewManager: deps.previewManager,
+        logger: deps.logger,
+        pathSuffix: "",
+        settings: requestPreviewSettings(deps),
+      })
     })
     previewApp.all("/previews/:token/*", async (request: FastifyRequest<{ Params: { token: string; "*": string } }>, reply) => {
       await proxyPreviewRequest({
@@ -575,7 +599,7 @@ function registerPreviewProxyRoutes(app: FastifyInstance, deps: PreviewProxyDeps
         previewManager: deps.previewManager,
         logger: deps.logger,
         pathSuffix: request.params["*"] ?? "",
-        enforceDocumentSandbox: true,
+        settings: requestPreviewSettings(deps),
       })
     })
   })
@@ -1738,6 +1762,8 @@ function setupStaticUi(
   authManager: AuthManager,
   previewManager: PreviewManager,
   logger: Logger,
+  settings: SettingsService,
+  appOrigins: () => Iterable<string>,
 ) {
   if (!uiDir) {
     app.log.warn("UI static directory not provided; API endpoints only")
@@ -1751,7 +1777,7 @@ function setupStaticUi(
 
   app.addHook("preHandler", (request, reply, done) => {
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, settings, appOrigins)) {
       return
     }
     done()
@@ -1773,7 +1799,7 @@ function setupStaticUi(
     }
 
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, settings, appOrigins)) {
       return
     }
 
@@ -1796,6 +1822,8 @@ function setupDevProxy(
   authManager: AuthManager,
   previewManager: PreviewManager,
   logger: Logger,
+  settings: SettingsService,
+  appOrigins: () => Iterable<string>,
 ) {
   app.log.info({ upstreamBase }, "Proxying UI requests to development server")
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
@@ -1806,7 +1834,7 @@ function setupDevProxy(
     }
 
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, settings, appOrigins)) {
       return
     }
 
@@ -1824,6 +1852,8 @@ function proxyPreviewFallbackFromReferer(
   reply: FastifyReply,
   previewManager: PreviewManager,
   logger: Logger,
+  settings: SettingsService,
+  appOrigins: () => Iterable<string>,
 ): boolean {
   const rawUrl = request.raw.url ?? request.url ?? ""
   const pathname = rawUrl.split("?")[0] ?? ""
@@ -1848,6 +1878,7 @@ function proxyPreviewFallbackFromReferer(
     previewManager,
     logger,
     token: parsed.token,
+    settings: requestPreviewSettings({ settings, appOrigins }),
   })
   return true
 }
@@ -2021,10 +2052,10 @@ async function proxyPreviewRequest(args: {
   token?: string
   publicBase?: string
   pathSuffix?: string
-  /** Path-proxied documents are served from the app origin: enforce the
-   * loopback/external origin tier on the response, so a stale or hostile
-   * frame sandbox attribute cannot hand external content the app origin. */
-  enforceDocumentSandbox?: boolean
+  /** The stored policy resolved for this request. Path-proxied requests are
+   * served from the app origin and always enforce it; the capability-host route
+   * serves a dedicated preview origin and leaves `documentSandbox` unset. */
+  settings?: PreviewSettings
 }) {
   const token = args.token ?? (args.request.params as { token?: string }).token ?? ""
   const preview = args.previewManager.get(token)
@@ -2045,14 +2076,9 @@ async function proxyPreviewRequest(args: {
     return
   }
 
-  let documentSandbox: string | undefined
-  if (args.enforceDocumentSandbox) {
-    documentSandbox = previewDocumentSandboxForTarget(
-      preview.targetUrl,
-      { ...DEFAULT_PREVIEW_SETTINGS, originMode: "app" },
-      args.request.headers.host ?? "",
-    )
-  }
+  const documentSandbox = args.settings
+    ? previewDocumentSandboxForTarget(preview.targetUrl, args.settings, args.request.headers.host ?? "")
+    : undefined
 
   args.logger.debug({ previewToken: token, targetUrl: targetUrl.toString() }, "Proxying request to preview")
   await proxyPreviewTargetRequest({
@@ -2075,6 +2101,8 @@ async function proxyPreviewAssetRequest(args: {
   previewManager: PreviewManager
   logger: Logger
   token: string
+  /** Fallback documents are still served from the app origin. */
+  settings: PreviewSettings
 }) {
   const rawUrl = args.request.raw.url ?? args.request.url ?? ""
   const queryIndex = rawUrl.indexOf("?")
@@ -2098,14 +2126,10 @@ async function proxyPreviewAssetRequest(args: {
     logContext: { previewToken: args.token, previewFallback: true },
     errorMessage: "Preview proxy failed",
     // A fallback document is still served from the app origin: keep the
-    // origin tier enforced so an absolute-path link in a previewed page
+    // resolved policy enforced so an absolute-path link in a previewed page
     // cannot deliver external HTML same-origin.
     documentSandbox: preview
-      ? previewDocumentSandboxForTarget(
-          preview.targetUrl,
-          { ...DEFAULT_PREVIEW_SETTINGS, originMode: "app" },
-          args.request.headers.host ?? "",
-        )
+      ? previewDocumentSandboxForTarget(preview.targetUrl, args.settings, args.request.headers.host ?? "")
       : undefined,
     rewriteHeaders: (headers) => rewritePreviewResponseHeaders(headers, args.token, targetUrl.origin),
   })
@@ -2120,7 +2144,7 @@ async function proxyPreviewTargetRequest(args: {
   publicBase: string
   logContext: Record<string, unknown>
   errorMessage: string
-  /** Set for path-proxied documents: injected as the response CSP sandbox. */
+  /** Set for path-proxied responses: injected as the response CSP sandbox. */
   documentSandbox?: string
   rewriteHeaders: (headers: Record<string, string | string[] | undefined>) => Record<string, string | string[] | undefined>
 }) {
@@ -2142,7 +2166,9 @@ async function proxyPreviewTargetRequest(args: {
         delete next["content-length"]
         delete next["content-encoding"]
       }
-      if (responseKind === "html" && args.documentSandbox) {
+      // Every path-proxied response is sandboxed, not only documents: a target
+      // must not be able to serve an untyped or SVG/XML body without the tier.
+      if (args.documentSandbox) {
         next["content-security-policy"] = args.documentSandbox
       }
       if (args.request.headers.origin === "null") {
@@ -2429,6 +2455,9 @@ function rewritePreviewResponseHeaders(
   delete next["x-frame-options"]
   delete next["content-security-policy"]
   delete next["content-security-policy-report-only"]
+  delete next["permissions-policy"]
+  delete next["permissions-policy-report-only"]
+  delete next["feature-policy"]
   delete next["set-cookie"]
   delete next["set-cookie2"]
 
