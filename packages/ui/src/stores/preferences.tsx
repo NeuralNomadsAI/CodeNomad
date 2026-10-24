@@ -1,7 +1,14 @@
 import { createContext, createMemo, createSignal, onMount, useContext } from "solid-js"
 import type { Accessor, ParentComponent } from "solid-js"
 import { storage, ConfigOwnerReconciliationPendingError, type OwnerBucket } from "../lib/storage"
-import type { RemoteServerProfile, UpdateFeed } from "../../../server/src/api-types"
+import type {
+  PreviewFeatureSettings,
+  PreviewOriginMode,
+  PreviewSandboxSettings,
+  PreviewSettings,
+  RemoteServerProfile,
+  UpdateFeed,
+} from "../../../server/src/api-types"
 import {
   ensureInstanceConfigLoaded,
   getInstanceConfig,
@@ -180,6 +187,8 @@ interface ServerConfigBucket {
   secureEnvVars?: string[]
   opencodeBinary?: string
   speech?: Partial<SpeechSettings>
+  /** Stored or hand-edited preview policy, normalized before it is exposed. */
+  preview?: unknown
 }
 
 interface UiStateBucket {
@@ -383,6 +392,92 @@ function normalizeUiSettings(input?: Partial<UiSettings> | null): UiSettings {
   }
 }
 
+const defaultPreviewSettings: PreviewSettings = {
+  originMode: "opaque",
+  customOrigin: "",
+  sandbox: {
+    forms: true,
+    modals: true,
+    popups: true,
+    downloads: true,
+  },
+  features: {
+    camera: false,
+    microphone: false,
+    clipboardRead: false,
+    clipboardWrite: false,
+    geolocation: false,
+    notifications: false,
+    fullscreen: false,
+  },
+}
+
+const previewOriginModes: readonly PreviewOriginMode[] = ["opaque", "app", "custom"]
+
+function isPlainConfigObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+}
+
+/** A bare http(s) origin without credentials, path, query or fragment. */
+function normalizePreviewOrigin(value: unknown): string {
+  if (typeof value !== "string") return ""
+  let url: URL
+  try {
+    url = new URL(value.trim())
+  } catch {
+    return ""
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") return ""
+  if (url.username || url.password) return ""
+  if (url.pathname !== "/" || url.search || url.hash) return ""
+  return url.origin
+}
+
+function normalizePreviewSandbox(value: unknown): PreviewSandboxSettings {
+  const record = isPlainConfigObject(value) ? value : {}
+  return {
+    forms: typeof record.forms === "boolean" ? record.forms : defaultPreviewSettings.sandbox.forms,
+    modals: typeof record.modals === "boolean" ? record.modals : defaultPreviewSettings.sandbox.modals,
+    popups: typeof record.popups === "boolean" ? record.popups : defaultPreviewSettings.sandbox.popups,
+    downloads: typeof record.downloads === "boolean" ? record.downloads : defaultPreviewSettings.sandbox.downloads,
+  }
+}
+
+function normalizePreviewFeatures(value: unknown): PreviewFeatureSettings {
+  const record = isPlainConfigObject(value) ? value : {}
+  return {
+    camera: typeof record.camera === "boolean" ? record.camera : defaultPreviewSettings.features.camera,
+    microphone: typeof record.microphone === "boolean" ? record.microphone : defaultPreviewSettings.features.microphone,
+    clipboardRead: typeof record.clipboardRead === "boolean" ? record.clipboardRead : defaultPreviewSettings.features.clipboardRead,
+    clipboardWrite: typeof record.clipboardWrite === "boolean" ? record.clipboardWrite : defaultPreviewSettings.features.clipboardWrite,
+    geolocation: typeof record.geolocation === "boolean" ? record.geolocation : defaultPreviewSettings.features.geolocation,
+    notifications: typeof record.notifications === "boolean" ? record.notifications : defaultPreviewSettings.features.notifications,
+    fullscreen: typeof record.fullscreen === "boolean" ? record.fullscreen : defaultPreviewSettings.features.fullscreen,
+  }
+}
+
+/** Normalize a stored or hand-edited preview policy into the safe shape the
+ * server uses: unknown modes and invalid custom origins are dropped and every
+ * missing capability falls back to its default. */
+export function normalizePreviewSettings(value: unknown): PreviewSettings {
+  const record = isPlainConfigObject(value) ? value : {}
+  return {
+    originMode: previewOriginModes.includes(record.originMode as PreviewOriginMode)
+      ? record.originMode as PreviewOriginMode
+      : defaultPreviewSettings.originMode,
+    customOrigin: normalizePreviewOrigin(record.customOrigin),
+    sandbox: normalizePreviewSandbox(record.sandbox),
+    features: normalizePreviewFeatures(record.features),
+  }
+}
+
+/** The normalized origin for the Settings input, or `null` when the value is
+ * not a bare http(s) origin. Shape only: the caller rejects the current app
+ * origin and the server rejects app-owned hostnames. */
+export function validatePreviewOrigin(raw: string): string | null {
+  return normalizePreviewOrigin(raw) || null
+}
+
 function normalizeRecord(value: unknown): Record<string, string> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {}
   const out: Record<string, string> = {}
@@ -524,7 +619,7 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
 
 export function normalizeServerConfig(
   input?: ServerConfigBucket | null,
-): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings } {
+): Required<Pick<ServerConfigBucket, "listeningMode" | "logLevel" | "environmentVariables" | "opencodeBinary" | "secureEnvVars">> & { speech: SpeechSettings; preview: PreviewSettings } {
   const source = input ?? {}
   const listeningMode = source.listeningMode === "all" ? "all" : "local"
   const logLevel =
@@ -537,7 +632,8 @@ export function normalizeServerConfig(
   const environmentVariables = normalizeRecord(source.environmentVariables)
   const secureEnvVars = normalizeSecureEnvVars(source.secureEnvVars)
   const speech = normalizeSpeechSettings(source.speech)
-  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech }
+  const preview = normalizePreviewSettings(source.preview)
+  return { listeningMode, logLevel, opencodeBinary, environmentVariables, secureEnvVars, speech, preview }
 }
 
 function normalizeSecureEnvVars(input?: unknown): string[] {
@@ -1075,6 +1171,11 @@ async function updateSpeechSettings(updates: SpeechSettingsUpdate): Promise<void
   }
 }
 
+/** Replaces the server-wide preview policy; the server normalizes and enforces it. */
+async function updatePreviewSettings(next: PreviewSettings): Promise<void> {
+  await patchConfigOwner("server", { preview: next })
+}
+
 function addOpenCodeBinary(path: string, version?: string): void {
   const nextList = buildBinaryList(path, version, opencodeBinaries())
   void patchStateOwner("ui", { opencodeBinaries: nextList }).catch((error) => log.error("Failed to add binary", error))
@@ -1372,6 +1473,7 @@ interface ConfigContextValue {
     updateLastUsedBinary: typeof updateLastUsedBinary
     updateLogLevel: typeof updateLogLevel
     updateSpeechSettings: typeof updateSpeechSettings
+    updatePreviewSettings: typeof updatePreviewSettings
 
   // ui-owned state
   recentFolders: typeof recentFolders
@@ -1456,6 +1558,7 @@ const configContextValue: ConfigContextValue = {
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
+  updatePreviewSettings,
   recentFolders,
   opencodeBinaries,
   remoteServers,
@@ -1561,6 +1664,7 @@ export {
   updateLastUsedBinary,
   updateLogLevel,
   updateSpeechSettings,
+  updatePreviewSettings,
   addRecentFolder,
   removeRecentFolder,
   renameRecentFolderProject,

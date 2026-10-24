@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { buildSpeechPatch } from "../lib/speech-patch"
-import { buildBinaryList, normalizeServerConfig, type SpeechSettingsUpdate } from "./preferences"
+import { buildBinaryList, normalizePreviewSettings, normalizeServerConfig, validatePreviewOrigin, type SpeechSettingsUpdate } from "./preferences"
 
 describe("buildBinaryList", () => {
   it("does not add built-in commands to custom binary history", () => {
@@ -17,6 +17,81 @@ describe("normalizeServerConfig", () => {
   it("maps the legacy system command to opencode2", () => {
     assert.equal(normalizeServerConfig({ opencodeBinary: "opencode" }).opencodeBinary, "opencode2")
     assert.equal(normalizeServerConfig({ opencodeBinary: "C:/tools/opencode2.exe" }).opencodeBinary, "C:/tools/opencode2.exe")
+  })
+
+  it("defaults to the server opaque preview policy", () => {
+    assert.deepEqual(normalizeServerConfig({}).preview, {
+      originMode: "opaque",
+      customOrigin: "",
+      sandbox: { forms: true, modals: true, popups: true, downloads: true },
+      features: {
+        camera: false,
+        microphone: false,
+        clipboardRead: false,
+        clipboardWrite: false,
+        geolocation: false,
+        notifications: false,
+        fullscreen: false,
+      },
+    })
+  })
+
+  it("preserves a stored preview policy", () => {
+    const stored = normalizePreviewSettings({
+      originMode: "custom",
+      customOrigin: "https://preview.example.com/",
+      sandbox: { forms: false },
+      features: { camera: true },
+    })
+
+    assert.deepEqual(normalizeServerConfig({ preview: stored }).preview, {
+      originMode: "custom",
+      customOrigin: "https://preview.example.com",
+      sandbox: { forms: false, modals: true, popups: true, downloads: true },
+      features: {
+        camera: true,
+        microphone: false,
+        clipboardRead: false,
+        clipboardWrite: false,
+        geolocation: false,
+        notifications: false,
+        fullscreen: false,
+      },
+    })
+  })
+
+  it("repairs an unknown preview mode and a malformed custom origin", () => {
+    assert.deepEqual(normalizePreviewSettings({ originMode: "trusted", customOrigin: "https://preview.example.com/path" }), {
+      originMode: "opaque",
+      customOrigin: "",
+      sandbox: { forms: true, modals: true, popups: true, downloads: true },
+      features: {
+        camera: false,
+        microphone: false,
+        clipboardRead: false,
+        clipboardWrite: false,
+        geolocation: false,
+        notifications: false,
+        fullscreen: false,
+      },
+    })
+  })
+})
+
+describe("validatePreviewOrigin", () => {
+  it("returns the normalized origin for a valid http(s) origin", () => {
+    assert.equal(validatePreviewOrigin("  https://preview.example.com/  "), "https://preview.example.com")
+    assert.equal(validatePreviewOrigin("http://127.0.0.1:3000"), "http://127.0.0.1:3000")
+  })
+
+  it("rejects values that are not a bare http(s) origin", () => {
+    assert.equal(validatePreviewOrigin(""), null)
+    assert.equal(validatePreviewOrigin("   "), null)
+    assert.equal(validatePreviewOrigin("not a url"), null)
+    assert.equal(validatePreviewOrigin("ftp://preview.example.com"), null)
+    assert.equal(validatePreviewOrigin("https://preview.example.com/path"), null)
+    assert.equal(validatePreviewOrigin("https://preview.example.com/?q=1"), null)
+    assert.equal(validatePreviewOrigin("https://user:pass@preview.example.com"), null)
   })
 })
 

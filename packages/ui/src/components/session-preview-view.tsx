@@ -4,6 +4,7 @@ import { showAlertDialog, showPromptDialog } from "../stores/alerts"
 import { openSessionPreview, showSessionChat, updateSessionPreviewLocation, updateSessionPreviewHistory, cancelSessionPreviewNavigation, type SessionPreviewRecord } from "../stores/session-previews"
 import { BrowserFrame, type BrowserFrameElementTarget } from "./browser-frame"
 import { getPreviewFrameSource, isLoopbackPreviewUrl } from "./browser-frame-security"
+import { useConfig } from "../stores/preferences"
 import { runtimeEnv } from "../lib/runtime-env"
 
 interface SessionPreviewViewProps {
@@ -32,6 +33,7 @@ function buildCommentMarkdown(target: BrowserFrameElementTarget, comment: string
 
 export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) => {
   const { t } = useI18n()
+  const config = useConfig()
   const [commentMode, setCommentMode] = createSignal(false)
   function showNavigationError(error: unknown) {
     showAlertDialog(t("sessionPreview.open.title"), {
@@ -42,7 +44,7 @@ export const SessionPreviewView: Component<SessionPreviewViewProps> = (props) =>
   }
 
   const frameSource = (preview: SessionPreviewRecord = props.preview) =>
-    getPreviewFrameSource(runtimeEnv, preview, window.location.href)
+    getPreviewFrameSource(runtimeEnv, preview, window.location.href, config.serverSettings().preview)
 
   async function handleCommentTarget(elementTarget: BrowserFrameElementTarget) {
     const comment = await showPromptDialog(t("sessionPreview.comment.prompt"), {
