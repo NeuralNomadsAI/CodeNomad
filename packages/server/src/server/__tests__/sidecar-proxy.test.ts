@@ -10,7 +10,8 @@ import pino from "pino"
 import type { FastifyInstance } from "fastify"
 import type { SideCar } from "../../api-types"
 import { AuthManager } from "../../auth/manager"
-import { PreviewManager, previewDocumentSandbox } from "../../previews/manager"
+import { PreviewManager } from "../../previews/manager"
+import { DEFAULT_PREVIEW_SETTINGS, previewDocumentSandbox } from "../../previews/policy"
 import { createHttpServer } from "../http-server"
 
 const WEBSOCKET_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
@@ -265,7 +266,7 @@ it("path-proxied loopback HTML previews load same-origin and never forward cooki
     })
     assert.equal(response.statusCode, 200)
     // Exactly the injected tier policy: the target's own CSP is overridden.
-    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(true))
+    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(true, DEFAULT_PREVIEW_SETTINGS.sandbox))
     assert.equal(server.requests.at(-1)?.cookie, undefined)
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
@@ -280,7 +281,7 @@ it("referer fallback documents carry the same origin tier as their preview", asy
       headers: { origin: server.origin, cookie: server.cookie, referer: `${server.origin}${server.preview.proxyUrl}` },
     })
     assert.equal(response.statusCode, 200)
-    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(true))
+    assert.equal(response.headers["content-security-policy"], previewDocumentSandbox(true, DEFAULT_PREVIEW_SETTINGS.sandbox))
     assert.equal(server.requests.at(-1)?.cookie, undefined)
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
