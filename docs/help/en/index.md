@@ -45,7 +45,7 @@ For precise limits, see [browser previews and SideCars](browser-sidecars.md), [R
 | CodeNomad backend | The server providing workspace, Git, authentication and client connectivity. Its account and environment determine backend filesystem access. |
 | Configuration | CodeNomad settings under the server's config directory; Global/Project OpenCode settings have their own native scope. |
 | Window | Its own tabs, navigation, drafts and restored view. Native history is shared, not copied for each window. |
-| Desktop data profile | Explicit native/client storage selection; it does not automatically isolate OpenCode sessions or every shared configuration. |
+| Desktop data profile | Native/client storage chosen in Settings; it does not automatically isolate OpenCode sessions or every shared configuration. |
 
 The workspace root limits which folders CodeNomad opens; it is not an agent sandbox. Review [security](security.md) before exposing a host or allowing broad tool access.
 

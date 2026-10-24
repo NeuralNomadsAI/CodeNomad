@@ -3,8 +3,9 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance } from "./startup"
-import { SELECTION_ANSWER_ENVIRONMENT, SELECTION_CLEANUP_ENVIRONMENT, stripPrivateRelaunchEnvironment, takeRelaunchHandoff } from "./profile-selection-cleanup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isPinnedLaunch, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance } from "./startup"
+import { stripPrivateRelaunchEnvironment } from "./profile-selection-cleanup"
+import type { TransitionResult } from "./profile-transition"
 
 test("default profile storage preserves paths while named profiles and alternate configs are scoped", () => {
   const base = join(tmpdir(), "codenomad-startup-base")
@@ -24,56 +25,47 @@ test("default profile storage preserves paths while named profiles and alternate
 test("launch profile: explicit settings skip the transition, packaged launches without them use it", () => {
   const base = join(tmpdir(), "codenomad-startup-base")
   let transitions = 0
-  const transition = () => { transitions++; return { kind: "resolved" as const, key: "dev", reason: "single" as const } }
+  const transition = () => { transitions++; return { key: "dev", reason: "single" as const } }
   const launch = (environment: Record<string, string | undefined>, packaged: boolean) =>
     resolveLaunchProfile({ environment, packaged, cwd: base, baseUserDataPath: base, transition })
-  assert.deepEqual(launch({ CODENOMAD_PROFILE: "Team", CODENOMAD_UPDATE_CHANNEL: "dev" }, true), { kind: "ready", key: "team", source: "profile" })
-  assert.deepEqual(launch({ CODENOMAD_UPDATE_CHANNEL: "dev-v2" }, true), { kind: "ready", key: "dev-v2", source: "legacy-channel" })
-  assert.deepEqual(launch({}, false), { kind: "ready", key: "dev", source: "unpackaged" })
+  assert.deepEqual(launch({ CODENOMAD_PROFILE: "Team", CODENOMAD_UPDATE_CHANNEL: "dev" }, true), { key: "team", source: "profile" })
+  assert.deepEqual(launch({ CODENOMAD_UPDATE_CHANNEL: "dev-v2" }, true), { key: "dev-v2", source: "legacy-channel" })
+  assert.deepEqual(launch({}, false), { key: "dev", source: "unpackaged" })
   assert.equal(transitions, 0)
-  assert.deepEqual(launch({}, true), { kind: "ready", key: "dev", source: "transition" })
+  assert.deepEqual(launch({}, true), { key: "dev", source: "transition" })
   assert.equal(transitions, 1)
   assert.throws(() => launch({ CODENOMAD_PROFILE: "not a profile" }, true), /Invalid CODENOMAD_PROFILE/)
 })
 
-test("an unremembered relaunch answer is private, one-shot, validated and below the user's own settings", () => {
+test("launch profile: only the transition lets a remembered choice apply", () => {
   const base = join(tmpdir(), "codenomad-startup-base")
-  const environment: NodeJS.ProcessEnv = {
-    [SELECTION_CLEANUP_ENVIRONMENT]: join(tmpdir(), "codenomad-profile-selection-x"),
-    [SELECTION_ANSWER_ENVIRONMENT]: "Dev-V2",
-    PATH: "/bin",
-  }
-  const handoff = takeRelaunchHandoff(environment)
-  assert.deepEqual(handoff, { cleanup: join(tmpdir(), "codenomad-profile-selection-x"), answer: "dev-v2" })
-  // Consumed: nothing private is left for the backend, its terminals or a later relaunch.
-  assert.deepEqual(environment, { PATH: "/bin" })
-  assert.deepEqual(takeRelaunchHandoff(environment), {})
-  assert.deepEqual(takeRelaunchHandoff({ [SELECTION_ANSWER_ENVIRONMENT]: "not a profile" }), {})
-
-  let transitions = 0
-  const transition = () => { transitions++; return { kind: "resolved" as const, key: "stable", reason: "none" as const } }
-  const launch = (env: Record<string, string | undefined>) =>
-    resolveLaunchProfile({ environment: env, packaged: true, cwd: base, baseUserDataPath: base, selectionAnswer: handoff.answer, transition })
-  assert.deepEqual(launch({}), { kind: "ready", key: "dev-v2", source: "transition" })
-  assert.equal(transitions, 0)
-  // The user's real CODENOMAD_PROFILE still wins.
-  assert.deepEqual(launch({ CODENOMAD_PROFILE: "team" }), { kind: "ready", key: "team", source: "profile" })
-
-  // Children never receive the private variables even if one were still set.
-  const child: NodeJS.ProcessEnv = { [SELECTION_ANSWER_ENVIRONMENT]: "dev", [SELECTION_CLEANUP_ENVIRONMENT]: "x", CODENOMAD_PROFILE: "team" }
-  stripPrivateRelaunchEnvironment(child)
-  assert.deepEqual(child, { CODENOMAD_PROFILE: "team" })
+  const pinned = (environment: Record<string, string | undefined>, packaged: boolean, reason: TransitionResult["reason"] = "remembered") =>
+    isPinnedLaunch(resolveLaunchProfile({ environment, packaged, cwd: base, baseUserDataPath: base, transition: () => ({ key: "dev-v2", reason }) }))
+  assert.equal(pinned({ CODENOMAD_PROFILE: "default" }, true), true)
+  assert.equal(pinned({ CODENOMAD_UPDATE_CHANNEL: "dev" }, true), true)
+  assert.equal(pinned({}, false), true)
+  for (const reason of ["remembered", "none", "single", "most-recent", "unremembered"] as const) assert.equal(pinned({}, true, reason), false, reason)
+  // Older builds' private relaunch answer no longer selects a profile or pins the launch.
+  assert.equal(pinned({ CODENOMAD_PROFILE_SELECTION_ANSWER: "team" }, true), false)
 })
 
-test("the backend environment drops private relaunch variables and keeps the resolved profile", () => {
-  const source = readFileSync(new URL("./process-manager.ts", import.meta.url), "utf8")
+test("older builds' private relaunch variables are dropped before anything inherits them", () => {
+  const environment: NodeJS.ProcessEnv = {
+    CODENOMAD_PROFILE_SELECTION_CLEANUP: join(tmpdir(), "codenomad-profile-selection-x"),
+    CODENOMAD_PROFILE_SELECTION_ANSWER: "dev",
+    CODENOMAD_PROFILE: "team",
+  }
+  stripPrivateRelaunchEnvironment(environment)
+  assert.deepEqual(environment, { CODENOMAD_PROFILE: "team" })
+  // main.ts strips process.env, which the backend environment is built from, before resolving the profile.
   const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8")
-  assert.match(source, /stripPrivateRelaunchEnvironment\(env\)/)
-  assert.match(source, /env\[BACKEND_PROFILE_ENVIRONMENT\] = profile/)
-  // The asking process never sets the user's CODENOMAD_PROFILE.
+  const stripped = main.indexOf("stripPrivateRelaunchEnvironment(process.env)")
+  assert.ok(stripped > 0 && stripped < main.indexOf("resolveInitialProfile(baseUserDataPath)"))
+})
+
+test("the host never sets the user's CODENOMAD_PROFILE", () => {
+  const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8")
   assert.doesNotMatch(main, /process\.env\[PROFILE_ENVIRONMENT\]\s*=/)
-  assert.match(main, /process\.env\[SELECTION_ANSWER_ENVIRONMENT\] = profileDisplayName\(key\)/)
-  assert.match(main, /const relaunchHandoff = takeRelaunchHandoff\(process\.env\)/)
 })
 
 test("remote profiles use isolated persistent partitions and TLS exceptions stay with their webContents", () => {

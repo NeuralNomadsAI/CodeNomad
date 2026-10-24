@@ -22,15 +22,15 @@ Das Einstellungsfenster hat keinen separaten Wiederherstellungszustand: Diese Be
 
 Browser- und Remote-Einstellungen sind eingebettet, kein zweiter nativer Einstellungsbesitzer. Ein Fehler beim Öffnen nativer Einstellungen wird gemeldet; er bedeutet nicht, dass stattdessen eine versteckte eingebettete Einstellungsseite geöffnet wurde.
 
-## Explizite Desktop-Datenprofile {#data-profiles}
+## Desktop-Datenprofile {#data-profiles}
 
-Ohne explizites Profil verwenden paketierte Starts das für diese Konfiguration gemerkte Profil. Ist keine Auswahl gemerkt, prüft die App Standard-, `dev`- und `dev-v2`-Profile auf wiederherstellbare Arbeit: Sie wählt den einzigen Kandidaten, fragt bei mehreren oder verwendet ohne Kandidaten das Standardprofil. Auswahl verschiebt, vereint oder löscht keine Profildaten. Verwenden Sie `CODENOMAD_PROFILE`, um explizit ein anderes Profil zu öffnen.
+1. Klappen Sie in den nativen **Einstellungen → Allgemein** unter **Vorherigen Zustand wiederherstellen** den Eintrag **Datenprofil** auf. Er listet alle Profile auf diesem Computer mit Größe, Erstellungsdatum und letzter Verwendung auf, das geöffnete zuerst.
+2. Wählen Sie das Profil, das der nächste Start öffnet, oder wählen Sie **Neues Profil** und geben Sie einen Namen aus 1–64 Kleinbuchstaben, Ziffern, Punkten, Bindestrichen oder Unterstrichen ein, beginnend mit einem Buchstaben oder einer Ziffer.
+3. Wählen Sie **In … neu starten**, um sofort zu wechseln; andernfalls öffnet sich das gewählte Profil beim nächsten Start. Erneutes Auswählen des geöffneten Profils hebt die Änderung auf.
 
-1. Setzen Sie für bewusste Desktop-Isolation `CODENOMAD_PROFILE` vor dem Programmstart.
-2. Verwenden Sie einen Namen mit 1–64 ASCII-Buchstaben/Ziffern, Punkten, Unterstrichen oder Bindestrichen, beginnend mit Buchstabe/Ziffer. Namen werden kleingeschrieben; `default` oder `stable` wählt das Standardprofil.
-3. Prüfen Sie **Einstellungen → Allgemein → Vorherigen Zustand wiederherstellen → Datenprofil** auf ein benanntes Profil. Ein ungültiger Name verhindert den Start, statt ein anderes Profil zu wählen.
+Profile aus einer anderen Konfiguration werden aufgelistet, können hier aber nicht gewählt werden. Ohne gemerkte Auswahl prüft ein paketierter Start Standard-, `dev`- und `dev-v2`-Profil auf wiederherstellbare Arbeit und öffnet das zuletzt verwendete davon, oder das Standardprofil, wenn keines solche Arbeit enthält. Die Auswahl eines Profils verschiebt, vereint oder löscht keine Profildaten.
 
-Beispielsweise in PowerShell vor dem Start der gewünschten Desktop-Programmdatei:
+Ein vor dem Programmstart gesetztes `CODENOMAD_PROFILE` hat Vorrang vor dieser Auswahl; **Datenprofil** zeigt die Profile dann an, ohne eine Auswahl zu erlauben. `default` oder `stable` wählt das Standardprofil, und ein ungültiger Name verhindert den Start, statt ein anderes Profil zu wählen. Beispielsweise in PowerShell vor dem Start der gewünschten Desktop-Programmdatei:
 
 ```powershell
 $env:CODENOMAD_PROFILE = "review"
@@ -46,13 +46,13 @@ Setzen Sie für unabhängige Serverkonfiguration zusätzlich vor dem Start `CLI_
 
 Unter macOS-Tauri teilen Profile System-WebKit-Speicher, Anmeldungen und Cache; verwenden Sie Profilnamen nicht zur sicherheitsbezogenen Kontentrennung. Electron speichert Webdaten im Profil. Installierte Version und **Update-Kanal** wählen niemals ein anderes Datenprofil. Nicht paketierte Entwicklungsstarts verwenden ohne explizite Auswahl das Profil `dev`.
 
-## Andere gespeicherte Profile löschen {#delete-profiles}
+## Ein gespeichertes Profil löschen {#delete-profiles}
 
-1. Suchen Sie unter nativen **Einstellungen → Allgemein** nach **Andere gespeicherte Profile** unterhalb von **Vorherigen Zustand wiederherstellen**. Dies erscheint nur bei anderen vorhandenen Profilen auf dem Rechner.
-2. Aktualisieren Sie bei Bedarf die Liste, wählen Sie **Löschen…** und lesen Sie Ziele und übersprungene Profile.
+1. Klappen Sie **Datenprofil** wie oben auf und aktualisieren Sie bei Bedarf die Liste.
+2. Wählen Sie die Löschschaltfläche des zu entfernenden Profils. Das geöffnete Profil hat keine.
 3. Bestätigen Sie erst nach Sicherung benötigter Entwürfe/Anmeldungen. Prüfen Sie vor Wiederholung Berichte zu unvollständiger Entfernung.
 
-Die Löschung entfernt gespeicherte Tabs, Entwürfe, Layout und zugehörigen Webspeicher/Cache/Anmeldungen anderer Profile, einschließlich aufgelisteter Profile anderer Konfigurationen. Sie bewahrt geöffnetes Profil, OpenCode-Unterhaltungen und Projektdateien. Offene Profile oder Profile mit unbekanntem Zustand werden übersprungen; schließen Sie relevante CodeNomad-Fenster vor expliziter Aktualisierung/Wiederholung. Unbekannte Inhalte werden behalten und gemeldet statt pauschal gelöscht.
+Die Löschung entfernt gespeicherte Tabs, Entwürfe, Layout und zugehörigen Webspeicher/Cache/Anmeldungen dieses Profils, auch bei einem aufgelisteten Profil einer anderen Konfiguration. Sie bewahrt geöffnetes Profil, OpenCode-Unterhaltungen und Projektdateien. Ein geöffnetes Profil oder eines mit unbekanntem Zustand kann nicht gelöscht werden; schließen Sie die relevanten CodeNomad-Fenster, aktualisieren Sie die Liste und versuchen Sie es erneut. Unbekannte Inhalte werden behalten und gemeldet statt pauschal gelöscht.
 
 Der gemeinsame WebKit-Speicher von macOS-Tauri bleibt erhalten, da dessen Löschung andere Profile betreffen würde. Diese Bereinigung ist nicht rückgängig zu machen: Eine erhaltene native Unterhaltung stellt keinen gelöschten ungesendeten Entwurf wieder her. **Gespeicherten Startzustand löschen** ist die kleinere Aktion, wenn Sie nur das aktuelle Fenster zurücksetzen möchten.
 

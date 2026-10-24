@@ -1,11 +1,14 @@
 import assert from "node:assert/strict"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs"
+import { existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import test from "node:test"
-import { deleteOtherProfiles, listOtherProfiles, requireProfileIds, resolveProfileRoots, TAURI_IDENTIFIER, type CleanupDependencies, type CurrentProfile, type ProfileRoots } from "./data-profile-cleanup"
+import {
+  deleteOtherProfiles, listOtherProfiles, reliableBirthTime, requireProfileIds, resolveProfileRoots, setNextLaunchProfile, TAURI_IDENTIFIER,
+  type CleanupDependencies, type CurrentProfile, type ProfileRoots,
+} from "./data-profile-cleanup"
 import { profileScope } from "./data-profile"
-import { choiceKey } from "./profile-transition"
+import { choiceKey, LOCK_STALE_MS } from "./profile-transition"
 
 const CONFIG = "/home/user/.config/codenomad/config.yaml"
 const OTHER_CONFIG = "/work/other/config.yaml"
@@ -25,7 +28,7 @@ function fixture() {
   return { base, roots, file, scope, tauriLock, cleanup: () => rmSync(base, { recursive: true, force: true }) }
 }
 
-const current = (key: string, configIdentity = CONFIG): CurrentProfile => ({ key, configIdentity, defaultIdentity: CONFIG })
+const current = (key: string, configIdentity = CONFIG): CurrentProfile => ({ key, configIdentity, defaultIdentity: CONFIG, pinned: false })
 const dependencies = (overrides: Partial<CleanupDependencies> = {}): CleanupDependencies =>
   ({ pidAlive: (pid) => pid === LIVE, now: () => Date.now(), ...overrides })
 
@@ -113,6 +116,117 @@ test("size measurement is bounded and reports a lower bound", async () => {
     const { profiles } = await listOtherProfiles(context.roots, current("stable"), dependencies({ sizeEntries: 5 }))
     assert.equal(profiles[0]!.sizeComplete, false)
     assert.ok(profiles[0]!.sizeBytes < 20)
+    // The open profile is measured with the same bound.
+    const open = (await listOtherProfiles(context.roots, current("big"), dependencies({ sizeEntries: 5 }))).current
+    assert.equal(open.sizeComplete, false)
+    assert.ok(open.sizeBytes < 20)
+  } finally {
+    context.cleanup()
+  }
+})
+
+const at = (path: string, time: number) => utimesSync(path, time / 1000, time / 1000)
+/** Birth times exist on Windows and macOS; Linux reports them only where the filesystem keeps them. */
+const createdBetween = (value: number | null, from: number, to: number) =>
+  value === null ? process.platform === "linux" : value >= from && value <= to
+
+test("profiles carry their main folder's creation date and their client state's last use", async () => {
+  const from = Date.now() - 2_000
+  const context = populated()
+  const to = Date.now() + 2_000
+  try {
+    const { roots, scope, file } = context
+    const used = Date.UTC(2026, 8, 1)
+    at(join(roots.electronBase, "scopes", scope("dev-v2").scopeName, "client-state", "client-state.json"), used)
+    // The default profile counts the shared file, restorable or not, and its legacy files only without it.
+    at(join(roots.homeClientState, "v2", "client-state.json"), used + 1_000)
+    at(join(roots.electronBase, "client-state.json"), used + 5_000)
+    // Only Tauri's WebView storage exists for `solo`: no client-state folder or file.
+    file(join(roots.webviewRoot, "scopes", scope("solo").scopeName, "EBWebView", "data"), 1)
+    const list = async () => new Map((await listOtherProfiles(roots, current("dev"), dependencies())).profiles.map((profile) => [profile.id, profile]))
+    const byId = await list()
+    const devV2 = byId.get(`scope:${scope("dev-v2").scopeName}`)!
+    assert.equal(devV2.lastUsedAt, used)
+    assert.ok(createdBetween(devV2.createdAt, from, to), String(devV2.createdAt))
+    const defaultProfile = byId.get("default")!
+    assert.equal(defaultProfile.name, "default")
+    assert.equal(defaultProfile.lastUsedAt, used + 1_000)
+    assert.ok(createdBetween(defaultProfile.createdAt, from, to), String(defaultProfile.createdAt))
+    const team = byId.get(`scope:${scope("team", OTHER_CONFIG).scopeName}`)!
+    assert.equal(team.lastUsedAt, null)
+    assert.ok(createdBetween(team.createdAt, from, to))
+    const orphan = byId.get(`orphan:${"f".repeat(16)}`)!
+    assert.equal(orphan.lastUsedAt, null)
+    assert.ok(createdBetween(orphan.createdAt, from, to))
+    assert.deepEqual([byId.get(`scope:${scope("solo").scopeName}`)!.createdAt, byId.get(`scope:${scope("solo").scopeName}`)!.lastUsedAt], [null, null])
+
+    rmSync(join(roots.homeClientState, "v2", "client-state.json"))
+    at(join(roots.tauriDataParent, TAURI_IDENTIFIER, "client-state.json"), used + 9_000)
+    assert.equal((await list()).get("default")!.lastUsedAt, used + 9_000)
+  } finally {
+    context.cleanup()
+  }
+})
+
+test("a creation date comes from a reliable birth time only", () => {
+  assert.equal(reliableBirthTime({ birthtimeMs: 1_700_000_000_123.9, ctimeMs: 1_700_000_100_000 }, "win32"), 1_700_000_000_123)
+  assert.equal(reliableBirthTime({ birthtimeMs: 1_700_000_000_000, ctimeMs: 1_700_000_000_000 }, "darwin"), 1_700_000_000_000)
+  assert.equal(reliableBirthTime({ birthtimeMs: 1_700_000_000_000, ctimeMs: 1_700_000_100_000 }, "linux"), 1_700_000_000_000)
+  // Linux without btime reports 0, or the change time when statx is unavailable.
+  assert.equal(reliableBirthTime({ birthtimeMs: 0, ctimeMs: 1_700_000_100_000 }, "linux"), null)
+  assert.equal(reliableBirthTime({ birthtimeMs: 1_700_000_100_000, ctimeMs: 1_700_000_100_000 }, "linux"), null)
+  assert.equal(reliableBirthTime({ birthtimeMs: Number.NaN, ctimeMs: 0 }, "win32"), null)
+})
+
+test("the open profile is described from the folders deletion would remove for it", async () => {
+  const from = Date.now() - 2_000
+  const context = populated()
+  const to = Date.now() + 2_000
+  try {
+    const { roots, scope } = context
+    const used = Date.UTC(2026, 9, 2)
+    at(join(roots.electronBase, "scopes", scope("dev").scopeName, "client-state", "client-state.json"), used)
+    at(join(roots.homeClientState, "v2", "client-state.json"), used + 1_000)
+    const named = (await listOtherProfiles(roots, current("dev"), dependencies())).current
+    // Electron/client-state folder (5), WebView folder (5) and Tauri lock folder (0).
+    assert.deepEqual([named.name, named.sizeBytes, named.sizeComplete, named.lastUsedAt], ["dev", 10, true, used])
+    assert.ok(createdBetween(named.createdAt, from, to), String(named.createdAt))
+    const byDefault = (await listOtherProfiles(roots, current("stable"), dependencies())).current
+    assert.deepEqual([byDefault.name, byDefault.sizeBytes, byDefault.sizeComplete, byDefault.lastUsedAt], ["default", 1000 + 20 + 30 + 40 + 400 + 60, true, used + 1_000])
+    assert.ok(createdBetween(byDefault.createdAt, from, to), String(byDefault.createdAt))
+    // The default profile of another configuration is a scope that does not exist yet.
+    assert.deepEqual((await listOtherProfiles(roots, current("stable", OTHER_CONFIG), dependencies())).current, {
+      name: "default", sizeBytes: 0, sizeComplete: true, createdAt: null, lastUsedAt: null,
+    })
+  } finally {
+    context.cleanup()
+  }
+})
+
+test("the listing reports the next launch's remembered profile and whether a choice can apply", async () => {
+  const context = populated()
+  try {
+    const choices = join(context.roots.electronBase, "profile-selection", "choices.json")
+    const list = (profile = current("dev")) => listOtherProfiles(context.roots, profile, dependencies())
+    // An empty (corrupt) or missing file remembers nothing.
+    assert.equal((await list()).nextLaunch, null)
+    rmSync(choices)
+    assert.equal((await list()).nextLaunch, null)
+    writeFileSync(choices, JSON.stringify({ version: 1, choices: { [choiceKey(CONFIG)]: "dev-v2", [choiceKey(OTHER_CONFIG)]: "team" } }))
+    assert.equal((await list()).nextLaunch, "dev-v2")
+    assert.equal((await list(current("dev", OTHER_CONFIG))).nextLaunch, "team")
+    assert.equal((await list(current("dev", "/third/config.yaml"))).nextLaunch, null)
+    writeFileSync(choices, JSON.stringify({ version: 1, choices: { [choiceKey(CONFIG)]: "Stable" } }))
+    assert.equal((await list()).nextLaunch, "default")
+    writeFileSync(choices, JSON.stringify({ version: 2, choices: { [choiceKey(CONFIG)]: "dev" } }))
+    assert.equal((await list()).nextLaunch, null)
+    // A choice the launch would not open is not the next launch's: its folder is gone, or links to a missing drive.
+    writeFileSync(choices, JSON.stringify({ version: 1, choices: { [choiceKey(CONFIG)]: "gone" } }))
+    assert.equal((await list()).nextLaunch, null)
+    symlinkSync(join(context.roots.electronBase, "missing-drive"), join(context.roots.electronBase, "scopes", context.scope("gone").scopeName), "junction")
+    assert.equal((await list()).nextLaunch, null)
+    assert.equal((await list()).pinned, false)
+    assert.equal((await list({ ...current("dev"), pinned: true })).pinned, true)
   } finally {
     context.cleanup()
   }
@@ -385,6 +499,111 @@ test("a linked scope, present or dangling, keeps other configurations' remembere
       context.cleanup()
       rmSync(outside, { recursive: true, force: true })
     }
+  }
+})
+
+function nextLaunch() {
+  const context = fixture()
+  const selection = join(context.roots.electronBase, "profile-selection")
+  const stored = () => JSON.parse(readFileSync(join(selection, "choices.json"), "utf8")).choices
+  const set = (name: unknown, profile = current("dev")) => setNextLaunchProfile(context.roots, profile, name, dependencies())
+  const folder = (key: string, config = CONFIG) => join(context.roots.electronBase, "scopes", context.scope(key, config).scopeName)
+  return { ...context, selection, stored, set, folder }
+}
+
+test("choosing the next launch's profile remembers it for the open configuration and prepares a new profile's folder", async () => {
+  const context = nextLaunch()
+  try {
+    const { set, stored, folder, selection } = context
+    // A new name gets its folder for this configuration, so the next launch keeps the choice.
+    assert.deepEqual(await set("  Team "), { outcome: "updated" })
+    assert.deepEqual(stored(), { [choiceKey(CONFIG)]: "team" })
+    assert.ok(statSync(folder("team")).isDirectory())
+    // An explicit choice replaces the remembered one; `stable` and `default` name the default profile and need no folder.
+    assert.deepEqual(await set("stable"), { outcome: "updated" })
+    assert.deepEqual(stored(), { [choiceKey(CONFIG)]: "default" })
+    assert.deepEqual(await set("Default", current("dev", OTHER_CONFIG)), { outcome: "updated" })
+    assert.deepEqual(stored(), { [choiceKey(CONFIG)]: "default", [choiceKey(OTHER_CONFIG)]: "default" })
+    assert.ok(!existsSync(folder("stable", OTHER_CONFIG)))
+    // An existing profile keeps its folder and content.
+    context.file(join(folder("dev-v2"), "client-state", "client-state.json"), 3)
+    assert.deepEqual(await set("dev-v2"), { outcome: "updated" })
+    assert.equal(readFileSync(join(folder("dev-v2"), "client-state", "client-state.json"), "utf8"), "xxx")
+    assert.deepEqual(stored(), { [choiceKey(CONFIG)]: "dev-v2", [choiceKey(OTHER_CONFIG)]: "default" })
+    // Names outside the CODENOMAD_PROFILE grammar change nothing.
+    for (const invalid of ["", "  ", "../x", "-dev", "a".repeat(65), "Émile", "C:\\Users", 7, null, ["dev"]]) {
+      assert.deepEqual(await set(invalid), { outcome: "invalid" }, String(invalid))
+    }
+    assert.deepEqual(stored(), { [choiceKey(CONFIG)]: "dev-v2", [choiceKey(OTHER_CONFIG)]: "default" })
+    // No lock or temporary file is left behind.
+    assert.deepEqual(readdirSync(selection), ["choices.json"])
+  } finally {
+    context.cleanup()
+  }
+})
+
+test("a chosen profile's existing entry, link or not, is left as it is", async () => {
+  const context = nextLaunch()
+  const outside = mkdtempSync(join(tmpdir(), "codenomad-profile-next-"))
+  try {
+    const { set, stored, folder } = context
+    mkdirSync(dirname(folder("linked")), { recursive: true })
+    symlinkSync(outside, folder("linked"), "junction")
+    rmSync(outside, { recursive: true })
+    assert.deepEqual(await set("linked"), { outcome: "updated" })
+    assert.ok(lstatSync(folder("linked")).isSymbolicLink())
+    assert.ok(!existsSync(outside), "nothing is created through a dangling link")
+    writeFileSync(folder("plain-file"), "x")
+    assert.deepEqual(await set("plain-file"), { outcome: "updated" })
+    assert.equal(readFileSync(folder("plain-file"), "utf8"), "x")
+    assert.deepEqual(stored(), { [choiceKey(CONFIG)]: "plain-file" })
+  } finally {
+    context.cleanup()
+    rmSync(outside, { recursive: true, force: true })
+  }
+})
+
+test("choosing the next launch's profile is busy while a launch holds the lock and never rewrites a newer or full file", async () => {
+  const context = nextLaunch()
+  try {
+    const { set, folder, selection } = context
+    const choices = join(selection, "choices.json")
+    const lock = join(selection, "choices.lock")
+    mkdirSync(selection, { recursive: true })
+    // A launch choosing its profile holds the lock: nothing is written or prepared.
+    writeFileSync(lock, JSON.stringify({ pid: 1, token: "launch" }))
+    assert.deepEqual(await set("team"), { outcome: "busy" })
+    assert.ok(!existsSync(choices))
+    assert.ok(!existsSync(folder("team")))
+    assert.equal(JSON.parse(readFileSync(lock, "utf8")).token, "launch")
+    // A lock left by a crashed launch is taken over.
+    at(lock, Date.now() - LOCK_STALE_MS - 5_000)
+    assert.deepEqual(await set("team"), { outcome: "updated" })
+    assert.ok(!existsSync(lock))
+
+    const future = JSON.stringify({ version: 2, choices: {} })
+    writeFileSync(choices, future)
+    assert.deepEqual(await set("dev-v2"), { outcome: "failed" })
+    assert.equal(readFileSync(choices, "utf8"), future)
+    assert.ok(!existsSync(folder("dev-v2")))
+
+    const full: Record<string, string> = {}
+    for (let index = 0; index < 256; index += 1) full[choiceKey(`/other/${index}/config.yaml`)] = "dev"
+    writeFileSync(choices, JSON.stringify({ version: 1, choices: full }))
+    assert.deepEqual(await set("dev-v2"), { outcome: "failed" })
+    assert.ok(!existsSync(folder("dev-v2")))
+    // This configuration's own entry is replaced in place even in a full file.
+    writeFileSync(choices, JSON.stringify({ version: 1, choices: { ...full, [choiceKey(`/other/0/config.yaml`)]: "team" } }))
+    assert.deepEqual(await set("dev-v2", current("dev", "/other/0/config.yaml")), { outcome: "updated" })
+
+    // An unwritable file fails and leaves no empty folder for the new name.
+    rmSync(choices)
+    mkdirSync(choices)
+    assert.deepEqual(await set("fresh"), { outcome: "failed" })
+    assert.ok(!existsSync(folder("fresh")))
+    assert.deepEqual(readdirSync(selection), ["choices.json"])
+  } finally {
+    context.cleanup()
   }
 })
 

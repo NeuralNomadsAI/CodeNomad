@@ -1,7 +1,7 @@
 //! One-time transition for packaged launches without an explicit profile, mirrored by Electron's
 //! `profile-transition.ts`. Older builds picked `dev`/`dev-v2` from their version label; we look
-//! (read-only) for restorable client state in those profiles and the default one, ask only when
-//! several qualify, and remember the result outside every profile. See
+//! (read-only) for restorable client state in those profiles and the default one, open the most
+//! recently used when several qualify, and remember the result outside every profile. See
 //! dev-docs/DESKTOP_DATA_PROFILES.md.
 use crate::client_state::restorable_state_modified;
 use crate::data_profile::{
@@ -11,10 +11,8 @@ use crate::data_profile::{
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{ErrorKind, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 
 pub(crate) const SELECTION_DIRECTORY: &str = "profile-selection";
@@ -23,9 +21,7 @@ const LOCK_FILENAME: &str = "choices.lock";
 const CHOICES_VERSION: u64 = 1;
 const MAX_CHOICES_BYTES: u64 = 64 * 1024;
 const MAX_CHOICES: usize = 256;
-pub(crate) const LOCK_HEARTBEAT: Duration = Duration::from_secs(2);
 pub(crate) const LOCK_STALE: Duration = Duration::from_secs(15);
-const LOCK_POLL: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug)]
 pub(crate) struct TransitionContext {
@@ -38,10 +34,9 @@ pub(crate) struct TransitionContext {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) struct Candidate {
-    pub(crate) key: String,
-    pub(crate) name: String,
-    pub(crate) last_used: SystemTime,
+struct Candidate {
+    key: String,
+    last_used: SystemTime,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -49,19 +44,14 @@ pub(crate) enum Reason {
     Remembered,
     None,
     Single,
+    MostRecent,
     Unremembered,
 }
 
-#[derive(Debug)]
-pub(crate) enum TransitionResult {
-    Resolved {
-        key: String,
-        reason: Reason,
-    },
-    Ask {
-        candidates: Vec<Candidate>,
-        lock: SelectionLock,
-    },
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct TransitionResult {
+    pub(crate) key: String,
+    pub(crate) reason: Reason,
 }
 
 pub(crate) fn selection_directory(user_data_base: &Path) -> PathBuf {
@@ -71,22 +61,32 @@ pub(crate) fn selection_directory(user_data_base: &Path) -> PathBuf {
 pub(crate) fn profile_state_files(key: &str, context: &TransitionContext) -> Vec<PathBuf> {
     let scope = profile_scope(key, &context.config_identity, &context.default_identity);
     if scope.scoped {
-        return vec![context
-            .user_data_base
-            .join("scopes")
-            .join(scope.scope_name)
-            .join("client-state")
-            .join("client-state.json")];
+        return vec![scope_state_file(&context.user_data_base, &scope.scope_name)];
     }
+    default_profile_state_files(&context.default_state_files)
+}
+
+/// Client-state file of the scoped profile stored in `scopes/<scope_name>`, for any configuration.
+pub(crate) fn scope_state_file(user_data_base: &Path, scope_name: &str) -> PathBuf {
+    user_data_base
+        .join("scopes")
+        .join(scope_name)
+        .join("client-state")
+        .join("client-state.json")
+}
+
+/// The unscoped default profile's files, given in migration order (current shared file first).
+pub(crate) fn default_profile_state_files(default_state_files: &[PathBuf]) -> Vec<PathBuf> {
     // Legacy default files are migrated only while the current shared file does not exist.
-    match context.default_state_files.split_first() {
+    match default_state_files.split_first() {
         Some((current, _)) if current.exists() => vec![current.clone()],
         Some((_, legacy)) => legacy.to_vec(),
         None => Vec::new(),
     }
 }
 
-pub(crate) fn detect_candidates(context: &TransitionContext) -> Vec<Candidate> {
+/// Profiles with restorable state, most recently used first.
+fn detect_candidates(context: &TransitionContext) -> Vec<Candidate> {
     let mut candidates = TRANSITION_PROFILE_KEYS
         .iter()
         .filter_map(|key| {
@@ -96,7 +96,6 @@ pub(crate) fn detect_candidates(context: &TransitionContext) -> Vec<Candidate> {
                 .max()?;
             Some(Candidate {
                 key: key.to_string(),
-                name: profile_display_name(key).to_string(),
                 last_used,
             })
         })
@@ -227,20 +226,9 @@ pub(crate) fn remembered_profile_state_with(
     is_directory: impl Fn(&Path) -> std::io::Result<bool>,
 ) -> RememberedProfileState {
     use RememberedProfileState::*;
-    if key == DEFAULT_PROFILE_KEY {
+    let Some(path) = remembered_profile_folder(key, context) else {
         return Present;
-    }
-    let scope = profile_scope(key, &context.config_identity, &context.default_identity);
-    if !scope.scoped {
-        return Present;
-    }
-    let absent = |error: &std::io::Error| {
-        matches!(
-            error.kind(),
-            std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-        )
     };
-    let path = context.user_data_base.join("scopes").join(scope.scope_name);
     let unusable = match is_link(&path) {
         Ok(true) => Unavailable,
         Ok(false) => Missing,
@@ -255,14 +243,29 @@ pub(crate) fn remembered_profile_state_with(
     }
 }
 
-fn remembered_key(directory: &Path, context: &TransitionContext) -> Option<String> {
+fn absent(error: &std::io::Error) -> bool {
+    matches!(error.kind(), ErrorKind::NotFound | ErrorKind::NotADirectory)
+}
+
+/// `scopes/<scope>` of a named profile for this configuration, the folder a remembered choice of
+/// it needs; `None` for the default profile, which always exists.
+fn remembered_profile_folder(key: &str, context: &TransitionContext) -> Option<PathBuf> {
+    let scope = profile_scope(key, &context.config_identity, &context.default_identity);
+    (key != DEFAULT_PROFILE_KEY && scope.scoped)
+        .then(|| context.user_data_base.join("scopes").join(scope.scope_name))
+}
+
+/// Profile key stored for this configuration, whether or not its folder still exists; `None` for
+/// no entry or a missing, corrupt or newer file.
+pub(crate) fn chosen_key(directory: &Path, config_identity: &str) -> Option<String> {
     let choices = read_choices(directory).choices();
-    let key = parse_profile_name(
-        choices
-            .get(&choice_key(&context.config_identity))?
-            .as_str()?,
-    )
-    .ok()?;
+    parse_profile_name(choices.get(&choice_key(config_identity))?.as_str()?).ok()
+}
+
+/// The remembered profile a launch of this configuration opens; `None` when it decides again (no
+/// usable entry, or the profile is missing or unavailable).
+pub(crate) fn remembered_key(directory: &Path, context: &TransitionContext) -> Option<String> {
+    let key = chosen_key(directory, &context.config_identity)?;
     (remembered_profile_state(&key, context) == RememberedProfileState::Present).then_some(key)
 }
 
@@ -286,26 +289,123 @@ fn try_write_choice(
     context: &TransitionContext,
     key: &str,
 ) -> Result<bool, String> {
+    let Some(choices) = updated_choices(directory, &context.config_identity, key, |existing| {
+        remembered_profile_state(existing, context) != RememberedProfileState::Missing
+    }) else {
+        return Ok(false);
+    };
+    write_choices_file(directory, choices)
+        .map(|_| true)
+        .map_err(|error| format!("failed to remember the profile choice: {error}"))
+}
+
+/// The choices with this configuration's entry set to `key`, unless `keep` keeps its valid
+/// existing one. `None` when nothing may be stored: a newer file, a kept choice, or a full file
+/// without an entry for this configuration.
+fn updated_choices(
+    directory: &Path,
+    config_identity: &str,
+    key: &str,
+    keep: impl Fn(&str) -> bool,
+) -> Option<Map<String, Value>> {
     let file = read_choices(directory);
     if file == ChoicesFile::Future {
-        return Ok(false);
+        return None;
     }
     let mut choices = file.choices();
-    let id = choice_key(&context.config_identity);
+    let id = choice_key(config_identity);
     let existing_is_kept = choices
         .get(&id)
         .and_then(Value::as_str)
         .and_then(|name| parse_profile_name(name).ok())
-        .is_some_and(|existing| {
-            remembered_profile_state(&existing, context) != RememberedProfileState::Missing
-        });
+        .is_some_and(|existing| keep(&existing));
     if existing_is_kept || (!choices.contains_key(&id) && choices.len() >= MAX_CHOICES) {
-        return Ok(false);
+        return None;
     }
     choices.insert(id, Value::String(profile_display_name(key).to_string()));
-    write_choices_file(directory, choices)
-        .map(|_| true)
-        .map_err(|error| format!("failed to remember the profile choice: {error}"))
+    Some(choices)
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub(crate) enum NextLaunchOutcome {
+    Updated,
+    Invalid,
+    Busy,
+    Failed,
+}
+
+/// The user's explicit choice of the next launch's profile (Settings): replaces this
+/// configuration's entry under the selection lock. A named profile without its `scopes/<scope>`
+/// folder gets one, so that launch finds it present and keeps the choice. A launch holding the
+/// lock makes it busy; a newer or full file and any write error fail and leave no new folder, like
+/// Electron's `data-profiles:setNextLaunch`.
+pub(crate) fn choose_next_launch(
+    context: &TransitionContext,
+    key: &str,
+    now: SystemTime,
+) -> NextLaunchOutcome {
+    let directory = selection_directory(&context.user_data_base);
+    if let Err(error) = fs::create_dir_all(&directory) {
+        eprintln!("[profile-transition] selection directory unavailable: {error}");
+        return NextLaunchOutcome::Failed;
+    }
+    let lock = match SelectionLock::acquire(&directory, now) {
+        Ok(Some(lock)) => lock,
+        Ok(None) => return NextLaunchOutcome::Busy,
+        Err(error) => {
+            eprintln!("[profile-transition] {error}");
+            return NextLaunchOutcome::Failed;
+        }
+    };
+    let written =
+        updated_choices(&directory, &context.config_identity, key, |_| false).map(|choices| {
+            write_with_profile_folder(&directory, choices, remembered_profile_folder(key, context))
+        });
+    lock.release();
+    match written {
+        Some(Ok(())) => NextLaunchOutcome::Updated,
+        Some(Err(error)) => {
+            eprintln!("[profile-transition] failed to remember the profile choice: {error}");
+            NextLaunchOutcome::Failed
+        }
+        None => NextLaunchOutcome::Failed,
+    }
+}
+
+/// Creates the profile's missing folder, then writes the choices; a failed write removes the
+/// folder again while it is still empty.
+fn write_with_profile_folder(
+    directory: &Path,
+    choices: Map<String, Value>,
+    folder: Option<PathBuf>,
+) -> Result<(), String> {
+    let created = match &folder {
+        Some(folder) => create_missing_folder(folder).map_err(|error| error.to_string())?,
+        None => false,
+    };
+    let result = write_choices_file(directory, choices);
+    if let (Err(_), true, Some(folder)) = (&result, created, &folder) {
+        let _ = fs::remove_dir(folder);
+    }
+    result
+}
+
+/// Plain create; true only when this call created the folder. Any existing entry there, a link
+/// included, is left as it is.
+fn create_missing_folder(folder: &Path) -> std::io::Result<bool> {
+    match fs::symlink_metadata(folder) {
+        Err(error) if absent(&error) => {}
+        _ => return Ok(false),
+    }
+    if let Some(parent) = folder.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    match fs::create_dir(folder) {
+        Ok(()) => Ok(true),
+        Err(error) if error.kind() == ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(error),
+    }
 }
 
 /// Atomic replacement: exclusive temporary file, fsync, rename.
@@ -401,10 +501,10 @@ pub(crate) fn forget_choices(
     outcome
 }
 
-/// Cross-process selection lock: exclusive create, kept alive by heartbeats, stolen only when stale.
-/// When the lock cannot be used at all (I/O errors other than contention), detection, which is
-/// read-only, proceeds without it: concurrent first launches may then each ask, and the first
-/// remembered answer wins for later launches.
+/// Cross-process selection lock: exclusive create, stolen only when stale (older builds kept it
+/// alive with heartbeats while their question was open). When the lock cannot be used at all (I/O
+/// errors other than contention), detection, which is read-only, proceeds without it: concurrent
+/// first launches may then each remember, and the first remembered choice wins for later launches.
 #[derive(Debug)]
 pub(crate) struct SelectionLock {
     directory: PathBuf,
@@ -420,6 +520,15 @@ impl SelectionLock {
             directory: directory.to_path_buf(),
             token: None,
             released: false,
+        }
+    }
+
+    /// Takes the lock unless a live holder has it; a first attempt that takes over a stale lock
+    /// only moves it aside, so a second one follows.
+    fn acquire(directory: &Path, now: SystemTime) -> Result<Option<Self>, String> {
+        match Self::try_acquire(directory, now)? {
+            None => Self::try_acquire(directory, now),
+            lock => Ok(lock),
         }
     }
 
@@ -458,8 +567,9 @@ impl SelectionLock {
         };
         // Move the stale lock aside atomically; restore it if a fresh holder replaced it meanwhile.
         // Accepted race (no cross-host primitive closes it): if a third launcher creates a new lock
-        // between our rename and the restoring link, the link fails and two holders may both ask.
-        // The outcome is bounded: the first remembered answer wins, the other applies to its launch.
+        // between our rename and the restoring link, the link fails and two holders may both write.
+        // The outcome is bounded: the first remembered choice wins, since an automatic write never
+        // replaces another valid one.
         let aside = directory.join(format!("{LOCK_FILENAME}.stale-{token}"));
         if fs::rename(&path, &aside).is_err() {
             return Ok(None);
@@ -473,34 +583,6 @@ impl SelectionLock {
 
     fn lock_path(&self) -> PathBuf {
         self.directory.join(LOCK_FILENAME)
-    }
-
-    /// Keeps the lock fresh while a dialog blocks the calling thread. Dropping the guard stops and
-    /// joins the thread, so no heartbeat thread outlives the question.
-    pub(crate) fn start_heartbeat(&self) -> HeartbeatGuard {
-        let stop = Arc::new(AtomicBool::new(false));
-        let path = self.token.as_ref().map(|_| self.lock_path());
-        let thread_stop = Arc::clone(&stop);
-        let thread = std::thread::spawn(move || {
-            while !thread_stop.load(Ordering::Acquire) {
-                if let Some(Ok(handle)) = path
-                    .as_ref()
-                    .map(|path| OpenOptions::new().write(true).open(path))
-                {
-                    let _ = handle.set_modified(SystemTime::now());
-                }
-                std::thread::park_timeout(LOCK_HEARTBEAT);
-            }
-        });
-        HeartbeatGuard {
-            stop,
-            thread: Some(thread),
-        }
-    }
-
-    /// Records the user's answer while still holding the lock; false when it could not be remembered.
-    pub(crate) fn commit(&self, context: &TransitionContext, key: &str) -> bool {
-        write_choice(&self.directory, context, key)
     }
 
     pub(crate) fn release(mut self) {
@@ -531,84 +613,60 @@ impl Drop for SelectionLock {
     }
 }
 
-pub(crate) struct HeartbeatGuard {
-    stop: Arc<AtomicBool>,
-    thread: Option<std::thread::JoinHandle<()>>,
-}
-
-impl Drop for HeartbeatGuard {
-    fn drop(&mut self) {
-        self.stop.store(true, Ordering::Release);
-        if let Some(thread) = self.thread.take() {
-            thread.thread().unpark();
-            let _ = thread.join();
-        }
+/// The selection lock, an unguarded stand-in when the lock itself is unusable, or `None` while
+/// another process holds it.
+fn launch_selection_lock(directory: &Path, now: SystemTime) -> Option<SelectionLock> {
+    if let Err(error) = fs::create_dir_all(directory) {
+        eprintln!(
+            "[profile-transition] selection directory unavailable; continuing without remembering: {error}"
+        );
+        return Some(SelectionLock::unguarded(directory));
     }
+    SelectionLock::acquire(directory, now).unwrap_or_else(|error| {
+        eprintln!("[profile-transition] selection lock unavailable; continuing unguarded: {error}");
+        Some(SelectionLock::unguarded(directory))
+    })
 }
 
+/// Detection decides alone: no candidate opens the default profile, otherwise the most recently
+/// used one. The result is remembered under the selection lock, never over another valid choice.
+/// While another process holds the lock the detected profile is used unremembered, so a launch
+/// never waits.
 pub(crate) fn resolve_transition_profile(
     context: &TransitionContext,
-    now: impl Fn() -> SystemTime,
-    mut sleep: impl FnMut(Duration),
-) -> Result<TransitionResult, String> {
+    now: SystemTime,
+) -> TransitionResult {
     let directory = selection_directory(&context.user_data_base);
     if let Some(key) = remembered_key(&directory, context) {
-        return Ok(TransitionResult::Resolved {
+        return TransitionResult {
             key,
             reason: Reason::Remembered,
-        });
+        };
     }
-    let lock_usable = match fs::create_dir_all(&directory) {
-        Ok(()) => true,
-        Err(error) => {
-            eprintln!(
-                "[profile-transition] selection directory unavailable; continuing without remembering: {error}"
-            );
-            false
-        }
+    let lock = launch_selection_lock(&directory, now);
+    // Another launch may have remembered a profile before this one took the lock.
+    if let Some(key) = lock
+        .as_ref()
+        .and_then(|_| remembered_key(&directory, context))
+    {
+        return TransitionResult {
+            key,
+            reason: Reason::Remembered,
+        };
+    }
+    let candidates = detect_candidates(context);
+    let key = candidates
+        .first()
+        .map(|candidate| candidate.key.clone())
+        .unwrap_or_else(|| DEFAULT_PROFILE_KEY.to_string());
+    let stored = lock.is_some() && write_choice(&directory, context, &key);
+    let reason = match (stored, candidates.len()) {
+        (false, _) => Reason::Unremembered,
+        (true, 0) => Reason::None,
+        (true, 1) => Reason::Single,
+        (true, _) => Reason::MostRecent,
     };
-    // Concurrent first launches wait here: only the lock holder detects, asks and records.
-    loop {
-        let acquired = if lock_usable {
-            SelectionLock::try_acquire(&directory, now()).unwrap_or_else(|error| {
-                eprintln!("[profile-transition] selection lock unavailable; continuing unguarded: {error}");
-                Some(SelectionLock::unguarded(&directory))
-            })
-        } else {
-            Some(SelectionLock::unguarded(&directory))
-        };
-        let Some(lock) = acquired else {
-            sleep(LOCK_POLL);
-            if let Some(key) = remembered_key(&directory, context) {
-                return Ok(TransitionResult::Resolved {
-                    key,
-                    reason: Reason::Remembered,
-                });
-            }
-            continue;
-        };
-        if let Some(key) = remembered_key(&directory, context) {
-            return Ok(TransitionResult::Resolved {
-                key,
-                reason: Reason::Remembered,
-            });
-        }
-        let candidates = detect_candidates(context);
-        if candidates.len() > 1 {
-            return Ok(TransitionResult::Ask { candidates, lock });
-        }
-        let key = candidates
-            .first()
-            .map(|candidate| candidate.key.clone())
-            .unwrap_or_else(|| DEFAULT_PROFILE_KEY.to_string());
-        let stored = write_choice(&directory, context, &key);
-        let reason = match (stored, candidates.is_empty()) {
-            (false, _) => Reason::Unremembered,
-            (true, true) => Reason::None,
-            (true, false) => Reason::Single,
-        };
-        return Ok(TransitionResult::Resolved { key, reason });
-    }
+    TransitionResult { key, reason }
 }
 
 #[cfg(test)]

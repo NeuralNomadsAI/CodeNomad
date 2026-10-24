@@ -1,6 +1,5 @@
 use super::*;
 use crate::data_profile::shared_vectors;
-use std::cell::Cell;
 
 struct Sandbox {
     _root: tempfile::TempDir,
@@ -75,18 +74,22 @@ impl Sandbox {
             .join("client-state/client-state.json")
     }
 
-    fn resolve(&self) -> TransitionResult {
-        resolve_transition_profile(&self.context, SystemTime::now, |_| {
-            panic!("unexpected wait")
-        })
-        .unwrap()
+    fn scope_folder(&self, key: &str) -> PathBuf {
+        self.scoped_file(key)
+            .parent()
+            .and_then(Path::parent)
+            .unwrap()
+            .to_path_buf()
     }
 
     fn resolved(&self) -> (String, Reason) {
-        match self.resolve() {
-            TransitionResult::Resolved { key, reason } => (key, reason),
-            TransitionResult::Ask { .. } => panic!("unexpected question"),
-        }
+        let TransitionResult { key, reason } =
+            resolve_transition_profile(&self.context, SystemTime::now());
+        (key, reason)
+    }
+
+    fn remembered(&self) -> Option<String> {
+        chosen_key(&self.directory, &self.context.config_identity)
     }
 
     fn choices_text(&self) -> String {
@@ -111,7 +114,7 @@ fn no_profile_with_state_keeps_the_default_profile_and_remembers_it() {
 }
 
 #[test]
-fn exactly_one_profile_with_state_is_selected_without_asking() {
+fn exactly_one_profile_with_state_is_selected_and_remembered() {
     let sandbox = sandbox();
     write(&sandbox.scoped_file("dev"), &with_tabs(), SystemTime::now());
     write(
@@ -140,7 +143,7 @@ fn legacy_default_files_count_only_while_the_current_shared_file_is_absent() {
 }
 
 #[test]
-fn several_profiles_with_state_ask_once_and_concurrent_launches_wait_for_the_answer() {
+fn several_profiles_with_state_open_the_most_recent_one_and_remember_it() {
     let sandbox = sandbox();
     write(
         &sandbox.context.default_state_files[0],
@@ -148,31 +151,42 @@ fn several_profiles_with_state_ask_once_and_concurrent_launches_wait_for_the_ans
         days(20_697),
     );
     write(&sandbox.scoped_file("dev-v2"), &with_tabs(), days(20_727));
-    let TransitionResult::Ask { candidates, lock } = sandbox.resolve() else {
-        panic!("expected a question");
-    };
-    assert_eq!(
-        candidates
-            .iter()
-            .map(|candidate| candidate.name.as_str())
-            .collect::<Vec<_>>(),
-        vec!["dev-v2", "default"]
+    write(&sandbox.scoped_file("dev"), &with_tabs(), days(20_700));
+    assert_eq!(sandbox.resolved(), ("dev-v2".into(), Reason::MostRecent));
+    assert_eq!(sandbox.remembered().as_deref(), Some("dev-v2"));
+    assert!(!sandbox.directory.join(LOCK_FILENAME).exists());
+    // Later use of another profile never changes the remembered one.
+    write(
+        &sandbox.context.default_state_files[0],
+        &with_tabs(),
+        days(20_800),
     );
-    let waits = Cell::new(0);
-    let mut held = Some(lock);
-    let waiting = resolve_transition_profile(&sandbox.context, SystemTime::now, |_| {
-        waits.set(waits.get() + 1);
-        if let Some(lock) = held.take() {
-            assert!(lock.commit(&sandbox.context, "dev-v2"));
-            lock.release();
-        }
-    })
-    .unwrap();
-    assert!(
-        matches!(waiting, TransitionResult::Resolved { ref key, reason: Reason::Remembered } if key == "dev-v2")
-    );
-    assert_eq!(waits.get(), 1);
     assert_eq!(sandbox.resolved(), ("dev-v2".into(), Reason::Remembered));
+}
+
+#[test]
+fn a_launch_never_waits_for_a_held_lock_and_opens_the_detected_profile_unremembered() {
+    let sandbox = sandbox();
+    write(
+        &sandbox.context.default_state_files[0],
+        &with_tabs(),
+        days(20_697),
+    );
+    write(&sandbox.scoped_file("dev-v2"), &with_tabs(), days(20_727));
+    let lock = sandbox.directory.join(LOCK_FILENAME);
+    let holder = r#"{"pid":1,"token":"other"}"#;
+    write(&lock, holder, SystemTime::now());
+    assert_eq!(sandbox.resolved(), ("dev-v2".into(), Reason::Unremembered));
+    assert!(!sandbox.directory.join(CHOICES_FILENAME).exists());
+    assert_eq!(fs::read_to_string(&lock).unwrap(), holder);
+    // Another launch remembered a profile meanwhile: it is used.
+    write(
+        &sandbox.directory.join(CHOICES_FILENAME),
+        &json!({ "version": 1, "choices": { choice_key(&sandbox.context.config_identity): "default" } })
+            .to_string(),
+        SystemTime::now(),
+    );
+    assert_eq!(sandbox.resolved(), ("stable".into(), Reason::Remembered));
 }
 
 #[test]
@@ -281,13 +295,7 @@ fn a_linked_scope_is_followed_and_an_unavailable_target_keeps_the_choice_unremem
     let sandbox = sandbox();
     let relocated = sandbox._root.path().join("other-disk").join("dev");
     fs::create_dir_all(&relocated).unwrap();
-    let scope_folder = sandbox
-        .scoped_file("dev")
-        .parent()
-        .unwrap()
-        .parent()
-        .unwrap()
-        .to_path_buf();
+    let scope_folder = sandbox.scope_folder("dev");
     fs::create_dir_all(scope_folder.parent().unwrap()).unwrap();
     link_directory(&relocated, &scope_folder);
     let id = choice_key(&sandbox.context.config_identity);
@@ -310,6 +318,14 @@ fn a_linked_scope_is_followed_and_an_unavailable_target_keeps_the_choice_unremem
     // The drive holding the target is disconnected: detection decides this launch only.
     fs::remove_dir_all(&relocated).unwrap();
     assert_eq!(sandbox.resolved(), ("stable".into(), Reason::Unremembered));
+    assert_eq!(read_choices(&sandbox.directory), remembered());
+    // Even the most recent of several detected profiles never replaces the kept choice.
+    write(
+        &sandbox.scoped_file("dev-v2"),
+        &with_tabs(),
+        SystemTime::now() + Duration::from_secs(60),
+    );
+    assert_eq!(sandbox.resolved(), ("dev-v2".into(), Reason::Unremembered));
     assert_eq!(read_choices(&sandbox.directory), remembered());
     // The target returns: the remembered profile is used again.
     fs::create_dir_all(&relocated).unwrap();
@@ -416,6 +432,130 @@ fn an_unknown_future_choices_file_is_never_overwritten() {
     assert_eq!(sandbox.choices_text(), future);
 }
 
+impl Sandbox {
+    fn choose(&self, key: &str) -> NextLaunchOutcome {
+        choose_next_launch(&self.context, key, SystemTime::now())
+    }
+}
+
+#[test]
+fn an_explicit_next_launch_choice_replaces_this_configurations_entry_under_the_lock() {
+    let sandbox = sandbox();
+    let id = choice_key(&sandbox.context.config_identity);
+    let other = choice_key("/other/config.yaml");
+    // Neither the selection directory, the file nor the profile's folder exists yet.
+    assert_eq!(sandbox.choose("dev"), NextLaunchOutcome::Updated);
+    assert!(sandbox.scope_folder("dev").is_dir());
+    assert_eq!(
+        remembered_profile_state("dev", &sandbox.context),
+        RememberedProfileState::Present
+    );
+    write(
+        &sandbox.directory.join(CHOICES_FILENAME),
+        &json!({ "version": 1, "choices": { id.clone(): "dev-v2", other.clone(): "dev" } })
+            .to_string(),
+        SystemTime::now(),
+    );
+    assert_eq!(sandbox.choose("stable"), NextLaunchOutcome::Updated);
+    let mut expected = Map::new();
+    expected.insert(id.clone(), Value::String("default".into()));
+    expected.insert(other, Value::String("dev".into()));
+    assert_eq!(
+        read_choices(&sandbox.directory),
+        ChoicesFile::Valid(expected)
+    );
+    assert!(!sandbox.directory.join(LOCK_FILENAME).exists());
+
+    // A launch is choosing right now: nothing is written and no folder is created.
+    let lock = sandbox.directory.join(LOCK_FILENAME);
+    write(&lock, r#"{"pid":1,"token":"launch"}"#, SystemTime::now());
+    let before = sandbox.choices_text();
+    assert_eq!(sandbox.choose("team"), NextLaunchOutcome::Busy);
+    assert_eq!(sandbox.choices_text(), before);
+    assert!(lock.exists());
+    assert!(!sandbox.scope_folder("team").exists());
+    // A crashed launch's stale lock is taken over.
+    write(
+        &lock,
+        r#"{"pid":1,"token":"crashed"}"#,
+        SystemTime::now() - LOCK_STALE - Duration::from_secs(5),
+    );
+    assert_eq!(sandbox.choose("team"), NextLaunchOutcome::Updated);
+    assert!(!lock.exists());
+    assert_eq!(sandbox.remembered().as_deref(), Some("team"));
+    assert!(sandbox.scope_folder("team").is_dir());
+}
+
+#[test]
+fn an_explicit_next_launch_choice_never_rewrites_a_newer_full_or_unwritable_file() {
+    let limited = sandbox();
+    let future = json!({ "version": 2, "profiles": {} }).to_string();
+    write(
+        &limited.directory.join(CHOICES_FILENAME),
+        &future,
+        SystemTime::now(),
+    );
+    assert_eq!(limited.choose("dev"), NextLaunchOutcome::Failed);
+    assert_eq!(limited.choices_text(), future);
+    assert!(!limited.directory.join(LOCK_FILENAME).exists());
+    assert!(!limited.scope_folder("dev").exists());
+
+    // A full file takes no new configuration, but this configuration's entry is replaced.
+    let mut choices = Map::new();
+    for index in 0..MAX_CHOICES {
+        choices.insert(
+            choice_key(&format!("/other/{index}/config.yaml")),
+            Value::String("dev".into()),
+        );
+    }
+    let full = json!({ "version": 1, "choices": choices.clone() }).to_string();
+    write(
+        &limited.directory.join(CHOICES_FILENAME),
+        &full,
+        SystemTime::now(),
+    );
+    assert_eq!(limited.choose("dev-v2"), NextLaunchOutcome::Failed);
+    assert_eq!(limited.choices_text(), full);
+    assert!(!limited.scope_folder("dev-v2").exists());
+    let first = choices.keys().next().unwrap().clone();
+    choices.remove(&first);
+    choices.insert(
+        choice_key(&limited.context.config_identity),
+        Value::String("dev".into()),
+    );
+    write(
+        &limited.directory.join(CHOICES_FILENAME),
+        &json!({ "version": 1, "choices": choices }).to_string(),
+        SystemTime::now(),
+    );
+    assert_eq!(limited.choose("dev-v2"), NextLaunchOutcome::Updated);
+
+    // A directory in place of choices.json makes the atomic rename fail: the folder created for
+    // the write is removed again, while a folder that already existed stays.
+    let unwritable = sandbox();
+    fs::create_dir_all(unwritable.directory.join(CHOICES_FILENAME)).unwrap();
+    assert_eq!(unwritable.choose("dev"), NextLaunchOutcome::Failed);
+    assert!(!unwritable.scope_folder("dev").exists());
+    fs::create_dir_all(unwritable.scope_folder("dev-v2")).unwrap();
+    assert_eq!(unwritable.choose("dev-v2"), NextLaunchOutcome::Failed);
+    assert!(unwritable.scope_folder("dev-v2").is_dir());
+    let leftovers = fs::read_dir(&unwritable.directory)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.file_name().to_string_lossy().into_owned())
+        .filter(|name| name.ends_with(".tmp") || name == LOCK_FILENAME)
+        .collect::<Vec<_>>();
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+    // A file where the selection directory should be.
+    let blocked = sandbox();
+    write(&blocked.directory, "not a directory", SystemTime::now());
+    assert_eq!(blocked.choose("dev"), NextLaunchOutcome::Failed);
+    assert_eq!(
+        fs::read_to_string(&blocked.directory).unwrap(),
+        "not a directory"
+    );
+}
+
 #[test]
 fn choices_are_keyed_by_config_identity() {
     let sandbox = sandbox();
@@ -440,21 +580,20 @@ fn a_stale_lock_from_a_crashed_launch_is_taken_over() {
         r#"{"pid":1,"token":"crashed"}"#,
         SystemTime::now() - LOCK_STALE - Duration::from_secs(5),
     );
-    let waits = Cell::new(0);
-    let result = resolve_transition_profile(&sandbox.context, SystemTime::now, |_| {
-        waits.set(waits.get() + 1)
-    })
-    .unwrap();
-    assert!(
-        matches!(result, TransitionResult::Resolved { ref key, reason: Reason::None } if key == "stable")
-    );
-    assert_eq!(waits.get(), 1);
+    assert_eq!(sandbox.resolved(), ("stable".into(), Reason::None));
+    assert_eq!(sandbox.remembered().as_deref(), Some("stable"));
+    assert!(!sandbox.directory.join(LOCK_FILENAME).exists());
 }
 
 #[test]
 fn an_unwritable_choices_file_never_prevents_startup() {
     let sandbox = sandbox();
-    write(&sandbox.scoped_file("dev"), &with_tabs(), SystemTime::now());
+    write(&sandbox.scoped_file("dev"), &with_tabs(), days(20_727));
+    write(
+        &sandbox.context.default_state_files[0],
+        &with_tabs(),
+        days(20_697),
+    );
     // A directory in place of choices.json makes the atomic rename fail like EPERM/EBUSY would.
     fs::create_dir_all(sandbox.directory.join(CHOICES_FILENAME)).unwrap();
     assert_eq!(sandbox.resolved(), ("dev".into(), Reason::Unremembered));
@@ -470,26 +609,16 @@ fn an_unwritable_choices_file_never_prevents_startup() {
 #[test]
 fn an_unusable_selection_directory_or_lock_still_starts_with_the_detected_profile() {
     let sandbox = sandbox();
-    write(
-        &sandbox.scoped_file("dev-v2"),
-        &with_tabs(),
-        SystemTime::now(),
-    );
+    write(&sandbox.scoped_file("dev-v2"), &with_tabs(), days(20_697));
     // A file where the selection directory should be: mkdir and the lock fail without contention.
     write(&sandbox.directory, "not a directory", SystemTime::now());
     assert_eq!(sandbox.resolved(), ("dev-v2".into(), Reason::Unremembered));
     write(
         &sandbox.context.default_state_files[0],
         &with_tabs(),
-        SystemTime::now(),
+        days(20_727),
     );
-    let TransitionResult::Ask { lock, .. } = sandbox.resolve() else {
-        panic!("expected a question");
-    };
-    let heartbeat = lock.start_heartbeat();
-    drop(heartbeat);
-    assert!(!lock.commit(&sandbox.context, "dev-v2"));
-    lock.release();
+    assert_eq!(sandbox.resolved(), ("stable".into(), Reason::Unremembered));
     assert_eq!(
         fs::read_to_string(&sandbox.directory).unwrap(),
         "not a directory"
@@ -511,19 +640,6 @@ fn choice_keys_fold_unicode_case_on_windows_so_both_hosts_share_a_choice() {
             None => assert_ne!(keys[0], keys[1]),
         }
     }
-}
-
-#[test]
-fn dropping_the_heartbeat_joins_its_thread_promptly() {
-    let sandbox = sandbox();
-    fs::create_dir_all(&sandbox.directory).unwrap();
-    let lock = SelectionLock::try_acquire(&sandbox.directory, SystemTime::now())
-        .unwrap()
-        .unwrap();
-    let started = std::time::Instant::now();
-    drop(lock.start_heartbeat());
-    assert!(started.elapsed() < LOCK_HEARTBEAT);
-    lock.release();
 }
 
 #[test]

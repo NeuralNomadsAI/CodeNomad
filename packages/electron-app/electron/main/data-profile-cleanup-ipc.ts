@@ -1,7 +1,7 @@
 import type { BrowserWindow, IpcMainInvokeEvent } from "electron"
 import { validateMainFrame } from "./ipc-security"
 import {
-  deleteOtherProfiles, listOtherProfiles, requireProfileIds,
+  deleteOtherProfiles, listOtherProfiles, requireProfileIds, setNextLaunchProfile,
   type CurrentProfile, type ProfileRoots,
 } from "./data-profile-cleanup"
 
@@ -15,15 +15,20 @@ interface DataProfileCleanupIPCDependencies {
   getAllowedOrigins(window: BrowserWindow): string[]
   roots(): ProfileRoots
   current(): CurrentProfile
-  operations?: Pick<typeof import("./data-profile-cleanup"), "listOtherProfiles" | "deleteOtherProfiles">
+  /** The graceful relaunch; the new process resolves its profile normally. */
+  relaunch(): void
+  operations?: Pick<typeof import("./data-profile-cleanup"), "listOtherProfiles" | "deleteOtherProfiles" | "setNextLaunchProfile">
 }
 
 /**
- * Two fixed host operations: list the other data profiles, and delete IDs from such a listing.
- * The renderer never supplies a path; the host re-enumerates and re-validates before deleting. Operations run one at a time so a listing never observes a half-finished deletion.
+ * Fixed host operations: list the data profiles, delete IDs from such a listing, remember the
+ * profile the next launch opens and relaunch into it. The renderer never supplies a path; the host
+ * re-enumerates and re-validates before deleting and validates a chosen name itself. Operations run
+ * one at a time so a listing never observes a half-finished deletion and a relaunch follows the
+ * choice made before it.
  */
 export function setupDataProfileCleanupIPC(ipcMain: IPCRegistrar, dependencies: DataProfileCleanupIPCDependencies): void {
-  const operations = dependencies.operations ?? { listOtherProfiles, deleteOtherProfiles }
+  const operations = dependencies.operations ?? { listOtherProfiles, deleteOtherProfiles, setNextLaunchProfile }
   let queue: Promise<unknown> = Promise.resolve()
   const serialized = <T>(operation: () => Promise<T>): Promise<T> => {
     const next = queue.then(operation, operation)
@@ -43,5 +48,13 @@ export function setupDataProfileCleanupIPC(ipcMain: IPCRegistrar, dependencies: 
     authorize(event)
     const requested = requireProfileIds(ids)
     return serialized(() => operations.deleteOtherProfiles(dependencies.roots(), dependencies.current(), requested))
+  })
+  ipcMain.handle("data-profiles:setNextLaunch", (event, name: unknown) => {
+    authorize(event)
+    return serialized(() => operations.setNextLaunchProfile(dependencies.roots(), dependencies.current(), name))
+  })
+  ipcMain.handle("data-profiles:relaunch", (event) => {
+    authorize(event)
+    return serialized(async () => { dependencies.relaunch() })
   })
 }

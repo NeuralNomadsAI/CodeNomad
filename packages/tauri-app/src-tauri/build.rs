@@ -76,6 +76,8 @@ fn main() {
             "client_state_startup_command_result",
             "data_profiles_list_others",
             "data_profiles_delete_others",
+            "data_profiles_set_next_launch",
+            "data_profiles_relaunch",
             "desktop_launch_ready",
             "desktop_launch_next_folder",
             "desktop_launch_acknowledge_folder",

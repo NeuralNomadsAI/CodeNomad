@@ -22,15 +22,15 @@ The Preferences window does not own a separate restore state: these controls tar
 
 Browser and remote settings are embedded rather than a second native Preferences owner. A native Preferences opening error is reported; it is not a reason to assume a hidden embedded settings screen was opened instead.
 
-## Explicit desktop data profiles {#data-profiles}
+## Desktop data profiles {#data-profiles}
 
-Without an explicit profile, packaged launches reuse the remembered profile for that configuration. If no choice is remembered, the app checks the default, `dev` and `dev-v2` profiles for restorable work: it selects the sole candidate, asks when several exist, or uses the default when none exists. Selection does not move, merge or delete profile data. Use `CODENOMAD_PROFILE` to open another profile explicitly.
+1. In native **Settings → General**, under **Restore previous state**, unfold **Data profile**. It lists every profile on this computer with its size, creation date and last use, the open one first.
+2. Select the profile the next launch opens, or choose **New profile** and enter a name of 1–64 lowercase letters, digits, dots, dashes or underscores, starting with a letter or digit.
+3. Choose **Restart in** to switch now; otherwise the chosen profile opens at the next launch. Selecting the open profile again cancels the change.
 
-1. For deliberate desktop isolation, set `CODENOMAD_PROFILE` before launching the executable.
-2. Use a name of 1–64 ASCII letters/digits, dots, underscores or hyphens, starting with a letter or digit. Names are normalized to lowercase; `default` or `stable` selects the default profile.
-3. Check **Settings → General → Restore previous state → Data profile** for a named profile. An invalid name prevents launch instead of selecting another profile.
+Profiles from another configuration are listed but cannot be chosen there. Without a remembered choice, a packaged launch checks the default, `dev` and `dev-v2` profiles for restorable work and opens the most recently used one, or the default when none has any. Choosing a profile does not move, merge or delete profile data.
 
-For example, in PowerShell, before launching the desired desktop executable:
+`CODENOMAD_PROFILE` set before launching the executable overrides the choice; **Data profile** then shows the profiles without letting you choose one. `default` or `stable` selects the default profile, and an invalid name prevents launch instead of selecting another profile. For example, in PowerShell, before launching the desired desktop executable:
 
 ```powershell
 $env:CODENOMAD_PROFILE = "review"
@@ -46,13 +46,13 @@ For an independent server configuration, set `CLI_CONFIG` to a separate configur
 
 On macOS Tauri, scoped profiles share system WebKit storage, sign-ins and cache; do not use profile names as account-security isolation. Electron stores web data in its profile. Installed version and **Update feed** never select another data profile. Unpackaged development launches use the `dev` profile unless explicitly selected.
 
-## Delete other saved profiles {#delete-profiles}
+## Delete a saved profile {#delete-profiles}
 
-1. In native **Settings → General**, find **Other saved profiles** below **Restore previous state**. It appears only when other profiles are present on the machine.
-2. Refresh the list if needed, choose **Delete…**, and read the listed targets and skipped profiles.
+1. Unfold **Data profile** as above and refresh the list if needed.
+2. Choose the delete button on the profile to remove. The open profile has none.
 3. Confirm only after preserving any drafts/sign-ins you need. Inspect any incomplete-removal report before retrying.
 
-Deletion removes other profiles' saved tabs, drafts, layout and owned web storage/cache/sign-ins, including listed profiles from another configuration. It preserves the open profile, OpenCode conversations and project files. Open or unknown-state profiles are skipped; close the relevant CodeNomad windows before explicitly refreshing and retrying. Unrecognized content is retained and reported rather than broadly deleted.
+Deletion removes that profile's saved tabs, drafts, layout and owned web storage/cache/sign-ins, including a listed profile from another configuration. It preserves the open profile, OpenCode conversations and project files. A profile that is open or in an unknown state cannot be deleted; close the relevant CodeNomad windows, refresh the list and retry. Unrecognized content is retained and reported rather than broadly deleted.
 
 macOS Tauri's shared WebKit store is kept because deleting it would affect other profiles. This is not an undoable cleanup: a surviving native conversation does not restore a deleted unsent draft. **Clear saved startup state** is the smaller action when you only want to reset the current window.
 

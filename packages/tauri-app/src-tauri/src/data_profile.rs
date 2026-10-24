@@ -6,8 +6,6 @@ use sha2::{Digest, Sha256};
 
 pub(crate) const PROFILE_ENVIRONMENT: &str = "CODENOMAD_PROFILE";
 pub(crate) const LEGACY_CHANNEL_ENVIRONMENT: &str = "CODENOMAD_UPDATE_CHANNEL";
-/// Set by the host on the backend it launches; present only for non-default profiles.
-pub(crate) const BACKEND_PROFILE_ENVIRONMENT: &str = "CODENOMAD_DESKTOP_PROFILE";
 
 /// Storage key of the default profile; it keeps the historical unscoped locations.
 pub(crate) const DEFAULT_PROFILE_KEY: &str = "stable";
@@ -16,20 +14,6 @@ pub(crate) const DEFAULT_PROFILE_NAME: &str = "default";
 pub(crate) const TRANSITION_PROFILE_KEYS: [&str; 3] = [DEFAULT_PROFILE_KEY, "dev", "dev-v2"];
 
 const MAX_PROFILE_NAME: usize = 64;
-
-/// Profile announced to the backend; set once at startup. Kept out of the process environment so
-/// no `std::env::set_var` runs while the heartbeat or dialog-toolkit threads may be alive.
-static BACKEND_PROFILE: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
-
-pub(crate) fn set_backend_profile(key: &str) {
-    let announced = (key != DEFAULT_PROFILE_KEY).then(|| profile_display_name(key).to_string());
-    let _ = BACKEND_PROFILE.set(announced);
-}
-
-/// `Some(name)` for a non-default profile; the default profile is never announced.
-pub(crate) fn backend_profile() -> Option<&'static str> {
-    BACKEND_PROFILE.get().and_then(|profile| profile.as_deref())
-}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum ProfileSource {

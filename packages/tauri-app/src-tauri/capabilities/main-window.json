@@ -44,6 +44,8 @@
     "allow-client-state-startup-command-result",
     "allow-data-profiles-list-others",
     "allow-data-profiles-delete-others",
+    "allow-data-profiles-set-next-launch",
+    "allow-data-profiles-relaunch",
     "allow-desktop-launch-ready",
     "allow-desktop-launch-next-folder",
     "allow-desktop-launch-acknowledge-folder",

@@ -3,7 +3,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session } fro
 import http from "node:http"
 import https from "node:https"
 import { createHash } from "node:crypto"
-import { existsSync, mkdirSync, mkdtempSync, rmSync, utimesSync } from "node:fs"
+import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -27,11 +27,9 @@ import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
-import { BACKEND_PROFILE_ENVIRONMENT, DEFAULT_PROFILE_KEY, InvalidProfileError, profileDisplayName } from "./data-profile"
-import { LOCK_HEARTBEAT_MS } from "./profile-transition"
-import { selectedProfileKey, selectionDialogContent } from "./profile-selection-dialog"
-import { SELECTION_ANSWER_ENVIRONMENT, SELECTION_CLEANUP_ENVIRONMENT, SELECTION_TEMP_PREFIX, sweepSelectionFolders, takeRelaunchHandoff } from "./profile-selection-cleanup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { InvalidProfileError } from "./data-profile"
+import { stripPrivateRelaunchEnvironment, sweepSelectionFolders } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
 import { forwardOpenerStartupState, runStartupStateCommandInWindow, startupStateTargetId } from "./opener-startup-state"
@@ -61,17 +59,14 @@ function resolveStoragePaths(baseUserDataPath: string, profileKey: string) {
   const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })
   app.setPath("userData", scope.userDataPath)
-  // The backend reports the active profile; the default profile is never announced.
-  if (profileKey === DEFAULT_PROFILE_KEY) delete process.env[BACKEND_PROFILE_ENVIRONMENT]
-  else process.env[BACKEND_PROFILE_ENVIRONMENT] = profileDisplayName(profileKey)
   return { scope, browserDataPath, sessionDataPath }
 }
 
-function resolveInitialProfile(baseUserDataPath: string, selectionAnswer: string | undefined): LaunchProfile | undefined {
+function resolveInitialProfile(baseUserDataPath: string): LaunchProfile | undefined {
   try {
     return resolveLaunchProfile({
       environment: process.env, packaged: app.isPackaged, cliConfig: process.env.CLI_CONFIG,
-      cwd: process.cwd(), baseUserDataPath, selectionAnswer,
+      cwd: process.cwd(), baseUserDataPath,
     })
   } catch (error) {
     // An invalid explicit profile must never silently open another profile.
@@ -81,47 +76,6 @@ function resolveInitialProfile(baseUserDataPath: string, selectionAnswer: string
     app.exit(1)
     return undefined
   }
-}
-
-/**
- * Several profiles hold restorable state and none was remembered. Chromium storage and the
- * singleton are fixed before `ready`, so ask from a throwaway profile-free storage location,
- * record the answer and relaunch into the chosen profile. No profile is opened or written.
- */
-function runProfileSelection(selection: Extract<LaunchProfile, { kind: "ask" }>) {
-  const temporary = mkdtempSync(join(tmpdir(), SELECTION_TEMP_PREFIX))
-  app.setPath("userData", temporary)
-  app.setPath("sessionData", temporary)
-  const heartbeat = setInterval(() => {
-    selection.lock.heartbeat()
-    // Keeps concurrent launches' age-based sweep away from a question that is still open.
-    try { const time = new Date(); utimesSync(temporary, time, time) } catch {}
-  }, LOCK_HEARTBEAT_MS)
-  void app.whenReady().then(async () => {
-    const content = selectionDialogContent(selection.candidates)
-    const { response } = await dialog.showMessageBox({
-      type: "question", title: content.title, message: content.message, detail: content.detail,
-      buttons: content.buttons, defaultId: 0, cancelId: content.buttons.length, noLink: true,
-    })
-    const key = selectedProfileKey(selection.candidates, response)
-    if (key === undefined) return
-    let remembered = false
-    try {
-      remembered = selection.lock.commit(selection.context, key)
-    } catch (error) {
-      console.error("[electron-startup] failed to remember the profile choice", error)
-    }
-    // An unremembered answer still applies to the relaunch (as in Tauri); the question returns next
-    // time. It travels privately and is consumed at startup, never as the user's CODENOMAD_PROFILE.
-    if (!remembered) process.env[SELECTION_ANSWER_ENVIRONMENT] = profileDisplayName(key)
-    // Chromium may still hold this folder while we exit; the relaunched process removes it.
-    process.env[SELECTION_CLEANUP_ENVIRONMENT] = temporary
-    app.relaunch()
-  }).catch((error) => console.error("[electron-startup] profile selection failed", error)).finally(() => {
-    clearInterval(heartbeat)
-    selection.lock.release()
-    app.exit(0)
-  })
 }
 
 function configureBrowserStorage(browserDataPath: string, sessionDataPath: string) {
@@ -157,22 +111,20 @@ process.setSourceMapsEnabled?.(true)
 const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
 if (!app.isPackaged) app.setName("CodeNomad")
 let storageScope!: StorageScope
+let profilePinned = false
 let sessionDataPath!: string
 let developerNativeIdentity!: string
-// Remove the question folder left by a relaunching predecessor and any older leftovers. The named
-// folder may still be locked for a moment on Windows, so retry once shortly after startup.
-const relaunchHandoff = takeRelaunchHandoff(process.env)
-const selectionCleanup = relaunchHandoff.cleanup
-const sweepSelection = () => sweepSelectionFolders({ temporaryRoot: tmpdir(), named: selectionCleanup })
-sweepSelection()
-if (selectionCleanup) setTimeout(sweepSelection, 10_000).unref()
-const launchProfile = resolveInitialProfile(baseUserDataPath, relaunchHandoff.answer)
-if (launchProfile?.kind === "ask") runProfileSelection(launchProfile)
-else if (launchProfile) startProfile(launchProfile.key)
+// An older build's profile question may have relaunched into this one: drop its private hand-offs
+// before anything inherits them, and sweep its leftover question folders.
+stripPrivateRelaunchEnvironment(process.env)
+sweepSelectionFolders({ temporaryRoot: tmpdir() })
+const launchProfile = resolveInitialProfile(baseUserDataPath)
+if (launchProfile) startProfile(launchProfile.key, isPinnedLaunch(launchProfile))
 
-function startProfile(profileKey: string) {
+function startProfile(profileKey: string, pinned: boolean) {
   const { scope, browserDataPath, sessionDataPath: profileSessionDataPath } = resolveStoragePaths(baseUserDataPath, profileKey)
   storageScope = scope
+  profilePinned = pinned
   sessionDataPath = profileSessionDataPath
   developerNativeIdentity = `electron:${createHash("sha256")
     .update(`${storageScope.profile}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
@@ -440,7 +392,8 @@ function runPrimary(firstIntent: LaunchIntent) {
     resolveWindow: (sender) => registry.resolve(sender)?.window ?? preferencesWindows.resolve(sender),
     getAllowedOrigins,
     roots: () => profileRoots,
-    current: () => ({ key: storageScope.profile, configIdentity: storageScope.configIdentity, defaultIdentity: normalizeConfigIdentity(undefined, process.cwd()) }),
+    current: () => ({ key: storageScope.profile, configIdentity: storageScope.configIdentity, defaultIdentity: normalizeConfigIdentity(undefined, process.cwd()), pinned: profilePinned }),
+    relaunch: () => lifecycle.requestRelaunch(),
   })
   setupPreferencesIPC(ipcMain, {
     resolveLocal: (sender) => registry.resolve(sender),

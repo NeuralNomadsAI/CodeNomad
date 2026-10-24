@@ -22,15 +22,15 @@ Tercihler penceresinin ayrı bir geri yükleme durumu yoktur: bu kontroller, Ter
 
 Tarayıcı ve uzak istemci ayarları, ikinci bir native Preferences sahibi açmak yerine istemciye gömülüdür. Native Preferences açılış hatası bildirilir; bunun yerine gizli bir gömülü ayar ekranı açıldığını varsaymayın.
 
-## Açıkça seçilen masaüstü veri profilleri {#data-profiles}
+## Masaüstü veri profilleri {#data-profiles}
 
-Açık profil seçilmediyse paketlenmiş başlatmalar o yapılandırma için hatırlanan profili kullanır. Hatırlanan seçim yoksa uygulama varsayılan, `dev` ve `dev-v2` profillerinde geri yüklenebilir durum arar: tek adayı seçer, birden fazlaysa sorar, yoksa varsayılanı kullanır. Seçim profil verilerini taşımaz, birleştirmez veya silmez. Başka profili açıkça açmak için `CODENOMAD_PROFILE` kullanın.
+1. Yerel **Ayarlar → Genel** bölümünde, **Önceki durumu geri yükle** altında **Veri profili** öğesini genişletin. Bu bilgisayardaki tüm profiller boyutu, oluşturulma tarihi ve son kullanımıyla listelenir; açık olan en baştadır.
+2. Bir sonraki başlatmanın açacağı profili seçin veya **Yeni profil** öğesini seçip harf veya rakamla başlayan, 1-64 küçük harf, rakam, nokta, kısa çizgi veya alt çizgiden oluşan bir ad girin.
+3. Hemen geçmek için **… ile yeniden başlat** öğesini seçin; aksi halde seçilen profil bir sonraki başlatmada açılır. Açık profili yeniden seçmek değişikliği iptal eder.
 
-1. Kasıtlı masaüstü izolasyonu için, yürütülebilir dosyayı başlatmadan önce `CODENOMAD_PROFILE`'yi ayarlayın.
-2. Bir harf veya rakamla başlayan, 1-64 arası ASCII harf/rakam, nokta, alt çizgi veya kısa çizgiden oluşan bir ad kullanın. Adlar küçük harfe göre normalleştirilmiştir; `default` veya `stable` varsayılan profili seçer.
-3. Adlandırılmış bir profil için **Ayarlar → Genel → Önceki durumu geri yükle → Veri profili** öğesini kontrol edin. Geçersiz bir ad, başka bir profil seçmek yerine başlatmayı engelliyor.
+Başka bir yapılandırmanın profilleri listelenir ancak burada seçilemez. Hatırlanan seçim yoksa paketlenmiş başlatma varsayılan, `dev` ve `dev-v2` profillerinde geri yüklenebilir çalışma arar ve bunlardan en son kullanılanı, hiçbirinde yoksa varsayılanı açar. Profil seçmek profil verilerini taşımaz, birleştirmez veya silmez.
 
-Örneğin, PowerShell'de istenen masaüstü yürütülebilir dosyasını başlatmadan önce:
+Yürütülebilir dosyayı başlatmadan önce ayarlanan `CODENOMAD_PROFILE` bu seçimi geçersiz kılar; **Veri profili** bu durumda profilleri gösterir ancak birini seçmenize izin vermez. `default` veya `stable` varsayılan profili seçer; geçersiz bir ad ise başka bir profil seçmek yerine başlatmayı engeller. Örneğin, PowerShell'de istenen masaüstü yürütülebilir dosyasını başlatmadan önce:
 
 ```powershell
 $env:CODENOMAD_PROFILE = "review"
@@ -46,13 +46,13 @@ Bağımsız bir sunucu yapılandırması için başlatmadan önce `CLI_CONFIG`'y
 
 macOS Tauri'de kapsamlı profiller sistem WebKit depolama alanını, oturum açma işlemlerini ve önbelleğini paylaşır; hesap güvenliği izolasyonu olarak profil adlarını kullanmayın. Electron, web verilerini profilinde saklar. Yüklü sürüm ve **Güncelleme akışı** asla başka bir veri profili seçmez. Paketlenmemiş geliştirme lansmanları, açıkça seçilmediği sürece `dev` profilini kullanır.
 
-## Diğer kayıtlı profilleri sil {#delete-profiles}
+## Kayıtlı bir profili sil {#delete-profiles}
 
-1. Yerel **Ayarlar → Genel** bölümünde, **Önceki durumu geri yükle** öğesinin altında **Diğer kayıtlı profiller** öğesini bulun. Yalnızca makinede başka profiller mevcut olduğunda görünür.
-2. Gerekirse listeyi yenileyin, **Sil…** öğesini seçin ve listelenen hedefleri ve atlanan profilleri okuyun.
+1. **Veri profili** öğesini yukarıdaki gibi genişletin ve gerekirse listeyi yenileyin.
+2. Kaldırılacak profildeki silme düğmesini seçin. Açık profilde bu düğme yoktur.
 3. Yalnızca ihtiyacınız olan taslakları/oturum açma bilgilerini koruduktan sonra onaylayın. Yeniden denemeden önce eksik kaldırma raporlarını inceleyin.
 
-Silme işlemi, başka bir yapılandırmadan listelenen profiller de dahil olmak üzere diğer profillerin kayıtlı sekmelerini, taslaklarını, düzenini ve sahip olunan web depolama/önbellek/oturum açma bilgilerini kaldırır. Açık profili, OpenCode konuşmalarını ve proje dosyalarını korur. Açık veya bilinmeyen durum profilleri atlanır; Açıkça yenileyip yeniden denemeden önce ilgili CodeNomad pencerelerini kapatın. Tanınmayan içerik, genel olarak silinmek yerine saklanır ve raporlanır.
+Silme işlemi, başka bir yapılandırmadan listelenen bir profil de dahil olmak üzere o profilin kayıtlı sekmelerini, taslaklarını, düzenini ve sahip olunan web depolama/önbellek/oturum açma bilgilerini kaldırır. Açık profili, OpenCode konuşmalarını ve proje dosyalarını korur. Açık veya durumu bilinmeyen bir profil silinemez; ilgili CodeNomad pencerelerini kapatın, listeyi yenileyin ve yeniden deneyin. Tanınmayan içerik, genel olarak silinmek yerine saklanır ve raporlanır.
 
 macOS Tauri'nin ortak WebKit deposu korunur; silinmesi diğer profilleri etkilerdi. Bu temizlik geri alınamaz: korunan OpenCode konuşması, silinmiş gönderilmemiş taslağı geri getirmez. Yalnızca güncel pencereyi sıfırlamak istiyorsanız **Kaydedilen başlangıç durumunu temizle** daha dar kapsamlı eylemdir.
 

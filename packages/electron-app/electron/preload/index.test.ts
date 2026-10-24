@@ -60,7 +60,8 @@ test("Preferences preload exposes only section and frame controls", () => {
   assert.deepEqual(Object.keys(api), [
     "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow", "getZoomFactor",
     "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
-    "openerStartupState", "listOtherDataProfiles", "deleteOtherDataProfiles", "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
+    "openerStartupState", "listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile",
+    "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
     "minimizeWindow", "toggleMaximizeWindow", "closeWindow",
   ])
   assert.equal(exposed.get("__CODENOMAD_WINDOW_CONTEXT__"), "preferences")
@@ -74,10 +75,16 @@ test("Preferences preload exposes only section and frame controls", () => {
   api.openerStartupState("read")
   api.listOtherDataProfiles()
   api.deleteOtherDataProfiles(["default"])
+  api.setNextLaunchDataProfile("dev")
+  api.relaunchIntoNextDataProfile()
   api.minimizeWindow()
   api.toggleMaximizeWindow()
   api.closeWindow()
-  assert.deepEqual(invoked, ["preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState", "data-profiles:listOthers", "data-profiles:deleteOthers", "preferences:minimize", "preferences:toggleMaximize", "preferences:close"])
+  assert.deepEqual(invoked, [
+    "preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState",
+    "data-profiles:listOthers", "data-profiles:deleteOthers", "data-profiles:setNextLaunch", "data-profiles:relaunch",
+    "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
+  ])
   // Preferences never receives direct client-state authority.
   assert.ok(!Object.keys(api).some((key) => /ClientState/.test(key)))
 
@@ -127,11 +134,27 @@ test("native titlebar controls remain local and obsolete automation toggles are 
   assert.equal(typeof expose([]).getZoomFactor, "function")
   assert.equal(typeof expose(["--codenomad-window-context=preferences"]).getZoomFactor, "function")
   assert.equal(expose(["--codenomad-window-context=remote"]).getZoomFactor, undefined)
-  // Data-profile cleanup belongs to local and Preferences windows, never remote content.
-  assert.equal(typeof expose([]).listOtherDataProfiles, "function")
-  assert.equal(typeof expose([]).deleteOtherDataProfiles, "function")
-  assert.equal(expose(["--codenomad-window-context=remote"]).listOtherDataProfiles, undefined)
-  assert.equal(expose(["--codenomad-window-context=remote"]).deleteOtherDataProfiles, undefined)
+  // Data-profile management belongs to local and Preferences windows, never remote content.
+  for (const operation of ["listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile"]) {
+    assert.equal(typeof expose([])[operation], "function", operation)
+    assert.equal(typeof expose(["--codenomad-window-context=preferences"])[operation], "function", operation)
+    assert.equal(expose(["--codenomad-window-context=remote"])[operation], undefined, operation)
+  }
+})
+
+test("local windows choose the next launch's profile and relaunch through fixed channels", () => {
+  const calls: unknown[][] = []
+  let api: Record<string, Function> | undefined
+  vm.runInNewContext(readFileSync(new URL("./index.cjs", import.meta.url), "utf8"), {
+    require: () => ({
+      contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+      ipcRenderer: { invoke: (...args: unknown[]) => calls.push(args), on() {}, removeListener() {} }, webUtils: {},
+    }),
+    process: { argv: [] },
+  })
+  api!.setNextLaunchDataProfile("team")
+  api!.relaunchIntoNextDataProfile()
+  assert.deepEqual(calls, [["data-profiles:setNextLaunch", "team"], ["data-profiles:relaunch"]])
 })
 
 test("count-only badge bridge is exposed to local and remote main renderers, never Preferences", () => {

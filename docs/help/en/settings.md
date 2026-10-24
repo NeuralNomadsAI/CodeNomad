@@ -79,4 +79,4 @@ The bell/history unread count, which only counts notifications routed to History
 | Hold long assistant replies | Stops automatic following when a streaming reply grows beyond the viewport. |
 | Environment Variables | Applied server-side before each prompt or session command; reads do not update already-running execution. See [OpenCode setup](opencode.md). |
 
-For keyboard configuration use [Keyboard shortcuts](shortcuts.md); for voice controls use [Voice input and playback](voice.md). Startup restore and deleting saved desktop profiles are covered in [Desktop windows and data](desktop.md).
+For keyboard configuration use [Keyboard shortcuts](shortcuts.md); for voice controls use [Voice input and playback](voice.md). Startup restore and desktop data profiles are covered in [Desktop windows and data](desktop.md).

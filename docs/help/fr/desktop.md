@@ -22,15 +22,15 @@ La fenêtre Preferences ne possède pas d’état de restauration séparé : ces
 
 Les paramètres navigateur et distants sont intégrés, plutôt qu’un second propriétaire natif de Preferences. Une erreur d’ouverture des préférences natives est signalée ; elle ne permet pas de supposer qu’un écran intégré caché s’est ouvert à la place.
 
-## Profils de données de bureau explicites {#data-profiles}
+## Profils de données de bureau {#data-profiles}
 
-Sans profil explicite, les lancements empaquetés réutilisent le profil mémorisé pour cette configuration. Si aucun choix n’est mémorisé, l’application examine les profils par défaut, `dev` et `dev-v2` pour du travail restaurable : elle sélectionne le seul candidat, demande s’il y en a plusieurs, ou utilise le défaut s’il n’y en a aucun. La sélection ne déplace, fusionne ni supprime les données de profil. Utilisez `CODENOMAD_PROFILE` pour ouvrir explicitement un autre profil.
+1. Dans les paramètres natifs **Paramètres → Général**, sous **Restaurer l’état précédent**, dépliez **Profil de données**. Il liste tous les profils de cet ordinateur avec leur taille, leur date de création et leur dernière utilisation, le profil ouvert en premier.
+2. Sélectionnez le profil qu’ouvrira le prochain lancement, ou choisissez **Nouveau profil** et saisissez un nom de 1 à 64 lettres minuscules, chiffres, points, tirets ou tirets bas, commençant par une lettre ou un chiffre.
+3. Choisissez **Redémarrer dans** pour basculer tout de suite ; sinon le profil choisi s’ouvre au prochain lancement. Sélectionner de nouveau le profil ouvert annule le changement.
 
-1. Pour une isolation volontaire du bureau, définissez `CODENOMAD_PROFILE` avant de lancer l’exécutable.
-2. Utilisez un nom de 1 à 64 lettres/chiffres ASCII, points, traits de soulignement ou d’union, commençant par une lettre ou un chiffre. Les noms sont normalisés en minuscules ; `default` ou `stable` sélectionne le profil par défaut.
-3. Vérifiez **Paramètres → Général → Restaurer l’état précédent → Profil de données** pour un profil nommé. Un nom invalide empêche le lancement au lieu de sélectionner un autre profil.
+Les profils d’une autre configuration sont listés mais ne peuvent pas être choisis ici. Sans choix mémorisé, un lancement empaqueté examine les profils par défaut, `dev` et `dev-v2` pour du travail restaurable et ouvre le plus récemment utilisé, ou le profil par défaut si aucun n’en contient. Choisir un profil ne déplace, ne fusionne ni ne supprime les données de profil.
 
-Par exemple, dans PowerShell, avant de lancer l’exécutable de bureau voulu :
+`CODENOMAD_PROFILE` défini avant de lancer l’exécutable prime sur ce choix ; **Profil de données** affiche alors les profils sans permettre d’en choisir un. `default` ou `stable` sélectionne le profil par défaut, et un nom invalide empêche le lancement au lieu de sélectionner un autre profil. Par exemple, dans PowerShell, avant de lancer l’exécutable de bureau voulu :
 
 ```powershell
 $env:CODENOMAD_PROFILE = "review"
@@ -46,13 +46,13 @@ Pour une configuration serveur indépendante, définissez aussi `CLI_CONFIG` ver
 
 Sur Tauri macOS, les profils délimités partagent le stockage WebKit système, les connexions et le cache ; n’utilisez pas les noms de profil comme isolation de sécurité des comptes. Electron stocke les données web dans son profil. La version installée et **Flux de mises à jour** ne sélectionnent jamais un autre profil. Les lancements de développement non empaquetés utilisent `dev` sauf sélection explicite.
 
-## Supprimer les autres profils enregistrés {#delete-profiles}
+## Supprimer un profil enregistré {#delete-profiles}
 
-1. Dans les paramètres natifs **Paramètres → Général**, trouvez **Autres profils enregistrés** sous **Restaurer l’état précédent**. Cette section apparaît seulement si d’autres profils existent sur la machine.
-2. Actualisez la liste au besoin, choisissez **Supprimer…** et lisez les cibles listées et profils ignorés.
+1. Dépliez **Profil de données** comme ci-dessus et actualisez la liste au besoin.
+2. Choisissez le bouton de suppression du profil à retirer. Le profil ouvert n’en a pas.
 3. Confirmez seulement après préservation des brouillons/connexions nécessaires. Inspectez tout rapport de suppression incomplète avant de réessayer.
 
-La suppression retire onglets, brouillons, disposition et stockage web/cache/connexions détenus des autres profils, y compris ceux listés depuis une autre configuration. Elle préserve le profil ouvert, les conversations OpenCode et les fichiers de projet. Les profils ouverts ou d’état inconnu sont ignorés ; fermez les fenêtres CodeNomad concernées avant d’actualiser explicitement et réessayer. Le contenu non reconnu est conservé et signalé plutôt que supprimé largement.
+La suppression retire onglets, brouillons, disposition et stockage web/cache/connexions détenus de ce profil, y compris un profil listé depuis une autre configuration. Elle préserve le profil ouvert, les conversations OpenCode et les fichiers de projet. Un profil ouvert ou dans un état inconnu ne peut pas être supprimé ; fermez les fenêtres CodeNomad concernées, actualisez la liste et réessayez. Le contenu non reconnu est conservé et signalé plutôt que supprimé largement.
 
 Le stockage WebKit partagé de Tauri macOS est conservé, car le supprimer affecterait les autres profils. Ce nettoyage n’est pas annulable : une conversation native survivante ne restaure pas un brouillon non envoyé supprimé. **Effacer l’état de démarrage enregistré** est l’action plus limitée pour seulement réinitialiser la fenêtre actuelle.
 

@@ -8,8 +8,6 @@ import { createHash } from "node:crypto"
  */
 export const PROFILE_ENVIRONMENT = "CODENOMAD_PROFILE"
 export const LEGACY_CHANNEL_ENVIRONMENT = "CODENOMAD_UPDATE_CHANNEL"
-/** Set by the host on the backend it launches; present only for non-default profiles. */
-export const BACKEND_PROFILE_ENVIRONMENT = "CODENOMAD_DESKTOP_PROFILE"
 
 /** Storage key of the default profile; it keeps the historical unscoped locations. */
 export const DEFAULT_PROFILE_KEY = "stable"
