@@ -6,6 +6,8 @@
 2. credential नभएको `http://` वा `https://` **पूर्वावलोकन URL** भर्नुहोस्, त्यसपछि **पूर्वावलोकन खोल्नुहोस्** रोज्नुहोस्। नेभिगेट, refresh र Back/Forward का लागि toolbar प्रयोग गर्नुहोस्।
 3. chat मा फर्कन पूर्वावलोकनको close बटन प्रयोग गर्नुहोस्। जारी राख्न त्यही कुराकानीमा फेरि खोल्नुहोस्।
 
+कुराकानीमा `localhost` वा `127.0.0.1` लिङ्क क्लिक गर्दा preview उपलब्ध भएका client मा त्यो सत्रको web preview मा खुल्छ। Remote Control मा host ले जानाजानी web preview बन्द राखेको अवस्थामा, वा preview उपलब्ध नभएको client मा, यस्ता लिङ्कले सामान्य browser व्यवहार नै राख्छन्। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले लिङ्क browser मा खोल्छ। Proxy मार्फतका preview ले पेजलाई मेमोरीमा `localStorage`, `sessionStorage` र `document.cookie` दिन्छन्, त्यसैले यीमा भर पर्ने विकास एपहरू चलिरहन्छन्; त्यो भण्डारण हालको पेज लोडको अवधिमा मात्र रहन्छ।
+
 प्रत्येक पूर्वावलोकन आफ्नो परियोजना फोल्डर र सत्रको हो। कुराकानी, परियोजना, Info वा chat बदल्दा स्पष्ट खोलिएको नेटिभ guest को live document/history नहटाई लुक्छ। लुकेका guest automation target होइनन्। परियोजना/विन्डो बन्द वा renderer restart गर्दा live document सकिन्छ।
 
 सुरक्षित इतिहास startup/session चयनमा होइन, त्यस सत्रको ब्राउजर स्पष्ट फेरि खोल्दा मात्र फर्किन्छ। यसले URL र cursor राख्छ, नपठाइएका form, DOM, POST body वा JavaScript memory होइन। इतिहास प्रति सत्र 32 URL र साझा layout budget मा सीमित छ; पुराना प्रविष्टि काटिन सक्छन्। URL पुनर्स्थापनाले नयाँ page load गर्न सक्छ; यो transaction replay होइन।
