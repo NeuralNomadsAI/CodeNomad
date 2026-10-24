@@ -126,7 +126,7 @@ function copyPackagedServerResources(options) {
   copyRequiredArtifact(serverRoot, serverDest, "node_modules", log)
   copyServerDist(serverRoot, serverDest, log)
   stripNodeModuleBins(path.join(serverDest, "node_modules"), log)
-  pruneKnownServerDependencies(path.join(serverDest, "node_modules"), log)
+  pruneKnownServerDependencies(path.join(serverDest, "node_modules"), log, resolveNpmTarget(options.target))
 }
 
 function copyRequiredArtifact(serverRoot, serverDest, name, log) {
@@ -249,12 +249,21 @@ function prunePackage(root, options) {
   return removed
 }
 
-function pruneKnownServerDependencies(root, log) {
+function pruneKnownServerDependencies(root, log, target) {
   if (!fs.existsSync(root)) return
 
   let removed = 0
   const declarationAndMaps = [/\.d\.[cm]?ts$/, /\.map$/]
   const packageDocs = [/\.md$/i, /\.markdown$/i]
+
+  // Desktop Linux bundles ship the official glibc Node runtime. msgpackr's
+  // platform package also includes musl ELFs which cannot load in this runtime
+  // and make linuxdeploy abort while resolving their incompatible dependencies.
+  if (target.os === "linux") {
+    removed += prunePackage(path.join(root, "@msgpackr-extract", `msgpackr-extract-linux-${target.cpu}`), {
+      filePatterns: [/\.musl\.node$/],
+    })
+  }
 
   removed += prunePackage(path.join(root, "openai"), {
     remove: ["CHANGELOG.md", "README.md", "bin", "src"],

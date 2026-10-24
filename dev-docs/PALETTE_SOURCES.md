@@ -1,13 +1,9 @@
 # Soft palette sources and adaptation
 
-CodeNomad's soft collection uses its own localized names and semantic roles.
-Appearance mode and the two saved palettes are independent. The picker is flat
-and filters by fixed mode; Auto exposes both slots for editing. Classic retains
-the dev canvas/panel/tool relationship, and all families use the muted surface
-for message/tool cards with base-canvas inset output. Earlier review notes that
-mention grouped palettes or panel-colored assistant cards are superseded.
-These are adaptations, not exact editor-theme ports. No Zed syntax definitions,
-theme loader, extension code, or complete theme JSON is shipped.
+CodeNomad's soft collection adapts the referenced editor themes' surface
+relationships under its own localized names and semantic roles; it ships only
+CodeNomad color values in `soft-color-schemes.ts`. The picker is flat and
+filters by fixed mode; Auto exposes both slots for editing.
 
 | CodeNomad family | Light ID | Dark ID | Visual reference |
 | --- | --- | --- | --- |
@@ -19,24 +15,22 @@ theme loader, extension code, or complete theme JSON is shipped.
 | Sage / Sauge | `sage-light` | `sage` | Everforest Soft's gray-green structure |
 
 The first three light IDs stay stable so saved selections and overrides remain
-addressable. Existing Classic, Basalt, Fjord, Lichen, Velvet and Ember retain
-their declared surface colors from `dev`. Their message surfaces are no longer
-collapsed onto the composer background. Participant identity colors are shared
-within each appearance, and selection uses a neutral surface tint rather than
-borrowing a participant color. Custom colors are never silently recolored.
+addressable. Classic (with its canvas/panel/tool relationship), Basalt, Fjord,
+Lichen, Velvet and Ember keep their declared surface colors. Custom colors are
+never silently recolored.
 
 The soft light canvases are darker than the original editor whites. Dark
 canvases use mid-dark grays instead of near-black. Text is adjusted for at least
 4.5:1 on base, panel, tool and user-message surfaces; participant colors are
-checked at full opacity for at least 3:1. Decorative resting icon opacity is
-unchanged and is not claimed to meet that full-opacity contrast threshold.
+checked at full opacity for at least 3:1. These thresholds apply at full
+opacity; decorative resting icons keep their partial opacity.
 
 ## Reference revisions
 
 - Zed One, Ayu and Gruvbox: `zed-industries/zed` commit
   `6f73c7d0a4aae8e32afb5d01b0fcb89e5e3642ff`, under `assets/themes/`.
-- [Catppuccin for Zed](https://github.com/catppuccin/zed), reviewed 2026-09-08.
-- [Everforest for Zed](https://github.com/albertsko/zed-everforest), reviewed 2026-09-08.
+- [Catppuccin for Zed](https://github.com/catppuccin/zed).
+- [Everforest for Zed](https://github.com/albertsko/zed-everforest).
 - [Original Solarized](https://github.com/altercation/solarized), MIT licensed.
   The GPL Zed Solarized extension was inspected as a visual reference only;
   none of its code, JSON or color values is included in Linen's definition.
@@ -72,3 +66,8 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+## Agent conventions
+
+- Soft palette families live in `packages/ui/src/lib/soft-color-schemes.ts`. Participant identity colors are shared within each appearance; selection uses a neutral surface tint, never a participant color; transcript/composer surfaces stay distinct. Run `palette-quality.test.ts` and inspect real rendered captures when changing palette colors or their token mapping.
+- Palette settings follow the resolved appearance in Auto mode. Keep the picker, square swatches and trailing actions on one line while they fit at their natural width, measured by `settings/palette-strip-fit.ts` rather than a breakpoint because the actions change with edits; otherwise the swatch strip moves below the picker and its actions (`data-stacked`) and wraps onto further lines instead of scrolling. Swatch names use tooltips and accessible input labels. Swatch styles live in `styles/components/theme-scheme-swatches.css`.

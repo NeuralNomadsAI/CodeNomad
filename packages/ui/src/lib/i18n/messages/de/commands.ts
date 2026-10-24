@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "Die Hilfe konnte nicht im Browser geöffnet werden. Öffnen Sie https://neuralnomadsai.github.io/CodeNomad/ manuell.",
   "commandPalette.title": "Befehlspalette",
   "commandPalette.description": "Befehle suchen und ausführen",
   "commandPalette.searchPlaceholder": "Befehl eingeben oder suchen...",
@@ -14,6 +15,9 @@ export const commandMessages = {
   "commands.newInstance.label": "Neue Instanz",
   "commands.newInstance.description": "Ordnerauswahl öffnen, um eine neue Instanz zu erstellen",
   "commands.newInstance.keywords": "ordner, projekt, arbeitsbereich",
+  "commands.newTemporaryInstance.label": "Neue temporäre Instanz",
+  "commands.newTemporaryInstance.description": "Leere temporäre Instanz öffnen, ohne einen Ordner zu wählen",
+  "commands.newTemporaryInstance.keywords": "temporär, entwurf, schnell, leer, projekt",
   "commands.openWorkspace.folder.label": "Projektordner öffnen",
   "commands.openWorkspace.folder.description": "Aktuellen Projektordner im Dateimanager öffnen",
   "commands.openWorkspace.folder.keywords": "Ordner, Explorer, Finder, Dateien",
@@ -31,9 +35,6 @@ export const commandMessages = {
   "commands.closeInstance.label": "Tab schließen",
   "commands.closeInstance.description": "Den aktuellen obersten Tab schließen",
   "commands.closeInstance.keywords": "stoppen, beenden, schließen, tab",
-  "commands.stopInstance.label": "Arbeitsbereich stoppen",
-  "commands.stopInstance.description": "Den gemeinsamen Arbeitsbereich für alle Fenster stoppen",
-  "commands.stopInstance.keywords": "stoppen, arbeitsbereich, server, gemeinsam",
 
   "commands.nextInstance.label": "Nächster Tab",
   "commands.nextInstance.description": "Zum nächsten obersten Tab wechseln",
@@ -66,6 +67,13 @@ export const commandMessages = {
   "commands.previousSession.label": "Vorherige Sitzung",
   "commands.previousSession.description": "Zum vorherigen Sitzungs-Tab wechseln",
   "commands.previousSession.keywords": "wechseln, navigieren",
+
+  "commands.previousUserMessage.label": "Vorherige Benutzernachricht",
+  "commands.previousUserMessage.description": "Zur vorherigen Nachricht springen, die du in dieser Unterhaltung gesendet hast",
+  "commands.previousUserMessage.keywords": "springen, Prompt, navigieren, Benutzernachricht",
+  "commands.nextUserMessage.label": "Nächste Benutzernachricht",
+  "commands.nextUserMessage.description": "Zur nächsten Nachricht springen, die du in dieser Unterhaltung gesendet hast",
+  "commands.nextUserMessage.keywords": "springen, Prompt, navigieren, Benutzernachricht",
 
   "commands.compactSession.label": "Sitzung komprimieren",
   "commands.compactSession.description": "Die aktuelle Sitzung zusammenfassen und komprimieren",
@@ -113,20 +121,10 @@ export const commandMessages = {
   "commands.clearInput.description": "Den Textbereich des Prompts löschen",
   "commands.clearInput.keywords": "löschen, zurücksetzen",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: Neue Zeile, Cmd/Ctrl+Enter: Prompt absenden",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Prompt absenden, Cmd/Ctrl+Enter: Neue Zeile",
-  "commands.promptSubmitShortcut.description": "Verhalten von Enter und Cmd/Ctrl+Enter bei der Prompt-Eingabe vertauschen",
-  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, senden, neuezeile, tastenkombination, prompt",
-
   "commands.thinkingBlocks.label.show": "Denken anzeigen",
   "commands.thinkingBlocks.label.hide": "Denken ausblenden",
   "commands.thinkingBlocks.description": "AI-Denkabschnitte anzeigen oder ausblenden",
   "commands.thinkingBlocks.keywords": "denken, schlussfolgern, umschalten, anzeigen, ausblenden",
-
-  "commands.timelineToolCalls.label.show": "Timeline-Tool-Aufrufe anzeigen",
-  "commands.timelineToolCalls.label.hide": "Timeline-Tool-Aufrufe ausblenden",
-  "commands.timelineToolCalls.description": "Tool-Aufruf-Einträge in der Nachrichten-Timeline umschalten",
-  "commands.timelineToolCalls.keywords": "timeline, tool, umschalten",
 
   "commands.keyboardShortcutHints.label.show": "Tastenkombinations-Hinweise anzeigen",
   "commands.keyboardShortcutHints.label.hide": "Tastenkombinations-Hinweise ausblenden",
@@ -173,9 +171,12 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "Leere Sitzungen beim Erstellen neuer Sitzungen automatisch bereinigen",
   "commands.autoCleanupBlankSessions.keywords": "auto, bereinigen, leer, sitzungen, umschalten",
 
-  "commands.showHelp.label": "Hilfe anzeigen",
-  "commands.showHelp.description": "Tastenkombinationen und Hilfe anzeigen",
-  "commands.showHelp.keywords": "tastenkombinationen, hilfe",
+  "commands.openHelp.label": "Hilfe öffnen",
+  "commands.openHelp.description": "Das CodeNomad-Benutzerhandbuch im Browser öffnen",
+  "commands.openHelp.keywords": "hilfe, handbuch, dokumentation",
+  "commands.openAbout.label": "Über CodeNomad",
+  "commands.openAbout.description": "Version, Updates und Diagnose in den Einstellungen anzeigen",
+  "commands.openAbout.keywords": "über, version, updates, diagnose",
 
   "commands.custom.argumentsPrompt.message": "Argumente für /{name}",
   "commands.custom.argumentsPrompt.title": "Benutzerdefinierter Befehl",

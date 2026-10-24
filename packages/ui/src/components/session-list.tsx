@@ -5,12 +5,11 @@ import type { SessionStatus } from "../types/session"
 import type { SessionThread } from "../stores/session-state"
 import { getRetrySeconds, getSessionIdleFadeClass, getSessionRetry, getSessionStatus, shouldShowSessionStatus } from "../stores/session-status"
 import { Bot, User, Copy, Trash2, Pencil, ShieldAlert, ChevronRight, Search, Square, CheckSquare, MinusSquare, Split, RotateCw } from "lucide-solid"
-import KeyboardHint from "./keyboard-hint"
+import { childActivityKind, childActivityLabel } from "./session-child-activity"
 import LoadErrorState from "./load-error-state"
 import SessionRenameDialog from "./session-rename-dialog"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { useSessionRowOverflow } from "./session-row-overflow"
-import { keyboardRegistry } from "../lib/keyboard-registry"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
@@ -37,7 +36,7 @@ import {
   isSessionSearchLoading,
 } from "../stores/sessions"
 import { getGitRepoStatus, getWorktreeSlugForParentSession, getWorktrees } from "../stores/worktrees"
-import { collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, projectSessionSearchResults, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
+import { collectDescendantActivity, collectSessionThreadIds, findSessionThread, flattenVisibleSessionThreads, projectSessionFamilies, projectSessionSearchResults, sortSessionIdsDeepestFirst, type SessionFamilySort } from "../stores/session-tree"
 import { normalizeSessionDirectory } from "../stores/session-list-options"
 import { getLogger } from "../lib/logger"
 import { copyToClipboard } from "../lib/clipboard"
@@ -132,6 +131,11 @@ const SessionList: Component<SessionListProps> = (props) => {
     return loading().fetchingSessions.get(props.instanceId) ?? false
   })
   const sessionListError = createMemo(() => getSessionListError(props.instanceId))
+  const descendantActivity = createMemo(() => collectDescendantActivity(
+    sessionStateSessions().get(props.instanceId),
+    session => !session.retry && session.generationRecovery !== "interrupted"
+      && shouldShowSessionStatus(props.instanceId, session.id, now(), preferences().keepUnseenSubagentIdleStatus),
+  ))
 
   createEffect(() => {
     const sort = sortBy()
@@ -332,13 +336,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     try {
       const success = await copyToClipboard(sessionId)
       if (success) {
-        showToastNotification({ message: t("sessionList.copyId.success"), variant: "success" })
+        showToastNotification({ category: "copy", message: t("sessionList.copyId.success"), variant: "success" })
       } else {
-        showToastNotification({ message: t("sessionList.copyId.error"), variant: "error" })
+        showToastNotification({ category: "copy", message: t("sessionList.copyId.error"), variant: "error" })
       }
     } catch (error) {
       log.error(`Failed to copy session ID ${sessionId}:`, error)
-      showToastNotification({ message: t("sessionList.copyId.error"), variant: "error" })
+      showToastNotification({ category: "copy", message: t("sessionList.copyId.error"), variant: "error" })
     }
   }
  
@@ -397,7 +401,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       }
     } catch (error) {
       log.error(`Failed to delete session ${sessionId}:`, error)
-      showToastNotification({ message: t("sessionList.delete.error"), variant: "error" })
+      showToastNotification({ category: "sessions", message: t("sessionList.delete.error"), variant: "error" })
     }
   }
 
@@ -423,7 +427,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       await loadMessages(props.instanceId, sessionId, { force: true })
     } catch (error) {
       log.error(`Failed to reload session ${sessionId}:`, error)
-      showToastNotification({ message: t("sessionList.reload.error"), variant: "error" })
+      showToastNotification({ category: "sessions", message: t("sessionList.reload.error"), variant: "error" })
     } finally {
       setReloadingSessionIds((prev) => {
         const next = new Set(prev)
@@ -447,7 +451,7 @@ const SessionList: Component<SessionListProps> = (props) => {
       setRenameTarget(null)
     } catch (error) {
       log.error(`Failed to rename session ${target.id}:`, error)
-      showToastNotification({ message: t("sessionList.rename.error"), variant: "error" })
+      showToastNotification({ category: "sessions", message: t("sessionList.rename.error"), variant: "error" })
     } finally {
       setIsRenaming(false)
     }
@@ -549,7 +553,7 @@ const SessionList: Component<SessionListProps> = (props) => {
     }
 
     if (failed > 0) {
-      showToastNotification({
+      showToastNotification({ category: "sessions",
         message: t("sessionList.bulkDelete.error", { count: failed }),
         variant: "error",
       })
@@ -582,6 +586,13 @@ const SessionList: Component<SessionListProps> = (props) => {
     })
 
     const isActive = () => props.activeSessionId === sessionId()
+    // A collapsed parent's chevron carries its subsessions' visible status.
+    const childActivity = () => rowProps.hasChildren && !rowProps.expanded ? descendantActivity().get(sessionId()) : undefined
+    const expanderLabel = (key: string) => {
+      const label = t(`sessionList.expand.${key}`)
+      const activity = childActivity()
+      return activity ? t("sessionList.expand.withChildActivity", { action: label, activity: childActivityLabel(t, activity) }) : label
+    }
     const title = () => rowProps.session.title || t("sessionList.session.untitled")
     const status = () => getSessionStatus(props.instanceId, sessionId())
     const interrupted = () => rowProps.session.generationRecovery === "interrupted"
@@ -723,10 +734,9 @@ const SessionList: Component<SessionListProps> = (props) => {
               class={`session-item-expander opacity-80 hover:opacity-100 ${isActive() ? "hover:bg-white/20" : "hover:bg-surface-hover"}`}
               onClick={() => rowProps.onToggleExpand?.()}
               aria-expanded={Boolean(rowProps.expanded)}
-              aria-label={
-                rowProps.expanded ? t("sessionList.expand.collapseAriaLabel") : t("sessionList.expand.expandAriaLabel")
-              }
-              title={rowProps.expanded ? t("sessionList.expand.collapseTitle") : t("sessionList.expand.expandTitle")}
+              aria-label={expanderLabel(rowProps.expanded ? "collapseAriaLabel" : "expandAriaLabel")}
+              title={expanderLabel(rowProps.expanded ? "collapseTitle" : "expandTitle")}
+              data-child-activity={childActivity() ? childActivityKind(childActivity()!) : undefined}
             >
               <ChevronRight class="disclosure-chevron w-3.5 h-3.5" />
             </button>
@@ -931,9 +941,6 @@ const SessionList: Component<SessionListProps> = (props) => {
               <h3 class="text-sm font-semibold text-primary notranslate" translate="no">
                 {t("sessionList.header.title")}
               </h3>
-              <KeyboardHint
-                shortcuts={[keyboardRegistry.get("session-prev")!, keyboardRegistry.get("session-next")!].filter(Boolean)}
-              />
             </div>
           )}
         </div>
@@ -976,6 +983,7 @@ const SessionList: Component<SessionListProps> = (props) => {
           <Show when={shouldRenderSessionRows(
             Boolean(sessionListError()),
             listViewportAttached() && (visibleProjection().ids.length > 0 || hasMore() || isFetchingSessions()),
+            visibleProjection().ids.length > 0,
           )}>
            <div class="session-section">
              <Show when={visibleProjection().ids.length > 0}>

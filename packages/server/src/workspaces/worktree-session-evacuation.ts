@@ -19,12 +19,25 @@ export class WorktreeDeletionFence {
   private readonly blocked = new Map<string, number>()
   private readonly active = new Map<string, number>()
   private readonly idleWaiters = new Map<string, Set<() => void>>()
+  private displayRevision = 0n
 
   constructor(private readonly mutationDrainTimeoutMs = MUTATION_DRAIN_TIMEOUT_MS) {}
 
   isBlocked(directory: string): boolean {
     const target = normalizeDirectory(directory)
     return [...this.blocked.keys()].some(blocked => directoriesOverlap(blocked, target))
+  }
+
+  /** Display reads must not survive a delete-and-unblock ABA. A deletion in
+   * another directory may conservatively invalidate the same read. */
+  captureDisplay(directories: readonly string[]): () => boolean {
+    const revision = this.displayRevision
+    const targets = [...directories]
+    let current = !targets.some(directory => this.isBlocked(directory))
+    return () => {
+      current = current && revision === this.displayRevision && !targets.some(directory => this.isBlocked(directory))
+      return current
+    }
   }
 
   enter(directories: string[]): (() => void) | undefined {
@@ -50,6 +63,7 @@ export class WorktreeDeletionFence {
   }
 
   run<T>(key: string, directories: string[], operation: () => Promise<T>): Promise<T> {
+    this.displayRevision += 1n
     const normalizedKey = normalizeDirectory(key)
     const blocked = [...new Set(directories.map(normalizeDirectory))]
     for (const directory of blocked) this.blocked.set(directory, (this.blocked.get(directory) ?? 0) + 1)

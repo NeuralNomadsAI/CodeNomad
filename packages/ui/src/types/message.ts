@@ -1,6 +1,6 @@
 import type {
   ModelRef,
-  SessionMessageProviderState,
+  SessionMessageNative,
   SessionStructuredError,
   SessionMessageInfo,
 } from "@opencode/client"
@@ -25,11 +25,8 @@ interface ToolMessagePart extends PartBase { type: "tool"; tool: string; state?:
 interface CompactionMessagePart extends PartBase {
   type: "compaction"
   model?: ModelRef
-  providerState?: SessionMessageProviderState
+  native?: SessionMessageNative
 }
-interface StepStartMessagePart extends PartBase { type: "step-start" }
-interface StepFinishMessagePart extends PartBase { type: "step-finish" }
-
 export type NormalizedMessagePart =
   | TextMessagePart
   | SystemMessagePart
@@ -38,11 +35,10 @@ export type NormalizedMessagePart =
   | SkillMessagePart
   | ToolMessagePart
   | CompactionMessagePart
-  | StepStartMessagePart
-  | StepFinishMessagePart
 
 export interface RenderCache {
-  text: string
+  /** Source the HTML was rendered from, for caches that compare it (Markdown keys on its version instead). */
+  text?: string
   html: string
   theme?: string
   mode?: string
@@ -116,18 +112,6 @@ export function isHiddenSyntheticTextPart(part: ClientPart): boolean {
   return Boolean(part && part.type === "text" && part.synthetic)
 }
 
-function hasTextSegment(segment: string | { text?: string }): boolean {
-  if (typeof segment === "string") {
-    return segment.trim().length > 0
-  }
-
-  if (segment && typeof segment === "object" && segment.text) {
-    return typeof segment.text === "string" && segment.text.trim().length > 0
-  }
-
-  return false
-}
-
 export function partHasRenderableText(part: ClientPart): boolean {
   if (!part || typeof part !== "object") {
     return false
@@ -137,7 +121,7 @@ export function partHasRenderableText(part: ClientPart): boolean {
     return false
   }
 
-  if (part.type === "text" && hasTextSegment(part.text)) {
+  if (part.type === "text" && part.text.trim().length > 0) {
     return true
   }
 
@@ -150,7 +134,7 @@ export function partHasRenderableText(part: ClientPart): boolean {
     return true // Tool parts are always renderable
   }
 
-  if (part.type === "reasoning" && hasTextSegment(part.text)) {
+  if (part.type === "reasoning" && part.text.trim().length > 0) {
     return true
   }
 

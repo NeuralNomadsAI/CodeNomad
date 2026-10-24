@@ -60,6 +60,12 @@ async function harness(
       markDelayedUpstreamStarted()
       await new Promise<void>((resolve) => { releaseDelayedUpstream = resolve })
     }
+    if (request.headers["x-test-message-list"] === "1") {
+      const uri = `data:image/png;base64,${"A".repeat(64 * 1024)}`
+      return { data: [{ id: "msg_1", type: "assistant", content: [{ type: "tool", id: "call", name: "read",
+        state: { status: "completed", content: [{ type: "file", mime: "image/png", uri }] } }] }], cursor: {},
+        forwarded: request.headers["x-codenomad-media"] ?? null }
+    }
     reply.header("set-cookie", "upstream_session=secret; Path=/")
     reply.header("www-authenticate", 'Basic realm="OpenCode"')
     reply.header("proxy-authenticate", 'Basic realm="OpenCode proxy"')
@@ -181,7 +187,7 @@ describe("instance proxy location enforcement", () => {
     const compact = (phase: "started" | "ended", seq: number) => observePendingDiscovery(connection, {
       id: `compact-${seq}`, created: seq, type: `session.compaction.${phase}`,
       durable: { aggregateID: "unknown", seq, version: 1 },
-      data: { sessionID: "unknown", reason: "auto", recent: "r", text: "summary" },
+      data: { sessionID: "unknown", reason: "auto", text: "summary" },
     } as any)
     const owns = manager.ownsDirectory
     let ownership = 0
@@ -234,6 +240,19 @@ describe("instance proxy location enforcement", () => {
     assert.deepEqual(root.json().body, { title: "Owned root", location: { directory: "/repo" } })
   })
 
+  it("admits only owned external integration connection requests", async () => {
+    const { app, requestCount } = await harness()
+    const url = "/workspaces/workspace/instance/api/integration/azure/connect/external"
+    const payload = { methodID: "azure-cli", answer: { resource: "fixture-only" } }
+    const response = await app.inject({ method: "POST", url: `${url}?location[directory]=/repo/worktree`, payload })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(response.json().body, payload)
+    assert.equal(response.json().headers.authorization, "Basic internal-secret")
+    assert.equal((await app.inject({ method: "POST", url: `${url}?location[directory]=/other`, payload })).statusCode, 403)
+    assert.equal((await app.inject({ method: "POST", url: `${url}/export`, payload })).statusCode, 403)
+    assert.equal(requestCount(), 1)
+  })
+
   it("keeps native credential export and creation outside the workspace proxy", async () => {
     const { app, requestCount } = await harness()
     for (const method of ["GET", "POST"] as const) {
@@ -260,6 +279,10 @@ describe("instance proxy location enforcement", () => {
     // Only the reviewed session-scoped route is opened, never generic generation.
     const generic = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/generate", payload: { prompt: "test" } })
     assert.equal(generic.statusCode, 403)
+    // 2.0.32's voice session brokers a realtime token from server-stored provider keys; it stays unexposed.
+    const voice = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/experimental/voice/session",
+      payload: { model: "gpt-realtime", transport: { type: "websocket" } } })
+    assert.equal(voice.statusCode, 403)
     assert.equal(requestCount(), 1)
   })
 
@@ -288,6 +311,18 @@ describe("instance proxy location enforcement", () => {
     manager.ownsLocation = async () => false
     const denied = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/session/session/message" })
     assert.equal(denied.statusCode, 403)
+  })
+
+  it("defers large tool images only in opted-in transcript list reads, never forwarding the opt-in", async () => {
+    const { app } = await harness()
+    const read = async (path: string, optIn: boolean) => (await app.inject({ url: `/workspaces/workspace/instance/api/session/session/${path}`,
+      headers: { "x-test-message-list": "1", ...(optIn ? { "x-codenomad-media": "deferred" } : {}) } })).json()
+    const uri = (body: any) => body.data[0].content[0].state.content[0].uri as string
+    const deferred = await read("message?limit=200&order=desc", true)
+    assert.match(uri(deferred), /^\/api\/workspaces\/workspace\/session-media\/session\/msg_1\/0\/0\/[a-f0-9]{64}$/)
+    assert.equal(deferred.forwarded, null)
+    assert.match(uri(await read("message?limit=200", false)), /^data:image\/png;base64,/)
+    assert.match(uri(await read("message/msg_1", true)), /^data:image\/png;base64,/, "a single message read stays whole")
   })
 
   it("forwards native execution settlement only for a session owned by the workspace", async () => {
@@ -436,6 +471,56 @@ describe("instance proxy location enforcement", () => {
     assert.equal((await mutation).statusCode, 200)
     await deletion
     assert.equal(deleted, true)
+  })
+
+  it("fences the effective default location of session, Shell, PTY and global Form writes", async () => {
+    const { app, worktreeDeletionFence, requestCount } = await harness()
+    await worktreeDeletionFence.run("workspace:root", ["workspace:root"], async () => {
+      for (const route of ["session", "shell", "pty", "session/global/form/form/reply"]) {
+        const response = await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/${route}`, payload: {} })
+        assert.equal(response.statusCode, 409, route)
+      }
+      assert.equal(requestCount(), 0)
+    })
+  })
+
+  it("retains default-location admission until the actual upstream response body ends", async () => {
+    const { app, worktreeDeletionFence, delayedUpstreamStarted, releaseDelayedUpstream } = await harness()
+    const mutation = app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session",
+      headers: { "x-test-delay-upstream-body": "1" }, payload: {} })
+    await delayedUpstreamStarted
+    let deleted = false
+    const deletion = worktreeDeletionFence.run("workspace:root", ["workspace:root"], async () => { deleted = true })
+    try {
+      await new Promise(resolve => setImmediate(resolve))
+      assert.equal(deleted, false)
+    } finally { releaseDelayedUpstream() }
+    assert.equal((await mutation).statusCode, 200)
+    await deletion
+    assert.equal(deleted, true)
+  })
+
+  it("fences native resource cwd as well as the request's default location", async () => {
+    const { app, worktreeDeletionFence, requestCount } = await harness("/repo/worktree", {}, {}, "/repo", "/repo", {},
+      { terminal: "/repo/worktree" }, { background: "/repo/worktree" })
+    await worktreeDeletionFence.run("workspace:worktree", ["workspace:worktree"], async () => {
+      for (const route of ["pty/terminal", "shell/background"]) {
+        const response = await app.inject({ method: "DELETE", url: `/workspaces/workspace/instance/api/${route}` })
+        assert.equal(response.statusCode, 409, route)
+      }
+      assert.equal(requestCount(), 0)
+    })
+  })
+
+  it("rejects a default write whose mutation identity cannot be established without affecting reads", async () => {
+    const { app, manager, requestCount } = await harness()
+    manager.getWorktreeIdentityForPath = async () => undefined
+    const write = await app.inject({ method: "POST", url: "/workspaces/workspace/instance/api/session", payload: {} })
+    assert.equal(write.statusCode, 403)
+    assert.equal(requestCount(), 0)
+    const read = await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/location" })
+    assert.equal(read.statusCode, 200)
+    assert.equal(requestCount(), 1)
   })
 
   it("holds mutation admission until the upstream response body ends", async () => {
@@ -910,7 +995,7 @@ describe("instance proxy location enforcement", () => {
     })).statusCode, 403)
     assert.equal((await app.inject({ method: "GET", url: "/workspaces/workspace/instance/api/permission/saved" })).statusCode, 403)
     assert.equal((await app.inject({ method: "DELETE", url: "/workspaces/workspace/instance/api/permission/saved/global-rule" })).statusCode, 403)
-    for (const route of ["plugin/check", "plugin/update", "rpc/plugin/method"]) {
+    for (const route of ["plugin/install", "plugin/remove", "rpc/plugin/method"]) {
       assert.equal((await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/${route}` })).statusCode, 403)
     }
     assert.equal(requestCount(), 0)
@@ -949,6 +1034,19 @@ describe("instance proxy location enforcement", () => {
     }
     assert.deepEqual(sessionGets, ["foreign"])
     assert.equal(requestCount(), 0)
+  })
+
+  it("allows native plugin package actions only for owned locations", async () => {
+    const { app, requestCount } = await harness()
+    for (const action of ["check", "update"]) {
+      const payload = action === "check" ? { target: "fixture@latest" } : { targets: ["fixture@latest"] }
+      assert.equal((await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/plugin/${action}`, payload })).statusCode, 200)
+      assert.equal((await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/plugin/${action}?location[directory]=/other`, payload })).statusCode, 403)
+      // The generated client may carry the location in the body instead of the query.
+      assert.equal((await app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/plugin/${action}`,
+        payload: { ...payload, location: { directory: "/other" } } })).statusCode, 403)
+    }
+    assert.equal(requestCount(), 2)
   })
 
   it("allows only native credential rename, activate and remove operations with directory ownership", async () => {

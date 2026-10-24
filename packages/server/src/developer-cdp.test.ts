@@ -74,14 +74,24 @@ class FakeChrome {
       this.deferred.set(command.method, { socket, command })
       return
     }
-    queueMicrotask(() => socket.respond(command, this.result(command.method)))
+    queueMicrotask(() => socket.respond(command, command.method === "Runtime.evaluate" && String(command.params?.expression).includes("__codenomadAutomationInputUntil")
+      ? { result: { value: 1_700_000_000 } } : this.result(command.method)))
   }
+
+  /** Visible box of every element, or none; and the element hit at its centre. */
+  quads: number[][] = []
+  hit = 42
+  functionResult: unknown
 
   result(method: string): Record<string, unknown> {
     if (method === "Accessibility.getFullAXTree") return {
       nodes: this.axNodes,
     }
+    if (method === "DOM.getContentQuads") return { quads: this.quads }
+    if (method === "DOM.getNodeForLocation") return { backendNodeId: this.hit }
+    if (method === "Page.getLayoutMetrics") return { cssLayoutViewport: { clientWidth: 800, clientHeight: 600 } }
     if (method === "Runtime.evaluate") return { result: { value: this.context } }
+    if (method === "Runtime.callFunctionOn") return { result: { value: this.functionResult } }
     if (method === "Page.captureScreenshot") return { data: this.screenshotData }
     if (method === "DOM.resolveNode") return { object: { objectId: "node-1" } }
     return {}
@@ -96,6 +106,8 @@ class FakeChrome {
     })
   }
 }
+
+const refOf = (inspection: { snapshot: string }) => /\[(e\d+)\]/.exec(inspection.snapshot)![1]
 
 const identity = {
   endpoint: "http://127.0.0.1:9222",
@@ -113,7 +125,7 @@ describe("DeveloperCdp", () => {
     try {
       const first = await client.inspect(window)
       chrome.context = { ...chrome.context, sessionId: "another-session", instanceId: "another-project" }
-      await client.act({ ...window, kind: "click", ref: first.nodes[0].ref! })
+      await client.act(window, { action: "click", ref: refOf(first) })
       assert.equal((await client.inspect(window)).context.sessionId, "another-session")
       chrome.context = { windowId: "window-1", sessionId: null, instanceId: null } as never
       assert.equal((await client.inspect(window)).context.sessionId, null)
@@ -148,7 +160,7 @@ describe("DeveloperCdp", () => {
     const screenshotCommand = chrome.deferred.get("Page.captureScreenshot")!
     screenshotCommand.socket.respond(screenshotCommand.command, { data: Buffer.from("shot").toString("base64") })
     const screenshot = await screenshotPromise
-    assert.equal(inspection.nodes[0].name, "Save")
+    assert.match(inspection.snapshot, /^- button "Save" \[e\d+\]$/)
     assert.equal(inspection.diagnostics.length, 1_000)
     assert.deepEqual(inspection.diagnostics[0], { level: "warning", text: "message-2" })
     assert.deepEqual(inspection.diagnostics.at(-1), { level: "error", text: "Error: broken" })
@@ -164,7 +176,7 @@ describe("DeveloperCdp", () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
     const first = await client.inspect(identity)
-    const oldRef = first.nodes[0].ref!
+    const oldRef = refOf(first)
     const oldSocket = chrome.sockets.at(-1)!
 
     chrome.target = page("two")
@@ -173,7 +185,7 @@ describe("DeveloperCdp", () => {
     assert.equal(second.target.id, "two")
     assert.equal(oldSocket.closed, true)
     assert.equal(chrome.sockets.length, 4)
-    await assert.rejects(client.act({ ...identity, kind: "click", ref: oldRef }), /stale accessibility ref/)
+    await assert.rejects(client.act(identity, { action: "click", ref: oldRef }), /stale ref/)
   })
 
   it("refreshes target metadata without reconnecting", async () => {
@@ -189,15 +201,40 @@ describe("DeveloperCdp", () => {
     assert.equal(chrome.sockets.length, 2)
   })
 
-  it("activates clicks through the resolved accessibility node", async () => {
+  it("clicks a visible element with marked real pointer input at its visible centre", async () => {
     const chrome = new FakeChrome()
+    chrome.quads = [[100, 40, 300, 40, 300, 80, 100, 80]]
     const client = chrome.client()
     const inspection = await client.inspect(identity)
+    chrome.commands.length = 0
 
-    await client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! })
+    await client.act(identity, { action: "click", ref: refOf(inspection) })
 
+    const sequence = chrome.commands.filter(command => command.method === "Input.dispatchMouseEvent"
+      || (command.method === "Runtime.evaluate" && /__codenomadAutomationInputUntil/.test(String(command.params?.expression))))
+      .map(command => command.method === "Runtime.evaluate" ? (/Math.min/.test(String(command.params!.expression)) ? "unmark" : "mark")
+        : `${command.params!.type}@${command.params!.x},${command.params!.y}`)
+    assert.deepEqual(sequence, ["mark", "mouseMoved@200,60", "mark", "mousePressed@200,60", "mark", "mouseReleased@200,60", "unmark"],
+      "every trusted event in the CodeNomad window is marked, and the mark is cleared")
+  })
+
+  it("refuses a covered element and activates a box-less one programmatically", async () => {
+    const chrome = new FakeChrome()
+    chrome.quads = [[0, 0, 10, 0, 10, 10, 0, 10]]
+    chrome.hit = 7
+    const client = chrome.client()
+    const inspection = await client.inspect(identity)
+    chrome.commands.length = 0
+    chrome.functionResult = "div \"Overlay\""
+    await assert.rejects(client.act(identity, { action: "click", ref: refOf(inspection) }), /is covered by div "Overlay"; close or move it first/)
+    assert.equal(chrome.commands.some(command => command.method === "Input.dispatchMouseEvent"), false)
+
+    chrome.functionResult = undefined
+    chrome.quads = []
+    chrome.commands.length = 0
+    await client.act(identity, { action: "click", ref: refOf(inspection) })
     assert.equal(chrome.commands.some((command) => command.method === "Input.dispatchMouseEvent"), false)
-    assert.equal(chrome.commands.find((command) => command.method === "Runtime.callFunctionOn")?.params?.objectId, "node-1")
+    assert.equal(chrome.commands.filter((command) => command.method === "Runtime.callFunctionOn").at(-1)?.params?.objectId, "node-1")
   })
 
   it("retries a failed WebSocket connection", async () => {
@@ -232,8 +269,8 @@ describe("DeveloperCdp", () => {
     chrome.sockets.at(-1)!.emit("Page.frameNavigated", { frame: { id: "main" } })
 
     await assert.rejects(
-      client.act({ ...identity, kind: "type", ref: inspection.nodes[0].ref!, text: "hello" }),
-      /stale accessibility ref/,
+      client.act(identity, { action: "type", ref: refOf(inspection), text: "hello", clear: true }),
+      /stale ref/,
     )
   })
 
@@ -244,8 +281,8 @@ describe("DeveloperCdp", () => {
     chrome.sockets.at(-1)!.close()
 
     await assert.rejects(
-      client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! }),
-      /stale accessibility ref/,
+      client.act(identity, { action: "click", ref: refOf(inspection) }),
+      /stale ref/,
     )
     assert.equal(chrome.sockets.length, 3)
   })
@@ -257,7 +294,7 @@ describe("DeveloperCdp", () => {
     chrome.context = { ...chrome.context, sessionId: "session-2" }
 
     await assert.rejects(
-      client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! }),
+      client.act(identity, { action: "click", ref: refOf(inspection) }),
       /active session changed/,
     )
     assert.equal(chrome.commands.some((command) => command.method === "Input.dispatchMouseEvent"), false)
@@ -267,11 +304,11 @@ describe("DeveloperCdp", () => {
     const chrome = new FakeChrome()
     const client = chrome.client()
     const inspection = await client.inspect(identity)
-    const oldRef = inspection.nodes[0].ref!
+    const oldRef = refOf(inspection)
     const socket = chrome.sockets.at(-1)!
     socket.onerror?.({})
 
-    await assert.rejects(client.act({ ...identity, kind: "click", ref: oldRef }), /stale accessibility ref/)
+    await assert.rejects(client.act(identity, { action: "click", ref: oldRef }), /stale ref/)
     assert.equal(socket.closed, true)
   })
 
@@ -287,7 +324,7 @@ describe("DeveloperCdp", () => {
     const client = chrome.client()
     const inspection = await client.inspect(identity)
     chrome.deferred.set("DOM.resolveNode", undefined as never)
-    const action = client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! })
+    const action = client.act(identity, { action: "click", ref: refOf(inspection) })
     while (!chrome.deferred.get("DOM.resolveNode")) await new Promise<void>((resolve) => setImmediate(resolve))
     const deferred = chrome.deferred.get("DOM.resolveNode")!
     deferred.socket.emit("Page.frameNavigated", { frame: { id: "main" } })
@@ -303,7 +340,7 @@ describe("DeveloperCdp", () => {
     const inspection = await client.inspect(identity)
 
     chrome.deferred.set("DOM.resolveNode", undefined as never)
-    const action = client.act({ ...identity, kind: "click", ref: inspection.nodes[0].ref! })
+    const action = client.act(identity, { action: "click", ref: refOf(inspection) })
     while (!chrome.deferred.get("DOM.resolveNode")) await new Promise<void>((resolve) => setImmediate(resolve))
     chrome.context = { ...chrome.context, instanceId: "workspace-2" }
     const deferred = chrome.deferred.get("DOM.resolveNode")!
@@ -322,15 +359,48 @@ describe("DeveloperCdp", () => {
     await assert.rejects(client.screenshot(identity), /exceeds 4 byte limit/)
   })
 
-  it("bounds accessibility snapshots", async () => {
+  it("bounds accessibility snapshots and says what it collapsed", async () => {
     const chrome = new FakeChrome()
-    chrome.axNodes = Array.from({ length: 800 }, (_, index) => ({
-      backendDOMNodeId: index + 1,
-      role: { value: "button" },
-      name: { value: `Button ${index}` },
-    }))
+    chrome.axNodes = [{ nodeId: "root", backendDOMNodeId: 1, role: { value: "main" }, name: { value: "" },
+      childIds: Array.from({ length: 4_000 }, (_, index) => `n${index}`) },
+    ...Array.from({ length: 4_000 }, (_, index) => ({ nodeId: `n${index}`, parentId: "root", backendDOMNodeId: index + 2,
+      role: { value: "button" }, name: { value: `Button ${index}` } }))]
     const inspection = await chrome.client().inspect(identity)
-    assert.equal(inspection.nodes.length, 750)
+    assert.ok(inspection.snapshot.length <= 33_000, `${inspection.snapshot.length} characters`)
+    assert.equal(inspection.collapsed, 1)
+    assert.match(inspection.snapshot, /- \(\+\d+ more\)/)
+    assert.match(inspection.snapshot, /"Button 0"[^\n]*\n/)
+    assert.match(inspection.snapshot, /"Button 3999" \[e\d+\]$/, "the end of the page stays visible around the gap")
+  })
+
+  it("expands a ref's subtree and keeps refs stable across inspections of the same page", async () => {
+    const chrome = new FakeChrome()
+    chrome.axNodes = [
+      { nodeId: "root", backendDOMNodeId: 1, role: { value: "main" }, childIds: ["toolbar", "dialog"] },
+      { nodeId: "toolbar", parentId: "root", backendDOMNodeId: 2, role: { value: "toolbar" }, name: { value: "Actions" }, childIds: ["save"] },
+      { nodeId: "save", parentId: "toolbar", backendDOMNodeId: 3, role: { value: "button" }, name: { value: "Save" } },
+      { nodeId: "dialog", parentId: "root", backendDOMNodeId: 4, role: { value: "dialog" }, name: { value: "Rename" }, childIds: ["field"] },
+      { nodeId: "field", parentId: "dialog", backendDOMNodeId: 5, role: { value: "textbox" }, name: { value: "Title" }, value: { value: "Old" } },
+    ]
+    const client = chrome.client()
+    const full = await client.inspect(identity)
+    const dialog = /dialog "Rename" \[(e\d+)\]/.exec(full.snapshot)![1]
+    const save = /button "Save" \[(e\d+)\]/.exec(full.snapshot)![1]
+    const scoped = await client.inspect(identity, { ref: dialog })
+    assert.equal(scoped.snapshot, `- dialog "Rename" [${dialog}]\n  - textbox "Title" [${/textbox "Title" \[(e\d+)\]/.exec(full.snapshot)![1]}] value="Old"`)
+    await client.act(identity, { action: "click", ref: save })
+    assert.match((await client.inspect(identity, { query: "save" })).snapshot, new RegExp(`button "Save" \\[${save}\\]`))
+    assert.equal(/button "Save" \[(e\d+)\]/.exec((await client.inspect(identity)).snapshot)![1], save)
+
+    // A later inspection of the same page never invalidates an earlier ref; a node that
+    // left the page is reported as such, not as a stale ref.
+    chrome.axNodes = chrome.axNodes.filter(node => !["dialog", "field"].includes(node.nodeId as string))
+    chrome.axNodes[0] = { ...chrome.axNodes[0], childIds: ["toolbar"] }
+    await client.inspect(identity)
+    await assert.rejects(client.inspect(identity, { ref: dialog }), /is no longer in the page/)
+    await client.act(identity, { action: "click", ref: dialog })
+    chrome.sockets.at(-1)!.emit("Page.frameNavigated", { frame: { id: "main" } })
+    await assert.rejects(client.act(identity, { action: "click", ref: save }), /stale ref/)
   })
 
   it("closes active target connections", async () => {

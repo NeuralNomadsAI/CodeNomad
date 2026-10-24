@@ -148,10 +148,6 @@ fn controller_with_registration() -> (BrowserController, Registration) {
         inner
             .navigation_versions
             .insert(registration.registration_id.clone(), 0);
-        inner.refs.insert(
-            registration.registration_id.clone(),
-            HashMap::from([("e1".into(), 42)]),
-        );
     }
     (controller, registration)
 }
@@ -161,6 +157,9 @@ fn only_primary_renderer_reload_disposes_its_native_browser_children() {
     let (app, owner, child) = app_with_preview();
     let (controller, registration) = controller_with_registration();
     let renderer_version = controller.renderer_version(OWNER).unwrap();
+    let lease = controller
+        .reserve_page(registration.clone(), &uuid::Uuid::new_v4().to_string())
+        .unwrap();
     let sequence = controller
         .prepare_page_load(&registration.registration_id, "https://example.com/")
         .unwrap();
@@ -185,11 +184,14 @@ fn only_primary_renderer_reload_disposes_its_native_browser_children() {
         .contains_key("preview"));
 
     controller.renderer_page_started(&owner);
+    assert!(controller
+        .check_page_state(&lease, Instant::now() + Duration::from_secs(1))
+        .is_err());
     assert!(app.get_webview(child.label()).is_none());
     assert!(app.get_webview(OWNER).is_some());
     let inner = controller.inner.0.lock().unwrap();
     assert!(!inner.registrations.contains_key("preview"));
-    assert!(!inner.refs.contains_key("preview"));
+    assert!(inner.page_leases.is_empty());
     assert!(!inner.navigation_versions.contains_key("preview"));
     assert!(!inner.page_load_expectations.contains_key("preview"));
     assert!(inner.registrations.contains_key("other-preview"));
@@ -278,9 +280,47 @@ fn fragment_completion_cannot_override_document_navigation_failure() {
 }
 
 #[test]
-fn snapshot_url_read_allows_navigation_callback_and_does_not_republish_stale_refs() {
+fn saved_history_contains_only_bounded_credential_free_urls_and_native_ids() {
+    let value = bounded_history(json!({ "currentIndex": 1, "entries": [
+        { "id": 1, "url": "about:blank", "pageState": "secret" },
+        { "id": 2, "url": "https://example.com/", "pageState": "secret" },
+        { "id": 3, "url": "https://user:secret@example.com/" },
+    ] }))
+    .unwrap();
+    assert_eq!(
+        value,
+        json!({ "entries": [{ "id": 2, "url": "https://example.com/" }], "index": 0 })
+    );
+    let entries = (0..100)
+        .map(|id| json!({ "id": id, "url": format!("https://example.com/{id}") }))
+        .collect::<Vec<_>>();
+    let result = bounded_history(json!({ "currentIndex": 50, "entries": entries })).unwrap();
+    assert_eq!(result["entries"].as_array().unwrap().len(), 32);
+    assert_eq!(result["index"], 16);
+}
+
+#[test]
+fn browser_tabs_use_one_persistent_profile_separate_from_the_application() {
+    let root = tempfile::tempdir().unwrap();
+    let browser_root = root.path().join("browser");
+    let controller = BrowserController::new(browser_root.clone());
+    assert_eq!(
+        controller.storage_directory(),
+        browser_root.join("shared-v1")
+    );
+    assert_eq!(
+        controller.clone().storage_directory(),
+        controller.storage_directory()
+    );
+    assert_ne!(controller.storage_directory(), root.path());
+}
+
+#[test]
+fn page_url_read_allows_navigation_callback_and_refuses_stale_result() {
     let (controller, registration) = controller_with_registration();
-    let version = controller.page_navigation_version("preview");
+    let lease = controller
+        .reserve_page(registration, &uuid::Uuid::new_v4().to_string())
+        .unwrap();
     let callback_controller = controller.clone();
     let (read_started, callback_ready) = std::sync::mpsc::channel();
     let (url_ready, read_url) = std::sync::mpsc::channel();
@@ -288,60 +328,192 @@ fn snapshot_url_read_allows_navigation_callback_and_does_not_republish_stale_ref
     // the synchronous URL getter. It must be able to acquire the controller lock.
     let callback = std::thread::spawn(move || {
         callback_ready.recv().unwrap();
-        callback_controller.clear_refs_for_generation("preview", 1);
+        callback_controller.invalidate_page_for_generation("preview", 1);
         let _ = url_ready.send("https://example.com/new".parse().unwrap());
     });
-    let result = controller.finish_snapshot(
-        &registration,
-        version,
-        HashMap::from([("e2".into(), 43)]),
-        || {
-            read_started.send(()).unwrap();
-            read_url
-                .recv_timeout(Duration::from_secs(2))
-                .map_err(|_| "URL getter blocked navigation callback".to_string())
-        },
-    );
+    let result = controller.finish_page(&lease, Instant::now() + Duration::from_secs(2), || {
+        read_started.send(()).unwrap();
+        read_url
+            .recv_timeout(Duration::from_secs(2))
+            .map_err(|_| "URL getter blocked navigation callback".to_string())
+    });
     callback.join().unwrap();
-    assert_eq!(result.unwrap().as_str(), "https://example.com/new");
-    assert!(!controller
-        .inner
-        .0
-        .lock()
-        .unwrap()
-        .refs
-        .contains_key("preview"));
+    assert_eq!(
+        result.unwrap_err(),
+        "Browser page lease is no longer current"
+    );
+    assert!(controller.inner.0.lock().unwrap().page_leases.is_empty());
 }
 
 #[test]
-fn snapshot_publication_requires_current_navigation_and_registration() {
+fn page_generation_survives_end_but_not_navigation_registration_or_host_replacement() {
     let (controller, registration) = controller_with_registration();
-    let refs = HashMap::from([("e2".into(), 43)]);
-    let version = controller.page_navigation_version("preview");
-    controller
-        .finish_snapshot(&registration, version, refs.clone(), || {
-            Ok("https://example.com/".parse().unwrap())
-        })
+    let operation = uuid::Uuid::new_v4().to_string();
+    let first = controller
+        .reserve_page(registration.clone(), &operation)
         .unwrap();
-    assert_eq!(controller.inner.0.lock().unwrap().refs["preview"], refs);
-
-    // A replacement may reset the navigation version to the same value. The
-    // registration generation must still prevent old snapshot publication.
-    controller
-        .finish_snapshot(&registration, version, refs, || {
+    controller.end_page("session", &operation);
+    let second = controller
+        .reserve_page(registration.clone(), &operation)
+        .unwrap();
+    assert_eq!(first.generation, second.generation);
+    controller.invalidate_page_for_generation("preview", 1);
+    assert!(controller
+        .check_page_state(&second, Instant::now() + Duration::from_secs(1))
+        .is_err());
+    let third = controller
+        .reserve_page(registration.clone(), &operation)
+        .unwrap();
+    assert_ne!(second.generation, third.generation);
+    assert!(controller
+        .finish_page(&third, Instant::now() + Duration::from_secs(1), || {
             let mut inner = controller.inner.0.lock().unwrap();
             inner.registrations.get_mut("preview").unwrap().generation += 1;
-            inner.refs.remove("preview");
+            inner.navigation_versions.insert("preview".into(), 0);
             Ok("https://example.com/replacement".parse().unwrap())
         })
+        .is_err());
+    controller.end_page("session", &operation);
+    let replacement = controller.inner.0.lock().unwrap().registrations["preview"].clone();
+    let fourth = controller.reserve_page(replacement, &operation).unwrap();
+    assert_ne!(fourth.generation, first.generation);
+    let (other_host, other_registration) = controller_with_registration();
+    let other = other_host
+        .reserve_page(other_registration, &operation)
+        .unwrap();
+    assert_ne!(other.generation, first.generation);
+}
+
+#[test]
+fn page_lease_identity_limits_expiry_and_cleanup_are_exact() {
+    let (controller, registration) = controller_with_registration();
+    let operation = uuid::Uuid::new_v4().to_string();
+    let lease = controller
+        .reserve_page(registration.clone(), &operation)
+        .unwrap();
+    assert!(controller
+        .reserve_page(registration.clone(), &operation)
+        .is_err());
+    assert!(controller
+        .reserve_page(registration.clone(), &uuid::Uuid::new_v4().to_string())
+        .is_err());
+    let identity =
+        json!({ "sessionID": "session", "operationID": operation, "generation": lease.generation });
+    assert!(controller.page_lease(&identity).is_ok());
+    for (key, value) in [
+        ("sessionID", "foreign"),
+        ("generation", "stale"),
+        ("operationID", "missing"),
+    ] {
+        let mut invalid = identity.clone();
+        invalid[key] = json!(value);
+        assert!(controller.page_lease(&invalid).is_err());
+    }
+    controller.end_page("foreign", &operation);
+    assert!(controller
+        .check_page_state(&lease, Instant::now() + Duration::from_secs(1))
+        .is_ok());
+    assert!(controller.check_page_state(&lease, Instant::now()).is_err());
+    for index in 1..32 {
+        let mut next = registration.clone();
+        next.registration_id = format!("preview-{index}");
+        next.webview_label = next.registration_id.clone();
+        {
+            let mut inner = controller.inner.0.lock().unwrap();
+            inner
+                .registrations
+                .insert(next.registration_id.clone(), next.clone());
+            inner
+                .navigation_versions
+                .insert(next.registration_id.clone(), 0);
+        }
+        controller
+            .reserve_page(next, &uuid::Uuid::new_v4().to_string())
+            .unwrap();
+    }
+    let mut overflow = registration.clone();
+    overflow.registration_id = "overflow".into();
+    overflow.webview_label = "browser-overflow".into();
+    {
+        let mut inner = controller.inner.0.lock().unwrap();
+        inner
+            .registrations
+            .insert("overflow".into(), overflow.clone());
+        inner.navigation_versions.insert("overflow".into(), 0);
+    }
+    assert!(controller
+        .reserve_page(overflow.clone(), &uuid::Uuid::new_v4().to_string())
+        .is_err());
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .page_leases
+        .get_mut(&operation)
+        .unwrap()
+        .expires = Instant::now();
+    assert!(controller
+        .check_page_state(&lease, Instant::now() + Duration::from_secs(1))
+        .is_err());
+    controller
+        .reserve_page(overflow, &uuid::Uuid::new_v4().to_string())
         .unwrap();
     assert!(!controller
         .inner
         .0
         .lock()
         .unwrap()
-        .refs
-        .contains_key("preview"));
+        .page_leases
+        .contains_key(&operation));
+    controller.end_page("session", &operation);
+    controller.end_page("session", "unknown");
+}
+
+#[test]
+fn page_lease_refuses_hidden_targets_and_renderer_disposal() {
+    let (controller, registration) = controller_with_registration();
+    let operation = uuid::Uuid::new_v4().to_string();
+    let lease = controller
+        .reserve_page(registration.clone(), &operation)
+        .unwrap();
+    controller
+        .inner
+        .0
+        .lock()
+        .unwrap()
+        .registrations
+        .get_mut("preview")
+        .unwrap()
+        .visible = false;
+    assert!(controller
+        .check_page_state(&lease, Instant::now() + Duration::from_secs(1))
+        .is_err());
+    controller.end_page("session", &operation);
+    assert!(controller.reserve_page(registration, &operation).is_err());
+}
+
+#[test]
+fn page_channel_is_private_native_routing_not_a_renderer_command() {
+    let main = include_str!("main.rs");
+    let native = main
+        .split("pub(crate) fn handle_native_request")
+        .nth(1)
+        .unwrap()
+        .split("#[tauri::command]")
+        .next()
+        .unwrap();
+    for method in [
+        "browser.page.begin",
+        "browser.page.send",
+        "browser.page.check",
+        "browser.page.end",
+    ] {
+        assert!(native.contains(method));
+        assert_eq!(main.matches(method).count(), 1);
+    }
+    let capabilities = include_str!("../capabilities/main-window.json");
+    assert!(!capabilities.contains("browser.page"));
 }
 
 #[cfg(windows)]

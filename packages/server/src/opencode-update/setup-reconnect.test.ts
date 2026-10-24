@@ -16,14 +16,14 @@ test("optional setup rebinds real workspace ownership without restarting the sup
   const parent = path.join(os.tmpdir(), "opencode")
   await mkdir(parent, { recursive: true })
   const root = await mkdtemp(path.join(parent, "codenomad-setup-reconnect-"))
-  const originalBinary = path.join(root, "2.0.11", "opencode.exe")
-  const installedBinary = path.join(root, "2.0.12", "opencode.exe")
+  const originalBinary = path.join(root, "2.1.2", "opencode.exe")
+  const installedBinary = path.join(root, "2.1.3", "opencode.exe")
   let selected = originalBinary
   let starts = 0
   let restarts = 0
   let reloads = 0
   const endpoint: Endpoint = { url: "http://127.0.0.1:1" }
-  rememberRuntime(endpoint, { version: "2.0.11", pid: 123, discovery: "info" })
+  rememberRuntime(endpoint, { version: "2.1.2", pid: 123, discovery: "info" })
   const lifecycle: OpenCodeServiceLifecycle = {
     discover: async () => endpoint,
     ensure: async () => { starts++; throw new Error("The existing daemon must not be started again") },
@@ -52,12 +52,12 @@ test("optional setup rebinds real workspace ownership without restarting the sup
   })
   const updater = new OpenCodeUpdateService({
     resolveBinary: () => ({ path: selected, label: "Fixture OpenCode" }),
-    probeBinary: binary => ({ valid: true, version: binary === installedBinary ? "2.0.12" : "2.0.11" }),
-    resolveLatestVersion: async () => "2.0.12",
+    probeBinary: binary => ({ valid: true, version: binary === installedBinary ? "2.1.3" : "2.1.2" }),
+    resolveLatestVersion: async () => "2.1.3",
     canUpgradeBinary: () => true,
     upgradeBinary: async () => {
       selected = installedBinary
-      return { success: true, version: "2.0.12" }
+      return { success: true, version: "2.1.3" }
     },
     lifecycle: async binary => (await manager.setupServiceOptions(binary.path)).lifecycle,
     admitActivation: binary => manager.assertSetupExecutionHost(binary.path),
@@ -78,8 +78,8 @@ test("optional setup rebinds real workspace ownership without restarting the sup
 
     const status = await updater.start(false)
     assert.equal(status.state, "ready")
-    assert.equal(status.currentVersion, "2.0.12")
-    assert.equal(status.daemonVersion, "2.0.11")
+    assert.equal(status.currentVersion, "2.1.3")
+    assert.equal(status.daemonVersion, "2.1.2")
     assert.equal(status.serviceState, "restart_available")
     assert.equal(status.canRestart, true, "non-disruptive reconnect retains explicit activation")
     assert.throws(() => originalConnection.assertCurrent(), /OpenCode connection changed/)

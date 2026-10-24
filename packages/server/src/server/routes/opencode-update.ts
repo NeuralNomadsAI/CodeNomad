@@ -4,13 +4,15 @@ import { OpenCodeUpdateError, type OpenCodeUpdateService } from "../../opencode-
 import { z } from "zod"
 import { InstallationBusyError } from "../../opencode-update/installation-lock"
 
+const legacyConsent = z.object({ path: z.string().min(1).max(4096), version: z.string().regex(/^\d+\.\d+\.\d+$/) }).strict()
+
 interface RouteDeps {
   service: OpenCodeUpdateService
   logger: Logger
 }
 
 function statusCode(error: OpenCodeUpdateError): number {
-  if (error.code === "unsupported_binary") return 409
+  if (error.code === "unsupported_binary" || error.code === "legacy_replacement_required") return 409
   if (error.code === "binary_unavailable") return 422
   return 502
 }
@@ -32,9 +34,11 @@ export function registerOpenCodeUpdateRoutes(app: FastifyInstance, deps: RouteDe
       return reply.code(502).send({ error: "service_activation_failed" })
     }
   })
-  app.get("/api/opencode/update", async (_request, reply) => {
+  app.get("/api/opencode/update", async (request, reply) => {
     try {
-      return await deps.service.getStatus()
+      // `recheck=1` marks the explicit user check, which refreshes cached probes.
+      const recheck = (request.query as { recheck?: unknown } | undefined)?.recheck === "1"
+      return await (recheck ? deps.service.getStatus({ recheck }) : deps.service.getStatus())
     } catch (error) {
       deps.logger.warn({ err: error }, "Failed to check OpenCode update status")
       const failure = requestError(error, "update_check_failed")
@@ -43,9 +47,12 @@ export function registerOpenCodeUpdateRoutes(app: FastifyInstance, deps: RouteDe
     }
   })
 
-  app.post("/api/opencode/update", async (_request, reply) => {
+  app.post("/api/opencode/update", async (request, reply) => {
     try {
-      return await deps.service.upgrade()
+      // Only an explicit confirmation naming the exact OpenCode 1.x installation
+      // may remove it from npm; the service rechecks that identity under the lock.
+      const parsed = legacyConsent.safeParse((request.body as { replaceLegacy?: unknown } | undefined)?.replaceLegacy)
+      return await deps.service.upgrade(parsed.success ? { replaceLegacy: parsed.data } : {})
     } catch (error) {
       deps.logger.warn({ err: error }, "Failed to update OpenCode")
       const failure = requestError(error, "upgrade_failed")

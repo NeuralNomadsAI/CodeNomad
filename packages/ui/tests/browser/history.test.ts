@@ -39,7 +39,8 @@ test("search derives page progress from search responses without a separate coun
       if (!input.cursor) result.cursor = "1"
       else {
         if (input.sessionID && scan === 2) await pauseScan
-        result.hits = [{ sessionID: input.sessionID ?? `other-session-${scan}`, messageID: `unloaded-${scan}`, role: "assistant", partIndex: 0, kind: "text", excerpt: input.sessionID ? `Old needle answer ${scan}` : `Workspace needle answer ${scan}` }]
+        // Workspace hits come two per session, so results group by conversation.
+        result.hits = [{ sessionID: input.sessionID ?? `other-session-${Math.ceil(scan / 2)}`, messageID: `unloaded-${scan}`, role: "assistant", partIndex: 0, kind: "text", excerpt: input.sessionID ? `Old needle answer ${scan}` : `Workspace needle answer ${scan}` }]
         result.cursor = scan < 34 ? String(scan + 1) : null
       }
     }
@@ -69,12 +70,26 @@ test("search derives page progress from search responses without a separate coun
     await page.getByText("Old needle answer 34", { exact: true }).waitFor()
     await page.getByText("This page: 2 results · 64 messages scanned", { exact: true }).waitFor()
     assert.equal(await page.getByText("Old needle answer 1", { exact: true }).count(), 0, "result pages remain bounded")
+    assert.equal(await page.locator(".history-search-session").count(), 0, "session scope needs no conversation headers")
+    assert.doesNotMatch(await page.locator(".history-search-results").innerText(), /unloaded-|other-session-/, "rows never show raw native IDs")
     await page.getByRole("combobox", { name: "Search scope" }).selectOption("workspace")
     await page.getByText("Workspace needle answer 1", { exact: true }).waitFor()
     await page.getByText("Workspace needle answer 32", { exact: true }).waitFor()
     await page.getByText("This page: 32 results · 1056 messages scanned", { exact: true }).waitFor()
     assert.equal(await page.locator(".history-search-result").count(), 32, "workspace results span many sessions and scan batches")
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.snapshot()), { ids: ["resident"], loads: 0, previewReads: [] })
+    // Each consecutive session group names its conversation and current worktree branch.
+    const headers = page.locator(".history-search-session")
+    assert.equal(await headers.count(), 16)
+    await page.getByText("Conversation 16", { exact: true }).waitFor()
+    assert.match(await headers.nth(0).innerText(), /Conversation 1\s*dev/)
+    assert.match(await headers.nth(1).innerText(), /Conversation 2\s*feature\/search/)
+    assert.equal((await headers.nth(2).innerText()).trim(), "Session unavailable", "a failed read names no worktree")
+    assert.equal(await page.locator(".history-search-result").first().getAttribute("aria-describedby"), await headers.nth(0).getAttribute("id"))
+    const labelReads = await page.evaluate(() => (window as any).fixture.sessionReads())
+    assert.deepEqual([...labelReads.reads].sort(), Array.from({ length: 16 }, (_, index) => `other-session-${index + 1}`).sort(), "one read per conversation")
+    assert.ok(labelReads.peak <= 4, `label reads stay bounded (peak ${labelReads.peak})`)
+    assert.doesNotMatch(await page.locator(".history-search-results").innerText(), /unloaded-|other-session-/)
     await page.getByText("Workspace needle answer 1", { exact: true }).click()
     await page.getByText("Full selected historical message", { exact: true }).waitFor()
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.snapshot()), { ids: ["resident"], loads: 0, previewReads: ["unloaded-1"] })
@@ -99,6 +114,17 @@ test("search derives page progress from search responses without a separate coun
     await page.getByText("This page:", { exact: false }).waitFor({ state: "hidden" })
     assert(requests.every(input => input.purpose === "search"), "search never starts a separate statistics traversal")
     assert(requests.some(input => input.includeTechnical === true && input.query === "needle"))
+    // Opening another conversation hydrates only it and anchors its transcript at the hit.
+    await page.getByRole("searchbox").fill("needle")
+    await page.getByText("Workspace needle answer 3", { exact: true }).click()
+    const preview = page.locator(".history-message-preview")
+    await preview.getByText("feature/search", { exact: true }).waitFor()
+    await preview.getByText("3h ago", { exact: true }).waitFor()
+    assert.equal(await page.evaluate(() => (window as any).fixture.showDestinationPreview()), "preview")
+    await preview.getByRole("button", { name: "Open in session" }).click()
+    await page.waitForFunction(() => (window as any).fixture.opened().active === "other-session-2")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.opened()), { active: "other-session-2", anchor: "unloaded-3", surface: "chat" },
+      "opening returns a destination left on its browser preview to the transcript")
     await page.evaluate(() => (window as any).fixture.deactivate())
     await page.getByRole("searchbox").waitFor({ state: "hidden" })
     assert.deepEqual(errors, [])

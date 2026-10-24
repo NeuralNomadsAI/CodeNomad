@@ -1,7 +1,10 @@
-import { createSignal } from "solid-js"
+import { createSignal, Show } from "solid-js"
 import { render } from "solid-js/web"
 import PromptInput from "../../../src/components/prompt-input"
-import { ConfigProvider } from "../../../src/stores/preferences"
+import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
+import FolderSelectionView from "../../../src/components/folder-selection-view"
+import { showFolderSelection, setShowFolderSelection } from "../../../src/stores/ui"
+import { setHotkeyRecording } from "../../../src/lib/hotkeys"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { getRootClient } from "../../../src/stores/opencode-client"
@@ -26,13 +29,24 @@ setSessions(new Map([[instanceId, new Map([
 ])]]))
 function Fixture() {
   useAppLifecycle({
-    setEscapeInDebounce: () => {}, handleNewInstanceRequest: () => {}, handleCloseActiveTab: async () => {},
-    handleNewSession: async () => {}, handleCloseSession: async () => {}, showFolderSelection: () => false,
-    setShowFolderSelection: () => {}, getActiveInstance: () => instances().get(instanceId)!,
+    setEscapeInDebounce: () => {}, handleNewInstanceRequest: () => setShowFolderSelection(true), handleCloseActiveTab: async () => {},
+    handleNewSession: async () => {}, handleCloseSession: async () => {}, showFolderSelection,
+    setShowFolderSelection, getActiveInstance: () => instances().get(instanceId)!,
     getActiveSessionIdForInstance: selected,
   })
-  return <PromptInput instanceId={instanceId} instanceFolder="/fixture" sessionId={selected()} isActive={true}
-    isSessionBusy={true} onAbortSession={() => abortSession(instanceId, selected())} onSend={async () => {}} />
+  return <>
+    <Show when={!showFolderSelection()}>
+      <PromptInput instanceId={instanceId} instanceFolder="/fixture" sessionId={selected()} isActive={true}
+        isSessionBusy={true} onAbortSession={() => abortSession(instanceId, selected())} onSend={async () => {}} />
+    </Show>
+    <Show when={showFolderSelection()}>
+      <FolderSelectionView onSelectFolder={() => {}} onSelectExistingInstance={() => {}}
+        onClose={() => setShowFolderSelection(false)} />
+    </Show>
+  </>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-;(window as any).fixture = { select: setSelected, sessionCount: () => sessions().get(instanceId)?.size }
+;(window as any).fixture = {
+  select: setSelected, selected, sessionCount: () => sessions().get(instanceId)?.size,
+  setRecording: setHotkeyRecording, setPreferences: updatePreferences,
+}

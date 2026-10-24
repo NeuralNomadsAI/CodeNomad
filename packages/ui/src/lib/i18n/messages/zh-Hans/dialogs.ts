@@ -1,6 +1,8 @@
 export const dialogMessages = {
   "authRecovery.title": "重新登录 CodeNomad",
   "authRecovery.description": "你的 CodeNomad 登录已失效。这可能发生在服务器重启之后。请重新登录以恢复连接。",
+  "authRecovery.pairing": "此设备已不再与 CodeNomad 配对。请在主机上打开 设置 → 远程访问，创建新的配对链接并在此设备上打开，然后重新检查。",
+  "authRecovery.pairingTitle": "重新配对此设备",
   "authRecovery.drafts": "此页面将保持打开以保留草稿。重新连接后，请重试失败的操作。",
   "authRecovery.username": "用户名",
   "authRecovery.password": "密码",

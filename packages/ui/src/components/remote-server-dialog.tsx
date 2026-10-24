@@ -1,6 +1,6 @@
 import { Dialog } from "@kobalte/core/dialog"
 import { Loader2 } from "lucide-solid"
-import { createEffect, createSignal, Show, type Component } from "solid-js"
+import { createEffect, createSignal, createUniqueId, Show, type Component } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import type { RemoteServerInput } from "../lib/hooks/use-remote-server-profiles"
 
@@ -17,6 +17,7 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
   const [skipTlsVerify, setSkipTlsVerify] = createSignal(false)
   const [error, setError] = createSignal<string | null>(null)
   const [busy, setBusy] = createSignal(false)
+  const urlHintId = createUniqueId()
 
   createEffect(() => {
     if (!props.open) return
@@ -54,10 +55,13 @@ export const RemoteServerDialog: Component<RemoteServerDialogProps> = (props) =>
               <span>{t("folderSelection.servers.dialog.name")}</span>
               <input class="selector-input w-full" value={name()} onInput={(event) => setName(event.currentTarget.value)} placeholder={t("folderSelection.servers.dialog.namePlaceholder")} />
             </label>
-            <label class="flex flex-col gap-2 text-sm text-secondary">
-              <span>{t("folderSelection.servers.dialog.url")}</span>
-              <input class="selector-input w-full" value={baseUrl()} onInput={(event) => setBaseUrl(event.currentTarget.value)} placeholder={t("folderSelection.servers.dialog.urlPlaceholder")} />
-            </label>
+            <div class="flex flex-col gap-2 text-sm text-secondary">
+              <label class="flex flex-col gap-2">
+                <span>{t("folderSelection.servers.dialog.url")}</span>
+                <input class="selector-input w-full" value={baseUrl()} onInput={(event) => setBaseUrl(event.currentTarget.value)} placeholder={t("folderSelection.servers.dialog.urlPlaceholder")} aria-describedby={urlHintId} />
+              </label>
+              <span id={urlHintId} class="text-xs">{t("folderSelection.servers.dialog.urlHint")}</span>
+            </div>
             <label class="flex items-start gap-3 text-sm text-secondary">
               <input type="checkbox" checked={skipTlsVerify()} onChange={(event) => setSkipTlsVerify(event.currentTarget.checked)} />
               <span>{t("folderSelection.servers.dialog.skipTls")}</span>

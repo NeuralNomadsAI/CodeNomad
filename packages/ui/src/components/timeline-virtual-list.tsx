@@ -1,4 +1,6 @@
-import { For, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
+import { For, createEffect, createMemo, createSignal, onCleanup, untrack, type JSX } from "solid-js"
+import { trackHeightDelta } from "../lib/height-delta"
+import { getBottomAnchoredViewportOffset } from "./virtual-follow-behavior"
 
 export interface TimelineListHandle {
   scrollToIndex: (index: number) => void
@@ -6,7 +8,7 @@ export interface TimelineListHandle {
 
 /** Timeline markers have known geometry, unlike transcript messages. Measure
  * the two CSS primitives once and give the native scrollbar the exact extent,
- * including offscreen group gaps. No estimated or zero-height hidden rows. */
+ * including offscreen gaps. No estimated or zero-height hidden rows. */
 export default function TimelineVirtualList<T>(props: {
   items: T[]
   gap: (item: T) => number
@@ -53,13 +55,19 @@ export default function TimelineVirtualList<T>(props: {
       if (next.marker > 0 && (next.marker !== size().marker || next.gap !== size().gap)) setSize(next)
       readViewport()
     }
-    const observer = new ResizeObserver(measure)
+    // A resized rail keeps its bottom marker in place.
+    const bottomAnchor = trackHeightDelta(element, delta => {
+      element.scrollTop = Math.min(getBottomAnchoredViewportOffset(element.scrollTop, delta), Math.max(element.scrollHeight - element.clientHeight, 0))
+    })
+    const observer = new ResizeObserver(() => { bottomAnchor.update(); measure() })
     observer.observe(element)
     observer.observe(marker)
     observer.observe(gap)
     element.addEventListener("scroll", readViewport, { passive: true })
-    measure()
-    onCleanup(() => { observer.disconnect(); element.removeEventListener("scroll", readViewport) })
+    // Untracked: a marker geometry change must not rebuild this observer, which
+    // also owns the bottom anchor and would drop its pending delta.
+    untrack(measure)
+    onCleanup(() => { observer.disconnect(); bottomAnchor.dispose(); element.removeEventListener("scroll", readViewport) })
   })
   props.register({ scrollToIndex: index => {
     const element = props.scrollElement, row = layout().rows[index]

@@ -2,7 +2,7 @@ import { Index, Show, createMemo } from "solid-js"
 import type { ToolRenderer } from "../types"
 import { defaultRenderer } from "./default"
 import { executeData, executeSummary } from "./execute-data"
-import { ensureMarkdownContent, formatUnknownForCopy, formatUnknownForRender, limitToolOutputForRender, limitToolTitleForRender } from "../utils"
+import { formatUnknownForCopy, formatUnknownForRender, hasVisibleText, limitToolTitleForRender } from "../utils"
 import { getDefaultToolSearchText } from "../search-text"
 
 export const executeRenderer: ToolRenderer = {
@@ -20,11 +20,11 @@ export const executeRenderer: ToolRenderer = {
   getOutputChrome: defaultRenderer.getOutputChrome,
   renderBody(context) {
     const data = createMemo(() => executeData(context.toolState()))
-    const markdown = (text: string, language: string, key: string) => context.renderMarkdown({
-      content: ensureMarkdownContent(limitToolOutputForRender(text), language, true) ?? "",
+    const markdown = (text: string, language: string, key: string) => hasVisibleText(text) ? context.renderMarkdown({
+      content: text, codeLanguage: language,
       cacheKey: `execute-${key}`, disableHighlight: context.toolState()?.status === "running",
       wrap: context.outputWrapEnabled?.() ?? true,
-    })
+    }) : null
     return <div class="tool-call-execute">
       <Show when={data().code}>{code => <section aria-label={context.t("toolCall.execute.script")}>
         {markdown(code(), "javascript", "script")}

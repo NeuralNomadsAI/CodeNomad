@@ -4,13 +4,12 @@ export function registerAgentShortcuts(
   focusModelSelector: () => void,
   openAgentSelector: () => void,
   focusVariantSelector: () => void,
+  condition: () => boolean = () => true,
 ) {
-  const isMac = () => navigator.platform.toLowerCase().includes("mac")
 
   keyboardRegistry.register({
     id: "focus-model",
-    key: "M",
-    modifiers: { ctrl: !isMac(), meta: isMac(), shift: true },
+    condition,
     handler: focusModelSelector,
     description: "focus model",
     context: "global",
@@ -18,8 +17,7 @@ export function registerAgentShortcuts(
 
   keyboardRegistry.register({
     id: "open-agent-selector",
-    key: "A",
-    modifiers: { ctrl: !isMac(), meta: isMac(), shift: true },
+    condition,
     handler: openAgentSelector,
     description: "open agent",
     context: "global",
@@ -27,10 +25,10 @@ export function registerAgentShortcuts(
 
   keyboardRegistry.register({
     id: "focus-variant",
-    key: "T",
-    modifiers: { ctrl: !isMac(), meta: isMac(), shift: true },
+    condition,
     handler: focusVariantSelector,
     description: "focus thinking",
     context: "global",
   })
+  return () => ["focus-model", "open-agent-selector", "focus-variant"].forEach(id => keyboardRegistry.unregister(id))
 }

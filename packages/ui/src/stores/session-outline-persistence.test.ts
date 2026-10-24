@@ -1,13 +1,13 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { hasCompleteOutlineToolMetadata, normalizePersistedOutline, normalizeOutlineIndexes, outlineBudget } from "./session-outline-persistence"
+import { hasCompleteOutlineMetadata, normalizePersistedOutline, normalizeOutlineIndexes, outlineBudget } from "./session-outline-persistence"
 import { canonicalJson, decodeClientSnapshotV2, encodeClientSnapshotV2, canCommitClientSnapshotV2 } from "./client-state-partitions"
 import type { ClientSnapshotV1, RestorableWorkspaceTabState } from "./client-state-codec"
 
 function index(count = 20000) {
   return normalizePersistedOutline({ format: 1, directory: "/repo", projectID: "p",
     entries: Array.from({ length: count }, (_, seq) => ({ id: `message-${seq}`, seq, type: "assistant", tools: seq % 2,
-      reasoning: 1, ...(seq % 2 ? { toolName: "shell" } : {}) })),
+      reasoning: 1, text: seq % 3 ? 1 : 0, ...(seq % 2 ? { toolName: "shell" } : {}), layout: `R${seq % 3 ? "T" : ""}${seq % 2 ? "X" : ""}` })),
     checkpoints: Array.from({ length: Math.ceil(count / 512) }, (_, chunk) => ({ after: chunk * 512 - 1,
       through: Math.min(count, (chunk + 1) * 512) - 1, digest: "a".repeat(64) })),
   })!
@@ -51,10 +51,30 @@ test("a missing or corrupt optional index chunk preserves the selected session, 
 test("index normalization bounds optional storage, rejects invalid ordering and never stores excerpts", () => {
   const valid = index(2)
   assert.equal(normalizePersistedOutline(valid), valid, "verified immutable indexes avoid repeated traversal on capture")
-  assert(hasCompleteOutlineToolMetadata(valid))
+  assert(hasCompleteOutlineMetadata(valid))
+  assert.deepEqual(valid.entries.map(entry => entry.text), [0, 1])
   const legacy = normalizePersistedOutline({ ...valid,
     entries: valid.entries.map(({ toolName: _, ...entry }) => entry) })!
-  assert.equal(hasCompleteOutlineToolMetadata(legacy), false, "older indexes trigger one native metadata refresh")
+  assert.equal(hasCompleteOutlineMetadata(legacy), false, "older indexes trigger one native metadata refresh")
+  const textless = normalizePersistedOutline({ ...valid, entries: valid.entries.map(({ text: _, ...entry }) => entry) })!
+  assert.equal(hasCompleteOutlineMetadata(textless), false, "indexes saved before text counts refresh once too")
+  assert.deepEqual(valid.entries.map(entry => entry.layout), ["R", "RTX"])
+  const unordered = normalizePersistedOutline({ ...valid, entries: valid.entries.map(({ layout: _, ...entry }) => entry) })!
+  assert.equal(hasCompleteOutlineMetadata(unordered), false, "indexes saved before part layouts refresh once too")
+  assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, layout: "RTQ" })) }), undefined)
+  const bounded = (fields: Record<string, unknown>) => normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, ...fields })) })
+  const long = `R${"X".repeat(499)}-${"X".repeat(499)}T`
+  const omitted = { reasoning: 2, text: 1, continues: true }
+  assert.equal(bounded({ layout: "RTX".repeat(333) })?.entries[0].layout?.length, 999, "a step's whole display window is listed")
+  assert.deepEqual(bounded({ layout: long, omitted })?.entries.map(entry => entry.omitted), [omitted, omitted],
+    "a layout around omitted parts keeps the runs that start among them")
+  assert.equal(bounded({ layout: long }), undefined, "a layout around omitted parts needs their runs for native ordinals")
+  assert.equal(bounded({ omitted }), undefined)
+  assert.equal(bounded({ layout: long, omitted: { reasoning: -1, text: 0, continues: false } }), undefined)
+  assert.equal(bounded({ layout: long, omitted: { reasoning: 0, text: 0 } }), undefined)
+  assert.equal(bounded({ layout: "X".repeat(1001) }), undefined, "no display window lists more than 1,000 parts")
+  assert.equal(bounded({ layout: `${"X".repeat(501)}-T`, omitted }), undefined)
+  assert.equal(normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, text: -1 })) }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, entries: [valid.entries[1], valid.entries[0]] }), undefined)
   assert.equal(normalizePersistedOutline({ ...valid, checkpoints: [{ after: 0, through: 1, digest: "a".repeat(64) }] }), undefined)
   const sanitized = normalizePersistedOutline({ ...valid, entries: valid.entries.map(entry => ({ ...entry, preview: "do not persist bodies" })) })!

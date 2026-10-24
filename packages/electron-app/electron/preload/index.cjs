@@ -1,4 +1,4 @@
-const { contextBridge, ipcRenderer, webUtils } = require("electron")
+const { contextBridge, ipcRenderer, webFrame, webUtils } = require("electron")
 
 function resolveWindowContext() {
   const prefix = "--codenomad-window-context="
@@ -48,6 +48,8 @@ const localElectronAPI = {
     return () => ipcRenderer.removeListener("menu:action", handler)
   },
   showTitlebarMenu: (menu, x, y) => ipcRenderer.invoke("menu:popup", menu, x, y),
+  // The page zoom the window applies; the macOS title bar undoes it.
+  getZoomFactor: () => webFrame.getZoomFactor(),
   getPathForFile: (file) => {
     try {
       return webUtils.getPathForFile(file)
@@ -58,6 +60,7 @@ const localElectronAPI = {
   requestMicrophoneAccess: () => ipcRenderer.invoke("media:requestMicrophoneAccess"),
   setWakeLock: (enabled) => ipcRenderer.invoke("power:setWakeLock", Boolean(enabled)),
   showNotification: (payload) => ipcRenderer.invoke("notifications:show", payload),
+  setNotificationBadge: (count) => ipcRenderer.invoke("notifications:setBadge", count),
   openRemoteWindow: (payload) => ipcRenderer.invoke("remote:openWindow", payload),
   openPreferences: (section, context, toggle, resume) => ipcRenderer.invoke("preferences:open", section, context, Boolean(toggle), Boolean(resume)),
   minimizeWindow: () => ipcRenderer.invoke("preferences:minimize"),
@@ -71,8 +74,13 @@ const localElectronAPI = {
   setClientStateRestoreEnabled: (token, enabled) =>
     ipcRenderer.invoke("client-state:setRestoreEnabled", token, Boolean(enabled)),
   clearClientState: (token) => ipcRenderer.invoke("client-state:clear", token),
+  listOtherDataProfiles: () => ipcRenderer.invoke("data-profiles:listOthers"),
+  deleteOtherDataProfiles: (ids) => ipcRenderer.invoke("data-profiles:deleteOthers", ids),
+  setNextLaunchDataProfile: (name) => ipcRenderer.invoke("data-profiles:setNextLaunch", name),
+  relaunchIntoNextDataProfile: () => ipcRenderer.invoke("data-profiles:relaunch"),
   registerBrowserTarget: (payload) => ipcRenderer.invoke("browser-target:register", payload),
   emulateBrowserTarget: (registrationId, preset) => ipcRenderer.invoke("browser-target:emulate", registrationId, preset),
+  browserTargetHistory: (guestWebContentsId, entryId) => ipcRenderer.invoke("browser-target:history", guestWebContentsId, entryId),
   unregisterBrowserTarget: (registrationId) => ipcRenderer.invoke("browser-target:unregister", registrationId),
   claimBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:claimOpen", requestId),
   releaseBrowserOpen: (requestId) => ipcRenderer.invoke("browser-target:releaseOpen", requestId),
@@ -87,6 +95,7 @@ const remoteElectronAPI = {
   requestMicrophoneAccess: localElectronAPI.requestMicrophoneAccess,
   setWakeLock: localElectronAPI.setWakeLock,
   showNotification: localElectronAPI.showNotification,
+  setNotificationBadge: localElectronAPI.setNotificationBadge,
 }
 
 const preferencesElectronAPI = {
@@ -97,11 +106,17 @@ const preferencesElectronAPI = {
   openDialog: localElectronAPI.openDialog,
   showNotification: localElectronAPI.showNotification,
   openRemoteWindow: localElectronAPI.openRemoteWindow,
+  getZoomFactor: localElectronAPI.getZoomFactor,
   getPreferencesSection: () => ipcRenderer.invoke("preferences:getSection"),
   getPreferencesRequest: () => ipcRenderer.invoke("preferences:getSection"),
   preferencesReady: () => ipcRenderer.invoke("preferences:ready"),
   acceptPreferencesRequest: (request) => ipcRenderer.invoke("preferences:acceptRequest", request),
   resolvePreferencesTransition: (id, approved) => ipcRenderer.invoke("preferences:resolveTransition", id, approved),
+  openerStartupState: (command, epoch) => ipcRenderer.invoke("preferences:openerStartupState", command, epoch),
+  listOtherDataProfiles: localElectronAPI.listOtherDataProfiles,
+  deleteOtherDataProfiles: localElectronAPI.deleteOtherDataProfiles,
+  setNextLaunchDataProfile: localElectronAPI.setNextLaunchDataProfile,
+  relaunchIntoNextDataProfile: localElectronAPI.relaunchIntoNextDataProfile,
   onPreferencesSection: (callback) => {
     const handler = (_event, section) => callback(section)
     ipcRenderer.on("preferences:section", handler)

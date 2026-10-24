@@ -1,4 +1,9 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
+import type { MissionRecurrenceSnapshot } from "../../../server/src/api-types"
+import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
+import { recurrenceControlStatusInput, readRecurrenceControlResult, type RecurrenceControlStatus, type RecurrenceControlIntent } from "./mission-recurrence-control"
+import type { MissionPreferenceExpectation } from "./mission-preferences-document"
 import type { GitHistoryPage, GitCommitDetails, GitCommitDiff } from "../../../server/src/api-types"
 import type { NavigationTarget, NavigationWindowResult, OutlineResult, OutlinePreviewResult, OutlineCheckpoint } from "../../../server/src/opencode/session-pruning/navigation-contract"
 import type {
@@ -14,6 +19,9 @@ import type {
   FileSystemFileContentResponse,
   FileSystemListResponse,
   InstanceData,
+  MissionListResponse,
+  MissionRecurrenceReadPage,
+  MissionMap,
   OpenCodeUpdateResponse,
   OpenCodeUpdateStatus,
   SpeechCapabilitiesResponse,
@@ -32,6 +40,10 @@ import type {
   RemoteProxySessionCreateResponse,
   RemoteServerProbeRequest,
   RemoteServerProbeResponse,
+  RemoteControlDevice,
+  RemoteControlPairing,
+  RemoteControlStartResponse,
+  RemoteControlStatus,
   YoloStateResponse,
   WorkspaceCloneRequest,
   WorkspaceCloneResponse,
@@ -61,8 +73,13 @@ import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
 import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
+import { deleteMissionRequest, type MissionDeletionRequest } from "./mission-cleanup"
+import { missionMutationRequest } from "./mission-mutation"
+import { missionLifecycleRequest } from "./mission-lifecycle-request"
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
+import { backgroundReads } from "./background-read-queue"
+import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
 const EVENTS_URL = buildEventsUrl(API_BASE, DEFAULT_EVENTS_PATH)
@@ -82,6 +99,15 @@ function buildEventsUrl(base: string | undefined, path: string): string {
 
 const httpLogger = getLogger("api")
 const sseLogger = getLogger("sse")
+
+// Secondary panel (plugin controls) and timeline reads share the bounded
+// background budget, so they never take the browser connections needed by the
+// selected transcript and its metadata during startup. Provider usage stays
+// direct (superseded reads are fenced, not cancelled), as does the OpenCode
+// status read that Restart/Start await, so a stalled daemon read cannot hold it.
+function secondaryRead<T>(signal: AbortSignal | undefined, read: () => Promise<T>, priority: "normal" | "visible" = "visible"): Promise<T> {
+  return backgroundReads.run(signal ?? new AbortController().signal, read, priority)
+}
 
 function normalizeHeaders(headers: HeadersInit | undefined): Record<string, string> {
   const output: Record<string, string> = {}
@@ -145,9 +171,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   try {
     const response = await authenticatedFetch(url, { ...init, headers, credentials: init?.credentials ?? "include" })
     if (!response.ok) {
+      const body = await response.clone().json().catch(() => undefined)
+      const code = typeof body?.code === "string" && body.code.length <= 100 ? body.code : undefined
       const message = await readErrorMessage(response)
       logHttp(`${method} ${path} -> ${response.status}`, { durationMs: Date.now() - startedAt, error: message })
-      throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"))
+      throw new HttpResponseError(message || `Request failed with ${response.status}`, response.status, response.headers.get("Retry-After"), code, body)
     }
     const duration = Date.now() - startedAt
     logHttp(`${method} ${path} -> ${response.status}`, { durationMs: duration })
@@ -193,17 +221,19 @@ export const serverApi = {
   fetchHistoryWindow(instanceId: string, sessionID: string, target: NavigationTarget, signal?: AbortSignal): Promise<NavigationWindowResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/window`, {
       method: "POST", body: JSON.stringify({ sessionID, target }), signal,
+      // A transcript page, like the native message list: large tool images load on demand.
+      headers: { [DEFERRED_MEDIA_HEADER]: DEFERRED_MEDIA_VALUE },
     })
   },
   fetchSessionOutline(instanceId: string, sessionID: string, cursor?: { after: number; through: number }, signal?: AbortSignal, after?: number, known?: OutlineCheckpoint[]): Promise<OutlineResult> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outline`, {
       method: "POST", body: JSON.stringify({ sessionID, cursor, after, known }), signal,
-    })
+    }))
   },
   fetchOutlinePreviews(instanceId: string, sessionID: string, messageIDs: string[], signal?: AbortSignal): Promise<OutlinePreviewResult> {
-    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/outlinePreview`, {
       method: "POST", body: JSON.stringify({ sessionID, messageIDs }), signal,
-    })
+    }))
   },
   querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
@@ -220,8 +250,8 @@ export const serverApi = {
       method: "POST", body: JSON.stringify(input),
     })
   },
-  fetchWorkspaces(): Promise<WorkspaceDescriptor[]> {
-    return request<WorkspaceDescriptor[]>("/api/workspaces")
+  fetchWorkspaces(signal?: AbortSignal): Promise<WorkspaceDescriptor[]> {
+    return request<WorkspaceDescriptor[]>("/api/workspaces", { signal })
   },
 
   fetchProviderUsage(instanceId: string, sessionId: string, providerId: string, modelId?: string): Promise<ProviderUsageResponse> {
@@ -231,8 +261,8 @@ export const serverApi = {
     return request<ProviderUsageResponse>(`/api/usage/${encodeURIComponent(providerId)}${query ? `?${query}` : ""}`)
   },
 
-  fetchWorktrees(id: string): Promise<WorktreeListResponse> {
-    return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees`)
+  fetchWorktrees(id: string, fresh = false): Promise<WorktreeListResponse> {
+    return request<WorktreeListResponse>(`/api/workspaces/${encodeURIComponent(id)}/worktrees${fresh ? "?fresh=true" : ""}`)
   },
 
   createWorktree(id: string, payload: WorktreeCreateRequest): Promise<{ slug: string; directory: string; branch?: string }> {
@@ -333,6 +363,24 @@ export const serverApi = {
   deleteRemoteProxySession(id: string): Promise<void> {
     return request(`/api/remote-proxy/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
+  fetchRemoteControlStatus(): Promise<RemoteControlStatus> {
+    return request<RemoteControlStatus>("/api/remote-control/status")
+  },
+  startRemoteControl(): Promise<RemoteControlStartResponse> {
+    return request<RemoteControlStartResponse>("/api/remote-control/start", { method: "POST" })
+  },
+  stopRemoteControl(): Promise<RemoteControlStatus> {
+    return request<RemoteControlStatus>("/api/remote-control", { method: "DELETE" })
+  },
+  createRemoteControlPairing(): Promise<RemoteControlPairing> {
+    return request<RemoteControlPairing>("/api/remote-control/pairings", { method: "POST" })
+  },
+  fetchRemoteControlDevices(): Promise<{ devices: RemoteControlDevice[] }> {
+    return request<{ devices: RemoteControlDevice[] }>("/api/remote-control/devices")
+  },
+  revokeRemoteControlDevice(id: string): Promise<void> {
+    return request(`/api/remote-control/devices/${encodeURIComponent(id)}`, { method: "DELETE" })
+  },
   fetchAuthStatus(): Promise<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }> {
     return request<{ authenticated: boolean; username?: string; passwordUserProvided?: boolean }>("/api/auth/status")
   },
@@ -352,13 +400,28 @@ export const serverApi = {
   getPluginControls(instanceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
     const params = new URLSearchParams({ directory: location.directory })
     if (location.workspaceID) params.set("workspaceID", location.workspaceID)
-    return request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal })
+    return secondaryRead(signal, () => request<PluginControlsSnapshot>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls?${params.toString()}`, { signal }))
   },
   getWebSearchSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").WebSearchSettingsSnapshot> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings?${new URLSearchParams({ directory })}`)
   },
+  getServiceUsageOwner(instanceId: string, signal?: AbortSignal): Promise<{ owner: string; identity?: string; connection?: string }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/owner`, { signal })
+  },
+  getCachedServiceUsage(instanceId: string, timezone: string, days?: number, signal?: AbortSignal): Promise<{ days: number; owner?: string; identity?: string; connection?: string; snapshot?: import("../../../server/src/api-types").ServiceUsageSnapshot }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage/cache?${new URLSearchParams({ timezone, ...(days ? { days: String(days) } : {}) })}`, { signal })
+  },
+  getServiceUsage(instanceId: string, query: { from: number; to: number; timezone: string; restorePeriod?: boolean }, signal?: AbortSignal): Promise<import("../../../server/src/api-types").ServiceUsageSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/service-usage?${new URLSearchParams({ from: String(query.from), to: String(query.to), timezone: query.timezone, ...(query.restorePeriod ? { restorePeriod: "true" } : {}) })}`, { signal })
+  },
   setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
+  },
+  getSubagentDepth(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").SubagentDepthSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
+  },
+  setSubagentDepth(instanceId: string, payload: { location: { directory: string }; depth: number | null; expectation: string }): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth`, { method: "PUT", body: JSON.stringify(payload) })
   },
   setPluginActivation(instanceId: string, payload: PluginActivationMutationRequest): Promise<PluginActivationMutationResponse> {
     return request<PluginActivationMutationResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-controls`, {
@@ -375,8 +438,21 @@ export const serverApi = {
   deleteWorkspace(id: string): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(id)}`, { method: "DELETE" })
   },
-  getPendingRequests(id: string, directories: string[], signal?: AbortSignal): Promise<WorkspacePendingRequestsResponse> {
+  createTemporaryFolder(): Promise<{ path: string }> {
+    return request("/api/workspaces/temporary", { method: "POST" })
+  },
+  abandonTemporaryFolder(path: string): Promise<void> {
+    return request("/api/workspaces/temporary/abandon", { method: "POST", body: JSON.stringify({ path }) })
+  },
+  keepTemporaryWorkspace(id: string): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/keep`, { method: "POST" })
+  },
+  discardTemporaryWorkspace(id: string, options: { onlyIfEmpty?: boolean } = {}): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(id)}/discard`, { method: "POST", body: JSON.stringify(options) })
+  },
+  getPendingRequests(id: string, directories: string[], signal?: AbortSignal, optionalDirectories: string[] = []): Promise<WorkspacePendingRequestsResponse> {
     const query = new URLSearchParams(directories.map((directory) => ["directories", directory]))
+    for (const directory of optionalDirectories) query.append("optionalDirectories", directory)
     return request(`/api/workspaces/${encodeURIComponent(id)}/pending-requests?${query}`, { signal })
   },
   cloneWorkspaceRepository(payload: WorkspaceCloneRequest): Promise<WorkspaceCloneResponse> {
@@ -440,9 +516,9 @@ export const serverApi = {
       },
     )
   },
-  fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal): Promise<WorktreeGitStatusResponse> {
+  fetchWorktreeGitStatus(id: string, slug: string, signal?: AbortSignal, options?: { hideWhitespace?: boolean }): Promise<WorktreeGitStatusResponse> {
     return request<WorktreeGitStatusResponse>(
-      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status`,
+      `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-status${options?.hideWhitespace ? "?hideWhitespace=1" : ""}`,
       { signal },
     )
   },
@@ -484,6 +560,12 @@ export const serverApi = {
       },
     )
   },
+  initializeWorkspaceGit(id: string, directory: string): Promise<WorktreeGitMutationResponse> {
+    return request<WorktreeGitMutationResponse>(`/api/workspaces/${encodeURIComponent(id)}/git-init`, {
+      method: "POST",
+      body: JSON.stringify({ directory }),
+    })
+  },
   commitWorktreeGitChanges(id: string, slug: string, payload: WorktreeGitCommitRequest): Promise<WorktreeGitCommitResponse> {
     return request<WorktreeGitCommitResponse>(
       `/api/workspaces/${encodeURIComponent(id)}/worktrees/${encodeURIComponent(slug)}/git-commit`,
@@ -502,13 +584,18 @@ export const serverApi = {
       method: "PUT", body: JSON.stringify({ directory, enabled }),
     })
   },
-  fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
-    return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`)
+  fetchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, signal?: AbortSignal): Promise<T> {
+    return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`, { signal })
   },
   patchConfigOwner<T extends Record<string, any> = Record<string, any>>(owner: string, patch: unknown): Promise<T> {
     return request<T>(`/api/storage/config/${encodeURIComponent(owner)}`, {
       method: "PATCH",
       body: JSON.stringify(patch ?? {}),
+    })
+  },
+  patchMissionPreferences<T extends Record<string, any> = Record<string, any>>(patch: unknown, expected: MissionPreferenceExpectation[]): Promise<T> {
+    return request<T>("/api/storage/config/ui?conditional=missions-v1", {
+      method: "PATCH", body: JSON.stringify({ patch, expected }),
     })
   },
   fetchStateOwner<T extends Record<string, any> = Record<string, any>>(owner: string): Promise<T> {
@@ -527,11 +614,13 @@ export const serverApi = {
       body: JSON.stringify({ path }),
     })
   },
-  fetchOpenCodeUpdateStatus(): Promise<OpenCodeUpdateStatus> {
-    return request<OpenCodeUpdateStatus>("/api/opencode/update")
+  /** `recheck` marks an explicit user check, which refreshes the server's cached version probes. */
+  fetchOpenCodeUpdateStatus(options: { recheck?: boolean } = {}): Promise<OpenCodeUpdateStatus> {
+    return request<OpenCodeUpdateStatus>(options.recheck ? "/api/opencode/update?recheck=1" : "/api/opencode/update")
   },
-  updateOpenCode(): Promise<OpenCodeUpdateResponse> {
-    return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST" })
+  updateOpenCode(options: { replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateResponse> {
+    return request<OpenCodeUpdateResponse>("/api/opencode/update", { method: "POST",
+      body: JSON.stringify(options.replaceLegacy ? { replaceLegacy: { path: options.replaceLegacy.path, version: options.replaceLegacy.version } } : {}) })
   },
   startOpenCode(restart = false): Promise<OpenCodeUpdateStatus> {
     return request<OpenCodeUpdateStatus>("/api/opencode/service", { method: "POST", body: JSON.stringify({ restart }) })
@@ -598,6 +687,84 @@ export const serverApi = {
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
+  fetchMissions(instanceId: string): Promise<MissionListResponse> {
+    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`)
+  },
+  fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current`, { signal })
+  },
+  fetchMissionCurrentContent(instanceId: string, input: import("../../../server/src/missions/recurrence-current").RecurrenceCurrentContentInput, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrentContent> {
+    const { scheduleID, passageID, ...query } = input
+    const params = new URLSearchParams(Object.entries(query).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current/${encodeURIComponent(passageID)}/content?${params}`, { signal })
+  },
+  async fetchMissionRecurrence(instanceId: string, signal?: AbortSignal): Promise<MissionRecurrenceSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { signal })
+  },
+  async controlMissionRecurrence(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
+    return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control`, {
+      method: "POST", body: JSON.stringify(input),
+    }))
+  },
+  async missionRecurrenceControlStatus(instanceId: string, scheduleID: string, input: RecurrenceControlIntent): Promise<RecurrenceControlStatus> {
+    return readRecurrenceControlResult(await request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/control/status`, {
+      method: "POST", body: JSON.stringify(recurrenceControlStatusInput(input)),
+    }))
+  },
+  async runMissionRecurrenceNow(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
+    const { requestID, expectedRevision, directory } = input
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now`, {
+      method: "POST", body: JSON.stringify({ requestID, expectedRevision, ...(directory ? { directory } : {}) }),
+    })
+  },
+  async missionRecurrenceRunNowStatus(instanceId: string, input: RecurrenceControlIntent): Promise<RecurrenceManualResult> {
+    const query = new URLSearchParams({ requestID: input.requestID, expectedRevision: String(input.expectedRevision),
+      ...(input.directory ? { directory: input.directory } : {}) })
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(input.scheduleID)}/run-now/status?${query}`)
+  },
+  fetchMissionRecurrencePassagePage(instanceId: string, scheduleID: string, passageID: string,
+    input: { section: number; page: number; revision?: number }, signal?: AbortSignal): Promise<MissionRecurrenceReadPage> {
+    const query = new URLSearchParams({ section: String(input.section), page: String(input.page),
+      ...(input.revision === undefined ? {} : { revision: String(input.revision) }) })
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/passages/${encodeURIComponent(passageID)}?${query}`, { signal })
+  },
+  createMissionRecurrence(instanceId: string, input: { requestID: string; title: string; instructions: string;
+    notes?: string; template: MissionMap["template"];
+    clock: { time: string; zone: string }; watchedConversationIDs: string[];
+    profiles: MissionProfiles; taskMode: "native" | "independent"; directory?: string
+  }): Promise<{ schedule: { id: string; revision: number; state: "paused"; digest: string; projectID: string; projectCanonical: string } }> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence`, { method: "POST", body: JSON.stringify(input) })
+  },
+  createMission(instanceId: string, input: { title?: string; objective: string; notes?: string; template: MissionMap["template"]; profiles?: MissionProfiles; taskMode?: "native" | "independent"; directory?: string; requestId: string }): Promise<{ mission: MissionMap }> {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions`
+    return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "POST", input)
+  },
+  editMission(instanceId: string, missionId: string, input: { objective: string; notes?: string; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
+    return missionMutationRequest(API_BASE ? new URL(path, API_BASE).toString() : path, "PATCH", input)
+  },
+  deleteMission(instanceId: string, missionId: string, input: MissionDeletionRequest) {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
+    return deleteMissionRequest(API_BASE ? new URL(path, API_BASE).toString() : path, input)
+  },
+  controlMission(instanceId: string, missionId: string, input: { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/control`
+    return missionLifecycleRequest(API_BASE ? new URL(path, API_BASE).toString() : path, input)
+  },
+  async recoverMission(instanceId: string, missionId: string, input: { expectedRevision: number; target: "coordinator" | "report"; taskKey?: string }): Promise<{ mission: MissionMap; admitted: true }> {
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/recover`
+    // Keep the structured classification: generic request() intentionally projects
+    // errors to text. Recovery must never display upstream text or replay a POST.
+    const response = await authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
+      method: "POST", credentials: "include", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input),
+    })
+    if (!response.ok) {
+      const body: unknown = await response.json().catch(() => undefined)
+      const code = body && typeof body === "object" && "code" in body && typeof body.code === "string" ? body.code : undefined
+      throw Object.assign(new Error("Mission recovery was not admitted"), { code, status: response.status })
+    }
+    return await response.json() as { mission: MissionMap; admitted: true }
+  },
   writeInstanceData(id: string, data: InstanceData): Promise<void> {
     return request(`/api/storage/instances/${encodeURIComponent(id)}`, {
       method: "PUT",
@@ -649,7 +816,8 @@ function buildClientEventsUrl(identity: { clientId: string; connectionId: string
   if (EVENTS_URL.startsWith("http://") || EVENTS_URL.startsWith("https://")) {
     return url.toString()
   }
+
   return `${url.pathname}${url.search}`
 }
 
-export type { WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SideCar }
+export type { MissionListResponse, WorkspaceDescriptor, WorkspaceLogEntry, WorkspaceEventPayload, WorkspaceEventType, SideCar }

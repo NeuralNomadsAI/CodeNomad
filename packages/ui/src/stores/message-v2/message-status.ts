@@ -1,27 +1,17 @@
 import type { MessageStatus } from "./types"
 
 /**
- * Single source of truth for deriving a message's lifecycle status from its
- * server-side info, shared by the live SSE path (session-events) and the REST
- * snapshot path (session-api) so a force-reload can never disagree with the
- * streaming derivation.
- *
- * Follows the OpenCode SDK contract (1.17.x):
- *   - Only assistant messages carry `error` and a completion timestamp.
- *   - Assistant completion is `time.completed` (NOT `time.end`, which is a
- *     part-level field, not message completion).
- *   - User messages expose only `time.created` and are complete once
- *     persisted — they have no pending/streaming server state.
+ * Whether an assistant's text can still grow. OpenCode marks the model stream
+ * finished (`time.streamed`) before the step's tools exit and `time.completed`
+ * is set, so text is final as soon as it is streamed.
  */
-export function deriveMessageStatus(info: {
-  role?: string
-  error?: unknown
-  time?: { completed?: number } | null
-}): MessageStatus {
-  if (info.error) return "error"
-  if (info.role === "user") return "complete"
-  const completed = info.time?.completed
-  return typeof completed === "number" && completed > 0 ? "complete" : "streaming"
+export function isMessageTextStreaming(
+  status: MessageStatus,
+  time?: { streamed?: number } | null,
+): boolean {
+  if (status !== "streaming") return false
+  const streamed = time?.streamed
+  return !(typeof streamed === "number" && streamed > 0)
 }
 
 export function shouldShowGeneratingPlaceholder(

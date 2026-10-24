@@ -1,5 +1,5 @@
 import type { UsageProvider } from "../types"
-import { fetchJson, getCredential, notConfigured, result, toNumber, toTimestamp, toUsageWindow } from "../shared"
+import { fetchJson, getCredential, notConfigured, ProviderHttpError, result, toNumber, toTimestamp, toUsageWindow } from "../shared"
 
 const INACTIVE_WINDOW_STATUS = 3
 
@@ -47,8 +47,8 @@ function createMiniMaxProvider(input: {
     id: input.id,
     name: input.name,
     aliases: input.aliases,
-    async fetchQuota() {
-      const key = getCredential(input.aliases, ["key", "token"])
+    async fetchQuota(auth) {
+      const key = getCredential(auth, input.aliases, ["key", "token"])
       if (!key) return notConfigured(this.id, this.name)
       try {
         let tokenPlan = true
@@ -92,6 +92,7 @@ function createMiniMaxProvider(input: {
           ok: false,
           configured: true,
           error: error instanceof Error ? error.message : "Request failed",
+          ...(error instanceof ProviderHttpError ? { status: error.status } : {}),
         })
       }
     },

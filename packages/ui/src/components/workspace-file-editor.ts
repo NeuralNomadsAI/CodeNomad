@@ -81,7 +81,7 @@ export function useWorkspaceFileEditor(options: {
       }
       if (current()) {
         setOriginal(value)
-        showToastNotification({ message: options.t("instanceShell.rightPanel.toast.saveSuccess"), variant: "success" })
+        showToastNotification({ category: "files", message: options.t("instanceShell.rightPanel.toast.saveSuccess"), variant: "success" })
       }
       invalidateFilesystemCaches(options.instanceId)
     } catch (error) {

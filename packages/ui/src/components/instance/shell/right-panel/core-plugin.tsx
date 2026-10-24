@@ -1,6 +1,5 @@
 import type { JSX } from "solid-js"
 
-import type { RightPanelManifest } from "./plugin-manifest"
 import type { RightPanelModule } from "./registry"
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 
@@ -11,6 +10,7 @@ interface CoreRightPanelRenderers {
 
 interface CoreStatusSectionRenderers {
   renderTokens: () => JSX.Element
+  renderTokensSummary?: () => JSX.Element
   renderYoloModeSection: () => JSX.Element
   renderProviderUsage: () => JSX.Element
   renderBackgroundProcesses: () => JSX.Element
@@ -18,33 +18,27 @@ interface CoreStatusSectionRenderers {
   renderPluginStatus: () => JSX.Element
 }
 
-export function createCoreRightPanelManifest(renderers: CoreRightPanelRenderers): RightPanelManifest {
+export function createCoreRightPanelModule(renderers: CoreRightPanelRenderers): RightPanelModule {
   return {
     id: "core-right-panel",
     displayNameKey: "instanceShell.rightPanel.modules.core",
     descriptionKey: "instanceShell.rightPanel.modules.core.description",
     origin: "first-party",
-    create: () => ({
-      id: "core-right-panel",
-      displayNameKey: "instanceShell.rightPanel.modules.core",
-      descriptionKey: "instanceShell.rightPanel.modules.core.description",
-      origin: "first-party",
-      tabs: [
-        {
-          id: "files",
-          labelKey: "instanceShell.rightPanel.tabs.files",
-          order: 20,
-          render: renderers.renderFilesTab,
-        },
-        {
-          id: "status",
-          labelKey: "instanceShell.rightPanel.tabs.status",
-          order: 30,
-          alwaysVisible: true,
-          render: renderers.renderStatusTab,
-        },
-      ],
-    }),
+    tabs: [
+      {
+        id: "files",
+        labelKey: "instanceShell.rightPanel.tabs.files",
+        order: 20,
+        render: renderers.renderFilesTab,
+      },
+      {
+        id: "status",
+        labelKey: "instanceShell.rightPanel.tabs.status",
+        order: 30,
+        alwaysVisible: true,
+        render: renderers.renderStatusTab,
+      },
+    ],
   }
 }
 
@@ -66,7 +60,7 @@ export function createCoreStatusSectionManifest(renderers: CoreStatusSectionRend
     statusSections: CORE_STATUS_SECTION_ITEMS.map((section) => {
       const render = sectionRenderers[section.id]
       if (!render) throw new Error(`Missing core right panel section renderer: ${section.id}`)
-      return { ...section, render }
+      return { ...section, render, renderSummary: section.id === "tokens" ? renderers.renderTokensSummary : undefined }
     }),
   }
 }

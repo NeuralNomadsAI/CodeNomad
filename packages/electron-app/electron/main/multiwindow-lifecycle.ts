@@ -38,33 +38,40 @@ export class MultiwindowLifecycle {
   private exitAllowed = false
   private relaunchRequested = false
   private readonly sessionEndWindows = new WeakSet<BrowserWindow>()
+  private readonly pendingWindowCloses = new Set<BrowserWindow>()
 
   constructor(private readonly dependencies: Dependencies) {}
 
   attach(record: LifecycleWindow): void {
     let approved = false
     let closing = false
+    record.window.on("closed", () => this.pendingWindowCloses.delete(record.window))
     record.window.on("close", (event) => {
       if (approved || this.exitAllowed) return
       event.preventDefault()
       if (closing || this.shutdown) return
-      const otherLocal = this.dependencies.getLocalWindows().some((candidate) => candidate.id !== record.id && !candidate.window.isDestroyed())
-      const otherWindow = this.dependencies.getAllWindows().some((candidate) => candidate !== record.window
-        && !candidate.isDestroyed() && !this.dependencies.isSupportWindow?.(candidate))
-      if (!otherLocal && !otherWindow) {
-        this.dependencies.app.quit()
-        return
-      }
       closing = true
-      void this.flushWindow(record).then(async () => {
+      this.pendingWindowCloses.add(record.window)
+      void (async () => {
+        // Closing the last window quits CodeNomad, Remote Control included; it
+        // resumes at the next launch.
+        if (!this.hasOtherApplicationWindow(record.window, record.id)) {
+          closing = false
+          this.pendingWindowCloses.delete(record.window)
+          this.dependencies.app.quit()
+          return
+        }
+        await this.flushWindow(record)
         if (record.persisted !== false && !await this.dependencies.removeWindowState(record.id)) {
           closing = false
+          this.pendingWindowCloses.delete(record.window)
           return
         }
         approved = true
         record.window.close()
-      }).catch((error) => {
+      })().catch((error) => {
         closing = false
+        this.pendingWindowCloses.delete(record.window)
         console.warn("[client-state] local window close failed", error)
       })
     })
@@ -72,7 +79,7 @@ export class MultiwindowLifecycle {
     this.attachSessionEnd(record.window)
   }
 
-  attachRemote(window: BrowserWindow): void {
+  attachSupportWindow(window: BrowserWindow): void {
     window.on("close", (event) => {
       if (event.defaultPrevented || this.exitAllowed || this.dependencies.getAllWindows().some((candidate) => candidate !== window
         && !candidate.isDestroyed() && !this.dependencies.isSupportWindow?.(candidate))) return
@@ -101,6 +108,7 @@ export class MultiwindowLifecycle {
       for (const window of visibleWindows) window.hide()
       void this.startShutdown().then(() => this.exit(), (error) => {
         this.relaunchRequested = false
+        this.pendingWindowCloses.clear()
         for (const window of visibleWindows) if (!window.isDestroyed()) window.show()
         console.warn("[client-state] shutdown remains pending", error)
       })
@@ -112,6 +120,14 @@ export class MultiwindowLifecycle {
     if (this.exitAllowed) return
     this.relaunchRequested = true
     this.dependencies.app.quit()
+  }
+
+  private hasOtherApplicationWindow(window: BrowserWindow, localId: string): boolean {
+    return this.dependencies.getLocalWindows().some((candidate) => candidate.id !== localId
+      && !candidate.window.isDestroyed() && !this.pendingWindowCloses.has(candidate.window))
+      || this.dependencies.getAllWindows().some((candidate) => candidate !== window
+        && !candidate.isDestroyed() && !this.pendingWindowCloses.has(candidate)
+        && !this.dependencies.isSupportWindow?.(candidate))
   }
 
   private startShutdown(preparedFlush?: Promise<void>): Promise<void> {

@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "ブラウザーでヘルプを開けませんでした。https://neuralnomadsai.github.io/CodeNomad/ を手動で開いてください。",
   "commandPalette.title": "コマンドパレット",
   "commandPalette.description": "コマンドを検索して実行",
   "commandPalette.searchPlaceholder": "コマンドを入力するか検索...",
@@ -14,6 +15,9 @@ export const commandMessages = {
   "commands.newInstance.label": "新しいインスタンス",
   "commands.newInstance.description": "フォルダ選択を開いて新しいインスタンスを作成",
   "commands.newInstance.keywords": "フォルダ, プロジェクト, ワークスペース, folder, project, workspace",
+  "commands.newTemporaryInstance.label": "新しい一時インスタンス",
+  "commands.newTemporaryInstance.description": "フォルダを選ばずに空の一時インスタンスを開く",
+  "commands.newTemporaryInstance.keywords": "一時, 下書き, クイック, 空, プロジェクト, temporary",
   "commands.openWorkspace.folder.label": "プロジェクトフォルダーを開く",
   "commands.openWorkspace.folder.description": "現在のプロジェクトフォルダーをファイルマネージャーで開く",
   "commands.openWorkspace.folder.keywords": "フォルダー, エクスプローラー, ファイル",
@@ -31,9 +35,6 @@ export const commandMessages = {
   "commands.closeInstance.label": "タブを閉じる",
   "commands.closeInstance.description": "現在のトップレベルタブを閉じる",
   "commands.closeInstance.keywords": "閉じる, タブ, stop, quit, close",
-  "commands.stopInstance.label": "ワークスペースを停止",
-  "commands.stopInstance.description": "すべてのウィンドウで共有ワークスペースを停止する",
-  "commands.stopInstance.keywords": "停止, ワークスペース, サーバー, 共有",
 
   "commands.nextInstance.label": "次のタブ",
   "commands.nextInstance.description": "次のトップレベルタブへ切り替え",
@@ -66,6 +67,13 @@ export const commandMessages = {
   "commands.previousSession.label": "前のセッション",
   "commands.previousSession.description": "前のセッションタブへ切り替え",
   "commands.previousSession.keywords": "切り替え, 移動, switch, navigate",
+
+  "commands.previousUserMessage.label": "前のユーザーメッセージ",
+  "commands.previousUserMessage.description": "この会話で送信した前のメッセージへ移動",
+  "commands.previousUserMessage.keywords": "移動, ジャンプ, プロンプト, jump, prompt, navigate",
+  "commands.nextUserMessage.label": "次のユーザーメッセージ",
+  "commands.nextUserMessage.description": "この会話で送信した次のメッセージへ移動",
+  "commands.nextUserMessage.keywords": "移動, ジャンプ, プロンプト, jump, prompt, navigate",
 
   "commands.compactSession.label": "セッションをコンパクト化",
   "commands.compactSession.description": "現在のセッションを要約して圧縮",
@@ -113,20 +121,10 @@ export const commandMessages = {
   "commands.clearInput.description": "プロンプト入力欄をクリア",
   "commands.clearInput.keywords": "クリア, リセット, clear, reset",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: 改行, Cmd/Ctrl+Enter: プロンプト送信",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: プロンプト送信, Cmd/Ctrl+Enter: 改行",
-  "commands.promptSubmitShortcut.description": "プロンプト入力で Enter と Cmd/Ctrl+Enter の動作を入れ替え",
-  "commands.promptSubmitShortcut.keywords": "enter, 送信, 改行, ショートカット, cmd, ctrl, プロンプト",
-
   "commands.thinkingBlocks.label.show": "思考を表示",
   "commands.thinkingBlocks.label.hide": "思考を非表示",
   "commands.thinkingBlocks.description": "AI の思考セクションを表示/非表示",
   "commands.thinkingBlocks.keywords": "思考, 推論, 切り替え, 表示, 非表示, thinking, reasoning, toggle, show, hide",
-
-  "commands.timelineToolCalls.label.show": "タイムラインのツールコールを表示",
-  "commands.timelineToolCalls.label.hide": "タイムラインのツールコールを非表示",
-  "commands.timelineToolCalls.description": "メッセージタイムラインのツールコール表示を切り替え",
-  "commands.timelineToolCalls.keywords": "タイムライン, ツール, 切り替え, timeline, tool, toggle",
 
   "commands.keyboardShortcutHints.label.show": "キーボードショートカットのヒントを表示",
   "commands.keyboardShortcutHints.label.hide": "キーボードショートカットのヒントを非表示",
@@ -173,9 +171,12 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "新しいセッション作成時に空のセッションを自動的に整理",
   "commands.autoCleanupBlankSessions.keywords": "自動, クリーンアップ, 空, セッション, 切り替え, auto, cleanup, blank, sessions, toggle",
 
-  "commands.showHelp.label": "ヘルプを表示",
-  "commands.showHelp.description": "キーボードショートカットとヘルプを表示",
-  "commands.showHelp.keywords": "ショートカット, ヘルプ, shortcuts, help",
+  "commands.openHelp.label": "ヘルプを開く",
+  "commands.openHelp.description": "CodeNomad のユーザーガイドをブラウザーで開く",
+  "commands.openHelp.keywords": "ヘルプ, ガイド, ドキュメント",
+  "commands.openAbout.label": "CodeNomad について",
+  "commands.openAbout.description": "設定でバージョン、更新、診断を表示",
+  "commands.openAbout.keywords": "について, バージョン, 更新, 診断",
 
   "commands.custom.argumentsPrompt.message": "/{name} の引数",
   "commands.custom.argumentsPrompt.title": "カスタムコマンド",

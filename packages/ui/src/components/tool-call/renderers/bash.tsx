@@ -1,45 +1,44 @@
 import { Show, createEffect, createMemo, onCleanup, type Accessor } from "solid-js"
 import type { ToolState } from "../../../types/tool-state"
-import type { ToolRenderer, ToolScrollHelpers } from "../types"
-import { ensureMarkdownContent, formatUnknownForCopy, formatUnknownForRender, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, limitToolOutputForRender, readToolStatePayload } from "../utils"
+import type { MarkdownRenderOptions, ToolRenderer, ToolScrollHelpers } from "../types"
+import { formatUnknownForCopy, formatUnknownForRender, getToolName, isToolStateCompleted, isToolStateError, isToolStateRunning, readToolStatePayload, TOOL_OUTPUT_RENDER_CHARACTER_LIMIT } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
 import { createStableAnsiStreamUpdater } from "../ansi-render"
 import { ansiToHtml, hasAnsi } from "../../../lib/ansi"
 import { getBashToolSearchText } from "../search-text"
+import type { RecordTextRevealTarget } from "../../../stores/message-v2/record-display-cache"
+import { HiddenTextNotice, createTextWindow } from "../../hidden-text"
+import { joinedTextSource } from "../../../lib/render-text-window"
 
+type TextWindowHandle = ReturnType<typeof createTextWindow>
+
+function OutputReveal(props: { output: TextWindowHandle }) {
+  return (
+    <Show when={props.output.window().hidden > 0}>
+      <HiddenTextNotice window={props.output.window()} onReveal={props.output.reveal} />
+    </Show>
+  )
+}
+
+// Output changes need no transcript notification: its ResizeObserver handles
+// any height change, and a frame-delayed notification always arrived after it.
+// Past the display bound the streamed prefix stops changing; only the reveal line counts on.
 function RunningBashOutput(props: {
   content: Accessor<string>
+  output: TextWindowHandle
   scrollHelpers?: ToolScrollHelpers
-  onContentRendered?: () => void
 }) {
   let preRef: HTMLPreElement | undefined
-  let pendingRenderNotificationFrame: number | null = null
   const updater = createStableAnsiStreamUpdater()
-
-  const notifyContentRendered = () => {
-    if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-    }
-    pendingRenderNotificationFrame = requestAnimationFrame(() => {
-      pendingRenderNotificationFrame = null
-      props.onContentRendered?.()
-    })
-  }
 
   createEffect(() => {
     const element = preRef
     if (!element) return
     updater.update(element, props.content())
     props.scrollHelpers?.restoreAfterRender()
-    notifyContentRendered()
   })
 
   onCleanup(() => {
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-      pendingRenderNotificationFrame = null
-    }
     preRef = undefined
     updater.reset()
   })
@@ -51,6 +50,7 @@ function RunningBashOutput(props: {
       onScroll={props.scrollHelpers ? (event) => props.scrollHelpers!.handleScroll(event as Event & { currentTarget: HTMLDivElement }) : undefined}
     >
       <pre ref={preRef} class="tool-call-content tool-call-ansi" dir="auto" />
+      <OutputReveal output={props.output} />
       {props.scrollHelpers?.renderSentinel?.()}
     </div>
   )
@@ -58,38 +58,18 @@ function RunningBashOutput(props: {
 
 function FinalAnsiOutput(props: {
   html: string
+  output: TextWindowHandle
   scrollHelpers?: ToolScrollHelpers
-  onContentRendered?: () => void
 }) {
-  let pendingRenderNotificationFrame: number | null = null
-
-  const notifyContentRendered = () => {
-    if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-    }
-    pendingRenderNotificationFrame = requestAnimationFrame(() => {
-      pendingRenderNotificationFrame = null
-      props.onContentRendered?.()
-    })
-  }
-
   createEffect(() => {
     props.html
     props.scrollHelpers?.restoreAfterRender()
-    notifyContentRendered()
-  })
-
-  onCleanup(() => {
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-      pendingRenderNotificationFrame = null
-    }
   })
 
   return (
     <div class="message-text tool-call-markdown" ref={props.scrollHelpers?.registerContainer}>
       <pre class="tool-call-content tool-call-ansi" dir="auto" innerHTML={props.html} />
+      <OutputReveal output={props.output} />
     </div>
   )
 }
@@ -111,66 +91,56 @@ function getBashCopyText(state: ToolState | undefined): string {
 
 function BashToolBody(props: {
   toolState: Accessor<ToolState | undefined>
-  renderMarkdown: (options: { content: string }) => ReturnType<ToolRenderer["renderBody"]>
+  renderMarkdown: (options: MarkdownRenderOptions) => ReturnType<ToolRenderer["renderBody"]>
+  revealTarget: RecordTextRevealTarget
   scrollHelpers?: ToolScrollHelpers
-  onContentRendered?: () => void
 }) {
   const state = createMemo(() => props.toolState())
 
-  const joinedContent = createMemo(() => {
+  // "$ command\noutput" as parts of the native strings: windows copy only their
+  // bounded prefix, so no full join of a large output stays alive between updates.
+  const parts = createMemo((): string[] => {
     const current = state()
-    if (!current || current.status === "pending") return ""
+    if (!current || current.status === "pending") return []
 
     const { input, metadata } = readToolStatePayload(current)
-    const command = typeof input.command === "string" && input.command.length > 0 ? limitToolOutputForRender(`$ ${input.command}`) : ""
-    const outputResult = formatUnknownForRender(
+    const command = typeof input.command === "string" ? input.command : ""
+    const output = formatUnknownForRender(
       isToolStateCompleted(current)
         ? current.output
         : (isToolStateRunning(current) || isToolStateError(current)) && metadata.output
           ? metadata.output
           : undefined,
-    )
-    return [command, outputResult?.text].filter(Boolean).join("\n")
+    )?.text ?? ""
+    if (!command) return output ? [output] : []
+    return output ? ["$ ", command, "\n", output] : ["$ ", command]
   })
-  const renderedContent = createMemo(() => limitToolOutputForRender(joinedContent()))
+  const source = createMemo(() => joinedTextSource(parts()))
+  // The Markdown path bounds the same text with the same reveal state ("output").
+  const output = createTextWindow({ source, limit: () => TOOL_OUTPUT_RENDER_CHARACTER_LIMIT, target: () => props.revealTarget })
+  const renderedContent = createMemo(() => output.window().text)
 
-  const finalMarkdown = createMemo(() => {
+  const isFinal = createMemo(() => {
     const current = state()
-    const content = renderedContent()
-    if (!current || current.status === "pending" || current.status === "running" || content.length === 0) {
-      return null
-    }
-    if (hasAnsi(content)) {
-      return null
-    }
-    return ensureMarkdownContent(content, "bash", true)
+    return Boolean(current && current.status !== "pending" && current.status !== "running" && source().length > 0)
   })
-
-  const finalAnsiHtml = createMemo(() => {
-    const current = state()
-    const content = renderedContent()
-    if (!current || current.status === "pending" || current.status === "running" || content.length === 0) {
-      return null
-    }
-    if (!hasAnsi(content)) {
-      return null
-    }
-    return ansiToHtml(content)
-  })
+  // Detect ANSI across the whole output, so a reveal never switches renderers.
+  const finalHasAnsi = createMemo(() => isFinal() && parts().some((part) => hasAnsi(part)))
+  const finalAnsiHtml = createMemo(() => (finalHasAnsi() ? ansiToHtml(renderedContent()) : null))
 
   return (
-    <Show when={state() && joinedContent().length > 0}>
+    <Show when={state() && source().length > 0}>
       <Show
         when={state()?.status === "running"}
         fallback={
-          <Show when={finalAnsiHtml()} fallback={finalMarkdown() ? props.renderMarkdown({ content: finalMarkdown()! as string }) : null}>
+          <Show when={finalAnsiHtml()} fallback={isFinal() && !finalHasAnsi() ? props.renderMarkdown({ content: source(), codeLanguage: "bash" }) : null}>
             {(html) => (
-              <FinalAnsiOutput html={html()} scrollHelpers={props.scrollHelpers} onContentRendered={props.onContentRendered} />
+              <FinalAnsiOutput html={html()} output={output} scrollHelpers={props.scrollHelpers} />
             )}
           </Show>
         }
       >
-        <RunningBashOutput content={renderedContent} scrollHelpers={props.scrollHelpers} onContentRendered={props.onContentRendered} />
+        <RunningBashOutput content={renderedContent} output={output} scrollHelpers={props.scrollHelpers} />
       </Show>
     </Show>
   )
@@ -206,7 +176,7 @@ export const bashRenderer: ToolRenderer = {
     if (!hasCopyText) return undefined
     return { language: "bash", getCopyText: () => getBashCopyText(state), hasCopyText: true, wrapToggle: true, suppressInnerHeader: true }
   },
-  renderBody({ toolState, renderMarkdown, scrollHelpers, onContentRendered }) {
-    return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown as any} scrollHelpers={scrollHelpers} onContentRendered={onContentRendered} />
+  renderBody({ toolState, renderMarkdown, scrollHelpers, textRevealTarget }) {
+    return <BashToolBody toolState={toolState} renderMarkdown={renderMarkdown} revealTarget={textRevealTarget("output")} scrollHelpers={scrollHelpers} />
   },
 }

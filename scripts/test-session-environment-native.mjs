@@ -57,7 +57,7 @@ try {
   let variables = Object.fromEntries(["TEMP", "TMP", "TMPDIR"].map(key => [key, path.join(root, "first")]))
   const logger = pino({ level: "silent" })
   manager = new WorkspaceManager({
-    rootDir: root, settings: { getOwner: () => ({ environmentVariables: variables }) },
+    rootDir: root, settings: { getOwner: () => ({ environmentVariables: variables }), readEnvironmentForAdmission: async () => ({ ...variables }) },
     binaryResolver: { resolveDefault: () => ({ path: cli, label: "Isolated fixture" }) },
     eventBus: new EventBus(), logger,
     hostServiceLifecycleFactory: () => ({ discover: async () => endpoint, ensure: async () => endpoint }),

@@ -1,0 +1,36 @@
+/* Settings "i": secondary explanations on hover/focus instead of captions.
+   The tooltip itself reuses the shared .section-info-tooltip surface. */
+.settings-info-tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  vertical-align: middle;
+  margin-inline-start: var(--space-xs);
+  color: var(--text-muted);
+  opacity: var(--icon-button-idle-opacity);
+  cursor: help;
+  transition: color 150ms, opacity 150ms;
+}
+
+.settings-info-tip > svg {
+  width: 0.8rem;
+  height: 0.8rem;
+}
+
+.settings-info-tip:hover,
+.settings-info-tip:focus-visible {
+  color: var(--text-secondary);
+  opacity: 1;
+}
+
+.settings-info-tip:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 1px;
+}
+
+@media (hover: none) {
+  .settings-info-tip {
+    opacity: 0.7;
+  }
+}

@@ -20,10 +20,13 @@ export interface GitChangeEntry {
   stagedDeletions?: number
   unstagedAdditions?: number
   unstagedDeletions?: number
+  /** Git reports the worktree side as whitespace/line-ending only (requested reads only). */
+  unstagedWhitespaceOnly?: boolean
 }
 
 export type GitChangeSection = "staged" | "unstaged"
 
+/** One rendered row. Only primitive fields: refreshes reuse an unchanged item by field equality. */
 export interface GitChangeListItem {
   id: string
   path: string
@@ -32,7 +35,6 @@ export interface GitChangeListItem {
   status: GitChangeStatus
   additions: number
   deletions: number
-  entry: GitChangeEntry
   displayName: string
   parentPath: string
 }

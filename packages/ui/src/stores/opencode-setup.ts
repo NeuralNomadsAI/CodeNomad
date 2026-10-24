@@ -7,7 +7,10 @@ export const [openCodeSetupOpen, setOpenCodeSetupOpen] = createSignal(false)
 export const [openCodeSetupBusy, setOpenCodeSetupBusy] = createSignal(false)
 export const [openCodeSetupError, setOpenCodeSetupError] = createSignal(false)
 export const [openCodeSetupCheckError, setOpenCodeSetupCheckError] = createSignal(false)
-export const [openCodeInstallationError, setOpenCodeInstallationError] = createSignal<"installation_busy" | "installation_in_use">()
+const INSTALLATION_ERRORS = ["installation_busy", "installation_in_use", "legacy_replacement_required", "legacy_removed_install_failed",
+  "legacy_partially_removed"] as const
+type OpenCodeInstallationError = typeof INSTALLATION_ERRORS[number]
+export const [openCodeInstallationError, setOpenCodeInstallationError] = createSignal<OpenCodeInstallationError>()
 export type OpenCodeSetupAction = "install" | "start" | "restart" | "reload"
 export const [openCodeSetupAction, setOpenCodeSetupAction] = createSignal<OpenCodeSetupAction>()
 export const [openCodeSetupPhase, setOpenCodeSetupPhase] = createSignal<OpenCodeSetupAction | "check">()
@@ -18,7 +21,25 @@ let generation = 0
 let notifiedGeneration = -1
 let pending: { promise: Promise<void>; again: boolean; announce: boolean } | undefined
 const [resume, setResume] = createSignal<(() => Promise<unknown>)>()
-export const canContinueOpenCodeSetup = () => Boolean(resume())
+const [resumeRestore, setResumeRestore] = createSignal<(() => Promise<void>)>()
+export const canContinueOpenCodeSetup = () => Boolean(resume() || resumeRestore())
+
+/** Startup restoration is separate from the user's latest explicit folder-open retry. */
+export function registerOpenCodeRestoreRecovery(retry: () => Promise<void>): () => void {
+  setResumeRestore(() => retry)
+  return () => { if (resumeRestore() === retry) setResumeRestore(undefined) }
+}
+
+function takeWorkspaceResume() {
+  const retry = resume(), restore = resumeRestore()
+  setResume(undefined)
+  setResumeRestore(undefined)
+  if (!retry && !restore) return undefined
+  return async () => {
+    // The explicit open goes first: restoration must respect its newer selection.
+    try { await retry?.() } finally { await restore?.() }
+  }
+}
 
 export function isOpenCodeConnected(status = openCodeSetupStatus()): boolean {
   return !openCodeSetupCheckError() && (status?.serviceState === "ready" || status?.serviceState === "restart_available")
@@ -28,11 +49,12 @@ export async function continueOpenCodeSetup() {
   if (!isOpenCodeConnected() || openCodeSetupBusy() || openCodeSetupChecking()) return
   const epoch = generation
   const retry = resume()
+  const restore = resumeRestore()
   await refreshOpenCodeSetup()
-  if (epoch !== generation || openCodeSetupBusy() || !isOpenCodeConnected() || resume() !== retry) return
-  setResume(undefined)
+  if (epoch !== generation || openCodeSetupBusy() || !isOpenCodeConnected() || resume() !== retry || resumeRestore() !== restore) return
+  const proceed = takeWorkspaceResume()
   setOpenCodeSetupOpen(false)
-  await retry?.()
+  await proceed?.()
 }
 
 export function needsOpenCodeSetup(status = openCodeSetupStatus()): boolean {
@@ -81,7 +103,8 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
     do {
       request.again = false
       try {
-        const status = await serverApi.fetchOpenCodeUpdateStatus()
+        // Only the explicit Check action asks the server to re-probe installations.
+        const status = await serverApi.fetchOpenCodeUpdateStatus({ recheck: request.announce })
         if (epoch !== generation) return
         setOpenCodeSetupStatus(status)
         setOpenCodeSetupCheckError(false)
@@ -102,7 +125,7 @@ export function refreshOpenCodeSetup(afterMutation = false, announce = false): P
   return request.promise
 }
 
-export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { resumeWorkspace?: boolean } = {}): Promise<OpenCodeUpdateStatus | undefined> {
+export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { resumeWorkspace?: boolean; replaceLegacy?: { path: string; version: string } } = {}): Promise<OpenCodeUpdateStatus | undefined> {
   if (openCodeSetupBusy()) return
   const epoch = ++generation
   pending = undefined
@@ -114,7 +137,7 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
   setOpenCodeSetupError(false)
   setOpenCodeInstallationError(undefined)
   try {
-    if (action === "install") await serverApi.updateOpenCode()
+    if (action === "install") await serverApi.updateOpenCode({ replaceLegacy: options.replaceLegacy })
     if (epoch !== generation) return
     // Installation can leave an older shared daemon running. Re-read first so
     // restart remains a separate explicit action, never an implicit interruption.
@@ -129,8 +152,7 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
     if (status.state === "ready" && (status.serviceState === "ready" || status.serviceState === "restart_available")) {
       // Info-panel maintenance must not resume a workspace-open request left in
       // a dismissed recovery dialog. Preserve it for explicit recovery instead.
-      const retry = options.resumeWorkspace === false ? undefined : resume()
-      if (options.resumeWorkspace !== false) setResume(undefined)
+      const retry = options.resumeWorkspace === false ? undefined : takeWorkspaceResume()
       if (action === "reload") setOpenCodeSetupFeedback("reloaded")
       if (retry && status.serviceState === "ready") setOpenCodeSetupOpen(false)
       await retry?.() // Workspace-open retry only; never a session prompt/mutation.
@@ -142,8 +164,8 @@ export async function runOpenCodeSetup(action: OpenCodeSetupAction, options: { r
       await refreshOpenCodeSetup(true)
       if (epoch !== generation) return
       setOpenCodeSetupError(true)
-      if (error instanceof Error && (error.message === "installation_busy" || error.message === "installation_in_use")) {
-        setOpenCodeInstallationError(error.message)
+      if (error instanceof Error && (INSTALLATION_ERRORS as readonly string[]).includes(error.message)) {
+        setOpenCodeInstallationError(error.message as OpenCodeInstallationError)
       }
     }
   } finally {

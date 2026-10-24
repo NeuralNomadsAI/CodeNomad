@@ -1,24 +1,3 @@
-import { fetch } from "undici"
-import type { LatestReleaseInfo } from "../api-types"
-import type { Logger } from "../logger"
-
-const RELEASES_API_URL = "https://api.github.com/repos/NeuralNomadsAI/CodeNomad/releases/latest"
-interface ReleaseMonitorOptions {
-  currentVersion: string
-  logger: Logger
-  onUpdate: (release: LatestReleaseInfo | null) => void
-}
-
-interface GithubReleaseResponse {
-  tag_name?: string
-  name?: string
-  html_url?: string
-  body?: string
-  published_at?: string
-  created_at?: string
-  prerelease?: boolean
-}
-
 interface NormalizedVersion {
   major: number
   minor: number
@@ -26,76 +5,10 @@ interface NormalizedVersion {
   prerelease: string | null
 }
 
-export interface ReleaseMonitor {
-  stop(): void
-}
-
-export function startReleaseMonitor(options: ReleaseMonitorOptions): ReleaseMonitor {
-  let stopped = false
-
-  const refreshRelease = async () => {
-    if (stopped) return
-    try {
-      const release = await fetchLatestRelease(options)
-      options.onUpdate(release)
-    } catch (error) {
-      options.logger.warn({ err: error }, "Failed to refresh release information")
-    }
-  }
-
-  void refreshRelease()
-
-  return {
-    stop() {
-      stopped = true
-    },
-  }
-}
-
 export function compareVersionStrings(a: string, b: string): number {
   const left = parseVersion(a)
   const right = parseVersion(b)
   return compareVersions(left, right)
-}
-
-async function fetchLatestRelease(options: ReleaseMonitorOptions): Promise<LatestReleaseInfo | null> {
-  const response = await fetch(RELEASES_API_URL, {
-    headers: {
-      Accept: "application/vnd.github+json",
-      "User-Agent": "CodeNomad-CLI",
-    },
-  })
-
-  if (!response.ok) {
-    throw new Error(`Release API responded with ${response.status}`)
-  }
-
-  const json = (await response.json()) as GithubReleaseResponse
-  const tagFromServer = json.tag_name || json.name
-  if (!tagFromServer) {
-    return null
-  }
-
-  const normalizedVersion = stripTagPrefix(tagFromServer)
-  if (!normalizedVersion) {
-    return null
-  }
-
-  const current = parseVersion(options.currentVersion)
-  const remote = parseVersion(normalizedVersion)
-
-  if (compareVersions(remote, current) <= 0) {
-    return null
-  }
-
-  return {
-    version: normalizedVersion,
-    tag: tagFromServer,
-    url: json.html_url ?? `https://github.com/NeuralNomadsAI/CodeNomad/releases/tag/${encodeURIComponent(tagFromServer)}`,
-    channel: json.prerelease || normalizedVersion.includes("-") ? "dev" : "stable",
-    publishedAt: json.published_at ?? json.created_at,
-    notes: json.body,
-  }
 }
 
 export function stripTagPrefix(tag: string | undefined): string | null {

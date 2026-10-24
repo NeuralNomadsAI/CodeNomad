@@ -296,6 +296,8 @@ pub fn setup_local_window(
     window_id: &str,
     persisted: bool,
 ) -> Result<(), String> {
+    #[cfg(windows)]
+    crate::windows_browser_accelerators::bind(window.as_ref());
     let client_state = app.state::<ClientState>();
     if !persisted {
         client_state.register_ephemeral_window(window_id.to_string());
@@ -398,9 +400,7 @@ pub fn setup_local_window(
         }
         if saved_window.fullscreen {
             let _ = window.set_fullscreen(true);
-            if cfg!(not(target_os = "macos")) {
-                let _ = window.hide_menu();
-            }
+            crate::menu_bar::hide(&window.as_ref().window());
         }
     }
 
@@ -442,6 +442,7 @@ pub fn set_local_window_zoom(app: &AppHandle, window_label: &str, next_zoom: f64
     if webview.set_zoom(normalized).is_err() {
         return;
     }
+    crate::title_bar::publish_page_zoom(&webview, normalized);
     crate::window_constraints::apply(&webview.window(), normalized);
     let Some(client_state) = app.try_state::<ClientState>() else {
         return;

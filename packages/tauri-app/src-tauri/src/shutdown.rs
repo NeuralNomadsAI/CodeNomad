@@ -1,5 +1,5 @@
 use crate::{client_state, local_windows::LocalWindows, AppState};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 #[cfg(windows)]
@@ -37,12 +37,14 @@ struct ShutdownState {
     next_generation: u64,
     local_closes: HashMap<String, PendingClose>,
     committed_local_closes: HashMap<String, PendingClose>,
+    approved_local_closes: HashSet<String>,
     global_pending: HashMap<String, u64>,
     global_requests: HashMap<String, u64>,
     shutdown_started: bool,
     cleanup_started: bool,
     exit_allowed: bool,
     restart_requested: bool,
+    update: Option<crate::desktop_updater::PreparedUpdate>,
     #[cfg(windows)]
     windows_session_end_generation: Option<u64>,
     #[cfg(windows)]
@@ -66,6 +68,7 @@ impl ShutdownCoordinator {
         if state.shutdown_started
             || state.local_closes.contains_key(&label)
             || state.committed_local_closes.contains_key(&label)
+            || state.approved_local_closes.contains(&label)
         {
             return None;
         }
@@ -115,6 +118,13 @@ impl ShutdownCoordinator {
         labels: impl IntoIterator<Item = String>,
     ) -> Option<Vec<(String, u64)>> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        Self::begin_shutdown_locked(&mut state, labels)
+    }
+
+    fn begin_shutdown_locked(
+        state: &mut ShutdownState,
+        labels: impl IntoIterator<Item = String>,
+    ) -> Option<Vec<(String, u64)>> {
         if state.shutdown_started {
             return None;
         }
@@ -130,6 +140,19 @@ impl ShutdownCoordinator {
             state.global_requests.insert(label.clone(), generation);
             requests.push((label, generation));
         }
+        Some(requests)
+    }
+
+    fn begin_update(
+        &self,
+        labels: impl IntoIterator<Item = String>,
+        mut update: crate::desktop_updater::PreparedUpdate,
+    ) -> Option<Vec<(String, u64)>> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        let requests = Self::begin_shutdown_locked(&mut state, labels)?;
+        update.arm();
+        state.update = Some(update);
+        state.restart_requested = true;
         Some(requests)
     }
 
@@ -161,6 +184,7 @@ impl ShutdownCoordinator {
 
     fn cleanup_failed(&self) -> Vec<(String, u64)> {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.update.take();
         let cancellations = state.global_requests.drain().collect();
         state.cleanup_started = false;
         state.shutdown_started = false;
@@ -178,15 +202,19 @@ impl ShutdownCoordinator {
         cancellations
     }
 
-    fn expire_pending_shutdown(&self) -> PendingShutdownTimeoutAction {
+    fn expire_pending_shutdown(&self, requests: &[(String, u64)]) -> PendingShutdownTimeoutAction {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        if !state.shutdown_started || state.cleanup_started {
+        if !state.shutdown_started || state.cleanup_started
+            || requests.len() != state.global_requests.len()
+            || requests.iter().any(|(label, generation)| state.global_requests.get(label) != Some(generation))
+        {
             return PendingShutdownTimeoutAction::Cancel(Vec::new());
         }
         #[cfg(windows)]
         if state.windows_session_end_generation.is_some() {
             return PendingShutdownTimeoutAction::Cleanup;
         }
+        state.update.take();
         state.shutdown_started = false;
         state.restart_requested = false;
         state.global_pending.clear();
@@ -212,6 +240,30 @@ impl ShutdownCoordinator {
 
     fn take_committed_local_close(&self, label: &str) -> Option<PendingClose> {
         self.state.lock().ok()?.committed_local_closes.remove(label)
+    }
+
+    fn local_close_in_flight(&self, label: &str) -> bool {
+        self.state.lock().map_or(true, |state| {
+            state.local_closes.contains_key(label)
+                || state.committed_local_closes.contains_key(label)
+                || state.approved_local_closes.contains(label)
+        })
+    }
+
+    fn approve_local_close(&self, label: String) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .approved_local_closes
+            .insert(label);
+    }
+
+    fn local_window_destroyed(&self, label: &str) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .approved_local_closes
+            .remove(label);
     }
 
     fn exit_allowed(&self) -> bool {
@@ -249,6 +301,7 @@ impl ShutdownCoordinator {
         Some(operation())
     }
 
+    #[cfg(test)]
     fn shutdown_started(&self) -> bool {
         self.state
             .lock()
@@ -276,6 +329,9 @@ impl ShutdownCoordinator {
         let session_deadline = Instant::now() + WINDOWS_SESSION_END_TIMEOUT;
         state.windows_session_end_generation = Some(session_generation);
         state.windows_session_end_deadline = Some(session_deadline);
+        if state.update.take().is_some() {
+            state.restart_requested = false;
+        }
         if state.shutdown_started {
             return WindowsSessionEndPreparation {
                 generation: session_generation,
@@ -509,6 +565,21 @@ pub(crate) fn request(app: AppHandle) {
         start_cleanup(app, false);
         return;
     };
+    flush_shutdown(app, requests);
+}
+
+pub(crate) fn request_update(
+    app: AppHandle,
+    update: crate::desktop_updater::PreparedUpdate,
+) -> Result<(), String> {
+    let requests = app.state::<ShutdownCoordinator>()
+        .begin_update(renderer_labels(&app), update)
+        .ok_or("Application shutdown is already in progress")?;
+    flush_shutdown(app, requests);
+    Ok(())
+}
+
+fn flush_shutdown(app: AppHandle, requests: Vec<(String, u64)>) {
     for (label, generation) in &requests {
         if !emit_flush(&app, label, *generation) {
             app.state::<ShutdownCoordinator>()
@@ -529,7 +600,7 @@ pub(crate) fn request(app: AppHandle) {
     }
     std::thread::spawn(move || {
         std::thread::sleep(RENDERER_FLUSH_TIMEOUT);
-        match app.state::<ShutdownCoordinator>().expire_pending_shutdown() {
+        match app.state::<ShutdownCoordinator>().expire_pending_shutdown(&requests) {
             PendingShutdownTimeoutAction::Cancel(cancellations) => {
                 emit_flush_cancellations(&app, cancellations)
             }
@@ -578,6 +649,30 @@ fn start_cleanup(app: AppHandle, deadline_reached: bool) {
             emit_flush_cancellations(&app, cancellations);
             return;
         }
+        let update = app.state::<ShutdownCoordinator>().state.lock()
+            .unwrap_or_else(|error| error.into_inner()).update.take();
+        if let Err(error) = update.map(|update| update.install()).unwrap_or(Ok(())) {
+            eprintln!("[tauri] update installation failed: {error}");
+            // The failed installer must not be replayed. Restore the owned
+            // backend after reopening navigation, so even immediate readiness
+            // can restore the windows. A newer quit still wins recovery admission.
+            let cancellations = app.state::<ShutdownCoordinator>().cleanup_failed();
+            emit_flush_cancellations(&app, cancellations);
+            let recovery = app.try_state::<AppState>().and_then(|state| {
+                with_navigation_authority(&app, || state.manager.start(app.clone(), crate::is_dev_mode()))
+            });
+            match recovery {
+                // Recovery reloads every window; the new documents report it.
+                Some(Ok(())) => crate::desktop_updater::record_failure(),
+                // Without a reload, the live document that started the update reports it.
+                Some(Err(error)) => {
+                    eprintln!("[tauri] backend recovery after failed update: {error}");
+                    crate::desktop_updater::report_failure(&app);
+                }
+                None => crate::desktop_updater::report_failure(&app),
+            }
+            return;
+        }
         client_state::release(&app);
         let restart = app.state::<ShutdownCoordinator>().complete_cleanup();
         if restart {
@@ -617,10 +712,21 @@ pub(crate) fn with_navigation_authority<T>(
 }
 
 pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option<bool> {
+    let coordinator = app.state::<ShutdownCoordinator>();
+    if coordinator
+        .state
+        .lock()
+        .ok()
+        .is_some_and(|state| state.approved_local_closes.contains(label))
+    {
+        return Some(true);
+    }
     let pending = app
         .state::<ShutdownCoordinator>()
         .take_committed_local_close(label)?;
     if !pending.persisted {
+        app.state::<ShutdownCoordinator>()
+            .approve_local_close(label.to_string());
         return Some(true);
     }
     let result = app
@@ -636,7 +742,19 @@ pub(crate) fn consume_local_window_close(app: &AppHandle, label: &str) -> Option
         emit_flush_cancelled(app, label, pending.generation);
         return Some(false);
     }
+    app.state::<ShutdownCoordinator>()
+        .approve_local_close(label.to_string());
     Some(true)
+}
+
+pub(crate) fn local_window_close_in_flight(app: &AppHandle, label: &str) -> bool {
+    app.state::<ShutdownCoordinator>()
+        .local_close_in_flight(label)
+}
+
+pub(crate) fn local_window_destroyed(app: &AppHandle, label: &str) {
+    app.state::<ShutdownCoordinator>()
+        .local_window_destroyed(label);
 }
 
 pub(crate) fn exit_allowed(app: &AppHandle) -> bool {
@@ -849,3 +967,7 @@ pub(crate) fn schedule_windows_session_end_handler(window: &WebviewWindow) -> Re
 #[cfg(test)]
 #[path = "shutdown_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "shutdown_updater_tests.rs"]
+mod updater_tests;

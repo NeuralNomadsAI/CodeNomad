@@ -5,6 +5,7 @@ import { useI18n } from "../../lib/i18n"
 import { serverEvents } from "../../lib/server-events"
 import { requestLocationOptions, toRequestLocation } from "../../stores/request-locations"
 import { serverApi } from "../../lib/api-client"
+import { SettingsSwitch } from "../settings/settings-switch"
 import type { ProviderAccountsSnapshot } from "../../../../server/src/api-types"
 
 export function ProviderAccounts(props: {
@@ -40,11 +41,14 @@ export function ProviderAccounts(props: {
         trailing = false
         try {
           const catalog = await client.integration.list({ location: toRequestLocation(location) }, requestLocationOptions(location))
-          const snapshot = integrationID === "openai"
+          const current = catalog.data.find(item => item.id === integrationID)?.connections ?? []
+          // The server decides which integrations support automatic selection;
+          // only saved credentials can carry logins or become candidates.
+          const snapshot = current.some(item => item.type === "credential")
             ? await serverApi.getProviderAccounts(instanceId, integrationID, location.directory).catch(() => emptySnapshot())
             : emptySnapshot()
           if (!disposed && !trailing) {
-            setConnections(catalog.data.find(item => item.id === integrationID)?.connections ?? [])
+            setConnections(current)
             setSelection(snapshot)
             setError(false)
           }
@@ -151,9 +155,9 @@ export function ProviderAccounts(props: {
             }}>
             <input ref={input} class="providers-input" aria-label={t("settings.accounts.label")} value={label()} maxlength={256} disabled={busy() || props.disabled}
               onInput={event => { editRevision++; setDirty(true); setLabel(event.currentTarget.value) }} />
-            <button type="submit" class="selector-button" disabled={busy() || props.disabled || !label().trim() || !dirty()}
+            <button type="submit" class="selector-button selector-button-secondary" disabled={busy() || props.disabled || !label().trim() || !dirty()}
               >{t("settings.configFiles.actions.save")}</button>
-            <button type="button" class="selector-button" disabled={busy() || props.disabled}
+            <button type="button" class="selector-button selector-button-secondary" disabled={busy() || props.disabled}
               onClick={() => { setDirty(false); setEditing(false); setLabel(connectionLabel(connection())) }}>{t("alertDialog.actions.cancel")}</button>
             </form></Show>
           </Show>
@@ -161,9 +165,9 @@ export function ProviderAccounts(props: {
       }}</For>
       <Show when={selection().supported && connections().filter(item => item.type === "credential").length > 1}>
         <label class="provider-account-auto" title={t("settings.accounts.autoSelectHint")}>
-          <input type="checkbox" checked={selection().enabled} disabled={busy() || props.disabled}
-            onChange={event => { const enabled = event.currentTarget.checked; event.currentTarget.checked = selection().enabled; void setAutomatic(enabled) }} />
           <span>{t("settings.accounts.autoSelect")}</span>
+          <SettingsSwitch checked={selection().enabled} label={t("settings.accounts.autoSelect")} disabled={busy() || props.disabled}
+            onChange={enabled => void setAutomatic(enabled)} />
         </label>
       </Show>
   </div>

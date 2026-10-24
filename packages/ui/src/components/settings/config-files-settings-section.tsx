@@ -104,10 +104,10 @@ export const ConfigFilesSettingsSection: Component = () => {
         setOriginalContent(payload)
       }
       setExists(true)
-      showToastNotification({ message: t("settings.configFiles.toast.saveSuccess"), variant: "success" })
+      showToastNotification({ category: "settings", message: t("settings.configFiles.toast.saveSuccess"), variant: "success" })
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : t("settings.configFiles.errors.save"))
-      showToastNotification({ message: t("settings.configFiles.toast.saveError"), variant: "error" })
+      showToastNotification({ category: "settings", message: t("settings.configFiles.toast.saveError"), variant: "error" })
     } finally {
       setSaving(false)
     }

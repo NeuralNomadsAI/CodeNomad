@@ -1,0 +1,90 @@
+import { For, Show, createEffect, createMemo, createSignal } from "solid-js"
+import { ChevronRight } from "lucide-solid"
+import type { MessageInfo } from "../types/message"
+import type { VisibilityPreference } from "../stores/preferences"
+import { formatTokenTotal } from "../lib/formatters"
+import { useI18n } from "../lib/i18n"
+
+interface MessageUsageProps {
+  /** An agent message's usage, added up with its "delete tools and reasoning" selection's messages. */
+  messageInfo: MessageInfo
+  usageVisibility: VisibilityPreference
+  borderColor?: string
+  onContentRendered?: () => void
+}
+
+/** The compact token and cost line closing one agent response. */
+export function MessageUsage(props: MessageUsageProps) {
+  const { t } = useI18n()
+  const [expandedOverride, setExpandedOverride] = createSignal<boolean | null>(null)
+  const expanded = () => expandedOverride() ?? props.usageVisibility === "expanded"
+  const usage = () => {
+    const tokens = props.messageInfo.tokens ?? {}
+    return {
+      input: tokens.input ?? 0,
+      output: tokens.output ?? 0,
+      reasoning: tokens.reasoning ?? 0,
+      cacheRead: tokens.cache?.read ?? 0,
+      cacheWrite: tokens.cache?.write ?? 0,
+      cost: props.messageInfo.cost ?? 0,
+    }
+  }
+  const tokenEntry = (label: string, value: number) => ({ label: t(`messageBlock.usage.${label}`), value: formatTokenTotal(value), full: String(value) })
+  const entries = createMemo(() => {
+    const values = usage()
+    const cost = formatCostValue(values.cost)
+    return [
+      tokenEntry("input", values.input),
+      tokenEntry("output", values.output),
+      tokenEntry("reasoning", values.reasoning),
+      tokenEntry("cacheRead", values.cacheRead),
+      tokenEntry("cacheWrite", values.cacheWrite),
+      { label: t("messageBlock.usage.cost"), value: cost, full: cost },
+    ]
+  })
+  const summaryEntries = () => [entries()[0], entries()[1], entries()[5]]
+  const labelList = (metrics: ReturnType<typeof entries>) => metrics.map(entry => `${entry.label}: ${entry.full}`).join(", ")
+  const summaryLabel = () => labelList(summaryEntries())
+  const fullLabel = () => labelList(entries())
+  const renderEntries = (metrics: ReturnType<typeof entries>) => (
+    <For each={metrics}>
+      {(entry) => <span class="message-step-usage-chip" data-label={entry.label} title={`${entry.label}: ${entry.full}`}>{entry.value}</span>}
+    </For>
+  )
+  const style = () => props.borderColor ? { "border-left-color": props.borderColor } : undefined
+
+  let reported = false
+  createEffect(() => {
+    if (reported) return
+    reported = true
+    props.onContentRendered?.()
+  })
+
+  return (
+    <Show when={props.usageVisibility !== "hidden"}>
+      <div class="delete-hover-scope message-step-card message-step-finish message-step-finish-flush relative" style={style()}>
+        <button
+          type="button"
+          class="message-step-usage-toggle"
+          aria-expanded={expanded()}
+          aria-label={expanded() ? `${t("messageBlock.usage.collapseAriaLabel")}. ${fullLabel()}` : `${t("messageBlock.usage.expandAriaLabel")}. ${summaryLabel()}`}
+          onClick={() => setExpandedOverride(!expanded())}
+        >
+          <ChevronRight class="message-step-usage-disclosure disclosure-chevron" aria-hidden="true" />
+          <Show
+            when={!expanded()}
+            fallback={<span class="message-step-usage" title={fullLabel()}>{renderEntries(entries())}</span>}
+          >
+            <span class="message-step-usage-summary" title={summaryLabel()}>{renderEntries(summaryEntries())}</span>
+          </Show>
+        </button>
+      </div>
+    </Show>
+  )
+}
+
+function formatCostValue(value: number) {
+  if (!value) return "$0.00"
+  if (value < 0.01) return `$${value.toPrecision(2)}`
+  return `$${value.toFixed(2)}`
+}

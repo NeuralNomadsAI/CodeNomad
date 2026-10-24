@@ -3,6 +3,8 @@ import type { JSX } from "solid-js"
 export interface RightPanelItem {
   id: string
   labelKey: string
+  /** External author label; never registered in the application's i18n catalogue. */
+  label?: string
   order: number
   alwaysVisible?: boolean
 }
@@ -14,6 +16,8 @@ export interface RightPanelTabModule extends RightPanelItem {
 export interface RightPanelSectionModule extends RightPanelItem {
   tooltipKey: string
   defaultExpanded?: boolean
+  /** Non-interactive inline content, shown only while collapsed. */
+  renderSummary?: () => JSX.Element
   render: () => JSX.Element
 }
 
@@ -21,7 +25,7 @@ export interface RightPanelModule {
   id: string
   displayNameKey: string
   descriptionKey?: string
-  origin: "first-party"
+  origin: "first-party" | "external"
   tabs?: readonly RightPanelTabModule[]
   statusSections?: readonly RightPanelSectionModule[]
 }

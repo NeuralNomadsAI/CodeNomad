@@ -4,7 +4,7 @@ import { describe, it } from "node:test"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
-import { handleNativeSessionEvent, handleSessionStatus, handleSessionUpdate } from "./session-events.ts"
+import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
 import { clearInstanceDeletedSessionAuthority, messagesLoaded, sessions, setActiveSession, setMessagesLoaded, setSessions } from "./session-state.ts"
 
 const delay = (duration: number) => new Promise<void>((resolve) => setTimeout(resolve, duration))
@@ -138,7 +138,7 @@ describe("native session event reducer", () => {
       } as any)
       handleInstanceInvalidation(instanceId, {
         id: "compact", type: "session.compaction.started", created: 3,
-        data: { sessionID: sessionId, inputID: "compact", reason: "manual", recent: "" },
+        data: { sessionID: sessionId, inputID: "compact", reason: "manual" },
       } as any)
       handleInstanceInvalidation(instanceId, {
         id: "text-delta-1", type: "session.text.delta", created: 4,
@@ -174,7 +174,7 @@ describe("native session event reducer", () => {
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "firstsecond")
       handleInstanceInvalidation(instanceId, {
         id: "ended", type: "session.compaction.ended", created: 9,
-        data: { sessionID: sessionId, reason: "manual", text: "final", recent: "" },
+        data: { sessionID: sessionId, reason: "manual", text: "final" },
       } as any)
 
       assert.equal((store.getMessage("compact")?.parts.compact?.data as any)?.text, "final")
@@ -197,6 +197,7 @@ describe("native session event reducer", () => {
     const gate = new Promise<void>((resolve) => { release = resolve })
     const client = {
       session: {
+        active: async () => ({}),
         get: async () => {
           await gate
           return {
@@ -215,9 +216,13 @@ describe("native session event reducer", () => {
         durable: { aggregateID: sessionId, seq: 1, version: 1 },
         data: { sessionID: sessionId }, location: { directory: "/work" },
       })
-      handleSessionStatus(instanceId, {
-        type: "session.status", data: { sessionID: sessionId, status: { type: "idle" } },
-      } as any)
+      handleNativeSessionEvent(instanceId, {
+        id: "succeeded", created: 2, type: "session.execution.succeeded",
+        durable: { aggregateID: sessionId, seq: 2, version: 1 },
+        data: { sessionID: sessionId }, location: { directory: "/work" },
+      })
+      // Settlement is confirmed while the session's metadata is still hydrating.
+      await delay(10)
       release()
       await delay(20)
 

@@ -6,23 +6,45 @@ import { join } from "node:path"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { prepareInterruptionDock } from "./fixtures/interruption-dock-preparation"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
+async function disposeFixture() {
+  try { await browser?.close() }
+  finally {
+    if (server) await server.close()
+    else await cache?.dispose()
+  }
+}
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "interruptions-fixture", configureServer(s) {
-      s.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/interruption-dock.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
-  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  try {
+    cache = await createFixtureCache()
+    const shutdown = createFixtureShutdown(cache)
+    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+      cacheDir: cache.cacheDir,
+      plugins: [shutdown.plugin, solid(), { name: "interruptions-fixture", configureServer(s) {
+        s.middlewares.use("/fixture", async (_req, res) => {
+          res.setHeader("Content-Type", "text/html")
+          res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/interruption-dock.tsx"></script></body></html>'))
+        })
+      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
+      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+    })
+    shutdown.own(server)
+    await server.listen()
+    await prepareInterruptionDock(server)
+    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  } catch (error) {
+    try { await disposeFixture() }
+    catch (cleanupError) { throw new AggregateError([error, cleanupError], "Interruption fixture setup and cleanup failed") }
+    throw error
+  }
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(disposeFixture)
 
 async function fixture(width = 1100, theme: "light" | "dark" = "light") {
   const page = await browser.newPage({ viewport: { width, height: 800 } })
@@ -30,13 +52,156 @@ async function fixture(width = 1100, theme: "light" | "dark" = "light") {
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-  await page.goto(url)
+  await page.goto(url, { timeout: 60000 })
   await page.waitForFunction(() => Boolean((window as any).fixture?.snapshot().ids.length))
   await page.evaluate(theme => (window as any).fixture.theme(theme), theme)
   assert.equal(await page.locator("html").getAttribute("data-theme"), theme)
   return { page, errors }
 }
 const answer = (page: Page) => page.locator('.interruption-dock input[type="text"]:visible')
+
+test("human answer origin follows the actual dock click/key input, never trusted script submission", async () => {
+  for (const action of ["dom-click", "request-submit", "pointer", "keyboard", "explicit-automation"] as const) {
+    const { page, errors } = await fixture()
+    try {
+      await page.evaluate(() => (window as any).fixture.ask())
+      await page.evaluate(() => {
+        (window as any).fixture.submitTrust = []
+        document.addEventListener("submit", event => (window as any).fixture.submitTrust.push(event.isTrusted), true)
+      })
+      await answer(page).fill(`Exact ${action} answer`)
+      const submit = page.locator('.interruption-dock button[type="submit"]:visible')
+      await submit.waitFor()
+      if (action === "dom-click") await submit.evaluate(element => (element as HTMLButtonElement).click())
+      else if (action === "request-submit") await submit.evaluate(element => (element as HTMLButtonElement).form!.requestSubmit())
+      else if (action === "keyboard") await answer(page).press("Enter")
+      else {
+        if (action === "explicit-automation") await page.evaluate(() => { (window as any).__codenomadAutomationDepth = 1 })
+        await submit.click()
+      }
+      await page.waitForFunction(() => (window as any).fixture.replies.length === 1)
+      const result = await page.evaluate(() => ({ reply: (window as any).fixture.replies[0], options: (window as any).fixture.replyOptions[0] }))
+      assert.deepEqual(result.reply.answer, { q0: `Exact ${action} answer` })
+      assert.deepEqual(await page.evaluate(() => (window as any).fixture.submitTrust), [true], `${action}: trusted submit alone proves nothing`)
+      assert.equal(result.options?.headers?.["x-codenomad-human-answer"], action === "pointer" || action === "keyboard" ? "1" : undefined, action)
+      assert.deepEqual(errors, [])
+    } finally { await page.close() }
+  }
+})
+
+test("ordinary question answers settle through the ordinary reply; the human header is only a backend hint", async () => {
+  const { page, errors } = await fixture()
+  try {
+    // The backend alone decides the Mission mark path; an ordinary conversation's
+    // human answer is forwarded as an ordinary native reply and settles the dock.
+    await page.evaluate(() => (window as any).fixture.ask())
+    await answer(page).fill("Ordinary answer")
+    await answer(page).press("Enter")
+    await page.waitForFunction(() => (window as any).fixture.snapshot().forms.length === 0)
+    const sent = await page.evaluate(() => ({ reply: (window as any).fixture.replies[0], options: (window as any).fixture.replyOptions[0] }))
+    assert.deepEqual(sent.reply, { sessionID: "s", formID: "question", answer: { q0: "Ordinary answer" } })
+    assert.equal(sent.options?.headers?.["x-codenomad-human-answer"], "1")
+    // A non-question Form never carries the hint at all.
+    await page.evaluate(() => (window as any).fixture.other())
+    await page.evaluate(() => (window as any).fixture.focusScoped("other", "other", "form"))
+    await answer(page).fill("Other answer")
+    await answer(page).press("Enter")
+    await page.waitForFunction(() => (window as any).fixture.replies.length === 2)
+    assert.equal(await page.evaluate(() => (window as any).fixture.replyOptions[1]?.headers?.["x-codenomad-human-answer"]), undefined)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+/** Recovery warnings of any cause in the history (one title for all causes); a question
+ *  asked meanwhile adds its own "needs your answer" entry. */
+const recoveryWarnings = (page: Page) => page.evaluate(() => (window as any).fixture.notifications()
+  .filter((item: { title?: string }) => /questions and permissions not fully recovered/.test(item.title ?? "")).length)
+
+test("removed idle worktree inventory heals before warning while real-event questions keep their draft", async () => {
+  const { page, errors } = await fixture()
+  const deleted = "/fixture/.codenomad/worktrees/deleted-history"
+  const inventoryReads: boolean[] = [], pendingReads: boolean[] = []
+  try {
+    await page.route("**/api/workspaces/interruptions/worktrees*", async route => {
+      const fresh = new URL(route.request().url()).searchParams.get("fresh") === "true"
+      inventoryReads.push(fresh)
+      await route.fulfill({ json: { worktrees: [
+        { slug: "root", directory: "/fixture", kind: "root" },
+        ...(!fresh ? [{ slug: "deleted", directory: deleted, kind: "worktree" }] : []),
+      ] } })
+    })
+    await page.route("**/api/workspaces/interruptions/pending-requests*", async route => {
+      const query = new URL(route.request().url()).searchParams
+      const optional = query.getAll("optionalDirectories").includes(deleted)
+      pendingReads.push(optional)
+      const queues = await page.evaluate(() => (window as any).fixture.recoveryState())
+      await route.fulfill({ json: { supported: true, directories: query.getAll("directories").map(directory => directory === deleted
+        ? optional ? { directory, status: "excluded" } : { directory, status: "error", reason: "missing" }
+        : { directory, status: "ok", locations: [{ location: { directory }, forms: queues.forms, permissions: queues.permissions }] }) } })
+    })
+    await page.evaluate(directory => (window as any).fixture.prepareRemovedWorktreeHistory(directory), deleted)
+    await page.evaluate(() => (window as any).fixture.ask())
+    await answer(page).fill("Keep my draft while inventory heals")
+    await page.evaluate(() => (window as any).fixture.recoverCurrent())
+    await page.evaluate(() => (window as any).fixture.recoverCurrent())
+    assert.deepEqual(inventoryReads, [false, true])
+    assert.deepEqual(pendingReads, [false, true, true])
+    assert.equal(await recoveryWarnings(page), 0)
+    assert.equal(await answer(page).inputValue(), "Keep my draft while inventory heals")
+    const result = await page.evaluate(() => (window as any).fixture.recoveryState())
+    assert.equal(result.historicalDirectory, deleted)
+    assert.deepEqual(result.forms.map((entry: { id: string }) => entry.id), ["question"])
+    assert.deepEqual(result.worktrees.map((entry: { slug: string }) => entry.slug), ["root"])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("persistently incomplete recovery uses existing notifications once until recovery, without banners or icons, and preserves drafts", async () => {
+  const { page, errors } = await fixture(393)
+  try {
+    await page.evaluate(() => (window as any).fixture.recover("empty"))
+    const warning = page.getByText(/^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./)
+    // A single transient failure is retried by the liveness pass without a warning.
+    assert.equal(await recoveryWarnings(page), 0)
+    await page.evaluate(() => (window as any).fixture.recover("unsupported"))
+    await warning.waitFor()
+    assert.equal(await warning.count(), 1)
+    assert.equal(await recoveryWarnings(page), 1)
+    assert.equal(await page.getByRole("button", { name: /^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./ }).count(), 0)
+    await page.getByRole("button", { name: "Close", exact: true }).click()
+    await warning.waitFor({ state: "detached" })
+    assert.equal(await page.locator(".interruption-dock").count(), 0)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)
+    await page.evaluate(() => (window as any).fixture.ask())
+    await answer(page).fill("Keep this answer")
+    await page.evaluate(() => (window as any).fixture.invalidateRecovery())
+    await page.evaluate(() => (window as any).fixture.recover("error"))
+    assert.equal(await warning.count(), 0)
+    assert.equal(await recoveryWarnings(page), 1)
+    assert.equal(await answer(page).inputValue(), "Keep this answer")
+    await page.screenshot({ path: join(tmpdir(), "opencode", "pending-recovery-incomplete-393.png") })
+    await page.evaluate(() => (window as any).fixture.recover("complete"))
+    assert.equal(await warning.count(), 0)
+    await page.evaluate(() => (window as any).fixture.recover("unsupported"))
+    assert.equal(await recoveryWarnings(page), 1)
+    await page.evaluate(() => (window as any).fixture.recover("unsupported"))
+    await warning.waitFor()
+    assert.equal(await recoveryWarnings(page), 2)
+    assert.equal(await answer(page).inputValue(), "Keep this answer")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+async function assertHeader(page: Page, icon: string) {
+  assert.equal(await page.locator(".interruption-heading").evaluate((heading, icon) => {
+    const [toggle, status, title] = Array.from(heading.children)
+    const direction = toggle.getAttribute("aria-expanded") === "true" ? "down" : "up"
+    const a = toggle.getBoundingClientRect(), b = status.getBoundingClientRect(), c = title.getBoundingClientRect()
+    return toggle.matches(".interruption-toggle") && Boolean(toggle.querySelector(`.lucide-chevron-${direction}`))
+      && status.matches(icon) && title.matches(".interruption-heading-copy") && a.right <= b.left && b.right <= c.left
+      && Math.abs(a.y + a.height / 2 - b.y - b.height / 2) < 1
+  }, icon), true)
+}
 
 async function assertBoundedActions(page: Page, footerSelector = ".form-request-actions") {
   const metrics = await page.locator(".interruption-dock").evaluate((dock, footerSelector) => {
@@ -75,6 +240,7 @@ for (const width of [393, 1100]) for (const theme of ["light", "dark"] as const)
       assert.equal(await page.getByRole("button", { name: "Next request", exact: true }).count(), 0)
       assert.equal(await fields.evaluate(element => element.scrollHeight > element.clientHeight), true)
       await assertBoundedActions(page)
+      await assertHeader(page, ".lucide-message-circle-question")
       await capture("open")
       const hierarchy = await page.locator(".form-request-field").first().evaluate(field => {
         const question = getComputedStyle(field.querySelector(".form-request-description")!)
@@ -116,6 +282,7 @@ for (const width of [393, 1100]) for (const theme of ["light", "dark"] as const)
       const panel = await page.locator(".interruption-dock").boundingBox()
       const header = await page.locator(".interruption-dock > header").boundingBox()
       assert.ok(panel && header && panel.height <= header.height + 3 && panel.height < 80)
+      await assertHeader(page, ".lucide-message-circle-question")
       await capture("collapsed")
       await page.keyboard.press("Enter")
       assert.equal(await answer(page).inputValue(), "Include the keyboard shortcuts and deployment schedule.")
@@ -192,6 +359,39 @@ test("a single request has no navigation; the badge restores the collapsed edito
   } finally { await page.close() }
 })
 
+test("answering in the dock preserves the Mission reader and does not reveal the transcript", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => { (window as any).fixture.ask(); (window as any).fixture.missionReader() })
+    await page.locator('.mission-transcript-content[inert]').waitFor({ state: "attached" })
+    await answer(page).fill("Answer without leaving the Mission reader")
+    assert.equal(await page.getByRole("button", { name: "View in conversation" }).count(), 0)
+    await page.locator('.interruption-dock button[type="submit"]').click()
+    await page.locator(".interruption-dock").waitFor({ state: "detached" })
+    assert.equal(await page.evaluate(() => (window as any).fixture.hasMissionReader()), true)
+    assert.equal(await page.locator('.mission-transcript-content').evaluate(element => element.hasAttribute("inert")), true)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.windows), [])
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.replies[0].answer), { q0: "Answer without leaving the Mission reader" })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("answering in the dock preserves the open file preview and composer draft", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.locator(".prompt-input").fill("Keep my preview draft")
+    await page.evaluate(() => { (window as any).fixture.ask(); (window as any).fixture.preview() })
+    await page.waitForFunction(() => (window as any).fixture.hasPreview())
+    await answer(page).fill("Answer without closing the preview")
+    await page.locator('.interruption-dock button[type="submit"]').click()
+    await page.locator(".interruption-dock").waitFor({ state: "detached" })
+    assert.equal(await page.evaluate(() => (window as any).fixture.hasPreview()), true)
+    assert.equal(await page.locator(".prompt-input").inputValue(), "Keep my preview draft")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.windows), [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("native receipt metadata wins and custom multiline answers stay literal", async () => {
   const { page, errors } = await fixture()
   try {
@@ -248,15 +448,57 @@ test("new permissions do not replace the draft; bounded navigation stays separat
     assert.equal(await answer(page).evaluate(element => element === document.activeElement), true)
     assert.equal(await page.getByRole("button", { name: "Next request", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Collapse requests", exact: true }).click()
+    await page.evaluate(() => { (window as any).fixture.other(); (window as any).fixture.refresh() })
+    assert.equal(await page.locator(".interruption-external-preview > :first-child.lucide-chevron-up").count(), 1)
+    assert.equal(await page.getByRole("button", { name: "Expand requests", exact: true }).getAttribute("aria-expanded"), "false")
     await page.locator('.permission-center-trigger').click()
     assert.equal(await answer(page).inputValue(), "Keep typing")
     await page.getByRole("button", { name: "Previous request", exact: true }).click()
     await page.getByRole("button", { name: "Allow Once", exact: true }).waitFor()
+    await assertHeader(page, ".lucide-shield-check")
     assert.equal(await page.getByRole("button", { name: "Previous request", exact: true }).isDisabled(), true)
     await page.getByRole("button", { name: "Next request", exact: true }).click()
     assert.equal(await answer(page).inputValue(), "Keep typing")
     assert.equal(await page.getByRole("button", { name: "Collapse requests", exact: true }).getAttribute("aria-expanded"), "true")
     assert.deepEqual(await page.evaluate(() => (window as any).fixture.windows), [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("exact focus intents honor the native session and never substitute another request after disappearance", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => (window as any).fixture.ask())
+    await answer(page).fill("Scoped draft")
+    await page.evaluate(() => (window as any).fixture.collidingPermission())
+    await page.evaluate(() => (window as any).fixture.focusScoped("question", "other"))
+    await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).waitFor()
+    assert((await page.locator(".interruption-dock").innerText()).includes("other-scope.txt"))
+    await page.evaluate(() => (window as any).fixture.focusScoped("question"))
+    await answer(page).waitFor()
+    assert.equal(await answer(page).inputValue(), "Scoped draft")
+    await page.evaluate(() => { (window as any).fixture.sameScopePermission(); (window as any).fixture.focusScoped("question", undefined, "permission") })
+    await page.locator(".interruption-dock").getByRole("button", { name: "Allow Once", exact: true }).waitFor()
+    assert((await page.locator(".interruption-dock").innerText()).includes("same-scope.txt"))
+    await page.evaluate(() => (window as any).fixture.focusScoped("question", undefined, "form"))
+    await answer(page).waitFor()
+    assert.equal(await answer(page).inputValue(), "Scoped draft")
+    await page.evaluate(() => (window as any).fixture.focusScoped("already-answered", "other"))
+    assert.equal(await answer(page).inputValue(), "Scoped draft")
+    await page.getByRole("button", { name: "Collapse requests", exact: true }).click()
+    await page.evaluate(async modulePath => {
+      const { focusInterruption } = await import(/* @vite-ignore */ modulePath)
+      focusInterruption("interruptions", "missing-session")
+    }, "/src/stores/interruption-navigation.ts")
+    assert.equal(await answer(page).count(), 0, "a session-only intent cannot substitute another conversation")
+    await page.evaluate(async modulePath => {
+      const { focusInterruption } = await import(/* @vite-ignore */ modulePath)
+      focusInterruption("interruptions", undefined, undefined, "permission")
+    }, "/src/stores/interruption-navigation.ts")
+    assert.equal(await answer(page).count(), 0, "a kind-only intent cannot substitute a different request")
+    await page.evaluate(() => (window as any).fixture.focusScoped("question", undefined, "form"))
+    assert.equal(await answer(page).inputValue(), "Scoped draft")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.replies), [])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -300,15 +542,14 @@ test("a live native question becomes a durable transcript receipt after dock sub
   } finally { await page.close() }
 })
 
-test("partial answers survive refresh, request navigation and session remount; failed sends stay retryable", async () => {
+test("partial answers survive refresh and conversation navigation; failed sends stay retryable", async () => {
   const { page, errors } = await fixture()
   try {
     await page.evaluate(() => (window as any).fixture.ask())
     await answer(page).fill("Partial answer")
     await page.evaluate(() => { (window as any).fixture.refresh(); (window as any).fixture.other() })
-    await page.getByRole("button", { name: "Next request", exact: true }).click()
-    await answer(page).fill("Other answer")
     await page.evaluate(() => (window as any).fixture.switch("other"))
+    await answer(page).fill("Other answer")
     assert.equal(await answer(page).inputValue(), "Other answer")
     await page.evaluate(() => (window as any).fixture.switch("s"))
     assert.equal(await answer(page).inputValue(), "Partial answer")
@@ -322,6 +563,15 @@ test("partial answers survive refresh, request navigation and session remount; f
     assert.equal(await answer(page).isDisabled(), true)
     await page.evaluate(() => (window as any).fixture.release())
     await page.waitForFunction(() => !(window as any).fixture.snapshot().forms.includes("question"))
+    assert.equal(await page.locator('.interruption-dock').isVisible(), true)
+    assert.equal(await answer(page).count(), 0, "foreign fallback stays compact after submission")
+    await assertHeader(page, ".lucide-message-circle-question")
+    assert.equal(await page.locator(".interruption-dock .window-actions .session-permission").textContent(), "Needs Input")
+    await page.locator(".interruption-toggle").click()
+    await assertHeader(page, ".lucide-message-circle-question")
+    assert.equal(await page.locator(".interruption-dock .window-actions .session-permission").count(), 0)
+    await page.evaluate(() => (window as any).fixture.switch("other"))
+    await assertHeader(page, ".lucide-message-circle-question")
     assert.equal(await answer(page).inputValue(), "Other answer")
     assert.equal(await page.evaluate(() => (window as any).fixture.replies.length), 2)
     assert.deepEqual(errors, [])
@@ -342,8 +592,14 @@ test("mobile dock handles source-less permissions, global Forms and remote settl
     await page.evaluate(() => (window as any).fixture.remoteReply())
     await page.locator(".interruption-dock").waitFor({ state: "detached" })
     await page.evaluate(() => (window as any).fixture.global())
-    await page.getByText("Service request", { exact: true }).waitFor()
-    assert.equal(await page.getByRole("button", { name: "View in conversation" }).count(), 0)
+    assert.equal(await page.locator('.interruption-dock').isVisible(), true)
+    assert.equal(await answer(page).count(), 0)
+    await page.evaluate(() => (window as any).fixture.switch(null))
+    await page.getByRole("heading", { name: "Project request", exact: true }).waitFor()
+    await assertHeader(page, ".lucide-message-circle-question")
+    assert.equal(await answer(page).count(), 0)
+    await page.getByRole("button", { name: "Open request from Project request", exact: true }).click()
+    assert.equal(await page.getByRole("button", { name: "View conversation", exact: true }).count(), 0)
     await answer(page).fill("Global answer")
     await page.screenshot({ path: join(tmpdir(), "interruption-dock-mobile.png") })
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true)

@@ -22,10 +22,10 @@ const instanceId = "pruning-ui"
 const sessionId = new URLSearchParams(location.search).get("session")!
 const proxyPath = `/workspaces/${instanceId}/instance`
 const client = sdkManager.createClient(instanceId, proxyPath)
-const uiConfig = { settings: { showThinkingBlocks: true, thinkingBlocksExpansion: "collapsed", toolOutputExpansion: "collapsed", locale: "en" } }
+let uiConfig = { settings: { showThinkingBlocks: true, thinkingBlocksExpansion: "collapsed", toolOutputExpansion: "collapsed", locale: "en" } }
 serverApi.fetchConfigOwner = async (owner: string) => (owner === "ui" ? uiConfig : {}) as any
 serverApi.fetchStateOwner = async () => ({} as any)
-serverApi.patchConfigOwner = async (_owner: string, patch: any) => Object.assign(uiConfig, patch) as any
+serverApi.patchConfigOwner = async (_owner: string, patch: any) => (uiConfig = { ...uiConfig, ...patch, settings: { ...uiConfig.settings, ...patch.settings } }) as any
 const session = await client.session.get({ sessionID: sessionId })
 let eventsReady = false
 addInstance({ id: instanceId, folder: session.location.directory, port: 0, pid: 0, proxyPath, status: "ready", client })
@@ -55,7 +55,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   eventsReady: () => eventsReady,
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
   snapshot: () => messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).map(id => messageStoreBus.getOrCreate(instanceId).getMessage(id)),
-  preferences: () => updatePreferences({ showThinkingBlocks: true, thinkingBlocksExpansion: "collapsed", toolOutputExpansion: "collapsed", locale: "en" }),
+  preferences: (showUsageMetrics = true) => updatePreferences({ showThinkingBlocks: true, thinkingBlocksExpansion: "collapsed", toolOutputExpansion: "collapsed", showUsageMetrics, locale: "en" }),
 }
 const events = new EventSource("/fixture-events")
 events.onmessage = message => {

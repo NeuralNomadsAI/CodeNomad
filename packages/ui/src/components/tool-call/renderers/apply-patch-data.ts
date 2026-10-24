@@ -72,8 +72,13 @@ export function getApplyPatchCopyAccess(files: ApplyPatchFile[], fallback: unkno
   return { language: "text" as const, getCopyText: () => fallback, hasCopyText: true as const }
 }
 
+/**
+ * Files to render within a shared character budget. Each rendered file carries its
+ * whole diff and the share of the budget it renders before its own in-place reveal;
+ * `truncated` reports files (or content) omitted from rendering altogether.
+ */
 export function getApplyPatchRenderData(files: ApplyPatchFile[], fileLimit: number, characterLimit: number, sourceTruncated = false) {
-  const rendered: Array<{ file: ApplyPatchFile; diffText: string }> = []
+  const rendered: Array<{ file: ApplyPatchFile; diffText: string; renderLimit: number }> = []
   let characters = 0
   let scannedCharacters = 0
   let truncated = sourceTruncated
@@ -87,10 +92,11 @@ export function getApplyPatchRenderData(files: ApplyPatchFile[], fileLimit: numb
     const probe = probeApplyPatchCopyText(file, Math.min(APPLY_PATCH_SCAN_LIMIT - scannedCharacters, remaining))
     scannedCharacters += probe.scanned
     const firstContent = probe.hasContent ? fullDiff.slice(0, probe.scanned).search(/\S/) : -1
-    const diffText = firstContent >= 0 ? fullDiff.slice(firstContent, firstContent + remaining) : ""
-    rendered.push({ file, diffText })
-    characters += diffText.length
-    if (probe.truncated || (firstContent >= 0 && fullDiff.length - firstContent > remaining)) truncated = true
+    const diffText = firstContent >= 0 ? fullDiff.slice(firstContent) : ""
+    rendered.push({ file, diffText, renderLimit: remaining })
+    characters += Math.min(diffText.length, remaining)
+    // Content the bounded scan could not locate cannot be revealed in place.
+    if (probe.truncated && !probe.hasContent) truncated = true
   }
   return { rendered, truncated }
 }

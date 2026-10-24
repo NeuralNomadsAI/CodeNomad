@@ -3,7 +3,7 @@ import { onCleanup } from "solid-js"
 const px = (value: string) => Number.parseFloat(value) || 0
 
 /** Intrinsic width of the single-line header, ignoring its overflow trigger. */
-function contentWidth(element: Element): number {
+export function contentWidth(element: Element): number {
   if (element.matches(".action-overflow-trigger, .message-agent-meta-inline--measure")) return 0
   const style = getComputedStyle(element)
   if (style.display === "none") return 0

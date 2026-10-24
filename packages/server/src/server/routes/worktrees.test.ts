@@ -14,6 +14,25 @@ import { readInternalLocationContext } from "../../workspaces/__tests__/location
 import { fixtureCatalogue } from "../../workspaces/__tests__/native-worktree-fixture"
 
 describe("worktree routes", () => {
+it("keeps ordinary worktree reads cached and exposes explicit fresh recovery validation", async () => {
+  const app = Fastify({ logger: false })
+  const modes: string[] = []
+  const manager = { get: () => ({ id: "workspace" }), getWorktrees: async (_id: string, mode: string) => {
+    modes.push(mode)
+    return { worktrees: [] }
+  } } as unknown as WorkspaceManager
+  registerWorktreeRoutes(app, { workspaceManager: manager, worktreeDeletionFence: new WorktreeDeletionFence() })
+  try {
+    for (const query of ["", "?fresh=true", "?fresh=false"]) {
+      assert.equal((await app.inject({ method: "GET", url: `/api/workspaces/workspace/worktrees${query}` })).statusCode, 200)
+    }
+    for (const query of ["?fresh=unknown", "?fresh=true&fresh=false", "?directory=/foreign"]) {
+      assert.equal((await app.inject({ method: "GET", url: `/api/workspaces/workspace/worktrees${query}` })).statusCode, 400)
+    }
+    assert.deepEqual(modes, ["cached", "fresh", "cached"])
+  } finally { await app.close() }
+})
+
 it("reserves the physical worktree and rejects a same-HEAD replacement before deletion", async () => {
   const temp = mkdtempSync(path.join(tmpdir(), "codenomad-worktree-route-"))
   const repo = path.join(temp, "repo")

@@ -13,7 +13,7 @@ export interface ResolvedBinary {
   path: string
   label: string
   version?: string
-  source?: "path" | "user"
+  source?: "path" | "user" | "managed"
 }
 
 function prettyLabel(p: string): string {

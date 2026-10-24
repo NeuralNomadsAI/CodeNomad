@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "לא ניתן לפתוח את העזרה בדפדפן. פתחו את https://neuralnomadsai.github.io/CodeNomad/ ידנית.",
   "commandPalette.title": "לוח פקודות",
   "commandPalette.description": "חיפוש והפעלה של פקודות",
   "commandPalette.searchPlaceholder": "הקלד פקודה או חיפוש...",
@@ -14,6 +15,9 @@ export const commandMessages = {
   "commands.newInstance.label": "מופע חדש",
   "commands.newInstance.description": "פתח בורר תיקיות ליצירת מופע חדש",
   "commands.newInstance.keywords": "תיקייה, פרויקט, סביבת עבודה",
+  "commands.newTemporaryInstance.label": "מופע זמני חדש",
+  "commands.newTemporaryInstance.description": "פתח מופע זמני ריק בלי לבחור תיקייה",
+  "commands.newTemporaryInstance.keywords": "זמני, טיוטה, מהיר, ריק, פרויקט, temporary",
   "commands.openWorkspace.folder.label": "פתיחת תיקיית הפרויקט",
   "commands.openWorkspace.folder.description": "פתיחת תיקיית הפרויקט הנוכחי במנהל הקבצים",
   "commands.openWorkspace.folder.keywords": "תיקייה, קבצים, סייר",
@@ -31,9 +35,6 @@ export const commandMessages = {
   "commands.closeInstance.label": "סגור לשונית",
   "commands.closeInstance.description": "סגור את הלשונית העליונה הנוכחית",
   "commands.closeInstance.keywords": "עצור, סגור, לשונית",
-  "commands.stopInstance.label": "עצור סביבת עבודה",
-  "commands.stopInstance.description": "עצור את סביבת העבודה המשותפת בכל החלונות",
-  "commands.stopInstance.keywords": "עצור, סביבת עבודה, שרת, משותף",
 
   "commands.nextInstance.label": "הלשונית הבאה",
   "commands.nextInstance.description": "עבור ללשונית העליונה הבאה",
@@ -66,6 +67,13 @@ export const commandMessages = {
   "commands.previousSession.label": "סשן קודם",
   "commands.previousSession.description": "עבור לסשן הקודם",
   "commands.previousSession.keywords": "החלף, נווט",
+
+  "commands.previousUserMessage.label": "הודעת משתמש קודמת",
+  "commands.previousUserMessage.description": "מעבר להודעה הקודמת ששלחת בשיחה זו",
+  "commands.previousUserMessage.keywords": "קפוץ, נווט, הנחיה, הודעת משתמש",
+  "commands.nextUserMessage.label": "הודעת משתמש הבאה",
+  "commands.nextUserMessage.description": "מעבר להודעה הבאה ששלחת בשיחה זו",
+  "commands.nextUserMessage.keywords": "קפוץ, נווט, הנחיה, הודעת משתמש",
 
   "commands.compactSession.label": "סכם סשן",
   "commands.compactSession.description": "סכם ודחוס את הסשן הנוכחי",
@@ -113,20 +121,10 @@ export const commandMessages = {
   "commands.clearInput.description": "נקה את תיבת הטקסט של הפקודה",
   "commands.clearInput.keywords": "נקה, אפס",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: שורה חדשה, Cmd/Ctrl+Enter: שלח פקודה",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: שלח פקודה, Cmd/Ctrl+Enter: שורה חדשה",
-  "commands.promptSubmitShortcut.description": "החלף את התנהגות Enter ו-Cmd/Ctrl+Enter בקלט הפקודה",
-  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, שלח, שורה חדשה, קיצור",
-
   "commands.thinkingBlocks.label.show": "הצג חשיבה",
   "commands.thinkingBlocks.label.hide": "הסתר חשיבה",
   "commands.thinkingBlocks.description": "הצג או הסתר קטעי חשיבה של ה-AI",
   "commands.thinkingBlocks.keywords": "חשיבה, הצג, הסתר",
-
-  "commands.timelineToolCalls.label.show": "הצג קריאות כלי בציר הזמן",
-  "commands.timelineToolCalls.label.hide": "הסתר קריאות כלי בציר הזמן",
-  "commands.timelineToolCalls.description": "הצג/הסתר קריאות כלי בציר הודעות",
-  "commands.timelineToolCalls.keywords": "ציר זמן, כלי, הצג, הסתר",
 
   "commands.keyboardShortcutHints.label.show": "הצג רמזי קיצורי מקלדת",
   "commands.keyboardShortcutHints.label.hide": "הסתר רמזי קיצורי מקלדת",
@@ -173,9 +171,12 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "נקה אוטומטית סשנים ריקים בעת יצירת סשנים חדשים",
   "commands.autoCleanupBlankSessions.keywords": "אוטומטי, ניקוי, ריק, סשנים",
 
-  "commands.showHelp.label": "הצג עזרה",
-  "commands.showHelp.description": "הצג קיצורי מקלדת ועזרה",
-  "commands.showHelp.keywords": "קיצורים, עזרה",
+  "commands.openHelp.label": "פתיחת עזרה",
+  "commands.openHelp.description": "פתיחת המדריך למשתמש של CodeNomad בדפדפן",
+  "commands.openHelp.keywords": "עזרה, מדריך, תיעוד",
+  "commands.openAbout.label": "אודות CodeNomad",
+  "commands.openAbout.description": "הצגת הגרסה, העדכונים והאבחון בהגדרות",
+  "commands.openAbout.keywords": "אודות, גרסה, עדכונים, אבחון",
 
   "commands.custom.argumentsPrompt.message": "ארגומנטים עבור /{name}",
   "commands.custom.argumentsPrompt.title": "פקודה מותאמת אישית",

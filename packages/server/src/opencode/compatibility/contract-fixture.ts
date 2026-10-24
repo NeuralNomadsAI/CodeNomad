@@ -25,5 +25,9 @@ export const modernContractFixture = {
     "/api/session/{sessionID}/command": { post: { requestBody: { content: { "application/json": { schema: { properties: { name: {} } } } } } } },
     "/api/session/{sessionID}/permission/{requestID}/reply": { post: { requestBody: { content: { "application/json": { schema: { properties: { decision: {} } } } } } } },
   },
-  components: { schemas: { "Session.Inbox.User": { properties: { time: { type: "object" } } } } },
+  components: { schemas: {
+    "Session.Inbox.User": { properties: { time: { type: "object" } } },
+    "Session.Message.Assistant.Text": { properties: { type: {}, text: {}, native: {} } },
+    "Session.Message.Compaction.Completed": { properties: { type: {}, metadata: {}, native: {}, summary: {} } },
+  } },
 }

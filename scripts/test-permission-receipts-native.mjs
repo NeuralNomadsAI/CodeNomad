@@ -35,7 +35,8 @@ export async function testNativePermissionReceiptRecovery({ client, connection, 
   const manager = new WorkspaceManager({ rootDir: root, settings: { getOwner: () => ({ environmentVariables: {} }) },
     binaryResolver: { resolveDefault: () => ({ path: process.execPath, label: "Isolated receipt fixture" }) },
     eventBus: bus, logger,
-    sharedService: { client: async () => managerClient, acquire: async () => connection, headers: async () => ({}),
+    // Event-purpose ownership reads the existing connection, like the production shared service.
+    sharedService: { client: async () => managerClient, acquire: async () => connection, existingConnection: () => connection, headers: async () => ({}),
       subscribe: async options => (async function* () {
         for await (const event of client.event.subscribe(options)) {
           nativeEventConnections.set(event, connection)

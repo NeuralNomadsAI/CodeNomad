@@ -45,7 +45,7 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
     const messages: SessionMessageInfo[] = Array.from({ length: 400 }, (_, index) => ({
       id: `m${String(index).padStart(3, "0")}`, type: "assistant", agent: "build",
       model: { providerID: "p", id: "model" }, time: { created: index + 1, completed: index + 2 },
-      content: [{ type: "text", text: `answer ${index}` }, { type: "reasoning", text: "remove", state: { opaque: `state-${index}` } }],
+      content: [{ type: "text", text: `answer ${index}` }, { type: "reasoning", text: "remove", native: { opaque: `state-${index}` } }],
     })) as SessionMessageInfo[]
     const latestIds = messages.slice(200).map(message => message.id)
     const olderIds = messages.slice(0, 200).map(message => message.id)
@@ -87,7 +87,7 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
       native("session.reasoning.started", { assistantMessageID: "m399" })
       native("session.reasoning.delta", { assistantMessageID: "m399", ordinal: 0, delta: "remove" })
       const oldProjection = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "old", type: "session.idle", created: 4, data: { sessionID: sessionId },
+        id: "evt_old", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId },
       } as any)
       await loadMessages(instanceId, sessionId, { force: true })
       assert.deepEqual(store.getSessionMessageIds(sessionId), latestIds)
@@ -135,16 +135,25 @@ for (const ordering of ["UI-first", "SDK-first"] as const) {
 
       // A previously captured/throttled callback cannot resurrect deleted parts.
       projectOpenCodeMessages(instanceId, sessionId, oldProjection, false)
-      native("session.idle")
-      assert.deepEqual(store.getSessionMessageIds(sessionId), latestIds)
+      // Nothing stays parked (an inbox item would defer retirement), so settlement
+      // releases the reconciled reducer after projecting its native idle record.
+      native("session.inbox.cancelled", { inboxID: "resynced" })
+      const probe = () => applyOpenCodeDataEvent(instanceId, "/work", {
+        id: `evt_probe_${++eventId}`, type: "permission.replied", created: eventId, data: { sessionID: sessionId, requestID: "missing" },
+      } as any)
+      const reconciled = probe()
+      native("session.execution.succeeded")
+      const idleRecord = `e${eventId}`
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [...latestIds, idleRecord].slice(-200))
       assert.ok(latestIds.every(id => !hasReasoning(id)))
+      assert.notEqual(probe(), reconciled, "settlement retires the reconciled reducer")
 
       await loadMoreMessages(instanceId, sessionId)
       assert.deepEqual(requests.at(-1), { limit: 200, cursor: "after200" })
       assert.deepEqual(store.getSessionMessageIds(sessionId), olderIds)
       assert.equal(store.getMessageWindow(sessionId)?.olderCursor, undefined)
       assert.deepEqual([...olderIds, ...latestIds], messages.map(message => message.id), "no skipped 180-message gap")
-      native("session.idle")
+      native("session.execution.succeeded")
       assert.deepEqual(store.getSessionMessageIds(sessionId), olderIds, "live projection does not replace a history page")
       await loadNewerMessageWindow(instanceId, sessionId)
       assert.deepEqual(store.getSessionMessageIds(sessionId), latestIds)

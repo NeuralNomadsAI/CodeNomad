@@ -1,6 +1,7 @@
 import path from "node:path"
 import { readFile, realpath, stat } from "node:fs/promises"
-import { readGitCommonDirectory } from "./git-common-directory"
+import { gitLocationOverridden, readGitCommonDirectory } from "./git-common-directory"
+export { readCheckoutIdentity } from "./git-common-directory"
 import { runWorktreeGit as git } from "./git-process"
 import { GitRequiredError } from "./git-requirement"
 
@@ -60,29 +61,6 @@ export async function readWorktreeAnnotations(directory: string) {
   })
 }
 
-export async function readCheckoutIdentity(directory: string) {
-  const entry = path.join(directory, ".git")
-  const info = await stat(entry)
-  let gitDirectory = entry
-  if (!info.isDirectory()) {
-    const pointer = (await readFile(entry, "utf8")).replace(/\r?\n$/, "")
-    if (!pointer.startsWith("gitdir: ")) throw new Error("Invalid worktree Git directory")
-    gitDirectory = path.resolve(directory, pointer.slice(8))
-  }
-  const common = await readFile(path.join(gitDirectory, "commondir"), "utf8").catch(error => {
-    if (error.code === "ENOENT") return "."
-    throw error
-  })
-  const resolvedGit = await realpath(gitDirectory)
-  const resolvedCommon = await realpath(path.resolve(gitDirectory, common.replace(/\r?\n$/, "")))
-  const backlink = resolvedGit === resolvedCommon ? undefined : (await readFile(path.join(resolvedGit, "gitdir"), "utf8")).replace(/\r?\n$/, "")
-  return {
-    gitDirectory: resolvedGit,
-    common: resolvedCommon,
-    root: backlink ? await realpath(path.dirname(path.resolve(resolvedGit, backlink))) : undefined,
-  }
-}
-
 export async function createCheckoutRootVerifier(directory: string) {
   // Read shared/system/global configuration once, letting Git expand includes.
   // Conditional includes and config.worktree can differ for each checkout, so
@@ -92,7 +70,7 @@ export async function createCheckoutRootVerifier(directory: string) {
     const [key, value] = entry.split("\n", 2)
     return key === "core.worktree" || key === "extensions.worktreeconfig" || key.startsWith("includeif.")
       || (key === "core.bare" && value !== "false")
-  }) || ["GIT_DIR", "GIT_COMMON_DIR", "GIT_WORK_TREE", "GIT_IMPLICIT_WORK_TREE"].some(key => process.env[key] !== undefined)
+  }) || gitLocationOverridden()
 
   return async (checkout: string) => {
     if (!configuredRoot) return

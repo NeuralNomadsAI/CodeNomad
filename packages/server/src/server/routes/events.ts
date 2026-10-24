@@ -51,7 +51,7 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
     let cleaned = false
     let backpressured = false
     let bufferedBytes = 0
-    const pending: string[] = []
+    const pending: Array<{ payload: string; bytes: number }> = []
     const backpressureLimitBytes = Math.max(1, deps.backpressureLimitBytes ?? 1024 * 1024)
     const backpressureTimeoutMs = Math.max(1, deps.backpressureTimeoutMs ?? 10_000)
     const clearDrain = () => {
@@ -87,32 +87,33 @@ export function registerEventRoutes(app: FastifyInstance, deps: RouteDeps) {
       if (closed) return
       clearDrain()
       backpressured = false
-      bufferedBytes = pending.reduce((total, payload) => total + Buffer.byteLength(payload), 0)
+      bufferedBytes = pending.reduce((total, item) => total + item.bytes, 0)
       while (pending.length) {
-        const payload = pending.shift()!
-        bufferedBytes -= Buffer.byteLength(payload)
-        if (!reply.raw.write(payload)) {
-          bufferedBytes += Buffer.byteLength(payload)
-          waitForDrain()
-          return
-        }
+        const { payload, bytes } = pending.shift()!
+        bufferedBytes -= bytes
+        if (!reply.raw.write(payload)) waitForDrain()
+        if (backpressured) return
       }
       bufferedBytes = 0
     }
     const write = (payload: string) => {
       if (closed) return
-      const bytes = Buffer.byteLength(payload)
-      if (bytes > backpressureLimitBytes || bufferedBytes + bytes > backpressureLimitBytes) {
-        handleClose(true)
-        return
-      }
+      // A single oversized frame (a native message part can embed a base64
+      // image) is legal: written directly it is paced by drain, and while
+      // backpressured the largest queued frame is exempt from the backlog
+      // limit. The drain timeout disconnects a client that never consumes
+      // it; only a sustained queued backlog abandons the stream here.
       if (backpressured) {
-        pending.push(payload)
+        const bytes = Buffer.byteLength(payload)
+        pending.push({ payload, bytes })
         bufferedBytes += bytes
+        const largest = pending.reduce((max, item) => Math.max(max, item.bytes), 0)
+        if (bufferedBytes - largest > backpressureLimitBytes) handleClose(true)
         return
       }
       if (!reply.raw.write(payload)) {
-        bufferedBytes = bytes
+        // The frame above was handed to the socket; only queued frames count.
+        bufferedBytes = 0
         waitForDrain()
       }
     }

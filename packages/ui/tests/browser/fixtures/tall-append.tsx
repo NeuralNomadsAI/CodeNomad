@@ -13,6 +13,8 @@ render(() => <VirtualFollowList items={items} getKey={item => item}
 ;(window as any).fixture = {
   bottom: () => api?.scrollToBottom({ immediate: true }),
   settleBottom: () => { void api?.settleAtBottom() },
+  settle: () => api!.settleAtBottom(),
+  replyHeight,
   resizeReply: setReplyHeight,
   append: () => setItems(items => [...items, "new-prompt"]),
   metadata: () => setItems(items => [...items, "metadata"]),

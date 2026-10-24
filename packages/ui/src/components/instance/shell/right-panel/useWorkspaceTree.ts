@@ -19,6 +19,8 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
   const requests = new Map<string, AbortController>()
   let current = directory()
   let dirty = false
+  let forcePending = false
+  const versionFor = (path: string) => filesystemInvalidationVersion(instanceId, directory(), path)
   // Filesystem-invalidation version seen by each loaded directory. Reopening a
   // directory serves its cached children unless the filesystem changed since
   // they were read; collapsed subtrees are never re-read on expand.
@@ -27,7 +29,7 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
   async function load(path: string, force = false) {
     if (!active() || requests.has(path) || (!force && state().directories.has(path))) return
     const scope = directory(), controller = new AbortController()
-    const version = filesystemInvalidationVersion(instanceId)
+    const version = versionFor(path)
     requests.set(path, controller)
     setBusy(new Set(requests.keys()))
     setErrors(previous => { const next = new Map(previous); next.delete(path); return next })
@@ -35,9 +37,32 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
       const entries = await backgroundReads.run(controller.signal,
         () => serverApi.listWorkspaceFiles(instanceId, path, scope, controller.signal), "visible")
       if (controller.signal.aborted || directory() !== scope) return
+      const nextEntries = new Map(entries.map(entry => [entry.path, entry]))
+      const replaced = new Set((state().directories.get(path) ?? []).filter(entry => {
+        const next = nextEntries.get(entry.path)
+        return entry.type === "directory" && (!next || next.type !== "directory"
+          || Boolean(entry.directoryIdentity && next.directoryIdentity && entry.directoryIdentity !== next.directoryIdentity))
+      }).map(entry => entry.path))
+      const invalidated = (candidate: string) => {
+        for (let key = candidate; key && key !== "."; key = key.includes("/") ? key.slice(0, key.lastIndexOf("/")) : "") {
+          if (replaced.has(key)) return true
+        }
+        return false
+      }
+      if (replaced.size) {
+        for (const key of loadedVersions.keys()) if (invalidated(key)) loadedVersions.delete(key)
+        for (const [key, pending] of requests) if (invalidated(key)) { pending.abort(); requests.delete(key) }
+      }
       loadedVersions.set(path, version)
-      setState(previous => ({ ...previous, directories: new Map(previous.directories).set(path, entries
-        .slice().sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name))) }))
+      setState(previous => {
+        const directories = new Map(previous.directories)
+        if (replaced.size) for (const key of directories.keys()) if (invalidated(key)) directories.delete(key)
+        directories.set(path, entries.slice().sort((a, b) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name)))
+        return { ...previous, directories }
+      })
+      // A replacement can expose a still-expanded path (and then its expanded
+      // descendants). Reload only those stale visible listings and bind new watches.
+      if (hasStaleVisibleDirectories()) dirty = true
     } catch (error) {
       if (!controller.signal.aborted) setErrors(previous => new Map(previous).set(path, error instanceof Error ? error.message : String(error)))
     } finally {
@@ -75,27 +100,31 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
     if (!opening) return
     // Cache-first expand: reuse loaded children unless the filesystem changed
     // since they were read. Only the reopened visible subtree revalidates.
-    if (loadedVersions.get(path) !== filesystemInvalidationVersion(instanceId)) {
+    if (loadedVersions.get(path) !== versionFor(path)) {
       void load(path, true)
       for (const row of rows()) {
-        if (row.type === "directory" && row.path.startsWith(`${path}/`) && state().expanded.has(row.path)) {
+        if (row.type === "directory" && row.path.startsWith(`${path}/`) && state().expanded.has(row.path)
+          && loadedVersions.get(row.path) !== versionFor(row.path)) {
           void load(row.path, true)
         }
       }
     } else void load(path)
   }
-  function refresh() {
+  function refresh(force = true) {
+    forcePending ||= force
     if (!active()) { dirty = true; return }
     if (requests.size) { dirty = true; return }
     dirty = false
-    void load(".", true)
-    for (const row of rows()) if (row.type === "directory" && state().expanded.has(row.path)) void load(row.path, true)
+    const all = forcePending
+    forcePending = false
+    if (all || loadedVersions.get(".") !== versionFor(".")) void load(".", true)
+    for (const row of rows()) if (row.type === "directory" && state().expanded.has(row.path)
+      && (all || loadedVersions.get(row.path) !== versionFor(row.path))) void load(row.path, true)
   }
-  const debounced = createDebouncedRefresh(refresh)
+  const debounced = createDebouncedRefresh(() => refresh(false))
   const hasStaleVisibleDirectories = () => {
-    const version = filesystemInvalidationVersion(instanceId)
-    return loadedVersions.get(".") !== version || rows().some(row =>
-      row.type === "directory" && state().expanded.has(row.path) && loadedVersions.get(row.path) !== version)
+    return loadedVersions.get(".") !== versionFor(".") || rows().some(row =>
+      row.type === "directory" && state().expanded.has(row.path) && loadedVersions.get(row.path) !== versionFor(row.path))
   }
   createEffect(on(busy, value => { if (!value.size && dirty && active()) debounced.trigger() }))
   createEffect(on(directory, value => {
@@ -104,6 +133,7 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
     cache.set(current, { state: state(), versions: loadedVersions })
     if (cache.size > 8) cache.delete(cache.keys().next().value!)
     current = value
+    forcePending = false
     const cached = cache.get(value)
     loadedVersions = cached?.versions ?? new Map()
     setState(cached?.state ?? empty())
@@ -115,9 +145,9 @@ export function useWorkspaceTree(instanceId: string, directory: Accessor<string>
     // Cache-first: a visited directory keeps its rows. Pending invalidations
     // revalidate through the debounced refresh below.
     if (!state().directories.has(".")) void load(".", true)
-    else if (dirty || hasStaleVisibleDirectories()) refresh()
+    else if (dirty || hasStaleVisibleDirectories()) refresh(false)
   }))
-  createEffect(on(() => filesystemInvalidationVersion(instanceId), () => {
+  createEffect(on(() => filesystemInvalidationVersion(instanceId, directory()), () => {
     dirty = true
     if (active()) debounced.trigger()
   }, { defer: true }))

@@ -390,14 +390,14 @@ describe("plugin RPC message pruning", () => {
   for (const variant of ["opaque-state", "identical", "missing-time", "changed-state"] as const) {
     it(`does not send a destructive RPC for a stale reasoning selection (${variant})`, async () => {
       const messageId = `stale-reasoning-${variant}`
-      const first = { type: "reasoning", text: "", state: { provider: { opaque: "FIRST" } } }
+      const first = { type: "reasoning", text: "", native: { provider: { opaque: "FIRST" } } }
       const second = variant === "identical" ? structuredClone(first)
-        : { ...first, state: { provider: { opaque: "SECOND" } } }
+        : { ...first, native: { provider: { opaque: "SECOND" } } }
       const original = {
         id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content: [first, second],
       } as any
       const fresh = variant === "missing-time" ? [{ ...first, time: { created: 1, completed: 2 } }]
-        : variant === "changed-state" ? [{ ...first, state: { provider: { opaque: "CHANGED" } } }]
+        : variant === "changed-state" ? [{ ...first, native: { provider: { opaque: "CHANGED" } } }]
         : [second]
       seed({ session: { message: { get: async () => ({ ...original, content: fresh }) } } })
       const normalized = normalizeSessionMessage(sessionId, original).message
@@ -415,10 +415,10 @@ describe("plugin RPC message pruning", () => {
 
   it("matches a surviving reasoning block with its full state despite key and index reordering", async () => {
     const messageId = "surviving-reasoning"
-    const first = { type: "reasoning", text: "", state: { provider: "p", opaque: "FIRST" } }
-    const second = { type: "reasoning", text: "", state: { provider: "p", opaque: "SECOND" } }
+    const first = { type: "reasoning", text: "", native: { provider: "p", opaque: "FIRST" } }
+    const second = { type: "reasoning", text: "", native: { provider: "p", opaque: "SECOND" } }
     const original = { id: messageId, type: "assistant", time: { created: 1, completed: 2 }, content: [first, second] } as any
-    const fresh = { ...original, content: [{ ...second, state: { opaque: "SECOND", provider: "p" } }] }
+    const fresh = { ...original, content: [{ ...second, native: { opaque: "SECOND", provider: "p" } }] }
     seed({ session: { message: { get: async () => fresh } } })
     const normalized = normalizeSessionMessage(sessionId, original).message
     messageStoreBus.getOrCreate(instanceId).upsertMessage({ id: messageId, sessionId, role: "assistant", status: "complete", parts: normalized.parts })
@@ -864,6 +864,32 @@ describe("native session selection persistence", () => {
 })
 
 describe("native prompt serialization", () => {
+  it("coordinator steering preserves the native profile while still syncing instructions", async () => {
+    const calls: string[] = []
+    seed({ session: {
+      instructions: { entry: { put: async () => { calls.push("instruction") }, remove: async () => {} } },
+      switchAgent: async () => { calls.push("agent") },
+      switchModel: async () => { calls.push("model") },
+      prompt: async (input: any) => { calls.push(input.delivery); return { id: input.id } },
+    } })
+    await sendMessage(instanceId, sessionId, "Human instruction", [], { delivery: "steer", preserveNativeProfile: true })
+    assert.ok(calls.includes("instruction"))
+    assert.equal(calls[calls.length - 1], "steer")
+    assert.ok(!calls.includes("agent") && !calls.includes("model"))
+  })
+
+  it("rechecks a guarded view after awaited instruction setup before native prompt admission", async () => {
+    let current = true, prompts = 0
+    seed({ session: {
+      instructions: { entry: { put: async () => { current = false }, remove: async () => {} } },
+      prompt: async () => { prompts++ },
+    } })
+    await assert.rejects(sendMessage(instanceId, sessionId, "Stale instruction", [], {
+      delivery: "steer", preserveNativeProfile: true, admissionCurrent: () => current,
+    }), /Session action view changed/)
+    assert.equal(prompts, 0)
+  })
+
   it("admits compaction after an in-flight prompt", async () => {
     const admissions: string[] = []
     let releasePrompt!: () => void

@@ -1,14 +1,18 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { getTechnicalCleanupParts, groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, segmentExplorationItems, technicalPartKey, type TechnicalCleanupTranscriptItem } from "./message-part-grouping.ts"
-import type { ClientPart } from "../types/message.ts"
+import { getTechnicalCleanupParts, groupTranscriptRows, isResponseTextPart, projectTranscriptTechnicalGroups, segmentExplorationItems, sumMessageUsage, technicalPartKey, transcriptPartKind, type TechnicalCleanupTranscriptItem, type TranscriptRow } from "./message-part-grouping.ts"
+import type { ClientPart, MessageInfo } from "../types/message.ts"
 
 const part = (id: string, type: ClientPart["type"], tool?: string) => ({ id, type, ...(tool ? { tool } : {}) }) as ClientPart
+const groupParts = (parts: Array<ClientPart | null>, getGroupId?: (part: ClientPart) => string | undefined) =>
+  groupTranscriptRows(parts, (value) => ({ kind: transcriptPartKind(value), groupId: getGroupId?.(value) }))
+const rowIds = (rows: TranscriptRow<ClientPart>[]) => rows.map((row) => !row ? null
+  : row.kind === "part" ? [row.kind, row.item.id] : [row.kind, row.items.map((item) => item.id)])
 
 describe("message technical part grouping", () => {
   it("matches the TUI reasoning and exploration boundaries", () => {
-    const groups = groupTechnicalParts([
+    const groups = groupParts([
       part("r1", "reasoning"),
       part("r2", "reasoning"),
       part("read", "tool", "Read"),
@@ -19,15 +23,24 @@ describe("message technical part grouping", () => {
       part("r3", "reasoning"),
     ])
 
-    assert.deepEqual(groups.map((group) => group.kind === "part"
-      ? [group.kind, group.part.id]
-      : [group.kind, group.parts.map((item) => item.id)]), [
+    assert.deepEqual(rowIds(groups), [
       ["reasoning", ["r1", "r2"]],
       ["exploration", ["read", "grep"]],
       ["shell", ["bash"]],
       ["exploration", ["glob"]],
-      ["part", "text"],
+      ["content", ["text"]],
       ["reasoning", ["r3"]],
+    ])
+  })
+
+  it("joins consecutive content into one row; tools, system, compaction and the omitted gap end rows", () => {
+    assert.deepEqual(rowIds(groupParts([
+      part("t1", "text"), part("file", "file"), part("edit", "tool", "edit"), part("t2", "text"),
+      part("system", "system"), part("t3", "text"), null, part("t4", "text"), part("t5", "text"),
+      part("compaction", "compaction"), part("r1", "reasoning"), null, part("r2", "reasoning"),
+    ])), [
+      ["content", ["t1", "file"]], ["part", "edit"], ["content", ["t2"]], ["part", "system"], ["content", ["t3"]],
+      null, ["content", ["t4", "t5"]], ["part", "compaction"], ["reasoning", ["r1"]], null, ["reasoning", ["r2"]],
     ])
   })
 
@@ -74,26 +87,24 @@ describe("message technical part grouping", () => {
     ])
     assert.equal(projection.byPartKey.get("assistant-3:grep"), projection.groups[1])
     assert.deepEqual(
-      groupTechnicalParts([read, grep], (value) => projection.byPartKey.get(technicalPartKey(
+      groupParts([read, grep], (value) => projection.byPartKey.get(technicalPartKey(
         value === read ? "assistant-2" : "assistant-3",
         value.id!,
-      ))?.id).map((group) => group.kind),
+      ))?.id).map((group) => group?.kind),
       ["exploration"],
     )
-    assert.equal(groupTechnicalParts([read, glob], (value) => value.id).length, 2)
+    assert.equal(groupParts([read, glob], (value) => value.id).length, 2)
   })
 
   it("groups consecutive shell tools until another kind", () => {
-    const groups = groupTechnicalParts([
+    const groups = groupParts([
       part("bash-1", "tool", "bash"),
       part("shell-2", "tool", "shell"),
       part("read", "tool", "read"),
       part("bash-3", "tool", "bash"),
     ])
 
-    assert.deepEqual(groups.map((group) => group.kind === "part"
-      ? [group.kind, group.part.id]
-      : [group.kind, group.parts.map((item) => item.id)]), [
+    assert.deepEqual(rowIds(groups), [
       ["shell", ["bash-1", "shell-2"]],
       ["exploration", ["read"]],
       ["shell", ["bash-3"]],
@@ -121,13 +132,21 @@ describe("message technical part grouping", () => {
     ])
   })
 
-  it("ignores invisible step lifecycle parts", () => {
-    const start = part("start", "step-start")
-    const finish = part("finish", "step-finish")
-    assert.equal(isTechnicalGroupingVisiblePart(start), false)
-    assert.equal(isTechnicalGroupingVisiblePart(finish), false)
-    assert.equal(isVisibleStepFinish(finish, undefined, true), false)
-    assert.equal(isVisibleStepFinish({ ...finish, tokens: { input: 1 } } as ClientPart, undefined, true), true)
-    assert.equal(isVisibleStepFinish({ ...finish, tokens: { input: 1 } } as ClientPart, undefined, false), false)
+  it("adds up the native usage of the messages a response's line covers", () => {
+    const info = (id: string, input?: number) => ({ id, sessionID: "s", role: "assistant", time: { created: 1 }, cost: input,
+      ...(input === undefined ? {} : { tokens: { input, output: 1, reasoning: 2, cache: { read: 3, write: 4 } } }) }) as MessageInfo
+    const own = info("answer", 40)
+    const sum = sumMessageUsage(own, [own, info("read", 20), info("streaming"), undefined])
+    assert.equal(sum.id, "answer", "the line keeps the response's own metadata")
+    assert.deepEqual(sum.tokens, { input: 60, output: 2, reasoning: 4, cache: { read: 6, write: 8 } }, "unsettled or missing messages add nothing")
+    assert.equal(sum.cost, 60)
+  })
+
+  it("counts only visible, non-synthetic text as an agent message", () => {
+    const text = (id: string, value: string, synthetic = false) => ({ id, type: "text", text: value, ...(synthetic ? { synthetic } : {}) }) as ClientPart
+    assert.equal(isResponseTextPart(text("t", "Looking")), true)
+    assert.equal(isResponseTextPart(text("error", "")), false, "an error placeholder is no message")
+    assert.equal(isResponseTextPart(text("s", "hidden", true)), false)
+    assert.equal(isResponseTextPart(part("read", "tool", "read")), false)
   })
 })

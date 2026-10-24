@@ -26,10 +26,9 @@ export const PENDING_DISCOVERY_DEFERRED = "Pending discovery deferred during com
 // This is admission state only: no native placement/request data is published.
 export function observePendingDiscovery(connection: ServiceConnection, event: OpenCodeEvent): void {
   const starting = event.type === "session.compaction.started" || event.type === "session.compaction.delta"
-  if (!starting && event.type !== "session.compaction.ended" && event.type !== "session.compaction.failed" && event.type !== "session.idle") return
+  if (!starting && event.type !== "session.compaction.ended" && event.type !== "session.compaction.failed") return
   const state = stateFor(connection), id = event.data.sessionID
   const previous = state.compactions.get(id)
-  if (event.type === "session.idle" && !previous?.active) return
   const sequence = "durable" in event ? event.durable.seq : undefined
   if (previous && (sequence === undefined ? event.created <= previous.created
     : previous.sequence !== undefined && sequence <= previous.sequence)) return

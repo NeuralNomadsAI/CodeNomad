@@ -4,11 +4,13 @@ import type { OpenCodeClient, PermissionRequest, SessionActiveOutput } from "@op
 import { serverApi } from "../lib/api-client"
 import { sdkManager } from "../lib/sdk-manager"
 import { sseManager } from "../lib/sse-manager"
+import { getToastHistory } from "../lib/notifications"
 import {
   addInstance, removeInstance, updateInstance, syncPendingRequests, reconcilePendingRequestLiveness,
   addPermissionToQueue, getPermissionQueue, markPermissionReplied, hasRepliedPermission, sendPermissionResponse,
-  addPendingForm, sendFormReply, sendFormCancel,
+  addPendingForm, sendFormReply, sendFormCancel, incompletePendingRecovery,
 } from "./instances"
+import { HttpResponseError } from "../lib/retryable-file-search"
 import { getFormQueue, type FormWithLocation } from "./forms"
 import { markFormSettled, hasSettledForm } from "./form-settlements"
 import { sessions, setSessions } from "./session-state"
@@ -32,17 +34,26 @@ async function until(check: () => boolean) {
 }
 const originalPending = serverApi.getPendingRequests, originalWorktrees = serverApi.fetchWorktrees
 const originalClient = sdkManager.createClient
-const originalToast = toast.custom
+const originalToast = toast.custom, originalDismiss = toast.dismiss
 let sequence = 0, brokerReads = 0
 const fixtures: ReturnType<typeof harness>[] = []
 beforeEach(() => {
   toast.custom = () => "fixture-toast"
+  // A later compaction end replaces the session's earlier bubble.
+  toast.dismiss = () => {}
   brokerReads = 0
-  serverApi.getPendingRequests = async () => { brokerReads++; return { supported: false } }
+  serverApi.getPendingRequests = async (id, directories) => {
+    brokerReads++
+    const h = fixtures.find((h) => h.id === id)!
+    return { supported: true, directories: directories.map((directory) => ({ directory, status: "ok", locations: [{
+      location: { directory }, permissions: directory === h.directory ? h.permissions : [], forms: directory === h.directory ? h.forms : [],
+    }] })) }
+  }
   sdkManager.createClient = (id) => fixtures.find((h) => h.id === id)!.client
 })
 afterEach(() => {
   toast.custom = originalToast
+  toast.dismiss = originalDismiss
   for (const h of fixtures.splice(0)) {
     removeInstance(h.id, { authoritative: false })
     setSessions((previous) => { const next = new Map(previous); next.delete(h.id); return next })
@@ -85,7 +96,7 @@ function compact(h: ReturnType<typeof harness>, phase: "started" | "delta" | "en
     id: `event-${seq}`, created: seq, type: `session.compaction.${phase}`,
     ...(phase === "delta" ? {} : { durable: { aggregateID: sessionID, seq, version: 1 } }),
     location: { directory: h.directory },
-    data: { sessionID, reason: "auto", recent: "recent", text: "summary", error: { _tag: "UnknownError", message: "fixture" } },
+    data: { sessionID, reason: "auto", text: "summary", error: { _tag: "UnknownError", message: "fixture" } },
   } as any)
 }
 async function history(h: ReturnType<typeof harness>) {
@@ -99,7 +110,9 @@ async function history(h: ReturnType<typeof harness>) {
   }))))
 }
 
-test("published-daemon scans defer across instances and recover idle/global Forms only after the last overlapping compaction", async () => {
+test("loaded-only scans defer across instances and recover idle/global Forms only after the last overlapping compaction", async () => {
+  const warnings = () => getToastHistory().filter((item) => item.variant === "warning").length
+  const before = warnings()
   const a = harness(), b = harness()
   await history(b)
   compact(a, "started")
@@ -112,6 +125,7 @@ test("published-daemon scans defer across instances and recover idle/global Form
   const draft = getFormQueue(b.id)[0]
   await Promise.all([syncPendingRequests(a.id), syncPendingRequests(b.id), syncPendingRequests(b.id)])
   assert.equal(brokerReads, 0)
+  assert.equal(warnings(), before, "compaction deferral does not notify")
   assert.deepEqual([...a.reads, ...b.reads], [])
   assert.equal(getFormQueue(b.id)[0], draft)
   await sendPermissionResponse(b.id, "ignored", "live", "once")
@@ -125,35 +139,56 @@ test("published-daemon scans defer across instances and recover idle/global Form
   await syncPendingRequests(b.id)
   assert.equal(brokerReads, 0)
   compact(b, "failed", "other-child")
-  await until(() => a.reads.length === 2 && b.reads.length === 402)
-  assert.equal(brokerReads, 2, "one trailing scan per deferred instance, not per event")
+  await until(() => brokerReads === 27 && getFormQueue(b.id).length === 2)
+  assert.deepEqual([...a.reads, ...b.reads], [], "no ordinary list may initialize a cold Location")
   assert.deepEqual(getPermissionQueue(b.id).map((p) => p.id), ["missed-idle"])
   assert.deepEqual(getFormQueue(b.id).map((f) => f.id), ["missed-global", "missed-ordinary"])
 })
 
-test("a compaction beginning mid legacy scan stops queued admissions and preserves every unscanned queue", async () => {
+test("an unavailable capability after compaction retains requests without legacy admissions", async () => {
   const h = harness()
   await history(h)
   addPermissionToQueue(h.id, permission("unscanned"), `${h.directory}/cold-99`)
   addPendingForm(h.id, { ...form("unscanned"), location: { directory: `${h.directory}/cold-99` } })
   const held = deferred<void>()
-  const listPermissions = h.client.permission.request.list, listForms = h.client.form.list
-  h.client.permission.request.list = async (...args) => { const result = await listPermissions(...args); await held.promise; return result }
-  h.client.form.list = async (...args) => { const result = await listForms(...args); await held.promise; return result }
+  serverApi.getPendingRequests = async () => { brokerReads++; await held.promise; return { supported: false } }
   const syncing = syncPendingRequests(h.id)
-  await until(() => h.reads.length === 2)
+  await until(() => brokerReads === 1)
   compact(h, "started")
   held.resolve()
-  await syncing
-  assert.equal(h.reads.length, 2)
+  await assert.rejects(syncing)
+  assert.equal(h.reads.length, 0)
   assert.equal(getPermissionQueue(h.id)[0]?.id, "unscanned")
   assert.equal(getFormQueue(h.id)[0]?.id, "unscanned")
   await syncPendingRequests(h.id)
   assert.equal(brokerReads, 1)
   compact(h, "ended")
-  await until(() => h.reads.length === 404)
-  assert.deepEqual(getPermissionQueue(h.id), [])
-  assert.deepEqual(getFormQueue(h.id), [])
+  await until(() => brokerReads === 2)
+  assert.deepEqual(h.reads, [])
+  assert.equal(getPermissionQueue(h.id)[0]?.id, "unscanned")
+  assert.equal(getFormQueue(h.id)[0]?.id, "unscanned")
+})
+
+test("a backend-only compaction deferral waits for the next pass without warning or losing requests", async () => {
+  const h = harness()
+  addPermissionToQueue(h.id, permission("known"), h.directory)
+  const warnings = () => getToastHistory().filter((item) => item.variant === "warning").length
+  const before = warnings()
+  // The backend sees compactions this UI never loaded (another project's or a mission's session).
+  serverApi.getPendingRequests = async () => {
+    brokerReads++
+    throw new HttpResponseError("Pending discovery deferred during compaction; retain existing queues", 503, "30", "deferred")
+  }
+  for (let attempt = 0; attempt < 3; attempt++) await syncPendingRequests(h.id)
+  assert.equal(brokerReads, 3, "one deferred read per pass, never a tight retry loop")
+  assert.equal(warnings(), before, "a deferral is not a failed recovery")
+  assert.equal(incompletePendingRecovery().has(h.id), true, "coverage stays non-authoritative while deferred")
+  assert.equal(getPermissionQueue(h.id)[0]?.id, "known")
+  assert.deepEqual(h.reads, [], "no ordinary-list fallback")
+  serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({
+    directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [], forms: [] }] })) })
+  await syncPendingRequests(h.id)
+  assert.equal(incompletePendingRecovery().has(h.id), false)
 })
 
 test("supported snapshot batching also stops before the next batch during compaction", async () => {
@@ -190,7 +225,8 @@ test("liveness handles a missed end for an unloaded child, but an active or newl
   assert.equal(brokerReads, 0, "a stale status read cannot settle a newer delta")
   a.client.session.active = async () => ({})
   await reconcilePendingRequestLiveness(a.id)
-  await until(() => a.reads.length === 2 && b.reads.length === 2)
+  await until(() => brokerReads === 2)
+  assert.deepEqual([...a.reads, ...b.reads], [])
   assert.equal(brokerReads, 2)
 })
 
@@ -205,8 +241,8 @@ test("disconnect/client replacement fence old ends; removal cannot revive a remo
   await syncPendingRequests(b.id)
   assert.equal(brokerReads, 0)
   await reconcilePendingRequestLiveness(a.id)
-  await until(() => b.reads.length === 2)
-  assert.equal(a.reads.length, 2, "explicit liveness, not the invalidated deferred scan, recovers this instance")
+  await until(() => brokerReads === 2)
+  assert.deepEqual([...a.reads, ...b.reads], [], "reconnect recovery uses only the broker")
   const reads = brokerReads
   compact(a, "started")
   await syncPendingRequests(a.id)

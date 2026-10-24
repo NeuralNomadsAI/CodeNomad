@@ -14,7 +14,7 @@
   @apply flex flex-col items-center gap-3 text-center;
   padding: 24px 32px;
   border-radius: var(--folder-card-radius);
-  background-color: var(--surface-base);
+  background-color: var(--surface-overlay);
   border: 1px solid var(--border-base);
   box-shadow: var(--folder-card-shadow);
   min-width: 260px;

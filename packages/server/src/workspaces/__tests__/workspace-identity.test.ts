@@ -34,7 +34,6 @@ function createManager(rootDir: string) {
       directory,
       project: { id: directory, directory, canonical: directory },
     }),
-    evictLocation: async () => undefined,
     subscribe: async () => ({ async *[Symbol.asyncIterator]() {} }),
     shutdown: async () => undefined,
   }

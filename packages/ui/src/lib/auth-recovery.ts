@@ -5,6 +5,8 @@ import { CODENOMAD_API_BASE } from "./api-base"
  * interprets an upstream OpenCode 401 as proof of an expired CodeNomad login. */
 export function createAuthRecovery(base: string | undefined, fetcher: typeof fetch = (...args) => fetch(...args)) {
   const [required, setRequired] = createSignal(false)
+  // Remote Control devices cannot sign in with a password; they pair again on the host.
+  const [pairingRequired, setPairingRequired] = createSignal(false)
   const restored = new Set<() => void>()
   let generation = 0
   let checking: Promise<void> | undefined
@@ -27,7 +29,10 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
         if (!response.ok) return
         const status = await response.json()
         if (current !== generation) return
-        if (status?.authenticated === false) setRequired(true)
+        if (status?.authenticated === false) {
+          setPairingRequired(status.pairingRequired === true)
+          setRequired(true)
+        }
         else if (status?.authenticated === true) authenticated()
       } catch { /* Offline/unreachable is not evidence of an expired login. */ }
     })()
@@ -60,7 +65,7 @@ export function createAuthRecovery(base: string | undefined, fetcher: typeof fet
   }
 
   return {
-    required, check, signIn,
+    required, pairingRequired, check, signIn,
     onRestored(handler: () => void) { restored.add(handler); return () => restored.delete(handler) },
   }
 }

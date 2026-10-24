@@ -71,7 +71,7 @@ function buildMatcher({ version, assetNameTemplate, assetRegex }) {
     }
   }
 
-  const template = assetNameTemplate || "CodeNomad-Tauri-windows-x64-{version}.zip"
+  const template = assetNameTemplate || "CodeNomad-Tauri-windows-x64-{version}.exe"
   if (!template.includes("{version}")) {
     throw new Error("asset-name-template must include the {version} placeholder")
   }

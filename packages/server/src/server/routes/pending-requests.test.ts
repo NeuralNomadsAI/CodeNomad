@@ -1,8 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { execFile } from "node:child_process"
+import { execFile, execFileSync } from "node:child_process"
 import { promisify } from "node:util"
-import { mkdtemp, mkdir, rm } from "node:fs/promises"
+import { mkdtemp, mkdir, rm, symlink } from "node:fs/promises"
+import { rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import Fastify from "fastify"
@@ -11,6 +12,7 @@ import { createRuntimeFetch } from "../../opencode/compatibility/transport"
 import { rememberRuntime } from "../../opencode/compatibility/runtime"
 import { registerPendingRequestRoutes, type PendingRequestsRouteDeps } from "./pending-requests"
 import { observePendingDiscovery, markLoadedPendingSupported, deferPendingDiscovery } from "../../workspaces/pending-discovery"
+import { readGitCommonDirectory } from "../../workspaces/git-common-directory"
 
 const git = promisify(execFile)
 const permission = { id: "permission", sessionID: "background", action: "read", resources: ["file"] }
@@ -18,7 +20,8 @@ const form = { id: "form", sessionID: "global", title: "Question", fields: [{ ke
 const complete = (directory: string, locations: unknown[] = []) => ({ directory, status: "complete", locations })
 const emptyLocation = (directory: string) => ({ location: { directory }, permissions: [], forms: [] })
 
-async function harness() {
+async function harness(options: Pick<PendingRequestsRouteDeps, "readGitCommonDirectory"> & { logs?: string[] } = {}) {
+  const { logs, ...deps } = options
   const root = await mkdtemp(join(tmpdir(), "codenomad-pending-"))
   await git("git", ["init", "--quiet", root])
   const subdirectory = join(root, "session-directory")
@@ -58,15 +61,18 @@ async function harness() {
     getServiceDirectoryForPath: async (_id, candidate) => state.allowed.has(candidate) ? candidate : undefined,
     getWorktreeIdentityForPath: async (_id, candidate) => state.allowed.has(candidate) ? root : undefined,
     getHostPathForServicePath: async (_id, candidate) => candidate,
+    desktopPluginsReady: async () => {},
     ownsLocation: async (_id, location) => {
       state.ownershipReads.push(location.directory)
       state.onOwnership()
       return state.allowed.has(location.directory) && location.workspaceID === undefined
     },
   }
-  const app = Fastify()
-  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) } })
-  const url = (directories = [root]) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams(directories.map((directory) => ["directories", directory]))}`
+  const app = Fastify(logs ? { logger: { stream: { write: (line: string) => { logs.push(line) } } } } : {})
+  registerPendingRequestRoutes(app, { workspaceManager: manager, worktreeDeletionFence: { isBlocked: (identity) => state.blocked || state.blockedIdentities.has(identity) }, ...deps })
+  const url = (directories = [root], optional: string[] = []) => `/api/workspaces/fixture/pending-requests?${new URLSearchParams([
+    ...directories.map((directory) => ["directories", directory]), ...optional.map((directory) => ["optionalDirectories", directory]),
+  ])}`
   return { root, subdirectory, state, manager, connection, app, url, async cleanup() { await app.close(); await rm(root, { recursive: true, force: true }) } }
 }
 
@@ -74,7 +80,7 @@ test("raw pending adapter retains the bound service authentication and fails clo
   const h = await harness()
   try {
     const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "opencode", password: "isolated-fixture" } }
-    rememberRuntime(endpoint, { version: "2.0.11", pid: 123, discovery: "info" })
+    rememberRuntime(endpoint, { version: "2.1.2", pid: 123, discovery: "info" })
     h.connection.endpoint = endpoint
     h.connection.fetch = createRuntimeFetch(endpoint, async (input, init) => {
       h.state.calls.push(new URL(String(input)))
@@ -133,20 +139,125 @@ test("cold coverage and idle/global pending recover through only the fixed loade
   } finally { await h.cleanup() }
 })
 
-test("unowned directories, nested independent clones and arbitrary query selectors never reach native", async () => {
+test("root recovery resolves its Git identity once before native read and once before publication", async () => {
+  const h = await harness()
+  try {
+    const phases: string[] = []
+    const identity = h.manager.getWorktreeIdentityForPath
+    h.manager.getWorktreeIdentityForPath = async (...args) => {
+      phases.push(h.state.calls.length ? "after" : "before")
+      return identity(...args)
+    }
+    h.state.result = { data: [complete(h.root, [emptyLocation(h.root)])] }
+    const response = await h.app.inject({ url: h.url() })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(phases, ["before", "after"], "Do not repeat serial Git authority reads within either phase")
+  } finally { await h.cleanup() }
+})
+
+test("recovery failures log their phase without native request contents", async () => {
+  const logs: string[] = []
+  const h = await harness({ logs })
+  try {
+    h.state.result = { data: [complete(h.root, [{ ...emptyLocation(h.root), forms: [{ ...form, title: "PRIVATE", fields: [] }] }])] }
+    assert.equal((await h.app.inject({ url: h.url() })).statusCode, 503)
+    const diagnostic = logs.map(line => JSON.parse(line)).find(line => line.msg === "Pending request recovery failed")
+    assert.equal(diagnostic.workspaceId, "fixture")
+    assert.equal(diagnostic.phase, "response-validation")
+    assert.equal(diagnostic.nativeStatus, 200)
+    assert.equal(diagnostic.timedOut, false)
+    assert.ok(diagnostic.elapsedMs >= 0)
+    assert.equal(JSON.stringify(diagnostic).includes("PRIVATE"), false)
+    assert.equal(diagnostic.err, undefined)
+  } finally { await h.cleanup() }
+})
+
+test("final publication revalidates root, candidate and submitted aliases after placement checks", async () => {
+  for (const changed of ["root", "candidate", "alias"] as const) {
+    const h = await harness()
+    try {
+      const alias = `${h.subdirectory}/.`
+      const translate = h.manager.getServiceDirectoryForPath
+      h.manager.getServiceDirectoryForPath = (id, value) => translate(id, value === alias ? h.subdirectory : value)
+      h.state.result = { data: [complete(h.subdirectory, [{ location: { directory: h.subdirectory }, permissions: [permission], forms: [form] }])] }
+      h.state.onOwnership = () => {
+        if (changed === "alias") {
+          h.manager.getServiceDirectoryForPath = (id, value) => translate(id, value === alias ? h.root : value)
+        } else {
+          const identity = h.manager.getWorktreeIdentityForPath
+          h.manager.getWorktreeIdentityForPath = (id, value) => value === (changed === "root" ? h.root : h.subdirectory)
+            ? Promise.resolve("replaced-checkout") : identity(id, value)
+        }
+      }
+      const response = await h.app.inject({ url: h.url([alias]) })
+      assert.equal(h.state.calls.length, 1)
+      assert.equal(response.body.includes('"forms"'), false, "Changed authority cannot publish requests or empty coverage")
+      // Root changes fence the whole batch; a candidate change withholds only its own coverage.
+      if (changed === "root") assert.equal(response.statusCode, 503, changed)
+      else assert.deepEqual(response.json(), { supported: true, directories: [{ directory: alias, status: "error", reason: "changed" }] }, changed)
+    } finally { await h.cleanup() }
+  }
+})
+
+test("unowned directories and arbitrary query selectors never reach native", async () => {
   const h = await harness()
   try {
     assert.equal((await h.app.inject({ url: h.url(["/foreign"]) })).statusCode, 403)
-    const clone = join(h.root, "clone")
-    await git("git", ["init", "--quiet", clone])
-    // Model the existing containing-worktree directory fence: the broker must
-    // additionally reject the clone's different Git common-directory identity.
-    h.state.allowed.add(clone)
-    assert.equal((await h.app.inject({ url: h.url([clone]) })).statusCode, 403)
     assert.equal((await h.app.inject({ url: `${h.url()}&rpcID=arbitrary` })).statusCode, 400)
     assert.equal((await h.app.inject({ url: h.url(Array.from({ length: 65 }, () => h.root)) })).statusCode, 400)
     assert.equal((await h.app.inject({ url: h.url(["x".repeat(4097)]) })).statusCode, 400)
     assert.deepEqual(h.state.calls, [])
+  } finally { await h.cleanup() }
+})
+
+test("refusals, deferrals and uncertain placements report a precise reason", async () => {
+  const h = await harness()
+  try {
+    // A batch without a readable directory is refused, yet names each path's own reason.
+    const deleted = join(h.root, "deleted-worktree"), untranslatable = "/home/fixture/untranslatable"
+    h.state.allowed.add(deleted)
+    const host = h.manager.getHostPathForServicePath
+    h.manager.getHostPathForServicePath = async (id, directory) => directory === untranslatable ? undefined : host(id, directory)
+    const refused = await h.app.inject({ url: h.url([deleted, "/foreign", untranslatable]) })
+    assert.equal(refused.statusCode, 403)
+    assert.deepEqual(refused.json(), { error: "Directory does not belong to workspace", directories: [
+      { directory: deleted, status: "error", reason: "missing" },
+      { directory: "/foreign", status: "error", reason: "not-owned" },
+      { directory: untranslatable, status: "error", reason: "unverified" },
+    ] })
+    assert.deepEqual(h.state.calls, [], "a refused batch never reaches native")
+
+    // A placement whose ownership check fails is unverified, not foreign.
+    h.state.result = { data: [complete(h.root, [emptyLocation(h.root)])] }
+    h.state.onOwnership = () => { throw Object.assign(new Error("Access denied"), { code: "EACCES" }) }
+    assert.deepEqual((await h.app.inject({ url: h.url() })).json(), { supported: true, directories: [{ directory: h.root, status: "error", reason: "unverified" }] })
+
+    // A compaction deferral is identified as such rather than as an unavailable server.
+    observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+    const deferred = await h.app.inject({ url: h.url() })
+    assert.equal(deferred.statusCode, 503)
+    assert.equal(deferred.json().code, "deferred")
+  } finally { await h.cleanup() }
+})
+
+test("an owned nested checkout of another repository recovers like prompts and live events, fenced by its own repository", async () => {
+  const h = await harness()
+  try {
+    // A session working in a worktree of an independent clone placed inside the
+    // opened folder: the workspace manager owns it, so its requests must recover.
+    const clone = join(h.root, "clone")
+    await git("git", ["init", "--quiet", clone])
+    h.state.allowed.add(clone)
+    const placed = { location: { directory: clone }, permissions: [permission], forms: [form] }
+    h.state.result = { data: [complete(clone, [placed])] }
+    const recovered = await h.app.inject({ url: h.url([clone]) })
+    assert.equal(recovered.statusCode, 200, recovered.body)
+    assert.deepEqual(h.state.batches, [[clone]])
+    assert.deepEqual(recovered.json().directories, [{ directory: clone, status: "ok", locations: [placed] }])
+    // Its repository is the one admitted before the read: a change during RPC withholds coverage.
+    h.state.onFetch = () => { rmSync(join(clone, ".git"), { recursive: true, force: true }) }
+    const changed = await h.app.inject({ url: h.url([clone]) })
+    assert.deepEqual(changed.json(), { supported: true, directories: [{ directory: clone, status: "error", reason: "changed" }] })
   } finally { await h.cleanup() }
 })
 
@@ -188,8 +299,26 @@ test("WSL host roots and worktrees are translated before dispatch with exact nat
       location: { directory: hostWorktree }, permissions: [permission], forms: [form],
     }])] }
     const foreignSpelling = await h.app.inject({ url: h.url([hostRootAlias, hostWorktree]) })
-    assert.equal(foreignSpelling.statusCode, 503)
-    assert.equal(foreignSpelling.body.includes('"locations"'), false)
+    assert.equal(foreignSpelling.statusCode, 200, foreignSpelling.body)
+    assert.deepEqual(foreignSpelling.json().directories.map((entry: any) => [entry.directory, entry.status]), [[hostRootAlias, "ok"], [hostWorktree, "error"]])
+    assert.equal(foreignSpelling.body.includes('"action"'), false, "A host-spelled placement never publishes its requests")
+    const missingHost = join(h.root, "deleted-wsl-history"), missingService = "/home/fixture/deleted-history"
+    directories.set(missingHost, missingService)
+    directories.set(missingService, missingService)
+    hosts.set(missingService, missingHost)
+    h.state.result = { data: [complete(serviceRoot)] }
+    const excluded = await h.app.inject({ url: h.url([missingHost], [missingHost]) })
+    assert.deepEqual(excluded.json(), { supported: true, directories: [{ directory: missingHost, status: "excluded" }] })
+    assert.deepEqual(h.state.batches.at(-1), [serviceRoot], "WSL exclusions probe the native owned root")
+    const untranslatable = "/home/fixture/untranslatable"
+    const failed = await h.app.inject({ url: h.url([serviceRoot, untranslatable], [untranslatable]) })
+    assert.deepEqual(failed.json().directories.find((entry: any) => entry.directory === untranslatable),
+      { directory: untranslatable, status: "error", reason: "unverified" }, "a failed WSL host translation cannot exclude history")
+    const unresolved = `${serviceRoot}/deleted-unknown`
+    hosts.set(unresolved, join(h.root, "deleted-unknown"))
+    const ownedHistory = await h.app.inject({ url: h.url([unresolved], [unresolved]) })
+    assert.deepEqual(ownedHistory.json(), { supported: true, directories: [{ directory: unresolved, status: "excluded" }] })
+    assert.deepEqual(h.state.batches.at(-1), [serviceRoot])
   } finally { await h.cleanup() }
 })
 
@@ -199,15 +328,21 @@ test("foreign placement identities are not erased or made authoritative by direc
     for (const location of [{ directory: h.root, workspaceID: "foreign" }, { directory: "/foreign" }]) {
       h.state.result = { data: [complete(h.root, [{ location, permissions: [permission], forms: [form] }])] }
       const response = await h.app.inject({ url: h.url() })
-      assert.equal(response.statusCode, 503)
-      assert.equal(response.body.includes("permission"), false)
+      assert.deepEqual(response.json(), { supported: true, directories: [{ directory: h.root, status: "error", reason: "not-owned" }] })
     }
     assert.deepEqual(h.state.ownershipReads, [])
     h.state.result = { data: [complete(h.root, [
       { location: { directory: h.root, workspaceID: "foreign" }, permissions: [permission], forms: [form] },
       { location: { directory: h.root }, permissions: [], forms: [form] },
     ])] }
+    // Duplicate placement keys are malformed native coverage and fail the batch.
     assert.equal((await h.app.inject({ url: h.url() })).statusCode, 503)
+    h.state.result = { data: [complete(h.root, [
+      { location: { directory: h.root }, permissions: [], forms: [form] },
+      { location: { directory: "/foreign" }, permissions: [permission], forms: [] },
+    ])] }
+    // One foreign placement withholds the whole directory, not just that placement.
+    assert.deepEqual((await h.app.inject({ url: h.url() })).json(), { supported: true, directories: [{ directory: h.root, status: "error", reason: "not-owned" }] })
   } finally { await h.cleanup() }
 })
 
@@ -216,12 +351,237 @@ test("mixed unowned candidates are rejected without blocking recovery of owned d
   try {
     const response = await h.app.inject({ url: h.url([h.root, "/foreign"]) })
     assert.deepEqual(response.json(), { supported: true, directories: [
-      { directory: "/foreign", status: "error" }, { directory: h.root, status: "ok", locations: [emptyLocation(h.root)] },
+      { directory: "/foreign", status: "error", reason: "not-owned" }, { directory: h.root, status: "ok", locations: [emptyLocation(h.root)] },
     ] })
     assert.deepEqual(h.state.batches[0], [h.root])
     h.state.status = 400
     h.state.result = { _tag: "RpcError", type: "rpc.unavailable", message: "RPC unavailable" }
     assert.deepEqual((await h.app.inject({ url: h.url([h.root, "/foreign"]) })).json(), { supported: false })
+  } finally { await h.cleanup() }
+})
+
+test("a deleting worktree withholds only its own coverage while siblings recover, and timing exposes phases only", async () => {
+  const h = await harness()
+  try {
+    h.manager.getWorktreeIdentityForPath = async (_id, directory) => directory === h.root ? "root-identity" : "candidate-identity"
+    h.state.result = { data: [complete(h.root, [{ location: { directory: h.root }, permissions: [permission], forms: [] }]), complete(h.subdirectory)] }
+    h.state.onFetch = () => { h.state.blockedIdentities.add("candidate-identity") }
+    const response = await h.app.inject({ url: h.url([h.root, h.subdirectory]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json().directories.map((entry: any) => [entry.directory, entry.status]), [[h.root, "ok"], [h.subdirectory, "error"]])
+    assert.deepEqual(response.json().directories[0].locations[0].permissions, [permission])
+    assert.match(String(response.headers["server-timing"]), /^ownership;dur=\d+, native;dur=\d+, placement;dur=\d+, revalidation;dur=\d+$/)
+    h.state.result = { data: [complete(h.root)] }
+    const blocked = await h.app.inject({ url: h.url([h.root, h.subdirectory]) })
+    assert.deepEqual(blocked.json().directories.map((entry: any) => [entry.directory, entry.status]), [[h.subdirectory, "error"], [h.root, "ok"]])
+    assert.deepEqual(h.state.batches[1], [h.root], "A fenced worktree never reaches the native reader")
+  } finally { await h.cleanup() }
+})
+
+test("a worktree deletion beginning during final revalidation still withholds its coverage", async () => {
+  const h = await harness()
+  try {
+    h.manager.getWorktreeIdentityForPath = async (_id, directory) => directory === h.root ? "root-identity" : "candidate-identity"
+    const translate = h.manager.getServiceDirectoryForPath
+    h.manager.getServiceDirectoryForPath = async (id, directory) => {
+      if (h.state.calls.length && directory === h.subdirectory) h.state.blockedIdentities.add("candidate-identity")
+      return translate(id, directory)
+    }
+    h.state.result = { data: [complete(h.root), complete(h.subdirectory)] }
+    const response = await h.app.inject({ url: h.url([h.root, h.subdirectory]) })
+    assert.deepEqual(response.json().directories.map((entry: any) => [entry.directory, entry.status]), [[h.root, "ok"], [h.subdirectory, "error"]])
+  } finally { await h.cleanup() }
+})
+
+test("deleted optional history is excluded without losing idle subdirectory requests or negotiating fake capability", async () => {
+  const h = await harness()
+  try {
+    const deleted = join(h.root, "deleted-history")
+    await mkdir(deleted)
+    await rm(deleted, { recursive: true })
+    // resolveOwnedWorktreePath can synthesize a missing child beneath an owned root.
+    h.state.allowed.add(deleted)
+    h.state.result = { data: [complete(h.root), complete(h.subdirectory, [{
+      location: { directory: h.subdirectory }, permissions: [permission], forms: [form],
+    }])] }
+    const response = await h.app.inject({ url: h.url([h.root, deleted, h.subdirectory], [deleted, h.subdirectory]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json().directories.map((entry: any) => [entry.directory, entry.status]), [
+      [deleted, "excluded"], [h.root, "ok"], [h.subdirectory, "ok"],
+    ])
+    assert.deepEqual(h.state.batches, [[h.root, h.subdirectory]])
+    assert.deepEqual(response.json().directories[2].locations[0].forms, [form])
+    assert.deepEqual(response.json().directories[2].locations[0].permissions, [permission])
+    h.state.result = { data: [complete(h.root)] }
+    const excluded = await h.app.inject({ url: h.url([deleted], [deleted]) })
+    assert.deepEqual(excluded.json(), { supported: true, directories: [{ directory: deleted, status: "excluded" }] })
+    assert.deepEqual(h.state.batches[1], [h.root], "all-excluded batches still validate the loaded-only RPC at the owned root")
+    h.state.status = 400
+    h.state.result = { _tag: "RpcError", type: "rpc.unavailable", message: "Unavailable" }
+    assert.deepEqual((await h.app.inject({ url: h.url([deleted], [deleted]) })).json(), { supported: false })
+    assert.equal((await h.app.inject({ url: h.url([h.root], [deleted]) })).statusCode, 400)
+  } finally { await h.cleanup() }
+})
+
+test("required deleted paths and optional authorization/identity failures remain non-authoritative errors", async () => {
+  const h = await harness()
+  try {
+    const deleted = join(h.root, "deleted-history")
+    h.state.allowed.add(deleted)
+    const required = await h.app.inject({ url: h.url([h.root, deleted]) })
+    assert.deepEqual(required.json().directories[0], { directory: deleted, status: "error", reason: "missing" })
+    h.state.allowed.delete(deleted)
+    h.manager.getServiceDirectoryForPath = async (_id, directory) => {
+      if (directory === deleted) throw Object.assign(new Error("Access denied"), { code: "EACCES" })
+      return directory
+    }
+    const denied = await h.app.inject({ url: h.url([h.root, deleted], [deleted]) })
+    assert.deepEqual(denied.json().directories[0], { directory: deleted, status: "error", reason: "unverified" }, "an authorization failure is not an obsolete-history exclusion")
+    h.manager.getServiceDirectoryForPath = async (_id, directory) => directory
+    const failed = await h.app.inject({ url: h.url([h.root, deleted], [deleted]) })
+    assert.deepEqual(failed.json().directories[0], { directory: deleted, status: "error", reason: "unverified" }, "missing identity is not an obsolete-history exclusion")
+    assert.deepEqual(h.state.batches, [[h.root], [h.root], [h.root]])
+  } finally { await h.cleanup() }
+})
+
+test("undefined ownership for an existing optional path never excludes it", async () => {
+  const h = await harness()
+  try {
+    const foreign = join(h.root, "unowned-present")
+    await mkdir(foreign)
+    const response = await h.app.inject({ url: h.url([h.root, foreign], [foreign]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "error", reason: "not-owned" })
+    assert.deepEqual(h.state.batches, [[h.root]])
+  } finally { await h.cleanup() }
+})
+
+test("missing optional history outside the checkout is excluded without claiming coverage", async () => {
+  const h = await harness()
+  try {
+    const owned = join(h.root, "deleted-parent", "session")
+    const foreign = join(h.root, "..", `${h.root.split(/[\\/]/).at(-1)}-foreign-missing`)
+    const response = await h.app.inject({ url: h.url([h.root, owned, foreign], [owned, foreign]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === owned), { directory: owned, status: "excluded" })
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "excluded" })
+    assert.deepEqual(h.state.batches, [[h.root]])
+    h.state.calls.length = 0
+    assert.deepEqual((await h.app.inject({ url: h.url([foreign], [foreign]) })).json(), {
+      supported: true, directories: [{ directory: foreign, status: "excluded" }],
+    })
+    assert.deepEqual(h.state.batches.at(-1), [h.root], "capability still comes from the owned root, never the excluded path")
+  } finally { await h.cleanup() }
+})
+
+test("unowned optional historical clones are excluded by actual Git identity while valid idle locations remain scanned", async () => {
+  const h = await harness()
+  try {
+    const foreign = join(h.root, "old-fixture-checkout")
+    await git("git", ["init", "--quiet", foreign])
+    h.state.result = { data: [complete(h.root), complete(h.subdirectory, [{
+      location: { directory: h.subdirectory }, permissions: [permission], forms: [form],
+    }])] }
+    const response = await h.app.inject({ url: h.url([h.root, foreign, h.subdirectory], [foreign, h.subdirectory]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "excluded" })
+    assert.deepEqual(h.state.batches.at(-1), [h.root, h.subdirectory], "never query or warm the unowned repository")
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === h.subdirectory).locations[0].forms, [form])
+    const required = await h.app.inject({ url: h.url([h.root, foreign, h.subdirectory]) })
+    assert.deepEqual(required.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "error", reason: "not-owned" }, "required locations still fail visibly")
+    // Once the workspace manager owns it (as for prompts and live events), it is scanned.
+    h.state.allowed.add(foreign)
+    h.state.result = { data: [complete(h.root), complete(foreign), complete(h.subdirectory)] }
+    const owned = await h.app.inject({ url: h.url([h.root, foreign, h.subdirectory], [foreign, h.subdirectory]) })
+    assert.equal(owned.statusCode, 200, owned.body)
+    assert.deepEqual(h.state.batches.at(-1), [h.root, foreign, h.subdirectory])
+    assert.equal(owned.json().directories.find((entry: any) => entry.directory === foreign).status, "ok")
+  } finally { await h.cleanup() }
+})
+
+test("negative scope evidence must survive native IO and does not swallow uncertain ownership", async () => {
+  for (const fault of ["becomes-owned", "reappears", "identity-blocked", "lookup-error"] as const) {
+    const h = await harness()
+    const foreign = fault === "reappears" ? `${h.root}-old-history` : join(h.root, "other-repository")
+    try {
+      if (fault !== "reappears") await git("git", ["init", "--quiet", foreign])
+      if (fault === "identity-blocked") {
+        // Owned like prompts and live events, so it is read; a deletion starting
+        // during that read must still withhold its coverage.
+        h.state.allowed.add(foreign)
+        h.manager.getWorktreeIdentityForPath = async (_id, directory) => directory === foreign ? "foreign-identity" : h.root
+        h.state.result = { data: [complete(h.root), complete(foreign)] }
+      }
+      if (fault === "lookup-error") {
+        const resolve = h.manager.getServiceDirectoryForPath
+        h.manager.getServiceDirectoryForPath = async (id, directory) => {
+          if (directory === foreign) throw Object.assign(new Error("Access denied"), { code: "EACCES" })
+          return resolve(id, directory)
+        }
+      }
+      h.state.onFetch = () => {
+        if (fault === "becomes-owned") h.state.allowed.add(foreign)
+        if (fault === "reappears") execFileSync("git", ["init", "--quiet", foreign], { windowsHide: true })
+        if (fault === "identity-blocked") h.state.blockedIdentities.add("foreign-identity")
+      }
+      const response = await h.app.inject({ url: h.url([h.root, foreign], [foreign]) })
+      assert.equal(response.statusCode, 200, response.body)
+      assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === foreign), { directory: foreign, status: "error", reason: ({ "becomes-owned": "changed", reappears: "changed", "identity-blocked": "deleting", "lookup-error": "unverified" } as const)[fault] }, fault)
+      assert.deepEqual(h.state.batches, fault === "identity-blocked" ? [[h.root, foreign]] : [[h.root]])
+    } finally { await h.cleanup(); if (fault === "reappears") await rm(foreign, { recursive: true, force: true }) }
+  }
+})
+
+test("a missing path through a symlink outside the owned root is not excluded", async () => {
+  const h = await harness()
+  const foreign = await mkdtemp(join(tmpdir(), "codenomad-foreign-"))
+  try {
+    const alias = join(h.root, "escape")
+    await symlink(foreign, alias, process.platform === "win32" ? "junction" : "dir")
+    const missing = join(alias, "deleted-session")
+    // Even if a stale resolver claims this existing alias belongs to the root,
+    // its canonical host path must match the canonical owned ancestor.
+    h.state.allowed.add(alias)
+    const translate = h.manager.getServiceDirectoryForPath
+    h.manager.getServiceDirectoryForPath = async (id, candidate) => candidate === alias ? h.root : translate(id, candidate)
+    const response = await h.app.inject({ url: h.url([h.root, missing], [missing]) })
+    assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === missing), { directory: missing, status: "error", reason: "unverified" })
+    assert.deepEqual(h.state.batches, [[h.root]])
+  } finally { await h.cleanup(); await rm(foreign, { recursive: true, force: true }) }
+})
+
+test("deleted optional linked worktrees remain fenced after RPC", async () => {
+  for (const unavailable of [false, true]) {
+    const h = await harness()
+    try {
+      const deleted = join(h.root, "removed-linked-worktree")
+      h.state.allowed.add(deleted)
+      h.manager.getWorktreeIdentityForPath = async (_id, directory) => directory === deleted ? "linked-identity" : "root-identity"
+      h.state.status = unavailable ? 400 : 200
+      h.state.result = unavailable ? { _tag: "RpcError", type: "rpc.unavailable", message: "Unavailable" } : { data: [complete(h.root)] }
+      h.state.onFetch = () => { h.state.blockedIdentities.add("linked-identity") }
+      const response = await h.app.inject({ url: h.url([deleted], [deleted]) })
+      // The fenced exclusion becomes only its own non-authoritative error.
+      assert.deepEqual(response.json(), unavailable ? { supported: false } : { supported: true, directories: [{ directory: deleted, status: "error", reason: "deleting" }] })
+      assert.deepEqual(h.state.batches, [[h.root]])
+      observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+      assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "deleted candidates cannot negotiate capability across a blocked fence")
+    } finally { await h.cleanup() }
+  }
+})
+
+test("a synthesized optional deletion becoming live during RPC cannot be excluded", async () => {
+  const h = await harness()
+  try {
+    const deleted = join(h.root, "historical-session")
+    h.state.allowed.add(deleted)
+    h.state.result = { data: [complete(h.root)] }
+    h.state.onFetch = () => { execFileSync("git", ["-C", h.root, "init", "--quiet", deleted], { windowsHide: true }) }
+    const response = await h.app.inject({ url: h.url([deleted], [deleted]) })
+    assert.deepEqual(response.json(), { supported: true, directories: [{ directory: deleted, status: "error", reason: "changed" }] }, "a live checkout is never excluded")
+    assert.deepEqual(h.state.batches, [[h.root]], "the capability probe remains at the owned root")
+    observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+    assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "stale exclusions cannot negotiate capability")
   } finally { await h.cleanup() }
 })
 
@@ -354,7 +714,7 @@ test("full provenance/coverage validation precedes connection-scoped capability 
   const h = await harness()
   try {
     h.state.result = { data: [complete(h.root, [{ location: { directory: "/foreign" }, permissions: [], forms: [] }])] }
-    assert.equal((await h.app.inject({ url: h.url() })).statusCode, 503)
+    assert.deepEqual((await h.app.inject({ url: h.url() })).json(), { supported: true, directories: [{ directory: h.root, status: "error", reason: "not-owned" }] })
     observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
     assert(deferPendingDiscovery(h.connection, { loadedOnly: true }))
     observePendingDiscovery(h.connection, { type: "session.compaction.ended", created: 2, data: { sessionID: "child" } } as any)
@@ -381,7 +741,10 @@ test("root-only deletion, bootstrap replacement and candidate authority changes 
         if (fault === "root-ownership") h.state.allowed.delete(h.root)
         if (fault === "candidate-ownership") h.state.allowed.delete(h.subdirectory)
       }
-      assert.equal((await h.app.inject({ url: h.url([h.subdirectory]) })).statusCode, 503)
+      const response = await h.app.inject({ url: h.url([h.subdirectory]) })
+      // Root authority fences everything; a changed candidate reports only its own error.
+      if (fault !== "candidate-ownership") assert.equal(response.statusCode, 503, fault)
+      else assert.deepEqual(response.json(), unavailable ? { supported: false } : { supported: true, directories: [{ directory: h.subdirectory, status: "error", reason: "changed" }] })
     } finally { await h.cleanup() }
   }
 })
@@ -410,8 +773,213 @@ test("mid-authorization compaction prevents RPC dispatch, and errors/duplicate p
   } finally { await h.cleanup() }
 })
 
-test("64 cold directories use one fixed RPC with at most eight concurrent ownership checks", async () => {
+test("fresh pre-RPC classification preserves mixed coverage and never fences or queries a foreign repository", async () => {
   const h = await harness()
+  try {
+    const clone = join(h.root, "foreign-clone")
+    await git("git", ["init", "--quiet", clone])
+    h.state.allowed.add(clone)
+    const alias = process.platform === "win32" ? h.root.toUpperCase().replaceAll("\\", "/") : `${h.root}/.`
+    const translate = h.manager.getServiceDirectoryForPath
+    h.manager.getServiceDirectoryForPath = async (id, directory) => directory === alias ? h.root : translate(id, directory)
+    h.manager.getWorktreeIdentityForPath = async (_id, directory) => directory === clone ? "foreign-identity" : h.root
+    h.state.blockedIdentities.add("foreign-identity")
+    const response = await h.app.inject({ url: h.url([h.root, alias, clone, "/foreign"]) })
+    assert.equal(response.statusCode, 200, response.body)
+    assert.deepEqual(h.state.batches, [[h.root]])
+    const entries = response.json().directories
+    for (const directory of [clone, "/foreign"]) assert.deepEqual(entries.find((entry: any) => entry.directory === directory), { directory, status: "error", reason: directory === clone ? "deleting" : "not-owned" })
+    for (const directory of [h.root, alias]) assert.deepEqual(entries.find((entry: any) => entry.directory === directory), {
+      directory, status: "ok", locations: [emptyLocation(h.root)],
+    })
+    h.state.calls.length = 0
+    h.state.batches.length = 0
+    assert.equal((await h.app.inject({ url: h.url([clone, "/foreign"]) })).statusCode, 403)
+    assert.deepEqual(h.state.calls, [])
+  } finally { await h.cleanup() }
+})
+
+// One admission pass precedes the native read (no repeated pre-RPC Git reads);
+// a later withdrawal withholds only that candidate's coverage and capability.
+test("candidate alias, identity and host withdrawal after admission withhold only that candidate", async () => {
+  for (const fault of ["alias", "identity", "host"] as const) {
+    const h = await harness()
+    try {
+      const alias = process.platform === "win32" ? h.subdirectory.toUpperCase().replaceAll("\\", "/") : `${h.subdirectory}/.`
+      const translate = h.manager.getServiceDirectoryForPath
+      const identity = h.manager.getWorktreeIdentityForPath
+      const host = h.manager.getHostPathForServicePath
+      let mappings = 0, identities = 0, hosts = 0
+      h.manager.getServiceDirectoryForPath = async (id, directory) => directory === alias
+        ? ++mappings === 2 && fault === "alias" ? undefined : h.subdirectory : translate(id, directory)
+      h.manager.getWorktreeIdentityForPath = async (id, directory) => directory === h.subdirectory && ++identities === 2 && fault === "identity"
+        ? undefined : identity(id, directory)
+      h.manager.getHostPathForServicePath = async (id, directory) => directory === h.subdirectory && ++hosts === 2 && fault === "host"
+        ? undefined : host(id, directory)
+      h.state.result = { data: [complete(h.root), complete(h.subdirectory, [{ location: { directory: h.subdirectory }, permissions: [permission], forms: [form] }])] }
+      const response = await h.app.inject({ url: h.url([h.root, alias]) })
+      assert.equal(response.statusCode, 200, response.body)
+      assert.deepEqual(response.json().directories.find((entry: any) => entry.directory === alias), { directory: alias, status: "error", reason: "changed" }, fault)
+      assert.equal(response.body.includes('"action"'), false, "a withdrawn candidate never publishes its requests")
+      assert.equal(h.state.calls.length, 1)
+      observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+      assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "a withdrawn candidate cannot verify capability")
+    } finally { await h.cleanup() }
+  }
+})
+
+test("root mapping and identity withdrawal after asynchronous candidate preparation fence publication and capability", async () => {
+  for (const fault of ["mapping", "identity"] as const) {
+    const h = await harness()
+    try {
+      const translate = h.manager.getServiceDirectoryForPath
+      const identity = h.manager.getWorktreeIdentityForPath
+      const host = h.manager.getHostPathForServicePath
+      let hosts = 0, withdrawn = false
+      h.manager.getServiceDirectoryForPath = async (id, directory) => withdrawn && directory === h.root && fault === "mapping"
+        ? undefined : translate(id, directory)
+      h.manager.getWorktreeIdentityForPath = async (id, directory) => withdrawn && directory === h.root && fault === "identity"
+        ? undefined : identity(id, directory)
+      h.manager.getHostPathForServicePath = async (id, directory) => {
+        const result = await host(id, directory)
+        // The single admission pass reads the candidate host once before the native read.
+        if (directory === h.subdirectory && ++hosts === 1) {
+          await new Promise<void>(resolve => setImmediate(resolve))
+          withdrawn = true
+        }
+        return result
+      }
+      h.state.result = { data: [complete(h.subdirectory, [{ location: { directory: h.subdirectory }, permissions: [permission], forms: [form] }])] }
+      const response = await h.app.inject({ url: h.url([h.subdirectory]) })
+      assert.equal(response.statusCode, 503, response.body)
+      assert.equal(response.body.includes('"locations"'), false)
+      assert.equal(h.state.calls.length, 1)
+      observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+      assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "a withdrawn root cannot verify capability")
+    } finally { await h.cleanup() }
+  }
+})
+
+test("actual repository changes during RPC fence both supported and declared unsupported snapshots", async () => {
+  for (const unavailable of [false, true]) {
+    const h = await harness()
+    try {
+      h.state.status = unavailable ? 400 : 200
+      h.state.result = unavailable ? { _tag: "RpcError", type: "rpc.unavailable", message: "Unavailable" } : { data: [complete(h.subdirectory)] }
+      // Normalized mappings and deletion identities stay unchanged; only real Git
+      // authority changes after dispatch, so a retained pre-RPC result is unsafe.
+      h.state.onFetch = () => { execFileSync("git", ["init", "--quiet", h.subdirectory], { windowsHide: true }) }
+      const response = await h.app.inject({ url: h.url([h.subdirectory]) })
+      assert.deepEqual(response.json(), unavailable ? { supported: false } : { supported: true, directories: [{ directory: h.subdirectory, status: "error", reason: "changed" }] })
+      assert.equal(h.state.calls.length, 1)
+      assert.equal(response.body.includes('"locations"'), false)
+      observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+      assert(deferPendingDiscovery(h.connection, { loadedOnly: true }), "Changed repositories cannot negotiate loaded-only capability")
+    } finally { await h.cleanup() }
+  }
+})
+
+// Per-candidate failures are isolated, so the batch continues; custody still means
+// no admitted read outlives the response and no later batch starts before it settles.
+for (const phase of ["admission", "supported post-RPC", "unsupported post-RPC"] as const) {
+  test(`failed ownership candidates retain admitted host reads until settlement: ${phase}`, async () => {
+    const h = await harness()
+    const gate = () => {
+      let resolve!: () => void
+      const promise = new Promise<void>(done => { resolve = done })
+      return { promise, resolve }
+    }
+    const started = gate(), release = gate(), failed = gate()
+    const ready = async (promise: Promise<void>) => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        await Promise.race([promise, new Promise<never>((_resolve, reject) => {
+          timer = setTimeout(() => reject(new Error("Owned custody gate did not become ready")), 30_000)
+        })])
+      } finally { if (timer) clearTimeout(timer) }
+    }
+    let request: Promise<{ statusCode: number; body: string; json(): any }> | undefined
+    let hostRead: Promise<string | undefined> | undefined
+    let settled = false, held = false, hostReads = 0, identityReads = 0, nextBatchReads = 0
+    const failRead = phase === "admission" ? 1 : 2
+    try {
+      const bad = join(h.root, "withdrawn-custody-peer")
+      await mkdir(bad)
+      h.state.allowed.add(bad)
+      const aliases = Array.from({ length: 7 }, (_, index) => join(h.root, `custody-root-alias-${index}`))
+      const nextBatch = aliases[6], directories = [h.subdirectory, bad, ...aliases]
+      h.state.status = phase === "unsupported post-RPC" ? 400 : 200
+      h.state.result = phase === "unsupported post-RPC"
+        ? { _tag: "RpcError", type: "rpc.unavailable", message: "Unavailable" }
+        : { data: (phase === "admission" ? [h.root] : [h.subdirectory, bad, h.root]).map(directory => complete(directory)) }
+      const host = h.manager.getHostPathForServicePath, identity = h.manager.getWorktreeIdentityForPath
+      const translate = h.manager.getServiceDirectoryForPath
+      h.manager.getServiceDirectoryForPath = async (id, directory) => {
+        if (directory === nextBatch) nextBatchReads++
+        return aliases.includes(directory) ? h.root : translate(id, directory)
+      }
+      h.manager.getHostPathForServicePath = (id, directory) => {
+        if (directory !== h.subdirectory || ++hostReads !== failRead) return host(id, directory)
+        hostRead = (async () => {
+          await host(id, directory)
+          held = true
+          started.resolve()
+          try { await release.promise }
+          finally { held = false }
+          // Withdraw on release too: no additional Git read may outlive cleanup,
+          // even when this regression is run against the old early-return route.
+          return undefined
+        })()
+        return hostRead
+      }
+      h.manager.getWorktreeIdentityForPath = async (id, directory) => {
+        if (directory === bad && ++identityReads === failRead) {
+          await started.promise
+          failed.resolve()
+          if (phase === "admission") throw new Error("Owned admission identity read rejected")
+          return undefined
+        }
+        return identity(id, directory)
+      }
+      request = h.app.inject({ url: h.url(directories) }).then(response => { settled = true; return response })
+      await ready(Promise.race([failed.promise, request.then(() => { throw new Error("Request settled before the failure gate") })]))
+      await new Promise<void>(resolve => setTimeout(resolve, 100))
+      assert.equal(held, true)
+      assert.equal(settled, false, "The failed request must retain custody until the admitted host read settles")
+      assert.equal(h.state.calls.length, failRead === 2 ? 1 : 0)
+      assert.equal(nextBatchReads, failRead - 1, "A failing candidate's batch must settle before a later ownership batch")
+      release.resolve()
+      const response = await request
+      assert.equal(held, false)
+      assert.equal(response.statusCode, 200, response.body)
+      if (phase === "unsupported post-RPC") assert.deepEqual(response.json(), { supported: false })
+      else {
+        const entries = response.json().directories
+        for (const directory of [h.subdirectory, bad]) assert.deepEqual(entries.find((entry: any) => entry.directory === directory), { directory, status: "error", reason: phase === "admission" ? "unverified" : "changed" })
+        for (const directory of aliases) assert.equal(entries.find((entry: any) => entry.directory === directory)?.status, "ok")
+      }
+      assert.equal(h.state.calls.length, 1)
+      assert.equal(nextBatchReads, 2, "admission and final revalidation each read the later batch once")
+      observePendingDiscovery(h.connection, { type: "session.compaction.started", created: 1, data: { sessionID: "child" } } as any)
+      assert.equal(deferPendingDiscovery(h.connection, { loadedOnly: true }), phase !== "admission", "only post-admission failures withhold capability")
+    } finally {
+      started.resolve()
+      failed.resolve()
+      release.resolve()
+      await Promise.allSettled([...(request ? [request] : []), ...(hostRead ? [hostRead] : [])])
+      await h.cleanup()
+    }
+  })
+}
+
+test("64 cold directories use one fixed RPC with at most eight concurrent ownership checks", async () => {
+  // About 130 fresh per-candidate Git reads run two at a time in the Git worker;
+  // on a loaded Windows host that alone can exceed the 30 s route deadline. This
+  // test is about RPC/ownership fan-out, so answer for the plain cold subdirectories
+  // exactly as real Git does (the root's common directory), still once per read.
+  let commonReads = 0, common: string | undefined
+  const h = await harness({ readGitCommonDirectory: async () => { commonReads++; return common! } })
+  common = await readGitCommonDirectory(h.root)
   try {
     const cold = Array.from({ length: 64 }, (_, index) => join(h.root, `cold-${index}`))
     await Promise.all(cold.map((directory) => mkdir(directory)))
@@ -432,5 +1000,6 @@ test("64 cold directories use one fixed RPC with at most eight concurrent owners
     assert.deepEqual(h.state.batches, [cold])
     assert.equal(peak, 8)
     assert.equal(active, 0)
+    assert.ok(commonReads >= 2 * 64, `every candidate is rechecked before and after the RPC: ${commonReads}`)
   } finally { await h.cleanup() }
 })

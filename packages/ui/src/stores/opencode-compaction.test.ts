@@ -28,7 +28,7 @@ function fixture(instanceId: string) {
   return {
     emit, client, projections: () => projections,
     data: () => data,
-    start: (id = "compact") => emit("session.compaction.started", { inputID: id, reason: "manual", recent: "" }),
+    start: (id = "compact") => emit("session.compaction.started", { inputID: id, reason: "manual" }),
     delta: (text: string) => emit("session.compaction.delta", { text }),
     summary: (id = "compact") => (data.session.message.get("s", id) as any)?.summary,
     cleanup: () => { destroyOpenCodeData(instanceId); sdkManager.destroyClientsForInstance(instanceId) },
@@ -56,7 +56,7 @@ test("compaction chunks are fenced immediately, joined once, and preserve same-s
     assert.equal(f.summary("second"), "second text")
     assert.equal(f.projections(), 3)
     f.delta("pending")
-    f.emit("session.compaction.ended", { reason: "manual", text: "final", recent: "" })
+    f.emit("session.compaction.ended", { reason: "manual", text: "final" })
     ctx.mock.timers.tick(500)
     assert.equal(f.summary("second"), "final")
     assert.equal(f.projections(), 3, "ended supersedes buffered fragments without replay")
@@ -88,15 +88,15 @@ for (const boundary of ["failed", "delete", "reconnect", "prune", "revert", "dis
   })
 }
 
-test("idle flushes pending compaction before retiring its reducer", ctx => {
+test("settlement flushes pending compaction before retiring its reducer", ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("compaction-idle")
   try {
     f.start()
     f.delta("last text")
-    f.emit("session.idle")
+    f.emit("session.execution.succeeded")
     assert.equal(f.summary(), "last text")
-    finishOpenCodeDataEvent("compaction-idle", { type: "session.idle", data: { sessionID: "s" } } as any)
+    finishOpenCodeDataEvent("compaction-idle", { type: "session.execution.succeeded", data: { sessionID: "s" } } as any)
     ctx.mock.timers.tick(500)
     assert.equal(f.projections(), 1)
   } finally { f.cleanup() }
@@ -125,7 +125,7 @@ test("SDK history reads flush pending chunks and reject a pre-delta page without
   const f = fixture(instanceId)
   const replies: Array<(value: any) => void> = []
   const page = (summary: string) => ({ data: [{ id: "compact", type: "compaction", status: "running",
-    reason: "manual", summary, recent: "", model, time: { created: 1 } }], cursor: {} })
+    reason: "manual", summary, model, time: { created: 1 } }], cursor: {} })
   f.client.message.list = () => new Promise(resolve => replies.push(resolve))
   try {
     const data = f.start()

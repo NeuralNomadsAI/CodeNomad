@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import os from "node:os"
 import path from "node:path"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises"
 import { describe, it } from "node:test"
 import { execFileSync } from "node:child_process"
 import type { LocationRef, OpenCodeClient, OpenCodeEvent } from "@opencode/client"
@@ -15,7 +15,7 @@ import {
   isWindowsHostPath,
 } from "./manager"
 import { startupEnvironmentHash } from "./host-opencode-service"
-import type { OpenCodeServiceLifecycle, OpenCodeSharedServiceOptions } from "./opencode-service"
+import type { OpenCodeServiceLifecycle, OpenCodeSharedServiceOptions, ServiceConnection } from "./opencode-service"
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -28,6 +28,7 @@ function deferred<T>() {
 }
 
 class ControlledSharedService {
+  existingConnection?: () => ServiceConnection | undefined
   readonly validationStarted = deferred<void>()
   validationGate?: ReturnType<typeof deferred<void>>
   ignoreValidationAbort = false
@@ -40,9 +41,6 @@ class ControlledSharedService {
   shutdownGate?: ReturnType<typeof deferred<void>>
   shutdownTimeouts: number[] = []
   evictionCalls: Array<{ location: LocationRef; options?: OpenCodeSharedServiceOptions; signal?: AbortSignal }> = []
-  evictionFailures = 0
-  readonly evictionStarted = deferred<void>()
-  evictionGate?: ReturnType<typeof deferred<void>>
 
   async endpoint() {
     return { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "user", password: "pass" } }
@@ -87,12 +85,7 @@ class ControlledSharedService {
 
   async evictLocation(location: LocationRef, requestOptions?: { signal?: AbortSignal }, options?: OpenCodeSharedServiceOptions) {
     this.evictionCalls.push({ location, options, signal: requestOptions?.signal })
-    this.evictionStarted.resolve()
-    await this.evictionGate?.promise
-    if (this.evictionFailures > 0) {
-      this.evictionFailures -= 1
-      throw new Error("eviction failed")
-    }
+    throw new Error("CodeNomad must never evict an OpenCode location")
   }
 
   async subscribe(): Promise<AsyncIterable<OpenCodeEvent>> {
@@ -123,13 +116,69 @@ function createHarness(service = new ControlledSharedService(), overrides: Recor
 }
 
 describe("workspace manager shared service lifecycle", () => {
+  it("observes existing connections only for published workspaces without acquisition or ownership expansion", async () => {
+    let peeks = 0
+    let acquisitions = 0
+    let current: ServiceConnection | undefined
+    const connection: ServiceConnection = {
+      endpoint: { url: "http://127.0.0.1:4321", auth: { type: "basic", username: "user", password: "pass" } },
+      client: {} as OpenCodeClient,
+      fetch: globalThis.fetch,
+      profile: async () => { throw new Error("unexpected negotiation") },
+      assertCurrent: () => { assert.equal(current, connection) },
+      invalidate: () => { current = undefined },
+    }
+    const service = Object.assign(new ControlledSharedService(), {
+      existingConnection: () => { peeks++; return current },
+      acquire: async () => { acquisitions++; return connection },
+      invalidate: connection.invalidate,
+    })
+    const { manager } = createHarness(service)
+    manager.getWorktrees = async () => { throw new Error("unexpected ownership expansion") }
+    assert.equal(manager.getExistingSharedServiceConnection("missing"), undefined)
+    assert.equal(peeks, 0)
+    service.validationGate = deferred<void>()
+    const creation = manager.create(process.cwd())
+    await service.validationStarted.promise
+    const record = [...(manager as any).workspaces.values()][0]
+    current = connection
+    assert.equal(manager.getExistingSharedServiceConnection(record.id), undefined)
+    assert.equal(peeks, 0)
+    service.validationGate.resolve()
+    const { workspace } = await creation
+    assert.equal(manager.getExistingSharedServiceConnection(workspace.id), connection)
+    connection.assertCurrent()
+    manager.invalidateSharedServiceConnection()
+    assert.equal(manager.getExistingSharedServiceConnection(workspace.id), undefined)
+    assert.throws(connection.assertCurrent)
+    assert.equal(acquisitions, 0)
+    // Ordinary acquisition retains its existing semantics.
+    assert.equal(await manager.getSharedServiceConnection(workspace.id), connection)
+    assert.equal(acquisitions, 1)
+    await manager.delete(workspace.id)
+    assert.equal(manager.getExistingSharedServiceConnection(workspace.id), undefined)
+    assert.equal(peeks, 2)
+  })
+
+  it("does not acquire when the shared-service fixture has no observation method", async () => {
+    let acquisitions = 0
+    const service = Object.assign(new ControlledSharedService(), {
+      acquire: async () => { acquisitions++; throw new Error("unexpected acquisition") },
+    })
+    const { manager } = createHarness(service)
+    const { workspace } = await manager.create(process.cwd())
+    assert.equal(manager.getExistingSharedServiceConnection(workspace.id), undefined)
+    assert.equal(acquisitions, 0)
+    await manager.shutdown()
+  })
+
   it("rejects another clone before scanning the native worktree inventory", async () => {
     const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-foreign-owner-"))
     const repo = path.join(root, "repo")
     const clone = path.join(root, "clone")
     const linked = path.join(root, "linked")
     const git = (...args: string[]) => execFileSync("git", args, { stdio: "pipe", windowsHide: true })
-    const { manager } = createHarness()
+    const { manager, service } = createHarness()
     try {
       git("init", repo)
       git("-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture")
@@ -146,6 +195,62 @@ describe("workspace manager shared service lifecycle", () => {
       assert.equal(scans, 0)
       assert.equal(await manager.ownsDirectory(workspace.id, linked), true)
       assert.equal(scans, 1)
+      let registered = [repo, linked]
+      let refreshes = 0
+      const client = {
+        location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+        worktree: {
+          refresh: async () => { refreshes++; throw new Error("unexpected native discovery") },
+          list: async () => registered.map(directory => ({ directory })),
+        },
+      } as unknown as OpenCodeClient
+      const connection: ServiceConnection = {
+        endpoint: await service.endpoint(), client, fetch: globalThis.fetch,
+        profile: async () => "modern", assertCurrent: () => {}, invalidate: () => {},
+      }
+      service.existingConnection = () => connection
+      service.client = async () => { throw new Error("unexpected service acquisition") }
+      assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, linked, "event"), canonicalWorktreeIdentity(linked))
+      assert.equal(scans, 1, "event identity must not acquire the discovery inventory")
+      registered = [repo]
+      manager.invalidateWorktrees("blocking")
+      assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, linked, "event"), undefined)
+      assert.equal(refreshes, 0, "event identity must remain registered-only after invalidation")
+      assert.equal(scans, 1)
+    } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
+  })
+
+  it("owns a checkout of another repository nested inside the opened folder, under the root's identity", async () => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-nested-foreign-"))
+    const repo = path.join(root, "repo")
+    const clone = path.join(root, "clone")
+    // A worktree of an independent clone placed in the workspace's own worktree folder.
+    const nested = path.join(repo, ".codenomad", "worktrees", "foreign")
+    const git = (...args: string[]) => execFileSync("git", args, { stdio: "pipe", windowsHide: true })
+    const { manager, service } = createHarness()
+    try {
+      git("init", repo)
+      git("-C", repo, "-c", "user.name=Test", "-c", "user.email=test@example.invalid", "commit", "--allow-empty", "-m", "fixture")
+      git("clone", repo, clone)
+      git("-C", clone, "worktree", "add", "-b", "foreign", nested)
+      const { workspace } = await manager.create(repo)
+      // The native inventory lists only this repository's checkouts.
+      const client = {
+        location: { get: async () => ({ directory: repo, project: { id: "fixture", directory: repo, canonical: repo } }) },
+        worktree: { refresh: async () => {}, list: async () => [{ directory: repo }] },
+      } as unknown as OpenCodeClient
+      const connection: ServiceConnection = {
+        endpoint: await service.endpoint(), client, fetch: globalThis.fetch,
+        profile: async () => "modern", assertCurrent: () => {}, invalidate: () => {},
+      }
+      service.existingConnection = () => connection
+      service.client = async () => client
+      // Pending recovery follows this ownership; it must match prompts and live events.
+      for (const purpose of ["request", "event"] as const) {
+        assert.equal(await manager.ownsLocation(workspace.id, { directory: nested }, undefined, undefined, purpose), true)
+        assert.equal(await manager.getServiceDirectoryForPath(workspace.id, nested, purpose), await realpath(nested))
+        assert.equal(await manager.getWorktreeIdentityForPath(workspace.id, nested, purpose), canonicalWorktreeIdentity(await realpath(repo)))
+      }
     } finally { await manager.shutdown(); await rm(root, { recursive: true, force: true }) }
   })
 
@@ -209,17 +314,19 @@ describe("workspace manager shared service lifecycle", () => {
     releaseUpper()
   })
 
-  it("retains and validates native identity rather than authorizing an arbitrary owned-directory selector", async () => {
+  it("never authorizes a workspace selector, even one the runtime resolves, without a native request", async () => {
     const service = new ControlledSharedService()
     service.resolvedLocation = { directory: process.cwd(), workspaceID: "native-one" }
     const { manager } = createHarness(service)
     const { workspace } = await manager.create(process.cwd())
-    assert.equal(await manager.ownsLocation(workspace.id, service.resolvedLocation), true)
-    assert.equal(await manager.ownsLocation(workspace.id, { directory: process.cwd(), workspaceID: "native-two" }), false)
-    service.resolvedLocation = { directory: path.join(process.cwd(), "foreign"), workspaceID: "native-one" }
-    assert.equal(await manager.ownsLocation(workspace.id, { directory: process.cwd(), workspaceID: "native-one" }), false)
+    const calls = service.validationCalls.length
+    const client = { location: { get: async () => assert.fail("no native request") } } as unknown as OpenCodeClient
+    assert.equal(await manager.ownsLocation(workspace.id, service.resolvedLocation), false)
+    assert.equal(await manager.ownsLocation(workspace.id, service.resolvedLocation, client), false)
+    assert.equal(await manager.ownsLocation(workspace.id, { directory: process.cwd() }, client), true)
+    assert.equal(service.validationCalls.length, calls)
     await manager.delete(workspace.id)
-    assert.deepEqual(service.evictionCalls[0].location, { directory: process.cwd(), workspaceID: "native-one" })
+    assert.equal(service.evictionCalls.length, 0)
   })
 
   it("does not share lifecycle ownership between distinct legacy identities at one directory", async () => {
@@ -230,25 +337,10 @@ describe("workspace manager shared service lifecycle", () => {
     service.resolvedLocation = { directory: process.cwd(), workspaceID: "two" }
     const second = await manager.create(process.cwd())
     await manager.delete(first.workspace.id)
-    assert.deepEqual(service.evictionCalls.map(call => call.location.workspaceID), ["one"])
+    assert.equal(service.evictionCalls.length, 0)
     assert.ok(manager.get(second.workspace.id))
     await manager.delete(second.workspace.id)
-    assert.deepEqual(service.evictionCalls.map(call => call.location.workspaceID), ["one", "two"])
-  })
-
-  it("uses the caller's pinned client for legacy location authorization", async () => {
-    const service = new ControlledSharedService()
-    const { manager } = createHarness(service)
-    const { workspace } = await manager.create(process.cwd())
-    const location = { directory: process.cwd(), workspaceID: "pinned-native" }
-    const calls = service.validationCalls.length
-    const client = { location: { get: async (_input: unknown, options: { headers: Record<string, string> }) => {
-      assert.deepEqual(JSON.parse(decodeURIComponent(options.headers["x-codenomad-location"])), location)
-      return location
-    } } } as unknown as OpenCodeClient
-    assert.equal(await manager.ownsLocation(workspace.id, location, client), true)
-    assert.equal(service.validationCalls.length, calls)
-    await manager.delete(workspace.id)
+    assert.equal(service.evictionCalls.length, 0)
   })
 
   it("pins a bounded host CLI lifecycle with binary, platform, and startup environment identity", async () => {
@@ -566,7 +658,7 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(new Set(created.map(({ workspace }) => workspace.id)).size, 32)
   })
 
-  it("cancels validation and cleans its logical location", async () => {
+  it("cancels validation and removes only its logical record", async () => {
     const harness = createHarness()
     harness.service.validationGate = deferred<void>()
     const creation = harness.manager.create(process.cwd())
@@ -579,9 +671,7 @@ describe("workspace manager shared service lifecycle", () => {
     await assert.rejects(creation, WorkspaceLaunchCancelledError)
     await deletion
     assert.deepEqual(harness.manager.list(), [])
-    assert.equal(harness.service.evictionCalls.length, 1)
-    assert.deepEqual(harness.service.evictionCalls[0]?.location, { directory: process.cwd() })
-    assert.equal(harness.service.evictionCalls[0]?.signal, undefined)
+    assert.equal(harness.service.evictionCalls.length, 0)
   })
 
   it("refuses deletion while another workspace occupies the worktree", async () => {
@@ -599,19 +689,17 @@ describe("workspace manager shared service lifecycle", () => {
     }
   })
 
-  it("evicts a ready location on explicit final deletion without stopping the daemon", async () => {
+  it("deletes a ready record without evicting its location or stopping the daemon", async () => {
     const harness = createHarness()
     const created = await harness.manager.create(process.cwd())
     await harness.manager.delete(created.workspace.id)
 
-    assert.equal(harness.service.evictionCalls.length, 1)
-    assert.deepEqual(harness.service.evictionCalls[0]?.location, {
-      directory: process.cwd(),
-    })
+    assert.equal(harness.service.evictionCalls.length, 0)
+    assert.equal(harness.manager.get(created.workspace.id), undefined)
     assert.equal(harness.service.shutdownCalls, 0)
   })
 
-  it("evicts a shared location only after its last workspace is deleted", async () => {
+  it("deletes shared-location occurrences independently without eviction", async () => {
     const harness = createHarness()
     const first = await harness.manager.create(process.cwd())
     const second = await harness.manager.create(process.cwd())
@@ -621,7 +709,7 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal(harness.manager.list().length, 1)
     await harness.manager.delete(second.workspace.id)
-    assert.equal(harness.service.evictionCalls.length, 1)
+    assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal(harness.manager.list().length, 0)
   })
 
@@ -631,100 +719,22 @@ describe("workspace manager shared service lifecycle", () => {
     const second = await harness.manager.create(path.join(process.cwd(), "location-b"))
 
     await harness.manager.delete(first.workspace.id)
-    assert.deepEqual(harness.service.evictionCalls.map(({ location }) => location.directory), [
-      path.join(process.cwd(), "location-a"),
-    ])
+    assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal(harness.manager.get(second.workspace.id)?.id, second.workspace.id)
     await harness.manager.delete(second.workspace.id)
-    assert.equal(harness.service.evictionCalls.length, 2)
+    assert.equal(harness.service.evictionCalls.length, 0)
   })
 
-  it("finishes a blocked final eviction before validating a new owner", async () => {
-    const harness = createHarness()
-    const first = await harness.manager.create(process.cwd())
-    harness.service.evictionGate = deferred<void>()
-    const deletion = harness.manager.delete(first.workspace.id)
-    await harness.service.evictionStarted.promise
-
-    const creation = harness.manager.create(process.cwd())
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    assert.equal(harness.service.validationCalls.length, 1)
-
-    harness.service.evictionGate.resolve()
-    await deletion
-    const second = await creation
-    assert.equal(harness.service.evictionCalls.length, 1)
-    assert.deepEqual(harness.manager.list().map(({ id }) => id), [second.workspace.id])
-  })
-
-  it("keeps a timed-out eviction between the old and new owner", async () => {
-    const harness = createHarness(new ControlledSharedService(), { launchSettlementTimeoutMs: 20 })
-    const first = await harness.manager.create(process.cwd())
-    harness.service.evictionGate = deferred<void>()
-    const deletion = assert.rejects(harness.manager.delete(first.workspace.id), /cleanup did not finish/)
-    await harness.service.evictionStarted.promise
-    await deletion
-
-    const creation = harness.manager.create(process.cwd())
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    assert.equal(harness.service.validationCalls.length, 1)
-
-    harness.service.evictionGate.resolve()
-    const second = await creation
-    assert.equal(harness.service.evictionCalls.length, 1)
-    assert.deepEqual(harness.manager.list().map(({ id }) => id), [second.workspace.id])
-  })
-
-  it("evicts once when duplicate workspaces are deleted concurrently", async () => {
+  it("removes duplicate workspace records concurrently without eviction", async () => {
     const harness = createHarness()
     const first = await harness.manager.create(process.cwd())
     const second = await harness.manager.create(process.cwd())
-    harness.service.evictionGate = deferred<void>()
-
-    const deletions = Promise.all([
+    await Promise.all([
       harness.manager.delete(first.workspace.id),
       harness.manager.delete(second.workspace.id),
     ])
-    await harness.service.evictionStarted.promise
-    await new Promise<void>((resolve) => setImmediate(resolve))
-    assert.equal(harness.service.evictionCalls.length, 1)
-
-    harness.service.evictionGate.resolve()
-    await deletions
-    assert.equal(harness.service.evictionCalls.length, 1)
-    assert.deepEqual(harness.manager.list(), [])
-  })
-
-  it("retries cleanup after an eviction failure", async () => {
-    const harness = createHarness()
-    const created = await harness.manager.create(process.cwd())
-    harness.service.evictionFailures = 1
-
-    await assert.rejects(harness.manager.delete(created.workspace.id), /eviction failed/)
-    await harness.manager.delete(created.workspace.id)
-
-    assert.equal(harness.service.evictionCalls.length, 2)
-    assert.deepEqual(harness.manager.list(), [])
-  })
-
-  it("does not launch an eviction queued before shutdown", async () => {
-    const harness = createHarness()
-    const first = await harness.manager.create(process.cwd())
-    harness.service.validationGate = deferred<void>()
-    const creation = harness.manager.create(process.cwd())
-    const creationFailure = assert.rejects(creation, WorkspaceLaunchCancelledError)
-    while (harness.service.validationCalls.length < 2) await new Promise((resolve) => setImmediate(resolve))
-
-    const deletion = harness.manager.delete(first.workspace.id)
-    while ((harness.manager as any).pendingLocationEvictions < 1) {
-      await new Promise((resolve) => setImmediate(resolve))
-    }
-    await harness.manager.shutdown()
-    await creationFailure
-    await deletion
-
     assert.equal(harness.service.evictionCalls.length, 0)
-    assert.equal(harness.service.shutdownCalls, 1)
+    assert.deepEqual(harness.manager.list(), [])
   })
 
   it("bounds deletion while an aborted creation ignores cancellation", async () => {
@@ -762,7 +772,6 @@ describe("workspace manager shared service lifecycle", () => {
     while ((harness.manager as any).workspaces.size) await new Promise((resolve) => setImmediate(resolve))
 
     assert.deepEqual(record.location, { directory: process.cwd() })
-    assert.equal(record[Object.getOwnPropertySymbols(record)[0]].locationOwned, false)
     assert.equal((harness.manager as any).serviceAuthorization, undefined)
   })
 
@@ -782,32 +791,27 @@ describe("workspace manager shared service lifecycle", () => {
     harness.service.validationGate.resolve()
     await creationFailure
     await deletion
-    assert.equal(harness.service.evictionCalls.length, 1)
+    assert.equal(harness.service.evictionCalls.length, 0)
   })
 
-  it("evicts an isolated validated location when header lookup fails", async () => {
+  it("removes an unpublished record without eviction when header lookup fails", async () => {
     const harness = createHarness()
     harness.service.headerFailures = 1
 
     await assert.rejects(harness.manager.create(process.cwd()), /header lookup failed/)
 
-    assert.deepEqual(harness.service.evictionCalls.map(({ location }) => location), [{
-      directory: process.cwd(),
-    }])
+    assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal((harness.manager as any).workspaces.size, 0)
   })
 
-  it("drops an unpublished owner when header lookup and eviction both fail", async () => {
+  it("removes a published failed launch and broadcasts its stop without eviction", async () => {
     const harness = createHarness()
-    harness.service.headerFailures = 1
-    harness.service.evictionFailures = 1
-
-    await assert.rejects(harness.manager.create(process.cwd()), /header lookup failed/)
+    harness.eventBus.on("workspace.created", () => { throw new Error("published launch failed") })
+    await assert.rejects(harness.manager.create(process.cwd()), /published launch failed/)
     assert.equal((harness.manager as any).workspaces.size, 0)
 
-    const replacement = await harness.manager.create(process.cwd())
-    await harness.manager.delete(replacement.workspace.id)
-    assert.equal(harness.service.evictionCalls.length, 2)
+    assert.equal(harness.stopped.length, 1)
+    assert.equal(harness.service.evictionCalls.length, 0)
   })
 
   it("shuts down local workspaces without evicting their OpenCode locations", async () => {
@@ -858,7 +862,6 @@ describe("workspace manager shared service lifecycle", () => {
     await creationFailure
 
     assert.deepEqual(record.location, { directory: process.cwd() })
-    assert.equal(record[Object.getOwnPropertySymbols(record)[0]].locationOwned, false)
     assert.deepEqual(lifecycleEvents, [])
     assert.equal(harness.service.evictionCalls.length, 0)
     assert.equal((harness.manager as any).workspaces.size, 0)
@@ -887,7 +890,6 @@ describe("workspace manager shared service lifecycle", () => {
     await creationFailure
 
     assert.deepEqual(record.location, { directory: process.cwd() })
-    assert.equal(record[Object.getOwnPropertySymbols(record)[0]].locationOwned, false)
     assert.deepEqual(lifecycleEvents, [])
     assert.equal(service.evictionCalls.length, 0)
   })
@@ -906,26 +908,6 @@ describe("workspace manager shared service lifecycle", () => {
     assert.equal(service.evictionCalls.length, 0)
     assert.equal(service.shutdownCalls, 1)
     assert.ok((service.shutdownTimeouts[0] ?? 0) > 0)
-  })
-
-  it("waits for raw eviction cleanup after a deletion timeout", async () => {
-    const harness = createHarness(new ControlledSharedService(), {
-      launchSettlementTimeoutMs: 20,
-      shutdownTimeoutMs: 500,
-    })
-    const created = await harness.manager.create(process.cwd())
-    harness.service.evictionGate = deferred<void>()
-    await assert.rejects(harness.manager.delete(created.workspace.id), /cleanup did not finish/)
-
-    let shutdownSettled = false
-    const shutdown = harness.manager.shutdown().then(() => { shutdownSettled = true })
-    await new Promise((resolve) => setImmediate(resolve))
-    assert.equal(shutdownSettled, false)
-
-    harness.service.evictionGate.resolve()
-    await shutdown
-    assert.equal(harness.service.evictionCalls.length, 1)
-    assert.equal(harness.service.shutdownCalls, 1)
   })
 
 })

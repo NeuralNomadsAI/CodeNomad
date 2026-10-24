@@ -164,20 +164,16 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
   }
 
   private async validateStatus(endpoint: Endpoint, deadlineAt: number): Promise<void> {
-    let kind: "status" | "health" | "info" = "status"
+    // Every admitted daemon serves server.info. Older status/health routes only
+    // identify an outdated live daemon: discover by route presence, never by a
+    // release-number allowlist, on the same authenticated endpoint and deadline,
+    // and only retry this read on 404.
+    let kind: "status" | "health" | "info" = "info"
     let response = await this.fetchServiceStatus(endpoint, kind, deadlineAt)
-    // Earlier V2 runtimes expose health instead of status. Negotiate only on
-    // route absence, using the same authenticated endpoint and deadline.
-    if (response.status === 404) {
-      await this.withDeadline(response.body?.cancel().catch(() => undefined) ?? Promise.resolve(), deadlineAt, "status response")
-      kind = "health"
-      response = await this.fetchServiceStatus(endpoint, kind, deadlineAt)
-    }
-    // The current service exposes server.info. Discover by route presence,
-    // never by a release-number allowlist, and only retry this read on 404.
-    if (response.status === 404) {
-      await this.withDeadline(response.body?.cancel().catch(() => undefined) ?? Promise.resolve(), deadlineAt, "health response")
-      kind = "info"
+    for (const older of ["status", "health"] as const) {
+      if (response.status !== 404) break
+      await this.withDeadline(response.body?.cancel().catch(() => undefined) ?? Promise.resolve(), deadlineAt, `${kind} response`)
+      kind = older
       response = await this.fetchServiceStatus(endpoint, kind, deadlineAt)
     }
     if (response.status === 401) {
@@ -202,6 +198,7 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
       throw new Error(`${this.options.label} OpenCode service returned an invalid ${kind} response at ${endpoint.url}`)
     }
     const { version, pid } = payload as { version: string; pid: number }
+    this.remaining(deadlineAt, `${kind} validation`)
     rememberRuntime(endpoint, { version, pid, discovery: kind })
   }
 
@@ -260,7 +257,7 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
     const timeoutMs = this.remaining(deadlineAt, label)
     let timer: NodeJS.Timeout | undefined
     try {
-      return await Promise.race([
+      const result = await Promise.race([
         operation,
         new Promise<never>((_resolve, reject) => {
           timer = setTimeout(
@@ -269,6 +266,8 @@ export class OpenCodeCliService implements OpenCodeServiceLifecycle {
           )
         }),
       ])
+      this.remaining(deadlineAt, label)
+      return result
     } finally {
       if (timer) clearTimeout(timer)
     }

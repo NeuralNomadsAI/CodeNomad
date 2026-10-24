@@ -14,7 +14,8 @@
 
 .theme-scheme-workbench {
   display: grid;
-  grid-template-columns: minmax(6rem, 10rem) minmax(0, 1fr) auto;
+  /* Beside the picker the strip keeps its natural width; the picker shrinks first. */
+  grid-template-columns: minmax(6rem, 10rem) minmax(max-content, 1fr) auto;
   align-items: center;
   gap: var(--space-sm);
   margin-top: var(--space-sm);
@@ -64,13 +65,13 @@
   padding: 0.35rem 0.65rem;
   border: 0;
   border-radius: 0;
-  background: var(--surface-base);
+  background: var(--surface-control);
   color: var(--text-secondary);
   font-size: var(--font-size-xs);
 }
 
 .theme-scheme-appearance-option[data-selected="true"] {
-  background: color-mix(in oklab, var(--accent-primary) 12%, var(--surface-base));
+  background: color-mix(in oklab, var(--accent-primary) 12%, var(--surface-control));
   color: var(--text-primary);
 }
 
@@ -99,29 +100,36 @@
   font-size: var(--font-size-xs);
 }
 
+/* One line beside the swatches; only the stacked layout may wrap them. */
 .theme-scheme-actions {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   justify-content: flex-end;
-  max-width: 18rem;
   gap: var(--space-xs);
+}
+
+.theme-scheme-workbench[data-stacked="true"] .theme-scheme-actions {
+  flex-wrap: wrap;
 }
 
 .theme-scheme-actions .selector-button {
   width: auto;
   border-radius: 0;
+  /* Labels never break, so the fit measurement sees their real width. */
+  white-space: nowrap;
 }
 
-@container palette-settings (max-width: 580px) {
-  .theme-scheme-workbench {
-    grid-template-columns: minmax(6rem, 1fr) minmax(0, 2fr);
-  }
-
-  .theme-scheme-actions {
-    grid-column: 1 / -1;
-    max-width: none;
-  }
+/* Measured (palette-strip-fit.ts): once the whole strip no longer fits beside
+   the picker and actions, all the swatches move together below them. */
+.theme-scheme-workbench[data-stacked="true"] {
+  grid-template-columns: minmax(6rem, 1fr) auto;
+  grid-template-areas: "picker actions" "swatches swatches";
 }
+
+.theme-scheme-workbench:not([data-stacked="true"]) .theme-scheme-swatches { flex-wrap: nowrap; }
+.theme-scheme-workbench[data-stacked="true"] .theme-scheme-picker { grid-area: picker; }
+.theme-scheme-workbench[data-stacked="true"] .theme-scheme-swatches { grid-area: swatches; }
+.theme-scheme-workbench[data-stacked="true"] .theme-scheme-actions { grid-area: actions; }
 
 .theme-scheme-appearance-option:hover:not(:disabled) {
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));

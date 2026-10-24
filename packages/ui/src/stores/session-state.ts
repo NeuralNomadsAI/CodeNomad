@@ -37,7 +37,8 @@ interface GenerationAdmission {
   token: number
   pending: number
   accepted: boolean
-  baseline: Pick<Session, "generationRecovery" | "runtimeStatusKnown" | "idleSince">
+  idleBoundary: number
+  baseline: Pick<Session, "generationRecovery" | "runtimeStatusKnown" | "idleSince" | "outcome" | "generationAdmissionEpoch" | "generationAdmissionIdleBoundary">
 }
 const generationAdmissions = new Map<string, GenerationAdmission>()
 
@@ -88,6 +89,11 @@ const [threadTotalsByInstance, setThreadTotalsByInstance] = createSignal<Map<str
 
 // Track expansion state for ANY session that has children (not just top-level parents)
 const [expandedSessions, setExpandedSessions] = createSignal<Map<string, Set<string>>>(new Map())
+// Rows opened only to reveal subsession activity: transient, never persisted,
+// and handed to the user as soon as they toggle the row themselves.
+const autoExpandedSessions = new Map<string, Set<string>>()
+// `${rowId}\0${descendantId}` pairs the user collapsed while that descendant ran.
+const dismissedActivityReveals = new Map<string, Set<string>>()
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
 
@@ -123,7 +129,14 @@ function getSessionPaginationState(instanceId: string): SessionPaginationState {
 }
 
 function getSessionListIds(instanceId: string): string[] {
-  return getSessionPaginationState(instanceId).ids
+  const ids = getSessionPaginationState(instanceId).ids
+  const current = sessions().get(instanceId)
+  if (!current) return ids
+  const directoryOnly = getDirectoryOnlyWorktree(instanceId)
+  const directory = directoryOnly?.serviceDirectory ?? directoryOnly?.directory
+  // Restored catalogs retain all candidates before worktree scope is known.
+  // Match the thread builder's root projection without rewriting native parents.
+  return ids.filter(id => !current.has(id) || getSessionRootFromMap(current, id, directory)?.id === id)
 }
 
 function getSessionNextCursor(instanceId: string): string | undefined {
@@ -705,7 +718,7 @@ function hydrateSessionGenerationRecovery(
     withSession(instanceId, sessionId, (session) => {
       const recovery = session.pendingPermission || session.pendingForm
         ? null
-        : resolveHydratedGenerationRecovery(persisted, session.status, session.runtimeStatusKnown === true)
+        : resolveHydratedGenerationRecovery(persisted, session.status, session.runtimeStatusKnown === true, session.outcome)
       if ((session.generationRecovery ?? null) === recovery) return false
       session.generationRecovery = recovery
     })
@@ -725,10 +738,14 @@ function beginSessionGenerationAdmission(instanceId: string, sessionId: string):
       token: ++generationAdmissionSequence,
       pending: 0,
       accepted: false,
+      idleBoundary: session.time.idle ?? 0,
       baseline: {
         generationRecovery: session.generationRecovery,
         runtimeStatusKnown: session.runtimeStatusKnown,
         idleSince: session.idleSince,
+        outcome: session.outcome,
+        generationAdmissionEpoch: session.generationAdmissionEpoch,
+        generationAdmissionIdleBoundary: session.generationAdmissionIdleBoundary,
       },
     }
     generationAdmissions.set(key, admission)
@@ -739,6 +756,9 @@ function beginSessionGenerationAdmission(instanceId: string, sessionId: string):
     session.runtimeStatusKnown = false
     session.idleSince = null
     session.generationAdmissionToken = admission!.token
+    session.generationAdmissionEpoch = admission!.token
+    session.generationAdmissionIdleBoundary = admission!.idleBoundary
+    session.outcome = undefined
   })
 
   let settled = false
@@ -866,12 +886,14 @@ function setSessionStatus(
       && sameRetry
       && session.runtimeStatusKnown === !admissionPending
       && (session.generationRecovery ?? null) === generationRecovery
+      && (status === "idle" || session.outcome === undefined)
     ) return false
     if (session.status === "compacting" && status !== "compacting" && !options.force) return false
     const previous = session.status
     session.status = status
     session.runtimeStatusKnown = !admissionPending
     session.generationRecovery = generationRecovery
+    if (status !== "idle") session.outcome = undefined
     if (!admissionPending) {
       cancelSessionGenerationAdmissions(instanceId, sessionId)
       session.generationAdmissionToken = undefined
@@ -884,7 +906,7 @@ function setSessionStatus(
     }
   })
 
-  if (expandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
+  if (expandAncestors) revealWorkingSubsession(instanceId, sessionId)
 }
 
 function getActiveParentSession(instanceId: string): Session | null {
@@ -963,6 +985,15 @@ function isSessionExpanded(instanceId: string, sessionId: string): boolean {
 
 function setSessionExpanded(instanceId: string, sessionId: string, expanded: boolean): void {
   addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, sessionId))
+  autoExpandedSessions.get(instanceId)?.delete(sessionId)
+  if (!expanded) {
+    // Collapsing a busy branch dismisses it for the subsessions running now.
+    const dismissed = dismissedActivityReveals.get(instanceId) ?? new Set<string>()
+    for (const descendant of getDescendantSessions(instanceId, sessionId)) {
+      if (descendant.status === "working" || descendant.status === "compacting") dismissed.add(`${sessionId}\0${descendant.id}`)
+    }
+    if (dismissed.size) dismissedActivityReveals.set(instanceId, dismissed)
+  }
   setExpandedSessions((prev) => {
     const next = new Map(prev)
     const currentSet = next.get(instanceId) ?? new Set<string>()
@@ -985,6 +1016,8 @@ function setSessionExpanded(instanceId: string, sessionId: string, expanded: boo
 function clearInstanceSessionExpansionState(instanceId: string): void {
   if (!instanceId) return
   const prefix = `${instanceId}:`
+  autoExpandedSessions.delete(instanceId)
+  dismissedActivityReveals.delete(instanceId)
   setExpandedSessions((prev) => {
     if (!prev.has(instanceId)) return prev
     const next = new Map(prev)
@@ -998,12 +1031,17 @@ function clearInstanceSessionExpansionState(instanceId: string): void {
 }
 
 function hydrateSessionExpansion(instanceId: string, sessionIds: readonly string[]): void {
+  const authoritative = getAuthoritativeSessionExpansionIdsForInstance(instanceId)
+  const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
+  const restored = sessionIds.filter((id) => !authoritative.has(id) && !deleted.has(id))
+  // A reveal can race restore: restored rows are the user's own again, while
+  // reveals still pending stay open like other local changes.
+  const auto = autoExpandedSessions.get(instanceId)
+  for (const id of restored) auto?.delete(id)
   setExpandedSessions((prev) => {
     const current = prev.get(instanceId)
-    const authoritative = getAuthoritativeSessionExpansionIdsForInstance(instanceId)
-    const deleted = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
-    const expanded = new Set(sessionIds.filter((id) => !authoritative.has(id) && !deleted.has(id)))
-    for (const id of current ?? []) if (authoritative.has(id) && !deleted.has(id)) expanded.add(id)
+    const expanded = new Set(restored)
+    for (const id of current ?? []) if ((authoritative.has(id) || auto?.has(id)) && !deleted.has(id)) expanded.add(id)
     if (current?.size === expanded.size && [...expanded].every((id) => current.has(id))) return prev
     const next = new Map(prev)
     if (expanded.size) next.set(instanceId, expanded)
@@ -1036,6 +1074,8 @@ function ensureSessionAncestorsExpanded(instanceId: string, sessionId: string): 
   if (ancestorIds.length === 0) return
   for (const ancestorId of ancestorIds) {
     addAuthoritativeKey(setAuthoritativeSessionExpansionKeys, getDraftKey(instanceId, ancestorId))
+    // An explicit reveal (selection, navigation) makes the path the user's own.
+    autoExpandedSessions.get(instanceId)?.delete(ancestorId)
   }
   setExpandedSessions((prev) => {
     const next = new Map(prev)
@@ -1046,6 +1086,40 @@ function ensureSessionAncestorsExpanded(instanceId: string, sessionId: string): 
     next.set(instanceId, expanded)
     return next
   })
+}
+
+/**
+ * A subsession started working. Reveal it only inside the conversation this
+ * instance is showing (the active session or its descendants); elsewhere the
+ * collapsed ancestor shows a child-activity dot instead. Each project tab has
+ * its own active session, so another tab of the same folder stays untouched.
+ */
+function revealWorkingSubsession(instanceId: string, sessionId: string): void {
+  const active = activeSessionId().get(instanceId)
+  if (!active) return
+  const ancestors = getSessionAncestorIds(instanceId, sessionId)
+  const start = ancestors.indexOf(active)
+  if (start < 0) return
+  const path = ancestors.slice(start)
+  const dismissed = dismissedActivityReveals.get(instanceId)
+  if (path.some((id) => dismissed?.has(`${id}\0${sessionId}`))) return
+  const current = expandedSessions().get(instanceId)
+  const missing = path.filter((id) => !current?.has(id))
+  if (missing.length === 0) return
+  const auto = autoExpandedSessions.get(instanceId) ?? new Set<string>()
+  for (const id of missing) auto.add(id)
+  autoExpandedSessions.set(instanceId, auto)
+  setExpandedSessions((prev) => {
+    const next = new Map(prev)
+    next.set(instanceId, new Set([...missing, ...(prev.get(instanceId) ?? [])]))
+    return next
+  })
+}
+
+/** Expanded rows the user chose; automatic activity reveals are not restorable state. */
+function getPersistentExpandedSessionIds(instanceId: string): string[] {
+  const auto = autoExpandedSessions.get(instanceId)
+  return [...(expandedSessions().get(instanceId) ?? [])].filter((id) => !auto?.has(id))
 }
 
 function getVisibleSessionIds(instanceId: string): string[] {
@@ -1070,6 +1144,11 @@ function setActiveSessionFromList(instanceId: string, sessionId: string): void {
 
 function isSessionMessagesLoading(instanceId: string, sessionId: string): boolean {
   return Boolean(loading().loadingMessages.get(instanceId)?.has(sessionId))
+}
+
+/** The active view must start a load: neither loaded nor being loaded by anyone. */
+function sessionMessagesNeedLoad(instanceId: string, sessionId: string): boolean {
+  return !messagesLoaded().get(instanceId)?.has(sessionId) && !isSessionMessagesLoading(instanceId, sessionId)
 }
 
 function getSessionMessagesLoadError(instanceId: string, sessionId: string): string | undefined {
@@ -1254,7 +1333,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
   }
 
   if (deletedCount > 0) {
-    showToastNotification({
+    showToastNotification({ category: "sessions",
       message: deletedCount === 1
         ? tGlobal("sessionState.cleanup.toast.one", { count: deletedCount })
         : tGlobal("sessionState.cleanup.toast.other", { count: deletedCount }),
@@ -1282,6 +1361,7 @@ export {
   isCurrentMessageLoad,
   getMessageLoadSignal,
   finishMessageLoad,
+  clearMessageLoadingFlag,
   supersedeSessionMessageLoad,
   invalidateSessionMessageLoad,
   clearInstanceMessageLoads,
@@ -1345,8 +1425,11 @@ export {
   ensureSessionExpanded,
   getSessionAncestorIds,
   ensureSessionAncestorsExpanded,
+  revealWorkingSubsession,
+  getPersistentExpandedSessionIds,
   setActiveSessionFromList,
   isSessionMessagesLoading,
+  sessionMessagesNeedLoad,
   getSessionMessagesLoadError,
   getSessionInfo,
   cleanupBlankSessions,

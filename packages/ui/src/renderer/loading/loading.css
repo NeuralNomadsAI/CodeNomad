@@ -32,8 +32,8 @@ button {
 }
 
 .loading-logo {
-  width: 180px;
-  height: auto;
+  height: 5.3rem;
+  width: auto;
   filter: drop-shadow(0 20px 60px rgba(0, 0, 0, 0.18));
 }
 

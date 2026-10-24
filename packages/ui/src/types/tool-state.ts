@@ -10,7 +10,6 @@ export interface ToolStateRunning {
   status: "running"
   input: ToolPayload
   metadata?: ToolPayload
-  title?: string
 }
 
 export interface ToolStateCompleted {
@@ -19,7 +18,6 @@ export interface ToolStateCompleted {
   metadata?: ToolPayload
   output: unknown
   content?: Array<ToolTextContent | ToolFileContent>
-  title?: string
 }
 
 export interface ToolStateError {

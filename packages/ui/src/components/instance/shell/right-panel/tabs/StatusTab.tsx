@@ -62,6 +62,9 @@ const SortableStatusSection: Component<SortableStatusSectionProps> = (props) => 
               <ChevronRight class="right-panel-accordion-chevron disclosure-chevron" />
               <span class="section-label">{props.t(props.section.labelKey)}</span>
             </span>
+            <Show when={!props.expanded && props.section.renderSummary}>
+              {(summary) => <span class="right-panel-section-summary">{summary()()}</span>}
+            </Show>
           </Accordion.Trigger>
           <Tooltip openDelay={200} gutter={4} placement="top">
             <Tooltip.Trigger as="button" type="button" class="section-info-trigger" aria-label={props.t(props.section.tooltipKey)}>
@@ -133,7 +136,7 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       },
     )
     if (confirmed && !await shellStore.remove(instanceId, location.directory, shellId, location.workspaceID)) {
-      showToastNotification({ message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
+      showToastNotification({ category: "sessions", message: props.t("instanceShell.backgroundProcesses.error"), variant: "error" })
     }
   }
 
@@ -222,6 +225,11 @@ const StatusTab: Component<StatusTabProps> = (props) => {
       renderTokens: () => (
         <Show when={props.activeSession()?.id}>
           <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} />
+        </Show>
+      ),
+      renderTokensSummary: () => (
+        <Show when={props.activeSession()?.id}>
+          <ContextUsagePanel instanceId={props.instanceId} sessionId={props.activeSession()!.id} summary />
         </Show>
       ),
       renderYoloModeSection,

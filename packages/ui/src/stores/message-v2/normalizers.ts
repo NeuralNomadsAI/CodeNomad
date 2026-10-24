@@ -3,32 +3,7 @@ import { isToolImageContent } from "../../lib/tool-content"
 import type { SessionMessageInfo } from "@opencode/client"
 import type { ClientPart, Message, MessageInfo } from "../../types/message"
 
-function decodeTextSegment(segment: any): any {
-  if (typeof segment === "string") {
-    return decodeHtmlEntities(segment)
-  }
-
-  if (segment && typeof segment === "object") {
-    const updated: Record<string, any> = { ...segment }
-
-    if (typeof updated.text === "string") {
-      updated.text = decodeHtmlEntities(updated.text)
-    }
-
-    if (typeof updated.value === "string") {
-      updated.value = decodeHtmlEntities(updated.value)
-    }
-
-    if (Array.isArray(updated.content)) {
-      updated.content = updated.content.map((item: any) => decodeTextSegment(item))
-    }
-
-    return updated
-  }
-
-  return segment
-}
-
+// Native text and reasoning parts carry their text as a string.
 export function normalizeMessagePart(part: any): any {
   if (!part || typeof part !== "object") {
     return part
@@ -42,41 +17,7 @@ export function normalizeMessagePart(part: any): any {
     return part
   }
 
-  const normalized: Record<string, any> = { ...part, renderCache: undefined }
-
-  if (typeof normalized.text === "string") {
-    normalized.text = decodeHtmlEntities(normalized.text)
-  } else if (normalized.text && typeof normalized.text === "object") {
-    const textObject: Record<string, any> = { ...normalized.text }
-
-    if (typeof textObject.value === "string") {
-      textObject.value = decodeHtmlEntities(textObject.value)
-    }
-
-    if (Array.isArray(textObject.content)) {
-      textObject.content = textObject.content.map((item: any) => decodeTextSegment(item))
-    }
-
-    if (typeof textObject.text === "string") {
-      textObject.text = decodeHtmlEntities(textObject.text)
-    }
-
-    normalized.text = textObject
-  }
-
-  if (Array.isArray(normalized.content)) {
-    normalized.content = normalized.content.map((item: any) => decodeTextSegment(item))
-  }
-
-  if (normalized.thinking && typeof normalized.thinking === "object") {
-    const thinking: Record<string, any> = { ...normalized.thinking }
-    if (Array.isArray(thinking.content)) {
-      thinking.content = thinking.content.map((item: any) => decodeTextSegment(item))
-    }
-    normalized.thinking = thinking
-  }
-
-  return normalized
+  return { ...part, renderCache: undefined, text: decodeHtmlEntities(part.text) }
 }
 
 export interface NormalizedSessionMessage {
@@ -84,8 +25,14 @@ export interface NormalizedSessionMessage {
   info: MessageInfo
 }
 
-function structuredError(error: { type: string; message: string; status?: number }): NonNullable<MessageInfo["error"]> {
-  return { ...error, name: error.type === "aborted" ? "MessageAbortedError" : error.type, data: { message: error.message } }
+// A failed run's own explanation (e.g. exhausted restarts, typed "aborted") must not
+// collapse into the generic interrupted-step label, so idle errors keep their native name.
+function structuredError(error: { type: string; message: string; status?: number }, nativeName = false): NonNullable<MessageInfo["error"]> {
+  return { ...error, name: error.type === "aborted" && !nativeName ? "MessageAbortedError" : error.type, data: { message: error.message } }
+}
+
+function failedIdleError(source: SessionMessageInfo) {
+  return source.type === "idle" && source.outcome === "failed" ? source.error : undefined
 }
 
 function normalizeStatus(source: SessionMessageInfo): Message["status"] {
@@ -133,6 +80,8 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         }
       : {}),
     ...(source.type === "compaction" && source.status === "failed" ? { error: structuredError(source.error) } : {}),
+    // A run can fail before or between model steps; only the idle record carries that cause.
+    ...(failedIdleError(source) ? { error: structuredError(failedIdleError(source)!, true) } : {}),
     ...(source.type === "user" ? { text: source.text } : {}),
   }
 
@@ -166,8 +115,10 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
         state: normalizedState,
       } as unknown as ClientPart
     })
-    if (parts.length === 0 && source.error) {
-      parts = [normalizeMessagePart({
+    // A failed step that streamed only reasoning or tool calls still needs a
+    // content row to carry its error (the run's duplicate idle failure is hidden).
+    if (source.error && !parts.some((part) => part.type === "text")) {
+      parts = [...parts, normalizeMessagePart({
         id: `${source.id}-error`, type: "text", text: "", sessionID: sessionId, messageID: source.id,
       }) as ClientPart]
     }
@@ -192,8 +143,11 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       sessionID: sessionId, messageID: source.id }]
   } else if (source.type === "idle") {
     // Native execution control record, not assistant-authored transcript text.
-    // Keep its ID/time for cursor/anchor authority without rendering "idle".
-    parts = []
+    // Keep its ID/time for cursor/anchor authority without rendering "idle";
+    // a failed run's cause renders through the shared message error row.
+    parts = failedIdleError(source)
+      ? [normalizeMessagePart({ id: `${source.id}-error`, type: "text", text: "", sessionID: sessionId, messageID: source.id }) as ClientPart]
+      : []
   } else if (source.type === "compaction") {
     parts = [{
       id: source.id,
@@ -201,7 +155,7 @@ export function normalizeSessionMessage(sessionId: string, source: SessionMessag
       auto: source.reason === "auto",
       text: "summary" in source ? source.summary : source.error.message,
       ...(source.status === "completed"
-        ? { model: source.model, providerState: source.providerState }
+        ? { model: source.model, native: source.native }
         : {}),
       sessionID: sessionId,
       messageID: source.id,

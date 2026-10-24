@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { Portal } from "solid-js/web"
 import { Bot, User, Copy, Eraser, Pencil, Play, Split, Trash2, Undo, Volume2 } from "lucide-solid"
 import type { SessionInboxUser } from "@opencode/client"
@@ -14,8 +14,9 @@ import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overfl
 import { observeActionOverflow } from "./measured-action-overflow"
 import { getMessageDurationMs, getMessageStartedAt } from "../lib/message-timing"
 import SpeechActionButton from "./speech-action-button"
-import { getUserMessageMenuState, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
+import { getUserMessageMenuState, isMessageTextStreaming, shouldShowGeneratingPlaceholder } from "../stores/message-v2/message-status"
 import { deleteMessageTechnicalParts } from "../stores/session-actions"
+import { agents, providers } from "../stores/session-state"
 import { showAlertDialog, showConfirmDialog } from "../stores/alerts"
 import type { TechnicalCleanupPart } from "../lib/message-part-grouping"
 
@@ -35,6 +36,8 @@ interface MessageItemProps {
   showAgentMeta?: boolean
   contentStartPartId?: string
   showTechnicalCleanup?: boolean
+  /** False on a record's content rows other than the one that carries its error. */
+  showError?: boolean
   technicalCleanupParts: () => TechnicalCleanupPart[]
   onTechnicalCleanupHoverChange?: (hovered: boolean) => void
   onContentRendered?: () => void
@@ -255,7 +258,7 @@ export default function MessageItem(props: MessageItemProps) {
 
   const errorMessage = () => {
     const info = props.messageInfo
-    if (!info || info.role !== "assistant" || !info.error) return null
+    if (!info || info.role !== "assistant" || !info.error || props.showError === false) return null
 
     const error = info.error
     if (error.name === "ProviderAuthError") {
@@ -267,10 +270,10 @@ export default function MessageItem(props: MessageItemProps) {
     if (error.name === "MessageAbortedError") {
       return t("messageItem.errors.requestAborted")
     }
-    if (error.name === "UnknownError") {
-      return error.data?.message || t("messageItem.errors.unknownFallback")
-    }
-    return null
+    // Native V2 structured errors (provider.quota, provider errors, run failures)
+    // carry their own display message under any type name.
+    const message = error.data?.message
+    return typeof message === "string" && message.trim() ? message : t("messageItem.errors.unknownFallback")
   }
 
   const hasContent = () => {
@@ -306,6 +309,8 @@ export default function MessageItem(props: MessageItemProps) {
     text: getRawContent,
   })
 
+  // Error-only rows have no text of their own to copy.
+  const canCopyMessage = () => getRawContent().length > 0
   const canSpeakMessage = () => getRawContent().trim().length > 0 && speech.canUseSpeech()
 
   const handleCopy = async () => {
@@ -372,7 +377,8 @@ export default function MessageItem(props: MessageItemProps) {
     if (isUser()) return ""
     const info = props.messageInfo
     if (!info || info.role !== "assistant") return ""
-    return info.mode || ""
+    // Same names as the composer footer, falling back to the identifier.
+    return agents().get(props.instanceId)?.find((agent) => agent.id === info.mode)?.name || info.mode || ""
   }
 
   const modelIdentifier = () => {
@@ -382,7 +388,8 @@ export default function MessageItem(props: MessageItemProps) {
     const modelID = info.modelID || ""
     const providerID = info.providerID || ""
 
-    const base = modelID && providerID ? `${providerID}/${modelID}` : modelID
+    const name = providers().get(props.instanceId)?.find((provider) => provider.id === providerID)?.models.find((model) => model.id === modelID)?.name
+    const base = name || (modelID && providerID ? `${providerID}/${modelID}` : modelID)
     if (!base) return ""
 
     const variant = info.variant
@@ -430,7 +437,7 @@ export default function MessageItem(props: MessageItemProps) {
     return formatWorkedFor(hours, "hours")
   }
 
-  const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
+  const buildActionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
     const pending = props.pendingPrompt
@@ -461,12 +468,14 @@ export default function MessageItem(props: MessageItemProps) {
         },
       )
     } else if (includePrimaryActions && canUseHistoryActions()) {
-      items.push({
-        key: "copy",
-        label: copyLabel(),
-        icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
-        onSelect: handleCopy,
-      })
+      if (canCopyMessage()) {
+        items.push({
+          key: "copy",
+          label: copyLabel(),
+          icon: <Copy class="w-3.5 h-3.5" aria-hidden="true" />,
+          onSelect: handleCopy,
+        })
+      }
 
       if (canSpeakMessage()) {
         items.push({
@@ -519,8 +528,14 @@ export default function MessageItem(props: MessageItemProps) {
     return items
   }
 
+  // Memoized so an identical re-projection of the message does not rebuild the
+  // item array (and its icon DOM) for every subscriber: re-evaluating on each
+  // store update would remount every action button through <For>.
+  const secondaryActionItems = createMemo(() => buildActionMenuItems(false))
+  const overflowEligibleItems = createMemo(() => buildActionMenuItems(true))
+
   const renderSecondaryActions = () => (
-    <For each={actionMenuItems()}>
+    <For each={secondaryActionItems()}>
       {(item) => (
         <button
           class="message-action-button"
@@ -590,20 +605,22 @@ export default function MessageItem(props: MessageItemProps) {
 
           <div
             class="message-item-actions"
-            data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}
+            data-action-overflow={overflowEligibleItems().length >= 2 ? "true" : undefined}
             ref={(el) => (actionsEl = el)}
           >
             <Show when={isUser()}>
               <div class="message-action-group">
                 <Show when={canUseHistoryActions()}>
-                  <button
-                    class="message-action-button"
-                    onClick={handleCopy}
-                    title={copyLabel()}
-                    aria-label={copyLabel()}
-                  >
-                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                  </button>
+                  <Show when={canCopyMessage()}>
+                    <button
+                      class="message-action-button"
+                      onClick={handleCopy}
+                      title={copyLabel()}
+                      aria-label={copyLabel()}
+                    >
+                      <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                    </button>
+                  </Show>
 
                   <Show when={canSpeakMessage()}>
                     <SpeechActionButton
@@ -655,7 +672,7 @@ export default function MessageItem(props: MessageItemProps) {
                 {renderSecondaryActions()}
               </div>
               <ActionOverflowMenu
-                items={actionMenuItems(true)}
+                items={overflowEligibleItems()}
                 label={t("messageItem.actions.more")}
                 triggerClass="message-action-button action-overflow-narrow"
                 minItems={2}
@@ -663,14 +680,16 @@ export default function MessageItem(props: MessageItemProps) {
             </Show>
             <Show when={!isUser()}>
               <div class="message-action-group">
-                <button
-                  class="message-action-button"
-                  onClick={handleCopy}
-                  title={copyLabel()}
-                  aria-label={copyLabel()}
-                >
-                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
+                <Show when={canCopyMessage()}>
+                  <button
+                    class="message-action-button"
+                    onClick={handleCopy}
+                    title={copyLabel()}
+                    aria-label={copyLabel()}
+                  >
+                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
 
                 <Show when={canSpeakMessage()}>
                   <SpeechActionButton
@@ -685,7 +704,7 @@ export default function MessageItem(props: MessageItemProps) {
                 {renderSecondaryActions()}
               </div>
               <ActionOverflowMenu
-                items={actionMenuItems(true)}
+                items={overflowEligibleItems()}
                 label={t("messageItem.actions.more")}
                 triggerClass="message-action-button action-overflow-narrow"
                 minItems={2}
@@ -723,6 +742,8 @@ export default function MessageItem(props: MessageItemProps) {
                   messageType={props.record.role}
                   instanceId={props.instanceId}
                   sessionId={props.sessionId}
+                  messageId={props.record.id}
+                  streaming={isMessageTextStreaming(props.record.status, props.messageInfo?.time as { streamed?: number } | undefined)}
                   primaryUserTextPartId={primaryUserTextPartId()}
                   displayMetadataOverride={part.id === primaryUserTextPartId() ? primaryUserPromptDisplayMetadata() : undefined}
                   onRendered={props.onContentRendered}

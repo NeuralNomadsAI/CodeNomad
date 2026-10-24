@@ -62,7 +62,7 @@ for (const submitOnEnter of [true, false]) {
       await f.assertDraft("@missing/path")
       await f.searches[0].fulfill({ json: [] })
       await f.page.getByText("No results found", { exact: true }).waitFor()
-      for (const key of ["Enter", "Shift+Enter", "Control+Enter", "Meta+Enter", "Control+Shift+Enter", "Meta+Shift+Enter"]) {
+      for (const key of ["Enter", "Shift+Enter", "Alt+Enter", "Control+Enter", "Meta+Enter", "Control+Shift+Enter", "Meta+Shift+Enter"]) {
         await f.input.press(key)
         await f.assertDraft("@missing/path")
         assert.equal(await f.picker.count(), 1)
@@ -91,6 +91,54 @@ test("Ctrl+V extends an ignored picker query without sending; empty-result Enter
     await f.page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("textarea")?.value === "")
     assert.equal(f.prompts.length, 1, "explicit submission after dismissal remains available")
     assert.deepEqual(f.errors, [])
+  } finally { await f.page.close() }
+})
+
+test("an @ inside a word stays plain text, so a pasted scoped path sends unchanged", async () => {
+  const f = await setup()
+  try {
+    await f.page.evaluate(() => navigator.clipboard.writeText("packages/@yarn-tool/fix-all/index.ts"))
+    await f.input.focus()
+    await f.input.press("Control+v")
+    await f.input.pressSequentially(" user@example")
+    await f.assertDraft("packages/@yarn-tool/fix-all/index.ts user@example")
+    assert.equal(await f.picker.count(), 0)
+    assert.equal(f.searches.length, 0, "no file search for a mid-word @")
+    await f.input.press("Enter")
+    await f.page.waitForFunction(() => document.querySelector<HTMLTextAreaElement>("textarea")?.value === "")
+    assert.equal(f.prompts.length, 1)
+    assert.match(JSON.stringify(f.prompts[0]), /packages\/@yarn-tool\/fix-all\/index\.ts user@example/)
+    assert.equal(await f.page.evaluate(() => (window as any).fixture.attachments().length), 0)
+
+    // A word-start @, after an opening bracket or CJK text, still opens the picker.
+    for (const draft of ["(@serv", "请看@src", "「@src"]) {
+      await f.input.fill(draft)
+      await f.picker.waitFor()
+    }
+    assert.deepEqual(f.errors, [])
+  } finally { await f.page.close() }
+})
+
+test("a mention keeps searching through a scoped folder after Tab, and Enter attaches the file", async () => {
+  const f = await setup()
+  try {
+    await f.input.fill("@packages/@yarn")
+    await f.picker.waitFor(); await f.waitSearch(1)
+    await f.searches[0].fulfill({ json: [{ name: "@yarn-tool", path: "packages/@yarn-tool", type: "directory" }] })
+    await f.page.locator('[data-picker-selected="true"]').waitFor()
+    await f.input.press("Tab")
+    await f.assertDraft("@packages/@yarn-tool/")
+    await f.waitSearch(2)
+    await f.searches[1].fulfill({ json: [] })
+    await f.input.pressSequentially("f")
+    assert.equal(await f.picker.count(), 1, "typing inside a scoped folder keeps the picker open")
+    await f.waitSearch(3)
+    await f.searches[2].fulfill({ json: [{ name: "index.ts", path: "packages/@yarn-tool/fix-all/index.ts", type: "file" }] })
+    await f.page.getByText("index.ts", { exact: true }).last().waitFor()
+    await f.input.press("Enter")
+    await f.picker.waitFor({ state: "detached" })
+    await f.assertDraft("@./packages/@yarn-tool/fix-all/index.ts ")
+    assert.equal(await f.page.evaluate(() => (window as any).fixture.attachments().length), 1)
   } finally { await f.page.close() }
 })
 
@@ -135,7 +183,7 @@ test("modified Enter cannot send a highlighted file; Shift+Enter retains path-on
     await f.picker.waitFor(); await f.waitSearch(1)
     await f.searches[0].fulfill({ json: [{ name: "server.txt", path: "server.txt", type: "file" }] })
     await f.page.getByText("server.txt", { exact: true }).last().waitFor()
-    for (const key of ["Control+Enter", "Control+Shift+Enter", "Meta+Enter", "Meta+Shift+Enter"]) {
+    for (const key of ["Alt+Enter", "Control+Enter", "Control+Shift+Enter", "Meta+Enter", "Meta+Shift+Enter"]) {
       await f.input.press(key)
       await f.assertDraft("@server")
       assert.equal(await f.page.evaluate(() => (window as any).fixture.attachments().length), 0)

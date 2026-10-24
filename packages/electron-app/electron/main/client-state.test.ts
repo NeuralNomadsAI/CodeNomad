@@ -39,7 +39,8 @@ test("Preferences restoration survives final local-window shutdown and clears on
     section: "providers" as const,
     scrollTop: 420,
     instanceId: "instance-1",
-    location: { directory: "C:\\repo", workspaceID: "workspace-1" },
+    workspacePath: "C:\\repo",
+    location: { directory: "/mnt/c/repo", workspaceID: "workspace-1" },
   }
   assert.equal(await manager.setPreferences(request), true)
   assert.equal(await manager.removeWindow(manager.activeWindowId), true)

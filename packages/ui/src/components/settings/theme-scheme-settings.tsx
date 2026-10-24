@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, For, onCleanup, Show, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, onCleanup, onMount, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import { useTheme } from "../../lib/theme"
 import type { AppearanceMode } from "../../lib/appearance-preferences"
@@ -6,6 +6,7 @@ import { isDefaultCustomColors, nextColorSchemePresetName } from "../../lib/colo
 import { showConfirmDialog } from "../../stores/alerts"
 import { useConfig } from "../../stores/preferences"
 import { registerSettingsDirtyGuard } from "../../stores/settings-dirty-guard"
+import { observePaletteStripFit } from "./palette-strip-fit"
 import {
   BUILT_IN_COLOR_SCHEMES,
   DEFAULT_CUSTOM_COLORS,
@@ -299,11 +300,14 @@ export const ThemeSchemeSettings: Component = () => {
 
   const colorsFor = (option: PaletteOption) => editingKey() === option.key ? draftColors() : option.colors
 
+  let workbench!: HTMLDivElement, actions!: HTMLDivElement
+  const [stripStacked, setStripStacked] = createSignal(false)
+  onMount(() => observePaletteStripFit(workbench, actions, setStripStacked))
+
   return (
     <div class="settings-card theme-scheme-settings">
       <div class="settings-card-header">
         <h3 class="settings-card-title">{t("settings.appearance.colorScheme.title")}</h3>
-        <span class="settings-scope-badge">{t("settings.scope.device")}</span>
       </div>
 
       <div class="theme-scheme-list">
@@ -319,8 +323,7 @@ export const ThemeSchemeSettings: Component = () => {
             )}</For>
           </div>
         </div>
-        <p class="settings-card-subtitle">{t("settings.appearance.palette.independent")}</p>
-        <div class="theme-scheme-workbench">
+        <div class="theme-scheme-workbench" ref={workbench} data-stacked={stripStacked() ? "true" : "false"}>
           <select
             class="selector-input theme-scheme-picker"
             value={pendingOption()?.key ?? editingOption()?.key ?? ""}
@@ -332,6 +335,20 @@ export const ThemeSchemeSettings: Component = () => {
               const option = options().find((candidate) => candidate.key === select.value)
               if (!option) return
               void queuePaletteSelection(option)
+            }}
+            onKeyDown={(event) => {
+              // Customizable selects open their list on arrows; keep stepping through
+              // palettes with a live preview while the list is closed, as native selects do.
+              if ((event.key !== "ArrowDown" && event.key !== "ArrowUp") || event.altKey) return
+              // Same detection as native-select.css enables customizable selects with.
+              if (!CSS.supports("(appearance: base-select) and (overflow-clip-margin: content-box)")) return
+              const select = event.currentTarget
+              if (select.matches(":open")) return
+              const next = select.selectedIndex + (event.key === "ArrowDown" ? 1 : -1)
+              event.preventDefault()
+              if (next < 0 || next >= select.options.length) return
+              select.selectedIndex = next
+              select.dispatchEvent(new Event("change", { bubbles: true }))
             }}
           >
             <For each={filteredOptions()}>{(option) => <option value={option.key} selected={(pendingOption()?.key ?? editingKey()) === option.key}>{option.name}</option>}</For>
@@ -360,7 +377,7 @@ export const ThemeSchemeSettings: Component = () => {
               }}</For>
             </div>
           )}</Show>
-          <div class="theme-scheme-actions">
+          <div class="theme-scheme-actions" ref={actions}>
             <Show when={editingOption()?.presetId}>
               <button type="button" class="selector-button selector-button-secondary" disabled={creating() || saving()} onClick={() => void deletePreset(editingOption()!)}>
                 {t("settings.appearance.colorScheme.custom.delete")}

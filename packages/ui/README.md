@@ -34,12 +34,14 @@ The output will be generated in the `dist` directory, which is then consumed by 
 
 ## Debug Logging
 
-The UI now routes all logging through a lightweight wrapper around [`debug`](https://github.com/debug-js/debug). The logger exposes four namespaces that can be toggled at runtime:
+The UI routes logging through a lightweight wrapper around [`debug`](https://github.com/debug-js/debug). Its namespaces can be toggled at runtime:
 
 - `sse` – Server-sent event transport and handlers
 - `api` – HTTP/API calls and workspace lifecycle
 - `session` – Session/model state, prompt handling, tool calls
 - `actions` – User-driven interactions in UI components
+- `foreground-refresh` – Visible-state reconciliation
+- `scroll` – Transcript position writes, follow-mode transitions and unclaimed (`unowned`) scrolls; see `dev-docs/SESSION_HISTORY_NAVIGATION.md`
 
 You can enable or disable namespaces from DevTools (in dev or production builds) via the global `window.codenomadLogger` helpers:
 

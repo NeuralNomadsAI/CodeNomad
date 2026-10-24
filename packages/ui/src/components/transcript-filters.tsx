@@ -5,9 +5,16 @@ import { For, Show, createMemo, createSignal } from "solid-js"
 import { ChevronDown, ChevronRight, Eye, EyeOff, ListFilter } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
-import { useConfig, type VisibilityPreference } from "../stores/preferences"
+import { useConfig, type Preferences, type ToolCallExpansionPreset, type VisibilityPreference } from "../stores/preferences"
 import { getMessageContentIcon } from "./message-content-icons"
-import { transcriptVisibility, transcriptVisibilityPatch, transcriptVisibilityRows } from "./transcript-visibility"
+import {
+  TRANSCRIPT_PRESETS,
+  transcriptPreset,
+  transcriptPresetPatch,
+  transcriptVisibility,
+  transcriptVisibilityPatch,
+  transcriptVisibilityRows,
+} from "./transcript-visibility"
 
 interface TranscriptFiltersProps {
   open?: boolean
@@ -15,11 +22,28 @@ interface TranscriptFiltersProps {
   overflowAnchor?: () => HTMLElement | undefined
 }
 
+// Customizable selects expose their list as :open; system lists consume Escape themselves.
+function presetListOpen(select: HTMLSelectElement) {
+  try { return select.matches(":open") } catch { return false }
+}
+
 export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
   const { t } = useI18n()
   const { preferences, updatePreferences } = useConfig()
   const rows = createMemo(() => transcriptVisibilityRows(t))
   const [saving, setSaving] = createSignal(false)
+  const preset = createMemo(() => transcriptPreset(preferences()))
+  const presetLabel = (value: string) => t(`settings.behavior.expansionPreset.${value}.title`)
+  const save = async (patch: () => Partial<Preferences>) => {
+    if (saving()) return
+    setSaving(true)
+    try {
+      const saved = await updatePreferences(patch())
+      if (!saved) showToastNotification({ category: "settings", message: t("settings.speech.save.error"), variant: "error" })
+    } finally {
+      setSaving(false)
+    }
+  }
   return (
     <Popover placement="bottom-end" gutter={6} open={props.open} onOpenChange={props.onOpenChange}
       getAnchorRect={(anchor) => (props.overflowAnchor?.() ?? anchor)?.getBoundingClientRect()}>
@@ -35,20 +59,27 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
             <Popover.Title class="window-title">{t("transcriptFilters.title")}</Popover.Title>
           </header>
           <Popover.Description class="sr-only">{t("transcriptFilters.description")}</Popover.Description>
+          <div class="transcript-filters-preset">
+            <select class="selector-trigger" value={preset()} aria-disabled={saving()}
+              // Escape closes an open list first: keep it from the popup's document listener (not delegated).
+              on:keydown={(event) => { if (event.key === "Escape" && presetListOpen(event.currentTarget)) event.stopPropagation() }}
+              aria-label={t("settings.behavior.expansionPresets.ariaLabel")} title={t("settings.behavior.expansionPresets.ariaLabel")}
+              onChange={(event) => {
+                const select = event.currentTarget, value = select.value
+                // The saved preference drives the shown value, including refused or failed changes.
+                select.value = preset()
+                if (value !== "custom") void save(() => transcriptPresetPatch(value as ToolCallExpansionPreset))
+              }}>
+              <For each={TRANSCRIPT_PRESETS}>{(value) => <option value={value}>{presetLabel(value)}</option>}</For>
+              {/* Custom only names manual changes; it is not a choice. */}
+              <option value="custom" disabled hidden={preset() !== "custom"}>{presetLabel("custom")}</option>
+            </select>
+          </div>
           <div class="window-body transcript-filters-list">
             <For each={rows()}>{(row) => {
               const mode = () => transcriptVisibility(preferences(), row)
               let previousVisible: VisibilityPreference = "collapsed"
-              const setMode = async (value: VisibilityPreference) => {
-                if (saving()) return
-                setSaving(true)
-                try {
-                  const saved = await updatePreferences(transcriptVisibilityPatch(preferences(), row, value))
-                  if (!saved) showToastNotification({ message: t("settings.speech.save.error"), variant: "error" })
-                } finally {
-                  setSaving(false)
-                }
-              }
+              const setMode = (value: VisibilityPreference) => save(() => transcriptVisibilityPatch(preferences(), row, value))
               const visibilityLabel = () => t(mode() === "hidden" ? "transcriptFilters.show" : "transcriptFilters.hide", { name: row.label })
               const expansionLabel = () => t(mode() === "expanded" ? "transcriptFilters.collapse" : "transcriptFilters.expand", { name: row.label })
               return (

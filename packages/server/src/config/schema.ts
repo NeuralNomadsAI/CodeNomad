@@ -12,7 +12,6 @@ const PreferencesSchema = z
   .object({
   showThinkingBlocks: z.boolean().default(false),
   thinkingBlocksExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
-  showTimelineTools: z.boolean().default(true),
   promptSubmitOnEnter: z.boolean().default(false),
   lastUsedBinary: z.string().optional(),
   locale: z.string().optional(),
@@ -24,7 +23,7 @@ const PreferencesSchema = z
   toolOutputExpansion: z.enum(["expanded", "collapsed"]).default("expanded"),
   diagnosticsExpansion: z.enum(["hidden", "expanded", "collapsed"]).default("expanded"),
   systemMessagesVisibility: z.enum(["hidden", "expanded", "collapsed"]).default("hidden"),
-  showUsageMetrics: z.boolean().default(true),
+  showUsageMetrics: z.boolean().default(false),
   usageMetricsExpansion: z.enum(["expanded", "collapsed"]).default("collapsed"),
   autoCleanupBlankSessions: z.boolean().default(true),
   listeningMode: z.enum(["local", "all"]).default("local"),

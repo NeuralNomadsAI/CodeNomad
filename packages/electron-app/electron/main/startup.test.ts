@@ -1,32 +1,71 @@
 import assert from "node:assert/strict"
-import { mkdirSync, rmSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, resolveUpdateChannel, startPrimaryInstance } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isPinnedLaunch, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance } from "./startup"
+import { stripPrivateRelaunchEnvironment } from "./profile-selection-cleanup"
+import type { TransitionResult } from "./profile-transition"
 
-test("update channel honors the environment, forces unpackaged dev, and only infers packaged versions", () => {
-  assert.equal(resolveUpdateChannel("Beta", "1.0.0-dev.2", false), "beta")
-  assert.equal(resolveUpdateChannel(undefined, "1.0.0", false), "dev")
-  assert.equal(resolveUpdateChannel(undefined, "1.0.0-dev-2", true), "dev")
-  assert.equal(resolveUpdateChannel(undefined, "1.0.0-dev-v2", true), "dev-v2")
-  assert.equal(resolveUpdateChannel(undefined, "1.0.0-dev-v2-2", true), "dev-v2")
-  assert.equal(resolveUpdateChannel(undefined, "1.0.0", true), "stable")
-})
-
-test("stable default storage preserves paths while dev and alternate configs are scoped", () => {
+test("default profile storage preserves paths while named profiles and alternate configs are scoped", () => {
   const base = join(tmpdir(), "codenomad-startup-base")
-  const stable = resolveStorageScope({ appVersion: "1.0.0", cwd: base, baseUserDataPath: base, packaged: true })
+  const stable = resolveStorageScope({ profileKey: "stable", cwd: base, baseUserDataPath: base, packaged: true })
   assert.equal(stable.userDataPath, base)
   assert.equal(stable.sessionDataPath, join(base, "session-data-v2"))
   assert.equal(stable.clientStateElectionDirectory, undefined)
-  const dev = resolveStorageScope({ appVersion: "1.0.0-dev.1", cwd: base, baseUserDataPath: base, packaged: true })
-  const alternate = resolveStorageScope({ appVersion: "1.0.0", cliConfig: "other/config.json", cwd: base, baseUserDataPath: base, packaged: true })
+  const dev = resolveStorageScope({ profileKey: "dev", cwd: base, baseUserDataPath: base, packaged: true })
+  const alternate = resolveStorageScope({ profileKey: "stable", cliConfig: "other/config.json", cwd: base, baseUserDataPath: base, packaged: true })
   assert.match(dev.userDataPath, /scopes[\\/]dev-[0-9a-f]{16}$/)
   assert.equal(dev.clientStateElectionDirectory, join(dev.userDataPath, "client-state", "election"))
   assert.match(alternate.userDataPath, /scopes[\\/]stable-[0-9a-f]{16}$/)
   assert.equal(alternate.clientStateElectionDirectory, join(alternate.userDataPath, "client-state", "election"))
-  assert.equal(resolveStorageScope({ appVersion: "1.0.0", cliConfig: "other/config.yaml", cwd: base, baseUserDataPath: base, packaged: true }).userDataPath, alternate.userDataPath)
+  assert.equal(resolveStorageScope({ profileKey: "stable", cliConfig: "other/config.yaml", cwd: base, baseUserDataPath: base, packaged: true }).userDataPath, alternate.userDataPath)
+})
+
+test("launch profile: explicit settings skip the transition, packaged launches without them use it", () => {
+  const base = join(tmpdir(), "codenomad-startup-base")
+  let transitions = 0
+  const transition = () => { transitions++; return { key: "dev", reason: "single" as const } }
+  const launch = (environment: Record<string, string | undefined>, packaged: boolean) =>
+    resolveLaunchProfile({ environment, packaged, cwd: base, baseUserDataPath: base, transition })
+  assert.deepEqual(launch({ CODENOMAD_PROFILE: "Team", CODENOMAD_UPDATE_CHANNEL: "dev" }, true), { key: "team", source: "profile" })
+  assert.deepEqual(launch({ CODENOMAD_UPDATE_CHANNEL: "dev-v2" }, true), { key: "dev-v2", source: "legacy-channel" })
+  assert.deepEqual(launch({}, false), { key: "dev", source: "unpackaged" })
+  assert.equal(transitions, 0)
+  assert.deepEqual(launch({}, true), { key: "dev", source: "transition" })
+  assert.equal(transitions, 1)
+  assert.throws(() => launch({ CODENOMAD_PROFILE: "not a profile" }, true), /Invalid CODENOMAD_PROFILE/)
+})
+
+test("launch profile: only the transition lets a remembered choice apply", () => {
+  const base = join(tmpdir(), "codenomad-startup-base")
+  const pinned = (environment: Record<string, string | undefined>, packaged: boolean, reason: TransitionResult["reason"] = "remembered") =>
+    isPinnedLaunch(resolveLaunchProfile({ environment, packaged, cwd: base, baseUserDataPath: base, transition: () => ({ key: "dev-v2", reason }) }))
+  assert.equal(pinned({ CODENOMAD_PROFILE: "default" }, true), true)
+  assert.equal(pinned({ CODENOMAD_UPDATE_CHANNEL: "dev" }, true), true)
+  assert.equal(pinned({}, false), true)
+  for (const reason of ["remembered", "none", "single", "most-recent", "unremembered"] as const) assert.equal(pinned({}, true, reason), false, reason)
+  // Older builds' private relaunch answer no longer selects a profile or pins the launch.
+  assert.equal(pinned({ CODENOMAD_PROFILE_SELECTION_ANSWER: "team" }, true), false)
+})
+
+test("older builds' private relaunch variables are dropped before anything inherits them", () => {
+  const environment: NodeJS.ProcessEnv = {
+    CODENOMAD_PROFILE_SELECTION_CLEANUP: join(tmpdir(), "codenomad-profile-selection-x"),
+    CODENOMAD_PROFILE_SELECTION_ANSWER: "dev",
+    CODENOMAD_PROFILE: "team",
+  }
+  stripPrivateRelaunchEnvironment(environment)
+  assert.deepEqual(environment, { CODENOMAD_PROFILE: "team" })
+  // main.ts strips process.env, which the backend environment is built from, before resolving the profile.
+  const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8")
+  const stripped = main.indexOf("stripPrivateRelaunchEnvironment(process.env)")
+  assert.ok(stripped > 0 && stripped < main.indexOf("resolveInitialProfile(baseUserDataPath)"))
+})
+
+test("the host never sets the user's CODENOMAD_PROFILE", () => {
+  const main = readFileSync(new URL("./main.ts", import.meta.url), "utf8")
+  assert.doesNotMatch(main, /process\.env\[PROFILE_ENVIRONMENT\]\s*=/)
 })
 
 test("remote profiles use isolated persistent partitions and TLS exceptions stay with their webContents", () => {

@@ -2,10 +2,11 @@ import { readFile } from "node:fs/promises"
 import { installDesktopPluginPresence, type DesktopPluginFeature, type DesktopPluginPaths } from "./desktop-plugin-installation"
 
 type PreparedPlugin = { commit(): void; release(): Promise<void> }
+type Presence = Awaited<ReturnType<typeof installDesktopPluginPresence>>
 type Installation = {
   claims: Map<symbol, () => void>
   committed: boolean
-  pending: Promise<() => Promise<void>>
+  pending: Promise<Presence>
   closing?: Promise<void>
 }
 
@@ -13,6 +14,7 @@ type Installation = {
 // attempts independent; only successful preparation retains the backend lease.
 export class DesktopPluginLifecycle {
   private readonly installations = new Map<string, Installation>()
+  private latest?: Installation
   private stopped = false
 
   constructor(
@@ -75,13 +77,22 @@ export class DesktopPluginLifecycle {
       await installation.pending
       check()
       return {
-        commit: () => { check(); installation.committed = true },
+        commit: () => { check(); installation.committed = true; this.latest = installation },
         release,
       }
     } catch (error) {
       await release()
       throw error
     }
+  }
+
+  /**
+   * Settles once the plugins of the current daemon have registered for this
+   * backend's lease, or after a bounded wait. Never rejects: callers then make
+   * their RPC and report its actual result.
+   */
+  async ready(): Promise<void> {
+    await this.latest?.pending.then(presence => presence.ready, () => undefined)
   }
 
   private close(installation: Installation): Promise<void> {
@@ -101,7 +112,7 @@ export class DesktopPluginLifecycle {
 export async function prepareDesktopPluginPresence(
   paths: DesktopPluginPaths,
   assertCurrent: () => void,
-  lifecycles: { pruning: DesktopPluginLifecycle; automation?: DesktopPluginLifecycle },
+  lifecycles: { pruning: DesktopPluginLifecycle; automation?: DesktopPluginLifecycle; missions?: DesktopPluginLifecycle },
 ): Promise<void> {
   const prepared: PreparedPlugin[] = []
   try {
@@ -109,6 +120,8 @@ export async function prepareDesktopPluginPresence(
     prepared.push(await lifecycles.pruning.prepare(paths, assertCurrent))
     assertCurrent()
     if (lifecycles.automation) prepared.push(await lifecycles.automation.prepare(paths, assertCurrent))
+    assertCurrent()
+    if (lifecycles.missions) prepared.push(await lifecycles.missions.prepare(paths, assertCurrent))
     assertCurrent()
     for (const entry of prepared) entry.commit()
   } finally {

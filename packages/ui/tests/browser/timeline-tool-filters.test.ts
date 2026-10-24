@@ -1,0 +1,49 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { startProductFixture } from "./fixtures/product-fixture-server"
+
+let fixture: Awaited<ReturnType<typeof startProductFixture>>
+before(async () => { fixture = await startProductFixture("timeline-tool-filters") })
+after(async () => { await fixture?.close() })
+
+test("timeline tool markers follow the tool types hidden in Message content", async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 400, height: 700 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    await page.goto(fixture.url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    const markers = () => page.evaluate(() => (window as any).fixture.markers())
+    const settle = (expected: string[]) => page.waitForFunction(value => JSON.stringify((window as any).fixture.markers()) === value, JSON.stringify(expected))
+    assert.deepEqual(await markers(), ["message-0", "message-1", "message-2", "message-3", "message-3", "message-4", "message-4", "message-4"])
+
+    // Hiding a tool joins the reply around it into one transcript row, and one marker.
+    await page.evaluate(() => (window as any).fixture.setTool("read", "hidden"))
+    await settle(["message-0", "message-1", "message-3", "message-3", "message-4"])
+    // Unregistered tools follow "Other".
+    await page.evaluate(() => (window as any).fixture.setTool("other", "hidden"))
+    await settle(["message-0", "message-1", "message-3", "message-4"])
+    // Collapsed tools stay in the timeline; only hidden ones leave it.
+    await page.evaluate(() => (window as any).fixture.setTool("read", "collapsed"))
+    await settle(["message-0", "message-1", "message-2", "message-3", "message-4", "message-4", "message-4"])
+
+    await page.evaluate(() => (window as any).fixture.preset("nothing"))
+    await settle(["message-0", "message-3", "message-4"])
+    // A hidden active tool marker stays hidden; its message's visible marker is highlighted instead.
+    const current = () => page.evaluate(() => (window as any).fixture.current())
+    await page.evaluate(() => (window as any).fixture.setActive("tool-3"))
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.markers()), ["message-0", "message-3", "message-4"])
+    assert.deepEqual(await current(), ["assistant"])
+    await page.evaluate(() => (window as any).fixture.setActive("tool-2"))
+    assert.deepEqual(await current(), [], "a message without a visible marker highlights nothing")
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.markers()), ["message-0", "message-3", "message-4"])
+    await page.evaluate(() => (window as any).fixture.setActive("user-0"))
+    assert.deepEqual(await current(), ["user"])
+    await page.evaluate(() => (window as any).fixture.preset("everything"))
+    await settle(["message-0", "message-1", "message-2", "message-3", "message-3", "message-4", "message-4", "message-4"])
+    await page.evaluate(() => (window as any).fixture.setActive("tool-3"))
+    assert.deepEqual(await current(), ["tool"], "a visible tool marker keeps its own highlight")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

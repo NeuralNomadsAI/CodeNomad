@@ -44,3 +44,7 @@ export const backgroundReads = new BackgroundReadQueue(2)
 // A clicked file is foreground work: one reserved lane prevents long directory
 // and status scans from delaying the reader, while retaining connection headroom.
 export const previewReads = new BackgroundReadQueue(1)
+
+// Per-row permission receipts arrive in bursts as virtualized rows mount; their
+// own lane keeps them from delaying recovery, catalogue and Git reads.
+export const receiptReads = new BackgroundReadQueue(1)

@@ -1,9 +1,10 @@
+/* Swatches wrap onto further lines instead of scrolling. */
 .theme-scheme-swatches {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: var(--space-2xs);
   min-width: 0;
-  overflow-x: auto;
   padding: 3px;
 }
 

@@ -6,7 +6,7 @@
   overflow: auto;
   padding: var(--space-md);
   border: 1px solid var(--border-base);
-  background-color: var(--surface-base);
+  background-color: var(--surface-overlay);
   color: var(--text-primary);
   box-shadow: var(--panel-shadow-strong);
   font-size: var(--font-size-sm);

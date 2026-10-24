@@ -20,7 +20,7 @@
   padding: 2rem;
   border: 2px dashed var(--accent-primary);
   border-radius: var(--radius-xl);
-  background-color: color-mix(in srgb, var(--surface-base) 92%, var(--accent-primary) 8%);
+  background-color: color-mix(in srgb, var(--surface-overlay) 92%, var(--accent-primary) 8%);
   box-shadow: var(--folder-card-shadow);
   text-align: center;
 }

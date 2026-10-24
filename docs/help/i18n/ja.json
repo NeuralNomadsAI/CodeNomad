@@ -1,0 +1,30 @@
+{
+  "language": "日本語",
+  "search": { "label": "ヘルプを検索", "clear": "クリア", "empty": "記事と見出しを検索します。", "noResults": "「{query}」の結果はありません。別の語句をお試しください。", "failure": "検索を読み込めませんでした。ページを再読み込みするか、ヘルプのトピックをご利用ください。", "loading": "検索を読み込み中…", "count": "{count} 件の結果" },
+  "siteTitle": "CodeNomad ヘルプ",
+  "brand": "ヘルプ",
+  "tagline": "プロジェクト、セッション、ワークツリーをつなぐ OpenCode ワークスペース。",
+  "sections": {
+    "start": "はじめに",
+    "workflows": "ワークフロー",
+    "opencode-setup": "OpenCode の設定",
+    "remote-access": "リモートアクセス",
+    "customize": "カスタマイズ",
+    "extensions": "拡張機能",
+    "desktop": "デスクトップ",
+    "help": "ヘルプを利用する"
+  },
+  "onThisPage": "このページの内容",
+  "skipToContent": "本文へスキップ",
+  "editPage": "このページを編集",
+  "translatePage": "このページを翻訳",
+  "reportProblem": "問題を報告",
+  "download": "ダウンロード",
+  "github": "GitHub",
+  "languageLabel": "言語",
+  "projectLinks": "プロジェクトのリンク",
+  "helpTopics": "ヘルプの目次",
+  "scope": "現在の CodeNomad · OpenCode V2",
+  "findHint": "{keys} でテキストを検索できます。",
+  "untranslated": "このページはまだ日本語に翻訳されていません。以下に英語版を表示しています。"
+}

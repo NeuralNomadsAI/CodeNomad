@@ -1,5 +1,5 @@
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, getRelativePath, getToolName, inferLanguageFromPath, limitToolOutputForRender, readToolStatePayload } from "../utils"
+import { getRelativePath, getToolName, hasVisibleText, inferLanguageFromPath, readToolStatePayload } from "../utils"
 import { tGlobal } from "../../../lib/i18n"
 import { getReadToolSearchText } from "../search-text"
 
@@ -55,9 +55,8 @@ export const readRenderer: ToolRenderer = {
     if (!state || state.status === "pending") return null
     const { output, input } = readToolStatePayload(state)
     const preview = typeof output === "string" ? output : null
+    if (!hasVisibleText(preview)) return null
     const language = inferLanguageFromPath(getReadPath(input))
-    const content = ensureMarkdownContent(preview ? limitToolOutputForRender(preview) : preview, language, true)
-    if (!content) return null
-    return renderMarkdown({ content, disableHighlight: state.status === "running" })
+    return renderMarkdown({ content: preview, codeLanguage: language ?? "", disableHighlight: state.status === "running" })
   },
 }

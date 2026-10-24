@@ -3,9 +3,19 @@ import { readFileSync } from "node:fs"
 import { describe, it } from "node:test"
 
 import { createInstanceMessageStore } from "./instance-store.ts"
-import { buildRecordDisplayData, getRecordDisplayPartIds, MESSAGE_PART_DISPLAY_LIMIT } from "./record-display-cache.ts"
-import { getSessionMessageRenderCache, purgeMessageRenderCache } from "../../lib/message-render-cache.ts"
-import type { MessageInfo } from "../../types/message"
+import {
+  buildRecordDisplayData,
+  clearRecordDisplayCacheForInstance,
+  clearRecordDisplayCacheForMessages,
+  getRecordDisplayPartIds,
+  getRevealedRecordText,
+  MESSAGE_PART_DISPLAY_LIMIT,
+  MESSAGE_PART_REVEAL_STEP,
+  revealHiddenRecordParts,
+  revealHiddenRecordText,
+} from "./record-display-cache.ts"
+import { getSessionMessageRenderCache, purgeMessageRenderCache, REASONING_RENDER_CHARACTER_LIMIT } from "../../lib/message-render-cache.ts"
+import type { MessageInfo, ClientPart } from "../../types/message"
 import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
 
 it("keeps the beginning and final response when bounding message parts", () => {
@@ -19,9 +29,11 @@ it("keeps the beginning and final response when bounding message parts", () => {
   assert.equal(data.orderedParts.length, MESSAGE_PART_DISPLAY_LIMIT)
   assert.equal(data.orderedParts[0]?.id, "part-0")
   assert.equal(data.orderedParts.at(-1)?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
-  assert.equal(data.truncated, true)
+  assert.equal(data.hiddenCount, 2)
+  assert.equal(data.gapIndex, MESSAGE_PART_DISPLAY_LIMIT / 2)
+  assert.equal(data.orderedParts[data.gapIndex]?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT / 2 + 2}`)
 
-  const displayPartIds = getRecordDisplayPartIds({
+  const displayPartIds = getRecordDisplayPartIds("bounded-parts", {
     id: "message", sessionId: "session", role: "assistant", status: "complete",
     createdAt: 1, updatedAt: 1, revision: 1, partIds,
     parts: {},
@@ -29,6 +41,59 @@ it("keeps the beginning and final response when bounding message parts", () => {
   assert.equal(displayPartIds.length, MESSAGE_PART_DISPLAY_LIMIT)
   assert.equal(displayPartIds[0], "part-0")
   assert.equal(displayPartIds.at(-1), `part-${MESSAGE_PART_DISPLAY_LIMIT + 1}`)
+})
+
+it("reveals omitted parts in place and resets with the instance", () => {
+  const total = MESSAGE_PART_DISPLAY_LIMIT + MESSAGE_PART_REVEAL_STEP + 5
+  const partIds = Array.from({ length: total }, (_, index) => `part-${index}`)
+  const record = {
+    id: "message", sessionId: "session", role: "assistant" as const, status: "complete" as const,
+    createdAt: 1, updatedAt: 1, revision: 1, partIds,
+    parts: Object.fromEntries(partIds.map((id) => [id, { id, revision: 1, data: { id, type: "text" as const, text: id } }])),
+  }
+  const initial = buildRecordDisplayData("revealed-parts", record)
+  assert.equal(initial.hiddenCount, MESSAGE_PART_REVEAL_STEP + 5)
+  assert.equal(initial.hiddenStart, MESSAGE_PART_DISPLAY_LIMIT / 2)
+
+  revealHiddenRecordParts("revealed-parts", "message")
+  const partial = buildRecordDisplayData("revealed-parts", record)
+  assert.notEqual(partial, initial, "revealing must invalidate the cached projection")
+  assert.equal(partial.hiddenCount, 5)
+  assert.equal(partial.orderedParts.length, total - 5)
+  assert.equal(partial.orderedParts[partial.gapIndex - 1]?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT / 2 + MESSAGE_PART_REVEAL_STEP - 1}`)
+  assert.equal(partial.orderedParts[partial.gapIndex]?.id, `part-${MESSAGE_PART_DISPLAY_LIMIT / 2 + MESSAGE_PART_REVEAL_STEP + 5}`)
+
+  revealHiddenRecordParts("revealed-parts", "message")
+  const complete = buildRecordDisplayData("revealed-parts", record)
+  assert.equal(complete.hiddenCount, 0)
+  assert.deepEqual(complete.orderedParts.map((part) => part.id), partIds)
+  assert.deepEqual(getRecordDisplayPartIds("revealed-parts", record), partIds)
+
+  clearRecordDisplayCacheForInstance("revealed-parts")
+  assert.equal(buildRecordDisplayData("revealed-parts", record).hiddenCount, MESSAGE_PART_REVEAL_STEP + 5)
+})
+
+it("keys text reveals by instance, message, part and section, and resets them with the instance", () => {
+  const output = { instanceId: "revealed-text", messageId: "message", partId: "tool", section: "output" }
+  const prompt = { ...output, section: "task:prompt" }
+  const otherInstance = { ...output, instanceId: "other-instance" }
+  assert.equal(getRevealedRecordText(output), 0)
+
+  revealHiddenRecordText(output)
+  revealHiddenRecordText(output)
+  revealHiddenRecordText(otherInstance)
+  assert.equal(getRevealedRecordText(output), 2)
+  assert.equal(getRevealedRecordText({ ...output }), 2, "a structurally equal target reads the same reveal after a remount")
+  assert.equal(getRevealedRecordText(prompt), 0, "sections of one tool part reveal independently")
+  assert.equal(getRevealedRecordText({ ...output, messageId: "other-message" }), 0)
+
+  clearRecordDisplayCacheForMessages("revealed-text", ["message"])
+  assert.equal(getRevealedRecordText(output), 2, "evicting derived caches keeps what the user revealed")
+
+  clearRecordDisplayCacheForInstance("revealed-text")
+  assert.equal(getRevealedRecordText(output), 0)
+  assert.equal(getRevealedRecordText(otherInstance), 1, "another instance keeps its reveals")
+  clearRecordDisplayCacheForInstance("other-instance")
 })
 
 describe("message window replacement authority", () => {
@@ -105,6 +170,28 @@ describe("message display cache authority", () => {
     const source = readFileSync(new URL("../../components/message-block.tsx", import.meta.url), "utf8")
     assert.match(source, /cachedBlock\.signature === cacheSignature && cachedBlock\.displayData === displayData/)
     assert.match(source, /messageBlocks\.set\(current\.id, \{\s*signature: cacheSignature,\s*displayData,/)
+  })
+
+  it("projects whole reasoning text, streaming or completed, for the card's display window", () => {
+    const longText = `${"t".repeat(REASONING_RENDER_CHARACTER_LIMIT)}ail beyond the bound`
+    const reasoning = (completed?: number): { id: string; revision: number; data: ClientPart } => ({
+      id: "reasoning", revision: 1,
+      data: {
+        id: "reasoning", type: "reasoning", text: longText,
+        time: { created: 1, ...(completed !== undefined ? { completed } : {}) },
+      } as ClientPart,
+    })
+    const recordFor = (part: { id: string; revision: number; data: ClientPart }, status: "streaming" | "complete") => ({
+      id: "message", sessionId: "session", role: "assistant" as const, status,
+      createdAt: 1, updatedAt: 1, revision: 1, partIds: ["reasoning"], parts: { reasoning: part },
+    })
+
+    const streaming = buildRecordDisplayData("reasoning-stream", recordFor(reasoning(), "streaming"))
+    assert.equal((streaming.orderedParts[0] as any).text, longText, "a live stream reaches the card whole")
+
+    clearRecordDisplayCacheForInstance("reasoning-stream")
+    const completed = buildRecordDisplayData("reasoning-stream", recordFor(reasoning(2), "complete"))
+    assert.equal((completed.orderedParts[0] as any).text, longText, "completion keeps what the reader could reveal")
   })
 })
 
@@ -191,18 +278,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.clearInstance()
   })
 
-  it("clears pending parts omitted by authoritative hydration", () => {
-    const store = createInstanceMessageStore("pending-cleanup")
-    store.hydrateMessages("session-1", [{ id: "old", sessionId: "session-1", role: "assistant", status: "complete" }])
-    store.bufferPendingPart({ messageId: "old", sessionId: "session-1", part: { type: "text", text: "pending" } as any, receivedAt: 1 })
-
-    store.hydrateMessages("session-1", [{ id: "current", sessionId: "session-1", role: "user", status: "complete" }])
-
-    assert.equal(store.state.pendingParts.old, undefined)
-    assert.deepEqual(store.getSessionMessageIds("session-1"), ["current"])
-    store.clearInstance()
-  })
-
   it("keeps an in-flight pending 'sending' message visible when a force reload snapshot doesn't include it yet", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
@@ -266,7 +341,33 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     assert.deepEqual(record?.clientPromptDisplayMetadata, displayMetadata, "metadata survives the same-id confirmation")
   })
 
-  it("retains client part identity through a metadata-only same-id snapshot", () => {
+  it("carries pending-send identity and display metadata through message ID replacement", () => {
+    const store = createInstanceMessageStore("replacement")
+    const metadata = { segments: [{ kind: "pasted" as const, length: 5 }] }
+    store.upsertMessage({
+      id: "temporary", sessionId: "session", role: "user", status: "sending", isEphemeral: true,
+      parts: [{ id: "client-part", type: "text", text: "hello" } as any], clientPromptDisplayMetadata: metadata,
+    })
+    store.markSendPending("temporary")
+    store.replaceMessageId({ oldId: "temporary", newId: "confirmed" })
+    store.reconcileEmptyAuthoritativeSnapshot("session")
+
+    assert.equal(store.getMessage("temporary"), undefined)
+    assert.deepEqual(store.getSessionMessageIds("session"), ["confirmed"])
+    assert.equal(store.hasPendingSends("session"), true)
+    assert.deepEqual(store.getMessage("confirmed")?.clientPromptDisplayMetadata, metadata)
+
+    store.hydrateMessages("session", [{
+      id: "confirmed", sessionId: "session", role: "user", status: "complete", isEphemeral: false,
+      parts: [{ id: "server-part", type: "text", text: "hello" } as any],
+    }])
+    assert.equal(store.hasPendingSends("session"), false)
+    assert.deepEqual(store.getMessage("confirmed")?.partIds, ["server-part"])
+    assert.deepEqual(store.getMessage("confirmed")?.clientPromptDisplayMetadata, metadata)
+    store.clearInstance()
+  })
+
+  it("retains client parts through a metadata-only snapshot until authoritative parts replace them", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
     store.upsertMessage({
@@ -278,13 +379,14 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       { id: "msg-1", sessionId: "session-1", role: "user", status: "complete", isEphemeral: false },
     ])
 
-    store.confirmServerMessage("msg-1", { clearOptimisticParts: true })
-    store.applyPartUpdate({
-      messageId: "msg-1",
-      part: { id: "server-part", type: "text", text: "hello" } as any,
-    })
+    assert.deepEqual(store.getMessage("msg-1")?.partIds, ["client-part"])
+    store.hydrateMessages("session-1", [{
+      id: "msg-1", sessionId: "session-1", role: "user", status: "complete", isEphemeral: false,
+      parts: [{ id: "server-part", type: "text", text: "hello" } as any],
+    }])
 
     assert.deepEqual(store.getMessage("msg-1")?.partIds, ["server-part"])
+    assert.equal(store.hasPendingSends("session-1"), false)
   })
 
   it("dedupes repeated snapshot ids so messageIds never repeat", () => {
@@ -363,16 +465,16 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
     store.reconcileEmptyAuthoritativeSnapshot("session-1")
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-accepted"])
 
-    store.confirmServerMessage("msg-accepted", { clearOptimisticParts: true })
-    store.applyPartUpdate({
-      messageId: "msg-accepted",
-      part: { id: "server-part", type: "text", text: "hello", synthetic: false } as any,
-    })
+    store.hydrateMessages("session-1", [{
+      id: "msg-accepted", sessionId: "session-1", role: "user", status: "complete", isEphemeral: false,
+      parts: [{ id: "server-part", type: "text", text: "hello", synthetic: false } as any],
+    }])
     assert.deepEqual(store.getMessage("msg-accepted")?.partIds, ["server-part"])
     assert.equal(store.getMessage("msg-accepted")?.isEphemeral, false)
+    assert.equal(store.hasPendingSends("session-1"), false)
   })
 
-  it("clears only client-created parts when the server confirms a send", () => {
+  it("replaces client parts with the authoritative snapshot without discarding server synthetic parts", () => {
     const store = createInstanceMessageStore("instance-1")
     store.addOrUpdateSession({ id: "session-1" })
     store.upsertMessage({
@@ -380,14 +482,14 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       parts: [{ id: "client-part", type: "text", text: "hello", synthetic: true } as any], isEphemeral: true,
     })
     store.markSendPending("msg-1")
-    store.applyPartUpdate({
-      messageId: "msg-1",
-      part: { id: "server-synthetic", type: "text", text: "server", synthetic: true } as any,
-    })
-
-    store.confirmServerMessage("msg-1", { clearOptimisticParts: true })
+    store.hydrateMessages("session-1", [{
+      id: "msg-1", sessionId: "session-1", role: "user", status: "complete", isEphemeral: false,
+      parts: [{ id: "server-synthetic", type: "text", text: "server", synthetic: true } as any],
+    }])
 
     assert.deepEqual(store.getMessage("msg-1")?.partIds, ["server-synthetic"])
+    assert.equal((store.getMessage("msg-1")?.parts["server-synthetic"]?.data as any).synthetic, true)
+    assert.equal(store.hasPendingSends("session-1"), false)
   })
 
   it("drops an unconfirmed accepted send once idle message authority settles", () => {
@@ -416,7 +518,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       id: "msg-stale", sessionID: "session-1", role: "assistant", time: { created: 1 },
       tokens: { input: 2, output: 3, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 1,
     } as any])
-    store.bufferPendingPart({ messageId: "msg-stale", part: { type: "text", text: "late" } as any, receivedAt: Date.now() })
     store.upsertPermission({
       permission: { id: "permission-stale", sessionID: "session-1", action: "edit", resources: [] },
       messageId: "msg-stale",
@@ -434,7 +535,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-inflight"], "stale records cleared, in-flight send preserved")
     assert.equal(store.getMessage("msg-stale"), undefined)
-    assert.equal(store.state.pendingParts["msg-stale"], undefined)
     assert.equal(store.state.permissions.byMessage["msg-stale"], undefined)
     assert.equal(store.state.permissions.queue.length, 0)
     assert.equal(store.state.usage["session-1"].totalInputTokens, 0)
@@ -451,7 +551,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       id: "msg-old", sessionID: "session-1", role: "assistant", time: { created: 1 },
       tokens: { input: 2, output: 3, reasoning: 0, cache: { read: 0, write: 0 } }, cost: 1,
     } as any])
-    store.bufferPendingPart({ messageId: "msg-old", part: { type: "text", text: "late" } as any, receivedAt: Date.now() })
     store.upsertPermission({
       permission: { id: "permission-old", sessionID: "session-1", action: "edit", resources: [] },
       messageId: "msg-old",
@@ -465,7 +564,6 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
 
     assert.deepEqual(store.getSessionMessageIds("session-1"), ["msg-new"])
     assert.equal(store.getMessage("msg-old"), undefined)
-    assert.equal(store.state.pendingParts["msg-old"], undefined)
     assert.equal(store.state.permissions.byMessage["msg-old"], undefined)
     assert.equal(store.state.permissions.queue.length, 0)
     assert.equal(store.state.usage["session-1"].totalInputTokens, 0)
@@ -501,5 +599,80 @@ describe("message-v2 hydrateMessages vs pending optimistic sends", () => {
       [{ id: "msg-1", sessionID: "session-1", role: "user", time: { created: 1000, end: 2000 } } as any],
     )
     assert.equal(store.state.messageInfoVersion["msg-1"], (versionAfterFirst ?? 0) + 1, "changed info must bump the version")
+  })
+})
+
+describe("identical re-hydration stability", () => {
+  const part = (text: string) => ({ id: "p1", type: "text", text } as any)
+
+  it("reuses the previous record object when a re-hydrated message is unchanged", () => {
+    const store = createInstanceMessageStore("stable-identity")
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    const first = store.getMessage("msg_1")!
+    const firstParts = first.parts
+    const sessionRevision = store.getSessionRevision("session")
+
+    // The SDK projection rebuilds input objects on every event; identical
+    // content must not invalidate the resident record.
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    const second = store.getMessage("msg_1")!
+    assert.equal(second, first, "an unchanged message must keep its record identity")
+    assert.equal(second.parts, firstParts, "unchanged parts must keep their identity")
+    assert.equal(second.revision, first.revision)
+    assert.equal(store.getSessionRevision("session"), sessionRevision, "an unchanged snapshot must not bump the session revision")
+  })
+
+  it("keeps record identity when input parts are the same object references", () => {
+    const store = createInstanceMessageStore("stable-refs")
+    const parts = [part("streamed")]
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts, updatedAt: 1000 },
+    ])
+    const first = store.getMessage("msg_1")!
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts, updatedAt: 1000 },
+    ])
+    assert.equal(store.getMessage("msg_1"), first, "reference-stable parts must skip content comparison")
+  })
+
+  it("replaces the record and bumps revisions when a streamed part changes", () => {
+    const store = createInstanceMessageStore("stable-change")
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    const first = store.getMessage("msg_1")!
+    const sessionRevision = store.getSessionRevision("session")
+
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello world")], updatedAt: 1000 },
+    ])
+    const second = store.getMessage("msg_1")!
+    assert.notEqual(second, first, "a changed message must receive a new record object")
+    assert.equal(second.revision, first.revision + 1)
+    assert.equal(store.getSessionRevision("session"), sessionRevision + 1)
+  })
+
+  it("replaces the record when only the status or an explicit updatedAt changes", () => {
+    const store = createInstanceMessageStore("stable-status")
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "streaming" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    const first = store.getMessage("msg_1")!
+
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "complete" as const, parts: [part("hello")], updatedAt: 1000 },
+    ])
+    assert.notEqual(store.getMessage("msg_1"), first, "a status change must replace the record")
+
+    const completed = store.getMessage("msg_1")!
+    store.hydrateMessages("session", [
+      { id: "msg_1", sessionId: "session", role: "assistant" as const, status: "complete" as const, parts: [part("hello")], updatedAt: 2000 },
+    ])
+    assert.notEqual(store.getMessage("msg_1"), completed, "an explicit updatedAt change must replace the record")
+    assert.equal(store.getMessage("msg_1")!.updatedAt, 2000)
   })
 })

@@ -51,7 +51,7 @@ export function WorkspaceTree(props: {
 
   const handleCopyPath = async (path: string) => {
     const ok = await copyToClipboard(path)
-    showToastNotification({
+    showToastNotification({ category: "copy",
       message: ok ? props.t("instanceShell.filesShell.toast.copyPathSuccess") : props.t("instanceShell.filesShell.toast.copyPathError"),
       variant: ok ? "success" : "error",
     })
@@ -61,7 +61,7 @@ export function WorkspaceTree(props: {
     try {
       await openWorkspacePath({ target, instanceId: props.instanceId, worktreeSlug: props.worktreeSlug, path })
     } catch (error) {
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: props.t("instanceShell.filesShell.toast.openError", {
           message: error instanceof Error ? error.message : String(error),
         }),
@@ -74,7 +74,7 @@ export function WorkspaceTree(props: {
     const items: ActionOverflowMenuItem[] = []
     if (row.type === "file") items.push({
       key: "preview", label: `${props.t("filesPanel.viewer")} · ${row.path}`,
-      icon: <Eye class="w-3.5 h-3.5" />, disabled: !props.canOpen,
+      get icon() { return <Eye class="w-3.5 h-3.5" /> }, disabled: !props.canOpen,
       checked: props.previewPath === row.path, onSelect: () => props.onOpen(row.path),
     })
     if (canOpenWorkspacePaths()) {
@@ -86,13 +86,13 @@ export function WorkspaceTree(props: {
             label: props.t(isMacApp
               ? "instanceShell.filesShell.actions.showInFolder"
               : "instanceShell.filesShell.actions.openFolder"),
-            icon: <FolderOpen class="w-3.5 h-3.5" />,
+            get icon() { return <FolderOpen class="w-3.5 h-3.5" /> },
             onSelect: () => handleNativeOpen(isMacApp ? "reveal" : "default", row.path),
           },
           {
             key: "open-terminal",
             label: props.t("instanceShell.filesShell.actions.openTerminal"),
-            icon: <TerminalSquare class="w-3.5 h-3.5" />,
+            get icon() { return <TerminalSquare class="w-3.5 h-3.5" /> },
             onSelect: () => handleNativeOpen("terminal", row.path),
           },
         )
@@ -105,14 +105,14 @@ export function WorkspaceTree(props: {
               edit: "instanceShell.filesShell.actions.editDefault",
               choose: "instanceShell.filesShell.actions.chooseApplication",
             }[windowsDefaultAction(row.path)]),
-            icon: <ExternalLink class="w-3.5 h-3.5" />,
+            get icon() { return <ExternalLink class="w-3.5 h-3.5" /> },
             onSelect: () => handleNativeOpen("default", row.path),
           })
         }
         items.push({
           key: "show-in-folder",
           label: props.t("instanceShell.filesShell.actions.showInFolder"),
-          icon: <FolderOpen class="w-3.5 h-3.5" />,
+          get icon() { return <FolderOpen class="w-3.5 h-3.5" /> },
           onSelect: () => handleNativeOpen("reveal", row.path),
         })
       }
@@ -120,7 +120,7 @@ export function WorkspaceTree(props: {
     items.push({
       key: "copy-path",
       label: props.t("instanceShell.filesShell.actions.copyPath"),
-      icon: <Copy class="w-3.5 h-3.5" />,
+      get icon() { return <Copy class="w-3.5 h-3.5" /> },
       onSelect: () => handleCopyPath(row.path),
     })
     return items
@@ -132,6 +132,10 @@ export function WorkspaceTree(props: {
       <For each={props.tree.rows()}>{row => {
         const isFolder = row.type === "directory", Icon = icon(row.name)
         const expanded = () => props.tree.state().expanded.has(row.path)
+        // Memoized per row so tree-state changes (selection, expansion) do not
+        // rebuild the action array for every row. Icons are getters because
+        // FileRowActions renders each item inline and in its overflow menu.
+        const actions = createMemo(() => rowActions(row))
         return <div role="treeitem" data-path={row.path} aria-label={row.name} aria-level={row.depth}
           aria-expanded={isFolder ? expanded() : undefined} aria-selected={props.tree.state().selected === row.path}
           class="workspace-tree-row" style={{ "padding-inline-start": `${8 + row.depth * 14}px` }} title={row.path}
@@ -143,7 +147,7 @@ export function WorkspaceTree(props: {
           </Show>
           <Show when={isFolder} fallback={<Icon size={14} />}><Show when={expanded()} fallback={<Folder size={14} />}><FolderOpen size={14} /></Show></Show>
           <span class="workspace-tree-label">{row.name}</span><Show when={props.tree.busy().has(row.path)}><RefreshCw size={12} class="animate-spin" /></Show>
-          <FileRowActions items={rowActions(row)} label={props.t("instanceShell.filesShell.actions.more", { name: row.name })} />
+          <FileRowActions items={actions()} label={props.t("instanceShell.filesShell.actions.more", { name: row.name })} />
         </div>
       }}</For>
     </div>

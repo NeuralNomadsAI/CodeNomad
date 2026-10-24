@@ -6,11 +6,9 @@ import type {
   SessionCreated,
   SessionDeleted,
   SessionExecutionFailed,
-  SessionIdle,
   SessionRevertCleared,
   SessionRevertCommitted,
   SessionRevertStaged,
-  SessionStatusUpdated,
   TuiToastShow,
   V2Event,
 } from "@opencode/client"
@@ -31,18 +29,11 @@ type InstanceStatusPayload = Extract<WorkspaceEventPayload, { type: "instance.ev
 
 export type NativeSessionEvent = V2Event
 
-interface ServerInstanceDisposedEvent {
-  type: "server.instance.disposed"
-  properties: {
-    directory: string
-  }
-}
-
 export interface WorktreeReadyEvent {
   type: "worktree.ready"
-  directory?: string
-  properties: {
-    name: string
+  location?: { directory: string }
+  data?: {
+    name?: string
     branch?: string
   }
 }
@@ -57,15 +48,12 @@ type SSEEvent =
   | SessionDeleted
   | SessionCompactionEnded
   | SessionExecutionFailed
-  | SessionIdle
   | SessionRevertStaged
   | SessionRevertCleared
   | SessionRevertCommitted
-  | SessionStatusUpdated
   | PermissionAsked
   | PermissionReplied
   | TuiToastShow
-  | ServerInstanceDisposedEvent
   | WorktreeReadyEvent
   | V2Event
 
@@ -138,20 +126,11 @@ class SSEManager {
       case "tui.toast.show":
         this.onTuiToast?.(instanceId, event as TuiToastShow)
         break
-      case "session.idle":
-        this.onSessionIdle?.(instanceId, event as SessionIdle)
-        break
-      case "session.status":
-        this.onSessionStatus?.(instanceId, event as SessionStatusUpdated)
-        break
       case "permission.asked":
         this.onPermissionUpdated?.(instanceId, event as PermissionAsked)
         break
       case "permission.replied":
         this.onPermissionReplied?.(instanceId, event as PermissionReplied)
-        break
-      case "server.instance.disposed":
-        this.onInstanceDisposed?.(instanceId, event as ServerInstanceDisposedEvent)
         break
       case "worktree.ready":
         try {
@@ -186,13 +165,10 @@ class SSEManager {
   onSessionCompacted?: (instanceId: string, event: SessionCompactionEnded) => void
   onSessionError?: (instanceId: string, event: SessionExecutionFailed) => void
   onTuiToast?: (instanceId: string, event: TuiToastShow) => void
-  onSessionIdle?: (instanceId: string, event: SessionIdle) => void
-  onSessionStatus?: (instanceId: string, event: SessionStatusUpdated) => void
   onPermissionUpdated?: (instanceId: string, event: PermissionAsked) => void
   onPermissionReplied?: (instanceId: string, event: PermissionReplied) => void
   onNativeSessionEvent?: (instanceId: string, event: NativeSessionEvent) => void
   onInvalidation?: (instanceId: string, event: V2Event) => void
-  onInstanceDisposed?: (instanceId: string, event: ServerInstanceDisposedEvent) => void
   onWorktreeReady?: (instanceId: string, event: WorktreeReadyEvent) => void | Promise<void>
   onConnectionLost?: (instanceId: string, reason: string) => void | Promise<void>
 

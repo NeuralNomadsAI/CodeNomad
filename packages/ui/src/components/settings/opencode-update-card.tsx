@@ -10,7 +10,7 @@ export const OpenCodeUpdateCard: Component = () => {
     <div class="settings-card-header"><div>
       <h3 class="settings-card-title">{t("settings.opencode.update.title")}</h3>
       <p class="settings-card-subtitle">{t("settings.opencode.setup.description")}</p>
-    </div><span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span></div>
+    </div></div>
     <div class="settings-card-body">
       <OpenCodeSetupPanel />
     </div>

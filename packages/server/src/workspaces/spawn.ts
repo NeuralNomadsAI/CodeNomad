@@ -41,7 +41,7 @@ export type WslWorkingDirectory =
   | { kind: "linux"; path: string }
   | { kind: "windows"; path: string }
 
-interface BinaryProbeExecution {
+export interface BinaryProbeExecution {
   error?: Error
   status: number | null
   stdout?: string | null
@@ -213,7 +213,7 @@ export function probeBinaryVersion(
   }
 }
 
-function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof probeBinaryVersion> {
+export function parseBinaryVersion(result: BinaryProbeExecution): ReturnType<typeof probeBinaryVersion> {
   if (result.error) {
     return { valid: false, error: result.error.message, ...((result.error as NodeJS.ErrnoException).code === "ENOENT" ? { missing: true } : {}) }
   }

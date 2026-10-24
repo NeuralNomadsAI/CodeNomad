@@ -5,11 +5,13 @@ import { registerInputShortcuts } from "../shortcuts/input"
 import { registerAgentShortcuts } from "../shortcuts/agent"
 import { registerEscapeShortcut, setEscapeStateChangeHandler } from "../shortcuts/escape"
 import { keyboardRegistry } from "../keyboard-registry"
+import { commandHotkeyDefinitions } from "../hotkey-definitions"
+import { resolveResolvable, type Command } from "../commands"
 import { abortSession, getSessions, isSessionBusy } from "../../stores/sessions"
 import { showCommandPalette, hideCommandPalette } from "../../stores/command-palette"
 import type { Instance } from "../../types/instance"
 import { getLogger } from "../logger"
-import { emitSessionSidebarRequest } from "../session-sidebar-events"
+import { emitSessionSidebarRequest, type SessionSidebarRequestAction } from "../session-sidebar-events"
 
 const log = getLogger("actions")
 
@@ -23,13 +25,29 @@ interface UseAppLifecycleOptions {
   setShowFolderSelection: (value: boolean) => void
   getActiveInstance: () => Instance | null
   getActiveSessionIdForInstance: () => string | null
+  commands?: Accessor<Command[]>
+  executeCommand?: (command: Command) => void
 }
 
 export function useAppLifecycle(options: UseAppLifecycleOptions) {
   onMount(() => {
     setEscapeStateChangeHandler(options.setEscapeInDebounce)
+    const isMainView = () => !options.showFolderSelection()
+    const hasActiveSession = () => {
+      const id = options.getActiveSessionIdForInstance()
+      return isMainView() && Boolean(options.getActiveInstance() && id && id !== "info" && id !== "logs")
+    }
+    // A composer is shown in a conversation and, before the first one, in the draft view.
+    const hasComposer = () => {
+      const id = options.getActiveSessionIdForInstance()
+      return isMainView() && Boolean(options.getActiveInstance()) && id !== "info" && id !== "logs"
+    }
+    const requestComposer = (action: SessionSidebarRequestAction) => {
+      const instance = options.getActiveInstance()
+      if (instance) emitSessionSidebarRequest({ instanceId: instance.id, action })
+    }
 
-    setupTabKeyboardShortcuts(
+    const cleanupTabs = setupTabKeyboardShortcuts(
       options.handleNewInstanceRequest,
       options.handleCloseActiveTab,
       options.handleNewSession,
@@ -40,46 +58,31 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
           showCommandPalette(instance.id)
         }
       },
+      isMainView,
     )
 
-    registerNavigationShortcuts()
-    registerInputShortcuts(
-      () => {
-        const textarea = document.querySelector(
-          ".session-cache-pane[aria-hidden=\"false\"] .prompt-input",
-        ) as HTMLTextAreaElement
-        if (textarea) textarea.value = ""
-      },
+    const cleanupNavigation = registerNavigationShortcuts(isMainView)
+    const cleanupInput = registerInputShortcuts(
+      () => requestComposer("clear-prompt"),
       () => {
         const textarea = document.querySelector(
           ".session-cache-pane[aria-hidden=\"false\"] .prompt-input",
         ) as HTMLTextAreaElement
         textarea?.focus()
       },
+      () => hasActiveSession() && Boolean(document.querySelector('.session-cache-pane[aria-hidden="false"] .prompt-input')),
+      hasComposer,
     )
 
-    registerAgentShortcuts(
-      () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-model-selector" })
-      },
-      () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-agent-selector" })
-      },
-      () => {
-        const instance = options.getActiveInstance()
-        if (!instance) return
-        emitSessionSidebarRequest({ instanceId: instance.id, action: "focus-variant-selector" })
-      },
+    const cleanupAgent = registerAgentShortcuts(
+      () => requestComposer("focus-model-selector"),
+      () => requestComposer("focus-agent-selector"),
+      () => requestComposer("focus-variant-selector"),
+      hasComposer,
     )
 
-    registerEscapeShortcut(
+    const cleanupEscape = registerEscapeShortcut(
       () => {
-        if (options.showFolderSelection()) return true
-
         const instance = options.getActiveInstance()
         if (!instance) return false
 
@@ -93,11 +96,6 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         return isSessionBusy(instance.id, sessionId)
       },
       async () => {
-        if (options.showFolderSelection()) {
-          options.setShowFolderSelection(false)
-          return
-        }
-
         const instance = options.getActiveInstance()
         const sessionId = options.getActiveSessionIdForInstance()
         if (!instance || !sessionId || sessionId === "info") return
@@ -114,14 +112,38 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
         active?.blur()
       },
       () => hideCommandPalette(),
+      hasActiveSession,
+      { isOpen: options.showFolderSelection, close: () => options.setShowFolderSelection(false) },
     )
 
-    const handleKeyDown = (e: KeyboardEvent) => {
-      const target = e.target as HTMLElement
+    if (options.commands && options.executeCommand) {
+      const executeCommand = options.executeCommand
+      for (const definition of commandHotkeyDefinitions) {
+        const command = options.commands().find(candidate => candidate.id === definition.id)
+        if (!command) continue // Native workspace actions are absent on the web.
+        keyboardRegistry.register({
+          id: definition.id,
+          description: resolveResolvable(command.description),
+          handler: () => executeCommand(command),
+          repeat: false,
+          condition: () => {
+            if (command.disabled && resolveResolvable(command.disabled)) return false
+            if (definition.scope === "app") return true
+            if (!isMainView()) return false
+            return definition.scope === "session" ? hasActiveSession() : Boolean(options.getActiveInstance())
+          },
+        })
+        onCleanup(() => keyboardRegistry.unregister(definition.id))
+      }
+    }
 
-      const isInCombobox = target.closest('[role="combobox"]') !== null
-      const isInListbox = target.closest('[role="listbox"]') !== null
-      const isInAgentSelect = target.closest('[role="button"][data-agent-selector]') !== null
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || document.querySelector('[role="dialog"][aria-modal="true"]')) return
+      const target = e.target instanceof Element ? e.target : null
+
+      const isInCombobox = Boolean(target?.closest('[role="combobox"]'))
+      const isInListbox = Boolean(target?.closest('[role="listbox"]'))
+      const isInAgentSelect = Boolean(target?.closest('[role="button"][data-agent-selector]'))
 
       if (isInCombobox || isInListbox || isInAgentSelect) {
         return
@@ -130,7 +152,7 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
       const shortcut = keyboardRegistry.findMatch(e)
       if (shortcut) {
         e.preventDefault()
-        shortcut.handler()
+        if (!(e.repeat && (shortcut.id === "session-abort" || shortcut.repeat === false))) shortcut.handler()
       }
     }
 
@@ -138,6 +160,11 @@ export function useAppLifecycle(options: UseAppLifecycleOptions) {
 
     onCleanup(() => {
       window.removeEventListener("keydown", handleKeyDown)
+      cleanupTabs()
+      cleanupNavigation()
+      cleanupInput()
+      cleanupAgent()
+      cleanupEscape()
     })
   })
 }

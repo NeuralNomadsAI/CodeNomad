@@ -1,0 +1,452 @@
+# Recurring Missions — simple native contract
+
+The Wayfinder UI-answer mark below applies to both one-time and recurring Missions.
+Acceptance status: `MISSIONS_RECURRING_QUALIFICATION.md`.
+
+## Product boundary
+
+Creation stores a paused schedule, never starts work or arms a timer, and is never
+resent; Play requests carry the then-current revision so CAS refuses a duplicate.
+New titles follow the 1–60 Mission title rule; stored schedules keep their
+120-character bound.
+Explicit user controls and native execution are separate responsibilities.
+
+## Schedule document and revision
+
+Store one schedule document in project-scoped plugin kv, including:
+
+- `id` and a user-visible `title`.
+- Instructions and daily `clock: { time, zone }`.
+- Frozen coordinator/role profiles, `taskMode` and template.
+- Watched conversations and their processed-message cursors.
+- Desired `state: paused | running | stopped`; stopped is terminal.
+- `lastDaily`, identifying the last settled scheduled civil day.
+- `pending`, either null or the exact passage identity and its progress.
+- Result history bounded to **30** entries.
+- A monotonically checked custom `revision`.
+
+Ceilings (`missions/recurrence-contract.ts`): 64 schedules per project, a 64 KiB
+configuration, a 256 KiB document and 64 remembered conversations
+(watched plus cursor-retaining); beyond that ceiling the document is refused, so never
+reset deduplication silently. Never add signing keys, authority epochs, grants,
+standing/child authority, per-effect receipts, budgets or ledgers, per-tool effect
+accounting or exact event-log replay to schedules, settlement or snapshots; human
+answers use the UI-answer marks below.
+
+Native kv offers no compare-and-swap, so the plugin serializes document updates and
+compares the supplied expected revision before committing the new revision; never
+follow a read with an unguarded write. Controls, due admission and settlement use
+the same guarded document mutation path; concurrent attempts cannot replace each
+other's pending identity or lose an archive.
+
+## User controls
+
+Create paused, Play, Pause, Stop, Resume, Run now and Check passage are admitted only through:
+
+1. The authenticated CodeNomad UI/backend route.
+2. The HMAC-authenticated bridge.
+3. The plugin's schedule-control RPC.
+
+The route's human principal, with local auth enabled, is a live login cookie
+session or, from the Remote Control ingress (socket membership), a paired device
+that is still authorized; the bridge callback revalidates the same principal and
+never treats a device as a cookie. Any other principal is refused before a
+deletion permit or control hold exists, so a refusal is definitive, never uncertain.
+
+Never expose these controls as model tools. Validate project/Location ownership,
+connection identity, inputs and frozen execution profiles at the existing boundary.
+Each control has `requestID` idempotency and `expectedRevision` CAS.
+A duplicate request must not start a second Job, passage or coordinator message.
+A stale revision is a conflict; never overwrite current state with it.
+Native stays the authoritative CAS: the exact status read reports `rejected`
+(`revision-conflict` or `control-conflict`) only when storage proves a request with
+no record never applied and never can — a later revision whose record provably was
+never evicted (the document bounds evicted revisions), or a pure pre-write refusal
+at its own revision. The route then releases the permit and answers 409
+`recurrence-revision-conflict` / `recurrence-control-conflict`. A control or Run
+now that fails before the route dispatches it (connection unavailable, Location
+ownership or deletion admission, another request's held permit) answers
+`recurrence-not-dispatched` (409 when another permit or a deletion blocks the
+hold or the permit table is full;
+otherwise 503). The code proves only that this attempt sent nothing: it means
+"no effect" solely for an identity the client never sent before. A refused
+repeat of an identity the backend still holds stays uncoded, but a backend that
+no longer holds it (for example after a restart, failing before any native read)
+cannot know an earlier send, so clients that repeat an identity must keep it
+uncertain and read its exact status. `/control`
+refuses `run-now` with 400 before any permit; Run now has its own endpoint. The
+UI releases these coded refusals and the route's pre-permit 400/401 for a
+request's first attempt only, refreshes the row and explains the refusal; a
+refused exact partial retry keeps the original held request and server permit.
+After a backend restart, an explicit partial Pause/Stop retry may take a fresh
+physical admission. Before dispatch, an authenticated exact native status read
+must prove the original action, request ID, expected revision, recorded revision
+and partial result in the current owned Location. Missing, foreign, completed or
+unknown records cannot authorize it. This never transfers an old permit, starts
+a Job or changes the request identity; native idempotency still decides effects.
+Failed preparation releases this fresh admission, but preserves a surviving
+original partial permit.
+Within one backend, a partial or uncertain Pause/Stop permit can outlive its
+retired OpenCode connection (event-stream end, failed request, new daemon).
+An explicit exact retry through the current connection may then prepare a fresh
+admission beside it, never transfer it: the same backend workspace object,
+native project ID and canonical path (which OpenCode derives from the Git root),
+directory, checkout, physical root and Settings profile must be re-proven, plus
+the same exact native partial record (random request ID, revision and state).
+Limit: these gates cannot distinguish a byte-identical copy of the native database
+served by another daemon at the same project/path; a retry's effects would land in
+that copy while the backend retires its permit. The old permit is retired
+only at dispatch, after the fresh one is entered. An in-flight, still-preparing
+or already-replacing original, a live original connection, or any mismatch
+refuses without effects; a deletion already waiting on the old permit blocks the
+fresh entry. Status reads through the current connection may still settle that
+permit (committed and complete, with the owner re-proven) while such a deletion
+waits, and never resend.
+A dispatched control or Run now that native refused before writing any record
+(transport-proof callback timeout, transient Git/family read, profile check,
+Resume not interrupted, service death) first reads unknown, as does a timeout.
+Every record-creating CAS (`beginControl`, `reserveManual`) rechecks the signed
+proof's 30 s freshness synchronously inside its write
+transaction. Once the backend's clock considers the exact proof it still holds
+expired, its status reads (and the route's immediate read after a lost reply)
+send that backend-signed `issuedAt` — never a browser value. Native, serialized
+with those CASes, answers `rejected` (`control-conflict`) only when its own clock
+also finds it expired by a further 5 s grace (so a CAS racing the boundary in
+another process sharing the storage has committed) and the request has no record that could ever have been
+evicted; it then retires the request ID in that native host, so an in-flight
+original (or any later attempt of that ID) fails at the CAS even if the wall
+clock moves back, and keeps answering `rejected` for it. The route releases the
+permit holding exactly that `issuedAt`, Location and request (with the owner
+re-proven through a replaced connection), unblocking controls and deletion. An
+unexpired proof or a mismatch stays unknown, and an unheld identity (for example
+after a backend restart, with no hint) cannot trigger retirement: it stays
+unknown unless native has already retired it. Retirement is process-local and bounded
+(4096 IDs); another daemon sharing the same storage relies on the expired proof
+alone, and clients must not reuse a rejected request ID.
+Everything else (including an unprovable profile change) stays unknown.
+
+If a reply is lost, retain that request identity and reread its status.
+Refresh, reconnect, remount and status reads never automatically resend it.
+An uncertain control must not be replaced with a fresh request to evade the hold.
+Resume is only ever an explicit user action. Stopped schedules cannot be played, resumed or run now.
+
+A schedule document keeps at most 64 control records. Admitting a new control
+evicts the oldest completed record; unresolved records are never evicted, and an
+evicted request's exact status reads unknown, which never authorizes a resend.
+`evictedControlRevision` bounds every evicted record's revision; a document without
+it starts from its current revision as the bound.
+A Play/Resume/Check whose Job or observer start stayed unknown is resolved by a
+later completed control that restarted or cancelled it. While such an intent, or
+a reserved but unadmitted Run now, stays unknown, the snapshot offers only
+Resume/Pause/Stop/Check and the UI enables exactly those that native offers once
+its snapshot records the intent; the original is never resent. The backend admits
+that new request with its own permit only after a fresh exact native read through
+the current connection shows the original recorded and incomplete under the same
+owner; a committed superseding control retires the original permit, a no-effect
+refusal restores it. If another client's exact read proves a retained middle
+intent had no effect while a newer control still supersedes it, only that
+intent's permit is released and the newer control inherits its predecessor, so
+a later no-effect restores (and a commit retires) the earlier intent instead of
+orphaning its permit. Run now itself completes only on admission or archive.
+In-flight, preparing and partial Pause/Stop permits are never superseded. A Play/Resume whose native
+Job start fails while a fresh read positively shows no running daily Job completes
+its record with the schedule Interrupted (reason `error`), releasing the backend
+permit for an explicit Resume/Pause/Stop; a failed or running read stays unknown.
+Interrupted(error) and the completed record are one CAS revision, so no crash can
+separate them; a crash before that write is an ordinary unknown start. A status
+read also resolves an incomplete current start intent already marked
+Interrupted(error) (for example by the daily Job's own fatal exit) when a fresh
+definite read shows no running daily Job. A Job writes that reason inside its own
+run, before native reports it not running, and Resume admits only after such a
+read, so a stale reason cannot land after Resume cleared it.
+Nothing retries the start. A Run now is resolved by
+its own passage's admission or archive; archiving also resolves Checks of that
+passage. Pause/Stop on a reserved passage without a journal mission has no actor
+to interrupt (dispatch of an unadmitted passage is refused once paused/stopped).
+
+## Threat model
+
+HMAC authenticates the desktop bridge. An unrestricted shell can read the service
+password and kv database and act with the service's privileges; native shell
+permissions and OS isolation are the security boundary, so never describe marks as
+tamper-proof. Ownership, authentication, permission and data-loss protections apply
+to every passage, and unknown effects stay unknown.
+
+## Native guarantees and missing primitives
+
+The implementation relies on existing native contracts, qualified at their callers:
+
+- Session creation with a caller-supplied session ID is idempotent.
+- Prompt admission with a caller-supplied message ID is first-admission-wins.
+- Plugin tools receive native session, message and call identity.
+- Jobs are process-local and disappear when the service restarts.
+- A turn holds a durable execution claim (`session_v2.time_suspended`) until its
+  terminal event; a hard kill leaves the claim without one. Never rely on native
+  continuation after a restart.
+
+Resume never sends a continuation or replacement coordinator prompt. A claim
+written before the current service process started and not live now is a turn
+cut by a restart: once the rest of the family is quiescent, the passage settles
+`ended-without-report` with reason `interrupted` ("Interrupted by a restart").
+If native work later resumes such a claim anyway, its effects remain unknown.
+
+Plugin-side mechanisms cover three native gaps:
+
+- Compare-and-swap: the revision guard above.
+- Family settlement: observation of the whole passage family and queues.
+- Form answerer identity: the backend UI-answer mark below.
+
+## Scheduler and civil time
+
+Keep **one native Job per running schedule** in the live OpenCode process.
+It sleeps until `min(nextDueAt, now + 1h)`, then rereads the wall clock and document.
+This hourly ceiling bounds clock-change detection; never poll per minute.
+A native `session.execution.succeeded|failed|interrupted` publication (Bus
+`listen`) also wakes the Job after a 3 s debounce, so settlement follows family
+quiescence in seconds; it is only a wake hint. Without that native contract the
+Job falls back to 30 s → 2 min → 5 min (capped) only while a passage is pending.
+On waking, verify desired running, no conflicting pending passage and a due
+civil day newer than `lastDaily` before attempting the guarded passage start.
+If several days were missed, admit the **latest missed day only**, never a backlog.
+
+Use the saved time zone and daily civil clock rather than 24-hour elapsed timers.
+Preserve the clock contract for DST gaps, advancing day-end gaps; a wholly skipped
+civil day has no passage. Repeated clock hours must not create two daily passages.
+A wall-clock rollback must not make an already processed day new again.
+`nextDueAt` is a display projection only; never schedule from it.
+
+Pause and Stop cancel the schedule Job and interrupt the pending passage's registered root coordinator; Stop is terminal.
+Retain pending passage identity and observations rather than clearing live work.
+
+Desired running without a live native Job is displayed as **Interrupted** with
+an interruption reason. Service restart therefore leaves scheduling Interrupted.
+Do not rearm from plugin load, a read, UI reopen or backend reconnect.
+Only explicit Resume may restore scheduling; pending work is reconciled first.
+An Interrupted schedule keeps its passage pending; a passage cut by the restart
+settles as interrupted after Resume, without waiting for a native continuation.
+
+## Write-ahead passage start and recovery
+
+Daily and manual passages use the same start/observation/settlement path.
+Before any native effect, CAS-write a pending record containing:
+
+- Deterministic `passageID`.
+- `coordinatorSessionID`.
+- Caller `messageID` for the coordinator's original instructions.
+
+The daily identity is tied to its schedule/civil day; a manual identity is tied
+to the accepted Run now request. Never use recovery to invent a new identity.
+Create/admit only the original native identities after the pending commit.
+If a crash occurs, inspect the exact native session, message and inbox.
+Never resend under a new identity or infer missing work from a lost RPC reply.
+
+Resume is allowed when a passage is pending, but it is **reconcile-only** for that
+passage: no second coordinator message. Unknown native coverage leaves pending
+uncertain and blocks a further passage. Never let an expiry turn unknown into a replay.
+
+An unadmitted pending passage is reconciled by reading natively whether its
+deterministic start message exists (delivered or inbox):
+
+- Present: record the admission and continue observing.
+- Absent, and the start input can never be built (watched conversation deleted or
+  moved, input capacity) or the schedule no longer allows dispatch: archive
+  `failed` with reason `not-started`. This is the only archive without an
+  admission; nothing was sent, so nothing can replay. The coordinator session is
+  kept, `lastDaily` advances normally and watched cursors do not.
+- Absent for a transient cause: retry admission on a later wake with the **same**
+  session and message identities (native first admission wins), never a new one.
+  Retry applies only while no admission was ever recorded. Once recorded, a later
+  native absence of the start message (pruned history) is observed history: the
+  passage settles by family quiescence and the message is never sent again.
+Run now cannot overlap an unresolved pending passage or bypass terminal Stop.
+A manual run never counts as another scheduled civil day's completion.
+
+Run now without a live schedule Job (paused, or Interrupted after a restart)
+starts a separate **settlement-only observer Job** using the same sleep/wake seam,
+including the native execution-event wake and the pending fallback backoff. It is
+reconcile-only (never a second coordinator message; at most the original start
+identity while dispatch is allowed), never starts daily passages and exits once
+the passage settles. Pause cancels it. Stop keeps (restarts) it for a pending
+passage so the passage still archives honestly; the schedule stays terminal. A
+live running schedule's own Job observes its manual passage instead. The observer
+starts only on a definite native read that no daily Job runs, or on an unknown read
+of a schedule not desired running; an unknown read of a desired-running schedule
+starts nothing (if its Job is in fact gone it shows Interrupted and Resume
+reconciles the passage), so no second observer runs beside the daily Job. After a
+service restart with a pending passage on a paused or stopped schedule, the
+snapshot offers an explicit **Check passage** (`check`) control, admitted like the
+others (requestID, expectedRevision, authenticated route), which only restarts
+that observer and keeps the schedule paused or stopped.
+
+A failed wake keeps the Job running: it records a display-only `lastError
+{ code, at }` in a sibling kv key (outside the document revision) and retries with
+a capped backoff (30 s, 2 min, 5 min, 15 min, 1 h). The next successful wake clears
+it. Only definitively fatal causes (Location or Job binding gone) end the Job as
+Interrupted with reason `error`; a missing or stopped schedule simply exits.
+
+## Passage tools and journals
+
+Register `mission_*` tools independently of CodeNomad backend presence.
+Use native session identity to route a passage and its actors to its isolated
+journal; otherwise route to the one-time journal. Do not accept arbitrary journal
+selectors from the model. Native message/call identity serves ordinary tool
+admission and journal ownership.
+
+Native permissions govern every other tool: read, shell, ordinary subagents and
+business tools run under those permissions alone. Preserve frozen profiles and taskMode.
+Both native descendants and passage-owned independent actors must be accounted
+for without inventing ancestry from task dependencies.
+
+## Settlement, result and watched cursors
+
+Settlement requires the coordinator and **all descendants** to be inactive,
+their inboxes empty, no applicable pending Form/permission, and no running Shell
+or background subagent. Passage-owned independent actors also cannot remain live.
+All of these conditions must hold together, whatever the activity or final report.
+Use bounded native observations, recheck identities and retain pending on unknown,
+incomplete or over-bound coverage.
+The family walk shares the 4096-session whole-family control ceiling
+(`MAX_CONTROL_FAMILY_SESSIONS`) with one-time lifecycle control, so ordinary
+recursive delegation settles; a larger family stays pending as unknown coverage
+(no archive, no cursor advance); it is never assumed complete.
+
+Supported outcomes are:
+
+- `completed`: the settled passage has a final `mission_report(outcome: "completed")`.
+  It stands even if a native failure occurs later during wrap-up.
+- `failed`: either a final business `mission_report(outcome: "failed")`, or a native
+  terminal failure in the family without a completed final report. Never guessed
+  from prose or an idle flag.
+- `ended-without-report`: settled native work ended without a final report and
+  without native terminal failure; reason `interrupted` when a family claim was
+  cut by a service restart.
+
+Atomically archive the result, clear pending and update the scheduled `lastDaily`
+in the guarded schedule document. Keep history at ≤30; do not let a crash between
+separate document writes permit a second passage for the same settled day.
+Advance watched processed-message cursors **only on completed**.
+Failed and ended-without-report leave those cursors unchanged.
+Keep watch cursor continuity when a watch is removed.
+
+Watched sources (`opencode/missions/native-service-adapter.ts`, `missions/recurrence-input.ts`):
+
+- Read only the configured conversation IDs, in order, through exact native
+  `get`/`message`/`messages` calls, each source placed in the project at its exact
+  directory/workspace under a configured root; never list sessions, discover
+  ancestry or fall back to full history.
+- Read at most 32 messages per source, ascending after the exact cursor, as a stable
+  complete-message prefix: a streaming assistant or tool, running Shell or compaction
+  ends it, every message is point-read again and changed bytes defer it and every
+  later ID, and a location switch fails the read. After the query the anchor's full
+  native bytes and the source placement are rechecked; a deleted, rewritten or moved
+  anchor is never read as no change.
+- Project only user/synthetic text and assistant text parts with the message ID,
+  type, native digest and completion time; never tools, reasoning, images, skills,
+  provider state or credentials.
+- Keep messages whole. The whole start text fits the 16,384-character lifecycle
+  input; each source gets the room left after the instructions, the worst-case
+  envelope (descriptors ≤ 48 KiB), earlier sources' messages and a 1 KiB reserve per
+  remaining watch (`recurrence-read-budget.ts`). A message that does not fit ends the
+  batch as an unconsumed `needsDecision: "source-input-capacity"` reference with
+  empty text.
+- Cursors keep each source's placement digest: re-adding a moved source fails closed
+  instead of resetting its high-water mark.
+
+## Wayfinder human decision mark — both execution modes
+
+When the user answers a native Form through CodeNomad's InterruptionDock, the
+backend records `{ formID, sessionID, answeredAt, via: "ui" }` in two phases:
+a `pending` mark with a fresh `attemptID` before forwarding, promoted to
+`confirmed` only after the native reply returns positively for that attempt.
+A definitely failed forward (Form still observed pending) removes the mark; a
+lost/uncertain reply leaves it pending forever. Pending never qualifies, so a
+later non-UI answer cannot borrow an earlier failed UI attempt; Wayfinder may ask again.
+The Wayfinder human gate accepts only a native Form with the matching confirmed UI mark.
+A refusal reaches the model as "Human decision required: the user must answer this
+question from the CodeNomad interface", with the gate's cause as a detail.
+The gate also proves the decision session natively: a fresh child of the expected
+parent's exact `subagent` call whose prompt carries the declared assignment. Answers
+and execution failures are read from durable message projections (completed question
+part, `idle` outcome). Native question and delegation evidence counts only from
+local tool parts and events: `isLocalNativeTool` (`missions/native-call-observation.ts`)
+accepts `executed === false`; `true` (provider-hosted) or a missing flag never qualifies.
+Do not infer identity from answer text, tool completion or the agent's assertion.
+
+Only Forms whose session belongs to a Mission family take the mark path: a root
+with `codenomad.mission` metadata, or a metadata-less root (an attached
+existing coordinator) that the plugin finds as the coordinator actor of a
+Mission in the project's durable one-time journal, after walking the bounded
+native parent chain to exactly that root. Every other Form uses the ordinary
+native reply unchanged and gets no mark. Marks live under
+`codenomad-missions/human-marks-v1`.
+
+The UI principal is explicit in the private bridge proof: a local login cookie
+session (auth enabled), or a paired Remote Control device chosen by ingress
+socket membership. A device qualifies only while Remote Control is connected
+and the device is still paired, unrevoked and unexpired; the route and the
+bridge callback revalidate that principal across native I/O. A device ID never
+poses as a cookie session. When the mark cannot be prepared before forwarding
+(no authenticated principal, plugin/binding unavailable, revocation or a
+session move), the answer falls back to the ordinary reply without a mark; the
+user is never blocked from answering. The human-answer header alone (automation,
+Yolo, SDK) never mints a mark. The dock sends `x-codenomad-human-answer` only for a
+real pointer click or submit keydown on that exact question, never for
+`element.click()`, `requestSubmit()`, synthetic events, developer automation,
+Auto/Yolo or SDK calls (`tests/browser/interruption-dock.test.ts`,
+`automation-input.test.ts`). The input captures a one-use token bound to the exact
+request, schema and answer (`lib/form-answer-interaction.ts`); it expires with that
+input task and is consumed at the SDK send in `stores/instances.ts`. Only a dispatched mark reply with a lost outcome is
+reported as uncertain.
+
+Missing evidence leaves the gate unmet and never replays an answer; the ordinary
+answer path keeps its ownership and uncertainty checks.
+
+## Per-schedule snapshot
+
+Expose `id`, `title`, `clock`, display `nextDueAt`, revision and available actions.
+Expose state including Interrupted and `interruptionReason` when applicable.
+Expose pending status `starting | running | settling | uncertain`, exact identity,
+latestResult and history. `starting` means a live Job/observer is handling a not
+yet admitted start; `uncertain` (with reason `not-observed` or `admission-failing`)
+only when no observer is live or that admission keeps failing. History and pending
+items carry their `daily | manual` trigger; a non-blocking `lastError` is exposed
+while relevant.
+Actions reflect terminality, unresolved controls and pending passage state.
+Read-only projections and invalidations never start work or settle unknown sends.
+
+## Acceptance journeys
+
+1. **Daily useful work:** create paused → explicit Play → close UI/backend → due
+   passage uses ordinary read/shell and Mission tools → final report → whole family
+   settled → atomic archive → next day's passage. Verify no overlapping passage,
+   one Job and one coordinator message, frozen profiles and completed-only cursors,
+   in both task modes.
+2. **Restart with pending:** restart the service during a pending passage → reopen
+   shows Interrupted → explicit Resume reconciles existing session/message/inbox →
+   no second coordinator message → settled archive (`ended-without-report` /
+   `interrupted` when the restart cut the turn) → next day. Missing/uncertain evidence
+   stays pending, and only Resume rearms scheduling.
+3. **Run now:** explicit authenticated Run now uses the shared write-ahead path;
+   duplicate request/status reads produce no second passage. An unresolved pending
+   passage blocks overlap. A lost reply is reread, never automatically resent.
+4. **Pause/Stop:** cancel the Job, verify no later due admission; pending work is
+   still observed honestly. Pause can be explicitly resumed; Stop cannot. Exercise
+   CAS conflicts and cancellation uncertainty without claiming recursive suspension.
+5. **Human gate:** native UI Form answer has the matching mark in both modes;
+   an agent/native answer without it leaves Wayfinder's human gate unmet.
+
+Acceptance requires these integrated journeys; isolated helper tests never count.
+
+Coverage: the offline `recurring-day.e2e.test.ts` fixture drives the real plugin,
+scheduler, storage and `mission_*` tools with a scripted model that only records
+`read`/`shell` call names. Real shell/backend execution under native permissions is
+covered by the isolated native qualification fixture
+(`MISSIONS_RECURRING_QUALIFICATION.md`, journeys A–G, L, W, Q and N).
+Native tests must use isolated service/database/provider fixtures, never the shared
+daemon or user Mission.
+
+## Agent conventions
+
+- Missions autonomy target is explicitly native: the OpenCode service/plugin runs scheduled passages with both CodeNomad UI and intermediary backend closed; neither a persistent CodeNomad backend nor a window timer is a substitute. One process-local native Job per running schedule sleeps until min(nextDueAt, now + 1h), then rereads clock/document and admits only the latest due civil day newer than lastDaily. A native session-execution terminal event (Bus `listen`, 3 s debounce) also wakes the Job so archives follow family quiescence promptly; the event is a wake hint, never settlement evidence. Pause/Stop cancel the Job; desired running without a live Job is Interrupted until explicit Resume, never automatic rearming. Do not rely on native continuation after a restart: Resume never sends one, and a family turn cut by the restart settles `ended-without-report` / `interrupted`.
+- Core: `missions/recurrence-{contract,clock,store,runner}.ts` (native side `opencode/missions/native-recurrence-*.ts`); omitting a profile variant is valid. Every rule in the sections above binds.
+- Root and schedule admission read the family identity with `readFamilyAuthorityIdentity` (`workspaces/family-authority-claim.ts`) only for a directory WorkspaceManager already authorized: registered linked worktrees share their Git common directory's identity, and a Git-free conversation has none, so it can never infer a family.

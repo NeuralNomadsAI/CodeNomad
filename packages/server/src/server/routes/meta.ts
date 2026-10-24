@@ -1,14 +1,18 @@
 import { FastifyInstance } from "fastify"
 import { ServerMeta } from "../../api-types"
+import { isRemoteRequest } from "../../remote-control/request-origin"
 import { isLoopbackHost, isWildcardHost } from "../network-host"
- 
+import { serverOperatingSystemName } from "../os-name"
 
 interface RouteDeps {
   serverMeta: ServerMeta
 }
 
 export function registerMetaRoutes(app: FastifyInstance, deps: RouteDeps) {
-  app.get("/api/meta", async () => buildMetaResponse(deps.serverMeta))
+  app.get("/api/meta", async (request) => ({
+    ...buildMetaResponse(deps.serverMeta),
+    ...(isRemoteRequest(request) ? { remoteControl: true as const } : {}),
+  }))
 }
 
 function buildMetaResponse(meta: ServerMeta): ServerMeta {
@@ -17,7 +21,7 @@ function buildMetaResponse(meta: ServerMeta): ServerMeta {
 
   return {
     ...meta,
-    system: { platform: process.platform, arch: process.arch },
+    system: { platform: process.platform, arch: process.arch, name: serverOperatingSystemName() },
     localPort,
     remotePort: remote?.port,
     listeningMode: isWildcardHost(meta.host) || !isLoopbackHost(meta.host) ? "all" : "local",

@@ -8,11 +8,10 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined
 }
 
-export function getQuestionReceipts(payload: { input: Record<string, unknown>; metadata: Record<string, unknown>; output: unknown }) {
+export function getQuestionReceipts(payload: { input: Record<string, unknown>; metadata: Record<string, unknown> }) {
   const questions = payload.input.questions
-  // Native metadata is authoritative, including malformed or explicitly empty answers.
-  const answers = Object.prototype.hasOwnProperty.call(payload.metadata, "answers")
-    ? payload.metadata.answers : record(payload.output).answers
+  // Native metadata is the only answer source, including malformed or explicitly empty answers.
+  const answers = payload.metadata.answers
   if (!Array.isArray(questions)) return []
 
   return questions.flatMap((value, index) => {

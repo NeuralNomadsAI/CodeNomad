@@ -17,7 +17,6 @@ const cli = process.argv[2]
 if (!cli || !path.isAbsolute(cli)) throw new Error("Pass an absolute path to the CLI executable to test in isolation")
 const runtimeVersion = execFileSync(cli, ["--version"], { encoding: "utf8" }).trim().replace(/^opencode2? v/, "")
 const ui = process.argv.includes("--ui")
-const legacyPruning = process.argv.includes("--legacy-pruning")
 const pluginArgument = process.argv[3]?.startsWith("--") ? undefined : process.argv[3]
 const pluginDirectory = pluginArgument ?? fileURLToPath(new URL("../packages/server/src/opencode/session-pruning/", import.meta.url))
 if (!path.isAbsolute(pluginDirectory)) throw new Error("Plugin directory must be absolute")
@@ -120,7 +119,7 @@ env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
   model: "fixture/fixture",
   permissions: [{ action: "read", resource: "*", effect: "ask" }],
   commands: { fixture: { description: "Isolated contract fixture", template: "Conclude briefly." } },
-  providers: { fixture: { package: `${runtimeVersion === "0.0.0-beta-19271" ? "@opencode-ai" : "@opencode"}/ai/providers/openai-compatible`, settings: {
+  providers: { fixture: { package: "@opencode/ai/providers/openai-compatible", settings: {
     baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only",
   }, models: { fixture: {} } } },
   plugins: [path.join(root, "plugin")],
@@ -242,7 +241,7 @@ try {
     },
   })
   primaryCount = 0
-  const location = { directory: root, ...(legacyPruning ? { workspaceID: "wrk_pruning_fixture" } : {}) }
+  const location = { directory: root }
   const { locationRequestOptions } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
   const locationOptions = locationRequestOptions(location)
   const session = await client.session.create({ location }, locationOptions)
@@ -279,6 +278,12 @@ try {
   const messages = (await client.message.list({ sessionID: session.id, limit: 100, order: "asc" })).data
   const target = messages.find(message => message.type === "assistant" && message.content.some(part => part.type === "tool"))
   assert(target)
+  const reasoning = target.content.find(part => part.type === "reasoning")
+  assert.deepEqual(reasoning.native, { reasoningField: "reasoning_content" })
+  const reasoningEnded = event => event.type === "session.reasoning.ended" && event.data.assistantMessageID === target.id
+  await until(() => first.some(reasoningEnded))
+  assert.deepEqual(first.find(reasoningEnded).data.native, reasoning.native, "native SSE and HTTP retain identical provider replay metadata")
+  console.log("PASS: native reasoning replay metadata agrees between SSE and HTTP")
   const { testSessionHistoryNative } = await import("./test-session-history-native.mjs")
   await testSessionHistoryNative({ client, location, locationOptions, template: target })
   const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
@@ -373,7 +378,7 @@ try {
   ;({ child, stopped } = start())
   await until(() => /http:\/\/127\.0\.0\.1:\d+/.test(output))
   const restartedEndpoint = { ...connection.endpoint, url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0] }
-  rememberRuntime(restartedEndpoint, { version: runtimeVersion, pid: child.pid, discovery: "status" })
+  rememberRuntime(restartedEndpoint, { version: runtimeVersion, pid: child.pid, discovery: "info" })
   const restarted = OpenCode.make({ baseUrl: restartedEndpoint.url, fetch: createRuntimeFetch(restartedEndpoint) })
   assert.deepEqual((await restarted.session.message.get({ sessionID: session.id, messageID: target.id })).content, [])
   assert.deepEqual((await restarted.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
@@ -406,7 +411,6 @@ try {
     console.log("PASS: installation on an already-running daemon and crash expiry without stopping OpenCode")
   }
   console.log("PASS: native plugin preview/prune RPC, active-claim refusal, idempotent retry, two subscribers, competing prompt, next model payload, fork isolation, pre-compaction history and restart")
-  if (legacyPruning) console.log("PASS: complete native pruning suite with non-null legacy workspace identity")
 } finally {
   diagnostics.stage("cleanup-presence")
   await closePresence?.()

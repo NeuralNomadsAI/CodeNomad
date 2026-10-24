@@ -1,7 +1,7 @@
 /* Log view utilities */
 .log-container {
   @apply relative flex flex-col h-full;
-  background-color: var(--surface-base);
+  background-color: var(--surface-inset);
 }
 
 .log-header {
@@ -58,7 +58,7 @@
   @apply flex flex-col items-center justify-center gap-3 text-center py-10 px-6;
   border: 1px dashed var(--border-base);
   border-radius: 0;
-  background-color: var(--surface-base);
+  background-color: var(--surface-inset);
 }
 
 .log-paused-title {
@@ -90,7 +90,7 @@
   height: 2.75rem;
   border-radius: 0;
   border: 1px solid var(--border-base);
-  background-color: var(--surface-base);
+  background-color: var(--surface-control);
   color: var(--text-primary);
   box-shadow: var(--scroll-elevation-shadow);
   transition: background-color 0.2s ease, transform 0.2s ease;
@@ -103,7 +103,7 @@
 
 .log-container .message-scroll-button:focus-visible {
   outline: none;
-  box-shadow: 0 0 0 2px var(--surface-base), 0 0 0 4px var(--accent-primary);
+  box-shadow: 0 0 0 2px var(--surface-inset), 0 0 0 4px var(--accent-primary);
 }
 
 .log-container .message-scroll-icon {

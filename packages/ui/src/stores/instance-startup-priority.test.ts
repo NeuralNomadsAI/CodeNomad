@@ -1,11 +1,19 @@
 import assert from "node:assert/strict"
 import { it } from "node:test"
+import toast from "solid-toast"
 import { serverApi } from "../lib/api-client"
+import { getToastHistory } from "../lib/notifications"
+import { tGlobal } from "../lib/i18n"
 import { serverEvents } from "../lib/server-events"
 import { sdkManager } from "../lib/sdk-manager"
-import { removeInstance, waitForInstanceInitialSessionHydration } from "./instances"
+import { sseManager } from "../lib/sse-manager"
+import { addInstance, incompletePendingRecovery, invalidatePendingRequestSync, removeInstance, syncPendingRequests, waitForInstanceInitialHydration, waitForInstanceInitialSessionHydration } from "./instances"
 import { getSessionListIds, sessions } from "./session-state"
 import { refreshSessionCatalog } from "./session-api"
+import { reloadWorktrees } from "./worktrees"
+
+// Fixture workspaces live in /repo; newest warning first, like the notification history.
+const recoveryWarnings = () => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryIncomplete.title", { workspace: "repo" }))
 
 it("publishes root sessions before project metadata and checkout discovery, then reconciles verified families", async () => {
   const id = "startup-slow-checkouts"
@@ -66,5 +74,96 @@ it("publishes root sessions before project metadata and checkout discovery, then
     serverApi.fetchWorktrees = oldWorktrees
     removeInstance(id, { authoritative: false })
     sdkManager.destroyClientsForInstance(id)
+  }
+})
+
+it("warns when initial hydration fails before pending recovery can start", async () => {
+  const id = "startup-pending-unavailable"
+  const oldCreate = sdkManager.createClient, oldWorktrees = serverApi.fetchWorktrees
+  const oldToast = toast.custom
+  toast.custom = () => "fixture-toast"
+  const client: any = { session: { list: async () => ({ data: [], cursor: {} }) }, location: { get: async () => ({ directory: "/repo" }) } }
+  sdkManager.createClient = () => client
+  serverApi.fetchWorktrees = async () => { throw new Error("Worktree metadata unavailable") }
+  const warnings = () => recoveryWarnings().length
+  const before = warnings()
+  try {
+    ;(serverEvents as any).dispatch({ type: "workspace.started", workspace: {
+      id, path: "/repo", status: "ready", proxyPath: `/workspaces/${id}/instance`,
+    } })
+    await assert.rejects(waitForInstanceInitialHydration(id))
+    assert.equal(warnings(), before + 1)
+  } finally {
+    sdkManager.createClient = oldCreate
+    serverApi.fetchWorktrees = oldWorktrees
+    toast.custom = oldToast
+    removeInstance(id, { authoritative: false })
+    sdkManager.destroyClientsForInstance(id)
+  }
+})
+
+for (const scenario of ["success", "reuse", "invalidation", "unrelated compaction"] as const) it(`startup metadata failure after ${scenario} stays incomplete only when unrecovered and warns on a consecutive failure`, async () => {
+  const oldCreate = sdkManager.createClient, oldWorktrees = serverApi.fetchWorktrees, oldPending = serverApi.getPendingRequests
+  const oldToast = toast.custom
+  toast.custom = () => "fixture-toast"
+  const warnings = () => recoveryWarnings().length
+  serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({
+    directory, status: "ok" as const, locations: [{ location: { directory }, permissions: [], forms: [] }],
+  })) })
+  const id = `stale-startup-${scenario}`, otherId = `compaction-${id}`
+  let failWorktrees!: (error: Error) => void
+  const worktrees = new Promise<any>((_resolve, reject) => { failWorktrees = reject })
+  const client: any = { session: { list: async () => ({ data: [], cursor: {} }) }, location: { get: async () => ({ directory: "/repo" }) } }
+  sdkManager.createClient = () => client
+  let reads = 0
+  serverApi.fetchWorktrees = () => { reads++; return worktrees }
+  // Startup joins an existing forced read, whose failure is not swallowed like an initial inventory miss.
+  const preload = reloadWorktrees(id)
+  void preload.catch(() => {})
+  try {
+    for (let attempt = 0; attempt < 100 && !reads; attempt++) await new Promise<void>(resolve => setImmediate(resolve))
+    assert.equal(reads, 1)
+    const before = warnings()
+    ;(serverEvents as any).dispatch({ type: "workspace.started", workspace: {
+      id, path: "/repo", status: "ready", proxyPath: `/workspaces/${id}/instance`,
+    } })
+    const failed = assert.rejects(waitForInstanceInitialHydration(id), /Old checkout read failed/, scenario)
+    await new Promise<void>(resolve => setImmediate(resolve))
+    if (scenario === "reuse") {
+      removeInstance(id, { authoritative: false })
+      addInstance({ id, folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client: { ...client } })
+    } else if (scenario === "invalidation") invalidatePendingRequestSync(id)
+    else if (scenario === "unrelated compaction") {
+      addInstance({ id: otherId, folder: "/other", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+      sseManager["handleEvent"](otherId, { id: "start", created: 1, type: "session.compaction.started",
+        location: { directory: "/other" }, data: { sessionID: "unrelated", reason: "auto" },
+      } as any)
+    }
+    if (scenario === "success" || scenario === "reuse") await syncPendingRequests(id)
+    failWorktrees(new Error("Old checkout read failed"))
+    await assert.rejects(preload)
+    await failed
+    await new Promise<void>(resolve => setImmediate(resolve))
+    const unrecovered = scenario === "invalidation" || scenario === "unrelated compaction"
+    assert.equal(incompletePendingRecovery().has(id), unrecovered)
+    // A single incomplete recovery is retained silently; only a consecutive one warns.
+    assert.equal(warnings(), before)
+    // The unrelated compaction is still active, so its next attempt is deferred rather than counted.
+    if (scenario === "invalidation") {
+      serverApi.getPendingRequests = async () => { throw new Error("Recovery still unavailable") }
+      await syncPendingRequests(id).catch(() => {})
+      assert.equal(warnings(), before + 1)
+      // The warning describes the attempt that crossed the threshold.
+      assert.equal(recoveryWarnings()[0]?.message, tGlobal("interruption.recoveryIssue.unavailableDetail", { directories: "repo", detail: "Recovery still unavailable" }))
+    }
+  } finally {
+    failWorktrees(new Error("Fixture disposed"))
+    removeInstance(otherId, { authoritative: false })
+    removeInstance(id, { authoritative: false })
+    sdkManager.destroyClientsForInstance(id)
+    sdkManager.createClient = oldCreate
+    serverApi.fetchWorktrees = oldWorktrees
+    serverApi.getPendingRequests = oldPending
+    toast.custom = oldToast
   }
 })

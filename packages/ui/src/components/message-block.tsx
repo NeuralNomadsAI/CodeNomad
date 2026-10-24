@@ -6,17 +6,27 @@ import type { SessionInboxUser } from "@opencode/client"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
 import type { ClientPart, Message, MessageInfo, TextPart } from "../types/message"
 import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData, clearRecordDisplayCacheForInstance } from "../stores/message-v2/record-display-cache"
+import {
+  buildRecordDisplayData,
+  clearRecordDisplayCacheForInstance,
+  MESSAGE_PART_REVEAL_STEP,
+  revealHiddenRecordParts,
+} from "../stores/message-v2/record-display-cache"
 import type { MessageRecord } from "../stores/message-v2/types"
 import { messageStoreBus } from "../stores/message-v2/bus"
-import { formatTokenTotal } from "../lib/formatters"
 import { ensureSessionAncestorsExpanded, sessions, setActiveSessionFromList } from "../stores/sessions"
 import { selectInstanceTab } from "../stores/app-tabs"
 import { useI18n, type I18nContextValue } from "../lib/i18n"
+import { withHotkey } from "../lib/hotkeys"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
-import { formatElapsedClock, inferReasoningDurationMs } from "../lib/message-timing"
+import { formatElapsedDuration, getPartEndedAt, getPartStartedAt, inferReasoningDurationMs } from "../lib/message-timing"
+import { PartDuration } from "./part-duration"
 import type { SessionSearchMatch } from "../lib/session-search"
+import { applySearchHighlights, clearSearchHighlights, type SearchRevealRequest } from "./search-highlights"
+import type { AlignInTranscript } from "./search-highlight-ranges"
+import { focusRevealedElement } from "./reveal-focus"
+import { TranscriptAlignmentContext } from "./transcript-alignment"
 import type { ActionOverflowMenuItem } from "./action-overflow-menu"
 import { copyToClipboard } from "../lib/clipboard"
 import SpeechActionButton from "./speech-action-button"
@@ -28,8 +38,13 @@ import {
   getSessionMessageRenderCache,
   peekSessionMessageRenderCache,
   purgeMessageRenderCache,
-  extractReasoningTextForCopy,
+  extractReasoningTextForRender,
+  extractWholeReasoningText,
+  REASONING_RENDER_CHARACTER_LIMIT,
 } from "../lib/message-render-cache"
+import { STREAMING_INSTANT_RENDER_CHARACTER_LIMIT, STREAMING_RENDER_INTERVAL_MS } from "../lib/render-text-window"
+import { createTextWindow, HiddenTextNotice } from "./hidden-text"
+import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { accountSessionTranscript } from "../stores/session-transcript-memory"
 import { parseReasoningSummary } from "../lib/reasoning-summary"
 import { getFormQueue } from "../stores/forms"
@@ -38,11 +53,10 @@ import { showAlertDialog } from "../stores/alerts"
 import { resolveFormToolTarget } from "./form-request-tool-target"
 import { Markdown } from "./markdown"
 import { useTheme } from "../lib/theme"
-import { groupTechnicalParts, isTechnicalGroupingVisiblePart, isVisibleStepFinish, segmentExplorationItems, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
+import { groupTranscriptRows, isTechnicalGroupingVisiblePart, segmentExplorationItems, transcriptPartKind, sumMessageUsage, technicalPartKey, type TechnicalCleanupPart, type TranscriptTechnicalGroup } from "../lib/message-part-grouping"
+import { MessageUsage } from "./message-usage"
 
-const USER_BORDER_COLOR = "var(--message-user-border)"
 const ASSISTANT_BORDER_COLOR = "var(--message-assistant-border)"
-const NO_STEP_BORDER = "none"
 const BACKGROUNDABLE_TOOLS = new Set(["bash", "shell", "task", "subagent"])
 
 const LazyToolCall = lazy(() => import("./tool-call"))
@@ -158,83 +172,6 @@ messageStoreBus.onInstanceDestroyed(clearInstanceCaches)
 messageStoreBus.onSessionCleared(clearSessionRenderCache)
 messageStoreBus.onMessagesRemoved(clearMessageRenderCache)
 
-function removeSearchMarks(root: HTMLElement) {
-  const marks = Array.from(root.querySelectorAll("mark.session-search-match"))
-  for (const mark of marks) {
-    const parent = mark.parentNode
-    if (!parent) continue
-    parent.replaceChild(document.createTextNode(mark.textContent ?? ""), mark)
-    parent.normalize()
-  }
-}
-
-function getPartIdForSearchContainer(container: HTMLElement): string | undefined {
-  const target = container.closest<HTMLElement>("[data-part-id]") ?? container
-  const id = target.dataset.partId
-  return id && id.length > 0 ? id : undefined
-}
-
-function applySearchMarks(root: HTMLElement, query: string, activeMatch?: SessionSearchMatch | null, scrollActive = false) {
-  removeSearchMarks(root)
-  const normalizedQuery = query.trim().toLocaleLowerCase()
-  if (!normalizedQuery) return
-
-  const containers = Array.from(root.querySelectorAll<HTMLElement>(".message-text, .tool-call, .message-reasoning-text"))
-  let occurrenceInActivePart = 0
-  let activeMark: HTMLElement | null = null
-
-  for (const container of containers) {
-    const containerPartId = getPartIdForSearchContainer(container)
-    const canContainActiveMatch = Boolean(activeMatch) && (!activeMatch?.partId || activeMatch.partId === containerPartId)
-    const walker = document.createTreeWalker(container, NodeFilter.SHOW_TEXT, {
-      acceptNode(node) {
-        const parent = node.parentElement
-        if (!parent) return NodeFilter.FILTER_REJECT
-        if (parent.closest("button, input, textarea, select, mark.session-search-match")) return NodeFilter.FILTER_REJECT
-        if (!node.nodeValue || !node.nodeValue.toLocaleLowerCase().includes(normalizedQuery)) return NodeFilter.FILTER_REJECT
-        return NodeFilter.FILTER_ACCEPT
-      },
-    })
-
-    const textNodes: Text[] = []
-    while (walker.nextNode()) {
-      textNodes.push(walker.currentNode as Text)
-    }
-
-    for (const textNode of textNodes) {
-      const original = textNode.nodeValue ?? ""
-      const lower = original.toLocaleLowerCase()
-      const fragment = document.createDocumentFragment()
-      let cursor = 0
-      while (cursor < original.length) {
-        const index = lower.indexOf(normalizedQuery, cursor)
-        if (index === -1) break
-        if (index > cursor) {
-          fragment.appendChild(document.createTextNode(original.slice(cursor, index)))
-        }
-        const mark = document.createElement("mark")
-        const isActive = Boolean(canContainActiveMatch && activeMatch && occurrenceInActivePart === activeMatch.occurrence)
-        mark.className = isActive ? "session-search-match session-search-match-active" : "session-search-match"
-        mark.textContent = original.slice(index, index + normalizedQuery.length)
-        fragment.appendChild(mark)
-        if (canContainActiveMatch) {
-          if (isActive) activeMark = mark
-          occurrenceInActivePart += 1
-        }
-        cursor = index + normalizedQuery.length
-      }
-      if (cursor < original.length) {
-        fragment.appendChild(document.createTextNode(original.slice(cursor)))
-      }
-      textNode.parentNode?.replaceChild(fragment, textNode)
-    }
-  }
-
-  if (activeMark && scrollActive) {
-    requestAnimationFrame(() => activeMark?.scrollIntoView({ block: "center", inline: "nearest", behavior: "smooth" }))
-  }
-}
-
 interface ContentDisplayItem {
   type: "content"
   key: string
@@ -267,17 +204,12 @@ interface MessageContentItemProps {
   onPendingPromptRemove?: (item: SessionInboxUser) => void
   technicalCleanupParts: () => TechnicalCleanupPart[]
   onTechnicalCleanupHoverChange?: (hovered: boolean) => void
+  usageVisibility: () => VisibilityPreference
   onContentRendered?: () => void
 }
 
-function isSupportedPartType(part: unknown): boolean {
-  const type = (part as any)?.type
-  // Ignore part types the UI does not support rendering yet.
-  return !(typeof type === "string" && type === "patch")
-}
-
 function isContentPartType(type: unknown): boolean {
-  return type === "text" || type === "file"
+  return type === "text" || type === "file" || type === "skill"
 }
 
 function isVisibleContentPart(part: ClientPart): boolean {
@@ -297,7 +229,6 @@ function MessageContentItem(props: MessageContentItemProps) {
     for (const partId of props.partIds) {
       const part = current.parts[partId]?.data
       if (!part) continue
-      if (!isSupportedPartType(part)) continue
       if (!isContentPartType((part as any).type)) continue
       resolved.push(part)
     }
@@ -315,6 +246,26 @@ function MessageContentItem(props: MessageContentItemProps) {
       return part?.type === "text" && isVisibleContentPart(part)
     })
     return Boolean(lastTextPartId && visibleParts().some((part) => part.id === lastTextPartId))
+  })
+
+  // One token line under each agent message: its own usage plus that of every
+  // message holding the tools and reasoning its "delete tools and reasoning"
+  // selects. It renders inside this row, so it never moves the tools after it.
+  const usage = createMemo(() => {
+    const own = messageInfo()
+    if (!own?.tokens || !isFinalAssistantTextBlock() || props.usageVisibility() === "hidden") return
+    const ids = new Set([props.messageId, ...props.technicalCleanupParts().map((part) => part.messageId)])
+    return sumMessageUsage(own, [...ids].map((id) => props.store().getMessageInfo(id)))
+  })
+
+  // A record's error renders once: in the row with its last displayed content,
+  // or in the error-only placeholder row when it has no renderable content.
+  const showsRecordError = createMemo(() => {
+    const current = record()
+    if (current?.role !== "assistant" || !messageInfo()?.error) return false
+    const reversed = [...buildRecordDisplayData(props.instanceId, current).orderedParts].reverse()
+    const last = reversed.find((part) => isVisibleContentPart(part)) ?? reversed.find((part) => isContentPartType(part.type))
+    return Boolean(last?.id && props.partIds.includes(last.id))
   })
 
   const showAgentMeta = createMemo(() => {
@@ -336,8 +287,6 @@ function MessageContentItem(props: MessageContentItemProps) {
       const partId = ids[idx]
       const part = current.parts[partId]?.data
       if (!part) continue
-      if (!isSupportedPartType(part)) continue
-
       if (!isContentPartType((part as any).type)) continue
         if (isVisibleContentPart(part)) {
           return false
@@ -357,6 +306,7 @@ function MessageContentItem(props: MessageContentItemProps) {
         sessionId={props.sessionId}
         contentStartPartId={props.startPartId}
         showTechnicalCleanup={isFinalAssistantTextBlock()}
+        showError={showsRecordError()}
         showAgentMeta={showAgentMeta()}
         onRevert={props.onRevert}
         onFork={props.onFork}
@@ -369,6 +319,12 @@ function MessageContentItem(props: MessageContentItemProps) {
         onTechnicalCleanupHoverChange={props.onTechnicalCleanupHoverChange}
         onContentRendered={props.onContentRendered}
       />
+      <Show when={usage()}>
+        {(info) => (
+          <MessageUsage messageInfo={info()} usageVisibility={props.usageVisibility()} borderColor={ASSISTANT_BORDER_COLOR}
+            onContentRendered={props.onContentRendered} />
+        )}
+      </Show>
     </Show>
   )
 }
@@ -439,6 +395,9 @@ function ToolCallItem(props: ToolCallItemProps) {
     }
   }
 
+  // Not memoized: ToolCall memoizes the arrays that embed these items, once
+  // for its header buttons and once for its overflow menu. Each call must
+  // return fresh icon elements, because one DOM node cannot be in both places.
   const actionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
@@ -488,7 +447,7 @@ function ToolCallItem(props: ToolCallItemProps) {
                   void moveRunningWorkToBackground(props.instanceId, props.sessionId, t)
                 }}
                 aria-label={t("promptInput.background.title")}
-                title={t("promptInput.background.title")}
+                title={withHotkey(t("promptInput.background.title"), "session-background")}
               >
                 <Layers3 class="w-3.5 h-3.5" aria-hidden="true" />
               </button>
@@ -499,14 +458,6 @@ function ToolCallItem(props: ToolCallItemProps) {
       </div>
     </Show>
   )
-}
-
-interface StepDisplayItem {
-  type: "step-start" | "step-finish"
-  key: string
-  part: ClientPart
-  messageInfo?: MessageInfo
-  accentColor?: string
 }
 
 interface ReasoningDisplayPart {
@@ -547,7 +498,8 @@ type CompactionDisplayItem = {
 }
 
 type SystemDisplayItem = { type: "system"; key: string; part: Extract<ClientPart, { type: "system" }> }
-type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | StepDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem
+type HiddenPartsDisplayItem = { type: "hidden-parts"; key: string; messageId: string; count: number; start: number }
+type MessageBlockItem = ContentDisplayItem | ToolDisplayItem | ExplorationDisplayItem | ReasoningDisplayItem | CompactionDisplayItem | SystemDisplayItem | HiddenPartsDisplayItem
 
 interface MessageDisplayBlock {
   messageId: string
@@ -579,6 +531,8 @@ interface MessageBlockProps {
   searchQuery?: Accessor<string>
   searchResultMessageIds?: Accessor<Set<string>>
   activeSearchMatch?: Accessor<SessionSearchMatch | null>
+  /** The navigation's one-shot reveal of the active occurrence; mounting alone never reveals. */
+  searchReveal?: Accessor<SearchRevealRequest | null>
   pendingFormToolTargets?: Accessor<ReadonlySet<string>>
   technicalGroupForPart?: (messageId: string, partId: string) => TranscriptTechnicalGroup | undefined
   technicalGroupingSignature?: Accessor<string>
@@ -587,6 +541,11 @@ interface MessageBlockProps {
   onTechnicalCleanupHoverChange?: (messageId: string, partId: string, hovered: boolean) => void
   isTechnicalGroupExpanded?: (groupId: string, defaultExpanded: boolean) => boolean
   setTechnicalGroupExpanded?: (groupId: string, expanded: boolean) => void
+  /**
+   * Leaves bottom-following and holds `target` `viewportOffset` px below the
+   * transcript top; used by hidden-part and search-occurrence reveals.
+   */
+  alignInTranscript?: AlignInTranscript
 }
 
 export default function MessageBlock(props: MessageBlockProps) {
@@ -611,12 +570,6 @@ export default function MessageBlock(props: MessageBlockProps) {
     })))
   const pendingFormToolTargets = () => props.pendingFormToolTargets?.() ?? localPendingFormToolTargets()
   const technicalCleanupPartKeys = () => props.technicalCleanupPartKeys?.() ?? new Set<string>()
-  let lastInlineScrolledSearchMatchId: string | null = null
-  const handleContentRendered = () => {
-    props.onContentRendered?.()
-    accountSessionTranscript(props.instanceId, props.sessionId)
-  }
-
   onCleanup(() => accountSessionTranscript(props.instanceId, props.sessionId))
 
   createEffect(() => {
@@ -624,17 +577,17 @@ export default function MessageBlock(props: MessageBlockProps) {
     systemDisclosureRevision()
     const active = activeSearchMatch()
     const relevantActiveMatch = active?.messageId === props.messageId ? active : null
-    const shouldScrollActive = Boolean(relevantActiveMatch && relevantActiveMatch.id !== lastInlineScrolledSearchMatchId)
+    const request = props.searchReveal?.()
+    const reveal = relevantActiveMatch && request?.matchId === relevantActiveMatch.id ? request : undefined
     const current = record()
     if (current) void current.revision
     const element = blockRef()
     if (!element) return
-    if (shouldScrollActive && relevantActiveMatch) lastInlineScrolledSearchMatchId = relevantActiveMatch.id
 
-    const frame = requestAnimationFrame(() => applySearchMarks(element, query, relevantActiveMatch, shouldScrollActive))
+    const frame = requestAnimationFrame(() => applySearchHighlights(element, query, relevantActiveMatch, reveal, props.alignInTranscript))
     onCleanup(() => {
       cancelAnimationFrame(frame)
-      removeSearchMarks(element)
+      clearSearchHighlights(element)
     })
   })
 
@@ -671,26 +624,19 @@ export default function MessageBlock(props: MessageBlockProps) {
     const items: MessageBlockItem[] = []
     const blockContentKeys: string[] = []
     const blockToolKeys: string[] = []
-    let pendingParts: ClientPart[] = []
     let agentMetaAttached = current.role !== "assistant"
-    const defaultAccentColor = current.role === "user" ? USER_BORDER_COLOR : ASSISTANT_BORDER_COLOR
-    let lastAccentColor = defaultAccentColor
 
-    const flushContent = () => {
-      if (pendingParts.length === 0) return
-      const startPartId = typeof (pendingParts[0] as any)?.id === "string" ? ((pendingParts[0] as any).id as string) : ""
-      if (!startPartId) {
-        pendingParts = []
-        return
-      }
+    const pushContent = (parts: ClientPart[]) => {
+      const startPartId = typeof (parts[0] as any)?.id === "string" ? ((parts[0] as any).id as string) : ""
+      if (!startPartId) return
 
-      if (!agentMetaAttached && pendingParts.some((part) => partHasRenderableText(part))) {
+      if (!agentMetaAttached && parts.some((part) => partHasRenderableText(part))) {
         agentMetaAttached = true
       }
 
       const segmentKey = `${current.id}:content:${startPartId}`
       let cached = sessionCache.messageItems.get(segmentKey)
-      const partIds = pendingParts.flatMap((part) => typeof part.id === "string" ? [part.id] : [])
+      const partIds = parts.flatMap((part) => typeof part.id === "string" ? [part.id] : [])
       // Index rows observe item identity, not mutations to this plain cached
       // object. Publish changed selections so appended/tail parts reach the row.
       if (!cached || cached.partIds.length !== partIds.length || cached.partIds.some((id, index) => id !== partIds[index])) {
@@ -706,8 +652,6 @@ export default function MessageBlock(props: MessageBlockProps) {
 
       items.push(cached)
       blockContentKeys.push(segmentKey)
-      lastAccentColor = defaultAccentColor
-      pendingParts = []
     }
 
     const toolItem = (part: ToolCallPart) => {
@@ -723,10 +667,7 @@ export default function MessageBlock(props: MessageBlockProps) {
       return item
     }
 
-    const displayParts = orderedParts.filter((part) => {
-      if (part.type === "step-finish") {
-        return isVisibleStepFinish(part, info, props.usageMetricsVisibility() !== "hidden")
-      }
+    const isDisplayPart = (part: ClientPart) => {
       if (!isTechnicalGroupingVisiblePart(part)) return false
       if (part.type !== "tool" || !props.technicalGroupForPart || props.toolVisibility(part.tool) !== "hidden") return true
       return Boolean(
@@ -734,16 +675,32 @@ export default function MessageBlock(props: MessageBlockProps) {
         || (part.id && props.store().getPermissionState(current.id, part.id)?.active)
         || (part.id && pendingFormToolTargets().has(technicalPartKey(current.id, part.id)))
       )
-    })
-    const groupedParts = groupTechnicalParts(displayParts, (part) => {
+    }
+    const shown = (parts: ClientPart[]) => parts.filter(isDisplayPart)
+    // `null` marks omitted parts; no row spans them.
+    const rows = groupTranscriptRows(displayData.hiddenCount > 0
+      ? [...shown(orderedParts.slice(0, displayData.gapIndex)), null, ...shown(orderedParts.slice(displayData.gapIndex))]
+      : shown(orderedParts), (part) => {
+      const kind = transcriptPartKind(part)
+      if (kind === "content" || kind === "part") return { kind }
       const partId = typeof part.id === "string" ? part.id : ""
-      return partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined
+      return { kind, groupId: partId ? props.technicalGroupForPart?.(current.id, partId)?.id : undefined }
     })
 
-    groupedParts.forEach((group, groupIndex) => {
+    rows.forEach((group, groupIndex) => {
+      if (!group) {
+        items.push({
+          type: "hidden-parts", key: `${current.id}:hidden-parts`, messageId: current.id,
+          count: displayData.hiddenCount, start: displayData.hiddenStart,
+        })
+        return
+      }
+      if (group.kind === "content") {
+        pushContent(group.items)
+        return
+      }
       if (group.kind === "exploration" || group.kind === "shell") {
-        flushContent()
-        const tools = group.parts.flatMap((part) => {
+        const tools = group.items.flatMap((part) => {
           const item = toolItem(part as ToolCallPart)
           return item ? [item] : []
         })
@@ -754,18 +711,16 @@ export default function MessageBlock(props: MessageBlockProps) {
             kind: group.kind,
             key: `${tools[0].key}:${group.kind}`,
             tools,
-            completed: technicalGroup?.completed ?? (groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error"),
+            completed: technicalGroup?.completed ?? (groupIndex < rows.length - 1 || current.status === "complete" || current.status === "error"),
             technicalGroup,
           })
         }
-        lastAccentColor = NO_STEP_BORDER
         return
       }
 
       if (group.kind === "reasoning") {
-        flushContent()
         if (props.showThinking()) {
-          const reasoningParts = group.parts.flatMap((part) => {
+          const reasoningParts = group.items.flatMap((part) => {
             const partId = part.id ?? ""
             return partId ? [{
               part,
@@ -783,36 +738,31 @@ export default function MessageBlock(props: MessageBlockProps) {
               type: "reasoning",
               key: `${current.id}:${reasoningParts[0].partId}:reasoning`,
               parts: reasoningParts,
-              completed: technicalGroup?.completed ?? (groupIndex < groupedParts.length - 1 || current.status === "complete" || current.status === "error"),
+              completed: technicalGroup?.completed ?? (groupIndex < rows.length - 1 || current.status === "complete" || current.status === "error"),
               showAgentMeta,
               defaultExpanded: props.thinkingDefaultExpanded(),
               technicalGroup,
             })
-            lastAccentColor = ASSISTANT_BORDER_COLOR
           }
         }
         return
       }
 
-      const part = group.part
+      const part = group.item
       const partIndex = orderedParts.indexOf(part)
       if (part.type === "system") {
-        flushContent()
         if (props.systemMessagesVisibility?.() && props.systemMessagesVisibility() !== "hidden") {
           items.push({ type: "system", key: `${current.id}:system`, part })
         }
         return
       }
       if (part.type === "tool") {
-        flushContent()
         const item = toolItem(part as ToolCallPart)
         if (item) items.push(item)
-        lastAccentColor = NO_STEP_BORDER
         return
       }
 
       if (part.type === "compaction") {
-        flushContent()
         const partId = part.id ?? ""
         const key = `${current.id}:${partId || partIndex}:compaction`
         items.push({
@@ -824,32 +774,17 @@ export default function MessageBlock(props: MessageBlockProps) {
           messageId: current.id,
           partId,
         })
-        lastAccentColor = "var(--session-status-compacting-fg)"
-        return
       }
-
-      if (part.type === "step-start") {
-        flushContent()
-        return
-      }
-
-      if (part.type === "step-finish") {
-        flushContent()
-        if (props.usageMetricsVisibility() !== "hidden") {
-          const key = `${current.id}:${part.id ?? partIndex}:${part.type}`
-          const accentColor = lastAccentColor || defaultAccentColor
-          items.push({ type: part.type, key, part, messageInfo: info, accentColor })
-          lastAccentColor = accentColor
-        }
-        return
-      }
-
-      pendingParts.push(part)
     })
 
-    flushContent()
+    // Error-only records (a failed step or a run that failed outside model steps)
+    // have no renderable part; keep one content row so their error is shown.
+    if (blockContentKeys.length === 0 && info?.role === "assistant" && info.error) {
+      const placeholder = orderedParts.find((part) => typeof part.id === "string" && part.type === "text")
+      if (placeholder) pushContent([placeholder])
+    }
 
-    const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.truncated }
+    const resultBlock: MessageDisplayBlock = { messageId: current.id, status: current.status, items, truncated: displayData.hiddenCount > 0 }
     sessionCache.messageBlocks.set(current.id, {
       signature: cacheSignature,
       displayData,
@@ -908,10 +843,57 @@ export default function MessageBlock(props: MessageBlockProps) {
     return true
   }
 
+  // Reveal in place: keep the reveal point where it was activated and move keyboard
+  // focus there, since the placeholder unmounts or ends up below the revealed parts.
+  const revealInPlace = (button: HTMLButtonElement, item: HiddenPartsDisplayItem) => {
+    const revealCount = Math.min(item.count, MESSAGE_PART_REVEAL_STEP)
+    const revealedIds = props.store().getMessage(item.messageId)?.partIds.slice(item.start, item.start + revealCount) ?? []
+    const stream = button.closest<HTMLElement>(".message-stream")
+    const activationTop = button.getBoundingClientRect().top
+    const hadFocus = document.activeElement === button
+    revealHiddenRecordParts(props.instanceId, item.messageId)
+    requestAnimationFrame(() => {
+      const element = blockRef()
+      if (!element) return
+      // Revealed parts may merge into an earlier row or a collapsed group that renders
+      // no member elements; group roots list their members for this lookup. A rendered
+      // member wins over its group so an expanded group does not focus its header.
+      const found = revealedIds.reduce<HTMLElement | null>((match, partId) => {
+        if (match) return match
+        const id = CSS.escape(partId)
+        return element.querySelector<HTMLElement>(`[data-part-id="${id}"]`)
+          ?? element.querySelector<HTMLElement>(`[data-group-part-ids~="${id}"]`)
+      }, null)
+      const groupToggle = found?.matches("[data-group-part-ids]")
+        ? found.querySelector<HTMLElement>(".message-technical-group-toggle")
+        : null
+      const revealPoint = groupToggle ?? found
+      // The virtualizer and bottom-following keep the message end fixed while a partly
+      // scrolled row grows, which can push the revealed parts far above the viewport.
+      if (revealPoint && stream?.isConnected) {
+        props.alignInTranscript?.(revealPoint, activationTop - stream.getBoundingClientRect().top)
+      }
+      if (!hadFocus) return
+      // Respect focus moved elsewhere meanwhile. The clicked button may stay mounted when
+      // revealed parts merge into the row above it, so it does not mark the reveal point.
+      const active = document.activeElement
+      if (active && active !== document.body && active !== button) return
+      // Nothing revealed rendered (hidden tools/thinking): stay at the next placeholder if any.
+      const target = revealPoint ?? element.querySelector<HTMLElement>(".message-hidden-parts-button") ?? element
+      if (target === groupToggle || target.matches(".message-hidden-parts-button")) {
+        target.focus({ preventScroll: true })
+        return
+      }
+      focusRevealedElement(target)
+    })
+  }
+
   const visibleItemKeys = createMemo(() => new Set((block()?.items ?? [])
     .filter(isDisplayItemVisible)
     .map((item) => item.key)))
+  const alignInTranscript: AlignInTranscript = (target, viewportOffset) => props.alignInTranscript?.(target, viewportOffset)
   return (
+    <TranscriptAlignmentContext.Provider value={alignInTranscript}>
     <Show when={block()}>
       {(resolvedBlock) => (
         <Show when={resolvedBlock().truncated || resolvedBlock().items.some(isDisplayItemVisible)}>
@@ -953,7 +935,8 @@ export default function MessageBlock(props: MessageBlockProps) {
                       (item() as ContentDisplayItem).startPartId,
                       hovered,
                     )}
-                    onContentRendered={handleContentRendered}
+                    usageVisibility={props.usageMetricsVisibility}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "tool"}>
@@ -971,7 +954,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                         store={props.store}
                         messageId={(item() as ToolDisplayItem).messageId}
                         partId={(item() as ToolDisplayItem).partId}
-                        onContentRendered={handleContentRendered}
+                        onContentRendered={props.onContentRendered}
                       />
                     </div>
                   </Show>
@@ -999,33 +982,9 @@ export default function MessageBlock(props: MessageBlockProps) {
                         ? (expanded) => props.setTechnicalGroupExpanded?.((item() as ExplorationDisplayItem).technicalGroup!.id, expanded)
                         : undefined}
                       technicalCleanupPartKeys={technicalCleanupPartKeys}
-                      onContentRendered={handleContentRendered}
+                      onContentRendered={props.onContentRendered}
                     />
                   </Show>
-                </Match>
-                <Match when={item().type === "step-start"}>
-                  <StepCard
-                    kind="start"
-                    part={(item() as StepDisplayItem).part}
-                    messageInfo={(item() as StepDisplayItem).messageInfo}
-                    showAgentMeta
-                    instanceId={props.instanceId}
-                    sessionId={props.sessionId}
-                    messageId={props.messageId}
-                  />
-                </Match>
-                <Match when={item().type === "step-finish"}>
-                  <StepCard
-                    kind="finish"
-                    part={(item() as StepDisplayItem).part}
-                    messageInfo={(item() as StepDisplayItem).messageInfo}
-                    usageVisibility={props.usageMetricsVisibility()}
-                    borderColor={(item() as StepDisplayItem).accentColor}
-                    instanceId={props.instanceId}
-                    sessionId={props.sessionId}
-                    messageId={props.messageId}
-                    onContentRendered={handleContentRendered}
-                  />
                 </Match>
                 <Match when={item().type === "system"}>
                   <SystemMessage part={(item() as SystemDisplayItem).part} visibility={props.systemMessagesVisibility?.() ?? "hidden"}
@@ -1041,7 +1000,7 @@ export default function MessageBlock(props: MessageBlockProps) {
                     instanceId={props.instanceId}
                     sessionId={props.sessionId}
                     messageId={(item() as CompactionDisplayItem).messageId}
-                    onContentRendered={handleContentRendered}
+                    onContentRendered={props.onContentRendered}
                   />
                 </Match>
                 <Match when={item().type === "reasoning"}>
@@ -1056,7 +1015,6 @@ export default function MessageBlock(props: MessageBlockProps) {
                     status={resolvedBlock().status}
                     showAgentMeta={(item() as ReasoningDisplayItem).showAgentMeta}
                     defaultExpanded={(item() as ReasoningDisplayItem).defaultExpanded}
-                    onContentRendered={handleContentRendered}
                     activePartId={activeSearchMatch()?.partId}
                     showHeader={technicalGroupStartsHere((item() as ReasoningDisplayItem).technicalGroup)}
                     expanded={(item() as ReasoningDisplayItem).technicalGroup
@@ -1071,30 +1029,32 @@ export default function MessageBlock(props: MessageBlockProps) {
                     technicalCleanupPartKeys={technicalCleanupPartKeys}
                   />
                 </Match>
+                <Match when={item().type === "hidden-parts"}>
+                  <div class="message-hidden-parts">
+                    <span class="message-hidden-parts-label">
+                      {t((item() as HiddenPartsDisplayItem).count === 1 ? "messageBlock.hiddenParts.one" : "messageBlock.hiddenParts.other", {
+                        count: (item() as HiddenPartsDisplayItem).count,
+                      })}
+                    </span>
+                    <button
+                      type="button"
+                      class="button-secondary message-hidden-parts-button"
+                      onClick={(event) => revealInPlace(event.currentTarget, item() as HiddenPartsDisplayItem)}
+                    >
+                      {t("messageBlock.hiddenParts.show", {
+                        count: Math.min((item() as HiddenPartsDisplayItem).count, MESSAGE_PART_REVEAL_STEP),
+                      })}
+                    </button>
+                  </div>
+                </Match>
               </Switch>
               )}
             </Index>
-            <Show when={resolvedBlock().truncated}>
-              <div class="tool-call-diagnostic-message" role="status">
-                <span>{t("toolCall.output.truncated")}</span>
-                <button
-                  type="button"
-                  class="tool-call-header-icon-button tool-call-io-copy"
-                  onClick={() => {
-                    const current = props.store().getMessage(resolvedBlock().messageId)
-                    if (current) void copyToClipboard(JSON.stringify(orderedMessageParts(current), null, 2))
-                  }}
-                  aria-label={t("toolCall.io.copyOutputAriaLabel")}
-                  title={t("toolCall.io.copyOutputTitle")}
-                >
-                  <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-                </button>
-              </div>
-            </Show>
           </div>
         </Show>
       )}
     </Show>
+    </TranscriptAlignmentContext.Provider>
   )
 }
 
@@ -1221,6 +1181,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     <Show when={!singleton()} fallback={<For each={props.tools}>{renderTool}</For>}>
     <div
       class="message-technical-group message-exploration-group"
+      data-group-part-ids={props.tools.map((item) => item.partId).join(" ")}
       data-delete-technical-selected={deleteGroupHovered() || groupTools().some((item) => props.technicalCleanupPartKeys().has(item.key)) ? "true" : undefined}
     >
       <Show when={props.showHeader !== false && props.summaryTools?.length}>
@@ -1244,7 +1205,7 @@ function ExplorationGroup(props: ExplorationGroupProps) {
                 void moveRunningWorkToBackground(props.instanceId, props.sessionId, t)
               }}
               aria-label={t("promptInput.background.title")}
-              title={t("promptInput.background.title")}
+              title={withHotkey(t("promptInput.background.title"), "session-background")}
             >
               <Layers3 class="w-3.5 h-3.5" aria-hidden="true" />
             </button>
@@ -1293,26 +1254,6 @@ function ExplorationGroup(props: ExplorationGroupProps) {
     </div>
     </Show>
   )
-}
-
-function orderedMessageParts(record: MessageRecord): ClientPart[] {
-  return record.partIds.flatMap((partId) => {
-    const part = record.parts[partId]?.data
-    return part ? [part] : []
-  })
-}
-
-interface StepCardProps {
-  kind: "start" | "finish"
-  part: ClientPart
-  messageInfo?: MessageInfo
-  showAgentMeta?: boolean
-  usageVisibility?: VisibilityPreference
-  borderColor?: string
-  instanceId?: string
-  sessionId?: string
-  messageId?: string
-  onContentRendered?: () => void
 }
 
 interface CompactionCardProps {
@@ -1374,6 +1315,7 @@ function CompactionCard(props: CompactionCardProps) {
             isDark={isDark()}
             size="tight"
             escapeRawHtml
+            revealTarget={{ instanceId: props.instanceId, messageId: props.messageId, partId: String((props.part as any)?.id ?? "compaction"), section: "compaction" }}
             onRendered={props.onContentRendered}
           />
         </div>
@@ -1382,197 +1324,21 @@ function CompactionCard(props: CompactionCardProps) {
   )
 }
 
-function StepCard(props: StepCardProps) {
-  const { t, locale } = useI18n()
-  const [usageExpandedOverride, setUsageExpandedOverride] = createSignal<boolean | null>(null)
-  const usageExpanded = () => usageExpandedOverride() ?? props.usageVisibility === "expanded"
-  let usagePartId = (props.part as { id?: string }).id
-  createEffect(() => {
-    const nextPartId = (props.part as { id?: string }).id
-    if (nextPartId === usagePartId) return
-    usagePartId = nextPartId
-    setUsageExpandedOverride(null)
-  })
-  const timestamp = () => {
-    const value = props.messageInfo?.time?.created ?? (props.part as any)?.time?.start ?? Date.now()
-    const date = new Date(value)
-    return date.toLocaleString(locale(), {
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-    })
-  }
-
-  const agentIdentifier = () => {
-    if (!props.showAgentMeta) return ""
-    const info = props.messageInfo
-    if (!info || info.role !== "assistant") return ""
-    return info.mode || ""
-  }
-
-  const modelIdentifier = () => {
-    if (!props.showAgentMeta) return ""
-    const info = props.messageInfo
-    if (!info || info.role !== "assistant") return ""
-    const modelID = info.modelID || ""
-    const providerID = info.providerID || ""
-    if (modelID && providerID) return `${providerID}/${modelID}`
-    return modelID
-  }
-
-  const usageStats = () => {
-    if (props.kind !== "finish" || props.usageVisibility === "hidden") {
-      return null
-    }
-    const info = props.messageInfo
-    const part = props.part as any
-
-    // step-finish parts have tokens embedded; also check messageInfo
-    const partTokens = part?.tokens
-    const infoTokens = info && info.role === "assistant" ? info.tokens : undefined
-    const tokens = partTokens ?? infoTokens
-    if (!tokens) {
-      return null
-    }
-
-    return {
-      input: tokens.input ?? 0,
-      output: tokens.output ?? 0,
-      reasoning: tokens.reasoning ?? 0,
-      cacheRead: tokens.cache?.read ?? 0,
-      cacheWrite: tokens.cache?.write ?? 0,
-      cost: (part?.cost ?? (info && info.role === "assistant" ? info.cost : 0)) ?? 0,
-    }
-  }
-
-  const finishStyle = () => {
-    if (props.borderColor === NO_STEP_BORDER) {
-      return {
-        "border-inline-start": "none",
-      }
-    }
-    return props.borderColor ? { "border-left-color": props.borderColor } : undefined
-  }
-  let didReportUsageStats = false
-
-  createEffect(() => {
-    if (didReportUsageStats) return
-    if (props.kind !== "finish" || !usageStats()) return
-    didReportUsageStats = true
-    props.onContentRendered?.()
-  })
-
-
-  const usageEntries = (usage: NonNullable<ReturnType<typeof usageStats>>) => [
-      { label: t("messageBlock.usage.input"), value: usage.input, formatter: formatTokenTotal },
-      { label: t("messageBlock.usage.output"), value: usage.output, formatter: formatTokenTotal },
-      ...(usageExpanded()
-        ? [
-            { label: t("messageBlock.usage.reasoning"), value: usage.reasoning, formatter: formatTokenTotal },
-            { label: t("messageBlock.usage.cacheRead"), value: usage.cacheRead, formatter: formatTokenTotal },
-            { label: t("messageBlock.usage.cacheWrite"), value: usage.cacheWrite, formatter: formatTokenTotal },
-          ]
-        : []),
-      { label: t("messageBlock.usage.cost"), value: usage.cost, formatter: formatCostValue },
-    ]
-
-  const renderUsageChips = (usage: NonNullable<ReturnType<typeof usageStats>>) => {
-    const entries = usageEntries(usage)
-
-    return (
-      <div class="message-step-usage">
-        <For each={entries}>
-          {(entry) => (
-            <span class="message-step-usage-chip" data-label={entry.label}>
-              {entry.formatter(entry.value)}
-            </span>
-          )}
-        </For>
-      </div>
-    )
-  }
-
-  if (props.kind === "finish") {
-    const usage = usageStats()
-    if (!usage) {
-      return null
-    }
-    return (
-      <div
-        class="delete-hover-scope message-step-card message-step-finish message-step-finish-flush relative"
-        style={finishStyle()}
-      >
-        <button
-          type="button"
-          class="message-step-usage-toggle"
-          aria-expanded={usageExpanded()}
-          aria-label={`${t(usageExpanded() ? "messageBlock.usage.collapseAriaLabel" : "messageBlock.usage.expandAriaLabel")}. ${usageEntries(usage).map((entry) => `${entry.label}: ${entry.formatter(entry.value)}`).join(", ")}`}
-          onClick={() => setUsageExpandedOverride((current) => !(current ?? props.usageVisibility === "expanded"))}
-        >
-          <ChevronRight class="message-step-usage-disclosure disclosure-chevron" aria-hidden="true" />
-          {renderUsageChips(usage)}
-        </button>
-      </div>
-    )
-  }
-
-  return (
-    <div class={`message-step-card message-step-start relative`}>
-      <div class="message-step-heading">
-        <div class="message-step-title">
-          <div class="message-step-title-left">
-            <Show when={props.showAgentMeta && (agentIdentifier() || modelIdentifier())}>
-              <span class="message-step-meta-inline">
-                {[
-                  agentIdentifier(),
-                  modelIdentifier(),
-                ].filter(Boolean).join(" • ")}
-              </span>
-            </Show>
-          </div>
-          <span class="message-step-right">
-            <span class="message-step-time">{timestamp()}</span>
-          </span>
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function formatCostValue(value: number) {
-  if (!value) return "$0.00"
-  if (value < 0.01) return `$${value.toPrecision(2)}`
-  return `$${value.toFixed(2)}`
-}
-
 function getReasoningText(part: ClientPart) {
-  const stringify = (segment: unknown): string => {
-    if (typeof segment === "string") return segment
-    if (!segment || typeof segment !== "object") return ""
-    const value = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-    return [
-      typeof value.text === "string" ? value.text : "",
-      typeof value.value === "string" ? value.value : "",
-      Array.isArray(value.content) ? value.content.map(stringify).join("\n") : "",
-    ].filter((item) => item.trim()).join("\n")
-  }
-  const text = stringify((part as any).text)
-  if (text.trim()) return text
-  const content = (part as any).content
-  return Array.isArray(content) ? content.map(stringify).join("\n") : ""
+  return part.type === "reasoning" && part.text.trim() ? part.text : ""
 }
 
 function reasoningDurationTitle(t: I18nContextValue["t"], durationMs?: number) {
-  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs <= 0) {
+  // Like the header duration, sub-second steps show no duration.
+  if (typeof durationMs !== "number" || !Number.isFinite(durationMs) || durationMs < 1000) {
     return t("messageBlock.reasoning.thoughtsFallback")
   }
   const seconds = Math.max(1, Math.round(durationMs / 1000))
   if (seconds < 60) return t(`messageBlock.reasoning.thoughtFor.seconds.${seconds === 1 ? "one" : "other"}`, { count: String(seconds) })
-  const minutes = Math.max(1, Math.round(seconds / 60))
+  // Whole units elapsed, like the header duration ("1m 30s" → "1 minute").
+  const minutes = Math.floor(seconds / 60)
   if (minutes < 60) return t(`messageBlock.reasoning.thoughtFor.minutes.${minutes === 1 ? "one" : "other"}`, { count: String(minutes) })
-  const hours = Math.max(1, Math.round(minutes / 60))
+  const hours = Math.floor(minutes / 60)
   return t(`messageBlock.reasoning.thoughtFor.hours.${hours === 1 ? "one" : "other"}`, { count: String(hours) })
 }
 
@@ -1585,7 +1351,6 @@ function ReasoningGroupCard(props: {
   status: MessageRecord["status"]
   showAgentMeta?: boolean
   defaultExpanded?: boolean
-  onContentRendered?: () => void
   activePartId?: string
   showHeader?: boolean
   expanded?: Accessor<boolean>
@@ -1631,30 +1396,40 @@ function ReasoningGroupCard(props: {
     if (props.activePartId && props.parts.some((item) => item.partId === props.activePartId)) setExpanded(true)
   })
 
-  const renderCard = (item: ReasoningDisplayPart) => (
-    <ReasoningCard
-      part={item.part}
-      copyText={() => extractReasoningTextForCopy(
-        messageStoreBus.getOrCreate(props.instanceId).getMessage(item.messageId)?.parts[item.partId]?.data,
-      )}
-      messageInfo={item.messageInfo}
-      durationMs={item.durationMs}
-      instanceId={props.instanceId}
-      sessionId={props.sessionId}
-      messageId={item.messageId}
-      status={props.status}
-      showAgentMeta={props.showAgentMeta}
-      defaultExpanded={summaryParts().length > 1 || props.defaultExpanded}
-      onContentRendered={props.onContentRendered}
-      forceExpanded={props.activePartId === item.partId}
-      technicalCleanupSelected={() => props.technicalCleanupPartKeys().has(technicalPartKey(item.messageId, item.partId))}
-    />
-  )
+  // Keyed by part: each projection of a streaming part is a new object, and keying
+  // by object would mount a new card (and its text) on every delta.
+  const partKey = (item: ReasoningDisplayPart) => technicalPartKey(item.messageId, item.partId)
+  // When the transcript item stops being reasoning (thinking hidden), its parts
+  // are absent until this card is disposed.
+  const partKeys = () => (props.parts ?? []).map(partKey)
+  const renderCard = (key: string) => {
+    let last: ReasoningDisplayPart | undefined
+    const item = () => (last = props.parts?.find((candidate) => partKey(candidate) === key) ?? last)!
+    return (
+      <ReasoningCard
+        part={item().part}
+        copyText={() => extractWholeReasoningText(
+          messageStoreBus.getOrCreate(props.instanceId).getMessage(item().messageId)?.parts[item().partId]?.data,
+        )}
+        messageInfo={item().messageInfo}
+        durationMs={item().durationMs}
+        instanceId={props.instanceId}
+        sessionId={props.sessionId}
+        messageId={item().messageId}
+        status={props.status}
+        showAgentMeta={props.showAgentMeta}
+        defaultExpanded={summaryParts().length > 1 || props.defaultExpanded}
+        forceExpanded={props.activePartId === item().partId}
+        technicalCleanupSelected={() => props.technicalCleanupPartKeys().has(key)}
+      />
+    )
+  }
 
   return (
-    <Show when={summaryParts().length > 1} fallback={<For each={props.parts}>{renderCard}</For>}>
+    <Show when={summaryParts().length > 1} fallback={<For each={partKeys()}>{renderCard}</For>}>
     <div
       class="message-technical-group message-reasoning-group"
+      data-group-part-ids={props.parts.map((item) => item.partId).join(" ")}
       data-delete-technical-selected={deleteGroupHovered() || summaryParts().some((item) => props.technicalCleanupPartKeys().has(technicalPartKey(item.messageId, item.partId))) ? "true" : undefined}
     >
       <Show when={props.showHeader !== false}>
@@ -1675,8 +1450,8 @@ function ReasoningGroupCard(props: {
             <span class="message-technical-group-meta">
               · {t(`messageBlock.reasoning.steps.${summaryParts().length === 1 ? "one" : "other"}`, { count: String(summaryParts().length) })}
             </span>
-            <Show when={totalDuration() > 0}>
-              <span class="message-technical-group-meta">· {formatElapsedClock(totalDuration(), locale())}</span>
+            <Show when={formatElapsedDuration(totalDuration(), locale())}>
+              {(duration) => <span class="message-technical-group-meta">· {duration()}</span>}
             </Show>
           </button>
           <Show when={!expanded() && canDeleteGroup()}>
@@ -1697,7 +1472,7 @@ function ReasoningGroupCard(props: {
       </Show>
       <Show when={expanded()}>
         <div class="message-technical-group-parts message-reasoning-group-parts">
-          <For each={props.parts}>{renderCard}</For>
+          <For each={partKeys()}>{renderCard}</For>
         </div>
       </Show>
     </div>
@@ -1716,20 +1491,26 @@ interface ReasoningCardProps {
   status: MessageRecord["status"]
   showAgentMeta?: boolean
   defaultExpanded?: boolean
-  onContentRendered?: () => void
   forceExpanded?: boolean
   technicalCleanupSelected: Accessor<boolean>
 }
 
+/**
+ * The reasoning text's display window (`render-text-window`) with its exact
+ * reveal line. While the part streams, a window longer than
+ * STREAMING_INSTANT_RENDER_CHARACTER_LIMIT keeps its last render and re-renders
+ * at most every STREAMING_RENDER_INTERVAL_MS (the streaming Markdown interval)
+ * with the latest text, immediately on a reveal and once the stream ends.
+ */
 function ReasoningStreamOutput(props: {
   text: Accessor<string>
+  streaming: Accessor<boolean>
+  revealTarget: Accessor<RecordTextRevealTarget | undefined>
   scrollTopSnapshot: Accessor<number>
   setScrollTopSnapshot: (next: number) => void
-  onContentRendered?: () => void
   ariaLabel: string
 }) {
   let preRef: HTMLPreElement | undefined
-  let pendingRenderNotificationFrame: number | null = null
 
   const followScroll = createFollowScroll({
     getScrollTopSnapshot: props.scrollTopSnapshot,
@@ -1737,31 +1518,41 @@ function ReasoningStreamOutput(props: {
     sentinelClassName: "reasoning-scroll-sentinel",
   })
 
-  const notifyContentRendered = () => {
-    if (!props.onContentRendered || typeof requestAnimationFrame !== "function") return
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-    }
-    pendingRenderNotificationFrame = requestAnimationFrame(() => {
-      pendingRenderNotificationFrame = null
-      props.onContentRendered?.()
-    })
+  const bounded = createTextWindow({ source: props.text, limit: () => REASONING_RENDER_CHARACTER_LIMIT, target: props.revealTarget })
+  const [shown, setShown] = createSignal(untrack(() => bounded.window().text))
+  let pendingRender: ReturnType<typeof setTimeout> | undefined
+  let lastRenderAt = 0
+  let renderedSteps = untrack(bounded.steps)
+  const renderLatest = () => {
+    pendingRender = undefined
+    lastRenderAt = performance.now()
+    renderedSteps = untrack(bounded.steps)
+    setShown(untrack(() => bounded.window().text))
   }
-
   createEffect(() => {
-    const nextText = props.text()
+    const next = bounded.window().text
+    // A reveal renders with its notice change: deferred, the block would shrink
+    // by the removed reveal line and move the reader.
+    if (bounded.steps() !== renderedSteps || !props.streaming() || next.length <= STREAMING_INSTANT_RENDER_CHARACTER_LIMIT) {
+      clearTimeout(pendingRender)
+      renderLatest()
+      return
+    }
+    // A pending render reads the latest window when it runs.
+    if (pendingRender === undefined) {
+      pendingRender = setTimeout(renderLatest, Math.max(0, lastRenderAt + STREAMING_RENDER_INTERVAL_MS - performance.now()))
+    }
+  })
+  onCleanup(() => clearTimeout(pendingRender))
+
+  // The transcript's ResizeObserver handles any height change: a frame-delayed
+  // notification always arrived after it.
+  createEffect(() => {
+    const nextText = shown()
     if (preRef && preRef.textContent !== nextText) {
       preRef.textContent = nextText
     }
     followScroll.restoreAfterRender()
-    notifyContentRendered()
-  })
-
-  onCleanup(() => {
-    if (pendingRenderNotificationFrame !== null) {
-      cancelAnimationFrame(pendingRenderNotificationFrame)
-      pendingRenderNotificationFrame = null
-    }
   })
 
   return (
@@ -1776,12 +1567,16 @@ function ReasoningStreamOutput(props: {
         ref={(element) => {
           preRef = element || undefined
           if (preRef) {
-            preRef.textContent = props.text() || ""
+            preRef.textContent = shown() || ""
           }
         }}
         class="message-reasoning-text"
         dir="auto"
       />
+      <Show when={bounded.window().hidden > 0}>
+        {/* The revealed text grows below the reader; following would skip past it. */}
+        <HiddenTextNotice window={bounded.window()} onReveal={() => { followScroll.stopFollowing(); bounded.reveal() }} />
+      </Show>
       {followScroll.renderSentinel()}
     </div>
   )
@@ -1827,7 +1622,8 @@ function ReasoningCard(props: ReasoningCardProps) {
 
   const thoughtDurationTitle = () => reasoningDurationTitle(t, props.durationMs)
 
-  const reasoningTitle = () => extractedTitle() || thoughtDurationTitle()
+  // The visible header duration already shows it; "Thought for…" stays in the tooltip.
+  const reasoningTitle = () => extractedTitle() || t("messageBlock.reasoning.thoughtsFallback")
 
   const reasoningMetaTooltip = () => {
     const parts: string[] = [thoughtDurationTitle()]
@@ -1842,12 +1638,19 @@ function ReasoningCard(props: ReasoningCardProps) {
     if (reasoningBody()) setExpanded((prev) => !prev)
   }
 
+  // Speech keeps its own bound; the card renders a window of the whole text.
+  const speechText = () => extractReasoningTextForRender(props.part)
   const speech = useSpeech({
     id: () => `${props.instanceId}:${props.sessionId}:${props.messageId}:${props.part.id || "reasoning"}`,
-    text: reasoningText,
+    text: speechText,
   })
 
-  const canSpeakReasoning = () => reasoningText().trim().length > 0 && speech.canUseSpeech()
+  const canSpeakReasoning = () => speechText().trim().length > 0 && speech.canUseSpeech()
+  const partId = () => (typeof props.part.id === "string" ? props.part.id : "")
+  const revealTarget = createMemo(() => partId()
+    ? { instanceId: props.instanceId, messageId: props.messageId, partId: partId(), section: "reasoning" }
+    : undefined)
+  const streaming = () => (props.status === "streaming" || props.status === "sending") && !getPartEndedAt(props.part)
 
   const handleCopyReasoning = async () => {
     const text = props.copyText()
@@ -1896,6 +1699,11 @@ function ReasoningCard(props: ReasoningCardProps) {
             <span class="message-reasoning-title" title={reasoningMetaTooltip() || undefined}>
               {reasoningTitle()}
             </span>
+            <PartDuration
+              startedAt={getPartStartedAt(props.part)}
+              endedAt={getPartEndedAt(props.part)}
+              running={props.status === "streaming" || props.status === "sending"}
+            />
           </span>
         </button>
 
@@ -1952,9 +1760,10 @@ function ReasoningCard(props: ReasoningCardProps) {
           <div class="message-reasoning-body">
             <ReasoningStreamOutput
               text={reasoningBody}
+              streaming={streaming}
+              revealTarget={revealTarget}
               scrollTopSnapshot={scrollTopSnapshot}
               setScrollTopSnapshot={setScrollTopSnapshot}
-              onContentRendered={props.onContentRendered}
               ariaLabel={t("messageBlock.reasoning.detailsAriaLabel")}
             />
           </div>

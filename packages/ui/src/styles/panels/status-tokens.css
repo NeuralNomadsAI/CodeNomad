@@ -1,0 +1,36 @@
+.status-tab-container .right-panel-accordion-trigger {
+  min-width: 0;
+  gap: var(--space-sm);
+}
+
+.right-panel-section-summary {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: start;
+  color: var(--text-muted);
+  font-weight: normal;
+}
+
+.status-token-summary .status-token-metric + .status-token-metric::before {
+  content: " · ";
+}
+
+.status-token-summary .status-token-label {
+  margin-inline-end: var(--space-xs);
+}
+
+.status-token-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-sm);
+}
+
+.status-token-group {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm) var(--space-xs);
+}

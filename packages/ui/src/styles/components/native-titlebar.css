@@ -35,6 +35,10 @@
   white-space: nowrap;
 }
 
+.native-titlebar-logo {
+  height: 20px;
+}
+
 .native-titlebar-controls {
   display: flex;
   flex: 0 0 auto;

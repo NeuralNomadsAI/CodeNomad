@@ -1,5 +1,6 @@
 export class HttpResponseError extends Error {
-  constructor(message: string, readonly status: number, readonly retryAfter: string | null) {
+  /** `body` is the parsed JSON error response, when there was one. */
+  constructor(message: string, readonly status: number, readonly retryAfter: string | null, readonly code?: string, readonly body?: unknown) {
     super(message)
   }
 }

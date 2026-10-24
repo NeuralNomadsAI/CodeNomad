@@ -2,11 +2,14 @@ import { isHiddenSyntheticTextPart, partHasRenderableText, type ClientPart, type
 
 export type TechnicalGroupKind = "reasoning" | "exploration" | "shell"
 
-export type TechnicalPartGroup =
-  | { kind: "part"; part: ClientPart }
-  | { kind: "reasoning"; parts: ClientPart[]; groupId?: string }
-  | { kind: "exploration"; parts: ClientPart[]; groupId?: string }
-  | { kind: "shell"; parts: ClientPart[]; groupId?: string }
+/** A displayed part's transcript row kind: text runs share content rows, tools/system/compaction stand alone. */
+export type TranscriptRowKind = TechnicalGroupKind | "content" | "part"
+
+/** One transcript row: a content row, a technical group, a standalone part or (`null`) the omitted-parts gap. */
+export type TranscriptRow<T> =
+  | { [K in "content" | TechnicalGroupKind]: { kind: K; items: T[]; groupId?: string } }["content" | TechnicalGroupKind]
+  | { kind: "part"; item: T }
+  | null
 
 export interface TranscriptTechnicalPart {
   messageId: string
@@ -39,57 +42,75 @@ export type ExplorationSegment<T> =
   | { kind: "group"; items: T[] }
   | { kind: "pending"; item: T }
 
-export function getTechnicalGroupKind(part: ClientPart) {
-  if (part.type === "reasoning") return "reasoning" as const
-  if (part.type !== "tool") return
-  const tool = part.tool.toLowerCase()
+export function toolGroupKind(name: string) {
+  const tool = name.toLowerCase()
   if (["read", "glob", "grep"].includes(tool)) return "exploration" as const
   if (tool === "bash" || tool === "shell") return "shell" as const
 }
 
+export function getTechnicalGroupKind(part: ClientPart) {
+  if (part.type === "reasoning") return "reasoning" as const
+  if (part.type === "tool") return toolGroupKind(part.tool)
+}
+
+export function transcriptPartKind(part: ClientPart): TranscriptRowKind {
+  return getTechnicalGroupKind(part) ?? (part.type === "tool" || part.type === "system" || part.type === "compaction" ? "part" : "content")
+}
+
 export function reasoningHasRenderableContent(part: ClientPart): boolean {
-  const check = (segment: unknown): boolean => {
-    if (typeof segment === "string") return segment.trim().length > 0
-    if (!segment || typeof segment !== "object") return false
-    const value = segment as { text?: unknown; value?: unknown; content?: unknown[] }
-    return (typeof value.text === "string" && value.text.trim().length > 0)
-      || (typeof value.value === "string" && value.value.trim().length > 0)
-      || (Array.isArray(value.content) && value.content.some(check))
-  }
-  return part.type === "reasoning" && (check(part.text) || (Array.isArray((part as any).content) && (part as any).content.some(check)))
+  return part.type === "reasoning" && part.text.trim().length > 0
 }
 
 export function isTechnicalGroupingVisiblePart(part: ClientPart): boolean {
-  if ((part as any)?.type === "patch") return false
-  if (part.type === "step-start" || part.type === "step-finish") return false
   if (part.type === "reasoning") return reasoningHasRenderableContent(part)
   if (part.type === "text" || part.type === "file") return !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)
   return true
 }
 
-export function isVisibleStepFinish(part: ClientPart, messageInfo: MessageInfo | undefined, usageVisible: boolean): boolean {
-  if (part.type !== "step-finish" || !usageVisible) return false
-  return Boolean((part as any).tokens ?? (messageInfo?.role === "assistant" ? messageInfo.tokens : undefined))
+/** Text that answers the user: it bounds technical cleanup runs and agent responses. */
+export function isResponseTextPart(part: ClientPart): boolean {
+  return (part.type === "text" || part.type === "file") && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)
+}
+
+/** Adds up native usage of distinct messages; `base` supplies the line's own metadata. */
+export function sumMessageUsage(base: MessageInfo, messages: ReadonlyArray<MessageInfo | undefined>): MessageInfo {
+  const settled = messages.filter((info): info is MessageInfo => Boolean(info?.tokens))
+  const total = (read: (tokens: NonNullable<MessageInfo["tokens"]>) => number | undefined) =>
+    settled.reduce((sum, info) => sum + (read(info.tokens!) ?? 0), 0)
+  return {
+    ...base,
+    tokens: {
+      input: total(tokens => tokens.input), output: total(tokens => tokens.output), reasoning: total(tokens => tokens.reasoning),
+      cache: { read: total(tokens => tokens.cache?.read), write: total(tokens => tokens.cache?.write) },
+    },
+    cost: settled.reduce((sum, info) => sum + (info.cost ?? 0), 0),
+  }
 }
 
 export function technicalPartKey(messageId: string, partId: string) {
   return `${messageId}:${partId}`
 }
 
-export function groupTechnicalParts(parts: ClientPart[], getGroupId?: (part: ClientPart) => string | undefined): TechnicalPartGroup[] {
-  return parts.reduce<TechnicalPartGroup[]>((groups, part) => {
-    const kind = getTechnicalGroupKind(part)
-    const groupId = kind ? getGroupId?.(part) : undefined
-    const previous = groups.at(-1)
-    if (!kind) {
-      groups.push({ kind: "part", part })
-    } else if (previous?.kind === kind && previous.groupId === groupId) {
-      previous.parts.push(part)
-    } else {
-      groups.push({ kind, parts: [part], groupId })
+/**
+ * The transcript's row boundaries over a message's displayed items, shared by
+ * its blocks and the timeline rail: consecutive content items form one row,
+ * consecutive technical items of one kind (and group) one group; `null`, the
+ * omitted-parts gap, ends every row.
+ */
+export function groupTranscriptRows<T>(items: Array<T | null>, classify: (item: T) => { kind: TranscriptRowKind; groupId?: string }): TranscriptRow<T>[] {
+  const rows: TranscriptRow<T>[] = []
+  for (const item of items) {
+    if (item === null) {
+      rows.push(null)
+      continue
     }
-    return groups
-  }, [])
+    const { kind, groupId } = classify(item)
+    const previous = rows.at(-1)
+    if (kind === "part") rows.push({ kind, item })
+    else if (previous && previous.kind !== "part" && previous.kind === kind && previous.groupId === groupId) previous.items.push(item)
+    else rows.push({ kind, items: [item], groupId })
+  }
+  return rows
 }
 
 export function projectTranscriptTechnicalGroups(items: Array<TranscriptTechnicalPart | null>) {

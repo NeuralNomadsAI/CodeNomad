@@ -4,10 +4,10 @@ import { tsImport } from "tsx/esm/api"
 
 // Called only by the isolated location fixture, using its synthetic repository,
 // native client and private daemon. Never discovers the user's service.
-export async function testNativeWorktreeFamily({ client, profile, rootLocation, worktreeLocation }) {
+export async function testNativeWorktreeFamily({ client, rootLocation, worktreeLocation }) {
   const { moveProjectSessionFamily, removeProjectWorktree } = await tsImport("../packages/server/src/workspaces/project-session-families.ts", import.meta.url)
   const { locationRequestOptions, readLocationRef } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
-  const source = { directory: rootLocation.directory, ...(profile === "legacy" ? { workspaceID: "wrk_family_fixture" } : {}) }
+  const source = { directory: rootLocation.directory }
   const root = await client.session.create({ location: { directory: source.directory }, title: "Synthetic family root" }, locationRequestOptions(source))
   const seed = await client.session.create({ location: { directory: source.directory }, title: "Synthetic family child" }, locationRequestOptions(source))
   const exported = await client.session.export({ sessionID: seed.id })
@@ -38,7 +38,7 @@ export async function testNativeWorktreeFamily({ client, profile, rootLocation, 
     for (const session of [root, child]) {
       assert.deepEqual(readLocationRef((await client.session.get({ sessionID: session.id })).location), readLocationRef(worktreeLocation))
     }
-    console.log(`PASS: native ${profile} complete family move, worktree refresh and verified evacuation rollback`)
+    console.log("PASS: native complete family move, worktree refresh and verified evacuation rollback")
   } finally {
     await Promise.allSettled([child, root].map(session => client.session.remove({ sessionID: session.id })))
   }

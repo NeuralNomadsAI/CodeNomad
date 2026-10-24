@@ -8,7 +8,7 @@ import {
 import { Service, type Endpoint } from "@opencode/client/service"
 import { assertLoopbackServiceUrl } from "./service-state"
 import { createRuntimeTransport } from "../opencode/compatibility/transport"
-import { contractProfile, rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
+import { rememberRuntime, runtimeIdentity, type ContractProfile } from "../opencode/compatibility/runtime"
 import { locationRequestOptions } from "../opencode/compatibility/location"
 import { assertSupportedOpenCode } from "../opencode/runtime-support"
 import { observePendingDiscovery, carryPendingCompactions } from "./pending-discovery"
@@ -86,6 +86,12 @@ export class OpenCodeSharedService {
     return this.connect()
   }
 
+  // Observation only: registration can precede profile/plugin preparation.
+  // Requests retain the connection's normal contract and generation fences.
+  existingConnection(): ServiceConnection | undefined {
+    return this.connected
+  }
+
   async headers(options?: OpenCodeSharedServiceOptions, requestOptions?: RequestOptions): Promise<ReturnType<typeof Service.headers>> {
     return this.dependencies.headers(await this.endpoint(options, requestOptions))
   }
@@ -95,10 +101,8 @@ export class OpenCodeSharedService {
     requestOptions?: RequestOptions,
     serviceOptions?: OpenCodeSharedServiceOptions,
   ): Promise<LocationGetOutput> {
-    const result = await this.withClient(serviceOptions, (client, connection) => {
-      if (location.workspaceID !== undefined && contractProfile(runtimeIdentity(connection.endpoint)) === "modern") {
-        throw new Error("OpenCode V2 locations are identified by directory")
-      }
+    const result = await this.withClient(serviceOptions, client => {
+      if (location.workspaceID !== undefined) throw new Error("OpenCode V2 locations are identified by directory")
       return client.location.get({ location: { directory: location.directory } }, {
         ...locationRequestOptions(location), ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}),
       })
@@ -113,18 +117,6 @@ export class OpenCodeSharedService {
       throw new Error("OpenCode returned an invalid location")
     }
     return result
-  }
-
-  async evictLocation(
-    location: LocationRef,
-    requestOptions?: RequestOptions,
-    serviceOptions?: OpenCodeSharedServiceOptions,
-  ): Promise<void> {
-    await this.withClient(serviceOptions, (client) => client.debug.location.evict({
-      location: {
-        directory: location.directory,
-      },
-    }, { ...locationRequestOptions(location), ...(requestOptions?.signal ? { signal: requestOptions.signal } : {}) }), requestOptions)
   }
 
   async subscribe(requestOptions?: RequestOptions, serviceOptions?: OpenCodeSharedServiceOptions): Promise<AsyncIterable<OpenCodeEvent>> {
@@ -154,7 +146,8 @@ export class OpenCodeSharedService {
 
   private connect(options?: OpenCodeSharedServiceOptions, deadlineAt?: number): Promise<ServiceConnection> {
     return this.connectService(options, deadlineAt).then(async connection => {
-      if (await connection.profile() !== "modern") throw new Error("Unsupported OpenCode runtime contract")
+      // Admits only the modern contract; refusal throws.
+      await connection.profile()
       const prepare = this.serviceOptions?.prepareDesktopPlugins
       if (!prepare) return connection
       connection.assertCurrent()
@@ -190,18 +183,23 @@ export class OpenCodeSharedService {
       return Promise.resolve(current)
     }
     const generation = this.generation
+    // Only a different discovered daemon replaces a working connection. A recheck
+    // that fails (a slow CLI or status probe past the caller's deadline) or finds
+    // no service is inconclusive: failed location validation, proxy transport or
+    // authentication failures and upstream event-stream EOF/errors retire the
+    // connection. Keep it and retry at the next interval.
+    const keepCurrent = () => {
+      this.connectionValidatedAt = this.now()
+      return current
+    }
     const check = this.lifecycle().discover(deadlineAt).then((endpoint) => {
       if (generation !== this.generation || this.connected !== current) return this.connectService(undefined, deadlineAt)
-      if (endpoint && this.sameEndpoint(endpoint, current.endpoint)) {
-        this.connectionValidatedAt = this.now()
-        return current
-      }
+      if (!endpoint || this.sameEndpoint(endpoint, current.endpoint)) return keepCurrent()
       this.invalidateConnection(current)
-      return endpoint ? this.createConnection(endpoint, this.generation) : this.startConnection(deadlineAt)
+      return this.createConnection(endpoint, this.generation)
     }, () => {
       if (generation !== this.generation || this.connected !== current) return this.connectService(undefined, deadlineAt)
-      this.invalidateConnection(current)
-      return this.startConnection(deadlineAt)
+      return keepCurrent()
     })
     const healthCheck = check.finally(() => {
       if (this.healthCheck === healthCheck) this.healthCheck = undefined

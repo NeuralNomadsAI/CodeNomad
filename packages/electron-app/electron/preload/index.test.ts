@@ -52,28 +52,41 @@ test("Preferences preload exposes only section and frame controls", () => {
     invoke(channel: string) { invoked.push(channel); return Promise.resolve() },
   }
   vm.runInNewContext(readFileSync(new URL("./index.cjs", import.meta.url), "utf8"), {
-    require: () => ({ contextBridge: { exposeInMainWorld: (name: string, value: unknown) => exposed.set(name, value) }, ipcRenderer, webUtils: {} }),
+    require: () => ({ contextBridge: { exposeInMainWorld: (name: string, value: unknown) => exposed.set(name, value) }, ipcRenderer, webFrame: { getZoomFactor: () => 1.5 }, webUtils: {} }),
     process: { argv: ["--codenomad-window-context=preferences"] },
   })
 
   const api = exposed.get("electronAPI") as Record<string, Function>
   assert.deepEqual(Object.keys(api), [
-    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow",
+    "onCliStatus", "onCliError", "getCliStatus", "restartCli", "openDialog", "showNotification", "openRemoteWindow", "getZoomFactor",
     "getPreferencesSection", "getPreferencesRequest", "preferencesReady", "acceptPreferencesRequest", "resolvePreferencesTransition",
+    "openerStartupState", "listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile",
     "onPreferencesSection", "onPreferencesCloseRequested", "onPreferencesTransitionRequested",
     "minimizeWindow", "toggleMaximizeWindow", "closeWindow",
   ])
   assert.equal(exposed.get("__CODENOMAD_WINDOW_CONTEXT__"), "preferences")
   assert.equal(exposed.get("__CODENOMAD_WINDOW_ID__"), null)
+  assert.equal(api.getZoomFactor(), 1.5, "the frame's own zoom factor")
   api.getPreferencesSection()
   api.getPreferencesRequest()
   api.preferencesReady()
   api.acceptPreferencesRequest({ section: "providers" })
   api.resolvePreferencesTransition(4, true)
+  api.openerStartupState("read")
+  api.listOtherDataProfiles()
+  api.deleteOtherDataProfiles(["default"])
+  api.setNextLaunchDataProfile("dev")
+  api.relaunchIntoNextDataProfile()
   api.minimizeWindow()
   api.toggleMaximizeWindow()
   api.closeWindow()
-  assert.deepEqual(invoked, ["preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:minimize", "preferences:toggleMaximize", "preferences:close"])
+  assert.deepEqual(invoked, [
+    "preferences:getSection", "preferences:getSection", "preferences:ready", "preferences:acceptRequest", "preferences:resolveTransition", "preferences:openerStartupState",
+    "data-profiles:listOthers", "data-profiles:deleteOthers", "data-profiles:setNextLaunch", "data-profiles:relaunch",
+    "preferences:minimize", "preferences:toggleMaximize", "preferences:close",
+  ])
+  // Preferences never receives direct client-state authority.
+  assert.ok(!Object.keys(api).some((key) => /ClientState/.test(key)))
 
   const sections: string[] = []
   const dispose = api.onPreferencesSection((section: string) => sections.push(section))
@@ -117,4 +130,47 @@ test("native titlebar controls remain local and obsolete automation toggles are 
   assert.equal(expose(["--codenomad-window-context=remote"]).showTitlebarMenu, undefined)
   assert.equal(expose(["--codenomad-window-context=preferences"]).getDeveloperMode, undefined)
   assert.equal(expose(["--codenomad-window-context=preferences"]).showTitlebarMenu, undefined)
+  // Only windows drawing their own title bar read the page zoom.
+  assert.equal(typeof expose([]).getZoomFactor, "function")
+  assert.equal(typeof expose(["--codenomad-window-context=preferences"]).getZoomFactor, "function")
+  assert.equal(expose(["--codenomad-window-context=remote"]).getZoomFactor, undefined)
+  // Data-profile management belongs to local and Preferences windows, never remote content.
+  for (const operation of ["listOtherDataProfiles", "deleteOtherDataProfiles", "setNextLaunchDataProfile", "relaunchIntoNextDataProfile"]) {
+    assert.equal(typeof expose([])[operation], "function", operation)
+    assert.equal(typeof expose(["--codenomad-window-context=preferences"])[operation], "function", operation)
+    assert.equal(expose(["--codenomad-window-context=remote"])[operation], undefined, operation)
+  }
+})
+
+test("local windows choose the next launch's profile and relaunch through fixed channels", () => {
+  const calls: unknown[][] = []
+  let api: Record<string, Function> | undefined
+  vm.runInNewContext(readFileSync(new URL("./index.cjs", import.meta.url), "utf8"), {
+    require: () => ({
+      contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+      ipcRenderer: { invoke: (...args: unknown[]) => calls.push(args), on() {}, removeListener() {} }, webUtils: {},
+    }),
+    process: { argv: [] },
+  })
+  api!.setNextLaunchDataProfile("team")
+  api!.relaunchIntoNextDataProfile()
+  assert.deepEqual(calls, [["data-profiles:setNextLaunch", "team"], ["data-profiles:relaunch"]])
+})
+
+test("count-only badge bridge is exposed to local and remote main renderers, never Preferences", () => {
+  const source = readFileSync(new URL("./index.cjs", import.meta.url), "utf8")
+  for (const context of ["local", "remote", "preferences"]) {
+    let api: Record<string, Function>
+    const calls: unknown[][] = []
+    vm.runInNewContext(source, {
+      require: () => ({
+        contextBridge: { exposeInMainWorld(name: string, value: Record<string, Function>) { if (name === "electronAPI") api = value } },
+        ipcRenderer: { invoke: (...args: unknown[]) => calls.push(args), on() {}, removeListener() {} }, webUtils: {},
+      }),
+      process: { argv: [`--codenomad-window-context=${context}`] },
+    })
+    if (context === "preferences") { assert.equal(api!.setNotificationBadge, undefined); continue }
+    api!.setNotificationBadge(12)
+    assert.deepEqual(calls, [["notifications:setBadge", 12]])
+  }
 })

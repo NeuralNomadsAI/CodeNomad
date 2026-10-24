@@ -4,12 +4,11 @@ import type {
   SessionCompactionEnded,
   SessionCreated,
   SessionExecutionFailed,
-  SessionIdle,
   SessionMoved,
+  SessionRetryScheduled,
   SessionRevertCleared,
   SessionRevertCommitted,
   SessionRevertStaged,
-  SessionStatusUpdated,
   TuiToastShow,
 } from "@opencode/client"
 import { getLogger } from "../lib/logger"
@@ -24,7 +23,6 @@ import {
 } from "../types/permission"
 import type { PermissionRequest } from "../types/permission"
 import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
-import { sendOsNotification } from "../lib/os-notifications"
 import { preferences } from "./preferences"
 import {
   instances,
@@ -37,14 +35,14 @@ import { showAlertDialog } from "./alerts"
 import {
   createClientSession,
   getIdleSinceForStatusTransition,
-  mapSdkSessionRetry,
-  mapSdkSessionStatus,
+  mapNativeSessionRetry,
   type Session,
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, ensureSessionAncestorsExpanded, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
+import { getRetrySeconds } from "./session-status"
 import { tGlobal } from "../lib/i18n"
 
 import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
@@ -57,14 +55,20 @@ import {
 import { messageStoreBus } from "./message-v2/bus"
 import { updateSessionInfo } from "./message-v2/session-info"
 import { handleConversationAssistantPartUpdated } from "./conversation-speech"
+import { createCompactionNoticeClaims, createSessionBubbles } from "./compaction-notice"
 
 const log = getLogger("sse")
+const claimCompactionNotice = createCompactionNoticeClaims()
+const compactionBubbles = createSessionBubbles()
+const COMPACTION_TOAST_MS = 10000
 const pendingSessionFetches = new Map<string, {
   status: SessionStatus
   retry?: SessionRetryState | null
 }>()
 const nativeLifecycleGenerations = new Map<string, number>()
-let activeRetryToast: ToastHandle | null = null
+// The live backoff countdown of one session; it ends when that session's next
+// attempt starts or its run settles.
+let activeRetryToast: { key: string; handle: ToastHandle } | null = null
 const movedSessionRefreshTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
@@ -76,6 +80,12 @@ function advanceNativeLifecycle(instanceId: string, sessionId: string): number {
 
 function isCurrentNativeLifecycle(instanceId: string, sessionId: string, generation: number): boolean {
   return nativeLifecycleGenerations.get(`${instanceId}\0${sessionId}`) === generation
+}
+
+function dismissRetryToast(instanceId: string, sessionId: string): void {
+  if (activeRetryToast?.key !== `${instanceId}\0${sessionId}`) return
+  activeRetryToast.handle.dismiss()
+  activeRetryToast = null
 }
 
 function speakCompletedAssistantText(instanceId: string, sessionId: string): void {
@@ -127,6 +137,7 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
       return
     case "session.compaction.started":
       advanceNativeLifecycle(instanceId, event.data.sessionID)
+      dismissRetryToast(instanceId, event.data.sessionID)
       ensureSessionStatus(instanceId, event.data.sessionID, "compacting", event.location?.directory)
       return
     case "session.compaction.failed":
@@ -140,14 +151,21 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
         failed: true,
         interrupted: true,
         refreshMessages: true,
+        // A person's stop needs no notice and a shutdown resumes the turn later;
+        // OpenCode stopping an unattended run does.
+        notify: event.data.reason === "inactivity",
         directory: event.location?.directory,
       })
       return
     case "session.execution.succeeded":
       void reconcileTerminalNativeSessionStatus(instanceId, event.data.sessionID, {
         failed: false,
+        notify: true,
         directory: event.location?.directory,
       })
+      return
+    case "session.retry.scheduled":
+      handleRetryScheduled(instanceId, event)
       return
   }
 
@@ -163,14 +181,21 @@ function handleNativeSessionEvent(instanceId: string, event: NativeSessionEvent)
     event.type.startsWith("session.tool.")
   ) {
     advanceNativeLifecycle(instanceId, sessionId)
+    // Ordinary work replaces the backoff: the next attempt has started.
+    dismissRetryToast(instanceId, sessionId)
     ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory)
   }
 }
 
+/**
+ * OpenCode V2 settles each busy period with one session.execution.* event. It is
+ * a hint until the native active list confirms the session no longer runs; only
+ * then does the run count as finished (`notify` announces that completion).
+ */
 async function reconcileTerminalNativeSessionStatus(
   instanceId: string,
   sessionId: string,
-  options: { failed: boolean; interrupted?: boolean; refreshMessages?: boolean; directory?: string },
+  options: { failed: boolean; interrupted?: boolean; refreshMessages?: boolean; notify?: boolean; directory?: string },
 ): Promise<void> {
   const generation = advanceNativeLifecycle(instanceId, sessionId)
   let activeSessions: Record<string, unknown> | null = null
@@ -194,6 +219,7 @@ async function reconcileTerminalNativeSessionStatus(
   }
   setTerminalNativeSessionStatus(instanceId, sessionId, options.failed, options.directory)
   refreshSettledSessionMessages(instanceId, sessionId, options.refreshMessages)
+  if (options.notify) notifySessionAttention("sessionDone", instanceId, sessionId)
 }
 
 function refreshSettledSessionMessages(instanceId: string, sessionId: string, force = false): void {
@@ -218,6 +244,7 @@ function setTerminalNativeSessionStatus(instanceId: string, sessionId: string, f
   const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) setSessionStatus(instanceId, sessionId, "idle", { force: true })
   else ensureSessionStatus(instanceId, sessionId, "idle", directory)
+  dismissRetryToast(instanceId, sessionId)
   if (failed) messageStoreBus.getOrCreate(instanceId).failPendingSends(sessionId)
   speakCompletedAssistantText(instanceId, sessionId)
 }
@@ -267,28 +294,14 @@ function handleSessionMoved(sourceInstanceId: string, data: SessionMoved["data"]
   }
 }
 
-function shouldSendOsNotification(kind: "needsInput" | "idle"): boolean {
-  if (typeof document === "undefined") return false
-  const pref = preferences()
-  if (!pref.osNotificationsEnabled) return false
-  if (!pref.osNotificationsAllowWhenVisible && document.visibilityState === "visible") return false
-  if (kind === "needsInput") return Boolean(pref.notifyOnNeedsInput)
-  if (kind === "idle") return Boolean(pref.notifyOnIdle)
-  return false
-}
-
 function isChildSession(instanceId: string, sessionId: string): boolean | null {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (!session) return null
   return session.parentId !== null && session.parentId !== undefined
 }
 
-function shouldSendOsNotificationForSession(
-  kind: "needsInput" | "idle",
-  instanceId: string,
-  sessionId: string | undefined | null,
-): boolean {
-  if (!shouldSendOsNotification(kind)) return false
+/** Session attention notifications concern root sessions only. */
+function isNotifiableSession(instanceId: string, sessionId: string | undefined | null): boolean {
   if (!sessionId) return true
 
   const child = isChildSession(instanceId, sessionId)
@@ -312,20 +325,18 @@ function getSessionTitle(instanceId: string, sessionId: string | undefined | nul
   return title && title.length > 0 ? title : sessionId
 }
 
-function fireOsNotification(payload: { title: string; body: string }) {
-  void sendOsNotification(payload).catch((error) => {
-    log.warn("Failed to send OS notification", error)
-  })
+/** Routed like every notification: screen, history and/or system per Settings → Notifications. */
+function notifySessionAttention(category: "needsInput" | "sessionDone", instanceId: string, sessionId: string | undefined | null): void {
+  if (!isNotifiableSession(instanceId, sessionId)) return
+  const label = getSessionTitle(instanceId, sessionId)
+  const message = label
+    ? tGlobal(category === "needsInput" ? "sessionEvents.notify.needsInput" : "sessionEvents.notify.done", { label })
+    : tGlobal(`settings.notifications.category.${category}`)
+  showToastNotification({ category, title: getInstanceDisplayName(instanceId), message, variant: "info" })
 }
 
 queueMicrotask(() => {
-  setPendingFormAddedHandler((instanceId, form) => {
-    if (!shouldSendOsNotificationForSession("needsInput", instanceId, form.sessionID)) return
-    fireOsNotification({
-      title: getInstanceDisplayName(instanceId),
-      body: tGlobal("settings.notifications.events.needsInput"),
-    })
-  })
+  setPendingFormAddedHandler((instanceId, form) => notifySessionAttention("needsInput", instanceId, form.sessionID))
 })
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
@@ -383,7 +394,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     const published = updatedInstanceSessions?.get(sessionId)
     if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
 
-    if (shouldExpandAncestors) ensureSessionAncestorsExpanded(instanceId, sessionId)
+    if (shouldExpandAncestors) revealWorkingSubsession(instanceId, sessionId)
 
     return fetched
   } catch (error) {
@@ -475,11 +486,11 @@ function handleSessionUpdate(
       retry: null,
       idleSince: null,
       version: info.version || "0",
-      projectID: (info as any).projectID ?? "",
+      projectID: info.projectID,
       metadata: info.metadata,
       cost: (info as any).cost ?? 0,
       tokens: (info as any).tokens ?? { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
-      location: (info as any).location ?? { directory: instances().get(instanceId)?.folder ?? "" },
+      location: info.location,
       time: info.time
         ? { ...info.time }
         : {
@@ -542,57 +553,34 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
   nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
+  dismissRetryToast(instanceId, sessionId)
   removeSessionRuntimeState(instanceId, sessionId)
 }
 
-function handleSessionIdle(instanceId: string, event: SessionIdle): void {
+/** Native provider backoff. The next attempt's step events clear it as ordinary work. */
+function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled): void {
   const sessionId = event.data.sessionID
-  if (!sessionId) return
-
   advanceNativeLifecycle(instanceId, sessionId)
-  if (shouldSendOsNotificationForSession("idle", instanceId, sessionId)) {
-    const title = getInstanceDisplayName(instanceId)
-    const label = getSessionTitle(instanceId, sessionId)
-    const body = label ? `Session "${label}" is idle` : "Session is idle"
-    fireOsNotification({ title, body })
-  }
-
-  ensureSessionStatus(instanceId, sessionId, "idle", event.location?.directory)
-  refreshSettledSessionMessages(instanceId, sessionId)
-  speakCompletedAssistantText(instanceId, sessionId)
-  log.info(`[SSE] Session idle: ${sessionId}`)
-}
-
-function handleSessionStatus(instanceId: string, event: SessionStatusUpdated): void {
-  const sessionId = event.data.sessionID
-  if (!sessionId) return
-
-  advanceNativeLifecycle(instanceId, sessionId)
-  const rawStatus = event.data.status
-  const status = mapSdkSessionStatus(rawStatus)
-  const retry = mapSdkSessionRetry(rawStatus)
-  ensureSessionStatus(instanceId, sessionId, status, event.location?.directory, retry)
-  if (status === "idle") refreshSettledSessionMessages(instanceId, sessionId)
-  if (retry) {
-    const remainingSeconds = Math.max(0, Math.round((retry.next - Date.now()) / 1000))
-    const countdown =
-      remainingSeconds > 0
-        ? tGlobal("sessionList.status.retryingIn", { seconds: String(remainingSeconds) })
-        : tGlobal("sessionList.status.retrying")
-    const label = getSessionTitle(instanceId, sessionId)
-    activeRetryToast?.dismiss()
-    activeRetryToast = showToastNotification({
-      title: label || getInstanceDisplayName(instanceId),
-      message: tGlobal("sessionList.status.retryToast", {
-        countdown,
-        message: retry.message,
-        attempt: String(retry.attempt),
-      }),
-      variant: "error",
-      duration: 7000,
-    })
-  }
-  log.info(`[SSE] Session status updated: ${sessionId}`, { status })
+  const retry = mapNativeSessionRetry(event.data)
+  ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory, retry)
+  const remainingSeconds = getRetrySeconds(retry.next)
+  const countdown =
+    remainingSeconds > 0
+      ? tGlobal("sessionList.status.retryingIn", { seconds: String(remainingSeconds) })
+      : tGlobal("sessionList.status.retrying")
+  const label = getSessionTitle(instanceId, sessionId)
+  activeRetryToast?.handle.dismiss()
+  // A live retry status replaced by the next attempt, not an event to keep.
+  activeRetryToast = { key: `${instanceId}\0${sessionId}`, handle: showToastNotification({ category: "sessions", transient: true,
+    title: label || getInstanceDisplayName(instanceId),
+    message: tGlobal("sessionList.status.retryToast", {
+      countdown,
+      message: retry.message,
+      attempt: String(retry.attempt),
+    }),
+    variant: "error",
+    duration: 7000,
+  }) }
 }
 
 function handleSessionCompacted(instanceId: string, event: SessionCompactionEnded): void {
@@ -606,6 +594,7 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
   else ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory)
 
+  if (!claimCompactionNotice(event)) return
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
   const label = session?.title?.trim() ? session.title : sessionID
@@ -613,12 +602,12 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   const instanceName = instanceFolder.split(/[\\/]/).filter(Boolean).pop() ?? instanceFolder
   const displayLabel = label ? `"${label}"` : sessionID
 
-  showToastNotification({
+  compactionBubbles.show(sessionID, COMPACTION_TOAST_MS, () => showToastNotification({ category: "sessions",
     title: instanceName,
     message: tGlobal("sessionEvents.sessionCompactedToast", { label: displayLabel }),
     variant: "info",
-    duration: 10000,
-  })
+    duration: COMPACTION_TOAST_MS,
+  }))
 }
 
 function handleSessionError(instanceId: string, event: SessionExecutionFailed): void {
@@ -627,20 +616,14 @@ function handleSessionError(instanceId: string, event: SessionExecutionFailed): 
   if (sessionId) {
     void reconcileTerminalNativeSessionStatus(instanceId, sessionId, {
       failed: true,
+      // The alert stays in this window; the notice reaches history and the system.
+      notify: true,
       directory: event.location?.directory,
     })
   }
   log.error(`[SSE] Session error:`, error)
 
-  let message = tGlobal("sessionEvents.sessionError.unknown")
-
-  if (error) {
-    if ("data" in error && error.data && typeof error.data === "object" && "message" in error.data) {
-      message = error.data.message as string
-    } else if ("message" in error && typeof error.message === "string") {
-      message = error.message
-    }
-  }
+  const message = typeof error?.message === "string" ? error.message : tGlobal("sessionEvents.sessionError.unknown")
 
   showAlertDialog(tGlobal("sessionEvents.sessionError.message", { message }), {
     title: tGlobal("sessionEvents.sessionError.title"),
@@ -657,7 +640,7 @@ function handleTuiToast(_instanceId: string, event: TuiToastShow): void {
     ? (payload.variant as ToastVariant)
     : "info"
 
-  showToastNotification({
+  showToastNotification({ category: "opencode",
     title: typeof payload.title === "string" ? payload.title : undefined,
     message: payload.message,
     variant,
@@ -676,14 +659,7 @@ function handlePermissionUpdated(instanceId: string, event: PermissionAsked): vo
   }
   log.info(`[SSE] Permission request: ${permissionId} (${getPermissionKind(permission)})`)
 
-  const sessionId = getPermissionSessionId(permission)
-
-  if (shouldSendOsNotificationForSession("needsInput", instanceId, sessionId)) {
-    const title = getInstanceDisplayName(instanceId)
-    const label = getSessionTitle(instanceId, sessionId)
-    const body = label ? `Session "${label}" needs permission` : "Session needs permission"
-    fireOsNotification({ title, body })
-  }
+  notifySessionAttention("needsInput", instanceId, getPermissionSessionId(permission))
 }
 
 function handlePermissionReplied(instanceId: string, event: PermissionReplied): void {
@@ -701,8 +677,6 @@ export {
   handleSessionCompacted,
   handleSessionDeleted,
   handleSessionError,
-  handleSessionIdle,
-  handleSessionStatus,
   handleSessionUpdate,
   handleTuiToast,
 }

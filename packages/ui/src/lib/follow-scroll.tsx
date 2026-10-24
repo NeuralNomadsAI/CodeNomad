@@ -1,15 +1,11 @@
 import { createEffect, createSignal, onCleanup, type Accessor, type JSXElement } from "solid-js"
-import { BOTTOM_FOLLOW_EPSILON_PX, VirtualScrollController, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
-
-const DEFAULT_SCROLL_INTENT_WINDOW_MS = 600
-const DEFAULT_SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
+import { SCROLL_INTENT_KEYS, USER_SCROLL_INTENT_WINDOW_MS, VirtualScrollController, describeKeyTarget, getKeyboardScrollIntent, isAutoFollowing, isMiddleButtonScrollIntent, type ScrollControllerMetrics } from "../components/virtual-follow-behavior"
+import { getElementZoom, wheelDeltaUnit } from "./scroll-gesture-routing"
 
 interface FollowScrollOptions {
   getScrollTopSnapshot: Accessor<number>
   setScrollTopSnapshot: (next: number) => void
   sentinelClassName: string
-  intentWindowMs?: number
-  intentKeys?: ReadonlySet<string>
 }
 
 export interface FollowScrollHelpers {
@@ -17,6 +13,8 @@ export interface FollowScrollHelpers {
   handleScroll: (event: Event & { currentTarget: HTMLDivElement }) => void
   renderSentinel: (options?: { disableTracking?: boolean }) => JSXElement | null
   restoreAfterRender: () => void
+  /** Leaves follow mode like an upward gesture, e.g. before content grows above the reader. */
+  stopFollowing: () => void
   autoScroll: Accessor<boolean>
 }
 
@@ -42,11 +40,10 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       container.scrollTop = container.scrollHeight
       lastKnownScrollTop = container.scrollTop
       options.setScrollTopSnapshot(lastKnownScrollTop)
-      scrollController.recordProgrammaticOffset(lastKnownScrollTop, true)
     } else {
       container.scrollTop = lastKnownScrollTop
-      scrollController.recordProgrammaticOffset(lastKnownScrollTop, isAtBottom(container))
     }
+    scrollController.recordProgrammaticOffset(lastKnownScrollTop)
   }
 
   function persistScrollSnapshot(element?: HTMLElement | null) {
@@ -55,19 +52,27 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     options.setScrollTopSnapshot(lastKnownScrollTop)
   }
 
-  function markUserScrollIntent(direction: "up" | "down" | null) {
+  function markUserScrollIntent(direction: "up" | "down" | null, distance = 0) {
     const now = typeof performance !== "undefined" ? performance.now() : Date.now()
-    scrollController.setUserIntent(direction, now + (options.intentWindowMs ?? DEFAULT_SCROLL_INTENT_WINDOW_MS))
-    if (direction === "up") {
-      // Take ownership immediately, even if native middle-button autoscroll
-      // waits longer than the intent deadline before its first scroll event.
-      scrollController.setFollow(false)
-      setAutoScroll(false)
-      suppressNextScrollHandling = false
-      if (pendingScrollFrame !== null) cancelAnimationFrame(pendingScrollFrame)
-      if (pendingAnchorScroll !== null) cancelAnimationFrame(pendingAnchorScroll)
-      pendingScrollFrame = pendingAnchorScroll = null
-    }
+    const container = scrollContainerRef
+    // Upward intent takes ownership immediately, even if native middle-button
+    // autoscroll waits longer than the intent deadline before its first scroll
+    // event; a downward gesture reaching the bottom resumes follow (shared rule).
+    const result = scrollController.userGesture(direction, now + USER_SCROLL_INTENT_WINDOW_MS, container ? getMetrics(container) : null, distance)
+    setAutoScroll(isAutoFollowing(result.state.mode))
+    if (direction === "up") cancelFollowFrames()
+  }
+
+  function cancelFollowFrames() {
+    suppressNextScrollHandling = false
+    if (pendingScrollFrame !== null) cancelAnimationFrame(pendingScrollFrame)
+    if (pendingAnchorScroll !== null) cancelAnimationFrame(pendingAnchorScroll)
+    pendingScrollFrame = pendingAnchorScroll = null
+  }
+
+  const stopFollowing = () => {
+    setAutoScroll(isAutoFollowing(scrollController.setFollow(false).state.mode))
+    cancelFollowFrames()
   }
 
   function attachScrollIntentListeners(element: HTMLDivElement) {
@@ -75,21 +80,27 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       detachScrollIntentListeners()
       detachScrollIntentListeners = undefined
     }
-    const intentKeys = options.intentKeys ?? DEFAULT_SCROLL_INTENT_KEYS
     const handlePointerIntent = (event: WheelEvent | PointerEvent | TouchEvent) => {
-      const direction = event instanceof WheelEvent
-        ? (event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null)
-        : event instanceof PointerEvent && isMiddleButtonScrollIntent(event.button) ? "up" : null
-      markUserScrollIntent(direction)
+      if (event instanceof WheelEvent) {
+        markUserScrollIntent(event.deltaY < 0 ? "up" : event.deltaY > 0 ? "down" : null, event.deltaY * wheelDeltaUnit(event, element))
+        return
+      }
+      markUserScrollIntent(event instanceof PointerEvent && isMiddleButtonScrollIntent(event.button) ? "up" : null)
     }
     const handleKeyIntent = (event: KeyboardEvent) => {
-      if (intentKeys.has(event.key)) {
-        const direction =
-          event.key === "ArrowUp" || event.key === "PageUp" || event.key === "Home" || (event.shiftKey && (event.key === " " || event.key === "Spacebar"))
-            ? "up"
-            : "down"
-        markUserScrollIntent(direction)
-      }
+      if (event.defaultPrevented || !SCROLL_INTENT_KEYS.has(event.key)) return
+      const intent = getKeyboardScrollIntent({
+        key: event.key,
+        shiftKey: event.shiftKey,
+        ...describeKeyTarget(event.target),
+        viewportHeight: element.clientHeight,
+        zoom: getElementZoom(element),
+        devicePixelRatio: window.devicePixelRatio,
+      })
+      if (!intent) return
+      // Home/End scroll natively here; End reaches the bottom whatever its distance.
+      if (intent.type === "direction") markUserScrollIntent(intent.direction, intent.distance)
+      else markUserScrollIntent(intent.type === "top" ? "up" : "down", intent.type === "top" ? 0 : Number.POSITIVE_INFINITY)
     }
     element.addEventListener("wheel", handlePointerIntent, { passive: true })
     element.addEventListener("pointerdown", handlePointerIntent)
@@ -124,7 +135,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       }
       lastKnownScrollTop = container.scrollTop
       options.setScrollTopSnapshot(lastKnownScrollTop)
-      scrollController.recordProgrammaticOffset(lastKnownScrollTop, isAtBottom(container))
+      scrollController.recordProgrammaticOffset(lastKnownScrollTop)
     })
   }
 
@@ -133,12 +144,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
       offset: container.scrollTop,
       scrollHeight: container.scrollHeight,
       clientHeight: container.clientHeight,
-      sentinelMarginPx: BOTTOM_FOLLOW_EPSILON_PX,
     }
-  }
-
-  function isAtBottom(container: HTMLDivElement) {
-    return container.scrollHeight - (container.scrollTop + container.clientHeight) <= BOTTOM_FOLLOW_EPSILON_PX
   }
 
   function updateFollowModeFromScroll(containerOverride?: HTMLDivElement) {
@@ -229,6 +235,7 @@ export function createFollowScroll(options: FollowScrollOptions): FollowScrollHe
     handleScroll,
     renderSentinel,
     restoreAfterRender,
+    stopFollowing,
     autoScroll,
   }
 }

@@ -1,25 +1,24 @@
-import { Component, For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
-import { Dynamic } from "solid-js/web"
+import { Component, For, Show, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import {
   DragDropProvider,
   DragDropSensors,
   SortableProvider,
   closestCenter,
   createSortable,
+  useDragDropContext,
+  type CollisionDetector,
   type DragEvent as SolidDndDragEvent,
 } from "@thisbeyond/solid-dnd"
 import InstanceTab from "./instance-tab"
 import TabScroll from "./tab-scroll"
-import KeyboardHint from "./keyboard-hint"
-import ToastHistoryPanel from "./toast-history-panel"
-import { Plus, MonitorUp, Bell, BellOff, Settings } from "lucide-solid"
-import { keyboardRegistry } from "../lib/keyboard-registry"
+import AppActions from "./app-actions"
+import { appActionsInTitlebar } from "./native-titlebar"
+import ProjectRenameDialog from "./project-rename-dialog"
+import { renameProject } from "../stores/project-names"
+import { Plus } from "lucide-solid"
+import { withHotkey } from "../lib/hotkeys"
+import { createLongPressHandlers } from "../lib/long-press"
 import { useI18n } from "../lib/i18n"
-import { isOsNotificationSupportedSync } from "../lib/os-notifications"
-import { canOpenRemoteWindows } from "../lib/runtime-env"
-import { getUnreadToastCountSignal } from "../lib/notifications"
-import { useConfig } from "../stores/preferences"
-import { openSettings, toggleSettings } from "../stores/settings-screen"
 import type { AppTabRecord } from "../stores/app-tabs"
 
 interface InstanceTabsProps {
@@ -28,6 +27,9 @@ interface InstanceTabsProps {
   onSelect: (tabId: string) => void
   onClose: (tabId: string) => void
   onNew: () => void
+  /** Long press, right-click or Alt+Down on the new-instance button. */
+  onOpenLauncher?: (anchor: HTMLElement) => void
+  launcherOpen?: boolean
   onMoveTab: (tabId: string, targetTabId: string, placement: "before" | "after") => void
 }
 
@@ -36,9 +38,11 @@ interface SortableAppTabProps {
   activeTabId: string | null
   onSelect: (tabId: string) => void
   onClose: (tabId: string) => void
+  onRename: (folder: string, label: string) => void
 }
 
 const AppTabContent: Component<SortableAppTabProps> = (props) => {
+  const { t } = useI18n()
   return (
     <>
       {props.tab.kind === "instance" ? (
@@ -47,6 +51,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
           active={props.tab.id === props.activeTabId}
           onSelect={() => props.onSelect(props.tab.id)}
           onClose={() => props.onClose(props.tab.id)}
+          onRename={(label) => props.tab.kind === "instance" && props.onRename(props.tab.instance.folder, label)}
         />
       ) : (
         <div
@@ -72,6 +77,7 @@ const AppTabContent: Component<SortableAppTabProps> = (props) => {
               props.onClose(props.tab.id)
             }}
             aria-label={props.tab.sidecarTab.name}
+            title={props.tab.id === props.activeTabId ? withHotkey(t("instanceTab.actions.close.ariaLabel"), "close-instance") : t("instanceTab.actions.close.ariaLabel")}
           >
             ×
           </button>
@@ -95,6 +101,47 @@ const SortableAppTab: Component<SortableAppTabProps> = (props) => {
   )
 }
 
+/** Horizontal distance the strip bound removed from the dragged tab. */
+type DragBound = { overshoot: number }
+
+/** Like a browser, a dragged tab stays within the tab list: the strip only spans
+ * its tabs (the new-instance button follows them), so it would otherwise clip. */
+const KeepDraggedTabInStrip: Component<{ strip: () => HTMLElement | undefined; bound: DragBound }> = (props) => {
+  const [, { onDragStart, onDragEnd, addTransformer, removeTransformer }] = useDragDropContext()!
+  const id = "keep-in-strip"
+  onDragStart(({ draggable }) => {
+    props.bound.overshoot = 0
+    const strip = props.strip()?.getBoundingClientRect()
+    if (!strip) return
+    const tab = draggable.layout
+    const min = strip.left - tab.left
+    const max = strip.right - tab.right
+    addTransformer("draggables", draggable.id, {
+      id,
+      order: 100,
+      callback: (transform) => {
+        const x = Math.min(max, Math.max(min, transform.x))
+        props.bound.overshoot = transform.x - x
+        return { ...transform, x }
+      },
+    })
+  })
+  onDragEnd(({ draggable }) => {
+    removeTransformer("draggables", draggable.id, id)
+    props.bound.overshoot = 0
+  })
+  return null
+}
+
+/** Picks the drop target from where the pointer drags the tab, not its bounded
+ * position: a wide tab held at the strip's end must still reach the end slot. */
+const closestUnboundedCenter = (bound: DragBound): CollisionDetector => (draggable, droppables, context) => {
+  if (!bound.overshoot) return closestCenter(draggable, droppables, context)
+  const center = draggable.transformed.center
+  const unbounded = { ...draggable, transformed: { center: { x: center.x + bound.overshoot, y: center.y } } }
+  return closestCenter(unbounded as typeof draggable, droppables, context)
+}
+
 const StaticAppTab: Component<SortableAppTabProps> = (props) => {
   return (
     <div class="tab-draggable" data-app-tab-id={props.tab.id}>
@@ -110,7 +157,12 @@ const isTouchOnlyPointer = () => {
 
 const InstanceTabs: Component<InstanceTabsProps> = (props) => {
   const { t } = useI18n()
-  const { preferences } = useConfig()
+  const newInstanceHandlers = createLongPressHandlers({
+    onClick: () => props.onNew(),
+    onLongPress: (anchor) => props.onOpenLauncher?.(anchor),
+  })
+  let tabList: HTMLDivElement | undefined
+  const dragBound: DragBound = { overshoot: 0 }
   const tabIds = createMemo(() => props.tabs.map((tab) => tab.id))
   const [dragReorderEnabled, setDragReorderEnabled] = createSignal(!isTouchOnlyPointer())
 
@@ -131,47 +183,22 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
     })
   })
 
-  /** Whether to show toast history panel */
-  const [showToastHistory, setShowToastHistory] = createSignal(false)
-  let notificationTriggerRef: HTMLButtonElement | undefined
-  let notificationPopoverRef: HTMLDivElement | undefined
-
-  createEffect(() => {
-    if (!showToastHistory()) return
-    queueMicrotask(() => notificationPopoverRef?.querySelector<HTMLElement>(".toast-history-panel button:not(:disabled)")?.focus())
-    const closeOutside = (event: PointerEvent) => {
-      if (!notificationPopoverRef?.contains(event.target as Node)) setShowToastHistory(false)
+  // Renaming a tab renames its project folder, like the home page: every tab of
+  // that folder and its recent-folder entry share one name.
+  const [renameTarget, setRenameTarget] = createSignal<{ folder: string; label: string } | null>(null)
+  const [isRenaming, setIsRenaming] = createSignal(false)
+  const openRename = (folder: string, label: string) => setRenameTarget({ folder, label })
+  const submitRename = async (name: string) => {
+    const target = renameTarget()
+    if (!target) return
+    setIsRenaming(true)
+    try {
+      await renameProject(target.folder, name)
+      setRenameTarget(null)
+    } finally {
+      setIsRenaming(false)
     }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return
-      event.preventDefault()
-      setShowToastHistory(false)
-      queueMicrotask(() => notificationTriggerRef?.focus())
-    }
-    document.addEventListener("pointerdown", closeOutside)
-    document.addEventListener("keydown", closeOnEscape)
-    onCleanup(() => {
-      document.removeEventListener("pointerdown", closeOutside)
-      document.removeEventListener("keydown", closeOnEscape)
-    })
-  })
-
-  const notificationsSupported = createMemo(() => isOsNotificationSupportedSync())
-  const notificationsEnabled = createMemo(() => Boolean(preferences().osNotificationsEnabled))
-  const notificationIcon = createMemo(() => {
-    if (!notificationsSupported()) return BellOff
-    return notificationsEnabled() ? Bell : BellOff
-  })
-
-  /** Unread notification count (reactive signal) */
-  const unreadCount = getUnreadToastCountSignal()
-
-  const notificationTitle = createMemo(() => {
-    if (!notificationsSupported()) return t("settings.notifications.status.unsupported")
-    return notificationsEnabled()
-      ? t("settings.notifications.status.enabled")
-      : t("settings.notifications.status.disabled")
-  })
+  }
 
   const handleDragEnd = ({ draggable, droppable }: SolidDndDragEvent) => {
     if (!droppable) return
@@ -192,7 +219,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
       <div class="tab-bar tab-bar-instance">
         <div class="tab-container">
           <TabScroll>
-              <div class="tab-strip-tabs" role="tablist">
+              <div class="tab-strip-tabs" role="tablist" ref={tabList}>
                 <Show
                   when={dragReorderEnabled()}
                   fallback={
@@ -203,13 +230,15 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                           activeTabId={props.activeTabId}
                           onSelect={props.onSelect}
                           onClose={props.onClose}
+                          onRename={openRename}
                         />
                       )}
                     </For>
                   }
                 >
-                  <DragDropProvider collisionDetector={closestCenter} onDragEnd={handleDragEnd}>
+                  <DragDropProvider collisionDetector={closestUnboundedCenter(dragBound)} onDragEnd={handleDragEnd}>
                     <DragDropSensors>
+                      <KeepDraggedTabInStrip strip={() => tabList} bound={dragBound} />
                       <SortableProvider ids={tabIds()}>
                         <For each={props.tabs}>
                           {(tab) => (
@@ -218,6 +247,7 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                               activeTabId={props.activeTabId}
                               onSelect={props.onSelect}
                               onClose={props.onClose}
+                              onRename={openRename}
                             />
                           )}
                         </For>
@@ -227,83 +257,33 @@ const InstanceTabs: Component<InstanceTabsProps> = (props) => {
                 </Show>
               </div>
           </TabScroll>
-          <div class="tab-bar-actions">
-            <Show when={props.tabs.length > 1}>
-              <div class="tab-shortcuts">
-                <KeyboardHint
-                  shortcuts={[keyboardRegistry.get("instance-prev")!, keyboardRegistry.get("instance-next")!].filter(
-                    Boolean,
-                  )}
-                />
-              </div>
-            </Show>
-
+          {/* Like a browser, the new-instance button follows the last tab. */}
+          <div class="tab-strip-new">
             <button
-              class="new-tab-button"
-              onClick={props.onNew}
-              title={t("instanceTabs.new.title")}
+              class="new-tab-button new-instance-button"
+              {...newInstanceHandlers}
+              title={withHotkey(t(props.onOpenLauncher ? "instanceTabs.new.launcherTitle" : "instanceTabs.new.title"), "new-instance")}
               aria-label={t("instanceTabs.new.ariaLabel")}
+              aria-haspopup={props.onOpenLauncher ? "dialog" : undefined}
+              aria-expanded={props.onOpenLauncher ? Boolean(props.launcherOpen) : undefined}
             >
               <Plus class="w-4 h-4" />
             </button>
-
-            <button
-              class="new-tab-button"
-              onClick={() => toggleSettings()}
-              title={t("settings.open.title")}
-              aria-label={t("settings.open.ariaLabel")}
-            >
-              <Settings class="w-4 h-4" />
-            </button>
-
-            <div ref={notificationPopoverRef} class="relative">
-              <button
-                ref={notificationTriggerRef}
-                type="button"
-                class={`new-tab-button icon-toggle ${!notificationsSupported() ? "opacity-50" : ""}`}
-                onClick={() => setShowToastHistory((open) => !open)}
-                title={notificationTitle()}
-                aria-label={notificationTitle()}
-                aria-expanded={showToastHistory()}
-              >
-                <Dynamic component={notificationIcon()} class="w-4 h-4" />
-              </button>
-              <Show when={unreadCount() > 0}>
-                <span
-                  class="tab-notification-badge"
-                  aria-label={t("toastHistory.unread", { count: unreadCount() })}
-                >
-                  {unreadCount() > 9 ? "9+" : unreadCount()}
-                </span>
-              </Show>
-              <Show when={showToastHistory()}>
-                <ToastHistoryPanel
-                  onClose={() => {
-                    setShowToastHistory(false)
-                    queueMicrotask(() => notificationTriggerRef?.focus())
-                  }}
-                  onOpenSettings={() => {
-                    setShowToastHistory(false)
-                    openSettings("notifications")
-                  }}
-                />
-              </Show>
-            </div>
-
-            <Show when={canOpenRemoteWindows()}>
-              <button
-                class="new-tab-button tab-remote-button"
-                onClick={() => openSettings("remote")}
-                title={t("instanceTabs.remote.title")}
-                aria-label={t("instanceTabs.remote.ariaLabel")}
-              >
-                <MonitorUp class="w-4 h-4" />
-              </button>
-            </Show>
           </div>
+          <Show when={!appActionsInTitlebar}>
+            <AppActions class="tab-bar-actions" />
+          </Show>
         </div>
       </div>
 
+      <ProjectRenameDialog
+        open={Boolean(renameTarget())}
+        currentName={renameTarget()?.label ?? ""}
+        projectLabel={renameTarget()?.label}
+        isSubmitting={isRenaming()}
+        onRename={submitRename}
+        onClose={() => setRenameTarget(null)}
+      />
     </>
   )
 }

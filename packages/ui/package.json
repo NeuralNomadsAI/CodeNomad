@@ -1,6 +1,6 @@
 {
   "name": "@codenomad/ui",
-  "version": "0.20.1",
+  "version": "1.0.0",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -9,14 +9,15 @@
     "build": "vite build",
     "preview": "vite preview",
     "test:browser": "node --import tsx --test --test-concurrency=1 tests/browser/*.test.ts",
+    "qualify:browser:native-mission-replay": "node --import tsx --test --test-concurrency=1 tests/browser/native-mission-integration.qualification.ts",
+    "qualify:browser:timeline-sync": "node --import tsx tests/browser/timeline-sync.qualification.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "@git-diff-view/solid": "^0.0.8",
     "@kobalte/core": "0.13.11",
-    "@opencode/client": "2.0.22",
+    "@opencode/client": "2.1.0",
     "@solidjs/router": "^0.13.0",
-    "@suid/icons-material": "^0.9.0",
     "@suid/material": "^0.19.0",
     "@suid/system": "^0.14.0",
     "@tauri-apps/api": "^2.10.1",
@@ -36,7 +37,7 @@
     "shiki": "^3.13.0",
     "solid-js": "^1.8.0",
     "solid-toast": "^0.5.0",
-    "virtua": "^0.51.0",
+    "virtua": "^0.53.5",
     "yaml": "^2.4.2"
   },
   "devDependencies": {

@@ -1,10 +1,13 @@
-import { Suspense, createEffect, createSignal, createUniqueId, lazy, on, onCleanup, Show } from "solid-js"
-import { Loader2, Mic, Paperclip, Volume2, X } from "lucide-solid"
+import { Suspense, createEffect, createMemo, createSignal, createUniqueId, lazy, on, onCleanup, Show } from "solid-js"
+import { ListEnd, Loader2, Mic, Paperclip, SendHorizontal, Volume2, X } from "lucide-solid"
 import { addAttachment, clearAttachments, removeAttachment } from "../stores/attachments"
 import { createPastedPlaceholderRegex, pastedDisplayCounterRegex } from "./prompt-input/attachmentPlaceholders"
 import { preparePromptSubmission, resolvePromptDelivery } from "./prompt-input/submitPrompt"
-import { focusConversationStream } from "./focus-conversation"
-import Kbd from "./kbd"
+import { findConversationStream, focusConversationStream } from "./focus-conversation"
+import { shouldTypeIntoComposer } from "./prompt-input/type-to-focus"
+import { hotkeyLabel, withHotkey } from "../lib/hotkeys"
+import { keyboardRegistry } from "../lib/keyboard-registry"
+import { PROMPT_CLEAR_EVENT } from "../lib/session-sidebar-events"
 import { getActiveInstance } from "../stores/instances"
 import { agents, executeCustomCommand } from "../stores/sessions"
 import { getCommands } from "../stores/commands"
@@ -24,7 +27,6 @@ import { usePromptVoiceInput } from "./prompt-input/usePromptVoiceInput"
 import { usePromptAside } from "./prompt-input/usePromptAside"
 import { usePromptViewport } from "./prompt-input/usePromptViewport"
 import PromptAsideWindow from "./prompt-input/PromptAsideWindow"
-import SkillAttachmentBadges from "./prompt-input/SkillAttachmentBadges"
 import {
   MIN_PROMPT_FIELD_HEIGHT_RATIO,
   MAX_PROMPT_FIELD_HEIGHT_RATIO,
@@ -83,6 +85,7 @@ function getConsumedPastedTextAttachmentIds(text: string, attachments: Attachmen
 export default function PromptInput(props: PromptInputProps) {
   const { t } = useI18n()
   const asideId = createUniqueId()
+  const helpId = createUniqueId()
   const aside = usePromptAside({
     instanceId: () => props.instanceId,
     sessionId: () => props.sessionId,
@@ -93,11 +96,14 @@ export default function PromptInput(props: PromptInputProps) {
     { name: "btw", description: t("promptInput.btw.commandDescription") },
     ...getCommands(props.instanceId).filter(command => command.name !== "btw"),
   ]
-  initializePromptInputHeight()
+  initializePromptInputHeight(props.instanceId)
+  createEffect(on(() => props.instanceId, (instanceId) => initializePromptInputHeight(instanceId), { defer: true }))
   const [, setIsFocused] = createSignal(false)
   const [mode, setMode] = createSignal<PromptMode>("normal")
-  const inputHeight = promptInputHeight
-  const setInputHeight = setPromptInputHeight
+  const inputHeight = () => promptInputHeight(props.instanceId)
+  const setInputHeight = (value: Parameters<typeof setPromptInputHeight>[1]) => setPromptInputHeight(props.instanceId, value)
+  const persistInputHeight = (...value: [] | [Parameters<typeof persistPromptInputHeight>[1]]) =>
+    persistPromptInputHeight(props.instanceId, ...value)
   const [isResizing, setIsResizing] = createSignal(false)
   const SELECTION_INSERT_MAX_LENGTH = 2000
   let textareaRef: HTMLTextAreaElement | undefined
@@ -127,11 +133,12 @@ export default function PromptInput(props: PromptInputProps) {
   })
   createEffect(() => {
     const saved = inputHeight()
-    if (typeof saved === "number" && viewport().height > 0) {
-      persistPromptInputHeight(heightPreference(saved))
+    if (!props.interruptionExpanded && typeof saved === "number" && viewport().height > 0) {
+      persistInputHeight(heightPreference(saved))
     }
   })
   const effectiveInputHeight = () => {
+    if (props.interruptionExpanded) return minimumFieldHeight()
     const saved = inputHeight()
     const desired = saved === null ? defaultFieldHeight()
       : typeof saved === "number" ? saved
@@ -335,43 +342,10 @@ export default function PromptInput(props: PromptInputProps) {
     if (props.disabled) return
 
     const handleGlobalKeyDown = (e: KeyboardEvent) => {
-      const activeElement = document.activeElement as HTMLElement | null
-      const targetElement = e.target instanceof HTMLElement ? e.target : null
-
-      const isEditableElement = (element: HTMLElement | null) =>
-        element?.tagName === "INPUT" ||
-        element?.tagName === "TEXTAREA" ||
-        element?.tagName === "SELECT" ||
-        Boolean(element?.isContentEditable)
-
-      const isInteractiveElement = (element: HTMLElement | null) =>
-        Boolean(
-          element?.closest(
-            'button, a[href], summary, [role="button"], [role="link"], [role="menuitem"], [role="option"], [role="tab"], [tabindex]:not([tabindex="-1"])',
-          ),
-        )
-
-      if (
-        isEditableElement(activeElement) ||
-        isEditableElement(targetElement) ||
-        isInteractiveElement(activeElement) ||
-        isInteractiveElement(targetElement)
-      ) {
-        return
-      }
-
-      const isModifierKey = e.ctrlKey || e.metaKey || e.altKey
-      if (isModifierKey) return
-
-      const isSpecialKey =
-        e.key === "Tab" ||
-        e.key === "Enter" ||
-        e.key === " " ||
-        e.key === "Spacebar" ||
-        e.key.startsWith("Arrow") ||
-        e.key === "Backspace" ||
-        e.key === "Delete"
-      if (isSpecialKey) return
+      const conversation = findConversationStream(wrapperRef?.closest(".session-view"))
+      if (!shouldTypeIntoComposer(e, document.activeElement, conversation)) return
+      // A shortcut bound to a plain key keeps it rather than becoming draft text.
+      if (keyboardRegistry.findMatch(e)) return
 
       const textarea = textareaRef
       if (!textarea || textarea.disabled) return
@@ -386,9 +360,8 @@ export default function PromptInput(props: PromptInputProps) {
         return
       }
 
-      if (e.key.length === 1) {
-        textarea.focus()
-      }
+      // Focus moves during keydown, so the browser inserts this character.
+      textarea.focus()
     }
 
     document.addEventListener("keydown", handleGlobalKeyDown)
@@ -407,6 +380,7 @@ export default function PromptInput(props: PromptInputProps) {
 
   function handleResizeStart(event: PointerEvent) {
     event.preventDefault()
+    if (props.interruptionExpanded) return
     const target = event.currentTarget as HTMLElement
 
     resizeDragState = {
@@ -427,6 +401,7 @@ export default function PromptInput(props: PromptInputProps) {
   }
 
   function handleResizeMove(event: PointerEvent) {
+    if (props.interruptionExpanded) return
     if (!resizeDragState || resizeDragState.pointerId !== event.pointerId) return
 
     event.preventDefault()
@@ -444,11 +419,15 @@ export default function PromptInput(props: PromptInputProps) {
     event.preventDefault()
     resizeDragState = undefined
     setIsResizing(false)
-    persistPromptInputHeight()
+    persistInputHeight()
     textareaRef?.focus()
   }
 
   function handleResizeKeyDown(event: KeyboardEvent) {
+    if (props.interruptionExpanded) {
+      if (["ArrowUp", "ArrowDown", "Home", "End"].includes(event.key)) event.preventDefault()
+      return
+    }
     const currentHeight = effectiveInputHeight() ?? fieldContainerRef?.getBoundingClientRect().height ?? defaultFieldHeight()
     const minimum = minimumFieldHeight()
     const current = Math.max(minimum, currentHeight)
@@ -464,11 +443,16 @@ export default function PromptInput(props: PromptInputProps) {
             : null
     if (next === null) return
     event.preventDefault()
-    persistPromptInputHeight(heightPreference(next))
+    persistInputHeight(heightPreference(next))
   }
 
   onCleanup(() => {
     resizeDragState = undefined
+  })
+  createEffect(() => {
+    if (!props.interruptionExpanded) return
+    resizeDragState = undefined
+    setIsResizing(false)
   })
 
   const promptDelivery = (alternate = false) => resolvePromptDelivery(
@@ -536,7 +520,7 @@ export default function PromptInput(props: PromptInputProps) {
     const refreshHistory = () => recordHistoryEntry(historyEntry)
     const previousInputHeight = inputHeight()
 
-    persistPromptInputHeight(null)
+    persistInputHeight(null)
     if (isKnownSlashCommand && retainedImageTokens().length) setPrompt(retainedImageTokens().join(" "))
     else clearPrompt()
     clearHistoryDraft()
@@ -586,7 +570,7 @@ export default function PromptInput(props: PromptInputProps) {
       restoredQueuedPayload = undefined
     } catch (error) {
       log.error("Failed to send message:", error)
-      if (inputHeight() === null) persistPromptInputHeight(previousInputHeight)
+      if (inputHeight() === null) persistInputHeight(previousInputHeight)
       if (prompt() === retainedDraft) {
         setPrompt(draftText)
         restoredQueuedPayload = restoredPayload
@@ -624,7 +608,8 @@ export default function PromptInput(props: PromptInputProps) {
 
   function handleResizeMaximize(event: MouseEvent) {
     event.preventDefault()
-    persistPromptInputHeight(heightPreference(computeMaxFieldHeight()))
+    if (props.interruptionExpanded) return
+    persistInputHeight(heightPreference(computeMaxFieldHeight()))
     textareaRef?.focus()
   }
 
@@ -735,13 +720,9 @@ export default function PromptInput(props: PromptInputProps) {
     return hasText || attachments().length > 0
   }
 
-  const canClearPrompt = () => prompt().length > 0
-
-  const shellHint = () =>
-    mode() === "shell"
-      ? { key: "Esc", text: t("promptInput.hints.shell.exit") }
-      : { key: "!", text: t("promptInput.hints.shell.enable") }
-  const commandHint = () => ({ key: "/", text: t("promptInput.hints.commands") })
+  // Boolean memos, so the action menu rebuilds only when they flip, not per keystroke.
+  const canClearPrompt = createMemo(() => prompt().length > 0)
+  const canSendDraft = createMemo(() => canSend())
 
   const submitOnEnter = () => preferences().promptSubmitOnEnter
 
@@ -766,7 +747,9 @@ export default function PromptInput(props: PromptInputProps) {
       selectNextHistory({ force, isPickerOpen: showPicker(), getTextarea: () => textareaRef ?? null }),
   })
 
-  const shouldShowOverlay = () => prompt().length === 0
+  const shouldShowAbortReminder = () => Boolean(props.escapeInDebounce && hotkeyLabel("session-abort"))
+  const shouldShowOverlay = () => shouldShowAbortReminder()
+    || (prompt().length === 0 && (attachments().length > 0 || mode() === "shell"))
   const voiceInput = usePromptVoiceInput({
     prompt,
     setPrompt,
@@ -817,8 +800,22 @@ export default function PromptInput(props: PromptInputProps) {
     voiceInput.stopRecording()
   }
 
-  const promptActionMenuItems = (): ActionOverflowMenuItem[] => {
+  const buildPromptActionMenuItems = (): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
+    // The other follow-up delivery than Enter's, like the alternate-send shortcut:
+    // queue when Enter steers, send now when Enter queues. Only a running session differs.
+    const alternate = preferences().followUpBehavior === "queue" ? "steer" : "queue"
+    items.push({
+      key: "alternate-send",
+      label: t(alternate === "queue" ? "promptInput.send.queueAriaLabel" : "promptQueue.actions.steer"),
+      description: hotkeyLabel("prompt-alternate-send") || undefined,
+      icon: alternate === "queue"
+        ? <ListEnd class="h-4 w-4" aria-hidden="true" />
+        : <SendHorizontal class="h-4 w-4" aria-hidden="true" />,
+      disabled: mode() !== "normal" || !props.isSessionBusy || !canSendDraft(),
+      // The shortcut's own resolution: an idle session always sends normally.
+      onSelect: () => void handleSend(promptDelivery(true)),
+    })
     if (showVoiceInput()) {
       items.push({
         key: "voice",
@@ -854,12 +851,14 @@ export default function PromptInput(props: PromptInputProps) {
       items.push({
         key: "history-previous",
         label: t("promptInput.history.previousAriaLabel"),
+        description: hotkeyLabel("prompt-history-prev") || undefined,
         disabled: !canHistoryGoPrevious(),
         onSelect: () => { selectPreviousHistory({ force: true, isPickerOpen: showPicker(), getTextarea: () => textareaRef }) },
       })
       items.push({
         key: "history-next",
         label: t("promptInput.history.nextAriaLabel"),
+        description: hotkeyLabel("prompt-history-next") || undefined,
         disabled: !canHistoryGoNext(),
         onSelect: () => { selectNextHistory({ force: true, isPickerOpen: showPicker(), getTextarea: () => textareaRef }) },
       })
@@ -867,12 +866,17 @@ export default function PromptInput(props: PromptInputProps) {
     items.push({
       key: "clear",
       label: t("promptInput.clear.title"),
+      description: hotkeyLabel("clear-input") || undefined,
       icon: <X class="h-4 w-4" aria-hidden="true" />,
       disabled: !canClearPrompt(),
       onSelect: handleClearPrompt,
     })
     return items
   }
+
+  // Memoized so composer-state updates (voice transcription ticks, drafts) do
+  // not rebuild the item array and its icon DOM on every re-render.
+  const promptActionMenuItems = createMemo(() => buildPromptActionMenuItems())
 
   return (
     <div class="prompt-input-container">
@@ -897,7 +901,8 @@ export default function PromptInput(props: PromptInputProps) {
           onPointerCancel={handleResizeEnd}
           onDblClick={handleResizeMaximize}
           onKeyDown={handleResizeKeyDown}
-          tabIndex={0}
+          tabIndex={props.interruptionExpanded ? -1 : 0}
+          aria-disabled={props.interruptionExpanded || undefined}
           role="separator"
           aria-orientation="horizontal"
           aria-valuemin={Math.round(minimumFieldHeight())}
@@ -931,13 +936,19 @@ export default function PromptInput(props: PromptInputProps) {
           >
             <div
               class="prompt-input-field"
+              data-prompt-help={shouldShowOverlay()}
               style={fieldHeightStyle()}
             >
               <textarea
-                ref={textareaRef}
+                ref={(element) => {
+                  textareaRef = element
+                  // The Clear shortcut and palette command run this composer's own Clear action.
+                  element.addEventListener(PROMPT_CLEAR_EVENT, handleClearPrompt)
+                }}
                 class={`prompt-input ${mode() === "shell" ? "shell-mode" : ""}`}
                 dir="auto"
                 placeholder={getPlaceholder()}
+                aria-describedby={shouldShowOverlay() ? helpId : undefined}
                 value={prompt()}
                 onInput={handleInput}
                 onKeyDown={handleKeyDown}
@@ -953,52 +964,17 @@ export default function PromptInput(props: PromptInputProps) {
                 style={textareaHeightStyle()}
               />
               <Show when={shouldShowOverlay()}>
-                <div class={`prompt-input-overlay keyboard-hints ${mode() === "shell" ? "shell-mode" : ""}`}>
-                  <Show
-                    when={props.escapeInDebounce}
-                    fallback={
-                      <>
-                        <span class="prompt-overlay-text">
-                          <Show
-                            when={submitOnEnter()}
-                            fallback={
-                              <>
-                                <Kbd>Enter</Kbd> {t("promptInput.overlay.newLine")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.send")}
-                              </>
-                            }
-                          >
-                            <>
-                              <Kbd>Enter</Kbd> {t("promptInput.overlay.send")} • <Kbd shortcut="cmd+enter" /> {t("promptInput.overlay.newLine")}
-                            </>
-                          </Show>
-                          {" "}• <Kbd>↑↓</Kbd> {t("promptInput.overlay.history")}
-                        </span>
-                        <Show when={attachments().length > 0}>
-                          <span class="prompt-overlay-text prompt-overlay-muted">{t("promptInput.overlay.attachments", { count: attachments().length })}</span>
-                        </Show>
-                        <span class="prompt-overlay-text">
-                          • <Kbd>{shellHint().key}</Kbd> {shellHint().text}
-                        </span>
-                        <Show when={mode() !== "shell"}>
-                          <span class="prompt-overlay-text">• <Kbd>@</Kbd> {t("promptInput.hints.projectFiles")}</span>
-                          <span class="prompt-overlay-text">
-                            • <Kbd>{commandHint().key}</Kbd> {commandHint().text}
-                          </span>
-                        </Show>
-                        <Show when={mode() === "shell"}>
-                          <span class="prompt-overlay-shell-active">{t("promptInput.overlay.shellModeActive")}</span>
-                        </Show>
-                      </>
-                    }
-                  >
-                    <>
-                      <span class="prompt-overlay-text prompt-overlay-warning">
-                        {t("promptInput.overlay.press")} <Kbd>Esc</Kbd> {t("promptInput.overlay.againToAbort")}
-                      </span>
-                      <Show when={mode() === "shell"}>
-                        <span class="prompt-overlay-shell-active">{t("promptInput.overlay.shellModeActive")}</span>
-                      </Show>
-                    </>
+                <div id={helpId} role="note" class={`prompt-input-overlay ${mode() === "shell" ? "shell-mode" : ""}`}>
+                  <Show when={shouldShowAbortReminder()}>
+                    <span role="status" class="prompt-overlay-text prompt-overlay-warning">
+                      {t("promptInput.overlay.abortHint")}
+                    </span>
+                  </Show>
+                  <Show when={prompt().length === 0 && attachments().length > 0}>
+                    <span class="prompt-overlay-text prompt-overlay-muted">{t("promptInput.overlay.attachments", { count: attachments().length })}</span>
+                  </Show>
+                  <Show when={mode() === "shell"}>
+                    <span class="prompt-overlay-shell-active">{t("promptInput.overlay.shellModeActive")}</span>
                   </Show>
                 </div>
               </Show>
@@ -1006,8 +982,6 @@ export default function PromptInput(props: PromptInputProps) {
           </div>
         </div>
 
-        <SkillAttachmentBadges instanceId={props.instanceId} sessionId={props.sessionId}
-          disabled={Boolean(props.disabled) || mode() !== "normal"} />
         <div class="prompt-input-footer">
           <div class="prompt-input-footer-context">{props.footerControls}</div>
           <div class="prompt-input-footer-actions">
@@ -1032,7 +1006,7 @@ export default function PromptInput(props: PromptInputProps) {
                 onClick={handleAbort}
                 disabled={!canStop()}
                 aria-label={t("promptInput.stopSession.ariaLabel")}
-                title={t("promptInput.stopSession.title")}
+                title={withHotkey(t("promptInput.stopSession.title"), "session-abort")}
               >
                 <svg class="stop-icon" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
                   <rect x="4" y="4" width="12" height="12" />
@@ -1044,7 +1018,7 @@ export default function PromptInput(props: PromptInputProps) {
                 onClick={() => void handleSend()}
                 disabled={!canSend()}
                 aria-label={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
-                title={t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel")}
+                title={withHotkey(t(mode() === "normal" && promptDelivery() === "queue" ? "promptInput.send.queueAriaLabel" : "promptInput.send.ariaLabel"), "prompt-send")}
               >
                 <Show
                   when={mode() === "shell"}

@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "No se pudo abrir la ayuda en el navegador. Abra https://neuralnomadsai.github.io/CodeNomad/ manualmente.",
   "commandPalette.title": "Paleta de comandos",
   "commandPalette.description": "Busca y ejecuta comandos",
   "commandPalette.searchPlaceholder": "Escribe un comando o busca...",
@@ -14,6 +15,9 @@ export const commandMessages = {
   "commands.newInstance.label": "Nueva instancia",
   "commands.newInstance.description": "Abrir el selector de carpetas para crear una nueva instancia",
   "commands.newInstance.keywords": "carpeta, proyecto, workspace",
+  "commands.newTemporaryInstance.label": "Nueva instancia temporal",
+  "commands.newTemporaryInstance.description": "Abrir una instancia temporal vacía sin elegir carpeta",
+  "commands.newTemporaryInstance.keywords": "temporal, borrador, rápido, vacío, proyecto",
   "commands.openWorkspace.folder.label": "Abrir carpeta del proyecto",
   "commands.openWorkspace.folder.description": "Abrir la carpeta del proyecto actual en el explorador de archivos",
   "commands.openWorkspace.folder.keywords": "carpeta, explorador, archivos",
@@ -31,9 +35,6 @@ export const commandMessages = {
   "commands.closeInstance.label": "Cerrar pestaña",
   "commands.closeInstance.description": "Cerrar la pestaña superior actual",
   "commands.closeInstance.keywords": "detener, salir, cerrar, pestaña",
-  "commands.stopInstance.label": "Detener espacio de trabajo",
-  "commands.stopInstance.description": "Detener el espacio de trabajo compartido para todas las ventanas",
-  "commands.stopInstance.keywords": "detener, espacio de trabajo, servidor, compartido",
 
   "commands.nextInstance.label": "Siguiente pestaña",
   "commands.nextInstance.description": "Cambiar a la siguiente pestaña superior",
@@ -66,6 +67,13 @@ export const commandMessages = {
   "commands.previousSession.label": "Sesión anterior",
   "commands.previousSession.description": "Cambiar a la pestaña de sesión anterior",
   "commands.previousSession.keywords": "cambiar, navegar",
+
+  "commands.previousUserMessage.label": "Mensaje de usuario anterior",
+  "commands.previousUserMessage.description": "Ir al mensaje anterior que enviaste en esta conversación",
+  "commands.previousUserMessage.keywords": "saltar, ir, prompt, navegar, mensaje de usuario",
+  "commands.nextUserMessage.label": "Siguiente mensaje de usuario",
+  "commands.nextUserMessage.description": "Ir al siguiente mensaje que enviaste en esta conversación",
+  "commands.nextUserMessage.keywords": "saltar, ir, prompt, navegar, mensaje de usuario",
 
   "commands.compactSession.label": "Compactar sesión",
   "commands.compactSession.description": "Resumir y compactar la sesión actual",
@@ -113,20 +121,10 @@ export const commandMessages = {
   "commands.clearInput.description": "Borrar el área de texto del prompt",
   "commands.clearInput.keywords": "limpiar, reiniciar",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: Nueva linea, Cmd/Ctrl+Enter: Enviar prompt",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Enviar prompt, Cmd/Ctrl+Enter: Nueva linea",
-  "commands.promptSubmitShortcut.description": "Intercambiar el comportamiento de Enter y Cmd/Ctrl+Enter en la entrada de prompt",
-  "commands.promptSubmitShortcut.keywords": "enter, enviar, salto de linea, atajo, teclado, cmd, ctrl, prompt",
-
   "commands.thinkingBlocks.label.show": "Mostrar pensamiento",
   "commands.thinkingBlocks.label.hide": "Ocultar pensamiento",
   "commands.thinkingBlocks.description": "Mostrar u ocultar secciones de pensamiento de IA",
   "commands.thinkingBlocks.keywords": "pensamiento, razonamiento, alternar, mostrar, ocultar",
-
-  "commands.timelineToolCalls.label.show": "Mostrar llamadas de herramienta en la línea de tiempo",
-  "commands.timelineToolCalls.label.hide": "Ocultar llamadas de herramienta en la línea de tiempo",
-  "commands.timelineToolCalls.description": "Alternar entradas de llamadas de herramienta en la línea de tiempo de mensajes",
-  "commands.timelineToolCalls.keywords": "línea de tiempo, herramienta, alternar",
 
   "commands.keyboardShortcutHints.label.show": "Mostrar atajos de teclado",
   "commands.keyboardShortcutHints.label.hide": "Ocultar atajos de teclado",
@@ -173,9 +171,12 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "Limpiar automáticamente las sesiones vacías al crear nuevas",
   "commands.autoCleanupBlankSessions.keywords": "auto, limpieza, vacías, sesiones, alternar",
 
-  "commands.showHelp.label": "Mostrar ayuda",
-  "commands.showHelp.description": "Mostrar atajos de teclado y ayuda",
-  "commands.showHelp.keywords": "atajos, ayuda",
+  "commands.openHelp.label": "Abrir ayuda",
+  "commands.openHelp.description": "Abrir la guía de usuario de CodeNomad en el navegador",
+  "commands.openHelp.keywords": "ayuda, guía, documentación",
+  "commands.openAbout.label": "Acerca de CodeNomad",
+  "commands.openAbout.description": "Mostrar la versión, las actualizaciones y el diagnóstico en la configuración",
+  "commands.openAbout.keywords": "acerca de, versión, actualizaciones, diagnóstico",
 
   "commands.custom.argumentsPrompt.message": "Argumentos para /{name}",
   "commands.custom.argumentsPrompt.title": "Comando personalizado",

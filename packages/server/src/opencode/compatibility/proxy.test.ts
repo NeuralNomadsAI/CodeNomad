@@ -39,3 +39,29 @@ test("retiring the actual connection preserves complete and streamed native 401 
     } finally { await service.shutdown(); await app.close(); await upstream.close() }
   }
 })
+
+test("a transform rewrites only successful JSON responses and releases each request once", async () => {
+  const upstream = Fastify()
+  upstream.get("/api/json", async () => ({ data: [{ uri: "inline" }] }))
+  upstream.get("/api/missing", async (_request, reply) => reply.code(404).send({ data: [{ uri: "inline" }] }))
+  upstream.get("/api/text", async (_request, reply) => reply.type("text/plain").send("plain"))
+  await upstream.listen({ host: "127.0.0.1", port: 0 })
+  const origin = `http://127.0.0.1:${(upstream.server.address() as { port: number }).port}`
+  const app = Fastify()
+  let releases = 0, invalidations = 0
+  app.get("/:path", (request, reply) => forwardRuntimeRequest({
+    request, reply, url: `${origin}/api/${(request.params as { path: string }).path}`, body: undefined, headers: {}, fetch,
+    invalidate: () => { invalidations++ }, release: () => { releases++ },
+    transform: body => { for (const item of (body as { data: Array<{ uri: string }> }).data) item.uri = "deferred" },
+  }))
+  try {
+    const json = await app.inject("/json")
+    assert.equal(json.statusCode, 200)
+    assert.match(String(json.headers["content-type"]), /^application\/json/)
+    assert.deepEqual(json.json(), { data: [{ uri: "deferred" }] })
+    assert.deepEqual((await app.inject("/missing")).json(), { data: [{ uri: "inline" }] }, "errors pass through")
+    assert.equal((await app.inject("/text")).body, "plain")
+    assert.equal(releases, 3)
+    assert.equal(invalidations, 0)
+  } finally { await app.close(); await upstream.close() }
+})

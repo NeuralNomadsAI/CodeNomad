@@ -1,51 +1,9 @@
-import fs from "fs"
-import os from "os"
-import path from "path"
-
 import type { ProviderUsageWindow } from "../api-types"
 import type { AuthEntry, AuthFile, ProviderResult, ProviderUsage } from "./types"
 
 const REQUEST_TIMEOUT_MS = 15_000
 
-function authFileCandidates(): string[] {
-  if (process.env.OPENCODE_AUTH_FILE !== undefined) {
-    return process.env.OPENCODE_AUTH_FILE ? [process.env.OPENCODE_AUTH_FILE] : []
-  }
-  const home = os.homedir()
-  const candidates = [
-    process.env.OPENCODE_DATA_DIR ? path.join(process.env.OPENCODE_DATA_DIR, "auth.json") : undefined,
-    process.env.XDG_DATA_HOME ? path.join(process.env.XDG_DATA_HOME, "opencode", "auth.json") : undefined,
-    path.join(home, ".local", "share", "opencode", "auth.json"),
-    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "opencode", "Data", "auth.json") : undefined,
-    process.env.APPDATA ? path.join(process.env.APPDATA, "opencode", "auth.json") : undefined,
-    path.join(home, "Library", "Application Support", "opencode", "auth.json"),
-  ]
-  return Array.from(new Set(candidates.filter((candidate): candidate is string => Boolean(candidate))))
-}
-
-function readAuthFile(file: string): AuthFile | null {
-  try {
-    const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf8"))
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed as AuthFile : null
-  } catch {
-    return null
-  }
-}
-
-function readAuthCandidate(): { auth: AuthFile; file: string } | null {
-  for (const file of authFileCandidates()) {
-    const auth = readAuthFile(file)
-    if (auth) return { auth, file }
-  }
-  return null
-}
-
-export function readOpenCodeAuth(): AuthFile {
-  return readAuthCandidate()?.auth ?? {}
-}
-
-export function getAuthEntry(aliases: readonly string[]): AuthEntry | null {
-  const auth = readOpenCodeAuth()
+export function getAuthEntry(auth: AuthFile, aliases: readonly string[]): AuthEntry | null {
   for (const alias of aliases) {
     const value = auth[alias]
     if (typeof value === "string" && value.trim()) return { token: value.trim() }
@@ -54,8 +12,7 @@ export function getAuthEntry(aliases: readonly string[]): AuthEntry | null {
   return null
 }
 
-export function getOAuthEntry(aliases: readonly string[]): AuthEntry | null {
-  const auth = readOpenCodeAuth()
+export function getOAuthEntry(auth: AuthFile, aliases: readonly string[]): AuthEntry | null {
   for (const alias of aliases) {
     const value = auth[alias]
     if (value && typeof value === "object" && !Array.isArray(value) && (value as AuthEntry).type === "oauth") {
@@ -70,8 +27,7 @@ export function getString(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-export function getCredential(aliases: readonly string[], fields: readonly string[]): string | null {
-  const auth = readOpenCodeAuth()
+export function getCredential(auth: AuthFile, aliases: readonly string[], fields: readonly string[]): string | null {
   for (const alias of aliases) {
     const raw = auth[alias]
     const entry = typeof raw === "string" && raw.trim()
@@ -127,6 +83,9 @@ export function toTimestamp(value: unknown): number | null {
   return null
 }
 
+export const formatMoney = (value: number | null): string | null =>
+  value === null || !Number.isFinite(value) ? null : value.toFixed(2)
+
 export function toUsageWindow(input: {
   usedPercent: number | null
   windowSeconds?: number | null
@@ -156,7 +115,7 @@ export function resolveWindowLabel(windowSeconds: number | null): string {
 export function result(
   providerId: string,
   providerName: string,
-  input: { ok: boolean; configured: boolean; usage?: ProviderUsage; error?: string },
+  input: { ok: boolean; configured: boolean; usage?: ProviderUsage; error?: string; status?: number },
 ): ProviderResult {
   return {
     providerId,
@@ -166,6 +125,7 @@ export function result(
     usage: input.usage ?? null,
     fetchedAt: Date.now(),
     ...(input.error ? { error: input.error } : {}),
+    ...(input.status !== undefined ? { status: input.status } : {}),
   }
 }
 
@@ -173,9 +133,14 @@ export function notConfigured(providerId: string, providerName: string): Provide
   return result(providerId, providerName, { ok: false, configured: false, error: "Not configured" })
 }
 
+/** Only the status is retained; upstream bodies may echo credentials. */
+export class ProviderHttpError extends Error {
+  constructor(readonly status: number) { super(`Provider returned HTTP ${status}`) }
+}
+
 export async function fetchJson(url: string, init: RequestInit = {}): Promise<any> {
   const response = await fetch(url, { ...init, signal: init.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
-  if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}`)
+  if (!response.ok) throw new ProviderHttpError(response.status)
   return response.json()
 }
 
@@ -191,6 +156,7 @@ export async function safeFetch(
       ok: false,
       configured: true,
       error: error instanceof Error ? error.message : "Request failed",
+      ...(error instanceof ProviderHttpError ? { status: error.status } : {}),
     })
   }
 }

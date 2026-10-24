@@ -13,7 +13,7 @@ import {
   onMount,
   type Component,
 } from "solid-js"
-import { X, Bell, Trash2, ExternalLink } from "lucide-solid"
+import { X, Bell, Trash2, ExternalLink, Settings } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import {
   type IToastHistoryItem,
@@ -198,7 +198,7 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
 
   return (
     <div
-      class="toast-history-panel window-shell flex flex-col overflow-hidden border border-base bg-surface-base"
+      class="toast-history-panel window-shell flex flex-col overflow-hidden border border-base bg-surface-overlay"
       role="dialog"
       aria-label={t("toastHistory.title")}
       onKeyDown={(event) => {
@@ -247,22 +247,23 @@ const ToastHistoryPanel: Component<ToastHistoryPanelProps> = (props) => {
               </button>
               <button
                 type="button"
-                class="toast-history-action-btn toast-history-action-btn-danger window-action cursor-pointer"
+                class="toast-history-action-btn toast-history-action-btn-danger window-icon-button cursor-pointer"
                 onClick={handleClearAll}
                 title={t("toastHistory.clearAll")}
+                aria-label={t("toastHistory.clearAll")}
               >
-                <Trash2 class="w-3 h-3" aria-hidden="true" />
-                {t("toastHistory.clearAll")}
+                <Trash2 aria-hidden="true" />
               </button>
             </Show>
             <Show when={props.onOpenSettings}>
               <button
                 type="button"
-                class="toast-history-action-btn window-action cursor-pointer"
+                class="toast-history-action-btn window-icon-button cursor-pointer"
                 onClick={props.onOpenSettings}
                 title={t("toastHistory.viewSettings")}
+                aria-label={t("toastHistory.viewSettings")}
               >
-                {t("toastHistory.viewSettings")}
+                <Settings aria-hidden="true" />
               </button>
             </Show>
           </div>

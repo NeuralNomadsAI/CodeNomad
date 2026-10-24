@@ -16,8 +16,7 @@ await mkdir(temporaryRoot, { recursive: true })
 const root = await mkdtemp(path.join(temporaryRoot, "fork-native-"))
 const { forkAfterMessage } = await tsImport("../packages/ui/src/stores/session-fork.ts", import.meta.url)
 const { createRuntimeFetch } = await tsImport("../packages/server/src/opencode/compatibility/transport.ts", import.meta.url)
-const { rememberRuntime, contractProfile, runtimeIdentity } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
-const { locationRequestOptions } = await tsImport("../packages/server/src/opencode/compatibility/location.ts", import.meta.url)
+const { rememberRuntime } = await tsImport("../packages/server/src/opencode/compatibility/runtime.ts", import.meta.url)
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_)/i.test(key)))
 for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
 const password = randomUUID()
@@ -41,10 +40,9 @@ try {
   }
   const endpoint = { url: output.match(/http:\/\/127\.0\.0\.1:\d+/)[0], auth: { type: "basic", username: "opencode", password } }
   const version = execFileSync(cli, ["--version"], { cwd: root, env, encoding: "utf8", windowsHide: true }).trim().split(/\s+/).at(-1).replace(/^v/, "")
-  rememberRuntime(endpoint, { version, pid: child.pid, discovery: "status" })
+  rememberRuntime(endpoint, { version, pid: child.pid, discovery: "info" })
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint) })
-  const location = { directory: root, ...(contractProfile(runtimeIdentity(endpoint)) === "legacy" ? { workspaceID: "wrk_fork_fixture" } : {}) }
-  const info = await client.session.create({ location }, locationRequestOptions(location))
+  const info = await client.session.create({ location: { directory: root } })
   console.log(`OpenCode ${version}`)
   const model = { providerID: "fixture", id: "fixture" }
   const messages = [

@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "Не удалось открыть справку в браузере. Откройте https://neuralnomadsai.github.io/CodeNomad/ вручную.",
   "commandPalette.title": "Палитра команд",
   "commandPalette.description": "Поиск и запуск команд",
   "commandPalette.searchPlaceholder": "Введите команду или начните поиск…",
@@ -14,6 +15,9 @@ export const commandMessages = {
   "commands.newInstance.label": "Новый экземпляр",
   "commands.newInstance.description": "Открыть выбор папки для создания нового экземпляра",
   "commands.newInstance.keywords": "папка, проект, рабочее пространство",
+  "commands.newTemporaryInstance.label": "Новый временный экземпляр",
+  "commands.newTemporaryInstance.description": "Открыть пустой временный экземпляр без выбора папки",
+  "commands.newTemporaryInstance.keywords": "временный, черновик, быстро, пустой, проект, temporary",
   "commands.openWorkspace.folder.label": "Открыть папку проекта",
   "commands.openWorkspace.folder.description": "Открыть папку текущего проекта в файловом менеджере",
   "commands.openWorkspace.folder.keywords": "папка, проводник, файлы",
@@ -31,9 +35,6 @@ export const commandMessages = {
   "commands.closeInstance.label": "Закрыть вкладку",
   "commands.closeInstance.description": "Закрыть текущую верхнеуровневую вкладку",
   "commands.closeInstance.keywords": "остановить, выйти, закрыть, вкладка",
-  "commands.stopInstance.label": "Остановить рабочее пространство",
-  "commands.stopInstance.description": "Остановить общее рабочее пространство во всех окнах",
-  "commands.stopInstance.keywords": "остановить, рабочее пространство, сервер, общее",
 
   "commands.nextInstance.label": "Следующая вкладка",
   "commands.nextInstance.description": "Переключиться на следующую верхнеуровневую вкладку",
@@ -66,6 +67,13 @@ export const commandMessages = {
   "commands.previousSession.label": "Предыдущая сессия",
   "commands.previousSession.description": "Переключиться на предыдущую вкладку сессии",
   "commands.previousSession.keywords": "переключить, навигация",
+
+  "commands.previousUserMessage.label": "Предыдущее сообщение пользователя",
+  "commands.previousUserMessage.description": "Перейти к предыдущему сообщению, которое вы отправили в этом разговоре",
+  "commands.previousUserMessage.keywords": "перейти, навигация, запрос, сообщение пользователя",
+  "commands.nextUserMessage.label": "Следующее сообщение пользователя",
+  "commands.nextUserMessage.description": "Перейти к следующему сообщению, которое вы отправили в этом разговоре",
+  "commands.nextUserMessage.keywords": "перейти, навигация, запрос, сообщение пользователя",
 
   "commands.compactSession.label": "Компактировать сессию",
   "commands.compactSession.description": "Суммировать и компактировать текущую сессию",
@@ -113,20 +121,10 @@ export const commandMessages = {
   "commands.clearInput.description": "Очистить поле prompt",
   "commands.clearInput.keywords": "очистить, сброс",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: Новая строка, Cmd/Ctrl+Enter: Отправить промпт",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Отправить промпт, Cmd/Ctrl+Enter: Новая строка",
-  "commands.promptSubmitShortcut.description": "Поменять местами Enter и Cmd/Ctrl+Enter в поле ввода промпта",
-  "commands.promptSubmitShortcut.keywords": "enter, отправить, новая строка, сочетание, cmd, ctrl, промпт",
-
   "commands.thinkingBlocks.label.show": "Показать размышления",
   "commands.thinkingBlocks.label.hide": "Скрыть размышления",
   "commands.thinkingBlocks.description": "Показать или скрыть секции размышлений ИИ",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, переключить, показать, скрыть",
-
-  "commands.timelineToolCalls.label.show": "Показать Tool Calls в таймлайне",
-  "commands.timelineToolCalls.label.hide": "Скрыть Tool Calls в таймлайне",
-  "commands.timelineToolCalls.description": "Переключить отображение вызовов инструментов в таймлайне сообщений",
-  "commands.timelineToolCalls.keywords": "таймлайн, tool, переключить",
 
   "commands.keyboardShortcutHints.label.show": "Показать подсказки сочетаний",
   "commands.keyboardShortcutHints.label.hide": "Скрыть подсказки сочетаний",
@@ -173,9 +171,12 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "Автоматически очищать пустые сессии при создании новых",
   "commands.autoCleanupBlankSessions.keywords": "auto, cleanup, пустые, сессии, переключить",
 
-  "commands.showHelp.label": "Показать справку",
-  "commands.showHelp.description": "Показать горячие клавиши и справку",
-  "commands.showHelp.keywords": "горячие клавиши, справка",
+  "commands.openHelp.label": "Открыть справку",
+  "commands.openHelp.description": "Открыть руководство пользователя CodeNomad в браузере",
+  "commands.openHelp.keywords": "справка, руководство, документация",
+  "commands.openAbout.label": "О CodeNomad",
+  "commands.openAbout.description": "Показать версию, обновления и диагностику в настройках",
+  "commands.openAbout.keywords": "о программе, версия, обновления, диагностика",
 
   "commands.custom.argumentsPrompt.message": "Аргументы для /{name}",
   "commands.custom.argumentsPrompt.title": "Пользовательская команда",

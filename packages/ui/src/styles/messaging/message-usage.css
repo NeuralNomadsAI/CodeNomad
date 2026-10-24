@@ -1,0 +1,59 @@
+/* The expanded metric row: starts on the chevron's line and wraps onto
+   further lines when narrow — expansion exists to read every value, so the
+   chips are never ellipsized. */
+.message-step-usage {
+  @apply flex flex-wrap items-center gap-1 text-[10px] text-[var(--text-muted)];
+}
+
+.message-step-usage-toggle {
+  @apply flex w-full min-w-0 items-center gap-1;
+  min-height: 22px;
+  text-align: start;
+}
+
+/* The collapsed metric row: one line, ellipsized summary chips. Its own muted
+   10px text styles the ellipsis like the chips it truncates. */
+.message-step-usage-summary {
+  @apply text-[10px] text-[var(--text-muted)];
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.message-step-usage-summary .message-step-usage-chip + .message-step-usage-chip {
+  margin-inline-start: var(--space-xs);
+}
+
+.message-step-usage-disclosure {
+  @apply shrink-0;
+  /* Stay level with the first chip row when the expanded row wraps:
+     chips are 22px tall and the chevron 0.75rem, so half the difference
+     recentres it at any root font size (the toggle itself centres against
+     the whole block). */
+  align-self: flex-start;
+  margin-block-start: calc((22px - 0.75rem) / 2);
+  width: 0.75rem;
+  height: 0.75rem;
+  color: var(--text-muted);
+}
+
+.message-step-usage-chip {
+  @apply inline-flex items-center border border-[var(--border-base)] px-2 text-[10px];
+  min-height: 22px;
+  color: var(--icon-button-hover-color);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1;
+}
+
+.message-step-usage-chip::before {
+  content: attr(data-label);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 9px;
+  color: var(--text-muted);
+  font-weight: var(--font-weight-medium);
+  line-height: 1;
+  margin-inline-end: 0.35rem;
+}

@@ -11,9 +11,12 @@ import {
   createAutomationBridgeRegistration,
   parseBrowserAction,
   parseDeveloperAction,
+  formatInspection,
+  formatBrowserSnapshot,
   publishAutomationBridge,
   removeLegacyAutomationPlugin,
   setupAutomationPlugin,
+  sendMissionInput,
 } from "./automation-plugin"
 
 type ToolDefinition = {
@@ -74,9 +77,102 @@ test("validates Developer Mode actions", () => {
     action: "type",
     ref: "e4",
     text: "CodeNomad",
+    clear: true,
   })
+  assert.deepEqual(parseDeveloperAction({ action: "type", ref: "e4", text: " more", clear: false }), { action: "type", ref: "e4", text: " more", clear: false })
+  assert.throws(() => parseDeveloperAction({ action: "type", ref: "e4", text: "x", clear: "no" }), /clear must be true or false/)
+  assert.deepEqual(parseDeveloperAction({ action: "select", ref: "e5", values: ["Exploration"] }), { action: "select", ref: "e5", values: ["Exploration"] })
+  assert.throws(() => parseDeveloperAction({ action: "select", ref: "e5", values: "Exploration" }), /select requires ref and values/)
+  assert.throws(() => parseDeveloperAction({ action: "select", ref: "e5", values: [1] }), /select requires ref and values/)
+  assert.deepEqual(parseDeveloperAction({ action: "inspect", ref: "e9", query: "  " }), { action: "inspect", ref: "e9" })
+  assert.deepEqual(parseDeveloperAction({ action: "inspect", query: "Playbook" }), { action: "inspect", query: "Playbook" })
+  assert.throws(() => parseDeveloperAction({ action: "inspect", query: "x".repeat(201) }), /at most 200 characters/)
   assert.deepEqual(parseDeveloperAction({ action: "restart" }), { action: "restart" })
   assert.throws(() => parseDeveloperAction({ action: "click" }), /click requires ref/)
+})
+
+test("validates trusted-input actions, and parsing is idempotent across the bridge", () => {
+  const cases: Array<[Record<string, unknown>, unknown]> = [
+    [{ action: "click", ref: "e1", button: "right" }, { action: "click", ref: "e1", button: "right" }],
+    [{ action: "click", ref: "e1", button: "left" }, { action: "click", ref: "e1" }],
+    [{ action: "hover", ref: "e2" }, { action: "hover", ref: "e2" }],
+    [{ action: "drag", ref: "e2", to: "e3" }, { action: "drag", ref: "e2", to: "e3" }],
+    [{ action: "scroll", direction: "down" }, { action: "scroll", direction: "down", amount: 600 }],
+    [{ action: "scroll", ref: "e4", direction: "left", amount: 120 }, { action: "scroll", ref: "e4", direction: "left", amount: 120 }],
+    [{ action: "press", key: "Shift+Tab" }, { action: "press", key: "Shift+Tab" }],
+    [{ action: "press", key: "Enter", ref: "e5" }, { action: "press", key: "Enter", ref: "e5" }],
+    [{ action: "wait", text: "Ready" }, { action: "wait", text: "Ready", gone: false, timeout: 5_000 }],
+    [{ action: "wait", text: "Saving", gone: true, timeout: 0 }, { action: "wait", text: "Saving", gone: true, timeout: 0 }],
+  ]
+  for (const [input, expected] of cases) {
+    assert.deepEqual(parseDeveloperAction(input), expected)
+    assert.deepEqual(parseDeveloperAction(parseDeveloperAction(input)), expected, "the backend re-parses the same flat command")
+  }
+  assert.throws(() => parseDeveloperAction({ action: "click", ref: "e1", button: "middle" }), /left or right/)
+  assert.throws(() => parseDeveloperAction({ action: "drag", ref: "e1" }), /drag requires to/)
+  assert.throws(() => parseDeveloperAction({ action: "scroll", direction: "sideways" }), /up, down, left or right/)
+  assert.throws(() => parseDeveloperAction({ action: "scroll", direction: "up", amount: 10_001 }), /from 1 to 10000/)
+  assert.throws(() => parseDeveloperAction({ action: "press", key: "" }), /press requires key/)
+  assert.throws(() => parseDeveloperAction({ action: "press", key: "Hyper+Q" }), /Unknown modifier/)
+  assert.throws(() => parseDeveloperAction({ action: "wait", text: " " }), /wait requires text/)
+  assert.throws(() => parseDeveloperAction({ action: "wait", text: "x", timeout: 20_000 }), /from 0 to 15000/)
+})
+
+test("an inspection reads as a plain outline with its window, collapse note and diagnostics", () => {
+  const text = formatInspection({
+    target: { title: "CodeNomad", url: "http://127.0.0.1:9899/" },
+    context: { windowId: "window-1", instanceId: null, sessionId: "ses_1" },
+    snapshot: "- main [e1]\n  - log \"Transcript\" [e2] (+40 hidden)",
+    collapsed: 1,
+    diagnostics: [{ level: "error", text: "boom" }],
+  })
+  assert.equal(text, [
+    "CodeNomad window window-1 · workspace none · conversation ses_1",
+    "CodeNomad — http://127.0.0.1:9899/",
+    "",
+    "- main [e1]",
+    "  - log \"Transcript\" [e2] (+40 hidden)",
+    "",
+    "A line ending in (+N hidden) collapses that element: inspect its ref to expand it. (+N more) stands for omitted siblings: inspect their parent's ref, or use query to find them.",
+    "",
+    "Runtime diagnostics:",
+    "- error: boom",
+  ].join("\n"))
+})
+
+test("mission discovery waits for cold ownership validation and still rejects competing owners", { timeout: 20_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-mission-cold-owner-"))
+  const restore = isolateAutomationBridgeRegistry(root)
+  const removals: Array<() => Promise<void>> = []
+  const servers: http.Server[] = []
+  let admissions = 0
+  let cold = true
+  try {
+    const owner = await listen(async body => {
+      if (body.mode === "browser-claim") {
+        // A backend without native browsers claims sessions only for this purpose.
+        assert.equal(body.purpose, "mission")
+        if (cold) await new Promise(resolve => setTimeout(resolve, 5_200))
+        return { result: { available: true } }
+      }
+      admissions++
+      return { result: { admitted: true } }
+    })
+    servers.push(owner.server)
+    removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(owner.url)))
+    assert.deepEqual(await sendMissionInput("ses_cold", "prompt", {}), { admitted: true })
+    cold = false
+    const competing = await listen(async () => ({ result: { available: true } }))
+    servers.push(competing.server)
+    removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(competing.url)))
+    await assert.rejects(sendMissionInput("ses_cold", "prompt", {}), /exactly one owning/)
+    assert.equal(admissions, 1)
+  } finally {
+    await Promise.all(removals.map(remove => remove()))
+    await Promise.all(servers.map(closeServer))
+    restore()
+    await rm(root, { recursive: true, force: true })
+  }
 })
 
 test("validates browser actions", () => {
@@ -91,6 +187,22 @@ test("validates browser actions", () => {
     clear: false,
   })
   assert.throws(() => parseBrowserAction({ action: "open" }), /open requires url/)
+  for (const input of [
+    { action: "select", ref: "e1", values: ["Exploration"] },
+    { action: "hover", ref: "e1" },
+    { action: "press", key: "Shift+Tab" },
+    { action: "scroll", ref: "e1", direction: "down", amount: 120 },
+    { action: "drag", ref: "e1", to: "e2" },
+    { action: "wait", text: "Ready", timeout: 1000, gone: false },
+  ]) {
+    assert.deepEqual(parseBrowserAction(input), parseDeveloperAction(input), "both surfaces use the same page action contract")
+  }
+  assert.deepEqual(parseBrowserAction({ action: "snapshot", query: "dialog", ref: "e1" }), { action: "snapshot", query: "dialog", ref: "e1" })
+  assert.throws(() => parseBrowserAction({ action: "type", ref: "e1", text: "x", clear: "no" }), /clear must be/)
+  assert.throws(() => parseBrowserAction({ action: "snapshot", query: "x".repeat(201) }), /at most 200/)
+  assert.throws(() => parseBrowserAction({ action: "evaluate", expression: "document.cookie" }), /Unsupported browser action/)
+  assert.equal(formatBrowserSnapshot({ url: "https://example.test", snapshot: '- button "Go" [e1]', collapsed: 0 }),
+    'https://example.test\n\n- button "Go" [e1]', "browser outlines are plain text too, not escaped JSON")
 })
 
 test("registers developer tools while execution remains session-gated", async () => {
@@ -151,23 +263,23 @@ test("restart waits for a new native generation and returns a fresh inspection",
     })
     const replacement = await listen(async (body) => body.mode === "developer-probe"
       ? { result: { available: true, nativeIdentity: "electron:test", runId: "run-new" } }
-      : { result: { target: { id: "page-new", title: "Restarted", url: "http://app.test" }, nodes: [], diagnostics: [] } })
+      : { result: { target: { id: "page-new", title: "Restarted", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
     newServer = replacement.server
     const preexisting = await listen(async (body) => body.mode === "developer-probe" && restarting
       ? { result: { available: true, nativeIdentity: "electron:test", runId: "run-preexisting" } }
       : body.mode === "developer-probe"
         ? { result: { available: false } }
-        : { result: { target: { id: "page-wrong", title: "Pre-existing", url: "http://app.test" }, nodes: [], diagnostics: [] } })
+        : { result: { target: { id: "page-wrong", title: "Pre-existing", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
     preexistingServer = preexisting.server
     removePreexisting = await publishAutomationBridge(createAutomationBridgeRegistration(preexisting.url))
     const distractors = await Promise.all(Array.from({ length: 5 }, (_, index) => listen(async (body) => body.mode === "developer-probe"
       ? { result: { available: true, nativeIdentity: `electron:distractor-${index}`, runId: `run-distractor-${index}` } }
-      : { result: { target: { id: `page-${index}`, title: "Distractor", url: "http://app.test" }, nodes: [], diagnostics: [] } })))
+      : { result: { target: { id: `page-${index}`, title: "Distractor", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })))
     distractorServers.push(...distractors.map((value) => value.server))
     const old = await listen(async (body) => {
       if (body.mode === "developer-probe") return { result: { available: true, nativeIdentity: "electron:test", runId: "run-old" } }
       if (body.command && (body.command as { action?: unknown }).action === "inspect") {
-        return { result: { target: { id: "page-old", title: "Original", url: "http://app.test" }, nodes: [], diagnostics: [] } }
+        return { result: { target: { id: "page-old", title: "Original", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } }
       }
       restarting = true
       removeNew = await publishAutomationBridge(createAutomationBridgeRegistration(replacement.url))
@@ -207,7 +319,7 @@ test("keeps inspected targets isolated per plugin setup", async () => {
   try {
     const bridge = await listen(async (body) => body.mode === "developer-probe"
       ? { result: { available: true, nativeIdentity: "electron:isolation", runId: "run-isolation" } }
-      : { result: { target: { id: "isolated", title: "Isolated", url: "http://app.test" }, nodes: [], diagnostics: [] } })
+      : { result: { target: { id: "isolated", title: "Isolated", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
     server = bridge.server
     removeBridge = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
     const first = await collectTools()
@@ -234,7 +346,7 @@ test("pins parallel sessions to their independently inspected bridges", async ()
     for (const sessionID of ["session-a", "session-b"]) {
       const bridge = await listen(async (body) => body.mode === "developer-probe"
         ? { result: { available: body.sessionID === sessionID, nativeIdentity: `electron:${sessionID}`, runId: `run-${sessionID}` } }
-        : { result: { target: { id: sessionID, title: sessionID, url: "http://app.test" }, nodes: [], diagnostics: [] } })
+        : { result: { target: { id: sessionID, title: sessionID, url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
       servers.push(bridge.server)
       removals.push(await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url)))
     }
@@ -261,7 +373,7 @@ test("prunes stale registry pressure before limiting discovery", async () => {
   try {
     const bridge = await listen(async (body) => body.mode === "developer-probe"
       ? { result: { available: true, nativeIdentity: "electron:live", runId: "run-live" } }
-      : { result: { target: { id: "live", title: "Live", url: "http://app.test" }, nodes: [], diagnostics: [] } })
+      : { result: { target: { id: "live", title: "Live", url: "http://app.test" }, context: { windowId: "window-1", instanceId: null, sessionId: null }, snapshot: "", collapsed: 0, diagnostics: [] } })
     server = bridge.server
     removeBridge = await publishAutomationBridge(createAutomationBridgeRegistration(bridge.url))
     const directory = automationBridgeDirectory()

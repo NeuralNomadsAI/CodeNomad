@@ -3,16 +3,16 @@ import { getUnavailableRestoredSessionIds, resolveRestoredSessionSelection } fro
 import { getAbortReason } from "./app-session-restore-timeout"
 import { getRestoredSessionIds } from "./app-session-restored-session-ids"
 import { hydrateWorkspacePromptState } from "./app-session-prompt-hydration"
-import { messageStoreBus, type MessageScrollSnapshotSeed } from "./message-v2/bus"
+import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus, type MessageScrollSnapshotSeed } from "./message-v2/bus"
 import { getSessionAncestorIdsFromMap } from "./session-tree"
 import { seedRestoredSessionSelection } from "./session-state"
 import { seedSessionOutlineIndexes } from "./session-outline"
+import { seedSessionCatalog } from "./session-catalog-hydration"
 import {
   getSessions, hasAuthoritativeSessionSelection, hydrateActiveSessionSelection,
   hydrateRestoredSessionChain, hydrateSessionExpansion, hydrateSessionGenerationRecovery, hydrateSessionIdleMarkers,
 } from "./sessions"
 
-const MESSAGE_SCROLL_SCOPE = "message-stream"
 export const NO_SESSION_DRAFT_SESSION_ID = "__no_session_draft__"
 
 export function seedRestoredWorkspaceState(
@@ -20,9 +20,14 @@ export function seedRestoredWorkspaceState(
   snapshot: RestorableWorkspaceTabState,
 ): void {
   const scrollSeeds: MessageScrollSnapshotSeed[] = Object.entries(snapshot.scrollSnapshots)
-    .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_SCROLL_SCOPE, snapshot: scrollSnapshot }))
+    .map(([sessionId, scrollSnapshot]) => ({ sessionId, scope: MESSAGE_STREAM_SCROLL_SCOPE, snapshot: scrollSnapshot }))
   messageStoreBus.seedScrollSnapshots(instanceId, scrollSeeds)
   seedSessionOutlineIndexes(instanceId, snapshot.outlineIndexes)
+  seedSessionCatalog(instanceId, snapshot.sessionCatalog)
+  hydrateSessionIdleMarkers(instanceId, snapshot.unseenIdleSince)
+  hydrateSessionGenerationRecovery(instanceId, snapshot.generationRecovery)
+  if (snapshot.expandedSessionIds !== undefined) hydrateSessionExpansion(instanceId, snapshot.expandedSessionIds)
+  hydrateWorkspacePromptState(instanceId, snapshot, new Set(getSessions(instanceId).map(session => session.id)), NO_SESSION_DRAFT_SESSION_ID)
   seedRestoredSessionSelection(instanceId, snapshot.activeParentSessionId ?? null, snapshot.activeSessionId ?? snapshot.activeParentSessionId ?? null)
 }
 

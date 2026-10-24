@@ -1,35 +1,9 @@
 import assert from "node:assert/strict"
-import fs from "node:fs"
-import os from "node:os"
-import path from "node:path"
 import test from "node:test"
 
 import { apiKeyProviders } from "./api-key"
 
-const originalAuthFile = process.env.OPENCODE_AUTH_FILE
-const createdAuthDirs: string[] = []
-
-test.before(() => {
-  const authDir = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-usage-auth-"))
-  createdAuthDirs.push(authDir)
-  fs.writeFileSync(
-    path.join(authDir, "auth.json"),
-    JSON.stringify({ "zai-coding-plan": { type: "api", key: "test-zai-key" }, "zhipuai-coding-plan": { type: "api", key: "test-zhipu-key" } }),
-  )
-  process.env.OPENCODE_AUTH_FILE = path.join(authDir, "auth.json")
-})
-
-test.after(() => {
-  if (originalAuthFile === undefined) delete process.env.OPENCODE_AUTH_FILE
-  else process.env.OPENCODE_AUTH_FILE = originalAuthFile
-  const tmpRoot = fs.realpathSync(os.tmpdir())
-  for (const dir of createdAuthDirs) {
-    // Containment guard: never recurse outside the temp root we created.
-    if (fs.realpathSync(path.dirname(dir)) === tmpRoot && path.basename(dir).startsWith("codenomad-usage-auth-")) {
-      fs.rmSync(dir, { recursive: true, force: true })
-    }
-  }
-})
+const auth = { "zai-coding-plan": { type: "api", key: "test-zai-key" }, "zhipuai-coding-plan": { type: "api", key: "test-zhipu-key" } }
 
 const CREDIT_RESET_AT = 1787849891189
 const TOKENS_RESET_AT = 1787950772998
@@ -69,7 +43,7 @@ test("parses credit-based limits into usage windows", async () => {
         ],
       },
     },
-    () => zai.fetchQuota(),
+    () => zai.fetchQuota(auth),
   )
 
   assert.equal(result.ok, true)
@@ -87,7 +61,7 @@ test("derives usedPercent when the credit payload omits percentage", async () =>
     {
       data: { limits: [{ type: "CREDIT_LIMIT", unit: 6, number: 1, usage: 2000, currentValue: 158, remaining: 1842, nextResetTime: CREDIT_RESET_AT }] },
     },
-    () => zai.fetchQuota(),
+    () => zai.fetchQuota(auth),
   )
 
   const window = result.usage!.windows["weekly"]
@@ -108,7 +82,7 @@ test("coerces string quota fields and skips unusable or unknown entries without 
         ],
       },
     },
-    () => zai.fetchQuota(),
+    () => zai.fetchQuota(auth),
   )
 
   assert.equal(result.ok, true)
@@ -127,7 +101,7 @@ test("keeps legacy token and time windows intact for the bigmodel endpoint", asy
         ],
       },
     },
-    () => zhipu.fetchQuota(),
+    () => zhipu.fetchQuota(auth),
   )
 
   assert.equal(requestUrl, "https://open.bigmodel.cn/api/monitor/usage/quota/limit")

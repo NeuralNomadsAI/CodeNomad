@@ -5,6 +5,7 @@ import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { prepareGitPrototypeAssets } from "./fixtures/git-history-assets.mjs"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
 const gitFocusBoundaryInitScript = String.raw`(() => {
@@ -34,6 +35,7 @@ const gitFocusBoundaryInitScript = String.raw`(() => {
   }, { once: true })
 })()`
 
+let cache: Awaited<ReturnType<typeof createFixtureCache>>
 test("large Changes inventories keep the reader controls responsive", async () => {
   const page = await browser.newPage({ viewport: { width: 2000, height: 1120 } })
   try {
@@ -55,7 +57,9 @@ test("large Changes inventories keep the reader controls responsive", async () =
       ;(window as any).fixture.invalidate()
     })
     await page.getByRole("button", { name: "Changements", exact: true }).click()
-    await page.locator('.git-panel-file-row').nth(1599).waitFor({ state: "attached", timeout: 15000 })
+    // Sections render a bounded window (see git-changes-scale.test.ts).
+    await page.locator('.git-change-hidden-rows').waitFor({ state: "attached", timeout: 15000 })
+    assert.equal(await page.locator('.git-change-section .git-panel-file-row').count(), 200)
     await page.getByRole("button", { name: "Workspace", exact: true }).click({ timeout: 5000 })
     await page.getByRole("button", { name: "Aperçu du fichier · package.json", exact: true }).click({ timeout: 5000 })
     await page.locator('.workspace-file-view .view-line').first().waitFor({ timeout: 5000 })
@@ -71,7 +75,7 @@ test("Workspace editing saves the exact directory, retains drafts and checks ext
   try {
     await page.goto(url)
     const eye = () => page.getByRole("button", { name: "Aperçu du fichier · package.json", exact: true })
-    const save = () => page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true })
+    const save = () => page.getByRole("button", { name: "Enregistrer", exact: true })
     await eye().click()
     await page.locator('.workspace-file-view .view-line').first().waitFor()
     await edit('{"edited": "écriture"}')
@@ -81,7 +85,7 @@ test("Workspace editing saves the exact directory, retains drafts and checks ext
     await page.locator('.workspace-file-view .view-line').filter({ hasText: 'écriture' }).waitFor()
     await save().click()
     await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save" && call.message.includes("écriture") && call.slug === "/CodeNomad"))
-    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer (Ctrl+S)"]')?.disabled)
+    await page.waitForFunction(() => document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer"]')?.disabled)
     await edit('{"local": true}')
     await page.evaluate(async () => {
       const apiPath = "/src/lib/api-client.ts"
@@ -125,7 +129,7 @@ test("a reader reopened before save completion retains its undo through filesyst
       ;(window as any).originalText = editor.getValue()
       editor.setValue('{"saved": true}')
     })
-    await page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true }).click()
+    await page.getByRole("button", { name: "Enregistrer", exact: true }).click()
     await page.waitForFunction(() => (window as any).writeStarted)
     await page.evaluate(() => {
       const editor = (window as any).monaco.editor.getEditors().find((e: any) => e.getModel()?.uri.toString().includes("workspace-editor"))
@@ -134,10 +138,10 @@ test("a reader reopened before save completion retains its undo through filesyst
     await eye().click()
     await eye().click()
     await page.locator('.workspace-file-view .view-line').first().waitFor()
-    assert.equal(await page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true }).isDisabled(), true)
+    assert.equal(await page.getByRole("button", { name: "Enregistrer", exact: true }).isDisabled(), true)
     await page.evaluate(() => (window as any).releaseWrite())
     await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "save"))
-    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer (Ctrl+S)"]')?.disabled)
+    await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('[aria-label="Enregistrer"]')?.disabled)
     // Also exercise the authoritative reader reload after completion rather
     // than only checking its hook's dirty flag before invalidation has run.
     await page.evaluate(() => (window as any).fixture.invalidate())
@@ -146,7 +150,7 @@ test("a reader reopened before save completion retains its undo through filesyst
       const editor = (window as any).monaco.editor.getEditors().find((e: any) => e.getModel()?.uri.toString().includes("workspace-editor"))
       return editor.getValue() === (window as any).originalText
     }), true)
-    assert.equal(await page.getByRole("button", { name: "Enregistrer (Ctrl+S)", exact: true }).isEnabled(), true)
+    assert.equal(await page.getByRole("button", { name: "Enregistrer", exact: true }).isEnabled(), true)
   } finally { await page.close() }
 })
 
@@ -241,7 +245,9 @@ test("returning after a cancelled child refresh revalidates expanded Workspace d
 
 before(async () => {
   prepareGitPrototypeAssets()
+  cache = await createFixtureCache()
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+    cacheDir: cache.cacheDir,
     publicDir: fileURLToPath(new URL("../../src/renderer/public", import.meta.url)),
     plugins: [solid(), { name: "git-history-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
@@ -255,7 +261,7 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 
 test("Changes restores independent disclosures and Git actions above the staged files", async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 850 } })
@@ -297,11 +303,34 @@ test("Changes restores independent disclosures and Git actions above the staged 
     assert.equal(await input.inputValue(), "Rétablir les sections Git")
     await submit.click()
     await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "submit" && call.message === "Rétablir les sections Git"))
+    // The mock records admission, not completion of the real hook's status
+    // refresh. Wait for the cleared draft and settled commit/refresh controls.
+    await page.waitForFunction(() => {
+      const input = document.querySelector<HTMLTextAreaElement>('.git-change-commit-input')
+      const submit = document.querySelector<HTMLButtonElement>('.git-change-commit-button')
+      const refresh = document.querySelector<HTMLButtonElement>('.files-header-icon-button')
+      return input?.value === "" && submit?.textContent === "Valider" && refresh?.disabled === false
+    })
     await stagedHeader.click()
     await unstagedHeader.click()
+    assert.equal(await stagedHeader.getAttribute("aria-expanded"), "false")
+    assert.equal(await unstagedHeader.getAttribute("aria-expanded"), "true")
+    await unstaged.locator('.git-panel-file-main').waitFor({ state: "visible" })
     // A collapsed section keeps its header as a real pointer drop target.
-    const source = await unstaged.locator('.git-panel-file-main').boundingBox()
-    const target = await stagedHeader.boundingBox()
+    // A trailing invalidation can replace file rows between Locator's lookup
+    // and boundingBox call. Read both current nodes in one DOM turn instead.
+    const { source, target } = await page.evaluate(() => {
+      const sections = document.querySelectorAll('.git-drop-zone')
+      const [source, target] = [
+        sections[1].querySelector('.git-panel-file-main'),
+        sections[0].querySelector('.git-change-section-header'),
+      ].map(element => {
+        if (!element) return null
+        const { x, y, width, height } = element.getBoundingClientRect()
+        return width > 0 && height > 0 ? { x, y, width, height } : null
+      })
+      return { source, target }
+    })
     assert.ok(source && target)
     await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2)
     await page.mouse.down()
@@ -355,6 +384,9 @@ test("Workspace actions measure the whole row and share the subtle rollover acro
     await page.keyboard.press("Escape")
     await page.waitForFunction(() => document.querySelector('[data-path="README.md"] .file-row-actions')?.getAttribute('data-compact') === "false")
     assert.equal(await actions.locator('.file-row-inline-actions').evaluate(element => (element as HTMLElement).inert), false)
+    // The overflow menu rendered the same items: their icons must not have been moved out of the inline buttons.
+    assert.equal(await actions.locator('.file-row-inline-actions button svg').count(), 3)
+    assert.equal(await actions.locator('.file-row-pinned-actions button svg').count(), 1)
     await page.evaluate(() => { document.documentElement.dir = "rtl"; document.body.style.zoom = "1.25" })
     await row.hover()
     assert.equal(await actions.getAttribute("data-compact"), "false")
@@ -385,7 +417,7 @@ test("clicked previews bypass blocked background scans and follow the live palet
     console.log(`Cold file reader with blocked scans: ${Math.round(performance.now() - start)}ms`)
     await page.evaluate(() => (window as any).releaseScans())
     await page.evaluate(() => {
-      document.documentElement.style.setProperty("--surface-base", "#24313f")
+      document.documentElement.style.setProperty("--surface-canvas", "#24313f")
       document.documentElement.style.setProperty("--status-success", "#68ac93")
     })
     await page.waitForFunction(() => getComputedStyle(document.querySelector(".monaco-editor-background")!).backgroundColor === "rgb(36, 49, 63)")
@@ -534,6 +566,139 @@ test("history and local changes open the central diff and preserve the conversat
   } finally { await page.close() }
 })
 
+test("whitespace-only changes leave the Changes list by default and follow the Advanced setting", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 1100 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  // Count modified lines Monaco marks once the visible model is the expected file.
+  const changedLines = (marker: string, expected?: number) => page.waitForFunction(({ marker, expected }) => {
+    const editor = (window as any).monaco?.editor.getDiffEditors().at(-1)
+    const changes = editor?.getModel()?.modified.getValue().includes(marker) ? editor.getLineChanges() : null
+    if (!changes) return 0
+    const lines = changes.reduce((sum: number, change: any) => sum + Math.max(0, change.modifiedEndLineNumber - change.modifiedStartLineNumber + 1), 0)
+    return expected === undefined || lines === expected ? lines + 1 : 0
+  }, { marker, expected }).then(async handle => (await handle.jsonValue() as number) - 1)
+  // Grouped Advanced toggles are checkboxes named by the setting title; the row
+  // keeps the owner's value until it confirms, so wait for the confirmed state.
+  const settingName = "Masquer les changements d'espaces"
+  const setting = () => page.getByRole("checkbox", { name: settingName, exact: true })
+  const choose = async (checked: boolean) => {
+    if (await setting().isChecked() !== checked) await setting().click()
+    await page.waitForFunction(({ name, checked }) =>
+      document.querySelector<HTMLInputElement>(`input[aria-label="${name}"]`)?.checked === checked, { name: settingName, checked })
+  }
+  const notice = () => page.getByRole("status").filter({ hasText: "Seuls des espaces ont changé dans ce fichier (indentation ou espaces en fin de ligne)." })
+  const lineEndings = () => page.getByRole("status").filter({ hasText: "Seules les fins de ligne (ou une marque d'ordre des octets) ont changé" })
+  const open = (path: string) => page.getByRole("button", { name: `Aperçu du fichier · ${path}`, exact: true }).click()
+  // Commits keeps its own mounted file rows; only the Changes sections count.
+  const row = (path: string) => page.locator(`.git-change-section .git-panel-file-main[title="${path}"]`)
+  const visibleRows = () => page.locator(".git-change-section .git-panel-file-main").evaluateAll(rows => rows.map(row => row.getAttribute("title")))
+  const statusReads = () => page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "status").map((call: any) => call.message))
+  try {
+    await page.goto(`${url}?advanced=1`)
+    // The fixture installs its own API stubs after its top-level imports settle.
+    await page.waitForFunction(() => (window as any).fixture)
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      const reindented: [string, string] = ["function a() {\n  if (x) {\n    call(1)\n  }\n  done()\n}\n",
+        "function a() {\n  if (y) {\n    if (x) {\n      call(1)\n    }\n  }\n  done()\n}\n"]
+      const texts: Record<string, [string, string]> = {
+        "src/components/git-panel.tsx": reindented,
+        "src/a-real.ts": ["export const a = 1\n", "export const a = 2\n"],
+        "src/crlf.txt": [".crlf {\n}\n", ".crlf {\r\n}\r\n"],
+        "src/styles/panels/git-history.css": [".panel {\n  gap: 4px;\n}\n", ".panel {\n\tgap: 4px;   \n}\n"],
+        "src/z-real.ts": ["export const z = 1\n", "export const z = 2\n"],
+      }
+      ;(window as any).diffTexts = texts
+      // Like the server, only reads requested with the option carry Git's -w flags.
+      serverApi.fetchWorktreeGitStatus = async (_id: string, slug: string, _signal?: AbortSignal, options?: { hideWhitespace?: boolean }) => {
+        ;(window as any).fixture.calls.push({ kind: "status", slug, message: options?.hideWhitespace ? "hide" : "show" })
+        // Anonymous callbacks only: tsx would wrap a named page function in an undefined `__name`.
+        const flag = options?.hideWhitespace ? { unstagedWhitespaceOnly: true } : {}
+        return ([["src/components/git-panel.tsx", { stagedStatus: "modified", stagedAdditions: 4, stagedDeletions: 2, unstagedStatus: null }],
+          ["src/a-real.ts", {}], ["src/crlf.txt", flag], ["src/styles/panels/git-history.css", flag], ["src/z-real.ts", {}]] as const)
+          .map(([path, extra]) => ({ path, originalPath: null, stagedStatus: null, stagedAdditions: 0, stagedDeletions: 0,
+            unstagedStatus: "modified", unstagedAdditions: 2, unstagedDeletions: 2, ...extra }))
+      }
+      serverApi.fetchWorktreeGitDiff = async (_id: string, slug: string, input: any) => {
+        ;(window as any).fixture.calls.push({ kind: "local-diff", slug, path: input.path })
+        const [before, after] = texts[input.path]
+        return { path: input.path, scope: input.scope, before, after, isBinary: false }
+      }
+      serverApi.fetchGitCommitDiff = async (_id: string, _slug: string, _commit: string, path: string) =>
+        ({ path, before: reindented[0], after: reindented[1], isBinary: false })
+      const patch = serverApi.patchConfigOwner
+      ;(window as any).configPatches = []
+      serverApi.patchConfigOwner = async (owner: string, value: unknown) => {
+        ;(window as any).configPatches.push(JSON.stringify({ owner, value }))
+        return patch(owner, value)
+      }
+    })
+    await setting().waitFor()
+    assert.equal(await setting().isChecked(), true, "hiding whitespace-only changes is the default")
+
+    await page.getByRole("button", { name: /Changements/ }).click()
+    await row("src/z-real.ts").waitFor()
+    assert.deepEqual(await visibleRows(), ["src/components/git-panel.tsx", "src/a-real.ts", "src/z-real.ts"],
+      "by default whitespace-only and CRLF-only files leave the list")
+    assert.equal(await page.locator(".git-panel-count").textContent(), "3 fichiers modifiés")
+    assert.deepEqual(await statusReads(), ["hide"])
+    if (process.env.CODENOMAD_GIT_CAPTURE) {
+      await page.locator("aside").screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/changes-list-whitespace-default.png` })
+      await page.locator(".advanced-settings-fixture .settings-toggle-row").filter({ has: setting() }).screenshot({ path: `${process.env.CODENOMAD_GIT_CAPTURE}/advanced-diff-whitespace-row.png` })
+    }
+
+    // A range selection spanning the hidden rows stages only the visible files.
+    await row("src/a-real.ts").click()
+    await row("src/z-real.ts").click({ modifiers: ["Shift"] })
+    await page.locator(".git-panel-more").filter({ hasText: "Indexer les 2 fichiers sélectionnés" }).click()
+    await page.waitForFunction(() => (window as any).fixture.calls.some((call: any) => call.kind === "stage"))
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "stage").map((call: any) => call.path)),
+      ["src/a-real.ts,src/z-real.ts"], "bulk staging never includes hidden files")
+
+    await open("src/components/git-panel.tsx")
+    assert.equal(await changedLines("if (y)", 2), 2, "diffs still ignore indentation by default")
+    assert.equal(await notice().count(), 0)
+
+    await choose(false)
+    await row("src/crlf.txt").waitFor()
+    assert.deepEqual(await visibleRows(), ["src/components/git-panel.tsx", "src/a-real.ts", "src/crlf.txt", "src/styles/panels/git-history.css", "src/z-real.ts"],
+      "turning the option off shows every change")
+    assert.equal(await page.locator(".git-panel-count").textContent(), "5 fichiers modifiés")
+    assert.equal((await statusReads()).at(-1), "show")
+    assert.ok((await page.evaluate(() => (window as any).configPatches as string[])).some(entry => entry.includes('"hideDiffWhitespaceChanges":false')),
+      "the choice is persisted with the other UI settings")
+    assert.ok(await changedLines("if (y)") > 2, "re-indented lines are visible changes with the option off")
+
+    await open("src/styles/panels/git-history.css")
+    await notice().waitFor()
+    assert.equal(await changedLines("\tgap", 1), 1, "the whitespace change is drawn, with a factual notice")
+    await open("src/crlf.txt")
+    await lineEndings().waitFor()
+    assert.equal(await changedLines(".crlf", 0), 0, "Monaco never draws line endings; the note explains the empty reader")
+    assert.equal(await notice().count(), 0, "line endings use their own note, not the whitespace notice")
+    // Monaco 0.52 never draws same-length trailing-whitespace swaps, even with the option off.
+    await page.evaluate(() => { (window as any).diffTexts["src/styles/panels/git-history.css"] = ["foo\t\n", "foo \n"] })
+    await open("src/styles/panels/git-history.css")
+    await notice().waitFor()
+    assert.equal(await changedLines("foo", 0), 0)
+
+    await page.getByRole("button", { name: "Commits", exact: true }).first().click()
+    await page.getByRole("button", { name: /Make Git history the starting point/ }).click()
+    await open("src/components/git-panel.tsx")
+    assert.ok(await changedLines("if (y)") > 2, "history diffs share the same reader and setting")
+    await choose(true)
+    assert.equal(await changedLines("if (y)", 2), 2)
+
+    await page.getByRole("button", { name: /Changements/ }).click()
+    await row("src/crlf.txt").waitFor({ state: "detached" })
+    assert.deepEqual(await visibleRows(), ["src/components/git-panel.tsx", "src/a-real.ts", "src/z-real.ts"], "turning the option back on hides them again")
+    assert.equal((await statusReads()).at(-1), "hide")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a slow commit cannot replace the history after browsing another worktree", async () => {
   const page = await browser.newPage()
   try {
@@ -630,6 +795,27 @@ test("central diff inserts local lines and revision-qualified history into the r
     await modifiedLine.click()
     await page.keyboard.press("Home")
     await page.keyboard.press("Shift+End")
+    // Git status reconciliation reopens a fresh, identical target to reload the
+    // file; the reader must keep its editor, selection and insert action.
+    const editor = (await page.locator(".git-diff-view .monaco-diff-editor").elementHandle())!
+    const diffReads = () => page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length)
+    const readsBefore = await diffReads()
+    const monacoPath = "/src/lib/monaco/setup.ts"
+    // A new diff view model would re-collapse regions the reader expanded.
+    await page.evaluate(async path => { (window as any).diffModelBeforeReopen = (await (await import(path)).loadMonaco()).editor.getDiffEditors()
+      .map((candidate: any) => candidate.getModel()) }, monacoPath)
+    await page.evaluate(async () => {
+      const storePath = "/src/stores/files-preview.ts"
+      const { getFilePreview, openFilePreview } = await import(storePath)
+      openFilePreview("git-prototype", { ...getFilePreview("git-prototype") })
+    })
+    await page.waitForFunction(count => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length > count, readsBefore)
+    assert.equal(await editor.evaluate(element => element.isConnected), true, "a refreshed identical target reloads in place")
+    assert.equal(await page.evaluate(async path => {
+      const current = (await (await import(path)).loadMonaco()).editor.getDiffEditors().map((candidate: any) => candidate.getModel())
+      const before = (window as any).diffModelBeforeReopen as unknown[]
+      return current.length === before.length && current.every((model: unknown, index: number) => model === before[index])
+    }, monacoPath), true, "a reload of the shown file keeps the diff view model and its expanded regions")
     const insert = page.getByRole("button", { name: "Ajouter au prompt", exact: true })
     await insert.click()
     assert.match(await composer.inputValue(), /Conserver ce brouillon/)
@@ -708,6 +894,73 @@ test("central diff inserts local lines and revision-qualified history into the r
     }
     await page.close()
   }
+})
+
+test("a reloaded diff keeps its collapsed regions and keeps its view model only for identical text", async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 960 } })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.stack ?? error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(`${url}?session=1`)
+    // The fixture installs its own diff reader while loading; replace it afterwards.
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    // A long file collapses its unchanged regions in the default context mode.
+    await page.evaluate(async () => {
+      const apiPath = "/src/lib/api-client.ts"
+      const { serverApi } = await import(apiPath)
+      const w = window as any
+      // Property assignments only: tsx wraps named functions in a page-absent __name.
+      // A BOM is one of the inputs Monaco's getValue() does not round-trip.
+      w.setLongDiff = (changed: number[]) => {
+        w.longDiff = {
+          before: "﻿" + Array.from({ length: 200 }, (_, line) => `line ${line}`).join("\n") + "\n",
+          after: "﻿" + Array.from({ length: 200 }, (_, line) => changed.includes(line) ? `changed ${line}` : `line ${line}`).join("\n") + "\n",
+        }
+      }
+      w.setLongDiff([100])
+      const read = serverApi.fetchWorktreeGitDiff
+      serverApi.fetchWorktreeGitDiff = async (...args: any[]) => ({ ...(await read(...args)), ...w.longDiff })
+    })
+    await page.getByRole("button", { name: /Changements/ }).click()
+    await page.getByRole("button", { name: "Aperçu du fichier · src/components/git-panel.tsx", exact: true }).click()
+    // Monaco 0.52 draws each collapsed unchanged region as a sized widget.
+    const hidden = page.locator(".git-diff-view .diff-hidden-lines-widget")
+    await hidden.first().waitFor()
+
+    const monacoPath = "/src/lib/monaco/setup.ts"
+    const captureModels = () => page.evaluate(async path => {
+      (window as any).capturedDiffModels = (await (await import(path)).loadMonaco()).editor.getDiffEditors().map((editor: any) => editor.getModel())
+    }, monacoPath)
+    const sameModels = () => page.evaluate(async path => {
+      const current = (await (await import(path)).loadMonaco()).editor.getDiffEditors().map((editor: any) => editor.getModel())
+      const captured = (window as any).capturedDiffModels as unknown[]
+      return current.length === captured.length && current.every((model: unknown, index: number) => model === captured[index])
+    }, monacoPath)
+    const reopen = async () => {
+      const reads = await page.evaluate(() => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length)
+      await page.evaluate(async () => {
+        const storePath = "/src/stores/files-preview.ts"
+        const { getFilePreview, openFilePreview } = await import(storePath)
+        openFilePreview("git-prototype", { ...getFilePreview("git-prototype") })
+      })
+      await page.waitForFunction(count => (window as any).fixture.calls.filter((call: any) => call.kind === "local-diff").length > count, reads)
+    }
+
+    await captureModels()
+    await reopen()
+    assert.equal(await sameModels(), true, "identical text keeps the view model and the reader's expanded regions")
+    assert.ok(await hidden.count() > 0, "identical text keeps unchanged regions collapsed")
+
+    await page.evaluate(() => (window as any).setLongDiff([100, 150]))
+    await captureModels()
+    await reopen()
+    await page.locator(".git-diff-view .editor.modified .view-line", { hasText: "changed 150" }).waitFor()
+    assert.equal(await sameModels(), false, "changed text gets a fresh view model")
+    await hidden.first().waitFor()
+    assert.ok(await hidden.count() > 0, "changed text keeps unchanged regions collapsed")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
 })
 
 test("Workspace keyboard focus survives lazy expansion and refresh, including RTL", async () => {

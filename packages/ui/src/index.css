@@ -14,6 +14,13 @@
   padding: 0;
 }
 
+/* <details> slots its content into the browser's own shadow tree, and the
+   component library resets every element to `box-sizing: inherit`, so folded
+   content would inherit content-box and overflow. Re-anchor each folded child. */
+details > :not(summary) {
+  box-sizing: border-box;
+}
+
 /* A default, not an override of component scrollbar visibility. */
 :where(:root body *) {
   scrollbar-width: thin;
@@ -51,13 +58,13 @@ body {
   font-weight: var(--font-weight-regular);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
   color: var(--text-primary);
 }
 
 #root {
   width: 100vw;
   height: 100vh;
-  background-color: var(--surface-base);
+  background-color: var(--surface-canvas);
 }
 

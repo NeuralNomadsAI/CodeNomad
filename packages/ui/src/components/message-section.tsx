@@ -1,7 +1,7 @@
 import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, on, untrack, type JSX } from "solid-js"
 import { ArrowDown, ArrowUp, ChevronDown, ChevronUp, Search } from "lucide-solid"
 import { Portal } from "solid-js/web"
-import Kbd from "./kbd"
+import { matchesHotkey, withHotkey } from "../lib/hotkeys"
 import DismissibleWindow from "./dismissible-window"
 import WindowCloseButton from "./window-close-button"
 import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../stores/session-search"
@@ -10,27 +10,33 @@ import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
 import PermissionReceipts from "./permission-receipts"
 import { getMessageAnchorId } from "./message-anchors"
-import MessageTimeline, { buildTimelineSegments, type TimelineSegment } from "./message-timeline"
-import { getTimelineRecordSignature } from "./message-timeline-projection"
+import MessageTimeline, { type TimelineSegment } from "./message-timeline"
+import { buildTimelineSegments, getTimelineRecordSignature, parseTimelineSegmentId, timelineRunStart } from "./message-timeline-projection"
 import VirtualFollowList, { type VirtualExplicitBottomPinIntent, type VirtualFollowListApi, type VirtualFollowListState, type VirtualFollowScrollSnapshot } from "./virtual-follow-list"
-import { isScrollRestoreGenerationCurrent, isSnapshotAutoFollowing } from "./virtual-follow-behavior"
+import { isSnapshotAutoFollowing } from "./virtual-follow-behavior"
 import { useConfig } from "../stores/preferences"
-import { messageStoreBus } from "../stores/message-v2/bus"
+import { MESSAGE_STREAM_SCROLL_SCOPE as MESSAGE_SCROLL_CACHE_SCOPE, messageStoreBus } from "../stores/message-v2/bus"
 import { useI18n } from "../lib/i18n"
 import { copyToClipboard } from "../lib/clipboard"
 import { showToastNotification } from "../lib/notifications"
 import type { InstanceMessageStore } from "../stores/message-v2/instance-store"
-import { isHiddenSyntheticTextPart, partHasRenderableText } from "../types/message"
-import { buildRecordDisplayData, getRecordDisplayPartIds } from "../stores/message-v2/record-display-cache"
+import type { ScrollSnapshot } from "../stores/message-v2/types"
+import { partHasRenderableText } from "../types/message"
+import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts, isRecordPartDisplayed, MESSAGE_PART_REVEAL_STEP, revealHiddenRecordParts } from "../stores/message-v2/record-display-cache"
+import { isDuplicateRunFailure } from "../stores/message-v2/run-failure"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
 import { findHistoryMatches } from "../stores/session-history"
 import HistoryMessagePreview from "./history-message-preview"
+import HistorySearchResults from "./history-search-results"
 import { createSessionOutline } from "../stores/session-outline"
 import { MissingHistoryAnchorError } from "../stores/history-window"
 import { sessions } from "../stores/session-state"
 import { createSessionOutlineProjection } from "./session-outline-projection"
+import { findTimelineSegmentBlock, readingLineSegment } from "./timeline-transcript-blocks"
+import { JUMP_USER_MESSAGE_EVENT, findUserMessageJumpTarget, keyAllowsUserMessageJump, type JumpUserMessageDetail, type UserMessageJumpDirection } from "./user-message-navigation"
 import SessionCleanupProgress from "./session-cleanup-progress"
 import type { SessionSearchMatch } from "../lib/session-search"
+import type { SearchRevealRequest } from "./search-highlights"
 import { resolveThinkingExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { isLatestWindow, preserveMessageWindowCursor, toWindowSnapshot } from "../stores/message-v2/message-window"
 import { createSearchLocatorAuthority, getMessageWindowPageKey, hasMessageSearchAuthority, loadPagesUntilAnchor } from "./message-history-pagination"
@@ -40,15 +46,30 @@ import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../s
 import type { SessionInboxUser } from "@opencode/client"
 import { getFormQueue } from "../stores/forms"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { getTechnicalCleanupParts, getTechnicalGroupKind, isTechnicalGroupingVisiblePart, isVisibleStepFinish, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
+import { getTechnicalCleanupParts, getTechnicalGroupKind, isResponseTextPart, isTechnicalGroupingVisiblePart, projectTranscriptTechnicalGroups, reasoningHasRenderableContent, technicalPartKey, type TechnicalCleanupTranscriptItem } from "../lib/message-part-grouping"
 
-const MESSAGE_SCROLL_CACHE_SCOPE = "message-stream"
 const QUOTE_SELECTION_MAX_LENGTH = 2000
 const STREAMING_TEXT_HOLD_TOP_THRESHOLD_PX = 8
 const SEARCH_DEBOUNCE_MS = 250
 const SEARCH_MIN_CHARS = 3
 const OPEN_SESSION_SEARCH_EVENT = "codenomad:open-session-search"
 const log = getLogger("session")
+
+/** Loads the anchor of the activation's scroll snapshot, then restores it through the list. */
+interface RestoringNavigation { kind: "restoring"; sessionId: string; loading: AbortController | null }
+/**
+ * Pages the history window; `gesture` is the scroll direction that requested it.
+ * `restored` records whether the activation restore had positioned the list
+ * before paging began, and `positioned` whether paging has positioned it since.
+ * Before the restore, `saved` keeps the stored position the page commit
+ * replaces (`null`: none was stored).
+ */
+interface PagingNavigation {
+  kind: "paging"; sessionId: string; controller: AbortController; gesture: "up" | "down" | null; around: boolean
+  restored: boolean; positioned: boolean; saved?: ScrollSnapshot | null
+}
+/** One owner positions the transcript: the activation's restore, then history paging. */
+type TranscriptNavigation = { kind: "unrestored" } | RestoringNavigation | PagingNavigation | { kind: "idle" }
 
 function TimelinePlacement(props: { mount?: HTMLElement; children: JSX.Element }) {
   return <Show when={props.mount} fallback={props.children}>
@@ -65,7 +86,6 @@ export interface MessageSectionProps {
   emptyStateVariant?: "messages" | "no-session"
   onRevert?: (messageId: string) => void
   onFork?: (messageId?: string) => void
-  registerScrollToBottom?: (fn: (() => void) | null) => void
   showSidebarToggle?: boolean
   onSidebarToggle?: () => void
   forceCompactStatusLayout?: boolean
@@ -95,14 +115,14 @@ export default function MessageSection(props: MessageSectionProps) {
   const usageMetricsVisibility = () =>
     preferences().showUsageMetrics ? preferences().usageMetricsExpansion : "hidden"
   const showMessageTimelinePreference = () => preferences().showMessageTimeline ?? true
-  const showTimelineToolsPreference = () => preferences().showTimelineTools ?? true
   const holdLongAssistantRepliesEnabled = () => preferences().holdLongAssistantReplies ?? true
   const emptyStateVariant = () => props.emptyStateVariant ?? "messages"
   const store = createMemo<InstanceMessageStore>(() => messageStoreBus.getOrCreate(props.instanceId))
   const messageIds = createMemo(() => store().getSessionMessageIds(props.sessionId))
   const visibleMessageIds = createMemo(() => {
     const resolvedStore = store()
-    const visible = messageIds().filter((messageId) => {
+    const ids = messageIds()
+    const visible = ids.filter((messageId, index) => {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return false
 
@@ -110,7 +130,8 @@ export default function MessageSection(props: MessageSectionProps) {
         return preferences().systemMessagesVisibility !== "hidden"
       }
 
-      if (buildTimelineSegments(props.instanceId, record, t).length > 0) {
+      // Thinking shows only with its preference, checked below.
+      if (buildTimelineSegments(props.instanceId, record, t).some(segment => segment.type !== "reasoning")) {
         return true
       }
 
@@ -118,8 +139,7 @@ export default function MessageSection(props: MessageSectionProps) {
         return true
       }
 
-      // The navigation timeline omits reasoning-only segments. The transcript
-      // must still show retained thoughts after their neighbouring tools are pruned.
+      // The transcript must still show retained thoughts after their neighbouring tools are pruned.
       if (preferences().showThinkingBlocks
         && buildRecordDisplayData(props.instanceId, record).orderedParts.some(reasoningHasRenderableContent)) return true
 
@@ -129,7 +149,7 @@ export default function MessageSection(props: MessageSectionProps) {
       }
 
       if (info.error) {
-        return true
+        return !isDuplicateRunFailure(ids, index, resolvedStore.getMessageInfo)
       }
 
       const timeInfo = info.time as { created: number; completed?: number } | undefined
@@ -151,17 +171,19 @@ export default function MessageSection(props: MessageSectionProps) {
       const record = resolvedStore.getMessage(messageId)
       if (!record) return []
       if (record.role === "user") return [null]
-      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap<TechnicalCleanupTranscriptItem>((part) => {
+      const display = buildRecordDisplayData(props.instanceId, record)
+      const projected = display.orderedParts.map<TechnicalCleanupTranscriptItem[]>((part) => {
         const partId = typeof part.id === "string" ? part.id : ""
         if (!partId) return []
         if (part.type === "tool" || part.type === "reasoning") {
           return [{ messageId, partId, type: part.type }]
         }
-        if ((part.type === "text" || part.type === "file") && !isHiddenSyntheticTextPart(part) && partHasRenderableText(part)) {
-          return [{ messageId, partId, type: "boundary" as const }]
-        }
+        if (isResponseTextPart(part)) return [{ messageId, partId, type: "boundary" as const }]
         return []
       })
+      // Omitted parts may hold boundaries: never select a cleanup run across them.
+      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
+      return projected.flat()
     })
   })
   const technicalCleanupParts = (messageId: string, partId: string) => getTechnicalCleanupParts(
@@ -178,12 +200,14 @@ export default function MessageSection(props: MessageSectionProps) {
   const handleTechnicalCleanupHoverChange = (messageId: string, partId: string, hovered: boolean) => {
     setTechnicalCleanupHoverTarget(hovered ? { messageId, partId } : null)
   }
+  // Resolving targets reads the transcript store, which changes per token: only
+  // a changed target set may invalidate its consumers (grouping, the rail).
   const pendingFormToolTargets = createMemo(() => new Set(getFormQueue(props.instanceId)
     .filter((form) => form.sessionID === props.sessionId)
     .flatMap((form) => {
       const target = resolveFormToolTarget(form, store())
       return target ? [technicalPartKey(target.messageId, target.partId)] : []
-    })))
+    })), undefined, { equals: (previous, next) => previous.size === next.size && [...next].every((key) => previous.has(key)) })
   const technicalGroupProjection = createMemo(() => {
     sessionRevision()
     const resolvedStore = store()
@@ -194,11 +218,8 @@ export default function MessageSection(props: MessageSectionProps) {
       if (record.role === "user") return [null]
       const completed = record.status === "complete" || record.status === "error"
       const infoRevision = resolvedStore.state.messageInfoVersion[messageId] ?? 0
-      const messageInfo = resolvedStore.getMessageInfo(messageId)
-      return buildRecordDisplayData(props.instanceId, record).orderedParts.flatMap((part) => {
-        if (part.type === "step-finish") {
-          return isVisibleStepFinish(part, messageInfo, usageMetricsVisibility() !== "hidden") ? [null] : []
-        }
+      const display = buildRecordDisplayData(props.instanceId, record)
+      const projected = display.orderedParts.map((part) => {
         if (!isTechnicalGroupingVisiblePart(part)) return []
         const partId = typeof part.id === "string" ? part.id : ""
         const kind = getTechnicalGroupKind(part)
@@ -218,6 +239,10 @@ export default function MessageSection(props: MessageSectionProps) {
           revision: `${record.revision}:${record.parts[partId]?.revision ?? 0}:${infoRevision}`,
         }]
       })
+      // Technical groups never span omitted parts; the gap renders between them.
+      // A step's usage line does not end its group: it folds with the group's tools.
+      if (display.hiddenCount > 0) projected.splice(display.gapIndex, 0, [null])
+      return projected.flat()
     })
     return projectTranscriptTechnicalGroups(items)
   })
@@ -226,7 +251,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const resolvedStore = store()
     const record = resolvedStore.getMessage(messageId)
     if (!record) return ""
-    const displayPartIds = getRecordDisplayPartIds(record)
+    const displayPartIds = getRecordDisplayPartIds(props.instanceId, record)
     const groups = Array.from(new Set(displayPartIds.flatMap((partId) => {
       const group = technicalGroupForPart(messageId, partId)
       return group ? [group.signature] : []
@@ -260,29 +285,20 @@ export default function MessageSection(props: MessageSectionProps) {
     return `${showThinking}|${thinkingExpansion}|${usageVisibility}|${pref.systemMessagesVisibility}`
   })
 
+  // The active marker follows the block at the reading line. A selected marker
+  // stays active instead until the reader scrolls: its placement, the row's late
+  // layout or a top it cannot reach must not select a neighbour.
+  let readerOwnsActiveSegment = true
+  let readingLineFrame: number | undefined
+  onCleanup(() => { if (readingLineFrame !== undefined) cancelAnimationFrame(readingLineFrame) })
   const handleTimelineSegmentClick = (segment: TimelineSegment) => {
-    const scrollToMessage = () => {
-      const api = listApi()
-      if (api) {
-        api.scrollToKey(segment.messageId, { block: "start" })
-        return
-      }
-      if (typeof document === "undefined") return
-      const anchor = document.getElementById(getMessageAnchorId(segment.messageId))
-      anchor?.scrollIntoView({ block: "start", behavior: "smooth" })
-    }
-
     setActiveSegmentId(segment.id)
-    if (messageIds().includes(segment.messageId)) {
-      cancelWindowNavigation()
-      listApi()?.setAutoScroll(false)
-      scrollToMessage()
-    }
-    else void pageWindow("around", () => scrollToMessage(), segment.messageId)
+    navigateToMessage(segment.messageId, undefined, segment.id)
   }
 
-  const [expandedMessageIds, setExpandedMessageIds] = createSignal<Set<string>>(new Set())
-  const isSearchOpen = () => isSessionSearchOpen(props.instanceId, props.sessionId)
+  // Workspace metadata updates can re-evaluate the identity accessors without
+  // changing search visibility. Only a real close may cancel history reads.
+  const isSearchOpen = createMemo(() => isSessionSearchOpen(props.instanceId, props.sessionId))
   const setIsSearchOpen = (open: boolean) => setSessionSearchOpen(props.instanceId, props.sessionId, open)
   const [searchQuery, setSearchQuery] = createSignal("")
   const [debouncedSearchQuery, setDebouncedSearchQuery] = createSignal("")
@@ -299,6 +315,10 @@ export default function MessageSection(props: MessageSectionProps) {
   const [skippedSearchMessages, setSkippedSearchMessages] = createSignal(0)
   const [previewSearchMatch, setPreviewSearchMatch] = createSignal<{ sessionId: string; messageId: string }>()
   const [activeSearchIndex, setActiveSearchIndex] = createSignal(0)
+  // Set once a search navigation has placed its message: that row reveals the
+  // occurrence once. Rows mounted later by paging or virtualization find it
+  // claimed, and any reader gesture claims it first.
+  const [searchReveal, setSearchReveal] = createSignal<SearchRevealRequest | null>(null)
   const searchLocatorAuthority = createSearchLocatorAuthority()
   let searchGeneration = 0
   let searchInputRef: HTMLInputElement | undefined
@@ -322,12 +342,14 @@ export default function MessageSection(props: MessageSectionProps) {
   })
   const searchFailed = createMemo(() => hasMessageSearchAuthority(trimmedSearchQuery(), failedSearchQuery()))
 
-  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; signature: string; segments: TimelineSegment[] }>()
+  const timelineSegmentCache = new Map<string, { revision: number; status: string; locale: string; revealed: number; signature: string; segments: TimelineSegment[] }>()
   const residentTimelineSegments = createMemo(() => {
     sessionRevision()
     const ids = visibleMessageIds()
     const resolvedStore = store()
     const activeLocale = locale()
+    // Revealing omitted parts changes the rendered window without a record revision.
+    const revealedByMessage = new Map(ids.map((messageId) => [messageId, getRevealedRecordParts(props.instanceId, messageId)]))
 
     return untrack(() => {
       const activeIds = new Set(ids)
@@ -335,16 +357,17 @@ export default function MessageSection(props: MessageSectionProps) {
       for (const messageId of ids) {
         const record = resolvedStore.getMessage(messageId)
         if (!record) continue
+        const revealed = revealedByMessage.get(messageId) ?? 0
         const cached = timelineSegmentCache.get(messageId)
-        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale) {
+        if (cached?.revision === record.revision && cached.status === record.status && cached.locale === activeLocale && cached.revealed === revealed) {
           segments.push(...cached.segments)
           continue
         }
         const signature = getTimelineRecordSignature(record)
-        const current = cached?.signature === signature && cached.locale === activeLocale
+        const current = cached?.signature === signature && cached.locale === activeLocale && cached.revealed === revealed
           ? cached.segments
           : buildTimelineSegments(props.instanceId, record, t)
-        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, signature, segments: current })
+        timelineSegmentCache.set(messageId, { revision: record.revision, status: record.status, locale: activeLocale, revealed, signature, segments: current })
         segments.push(...current)
       }
       for (const messageId of timelineSegmentCache.keys()) {
@@ -353,14 +376,33 @@ export default function MessageSection(props: MessageSectionProps) {
       return segments
     })
   })
+  // Jumping between user messages needs the same structural index, timeline shown or not.
+  const [outlineDemanded, setOutlineDemanded] = createSignal(false)
   const outline = createSessionOutline({ instanceId: () => props.instanceId, sessionId: () => props.sessionId,
-    active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && showMessageTimelinePreference() })
+    active: () => props.isActive !== false && Boolean(props.onLoadMessageAnchor) && (showMessageTimelinePreference() || outlineDemanded()) })
   const projectSessionOutline = createSessionOutlineProjection()
   const timelineSegments = createMemo(() => {
     const boundary = sessions().get(props.instanceId)?.get(props.sessionId)?.revert?.messageID
     const entries = boundary ? outline.entries().filter(entry => entry.id < boundary) : outline.entries()
-    return entries.length ? projectSessionOutline(entries, residentTimelineSegments(), t) : residentTimelineSegments()
+    return entries.length ? projectSessionOutline(entries, residentTimelineSegments(), messageIds(), t) : residentTimelineSegments()
   })
+  const timelineSegmentsByMessage = createMemo(() => {
+    const result = new Map<string, TimelineSegment[]>()
+    for (const segment of timelineSegments()) {
+      const list = result.get(segment.messageId)
+      if (list) list.push(segment)
+      else result.set(segment.messageId, [segment])
+    }
+    return result
+  })
+  // As in the transcript, a hidden tool awaiting a form stays shown (the rail
+  // keeps those awaiting a permission itself).
+  const isPendingFormSegment = (segment: TimelineSegment) =>
+    (segment.toolPartIds ?? []).some((partId) => pendingFormToolTargets().has(technicalPartKey(segment.messageId, partId)))
+  const isTimelineSegmentHidden = (segment: TimelineSegment) => segment.type === "tool"
+    ? resolveToolVisibility(preferences(), segment.toolName ?? "") === "hidden" && !isPendingFormSegment(segment)
+    : segment.type === "reasoning" ? !preferences().showThinkingBlocks
+      : segment.type === "system" && preferences().systemMessagesVisibility === "hidden"
   const hasTimelineSegments = () => timelineSegments().length > 0
 
   function segmentMatchesSearch(segment: TimelineSegment, match: { messageId: string; partId?: string; partType?: string }): boolean {
@@ -407,43 +449,80 @@ export default function MessageSection(props: MessageSectionProps) {
   // should not trigger an immediate scroll-to-bottom.
   const followToken = createMemo(() => preferenceSignature())
 
-  const initialScrollSnapshot = createMemo(() => store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))
-  const initialAutoScroll = createMemo(() => isSnapshotAutoFollowing(initialScrollSnapshot()))
-
-  const [didRestoreScroll, setDidRestoreScroll] = createSignal(false)
   const lastGoodScrollSnapshots = new Map<string, VirtualFollowScrollSnapshot>()
-  let restoringScrollSnapshot = false
-  let restoredWithoutSnapshot = false
-  let scrollRestoreGeneration = 0
-  let pagingWindow = false
-  let pagingWindowController: AbortController | null = null
-  let anchorRestoreController: AbortController | null = null
-  const [navigationPending, setNavigationPending] = createSignal(false)
-  function cancelWindowNavigation() {
-    if (anchorRestoreController) {
-      anchorRestoreController.abort()
-      anchorRestoreController = null
-      scrollRestoreGeneration += 1
-      restoringScrollSnapshot = false
-      setDidRestoreScroll(true)
-    }
-    pagingWindowController?.abort()
-    pagingWindowController = null
-    pagingWindow = false
-    setNavigationPending(false)
+  // Restoring or paging owns the transcript position; only an idle (restored)
+  // transcript persists it. An operation is current while it is the state.
+  const [navigation, setNavigation] = createSignal<TranscriptNavigation>({ kind: "unrestored" })
+  const navigationPending = () => {
+    const nav = navigation()
+    return nav.kind === "paging" && nav.around
   }
   let retryAnchorRestore: (() => void) | null = null
   const [olderMessageLoadFailed, setOlderMessageLoadFailed] = createSignal(false)
+  // The list cannot raise a message near the end to its top, so the last jump's
+  // target, while loading or shown, stays the reference for the next jump.
+  let userMessageJumpTarget: string | null = null
+  // A jump that finds nothing resident waits for the index it requested.
+  let deferredUserMessageJump: UserMessageJumpDirection | null = null
+
+  /** Another navigation or a scroll gesture now owns the position. */
+  function forgetUserMessageJump() {
+    userMessageJumpTarget = null
+    deferredUserMessageJump = null
+  }
+
+  /** `positioning`: the caller positions the list at once, so it leaves no restore pending. */
+  function cancelWindowNavigation(positioning = false) {
+    forgetUserMessageJump()
+    const nav = navigation()
+    if (nav.kind === "paging") {
+      nav.controller.abort()
+      settlePaging(nav, positioning)
+    } else if (nav.kind === "restoring" && nav.loading) {
+      // The navigation that cancels the restore positions the list itself.
+      nav.loading.abort()
+      setNavigation({ kind: "idle" })
+    } else if (positioning && nav.kind === "unrestored") setNavigation({ kind: "idle" })
+  }
+
+  function settlePaging(paging: PagingNavigation, positioning = false) {
+    // Scrolls during paging were ignored, and a page may end without moving
+    // anything: the reading line decides once it settles.
+    scheduleReadingLineSegment()
+    // Paging that never positioned a list the activation had not restored yet
+    // leaves that restore pending, unless the caller positions the list now; its
+    // unpositioned list has nothing to persist. A failed or cancelled jump thus
+    // falls back to the saved position, put back over its page commit (none
+    // saved stands for the latest bottom), and that restore then reloads the
+    // saved position's window and owns the retry banner. A saved bottom of a
+    // historical window carries no anchor to reload, so it is not covered.
+    if (!paging.restored && !paging.positioned) {
+      const resolvedStore = store()
+      const current = resolvedStore.getScrollSnapshot(paging.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+      if (!positioning && paging.saved !== undefined && current !== (paging.saved ?? undefined)) {
+        const { updatedAt: _updatedAt, ...saved } = paging.saved
+          ?? { scrollTop: 0, atBottom: true, followModeType: "following" as const, windowIsLatest: true, updatedAt: 0 }
+        resolvedStore.setScrollSnapshot(paging.sessionId, MESSAGE_SCROLL_CACHE_SCOPE, saved)
+      }
+      setNavigation(positioning ? { kind: "idle" } : { kind: "unrestored" })
+      return
+    }
+    setNavigation({ kind: "idle" })
+    // A committed page records its intended position in the store; record the reader's actual one.
+    // Known follow-up: Virtua renders a jump's rows only at its next scroll event; a view hidden
+    // before then finds no anchor to capture, so the last good position predates the jump.
+    persistMessageScrollSnapshot({ sessionId: paging.sessionId, allowCapture: paging.sessionId === props.sessionId, requireActive: false })
+  }
+
+  function resetNavigation() {
+    cancelWindowNavigation()
+    retryAnchorRestore = null
+    readerOwnsActiveSegment = true
+    setNavigation({ kind: "unrestored" })
+  }
 
   function registerListApi(api: VirtualFollowListApi) {
-    if (listApi() !== api) {
-      cancelWindowNavigation()
-      scrollRestoreGeneration += 1
-      restoringScrollSnapshot = false
-      setDidRestoreScroll(false)
-      pagingWindow = false
-      retryAnchorRestore = null
-    }
+    if (listApi() !== api) untrack(resetNavigation)
     setListApi(api)
   }
 
@@ -459,14 +538,8 @@ export default function MessageSection(props: MessageSectionProps) {
     on(
       () => props.sessionId,
       () => {
-        cancelWindowNavigation()
-        scrollRestoreGeneration += 1
-        restoringScrollSnapshot = false
-        restoredWithoutSnapshot = false
-        pagingWindow = false
-        retryAnchorRestore = null
+        resetNavigation()
         setOlderMessageLoadFailed(false)
-        setDidRestoreScroll(false)
         const snapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE)
         if (snapshot) setLastGoodScrollSnapshot(props.sessionId, snapshot)
       },
@@ -478,30 +551,39 @@ export default function MessageSection(props: MessageSectionProps) {
       isActive,
       (active, wasActive) => {
         if (active) {
-          if (wasActive === false) {
-            setDidRestoreScroll(false)
-          }
+          if (wasActive === false) setNavigation({ kind: "unrestored" })
           return
         }
-        const wasRestoringScrollSnapshot = restoringScrollSnapshot
+        const nav = navigation()
         cancelWindowNavigation()
-        scrollRestoreGeneration += 1
         retryAnchorRestore = null
-        if (!wasRestoringScrollSnapshot) persistMessageScrollSnapshot({ requireActive: false })
-        restoringScrollSnapshot = false
-        pagingWindow = false
+        if (nav.kind === "idle") persistMessageScrollSnapshot({ requireActive: false })
+        else if (nav.kind === "restoring") setNavigation({ kind: "unrestored" })
       },
     ),
   )
 
-  onCleanup(cancelWindowNavigation)
+  onCleanup(() => {
+    cancelWindowNavigation()
+    retryAnchorRestore = null
+  })
+
+  // A send loads and pins the latest window itself: stale paging must not resume
+  // afterwards and leave follow, and a restore still pending must not run after
+  // it, either of which would cancel the new send pin. The intent object is
+  // rebuilt on every count/streaming change; only a new token is a send.
+  const sendIntentToken = createMemo(() => props.explicitBottomPinIntent?.token)
+  createEffect(on(sendIntentToken, (token) => {
+    if (token === undefined) return
+    cancelWindowNavigation(true)
+    // The marker of the latest bottom the send pins replaces one selected before.
+    releaseActiveSegment()
+  }, { defer: true }))
 
   function canCaptureScrollSnapshot(options?: { requireActive?: boolean }) {
     const element = streamElement()
     if (!element) return false
     if ((options?.requireActive ?? true) && !isActive()) return false
-    if (restoringScrollSnapshot) return false
-    if (pagingWindow) return false
     if (!element.isConnected) return false
     if (element.clientHeight <= 0) return false
     if (typeof getComputedStyle === "function" && getComputedStyle(element).display === "none") return false
@@ -509,15 +591,16 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function persistMessageScrollSnapshot(options?: { sessionId?: string; allowCapture?: boolean; requireActive?: boolean; snapshot?: VirtualFollowScrollSnapshot }) {
-    if (restoringScrollSnapshot) return
-    if (pagingWindow) return
-    if (!didRestoreScroll()) return
+    if (navigation().kind !== "idle") return
 
     const sessionId = options?.sessionId ?? props.sessionId
     const allowCapture = options?.allowCapture ?? true
     const canCapture = canCaptureScrollSnapshot({ requireActive: options?.requireActive })
     if (allowCapture && canCapture) {
-      const snapshot = overlayWindowOnSnapshot(options?.snapshot ?? listApi()?.captureScrollSnapshot())
+      const captured = options?.snapshot ?? listApi()?.captureScrollSnapshot()
+      // Only the bottom or an anchored row identifies the reader; otherwise keep
+      // the last good position.
+      const snapshot = captured && (captured.atBottom || captured.anchorKey !== undefined) ? overlayWindowOnSnapshot(captured) : undefined
       if (snapshot) {
         setLastGoodScrollSnapshot(sessionId, snapshot)
         const resolvedStore = store()
@@ -543,8 +626,36 @@ export default function MessageSection(props: MessageSectionProps) {
 
   }
 
+  // A scroll persists once Virtua reports it settled, not on every event. An
+  // unsettled position is still recorded on unmount by the cleanup below (an
+  // inactive SessionView unmounts this section before hiding it) and by a
+  // state capture's flush.
+  let scrollUnsettled = false
+  function persistScroll() {
+    scrollUnsettled = false
+    persistMessageScrollSnapshot()
+  }
+  function persistSettledScroll() {
+    if (scrollUnsettled) persistScroll()
+  }
+  onCleanup(messageStoreBus.onScrollSnapshotFlush(persistSettledScroll))
+  // A pinned stream keeps scrolling, so it never settles: persist a follow-mode
+  // change rather than wait for the stream to pause. The list captures a
+  // following reader at the bottom even before a resuming gesture lands.
+  createEffect(on(() => listState()?.autoScroll(), (following, previous) => {
+    if (following === undefined || previous === undefined) return
+    persistScroll()
+    // Growth below an escaped reader (a long-reply hold) scrolls nothing, so
+    // nothing settles: a state capture's flush must still record it again.
+    if (!following) scrollUnsettled = true
+  }, { defer: true }))
+
   // Persist scroll position when switching sessions. This effect's cleanup runs
   // when `props.sessionId` changes, before the next session is rendered.
+  // Production sections are keyed per session: only the loading placeholder
+  // changes session, and it never persists (loading keeps its navigation
+  // unrestored). A retained section whose session changes after an unsettled
+  // scroll would keep its last settled position.
   createEffect(() => {
     const sessionId = props.sessionId
     onCleanup(() => {
@@ -590,93 +701,62 @@ export default function MessageSection(props: MessageSectionProps) {
     })
   }
 
+  // Restore once per activation, when the transcript can show the snapshot.
+  // The snapshot is read untracked: persisting the position must not restart it.
   createEffect(() => {
-    const api = listApi()
-    if (!api) return
-    if (props.registerScrollToBottom) {
-      props.registerScrollToBottom(() => api.scrollToBottom({ immediate: true }))
-      onCleanup(() => props.registerScrollToBottom?.(null))
-    }
-  })
-
-  // Restore scroll position when the stream element is available.
-  createEffect(() => {
+    // Checked first: once restored, the effect does not track the transcript.
+    if (navigation().kind !== "unrestored") return
     const element = streamElement()
     const api = listApi()
-    if (!element || !api) return
-    if (!isActive()) return
-    if (props.loading) return
-    if (visibleMessageIds().length === 0) return
-    if (restoringScrollSnapshot) return
+    if (!element || !api || !isActive() || props.loading || visibleMessageIds().length === 0) return
+    untrack(() => restoreTranscriptPosition(api))
+  })
 
-    const snapshot = initialScrollSnapshot()
-    if (didRestoreScroll() && (!restoredWithoutSnapshot || !snapshot)) return
-    if (!snapshot) {
-      const restoreSessionId = props.sessionId
-      const restoreGeneration = ++scrollRestoreGeneration
-      const isCurrentRestore = () => isActive()
-        && api === listApi()
-        && isScrollRestoreGenerationCurrent(
-          restoreSessionId,
-          restoreGeneration,
-          props.sessionId,
-          scrollRestoreGeneration,
-        )
-      restoredWithoutSnapshot = true
-      restoringScrollSnapshot = true
-      api.restoreScrollSnapshot({ scrollTop: 0, atBottom: true, followModeType: "following" }, {
-        behavior: "auto",
-        fallback: () => {
-          if (!isCurrentRestore()) return
-          api.setAutoScroll(true)
-          api.scrollToBottom({ immediate: true })
-          restoringScrollSnapshot = false
-          setDidRestoreScroll(true)
-        },
-        onApplied: () => {
-          if (!isCurrentRestore()) return
-          restoringScrollSnapshot = false
-          setDidRestoreScroll(true)
-        },
-        onCancelled: () => {
-          if (!isCurrentRestore()) return
-          restoringScrollSnapshot = false
-          setDidRestoreScroll(true)
-        },
-      })
-      return
-    }
-
-    restoredWithoutSnapshot = false
+  function restoreTranscriptPosition(api: VirtualFollowListApi) {
     const restoreSessionId = props.sessionId
-    const restoreGeneration = ++scrollRestoreGeneration
-    const isCurrentRestore = () => isActive()
-      && api === listApi()
-      && isScrollRestoreGenerationCurrent(
-        restoreSessionId,
-        restoreGeneration,
-        props.sessionId,
-        scrollRestoreGeneration,
-      )
-    restoringScrollSnapshot = true
+    const restoring: RestoringNavigation = { kind: "restoring", sessionId: restoreSessionId, loading: null }
+    setNavigation(restoring)
+    releaseActiveSegment()
+    const isCurrentRestore = () => navigation() === restoring && isActive() && api === listApi()
+    const finish = (applied: boolean) => {
+      if (!isCurrentRestore()) return
+      setNavigation({ kind: "idle" })
+      // Record the position actually reached, not the requested one.
+      if (applied) persistMessageScrollSnapshot()
+    }
+    // Without a snapshot, the latest page opens at its bottom.
+    const stored = store().getScrollSnapshot(restoreSessionId, MESSAGE_SCROLL_CACHE_SCOPE)
+    const snapshot: VirtualFollowScrollSnapshot = stored ?? { scrollTop: 0, atBottom: true, followModeType: "following" }
     const restore = async () => {
       setOlderMessageLoadFailed(false)
       let restoredSnapshot = snapshot
-      if (!snapshot.atBottom && snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && (props.onLoadMessageAnchor || props.onLoadMoreMessages)) {
+      // An anchor identifies an escaped reader, even one captured at the bottom
+      // (a long-reply hold); only a following snapshot has none.
+      const loadsAnchor = snapshot.anchorKey && !visibleMessageIds().includes(snapshot.anchorKey) && (props.onLoadMessageAnchor || props.onLoadMoreMessages)
+      // The bottom of the latest page (or no position) reopens that page first
+      // when a cancelled jump left a historical window in its place.
+      const loadsLatest = snapshot.atBottom && !snapshot.anchorKey && stored?.windowIsLatest !== false && props.onLoadLatestMessages
+        && !isLatestWindow(store().getMessageWindow(restoreSessionId))
+      if (loadsAnchor || loadsLatest) {
         try {
-          if (props.onLoadMessageAnchor) {
+          if (loadsLatest) {
             const controller = new AbortController()
-            anchorRestoreController = controller
+            restoring.loading = controller
+            try { await props.onLoadLatestMessages!(controller.signal) }
+            finally { if (restoring.loading === controller) restoring.loading = null }
+          } else if (props.onLoadMessageAnchor) {
+            const controller = new AbortController()
+            restoring.loading = controller
             try {
-              try { await props.onLoadMessageAnchor(snapshot.anchorKey, controller.signal) }
+              try { await props.onLoadMessageAnchor(snapshot.anchorKey!, controller.signal) }
               catch (error) {
                 if (!(error instanceof MissingHistoryAnchorError) || !props.onLoadLatestMessages || !isCurrentRestore()) throw error
                 await props.onLoadLatestMessages(controller.signal)
                 if (!isCurrentRestore()) return
-                restoredSnapshot = store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE) ?? snapshot
+                restoredSnapshot = store().getScrollSnapshot(restoreSessionId, MESSAGE_SCROLL_CACHE_SCOPE) ?? snapshot
               }
             }
-            finally { if (anchorRestoreController === controller) anchorRestoreController = null }
+            finally { if (restoring.loading === controller) restoring.loading = null }
           } else await loadPagesUntilAnchor({
             hasAnchor: () => visibleMessageIds().includes(snapshot.anchorKey!),
             hasMore: () => Boolean(props.hasMoreMessages),
@@ -696,37 +776,18 @@ export default function MessageSection(props: MessageSectionProps) {
       retryAnchorRestore = null
 
       api.restoreScrollSnapshot(restoredSnapshot, {
-        behavior: "auto",
         fallback: () => {
           if (!isCurrentRestore()) return
           api.setAutoScroll(true)
           api.scrollToBottom({ immediate: true })
-          restoringScrollSnapshot = false
-          setDidRestoreScroll(true)
+          finish(false)
         },
-        onApplied: () => {
-          if (!isCurrentRestore()) return
-          restoringScrollSnapshot = false
-          setLastGoodScrollSnapshot(restoreSessionId, restoredSnapshot)
-          setDidRestoreScroll(true)
-        },
-        onCancelled: () => {
-          if (!isCurrentRestore()) return
-          restoringScrollSnapshot = false
-          setDidRestoreScroll(true)
-        },
+        onApplied: () => finish(true),
+        onCancelled: () => finish(false),
       })
     }
     void restore()
-  })
-
-  onCleanup(() => {
-    const allowCapture = !restoringScrollSnapshot
-    scrollRestoreGeneration += 1
-    restoringScrollSnapshot = false
-    retryAnchorRestore = null
-    persistMessageScrollSnapshot({ allowCapture, requireActive: false })
-  })
+  }
 
   function clearQuoteSelection() {
     setQuoteSelection(null)
@@ -754,6 +815,7 @@ export default function MessageSection(props: MessageSectionProps) {
     setFailedSearchQuery("")
     setSearchMatches([])
     setActiveSearchIndex(0)
+    setSearchReveal(null)
   }
 
   function updateSearchQuery(query: string) {
@@ -773,21 +835,123 @@ export default function MessageSection(props: MessageSectionProps) {
   function moveSearchMatch(direction: 1 | -1) {
     const count = currentSearchMatches().length
     if (count === 0) return
-    setActiveSearchIndex((index) => (index + direction + count) % count)
-    const match = activeSearchMatch()
-    if (match) navigateSearchMatch(match)
+    selectSearchMatch((activeSearchIndex() + direction + count) % count)
   }
 
-  function navigateSearchMatch(match: { sessionId: string; messageId: string }) {
-    if (match.sessionId !== props.sessionId || !props.onLoadMessageAnchor) {
-      setPreviewSearchMatch(match)
+  function selectSearchMatch(index: number) {
+    const previous = activeSearchMatch()
+    setActiveSearchIndex(index)
+    const match = activeSearchMatch()
+    if (!match) return
+    if (match.sessionId !== props.sessionId || !props.onLoadMessageAnchor) setPreviewSearchMatch(match)
+    // The active-match effect locates a newly selected resident match.
+    else if (match === previous || !messageIds().includes(match.messageId)) navigateToMessage(match.messageId, match.id)
+  }
+
+  /**
+   * Places a message at the top, first paging in its history window when it is
+   * not resident. A search navigation then reveals its occurrence once; a
+   * selected marker keeps its highlight and places its own block.
+   */
+  function navigateToMessage(messageId: string, searchMatchId?: string, segmentId?: string) {
+    forgetUserMessageJump()
+    readerOwnsActiveSegment = !segmentId
+    if (messageIds().includes(messageId)) placeResidentMessage(messageId, searchMatchId, segmentId)
+    else void pageWindow("around", api => placeMessage(api, messageId, searchMatchId, segmentId), messageId)
+  }
+
+  function placeResidentMessage(messageId: string, searchMatchId?: string, segmentId?: string) {
+    const api = listApi()
+    // A resident message the list hides (filtered, beyond a revert) places nothing.
+    const placeable = Boolean(api) && visibleMessageIds().includes(messageId)
+    cancelWindowNavigation(placeable)
+    if (placeable) placeMessage(api!, messageId, searchMatchId, segmentId)
+    else claimSearchReveal()
+  }
+
+  function placeMessage(api: VirtualFollowListApi, messageId: string, searchMatchId?: string, segmentId?: string) {
+    if (segmentId) revealTimelineSegment(messageId, segmentId)
+    // A selected marker's own block (a later tool, a reply after its thinking)
+    // is held at the top once its row renders, even when the row remounts.
+    api.scrollToKey(messageId, segmentId ? () => {
+      const scroller = streamElement(), segment = timelineSegmentsByMessage().get(messageId)?.find(candidate => candidate.id === segmentId)
+      return scroller && segment ? findTimelineSegmentBlock(scroller, segment, technicalGroupForPart) : null
+    } : undefined)
+    if (searchMatchId) setSearchReveal({ matchId: searchMatchId, claimed: false })
+    else claimSearchReveal()
+  }
+
+  /** A marker stands for its whole native run: reveal the omitted parts its run starts among. */
+  function revealTimelineSegment(messageId: string, segmentId: string) {
+    const record = store().getMessage(messageId)
+    const start = record ? timelineRunStart(record, segmentId, t) : undefined
+    if (!record || start === undefined) return
+    for (let step = 0; step <= record.partIds.length / MESSAGE_PART_REVEAL_STEP && !isRecordPartDisplayed(props.instanceId, record, start); step++) {
+      revealHiddenRecordParts(props.instanceId, messageId)
+    }
+  }
+
+  /** The block at the reading line, not a marker selected before, is active again. */
+  function releaseActiveSegment() {
+    readerOwnsActiveSegment = true
+    scheduleReadingLineSegment()
+  }
+
+  function readingLinePosition() {
+    const scroller = streamElement()
+    return scroller ? readingLineSegment(scroller, timelineSegmentsByMessage()) : null
+  }
+
+  function scheduleReadingLineSegment() {
+    if (readingLineFrame !== undefined || !readerOwnsActiveSegment) return
+    readingLineFrame = requestAnimationFrame(() => {
+      readingLineFrame = undefined
+      // Intermediate positions while a window loads must not move the rail.
+      if (!readerOwnsActiveSegment || navigation().kind === "paging") return
+      const position = readingLinePosition()
+      if (position) setActiveSegmentId(current => (current === position.id ? current : position.id))
+    })
+  }
+
+  /** Any other navigation or gesture now owns the position: a pending reveal must not pull it. */
+  function claimSearchReveal() {
+    const reveal = untrack(searchReveal)
+    if (reveal) reveal.claimed = true
+  }
+
+  function jumpToUserMessage(direction: UserMessageJumpDirection) {
+    const api = listApi()
+    if (!api || !isActive()) return
+    setOutlineDemanded(true)
+    const pending = userMessageJumpTarget
+    const highlighted = activeSegmentId()
+    const highlightedMessageId = highlighted ? parseTimelineSegmentId(highlighted)?.messageId : undefined
+    // Advance from the marker the reader sees (selected, or last published at
+    // the reading line) while its message remains in the jump order; otherwise
+    // use that same reading line.
+    const current = pending && (navigation().kind === "paging" || isMessageRowShown(pending))
+      ? pending
+      : highlightedMessageId && (timelineSegmentsByMessage().has(highlightedMessageId) || visibleMessageIds().includes(highlightedMessageId))
+        ? highlightedMessageId : readingLinePosition()?.messageId ?? null
+    const segments = timelineSegments()
+    const target = findUserMessageJumpTarget({ markers: segments, resident: visibleMessageIds(), current, direction })
+    if (!target) {
+      if (current !== pending) userMessageJumpTarget = null
+      deferredUserMessageJump = props.onLoadMessageAnchor && outline.entries().length === 0 ? direction : null
       return
     }
-    if (messageIds().includes(match.messageId)) {
-      cancelWindowNavigation()
-      listApi()?.setAutoScroll(false)
-      listApi()?.scrollToKey(match.messageId, { block: "start" })
-    } else void pageWindow("around", api => api.scrollToKey(match.messageId, { block: "start" }), match.messageId)
+    const segment = segments.find(segment => segment.messageId === target && segment.type === "user")
+    if (segment) setActiveSegmentId(segment.id)
+    navigateToMessage(target, undefined, segment?.id)
+    userMessageJumpTarget = target
+  }
+
+  function isMessageRowShown(messageId: string) {
+    const scroller = streamElement()
+    const row = scroller?.querySelector(`[data-virtual-follow-key="${CSS.escape(messageId)}"]`)
+    if (!scroller || !row) return false
+    const view = scroller.getBoundingClientRect(), rect = row.getBoundingClientRect()
+    return rect.bottom > view.top && rect.top < view.bottom
   }
 
   function isSelectionWithinStream(range: Range | null) {
@@ -867,7 +1031,7 @@ export default function MessageSection(props: MessageSectionProps) {
     if (!info) return
 
     const success = await copyToClipboard(info.text)
-    showToastNotification({
+    showToastNotification({ category: "copy",
       message: success ? t("messageSection.quote.copied") : t("messageSection.quote.copyFailed"),
       variant: success ? "success" : "error",
       duration: success ? 2000 : 6000,
@@ -882,6 +1046,8 @@ export default function MessageSection(props: MessageSectionProps) {
  
   function handleContentRendered() {
     listApi()?.notifyContentRendered()
+    // Rendering can move the reading line's block without a scroll event.
+    scheduleReadingLineSegment()
   }
 
   function overlayWindowOnSnapshot(snapshot: VirtualFollowScrollSnapshot | undefined) {
@@ -900,8 +1066,12 @@ export default function MessageSection(props: MessageSectionProps) {
   ) {
     const api = listApi()
     if (!api || !isActive()) return
-    if (pagingWindow && direction !== "around" && direction !== "latest") return
-    cancelWindowNavigation()
+    const previous = navigation()
+    if (previous.kind === "paging" && direction !== "around" && direction !== "latest") return
+    // A restore loading its anchor replaces the window and positions the list
+    // itself; a boundary gesture meanwhile must not page beyond that window.
+    if (previous.kind === "restoring" && previous.loading && (direction === "older" || direction === "newer")) return
+    const restored = previous.kind === "idle" || (previous.kind === "paging" && (previous.restored || previous.positioned))
     const load = direction === "around"
       ? props.onLoadMessageAnchor && anchorMessageId ? (signal?: AbortSignal) => props.onLoadMessageAnchor!(anchorMessageId, signal) : undefined
       : direction === "older"
@@ -911,32 +1081,43 @@ export default function MessageSection(props: MessageSectionProps) {
         : direction === "oldest"
           ? props.onLoadOldestMessages
           : props.onLoadLatestMessages
-    if (!load) {
-      if (direction === "oldest") after(api)
-      return
-    }
+    // First without a page to load is a local jump; other requests that load
+    // nothing leave every navigation, including a loading restore, untouched.
+    const localFirst = direction === "oldest" && (!load || !props.hasMoreMessages)
+    if (!load && !localFirst) return
     if (direction === "older" && !props.hasMoreMessages) return
-    if (direction === "oldest" && !props.hasMoreMessages) {
+    if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return
+    // Before the restore, keep the position a page commit would replace (a
+    // superseded jump already kept it).
+    const saved = restored ? undefined
+      : previous.kind === "paging" ? previous.saved : store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE) ?? null
+    // Paging positions the list itself.
+    cancelWindowNavigation(true)
+    claimSearchReveal()
+    if (localFirst || !load) {
       after(api)
       return
     }
-    if (direction === "newer" && isLatestWindow(store().getMessageWindow(props.sessionId))) return
     const sessionId = props.sessionId
-    const generation = scrollRestoreGeneration
     const controller = new AbortController()
-    pagingWindowController = controller
-    const isCurrent = () => isActive()
-      && api === listApi()
-      && pagingWindowController === controller
-      && !controller.signal.aborted
-      && isScrollRestoreGenerationCurrent(sessionId, generation, props.sessionId, scrollRestoreGeneration)
-    pagingWindow = true
-    setNavigationPending(direction === "around")
+    const paging: PagingNavigation = {
+      kind: "paging",
+      sessionId,
+      controller,
+      gesture: direction === "older" || direction === "oldest" ? "up" : direction === "around" ? null : "down",
+      around: direction === "around",
+      restored,
+      positioned: false,
+      saved,
+    }
+    setNavigation(paging)
+    // A jump keeps its selected marker; other pages show the reading line's.
+    if (direction !== "around") readerOwnsActiveSegment = true
+    const isCurrent = () => navigation() === paging && isActive() && api === listApi()
     if (direction !== "latest") api.setAutoScroll(false)
     setOlderMessageLoadFailed(false)
     retryAnchorRestore = null
     try {
-      if (!isCurrent()) return
       const previousPage = messageWindowPageKey()
       const previousPosition = direction === "older" || direction === "newer" ? api.captureScrollSnapshot() : undefined
       const committed = await load(controller.signal)
@@ -948,7 +1129,10 @@ export default function MessageSection(props: MessageSectionProps) {
       api.notifyContentRendered()
       await waitTwoFrames()
       if (!isCurrent()) return
-      const retainedAnchor = previousPosition?.anchorKey && visibleMessageIds().includes(previousPosition.anchorKey)
+      const visible = visibleMessageIds()
+      const retainedAnchor = previousPosition?.anchorKey && visible.includes(previousPosition.anchorKey)
+      // A jump target hidden from the list (filtered, beyond a revert) places nothing.
+      paging.positioned = visible.length > 0 && (Boolean(retainedAnchor) || direction !== "around" || visible.includes(anchorMessageId!))
       if (retainedAnchor) api.restoreScrollSnapshot({ ...previousPosition, atBottom: false, followModeType: "escaped" })
       else after(api)
       const bottomSettlement = !retainedAnchor && (direction === "older" || direction === "latest")
@@ -959,14 +1143,7 @@ export default function MessageSection(props: MessageSectionProps) {
       api.notifyContentRendered()
       await waitTwoFrames()
       if (!isCurrent()) return
-      pagingWindowController = null
-      pagingWindow = false
-      setNavigationPending(false)
-      const activeMessageId = api.captureScrollSnapshot()?.anchorKey ?? listState()?.activeKey()
-      const segment = timelineSegments().find(segment => segment.messageId === activeMessageId)
-      if (segment) setActiveSegmentId(segment.id)
       if (direction === "latest" || direction === "oldest") setRevealActiveToken(value => value + 1)
-      persistMessageScrollSnapshot({ snapshot: api.captureScrollSnapshot() })
     } catch (error) {
       if (isCurrent()) {
         retryAnchorRestore = () => { void pageWindow(direction, after, anchorMessageId) }
@@ -974,11 +1151,7 @@ export default function MessageSection(props: MessageSectionProps) {
         log.error("Failed to page message window", { instanceId: props.instanceId, sessionId, direction, error })
       }
     } finally {
-      if (pagingWindowController === controller) {
-        pagingWindowController = null
-        pagingWindow = false
-        setNavigationPending(false)
-      }
+      if (navigation() === paging) settlePaging(paging)
     }
   }
 
@@ -1095,16 +1268,19 @@ export default function MessageSection(props: MessageSectionProps) {
     }
   })
 
+  // Locates a newly active resident match. Residency is untracked: paging a
+  // non-resident match in positions it once its page commits. `locate` never
+  // awaits, so the match checked resident here is still resident when placed.
   createEffect(() => {
     const match = activeSearchMatch()
-    if (!match || !isSearchOpen() || match.sessionId !== props.sessionId || !messageIds().includes(match.messageId)) return
+    if (!match || !isSearchOpen() || match.sessionId !== props.sessionId || !untrack(messageIds).includes(match.messageId)) return
     const locatorAuthority = searchLocatorAuthority.claim(match.id)
     if (!locatorAuthority) return
     const locate = async () => {
       const endTraversal = beginMessageHistoryTraversal(props.instanceId, props.sessionId)
       try {
       if (searchLocatorAuthority.isCurrent(locatorAuthority) && activeSearchMatch()?.id === match.id) {
-        listApi()?.scrollToKey(match.messageId, { block: "start" })
+        placeResidentMessage(match.messageId, match.id)
       }
       } finally {
         endTraversal()
@@ -1144,9 +1320,8 @@ export default function MessageSection(props: MessageSectionProps) {
   createEffect(() => {
     if (typeof document === "undefined") return
     const handleKeyDown = (event: KeyboardEvent) => {
-      const key = event.key.toLowerCase()
-      const isModSearch = (event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && key === "f"
-      if (isModSearch && isActive()) {
+      if (event.defaultPrevented) return
+      if (matchesHotkey("session-search", event) && isActive()) {
         const modalOpen = Boolean(document.querySelector('[role="dialog"][aria-modal="true"]'))
         if (!modalOpen) {
           event.preventDefault()
@@ -1171,6 +1346,40 @@ export default function MessageSection(props: MessageSectionProps) {
     onCleanup(() => window.removeEventListener(OPEN_SESSION_SEARCH_EVENT, handleOpenSearch))
   })
 
+  createEffect(() => {
+    if (typeof document === "undefined") return
+    // Capture: the stream reads arrow keys as a scroll gesture, which would
+    // supersede the jump it is about to receive.
+    const handleJumpKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || !isActive()) return
+      const direction = matchesHotkey("user-message-prev", event) ? "previous"
+        : matchesHotkey("user-message-next", event) ? "next" : null
+      if (!direction || !keyAllowsUserMessageJump(event)) return
+      // An open composer picker moves its selection with every arrow key.
+      if (document.querySelector('[role="dialog"][aria-modal="true"], [data-prompt-picker]')) return
+      event.preventDefault()
+      if (!event.repeat) jumpToUserMessage(direction)
+    }
+    const handleJumpRequest = (event: Event) => {
+      const detail = (event as CustomEvent<JumpUserMessageDetail>).detail
+      if (detail?.instanceId === props.instanceId && detail.sessionId === props.sessionId) jumpToUserMessage(detail.direction)
+    }
+    document.addEventListener("keydown", handleJumpKey, true)
+    window.addEventListener(JUMP_USER_MESSAGE_EVENT, handleJumpRequest)
+    onCleanup(() => {
+      document.removeEventListener("keydown", handleJumpKey, true)
+      window.removeEventListener(JUMP_USER_MESSAGE_EVENT, handleJumpRequest)
+    })
+  })
+
+  createEffect(on(() => outline.entries().length > 0, (indexed) => {
+    const direction = deferredUserMessageJump
+    if (!indexed || !direction) return
+    deferredUserMessageJump = null
+    jumpToUserMessage(direction)
+  }, { defer: true }))
+  createEffect(() => { if (outline.error()) deferredUserMessageJump = null })
+
   onCleanup(() => {
     setIsSearchOpen(false)
     timelineSegmentCache.clear()
@@ -1193,7 +1402,7 @@ export default function MessageSection(props: MessageSectionProps) {
       <Show when={navigationPending()}>
         <div class="history-navigation-status window-toolbar" role="status">
           <span>{t("history.navigation.loading")}</span>
-          <button type="button" class="button-tertiary" onClick={cancelWindowNavigation}>{t("alertDialog.actions.cancel")}</button>
+          <button type="button" class="button-tertiary" onClick={() => cancelWindowNavigation()}>{t("alertDialog.actions.cancel")}</button>
         </div>
       </Show>
       <Show when={outline.error() && !navigationPending() && showMessageTimelinePreference()}>
@@ -1213,9 +1422,7 @@ export default function MessageSection(props: MessageSectionProps) {
           overscanPx={800}
           streamingActive={streamingActive}
           isActive={isActive}
-          scrollToBottomOnActivate={() => false}
-          initialScrollToBottom={() => false}
-          initialAutoScroll={initialAutoScroll}
+          initialAutoScroll={() => isSnapshotAutoFollowing(store().getScrollSnapshot(props.sessionId, MESSAGE_SCROLL_CACHE_SCOPE))}
           resetKey={() => props.sessionId}
           followToken={followToken}
           explicitBottomPinIntent={() => props.explicitBottomPinIntent ?? null}
@@ -1227,26 +1434,29 @@ export default function MessageSection(props: MessageSectionProps) {
             const candidates = Array.from(itemWrapper.querySelectorAll<HTMLElement>(`.message-item-base[data-message-id="${key}"][data-message-role="assistant"][data-assistant-text-block="true"]`))
             return candidates[candidates.length - 1] ?? null
           }}
-          onScroll={(snapshot) => {
+          onScroll={() => {
             clearQuoteSelection()
-            persistMessageScrollSnapshot({ snapshot })
+            scrollUnsettled = true
+            scheduleReadingLineSegment()
           }}
+          onScrollEnd={persistSettledScroll}
           onUserReachedTop={() => { void pageWindow("older", (api) => api.scrollToBottom({ immediate: true })) }}
-          onScrollIntent={() => {
+          onScrollIntent={(direction) => {
             setRevealActiveToken(value => value + 1)
-            if (navigationPending()) cancelWindowNavigation()
+            claimSearchReveal()
+            forgetUserMessageJump()
+            // The reader now owns the position, and with it the active marker.
+            releaseActiveSegment()
+            // An opposite directional gesture supersedes pending history paging
+            // before it can position; taps and the requesting gesture do not.
+            const nav = navigation()
+            // The reader then owns a visible list; before any row shows, the restore stays pending.
+            if (nav.kind === "paging" && (nav.around || (direction && nav.gesture && direction !== nav.gesture))) cancelWindowNavigation(visibleMessageIds().length > 0)
           }}
           onUserReachedBottom={() => { void pageWindow("newer", (api) => api.scrollToTop({ immediate: true })) }}
-          onJumpTop={() => { void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
-          onJumpBottom={() => { void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
+          onJumpTop={() => { releaseActiveSegment(); void pageWindow("oldest", (api) => api.scrollToTop({ immediate: true })) }}
+          onJumpBottom={() => { releaseActiveSegment(); void pageWindow("latest", (api) => api.scrollToBottom({ immediate: true })) }}
           onMouseUp={() => handleStreamMouseUp()}
-          onActiveKeyChange={(messageId) => {
-            if (!messageId || pagingWindow) return
-            const firstSeg = timelineSegments().find((s) => s.messageId === messageId)
-            if (firstSeg) {
-              setActiveSegmentId((current) => (current === firstSeg.id ? current : firstSeg.id))
-            }
-          }}
           onScrollElementChange={(element) => {
             setStreamElement(element)
             if (!element) clearQuoteSelection()
@@ -1316,7 +1526,6 @@ export default function MessageSection(props: MessageSectionProps) {
                       <ul>
                         <li>
                           <span>{t("messageSection.empty.tips.commandPalette")}</span>
-                          <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
                         </li>
                         <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
                         <li>
@@ -1333,7 +1542,6 @@ export default function MessageSection(props: MessageSectionProps) {
                     <ul>
                       <li>
                         <span>{t("messageSection.empty.tips.commandPalette")}</span>
-                        <Kbd shortcut="cmd+shift+p" class="ml-2 kbd-hint" />
                       </li>
                       <li>{t("messageSection.empty.tips.askAboutCodebase")}</li>
                       <li>
@@ -1386,6 +1594,7 @@ export default function MessageSection(props: MessageSectionProps) {
               searchQuery={authoritativeSearchQuery}
               searchResultMessageIds={searchResultMessageIds}
               activeSearchMatch={activeSearchMatch}
+              searchReveal={searchReveal}
               pendingFormToolTargets={pendingFormToolTargets}
               technicalGroupForPart={technicalGroupForPart}
               technicalGroupingSignature={() => technicalGroupingSignature(messageId)}
@@ -1394,6 +1603,7 @@ export default function MessageSection(props: MessageSectionProps) {
               onTechnicalCleanupHoverChange={handleTechnicalCleanupHoverChange}
               isTechnicalGroupExpanded={isTechnicalGroupExpanded}
               setTechnicalGroupExpanded={setTechnicalGroupExpanded}
+              alignInTranscript={(target, viewportOffset) => listApi()?.alignElement(target, viewportOffset)}
             />
             <PermissionReceipts instanceId={props.instanceId} sessionId={props.sessionId} messageId={messageId} active={isActive()} />
             </>
@@ -1406,13 +1616,14 @@ export default function MessageSection(props: MessageSectionProps) {
                 onClose={closeSearch}
                 title={t("messageSection.search.ariaLabel")}
                 class="message-search-popover"
+              draggable
               inline
               initialFocus={() => searchInputRef}
               >
                 <div role="search" aria-label={t("messageSection.search.ariaLabel")}>
-                  <div class="window-toolbar history-search-toolbar">
+                  <div class="window-toolbar history-search-toolbar" data-window-drag-handle>
                     <div class="history-search-options">
-                    <select class="selector" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
+                    <select class="selector-input history-search-scope" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
                       onChange={event => batch(() => { setSearchPageCursor(undefined); setSearchWorkspace(event.currentTarget.value === "workspace") })}>
                       <option value="session">{t("history.session")}</option>
                       <option value="workspace">{t("history.workspace")}</option>
@@ -1440,9 +1651,11 @@ export default function MessageSection(props: MessageSectionProps) {
                           updateSearchQuery(event.currentTarget.value)
                         }}
                         onKeyDown={(event) => {
-                          if (event.key === "Enter") {
+                          if (event.defaultPrevented || !isActive()) return
+                          const previous = matchesHotkey("search-prev-result", event)
+                          if (previous || matchesHotkey("search-next-result", event)) {
                             event.preventDefault()
-                            moveSearchMatch(event.shiftKey ? -1 : 1)
+                            moveSearchMatch(previous ? -1 : 1)
                             return
                           }
                         }}
@@ -1469,7 +1682,7 @@ export default function MessageSection(props: MessageSectionProps) {
                         onClick={() => moveSearchMatch(-1)}
                         disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.previousAriaLabel")}
-                        title={t("messageSection.search.previousAriaLabel")}
+                        title={withHotkey(t("messageSection.search.previousAriaLabel"), "search-prev-result")}
                       >
                         <ChevronUp class="w-4 h-4" aria-hidden="true" />
                       </button>
@@ -1479,7 +1692,7 @@ export default function MessageSection(props: MessageSectionProps) {
                         onClick={() => moveSearchMatch(1)}
                         disabled={currentSearchMatches().length === 0}
                         aria-label={t("messageSection.search.nextAriaLabel")}
-                        title={t("messageSection.search.nextAriaLabel")}
+                        title={withHotkey(t("messageSection.search.nextAriaLabel"), "search-next-result")}
                       >
                         <ChevronDown class="w-4 h-4" aria-hidden="true" />
                       </button>
@@ -1505,18 +1718,8 @@ export default function MessageSection(props: MessageSectionProps) {
                       </button>
                     </div>
                   </Show>
-                  <div class="history-search-results">
-                    <For each={currentSearchMatches()}>{(match, index) => (
-                      <button type="button" class="history-search-result" classList={{ "history-search-result-active": activeSearchIndex() === index() }}
-                        onClick={() => {
-                          setActiveSearchIndex(index())
-                          navigateSearchMatch(match)
-                        }}>
-                        <span class="text-xs text-muted">{match.sessionId} · {match.messageId} · {t(`history.${match.partType}`)}</span>
-                        <span>{match.preview}</span>
-                      </button>
-                    )}</For>
-                  </div>
+                  <HistorySearchResults instanceId={props.instanceId} matches={currentSearchMatches()} activeIndex={activeSearchIndex()}
+                    showSessions={searchWorkspace()} onSelect={selectSearchMatch} />
                   <Show when={skippedSearchMessages()}><div class="history-statistics" role="status">
                     {t("history.skipped", { count: skippedSearchMessages() })}
                   </div></Show>
@@ -1558,12 +1761,11 @@ export default function MessageSection(props: MessageSectionProps) {
               isActive={isActive()}
               segments={timelineSegments()}
               onSegmentClick={handleTimelineSegmentClick}
-              expandedMessageIds={expandedMessageIds}
               activeSegmentId={activeSegmentId()}
               revealActiveToken={revealActiveToken()}
               instanceId={props.instanceId}
               sessionId={props.sessionId}
-              showToolSegments={showTimelineToolsPreference()}
+              isSegmentHidden={isTimelineSegmentHidden}
               searchMatchedSegmentIds={searchMatchedTimelineSegmentIds}
               activeSearchSegmentId={activeSearchTimelineSegmentId}
             />

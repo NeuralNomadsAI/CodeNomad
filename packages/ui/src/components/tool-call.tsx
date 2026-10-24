@@ -12,9 +12,8 @@ import { copyToClipboard } from "../lib/clipboard"
 import type { PermissionRequest } from "../types/permission"
 import { useI18n } from "../lib/i18n"
 import { resolveToolRenderer } from "./tool-call/renderers"
-import { getCanonicalToolName, resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
+import { resolveToolExpansionDefault, resolveToolVisibility } from "./tool-call/tool-registry"
 import { resolveFormToolTarget } from "./form-request-tool-target"
-import { createAnsiContentRenderer } from "./tool-call/ansi-render"
 import { createDiffContentRenderer } from "./tool-call/diff-render"
 import { createMarkdownContentRenderer } from "./tool-call/markdown-render"
 import { extractDiagnosticsView, diagnosticFileName } from "./tool-call/diagnostics"
@@ -28,26 +27,28 @@ import type {
 } from "./tool-call/types"
 import {
   buildToolSpeechText,
-  ensureMarkdownContent,
   formatToolInputForCopy,
   formatToolInputForRender,
   getToolName,
   getToolTitleDetail,
-  isToolStateCompleted,
-  isToolStateRunning,
-  limitToolOutputForRender,
+  hasVisibleText,
   limitToolTitleForRender,
   TOOL_OUTPUT_RENDER_CHARACTER_LIMIT,
   getDefaultToolAction,
   readToolStatePayload,
 } from "./tool-call/utils"
+import { BoundedText } from "./hidden-text"
+import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { getLogger } from "../lib/logger"
 import { useSpeech } from "../lib/hooks/use-speech"
 import { createFollowScroll } from "../lib/follow-scroll"
 import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overflow-menu"
 import { observeActionOverflow } from "./measured-action-overflow"
+import { observeToolStatusCompaction } from "./tool-status-compaction"
 import SpeechActionButton from "./speech-action-button"
 import { ToolOutputImages } from "./tool-call/output-images"
+import { PartDuration } from "./part-duration"
+import { getPartEndedAt, getPartStartedAt } from "../lib/message-timing"
 import { isToolImageContent } from "../lib/tool-content"
 
 const log = getLogger("session")
@@ -65,6 +66,10 @@ function makeRenderCacheKey(
   const messageComponent = messageId ?? "unknown-message"
   const toolCallComponent = partId ?? toolCallId ?? "unknown-tool-call"
   return `${messageComponent}:${toolCallComponent}:${variant}`
+}
+
+function makeTextRevealTarget(instanceId: string, messageId: string | undefined, partId: string, section: string): RecordTextRevealTarget {
+  return { instanceId, messageId: messageId ?? "", partId, section }
 }
 
 
@@ -96,7 +101,7 @@ function ToolStatusIndicator(props: { status: Accessor<string>; t: ReturnType<ty
   const label = () => props.t(`toolCall.status.${resolvedStatus()}`)
 
   return (
-    <span class="tool-call-header-status" role="status" aria-label={label()} data-status={resolvedStatus()}>
+    <span class="tool-call-header-status" role="status" aria-label={label()} title={label()} data-status={resolvedStatus()}>
       <span class="tool-call-header-status-icon" aria-hidden="true" style={{ display: isVisible("pending") ? "inline-flex" : "none" }}>
         <Hourglass class="w-4 h-4" />
       </span>
@@ -165,24 +170,21 @@ function ToolCallDetails(props: {
     return "noversion"
   })
 
-  const createVariantCache = (variant: string | (() => string), version?: () => string) =>
+  const createVariantCache = (variant: string) =>
     useGlobalCache({
       instanceId: () => props.instanceId,
       sessionId: () => props.sessionId,
       scope: TOOL_CALL_CACHE_SCOPE,
       cacheId: () => {
         const context = cacheContext()
-        const resolvedVariant = typeof variant === "function" ? variant() : variant
-        return makeRenderCacheKey(context.toolCallId || undefined, context.messageId, context.partId, resolvedVariant)
+        return makeRenderCacheKey(context.toolCallId || undefined, context.messageId, context.partId, variant)
       },
-      version: () => (version ? version() : cacheVersion()),
+      version: cacheVersion,
     })
 
   const diffCache = createVariantCache("diff")
   const permissionDiffCache = createVariantCache("permission-diff")
-  const ansiRunningCache = createVariantCache("ansi-running", () => "running")
-  const ansiFinalCache = createVariantCache("ansi-final")
-
+  const textRevealTarget = (section: string) => makeTextRevealTarget(props.instanceId, props.messageId, props.toolCallIdentifier(), section)
 
 
   const followScroll = createFollowScroll({
@@ -212,20 +214,11 @@ function ToolCallDetails(props: {
     if (!input) return null
     if (!props.inputSectionExpanded()) return { content: "", language: "json" }
     const formatted = formatToolInputForRender(input)
-    if (!formatted) return null
-    const language = formatted.language ?? "text"
-    const content = ensureMarkdownContent(formatted.text, language, true)
-    return content ? { content, language } : null
+    if (!formatted || !hasVisibleText(formatted.text)) return null
+    return { content: formatted.text, language: formatted.language ?? "text" }
   })
 
   const renderer = createMemo(() => resolveToolRenderer(props.toolName()))
-
-  const { renderAnsiContent } = createAnsiContentRenderer({
-    ansiRunningCache,
-    ansiFinalCache,
-    scrollHelpers,
-    partVersion: partVersionAccessor,
-  })
 
   const { renderDiffContent } = createDiffContentRenderer({
     toolState: props.toolState,
@@ -235,6 +228,7 @@ function ToolCallDetails(props: {
     t: props.t,
     diffCache,
     permissionDiffCache,
+    textRevealTarget,
     scrollHelpers,
     handleScrollRendered,
     onContentRendered: props.onContentRendered,
@@ -246,6 +240,7 @@ function ToolCallDetails(props: {
     partVersion: partVersionAccessor,
     instanceId: props.instanceId,
     sessionId: props.sessionId,
+    textRevealTarget,
     isDark: props.isDark,
     scrollHelpers,
     handleScrollRendered,
@@ -253,7 +248,7 @@ function ToolCallDetails(props: {
   })
 
   const renderOutputMarkdownContent: ToolRendererContext["renderMarkdown"] = (options) =>
-    renderMarkdownContent({ ...options, content: limitToolOutputForRender(options.content), wrap: options.wrap ?? props.outputWrapEnabled() })
+    renderMarkdownContent({ ...options, wrap: options.wrap ?? props.outputWrapEnabled() })
 
   const rendererContext: ToolRendererContext = {
     toolCall: props.toolCallMemo,
@@ -265,8 +260,8 @@ function ToolCallDetails(props: {
     t: props.t,
     messageVersion: messageVersionAccessor,
     partVersion: partVersionAccessor,
+    textRevealTarget,
     renderMarkdown: renderOutputMarkdownContent,
-    renderAnsi: renderAnsiContent,
     renderDiff: renderDiffContent,
     renderToolCall: (options) => {
       if (!options?.toolCall) return null
@@ -329,12 +324,18 @@ function ToolCallDetails(props: {
       const truncated = state.error.length > TOOL_OUTPUT_RENDER_CHARACTER_LIMIT
       return (
         <div class="tool-call-error-content">
-          <strong>{props.t("toolCall.error.label")}</strong> {limitToolOutputForRender(state.error)}
-          <Show when={truncated}>
-            <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, state.error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
-              <Copy class="w-3.5 h-3.5" aria-hidden="true" />
-            </button>
-          </Show>
+          <BoundedText source={state.error} revealTarget={textRevealTarget("error")}>
+            {(text) => (
+              <div>
+                <strong>{props.t("toolCall.error.label")}</strong> {text()}
+                <Show when={truncated}>
+                  <button type="button" class="tool-call-header-icon-button tool-call-io-copy" onClick={(event) => void copyIoText(event, state.error)} aria-label={props.t("toolCall.io.copyOutputAriaLabel")} title={props.t("toolCall.io.copyOutputTitle")}>
+                    <Copy class="w-3.5 h-3.5" aria-hidden="true" />
+                  </button>
+                </Show>
+              </div>
+            )}
+          </BoundedText>
         </div>
       )
     }
@@ -493,7 +494,7 @@ function ToolCallDetails(props: {
                   {(() => {
                     const input = toolInputDisplay()
                     if (!input) return null
-                    return renderMarkdownContent({ content: input.content, cacheKey: "input" })
+                    return renderMarkdownContent({ content: input.content, codeLanguage: input.language, cacheKey: "input" })
                   })()}
                 </div>
               </Show>
@@ -704,7 +705,6 @@ export default function ToolCall(props: ToolCallProps) {
   const renderer = createMemo(() => resolveToolRenderer(toolName()))
 
   const renderMarkdownStub: ToolRendererContext["renderMarkdown"] = () => null
-  const renderAnsiStub: ToolRendererContext["renderAnsi"] = () => null
   const renderDiffStub: ToolRendererContext["renderDiff"] = () => null
   const renderToolCallStub: NonNullable<ToolRendererContext["renderToolCall"]> = () => null
   const headerRendererContext: ToolRendererContext = {
@@ -716,8 +716,8 @@ export default function ToolCall(props: ToolCallProps) {
     t,
     messageVersion: () => props.messageVersion,
     partVersion: () => props.partVersion,
+    textRevealTarget: (section) => makeTextRevealTarget(props.instanceId, props.messageId, toolCallIdentifier(), section),
     renderMarkdown: renderMarkdownStub,
-    renderAnsi: renderAnsiStub,
     renderDiff: renderDiffStub,
     renderToolCall: renderToolCallStub,
     outputWrapEnabled,
@@ -730,37 +730,8 @@ export default function ToolCall(props: ToolCallProps) {
 
   const renderToolTitle = () => {
     const state = toolState()
-    const currentTool = toolName()
-
-    if (getCanonicalToolName(currentTool) !== "task") {
-      if (!state || state.status === "pending") return getRendererAction()
-
-      const stateTitle = typeof (state as { title?: string }).title === "string" ? (state as { title?: string }).title : undefined
-      if (stateTitle && stateTitle.length > 0) {
-        return stateTitle
-      }
-
-      const customTitle = renderer().getTitle?.(headerRendererContext)
-      if (customTitle) return customTitle
-
-      return getToolName(currentTool)
-    }
-
-    if (!state) return getRendererAction()
-    if (state.status === "pending") return getRendererAction()
-
-    const customTitle = renderer().getTitle?.(headerRendererContext)
-    if (customTitle) return customTitle
-
-    if (isToolStateRunning(state) && state.title) {
-      return state.title
-    }
-
-    if (isToolStateCompleted(state) && state.title) {
-      return state.title
-    }
-
-    return getToolName(currentTool)
+    if (!state || state.status === "pending") return getRendererAction()
+    return renderer().getTitle?.(headerRendererContext) || getToolName(toolName())
   }
 
   const toolTypeLabel = createMemo(() => toolName())
@@ -801,7 +772,7 @@ export default function ToolCall(props: ToolCallProps) {
     await copyToClipboard(text)
   }
 
-  const actionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
+  const buildActionMenuItems = (includePrimaryActions = false): ActionOverflowMenuItem[] => {
     const items: ActionOverflowMenuItem[] = []
 
     if (hasToolInput()) {
@@ -846,6 +817,12 @@ export default function ToolCall(props: ToolCallProps) {
     return items
   }
 
+  // Memoized so tool-state events do not rebuild the item array (and its icon
+  // DOM) for every subscriber: re-evaluating on each store update would remount
+  // every header action through <For>.
+  const secondaryActionItems = createMemo(() => buildActionMenuItems(false))
+  const overflowEligibleItems = createMemo(() => buildActionMenuItems(true))
+
   const status = () => toolState()?.status || ""
 
   return (
@@ -864,7 +841,7 @@ export default function ToolCall(props: ToolCallProps) {
         data-part-id={toolCallIdentifier()}
       >
       <Show when={!hasPendingForm()}>
-        <div class="tool-call-header" ref={observeActionOverflow} data-action-overflow={actionMenuItems(true).length >= 2 ? "true" : undefined}>
+        <div class="tool-call-header" ref={observeActionOverflow} data-action-overflow={overflowEligibleItems().length >= 2 ? "true" : undefined}>
         <button
           type="button"
           class="tool-call-header-toggle"
@@ -872,12 +849,17 @@ export default function ToolCall(props: ToolCallProps) {
           aria-expanded={expanded()}
         >
           <ChevronRight class="tool-call-disclosure disclosure-chevron" aria-hidden="true" />
-          <span class="tool-call-summary">
+          <span class="tool-call-summary" ref={observeToolStatusCompaction}>
             <span class="tool-call-summary-type">{renderedToolTypeLabel()}</span>
             <Show when={renderedHeaderTitleDetail()}>
               {(detail) => <span class="tool-call-summary-title">{detail()}</span>}
             </Show>
             <ToolStatusIndicator status={status} t={t} />
+            <PartDuration
+              startedAt={getPartStartedAt(toolCallMemo() as any)}
+              endedAt={status() === "completed" || status() === "error" ? getPartEndedAt(toolCallMemo() as any) : undefined}
+              running={status() === "running"}
+            />
           </span>
         </button>
 
@@ -907,7 +889,7 @@ export default function ToolCall(props: ToolCallProps) {
           {(action) => <span class="tool-call-header-action">{action()}</span>}
         </Show>
 
-        <For each={actionMenuItems()}>
+        <For each={secondaryActionItems()}>
           {(item) => (
             <button
               type="button"
@@ -928,7 +910,7 @@ export default function ToolCall(props: ToolCallProps) {
           )}
         </For>
         <ActionOverflowMenu
-          items={actionMenuItems(true)}
+          items={overflowEligibleItems()}
           label={t("messageItem.actions.more")}
           triggerClass="tool-call-header-icon-button tool-call-header-copy action-overflow-narrow"
           minItems={2}

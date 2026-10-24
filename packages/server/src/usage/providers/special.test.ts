@@ -17,7 +17,7 @@ test("fails closed without requesting quota for an expired Cursor access token",
   }
 
   try {
-    const usage = await specialProviders.find((provider) => provider.id === "cursor")!.fetchQuota()
+    const usage = await specialProviders.find((provider) => provider.id === "cursor")!.fetchQuota({})
     assert.equal(usage.ok, false)
     assert.equal(usage.configured, true)
     assert.equal(usage.error, "Cursor access token expired. Provide a current CURSOR_ACCESS_TOKEN or CURSOR_TOKEN.")

@@ -112,12 +112,12 @@ Then open a pull request on GitHub targeting the `dev` branch.
 
 ### OpenCode V2 Boundaries
 
-- Server and UI pin `@opencode/client@2.0.4`; the pruning plugin pins `@opencode/plugin@2.0.4`. Upgrade them together with the lockfile and isolated native validation. The runtime CLI is managed independently, and startup must not reject an otherwise compatible service solely for a different version string. Review current OpenCode documentation, installed declarations, and proxy/API parity whenever the client contract changes.
-- Upgrade references: [OpenCode releases](https://github.com/anomalyco/opencode/releases), [OpenCode V2 documentation](https://opencode.ai/v2/docs/), and `node_modules/@opencode/client/dist/promise/`.
+- Server and UI pin `@opencode/client@2.1.0`; native plugins pin `@opencode/plugin@2.1.0` for authoring but resolve Effect and the public SDK from the daemon at runtime. Upgrade pins together with the lockfile and isolated native validation. The runtime CLI is managed independently; its demonstrated minimum and recommended/tested versions remain separate constants in `packages/server/src/opencode/runtime-support.ts` (minimum 2.1.2 for Code Mode's reproduced JavaScript job-ordering defect on 2.1.0/2.1.1, recommended 2.1.4; the native replay contract dates from 2.1.0). A build pin alone is never a runtime requirement, and unfamiliar newer/custom labels retain authenticated contract recognition. Review current OpenCode documentation, installed declarations, and proxy/API parity whenever the client contract changes.
+- Upgrade references: [OpenCode V2 changelog](https://opencode.ai/changelog) (GitHub Releases list V1), the exact release tags (`vX.Y.Z`) or published npm packages for source/declaration deltas, [OpenCode V2 documentation](https://opencode.ai/v2/docs/), and `node_modules/@opencode/client/dist/promise/`.
 - `packages/server/src/workspaces/opencode-service.ts` uses the selected host or WSL CLI's official `service status`, `service start`, and `service get password` lifecycle to connect to one externally owned global daemon. CodeNomad owns no private port, database, registration, or daemon PID and never stops the daemon on backend shutdown.
 - WSL requires Windows localhost forwarding and runs the Linux CLI lifecycle inside the distribution; never inspect or signal Linux PIDs from Windows.
 - OpenCode owns the global daemon's standard state and database. Configured allowed environment variables apply only when CodeNomad starts a missing daemon; an existing daemon is unchanged, and legacy `OPENCODE_DB`/`XDG_STATE_HOME` ownership settings are ignored.
-- Explicit **Stop Workspace** evicts the native location/resources. Closing a tab or window only detaches that local UI and must never delete or evict the workspace.
+- Closing a project tab immediately detaches its UI and deletes that tab's logical backend workspace record. Sessions keep running in OpenCode; CodeNomad never evicts native Locations. Separately opened occurrences are independent; another window displaying the same record closes its tab with a notification. Whole-window close, quit, reload and backend shutdown retain their existing restoration behavior.
 - OpenCode session calls use `/workspaces/:id/instance/api/*`; CodeNomad control routes and multiplexed events use `/api/*` and `/api/events`.
 - The proxy is method/path allowlisted, so new upstream functionality is not exposed automatically.
 - Shell mode (`client.session.shell`) and prompt instructions (`client.session.instructions.entry`) remain separate from background shells and interactive PTYs.
@@ -126,7 +126,7 @@ Then open a pull request on GitHub targeting the `dev` branch.
 - Git mutations and Yolo policy remain CodeNomad-owned server boundaries.
 - Native desktop identity is channel plus config profile: one singleton process/backend per profile and multiple UUID windows. A second launch opens another window by default; Advanced settings can restore MRU focus, while `--new-window` always requests another window. Stable, dev, and non-default profiles isolate native/browser/client state; OpenCode sessions/messages stay shared while tabs, drafts, and views are per-window.
 - Desktop restore uses a V3 per-window envelope over the V2 content-addressed partition graph. Preserve atomic publication/migration, ownership write fencing, and post-commit conservative garbage collection in both Electron and Tauri.
-- Native SideCar/browser previews are sandboxed without same-origin access, so DOM comment inspection is web-only.
+- Browser preview iframes are sandboxed without same-origin access, so DOM comment inspection is web-only. SideCar iframes are same-origin by design: SideCars are trusted extensions of the application (see `dev-docs/architecture.md`).
 
 ### Key UI Files
 

@@ -4,10 +4,13 @@ import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page, type Route } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { createFixtureCache } from "./fixture-cache"
 
 let server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
+  cache = await createFixtureCache()
+  server = await createServer({ configFile: false, cacheDir: cache.cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     plugins: [solid(), { name: "provider-usage-fixture", configureServer(vite) {
       vite.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
@@ -19,7 +22,7 @@ before(async () => {
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { try { await browser?.close() } finally { await server?.close(); await cache?.dispose() } })
 
 async function prepare(page: Page) {
   const requests: Route[] = []
@@ -110,17 +113,30 @@ test("native account events and reconnect clear old quotas; hidden panels do not
   } finally { await page.close() }
 })
 
-test("missing credential API explains the running service requirement without generic authentication advice", async () => {
-  const page = await browser.newPage({ locale: "en-US" })
+for (const [locale, message] of [
+  ["en-US", "OpenAI does not provide usage for this ChatGPT sign-in method. You can still chat."],
+  ["fr-FR", "OpenAI ne permet pas de consulter l'utilisation avec cette méthode de connexion ChatGPT. Les conversations restent disponibles."],
+]) test(`ChatGPT sign-in limitation replaces old quota and clears on account change (${locale})`, async () => {
+  const page = await browser.newPage({ locale, viewport: { width: 320, height: 200 } })
   try {
     const { requests, errors } = await prepare(page)
-    await waitRequests(requests, 1)
-    await requests[0].fulfill({ contentType: "application/json", body: JSON.stringify({
+    await waitRequests(requests, 1); await fulfill(requests[0], 10)
+    await page.getByRole("progressbar").waitFor()
+    await page.evaluate(() => (window as any).usageFixture.event("credential.switched"))
+    await waitRequests(requests, 2)
+    await requests[1].fulfill({ json: {
       requestedProviderId: "openai", providerId: "codex", providerName: "Codex", supported: true,
-      configured: true, ok: false, fetchedAt: Date.now(), windows: {}, unavailableReason: "native-credential-api-unavailable",
-    }) })
-    await page.getByText("Usage requires OpenCode 2.0.20 or newer. Update OpenCode, then restart its service from Settings.", { exact: true }).waitFor()
+      configured: true, ok: false, fetchedAt: Date.now(), windows: {}, unavailableReason: "openai-token-sharing-unsupported",
+    } })
+    await page.getByText(message, { exact: true }).waitFor()
     assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true)
+    if (process.env.CODENOMAD_USAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_USAGE_CAPTURE.replace(/\.png$/, `-${locale}.png`) })
+    await page.evaluate(() => (window as any).usageFixture.event("credential.switched"))
+    await waitRequests(requests, 3); await fulfill(requests[2], 20)
+    await page.getByRole("progressbar").waitFor()
+    assert.equal(await page.getByText(message, { exact: true }).count(), 0)
+    assert.equal(await page.getByRole("progressbar").getAttribute("aria-valuenow"), "20")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -289,6 +305,26 @@ test("stable window labels handle removed quotas and passive read failure withou
     await page.getByText("Usage is temporarily unavailable.", { exact: true }).waitFor({ timeout: 5000 })
       .catch(async error => { console.error("Failure display", errors, await page.locator("body").innerText(), requests.length); throw error })
     assert.equal(await page.getByRole("progressbar").count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("Claude Code sessions label model-scoped limits beside the plan windows", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  try {
+    const { requests, errors } = await prepare(page)
+    await waitRequests(requests, 1)
+    await page.evaluate(() => (window as any).usageFixture.select({ providerId: "claude-code", modelId: "claude-opus-5-5" }))
+    await waitRequests(requests, 2)
+    assert.equal(new URL(requests[1].request().url()).pathname, "/api/usage/claude-code")
+    const quota = (usedPercent: number, windowSeconds: number) => ({ usedPercent, remainingPercent: 100 - usedPercent, windowSeconds, resetAt: null })
+    await requests[1].fulfill({ contentType: "application/json", body: JSON.stringify({
+      requestedProviderId: "claude-code", providerId: "claude-code", providerName: "Claude", supported: true, configured: true, ok: true,
+      fetchedAt: Date.now(), windows: { "5h": quota(4, 18000), "7d": quota(1, 604800), "7d:Opus": quota(60, 604800) },
+    }) })
+    await page.getByText("7 days · Opus", { exact: true }).waitFor({ timeout: 5000 })
+    assert.equal(await page.getByRole("progressbar").count(), 3)
+    for (const label of ["5 hours", "7 days"]) assert.equal(await page.getByText(label, { exact: true }).count(), 1)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

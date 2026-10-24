@@ -50,6 +50,35 @@ describe("useActiveSessionMessageLoad", () => {
     } finally { gate.resolve(); dispose() }
   })
 
+  it("keeps the in-flight read when state read by the readiness gate changes", async () => {
+    // waitForInstanceReady reads the instances map. Restoring other workspaces
+    // updates it repeatedly; that must not restart (and requeue) the transcript read.
+    const [workspaces, setWorkspaces] = createSignal(1)
+    const requests: AbortSignal[] = []
+    const gate = deferred()
+    let dispose = () => {}
+    createRoot(done => {
+      dispose = done
+      useActiveSessionMessageLoad({ isActive: () => true, instanceId: () => 'inst', session: () => ({ id: 'a' }),
+        shouldLoad: () => true,
+        waitForHydration: () => { workspaces(); return Promise.resolve() },
+        loadMessages: (_instance, _session, options) => {
+          requests.push(options!.signal!)
+          return gate.promise
+        },
+      })
+    })
+    try {
+      await tick()
+      for (let count = 2; count <= 4; count++) {
+        setWorkspaces(count)
+        await tick()
+      }
+      assert.equal(requests.length, 1)
+      assert.equal(requests[0].aborted, false)
+    } finally { gate.resolve(); dispose() }
+  })
+
   it("does not revive the first hydration callback after an away-and-back cycle", async () => {
     const [active, setActive] = createSignal(true)
     const gate = deferred(), loads: string[] = []

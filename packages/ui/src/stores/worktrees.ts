@@ -18,77 +18,93 @@ const [gitRepoStatusByInstance, setGitRepoStatusByInstance] = createSignal<Map<s
 
 const worktreeRequests = new Map<string, Promise<void>>()
 const pendingWorktreeRefreshes = new Set<string>()
+const freshWorktreeRequests = new Map<string, Promise<void>>()
+const worktreeReads = new Map<string, Promise<void>>()
 const worktreeReadyRefreshes = new Map<string, Promise<void>>()
 const familyMoveRequests = new Map<string, Promise<void>>()
+const unreconciledFamilyMoves = new Map<string, { instanceId: string; directories: string[]; settled: boolean; request: Promise<void> }>()
 const [pendingFamilyMoveSlugs, setPendingFamilyMoveSlugs] = createSignal(new Map<string, string>())
 const defaultDirectories = new Map<string, string>()
 
 type WorktreeReadyRefresh = (instanceId: string) => Promise<void>
 
-async function queueWorktreeRequest(instanceId: string, initial: boolean): Promise<void> {
-  const existing = worktreeRequests.get(instanceId)
+async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh = false): Promise<void> {
+  const requests = fresh ? freshWorktreeRequests : worktreeRequests
+  const existing = requests.get(instanceId)
   if (existing) {
-    if (!initial) pendingWorktreeRefreshes.add(instanceId)
+    if (!initial && !fresh) pendingWorktreeRefreshes.add(instanceId)
     return existing
   }
-  const load = async (initialRead: boolean) => {
-    try {
-      const response = await prioritizedRead(
-        () => activeInstanceId() === instanceId,
-        new AbortController().signal,
-        () => serverApi.fetchWorktrees(instanceId),
-      )
-      if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
-      else defaultDirectories.delete(instanceId)
-      setWorktreesByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, response.worktrees ?? [])
-        return next
-      })
+  const load = (initialRead: boolean) => {
+    // Display and required-fresh callers have independent outcomes, but every
+    // read/publication shares one lane. An older cached response cannot land last.
+    const previous = worktreeReads.get(instanceId)
+    const read = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+      try {
+        const response = await prioritizedRead(
+          () => activeInstanceId() === instanceId,
+          new AbortController().signal,
+          () => serverApi.fetchWorktrees(instanceId, fresh),
+        )
+        if (response.defaultDirectory) defaultDirectories.set(instanceId, response.defaultDirectory)
+        else defaultDirectories.delete(instanceId)
+        setWorktreesByInstance((prev) => {
+          const next = new Map(prev)
+          next.set(instanceId, response.worktrees ?? [])
+          return next
+        })
 
-      setGitRepoStatusByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
-        return next
-      })
-    } catch (error) {
-      log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
-      if (!initialRead) throw error
+        setGitRepoStatusByInstance((prev) => {
+          const next = new Map(prev)
+          next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
+          return next
+        })
+      } catch (error) {
+        log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
+        if (!initialRead || fresh) throw error
+        // A fresh read may have published while this initial display read waited.
+        if (worktreesByInstance().has(instanceId)) return
 
-      setWorktreesByInstance((prev) => {
-        const next = new Map(prev)
-        next.set(instanceId, [])
-        return next
-      })
+        setWorktreesByInstance((prev) => {
+          const next = new Map(prev)
+          next.set(instanceId, [])
+          return next
+        })
 
-      // Preserve any previous value; if unknown, keep it unknown.
-      setGitRepoStatusByInstance((prev) => {
-        if (prev.has(instanceId)) return prev
-        const next = new Map(prev)
-        next.set(instanceId, null)
-        return next
-      })
-    }
+        // Preserve any previous value; if unknown, keep it unknown.
+        setGitRepoStatusByInstance((prev) => {
+          if (prev.has(instanceId)) return prev
+          const next = new Map(prev)
+          next.set(instanceId, null)
+          return next
+        })
+      }
+    })
+    worktreeReads.set(instanceId, read)
+    return read.finally(() => {
+      if (worktreeReads.get(instanceId) === read) worktreeReads.delete(instanceId)
+    })
   }
   // Like the provider/model catalogue, retain one in-flight read and one dirty
-  // bit. A burst requests one trailing read, not an unbounded HTTP queue.
+  // bit for display demand. Concurrent fresh callers share only their fresh read;
+  // its failure must neither satisfy fresh recovery nor discard display demand.
   const task = Promise.resolve().then(async () => {
     let initialRead = initial
     do {
-      pendingWorktreeRefreshes.delete(instanceId)
+      if (!fresh) pendingWorktreeRefreshes.delete(instanceId)
       try {
         await load(initialRead)
       } catch (error) {
-        if (!pendingWorktreeRefreshes.has(instanceId)) throw error
+        if (fresh || !pendingWorktreeRefreshes.has(instanceId)) throw error
       }
       initialRead = false
-    } while (pendingWorktreeRefreshes.has(instanceId))
+    } while (!fresh && pendingWorktreeRefreshes.has(instanceId))
   })
 
-  worktreeRequests.set(instanceId, task)
+  requests.set(instanceId, task)
   await task.finally(() => {
-    if (worktreeRequests.get(instanceId) === task) {
-      worktreeRequests.delete(instanceId)
+    if (requests.get(instanceId) === task) {
+      requests.delete(instanceId)
     }
   })
 }
@@ -106,9 +122,9 @@ async function ensureWorktreesLoaded(instanceId: string): Promise<void> {
   await queueWorktreeRequest(instanceId, true)
 }
 
-async function reloadWorktrees(instanceId: string): Promise<void> {
+async function reloadWorktrees(instanceId: string, fresh = false): Promise<void> {
   if (!instanceId) return
-  await queueWorktreeRequest(instanceId, false)
+  await queueWorktreeRequest(instanceId, false, fresh)
 }
 
 serverEvents.on("workspace.worktreesChanged", (event) => {
@@ -116,7 +132,7 @@ serverEvents.on("workspace.worktreesChanged", (event) => {
   const id = event.workspaceId
   // Refresh consumers that already requested this inventory. Queue behind an
   // older HTTP response so it cannot overwrite the completed background scan.
-  if (!worktreesByInstance().has(id) && !worktreeRequests.has(id)) return
+  if (!worktreesByInstance().has(id) && !worktreeRequests.has(id) && !freshWorktreeRequests.has(id)) return
   void reloadWorktrees(id).catch(error => log.warn("Failed to receive refreshed worktrees", { instanceId: id, error }))
 })
 
@@ -129,8 +145,8 @@ async function handleWorktreeReady(
 
   log.info("OpenCode worktree ready", {
     instanceId,
-    directory: event.directory,
-    name: event.properties?.name,
+    directory: event.location?.directory,
+    name: event.data?.name,
   })
 
   const previous = worktreeReadyRefreshes.get(instanceId)
@@ -221,10 +237,15 @@ function normalizeDirectory(directory: string): string {
   return normalizeSessionDirectory(directory)
 }
 
+/** Matches a native session location against the worktree inventory. */
+function getWorktreeForDirectory(instanceId: string, directory: string): WorktreeDescriptor | undefined {
+  const normalized = normalizeDirectory(directory)
+  return getWorktrees(instanceId).find((worktree) => normalizeDirectory(worktree.serviceDirectory ?? worktree.directory) === normalized)
+}
+
 function getWorktreeSlugForParentSession(instanceId: string, parentSessionId: string): string {
   const directory = sessions().get(instanceId)?.get(parentSessionId)?.location.directory
-  const locationSlug = directory && getWorktrees(instanceId)
-    .find((worktree) => normalizeDirectory(worktree.serviceDirectory ?? worktree.directory) === normalizeDirectory(directory))?.slug
+  const locationSlug = directory && getWorktreeForDirectory(instanceId, directory)?.slug
   if (locationSlug) return normalizeWorktreeSlug(instanceId, locationSlug)
 
   return "root"
@@ -240,6 +261,36 @@ export function getDefaultWorktreeDirectory(instanceId: string): string | undefi
 
 export function getPendingWorktreeSlug(instanceId: string, sessionId: string): string | undefined {
   return pendingFamilyMoveSlugs().get(`${instanceId}:${getParentSessionId(instanceId, sessionId)}`)
+}
+
+export function getPendingWorktreeLocations(instanceId: string): Array<{ directory: string }> {
+  return [...unreconciledFamilyMoves.values()].filter(move => move.instanceId === instanceId)
+    .flatMap(move => move.directories.map(directory => ({ directory })))
+}
+
+export function clearPendingWorktreeMoves(instanceId: string): void {
+  const keys = [...unreconciledFamilyMoves].filter(([, move]) => move.instanceId === instanceId).map(([key]) => key)
+  for (const key of keys) unreconciledFamilyMoves.delete(key)
+  setPendingFamilyMoveSlugs(previous => {
+    const next = new Map(previous)
+    for (const key of keys) next.delete(key)
+    return next
+  })
+}
+
+/** Only a complete owned project inventory plus fresh activity can release an
+ * uncertain move's locations. Capture before I/O so an older read cannot settle
+ * a newer or still-running move. Absence from that scope is authoritative too;
+ * deleted or moved-away member IDs must not pin these directories forever.
+ * This never retries a mutation and does not own selector busy state. */
+export function captureWorktreeMoveReconciliation(instanceId: string) {
+  const captured = [...unreconciledFamilyMoves].filter(([, move]) => move.instanceId === instanceId && move.settled)
+  return () => {
+    for (const [key, move] of captured) {
+      if (unreconciledFamilyMoves.get(key) !== move || (familyMoveRequests.has(key) && familyMoveRequests.get(key) !== move.request)) continue
+      unreconciledFamilyMoves.delete(key)
+    }
+  }
 }
 
 async function setWorktreeSlugForParentSession(
@@ -270,13 +321,19 @@ async function setWorktreeSlugForParentSession(
     serverApi.moveSessionFamily(id, sessionId, { worktreeSlug }))
   const refreshSessions = options.refreshSessions ?? ((id: string) =>
     import("./session-api").then(({ fetchSessions }) => fetchSessions(id, { reset: true, strictStatus: true })))
-  const task = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+  const task: Promise<void> = (previous?.catch(() => undefined) ?? Promise.resolve()).then(async () => {
+    const family = [...(sessions().get(instanceId)?.values() ?? [])].filter(session => getParentSessionId(instanceId, session.id) === rootSessionId)
+    const prior = unreconciledFamilyMoves.get(key)
+    const recovery = { instanceId,
+      directories: [...new Set([targetDirectory, ...family.map(session => session.location.directory), ...(prior?.directories ?? [])])], settled: false, request: task }
+    unreconciledFamilyMoves.set(key, recovery)
     let moveError: unknown
     try {
       await moveFamily(instanceId, rootSessionId, normalizedSlug)
     } catch (error) {
       moveError = error
     }
+    recovery.settled = true
     try {
       await refreshSessions(instanceId)
     } catch {
@@ -286,7 +343,7 @@ async function setWorktreeSlugForParentSession(
     }
     if (moveError) {
       log.warn("Failed to move session family", { instanceId, rootSessionId, error: moveError })
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: tGlobal("sessionList.worktreeMove.error"),
         variant: "error",
       })
@@ -317,6 +374,7 @@ export {
   getWorktrees,
   getDefaultWorktreeSlug,
   getParentSessionId,
+  getWorktreeForDirectory,
   getWorktreeSlugForParentSession,
   getWorktreeSlugForSession,
   setWorktreeSlugForParentSession,

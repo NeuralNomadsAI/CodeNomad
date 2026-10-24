@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "Impossible d’ouvrir l’aide dans votre navigateur. Ouvrez https://neuralnomadsai.github.io/CodeNomad/ manuellement.",
   "commandPalette.title": "Palette de commandes",
   "commandPalette.description": "Rechercher et exécuter des commandes",
   "commandPalette.searchPlaceholder": "Tapez une commande ou recherchez...",
@@ -14,6 +15,9 @@ export const commandMessages = {
   "commands.newInstance.label": "Nouvelle instance",
   "commands.newInstance.description": "Ouvrir le sélecteur de dossiers pour créer une nouvelle instance",
   "commands.newInstance.keywords": "dossier, projet, espace de travail",
+  "commands.newTemporaryInstance.label": "Nouvelle instance temporaire",
+  "commands.newTemporaryInstance.description": "Ouvrir une instance temporaire vide sans choisir de dossier",
+  "commands.newTemporaryInstance.keywords": "temporaire, brouillon, rapide, vide, projet",
   "commands.openWorkspace.folder.label": "Ouvrir le dossier du projet",
   "commands.openWorkspace.folder.description": "Ouvrir le dossier du projet actuel dans le gestionnaire de fichiers",
   "commands.openWorkspace.folder.keywords": "dossier, explorateur, fichiers",
@@ -31,9 +35,6 @@ export const commandMessages = {
   "commands.closeInstance.label": "Fermer l'onglet",
   "commands.closeInstance.description": "Fermer l'onglet de premier niveau actuel",
   "commands.closeInstance.keywords": "arrêter, quitter, fermer, onglet",
-  "commands.stopInstance.label": "Arrêter l'espace de travail",
-  "commands.stopInstance.description": "Arrêter l'espace de travail partagé pour toutes les fenêtres",
-  "commands.stopInstance.keywords": "arrêter, espace de travail, serveur, partagé",
 
   "commands.nextInstance.label": "Onglet suivant",
   "commands.nextInstance.description": "Passer à l'onglet de premier niveau suivant",
@@ -66,6 +67,13 @@ export const commandMessages = {
   "commands.previousSession.label": "Session précédente",
   "commands.previousSession.description": "Passer à l'onglet de session précédent",
   "commands.previousSession.keywords": "changer, naviguer, précédent",
+
+  "commands.previousUserMessage.label": "Message utilisateur précédent",
+  "commands.previousUserMessage.description": "Aller au message précédent que vous avez envoyé dans cette conversation",
+  "commands.previousUserMessage.keywords": "aller, sauter, invite, naviguer, message utilisateur",
+  "commands.nextUserMessage.label": "Message utilisateur suivant",
+  "commands.nextUserMessage.description": "Aller au message suivant que vous avez envoyé dans cette conversation",
+  "commands.nextUserMessage.keywords": "aller, sauter, invite, naviguer, message utilisateur",
 
   "commands.compactSession.label": "Compacter la session",
   "commands.compactSession.description": "Résumer et compacter la session actuelle",
@@ -113,20 +121,10 @@ export const commandMessages = {
   "commands.clearInput.description": "Effacer la zone de texte du prompt",
   "commands.clearInput.keywords": "effacer, réinitialiser, prompt",
 
-  "commands.promptSubmitShortcut.label.default": "Entree: Nouvelle ligne, Cmd/Ctrl+Entree: Envoyer le prompt",
-  "commands.promptSubmitShortcut.label.swapped": "Entree: Envoyer le prompt, Cmd/Ctrl+Entree: Nouvelle ligne",
-  "commands.promptSubmitShortcut.description": "Echanger le comportement de Entree et Cmd/Ctrl+Entree dans la saisie du prompt",
-  "commands.promptSubmitShortcut.keywords": "entree, envoyer, nouvelle ligne, raccourci, cmd, ctrl, prompt",
-
   "commands.thinkingBlocks.label.show": "Afficher la réflexion",
   "commands.thinkingBlocks.label.hide": "Masquer la réflexion",
   "commands.thinkingBlocks.description": "Afficher ou masquer les sections de réflexion de l'IA",
   "commands.thinkingBlocks.keywords": "réflexion, raisonnement, basculer, afficher, masquer",
-
-  "commands.timelineToolCalls.label.show": "Afficher les appels d'outil dans la timeline",
-  "commands.timelineToolCalls.label.hide": "Masquer les appels d'outil dans la timeline",
-  "commands.timelineToolCalls.description": "Afficher/masquer les entrées d'appel d'outil dans la timeline des messages",
-  "commands.timelineToolCalls.keywords": "timeline, outil, basculer",
 
   "commands.keyboardShortcutHints.label.show": "Afficher les raccourcis clavier",
   "commands.keyboardShortcutHints.label.hide": "Masquer les raccourcis clavier",
@@ -173,9 +171,12 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "Nettoyer automatiquement les sessions vides lors de la création de nouvelles",
   "commands.autoCleanupBlankSessions.keywords": "auto, nettoyage, vide, sessions, basculer",
 
-  "commands.showHelp.label": "Afficher l'aide",
-  "commands.showHelp.description": "Afficher les raccourcis clavier et l'aide",
-  "commands.showHelp.keywords": "raccourcis, aide",
+  "commands.openHelp.label": "Ouvrir l’aide",
+  "commands.openHelp.description": "Ouvrir le guide d’utilisation de CodeNomad dans votre navigateur",
+  "commands.openHelp.keywords": "aide, guide, documentation",
+  "commands.openAbout.label": "À propos de CodeNomad",
+  "commands.openAbout.description": "Afficher la version, les mises à jour et le diagnostic dans les réglages",
+  "commands.openAbout.keywords": "à propos, version, mises à jour, diagnostic",
 
   "commands.custom.argumentsPrompt.message": "Arguments pour /{name}",
   "commands.custom.argumentsPrompt.title": "Commande personnalisée",

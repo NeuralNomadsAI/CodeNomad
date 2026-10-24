@@ -3,14 +3,18 @@
  * For now this only wires the typed modules together; actual command handling comes later.
  */
 import { Command, InvalidArgumentError, Option } from "commander"
+import type { IncomingMessage, ServerResponse } from "http"
 import path from "path"
 import { fileURLToPath } from "url"
 import { createRequire } from "module"
 import { createHttpServer } from "./server/http-server"
+import { PanelExtensionStore } from "./panel-extensions/store"
 import { WorkspaceManager } from "./workspaces/manager"
 import { resolveConfigLocation } from "./config/location"
+import { TemporaryFolderRegistry } from "./workspaces/temporary-workspaces"
 import { SettingsService } from "./settings/service"
 import { BinaryResolver } from "./settings/binaries"
+import { prepareForeignProbe } from "./opencode-update/shared-installation"
 import { FileSystemBrowser } from "./filesystem/browser"
 import { EventBus } from "./events/bus"
 import { ServerMeta } from "./api-types"
@@ -24,9 +28,9 @@ import { resolveHttpsOptions } from "./server/tls"
 import { RemoteProxySessionManager } from "./server/remote-proxy"
 import { resolveNetworkAddresses, resolveRemoteAddresses } from "./server/network-addresses"
 import { nativeServiceStarter } from "./workspaces/native-service-start"
-import { resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
+import { acceptsIpv4Loopback, resolveAutomationBridgeUrl, resolvePluginBaseUrl, resolvePreferredRemoteListener } from "./server/listener-base-url"
 import { formatHostForUrl, hasIPv6Zone, isLoopbackHost, isWildcardHost, normalizeNetworkHost } from "./server/network-host"
-import { startDevReleaseMonitor } from "./releases/dev-release-monitor"
+import { resolveUpdateFeed, startPreviewReleaseMonitor } from "./releases/dev-release-monitor"
 import { SpeechService } from "./speech/service"
 import { SideCarManager } from "./sidecars/manager"
 import { PreviewManager } from "./previews/manager"
@@ -42,7 +46,12 @@ import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
+import { provisionDesktopPlugins } from "./opencode/desktop-plugin-provisioning"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
+import { RemoteDeviceRegistry } from "./remote-control/devices"
+import { RemoteControlManager } from "./remote-control/manager"
+import { RemoteControlOwnerLease } from "./remote-control/owner-lease"
+import { WorktreeDeletionFence } from "./workspaces/worktree-session-evacuation"
 
 const require = createRequire(import.meta.url)
 
@@ -131,7 +140,14 @@ export function installShutdownStdinHandler(
   source.on("data", onData)
 }
 
-function parseCliOptions(argv: string[]): CliOptions {
+export function parseBooleanSwitchEnv(name: string, value: string | undefined = process.env[name]): boolean {
+  const normalized = (value ?? "").trim().toLowerCase()
+  if (["1", "true", "yes", "on"].includes(normalized)) return true
+  if (["0", "false", "no", "off", ""].includes(normalized)) return false
+  throw new InvalidArgumentError(`${name} must be 1, true, yes, on, 0, false, no, off, or empty (case-insensitive)`)
+}
+
+export function parseCliOptions(argv: string[]): CliOptions {
   const program = new Command()
     .name("codenomad")
     .description("CodeNomad CLI server")
@@ -149,7 +165,7 @@ function parseCliOptions(argv: string[]): CliOptions {
       new Option("--workspace-root <path>", "Restricts root path where workspaces can be opened").env("CLI_WORKSPACE_ROOT").default(process.cwd()),
     )
     .addOption(new Option("--root <path>").env("CLI_ROOT").hideHelp(true))
-    .addOption(new Option("--unrestricted-root", "Allow browsing the full filesystem").env("CLI_UNRESTRICTED_ROOT").default(false))
+    .addOption(new Option("--unrestricted-root", "Allow browsing the full filesystem (env: CLI_UNRESTRICTED_ROOT)").default(false))
     .addOption(new Option("--config <path>", "Path to the config file").env("CLI_CONFIG").default(DEFAULT_CONFIG_PATH))
     .addOption(new Option("--log-level <level>", "Log level (trace|debug|info|warn|error)").env("CLI_LOG_LEVEL"))
     .addOption(new Option("--log-destination <path>", "Log destination file (defaults to stdout)").env("CLI_LOG_DESTINATION"))
@@ -157,10 +173,10 @@ function parseCliOptions(argv: string[]): CliOptions {
       new Option("--ui-dir <path>", "Directory containing the built UI bundle").env("CLI_UI_DIR").default(DEFAULT_UI_STATIC_DIR),
     )
     .addOption(new Option("--ui-dev-server <url>", "Proxy UI requests to a running dev server").env("CLI_UI_DEV_SERVER"))
-    .addOption(new Option("--ui-no-update", "Disable remote UI updates").env("CLI_UI_NO_UPDATE").default(false))
+    .addOption(new Option("--ui-no-update", "Disable remote UI updates (env: CLI_UI_NO_UPDATE)").default(false))
     .addOption(new Option("--ui-auto-update <enabled>", "Enable remote UI updates (true|false)").env("CLI_UI_AUTO_UPDATE").default("true"))
     .addOption(new Option("--ui-manifest-url <url>", "Remote UI manifest URL").env("CLI_UI_MANIFEST_URL"))
-    .addOption(new Option("--launch", "Launch the UI in a browser after start").env("CLI_LAUNCH").default(false))
+    .addOption(new Option("--launch", "Launch the UI in a browser after start (env: CLI_LAUNCH)").default(false))
     .addOption(
       new Option("--username <username>", "Username for server authentication")
         .env("CODENOMAD_SERVER_USERNAME")
@@ -173,19 +189,18 @@ function parseCliOptions(argv: string[]): CliOptions {
         .default(DEFAULT_AUTH_COOKIE_NAME),
     )
     .addOption(
-      new Option("--generate-token", "Emit a one-time bootstrap token for desktop")
-        .env("CODENOMAD_GENERATE_TOKEN")
+      new Option("--generate-token", "Emit a one-time bootstrap token for desktop (env: CODENOMAD_GENERATE_TOKEN)")
         .default(false),
     )
     .addOption(
       new Option(
         "--dangerously-skip-auth",
-        "Disable CodeNomad's internal auth. Use only behind a trusted perimeter (SSO/VPN/etc).",
+        "Disable CodeNomad's internal auth. Use only behind a trusted perimeter (SSO/VPN/etc). (env: CODENOMAD_SKIP_AUTH)",
       )
-        .env("CODENOMAD_SKIP_AUTH")
         .default(false),
     )
     .addOption(new Option("--upgrade [version]", "Upgrade the global CodeNomad CLI server package and exit"))
+    .addHelpText("after", "\nArgument-less switch env values: 1/true/yes/on enable; 0/false/no/off/empty disable (case-insensitive, trimmed; unset defaults off). Other values are errors; CLI flags override valid off values.")
 
   program.parse(argv, { from: "user" })
   const parsed = program.opts<{
@@ -250,20 +265,20 @@ function parseCliOptions(argv: string[]): CliOptions {
     tlsSANs: parsed.tlsSANs,
     rootDir: resolvedRoot,
     configPath: parsed.config,
-    unrestrictedRoot: Boolean(parsed.unrestrictedRoot),
+    unrestrictedRoot: parseBooleanSwitchEnv("CLI_UNRESTRICTED_ROOT") || Boolean(parsed.unrestrictedRoot),
     logLevel: parsed.logLevel,
     logDestination: parsed.logDestination,
     uiStaticDir: parsed.uiDir,
     uiDevServer: parsed.uiDevServer,
     uiAutoUpdate,
-    uiNoUpdate: Boolean(parsed.uiNoUpdate),
+    uiNoUpdate: parseBooleanSwitchEnv("CLI_UI_NO_UPDATE") || Boolean(parsed.uiNoUpdate),
     uiManifestUrl: parsed.uiManifestUrl,
-    launch: Boolean(parsed.launch),
+    launch: parseBooleanSwitchEnv("CLI_LAUNCH") || Boolean(parsed.launch),
     authUsername: parsed.username,
     authPassword: parsed.password,
     authCookieName: parsed.authCookieName,
-    generateToken: Boolean(parsed.generateToken),
-    dangerouslySkipAuth: Boolean(parsed.dangerouslySkipAuth),
+    generateToken: parseBooleanSwitchEnv("CODENOMAD_GENERATE_TOKEN") || Boolean(parsed.generateToken),
+    dangerouslySkipAuth: parseBooleanSwitchEnv("CODENOMAD_SKIP_AUTH") || Boolean(parsed.dangerouslySkipAuth),
     upgrade,
   }
 }
@@ -376,34 +391,49 @@ async function main() {
 
   const settings = new SettingsService(configLocation, eventBus, configLogger)
   const binaryResolver = new BinaryResolver(settings)
+  // Warm the bounded, asynchronous version probe of a foreign PATH OpenCode so
+  // synchronous resolution can prefer a managed OpenCode 2 without spawning.
+  void prepareForeignProbe().catch(() => {})
   const pruningLifecycle = new PruningLifecycle()
   const nativeParent = new NativeParent()
   const automationLifecycle = new DesktopPluginLifecycle("automation")
-  const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = async (launch, connection, deadlineAt) => {
-    let paths
-    try { paths = await resolveDesktopPluginPaths(connection, launch, deadlineAt) }
-    catch (error) {
-      logger.error({ err: error }, "Cannot provision bundled plugins without the connected daemon's discovery directory")
-      return false
-    }
-    try {
-      await prepareDesktopPluginPresence(paths, connection.assertCurrent, {
-        pruning: pruningLifecycle,
-        automation: nativeParent.available ? automationLifecycle : undefined,
-      })
-      return true
-    } catch (error) {
-      logger.error({ err: error }, "Failed to provision bundled desktop plugins for the current connection")
-      return false
-    }
-  }
+  const missionsLifecycle = new DesktopPluginLifecycle("missions")
+  // Missions dispatch through the loopback bridge of the owning backend, desktop or
+  // standalone; window/browser automation needs a desktop host. Settles once
+  // publication has been attempted, so early connections never skip Missions.
+  let missionBridge: "pending" | "published" | "failed" = "pending"
+  let settleMissionBridge!: (published: boolean) => void
+  const missionBridgeSettled = new Promise<boolean>(resolve => { settleMissionBridge = resolve })
+  const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = (launch, connection, deadlineAt) =>
+    provisionDesktopPlugins({
+      connection,
+      logger,
+      resolvePaths: () => resolveDesktopPluginPaths(connection, launch, deadlineAt),
+      install: async paths => {
+        const missions = await missionBridgeSettled
+        await prepareDesktopPluginPresence(paths, connection.assertCurrent, {
+          pruning: pruningLifecycle,
+          automation: nativeParent.available ? automationLifecycle : undefined,
+          missions: missions ? missionsLifecycle : undefined,
+        })
+      },
+    })
+  const temporaryFolders = await TemporaryFolderRegistry.open(
+    path.join(configDir, "temporary-workspaces"),
+    path.join(configDir, "temporary-workspaces.json"),
+  ).catch((error) => {
+    logger.warn({ err: error }, "Temporary workspaces are unavailable")
+    return undefined
+  })
   const workspaceManager = new WorkspaceManager({
     rootDir: options.rootDir,
+    temporaryFolders,
     settings,
     binaryResolver,
     eventBus,
     logger: workspaceLogger,
     prepareDesktopPlugins,
+    desktopPluginsReady: () => pruningLifecycle.ready(),
     startServiceCommand: nativeServiceStarter(nativeParent),
   })
   const automationBridge = createAutomationBridgeRegistration("http://127.0.0.1")
@@ -468,20 +498,27 @@ async function main() {
     minServerVersion: uiResolution.minServerVersion,
   }
 
-  const updateChannel = (process.env.CODENOMAD_UPDATE_CHANNEL ?? "").trim().toLowerCase()
+  // The feed is a saved server preference, independent of the desktop data
+  // profile and of CODENOMAD_UPDATE_CHANNEL, which hosts read only as a deprecated profile alias.
   const githubRepo = (process.env.CODENOMAD_GITHUB_REPO ?? "NeuralNomadsAI/CodeNomad").trim()
-  const isDevVersion = packageJson.version.includes("-dev.") || packageJson.version.includes("-dev-")
-  const enableDevUpdateChecks = updateChannel === "dev" || (updateChannel === "" && isDevVersion)
-  const devReleaseMonitor = enableDevUpdateChecks
-    ? startDevReleaseMonitor({
-        currentVersion: packageJson.version,
-        repo: githubRepo,
-        logger: logger.child({ component: "updates" }),
-        onUpdate: (release) => {
-          serverMeta.update = release
-        },
-      })
-    : null
+  const readUpdateFeed = () => resolveUpdateFeed(settings.getOwner("config", "server")?.updateFeed, packageJson.version)
+  serverMeta.updateFeed = readUpdateFeed()
+  const devReleaseMonitor = startPreviewReleaseMonitor({
+    currentVersion: packageJson.version,
+    repo: githubRepo,
+    logger: logger.child({ component: "updates" }),
+    feed: () => serverMeta.updateFeed ?? "stable",
+    onUpdate: (release) => {
+      serverMeta.update = release
+    },
+  })
+  eventBus.on("storage.configChanged", (event: { owner?: string }) => {
+    if (event.owner !== "server" && event.owner !== "*") return
+    const feed = readUpdateFeed()
+    if (feed === serverMeta.updateFeed) return
+    serverMeta.updateFeed = feed
+    devReleaseMonitor.refresh()
+  })
 
   const clientConnectionManager = new ClientConnectionManager(logger.child({ component: "client-connections" }))
   const remoteProxySessionManager = new RemoteProxySessionManager({
@@ -489,83 +526,111 @@ async function main() {
     logger: logger.child({ component: "remote-proxy" }),
     httpsOptions: tlsResolution?.httpsOptions,
   })
+  // Decrypted Remote Control requests enter the same application as local ones.
+  let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
+  const remoteControlManager = new RemoteControlManager({
+    registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
+    lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
+    router: () => remoteControlRouter,
+    tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
+    logger: logger.child({ component: "remote-control" }),
+  })
   const httpsPortExplicit = programHasArg(process.argv.slice(2), "--https-port") || Boolean(process.env.CLI_HTTPS_PORT)
   const httpPortExplicit = programHasArg(process.argv.slice(2), "--http-port") || Boolean(process.env.CLI_HTTP_PORT)
 
   const httpsBindPort = httpsPortExplicit ? options.httpsPort : 0
-  const httpBindPort = httpPortExplicit ? options.httpPort : 0
+  // An HTTP listener nobody asked for is private: any free loopback port.
+  const httpBindPort = options.http && httpPortExplicit ? options.httpPort : 0
 
   // Listener binding rules:
-  // - Native desktop HTTP and dual-listener HTTP stay on loopback.
+  // - Native desktop HTTP, dual-listener HTTP and the private HTTP listener stay on loopback.
   // - HTTPS and non-native HTTP-only modes respect --host.
   const httpsBindHost = options.host
   const httpBindHost = nativeParent.available ? "127.0.0.1" : options.http ? (options.https ? "127.0.0.1" : options.host) : "127.0.0.1"
 
   const servers: Array<ReturnType<typeof createHttpServer>> = []
+  const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
+    eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
+  })
+  // Every listener admits the same worktrees: one fence (and its mission holds),
+  // so a deletion through HTTPS drains a mission admitted through the bridge.
+  const worktreeDeletionFence = new WorktreeDeletionFence()
+  const missionsHost = () => missionBridge !== "failed"
 
-  const httpServer = options.http || nativeParent.available
-    ? createHttpServer({
-        bindHost: httpBindHost,
-        bindPort: httpBindPort,
-        defaultPort: options.httpPort,
-        protocol: "http",
-        workspaceManager,
-        settings,
-        fileSystemBrowser,
-        eventBus,
-        serverMeta,
-        instanceStore,
-        speechService,
-        sidecarManager,
-        previewManager,
-        authManager,
-        clientConnectionManager,
-        remoteProxySessionManager,
-        yoloManager,
-        permissionReceipts,
-        uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
-        uiDevServerUrl: uiResolution.uiDevServerUrl,
-        logger,
-        nativeParent,
-        automationBridgeToken: automationBridge.token,
-      })
-    : null
+  // The same application behind every listener of this backend.
+  const listenerDeps = {
+    workspaceManager,
+    settings,
+    fileSystemBrowser,
+    eventBus,
+    serverMeta,
+    instanceStore,
+    speechService,
+    sidecarManager,
+    previewManager,
+    authManager,
+    clientConnectionManager,
+    remoteProxySessionManager,
+    remoteControlManager,
+    yoloManager,
+    permissionReceipts,
+    panelExtensions,
+    uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
+    logger,
+    nativeParent,
+    automationBridgeToken: automationBridge.token,
+    worktreeDeletionFence,
+    missionsHost,
+  }
+
+  // HTTP always starts: besides an explicit --http it carries the loopback bridge
+  // that the bundled plugins call (desktop automation, Missions dispatch).
+  const httpServer = createHttpServer({
+    ...listenerDeps,
+    bindHost: httpBindHost,
+    bindPort: httpBindPort,
+    defaultPort: options.http ? options.httpPort : 0,
+    protocol: "http",
+    uiDevServerUrl: uiResolution.uiDevServerUrl,
+  })
 
   const httpsServer = options.https
     ? createHttpServer({
+        ...listenerDeps,
         bindHost: httpsBindHost,
         bindPort: httpsBindPort,
         defaultPort: options.httpsPort,
         protocol: "https",
         httpsOptions: tlsResolution?.httpsOptions,
-        workspaceManager,
-        settings,
-        fileSystemBrowser,
-        eventBus,
-        serverMeta,
-        instanceStore,
-        speechService,
-        sidecarManager,
-        previewManager,
-        authManager,
-        clientConnectionManager,
-        remoteProxySessionManager,
-        yoloManager,
-        permissionReceipts,
-        uiStaticDir: uiResolution.uiStaticDir ?? DEFAULT_UI_STATIC_DIR,
         uiDevServerUrl: undefined,
-        logger,
-        nativeParent,
-        automationBridgeToken: automationBridge.token,
       })
     : null
 
-  if (httpServer) servers.push(httpServer)
-  if (httpsServer) servers.push(httpsServer)
+  // Bridge registrations name http://127.0.0.1 only. A requested HTTP-only listener
+  // on another address (IPv6 such as ::1, or a LAN interface) cannot serve them, so
+  // the bridge then gets its own private, unannounced IPv4 loopback listener.
+  const bridgeServer = acceptsIpv4Loopback(httpBindHost)
+    ? httpServer
+    : createHttpServer({
+        ...listenerDeps,
+        bindHost: "127.0.0.1",
+        bindPort: 0,
+        defaultPort: 0,
+        protocol: "http",
+        uiDevServerUrl: uiResolution.uiDevServerUrl,
+      })
 
-  const [httpStart, httpsStart] = await Promise.all([
-    httpServer ? httpServer.start() : Promise.resolve(null),
+  servers.push(httpServer)
+  if (httpsServer) servers.push(httpsServer)
+  if (bridgeServer !== httpServer) servers.push(bridgeServer)
+  // Remote Control enters the application users reach: a private listener is not it.
+  const routingApp = (options.http || nativeParent.available || !httpsServer ? httpServer : httpsServer).instance
+  remoteControlRouter = (request, response) => routingApp.routing(request, response)
+
+  const [httpStart, httpsStart, bridgeStart] = await Promise.all([
+    httpServer.start(),
     httpsServer ? httpsServer.start() : Promise.resolve(null),
+    bridgeServer === httpServer ? Promise.resolve(null) : bridgeServer.start(),
   ])
 
   const visibleHttpStart = options.http ? httpStart : null
@@ -574,7 +639,7 @@ async function main() {
     throw new Error("No listeners started")
   }
 
-  const httpListener = httpStart ? { protocol: "http" as const, bindHost: httpBindHost, port: httpStart.port } : null
+  const httpListener = visibleHttpStart ? { protocol: "http" as const, bindHost: httpBindHost, port: visibleHttpStart.port } : null
   const httpsListener = httpsStart ? { protocol: "https" as const, bindHost: httpsBindHost, port: httpsStart.port } : null
   const remoteListener = resolvePreferredRemoteListener({ httpStart: httpListener, httpsStart: httpsListener })
 
@@ -612,17 +677,20 @@ async function main() {
   serverMeta.listeningMode = isWildcardHost(serverMeta.host) || !isLoopbackHost(serverMeta.host) ? "all" : "local"
 
   let removeAutomationBridge: (() => Promise<void>) | undefined
-  if (nativeParent.available) {
-    try {
-      if (!httpStart) throw new Error("Native automation HTTP listener did not start")
-      const automationUrl = resolveAutomationBridgeUrl({ protocol: "http", bindHost: httpBindHost, port: httpStart.port })
-      removeAutomationBridge = await publishAutomationBridge({
-        ...automationBridge,
-        url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,
-      })
-    } catch (error) {
-      logger.warn({ err: error }, "Failed to publish the native automation bridge")
-    }
+  try {
+    const automationUrl = resolveAutomationBridgeUrl(bridgeStart
+      ? { protocol: "http", bindHost: "127.0.0.1", port: bridgeStart.port }
+      : { protocol: "http", bindHost: httpBindHost, port: httpStart.port })
+    removeAutomationBridge = await publishAutomationBridge({
+      ...automationBridge,
+      url: new URL(AUTOMATION_BRIDGE_PATH, automationUrl).href,
+    })
+    missionBridge = "published"
+  } catch (error) {
+    missionBridge = "failed"
+    logger.warn({ err: error }, "Failed to publish the local automation bridge; Missions are unavailable")
+  } finally {
+    settleMissionBridge(missionBridge === "published")
   }
 
   if (serverMeta.remotePort && remoteUrl) {
@@ -648,6 +716,9 @@ async function main() {
     }
   }
 
+  // Started earlier by the user and not stopped since; runs in the background.
+  void remoteControlManager.resume()
+
   if (options.launch) {
     await launchInBrowser(serverMeta.localUrl, logger.child({ component: "launcher" }))
   }
@@ -666,6 +737,7 @@ async function main() {
           stopSidecars: () => sidecarManager.shutdown(),
           stopClientConnections: () => clientConnectionManager.shutdown(),
           stopRemoteProxySessions: () => remoteProxySessionManager.shutdown(),
+          stopRemoteControl: () => remoteControlManager.shutdown(),
           stopWorkspaces: async () => {
             instanceEventBridge.shutdown()
             yoloManager.stop()
@@ -675,6 +747,7 @@ async function main() {
           stopHttpServers: async () => {
             await pruningLifecycle.stop()
             await automationLifecycle.stop()
+            await missionsLifecycle.stop()
             nativeParent.close()
             await removeAutomationBridge?.()
             yoloManager.stop()

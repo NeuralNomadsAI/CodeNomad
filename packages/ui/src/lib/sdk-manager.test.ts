@@ -107,6 +107,25 @@ describe("SDKManager", () => {
       globalThis.fetch = original
     }
   })
+  it("opts the generated client's transcript list reads, and only those, into deferred tool images", async () => {
+    const original = globalThis.fetch
+    const seen: Array<[string, string | null, string | null]> = []
+    try {
+      globalThis.fetch = async (input, init) => {
+        const headers = new Headers(init?.headers)
+        seen.push([new URL(String(input)).pathname, headers.get("x-codenomad-media"), headers.get("x-codenomad-location")])
+        return Response.json({ data: [], cursor: {} })
+      }
+      const baseUrl = buildInstanceBaseUrl("/workspaces/first/instance", "https://codenomad.test/tenant")
+      const client = OpenCode.make({ baseUrl, fetch: createInstanceFetch(baseUrl) })
+      await client.message.list({ sessionID: "owned", limit: 200, order: "desc" }, { headers: { "x-codenomad-location": "kept" } })
+      await client.session.message.get({ sessionID: "owned", messageID: "msg" }).catch(() => undefined)
+      assert.deepEqual(seen, [
+        ["/tenant/workspaces/first/instance/api/session/owned/message", "deferred", "kept"],
+        ["/tenant/workspaces/first/instance/api/session/owned/message/msg", null, null],
+      ])
+    } finally { globalThis.fetch = original }
+  })
   it("reports environment admission failures without exposing an upstream error body", async () => {
     const original = globalThis.fetch
     try {

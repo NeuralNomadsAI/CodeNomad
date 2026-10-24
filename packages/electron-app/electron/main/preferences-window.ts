@@ -2,8 +2,8 @@ import type { BrowserWindow, WebContents } from "electron"
 import { requireHttpUrl } from "./navigation-security"
 
 export const PREFERENCES_SECTIONS = [
-  "general", "chat", "notifications", "speech", "remote", "opencode",
-  "providers", "sidecars", "config-files", "advanced", "info",
+  "general", "chat", "hotkeys", "notifications", "speech", "remote", "opencode",
+  "providers", "missions", "usage", "sidecars", "config-files", "advanced", "info",
 ] as const
 
 export type PreferencesSection = typeof PREFERENCES_SECTIONS[number]
@@ -12,6 +12,7 @@ export interface PreferencesRequest {
   section: PreferencesSection
   scrollTop?: number
   instanceId?: string
+  workspacePath?: string
   location?: { directory: string; workspaceID?: string }
 }
 
@@ -35,6 +36,9 @@ export function requirePreferencesRequest(section: unknown, context: unknown): P
   const candidate = context as Record<string, unknown>
   const instanceId = optionalString(candidate.instanceId, "instance ID", 512)
   if (instanceId) request.instanceId = instanceId
+  const workspacePath = optionalString(candidate.workspacePath, "workspace path", 32768)
+  if (workspacePath?.includes("\0")) throw new Error("Invalid Preferences workspace path")
+  if (workspacePath) request.workspacePath = workspacePath
   if (candidate.scrollTop !== undefined) {
     if (!Number.isSafeInteger(candidate.scrollTop) || (candidate.scrollTop as number) < 0 || (candidate.scrollTop as number) > 10_000_000) throw new Error("Invalid Preferences scroll position")
     request.scrollTop = candidate.scrollTop as number
@@ -58,12 +62,19 @@ export function createPreferencesUrl(baseUrl: string, section: PreferencesSectio
   return target
 }
 
-export class PreferencesWindowRegistry {
-  private record: { window: BrowserWindow; request: PreferencesRequest; loaded: boolean; guarded: boolean; navigationPending: boolean; closeApproved: boolean } | undefined
+/** Host-observed local window that opened Preferences; never renderer-supplied. */
+export interface PreferencesOpener {
+  id?: string
+  epoch: number
+}
 
-  register(window: BrowserWindow, request: PreferencesRequest): void {
+export class PreferencesWindowRegistry {
+  private record: { window: BrowserWindow; request: PreferencesRequest; opener: PreferencesOpener; loaded: boolean; guarded: boolean; navigationPending: boolean; closeApproved: boolean } | undefined
+  private openerEpoch = 0
+
+  register(window: BrowserWindow, request: PreferencesRequest, openerId?: string): void {
     if (this.current()) throw new Error("Preferences window is already registered")
-    const record = { window, request, loaded: false, guarded: false, navigationPending: false, closeApproved: false }
+    const record = { window, request, opener: { id: openerId, epoch: ++this.openerEpoch }, loaded: false, guarded: false, navigationPending: false, closeApproved: false }
     this.record = record
     window.webContents.on("did-finish-load", () => {
       if (this.record !== record) return
@@ -87,10 +98,12 @@ export class PreferencesWindowRegistry {
     })
   }
 
-  reuse(request: PreferencesRequest): BrowserWindow | undefined {
+  reuse(request: PreferencesRequest, openerId?: string): BrowserWindow | undefined {
     const window = this.current()
     if (!window) return undefined
     if (!this.record!.guarded || this.record!.navigationPending) this.record!.request = request
+    // Startup state follows the newest opener even while other drafts are guarded.
+    if (openerId && openerId !== this.record!.opener.id) this.record!.opener = { id: openerId, epoch: ++this.openerEpoch }
     if (window.isMinimized()) window.restore()
     window.show()
     window.focus()
@@ -115,6 +128,17 @@ export class PreferencesWindowRegistry {
 
   request(window: BrowserWindow): PreferencesRequest | undefined {
     return this.current() === window ? this.record?.request : undefined
+  }
+
+  opener(window: BrowserWindow): PreferencesOpener | undefined {
+    return this.current() === window ? { ...this.record!.opener } : undefined
+  }
+
+  /** Makes another local window the opener; its new epoch fences changes prepared for the previous one. */
+  adoptOpener(window: BrowserWindow, openerId: string): PreferencesOpener | undefined {
+    if (this.current() !== window) return undefined
+    if (openerId !== this.record!.opener.id) this.record!.opener = { id: openerId, epoch: ++this.openerEpoch }
+    return { ...this.record!.opener }
   }
 
   markReady(window: BrowserWindow): void {

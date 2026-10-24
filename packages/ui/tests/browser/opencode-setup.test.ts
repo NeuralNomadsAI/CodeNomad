@@ -136,8 +136,8 @@ test("missing installation and incompatible daemon expose different actions; res
 
 test("closing required-update screen leaves recovery clickable above a pending folder overlay", async () => {
   const page = await browser.newPage()
-  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.6",
-    latestVersion: "2.0.11", minimumVersion: "2.0.7", recommendedVersion: "2.0.11", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.32",
+    latestVersion: "2.1.2", minimumVersion: "2.1.2", recommendedVersion: "2.1.2", incompatibilityReason: "native_contract", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.getByRole("dialog").waitFor()
@@ -150,10 +150,11 @@ test("closing required-update screen leaves recovery clickable above a pending f
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "OpenCode setup required" }).click()
     await page.getByRole("dialog").waitFor()
-    assert.equal(await page.getByText("2.0.6", { exact: true }).count(), 1)
+    assert.equal(await page.getByText("2.0.32", { exact: true }).count(), 1)
     assert.equal(await page.locator("details[open]").count(), 0)
     await page.getByText("Version details", { exact: true }).click()
-    await page.getByText(/introduced the native step-start timestamp/).waitFor()
+    await page.getByText(/requires OpenCode 2\.1\.2 or later for correct JavaScript job ordering in Code Mode/).waitFor()
+    assert.equal(await page.getByText("settings.opencode.setup.native_contract", { exact: true }).count(), 0)
   } catch (error) { console.error(await page.locator("body").innerText()); throw error }
   finally { await page.close() }
 })
@@ -317,7 +318,7 @@ test("activation failure after installation retains the installed version and re
   } finally { await page.close() }
 })
 
-test("settings keep executable selection and management inline, disclosures collapsed and logs last", async () => {
+test("settings show management first, executable selection next, disclosures collapsed and logs last", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } })
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -353,7 +354,12 @@ test("settings keep executable selection and management inline, disclosures coll
     assert.equal(await page.locator("details").count(), 2)
     assert.equal(await page.locator("details[open]").count(), 0)
     const cards = page.locator("main .settings-section-stack > .settings-card")
-    await cards.first().locator(".selector-input").waitFor()
+    // Version and service management first, then the executable selector without a separate Runtime header.
+    await cards.first().locator(".opencode-setup-panel").waitFor()
+    await cards.nth(1).locator(".selector-input").waitFor()
+    assert.equal(await cards.nth(1).locator(".settings-card-header").count(), 0)
+    await cards.nth(1).getByText("OpenCode Binary", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("heading", { name: "Runtime", exact: true }).count(), 0)
     assert.equal(await cards.last().getByRole("heading", { name: "OpenCode Log Level", exact: true }).count(), 1, "log levels stay below all runtime controls and disclosures")
     await cards.last().locator(".selector-trigger").waitFor()
     if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-settings-summary.png"), fullPage: true })
@@ -425,6 +431,184 @@ test("French settings remain readable at narrow widths and failed checks recover
 const healthyStatus = { state: "ready", currentVersion: "2.0.16", latestVersion: "2.0.16", minimumVersion: "2.0.7",
   recommendedVersion: "2.0.15", binaryPath: "opencode2", target: "host", canUpgrade: false, canRestart: false,
   serviceState: "ready", daemonVersion: "2.0.16" }
+
+for (const surface of ["settings", "recovery"]) test(`${surface} keeps same-version restart in troubleshooting, confirmed and separate from reload`, async () => {
+  const page = await browser.newPage()
+  const mutations: unknown[] = [], errors: string[] = []
+  let release: (() => void) | undefined
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", async route => {
+    const request = route.request()
+    if (request.method() === "POST" && /\/api\/opencode\/(service|update)$/.test(request.url())) {
+      assert.ok(request.url().endsWith("/api/opencode/service"), "maintenance must not install an update")
+      mutations.push(request.postDataJSON())
+      if (request.postDataJSON().restart) await new Promise<void>(resolve => { release = resolve })
+    }
+    return route.fulfill({ json: { ...healthyStatus, canRestart: true, canReload: true,
+      latestVersion: null, checkError: "update_check_failed", target: surface === "recovery" ? "wsl" : "host" } })
+  })
+  try {
+    await page.goto(`${url}${surface === "settings" ? "?settings=1" : ""}`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    if (surface === "recovery") await page.evaluate(() => (window as any).fixture.open())
+    const panel = page.locator(".opencode-setup-panel")
+    await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    assert.equal(await panel.getByRole("button", { name: "Restart shared service", exact: true }).count(), 0, "no update-only shortcut on a healthy same-version service")
+    await panel.getByText("Troubleshooting", { exact: true }).click()
+    const restart = panel.getByRole("button", { name: "Restart OpenCode service", exact: true })
+    assert.equal(await restart.isEnabled(), true, "registry availability is not restart authority")
+    await restart.click()
+    const confirm = page.getByRole("dialog", { name: "Restart OpenCode service", exact: true })
+    await confirm.getByText(/interrupts active work in all connected clients/).waitFor()
+    assert.deepEqual(mutations, [])
+    await confirm.getByRole("button", { name: "Cancel", exact: true }).click()
+    assert.deepEqual(mutations, [])
+    await restart.evaluate(button => { (button as HTMLButtonElement).click(); (button as HTMLButtonElement).click() })
+    assert.equal(await confirm.count(), 1)
+    await confirm.getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+    await page.waitForFunction(() => document.querySelector(".opencode-setup-progress"))
+    assert.equal(await restart.isDisabled(), true)
+    for (let count = 0; count < 100 && !release; count++) await page.waitForTimeout(10)
+    assert.ok(release)
+    release()
+    await page.waitForFunction(() => !document.querySelector(".opencode-setup-progress"))
+    assert.deepEqual(mutations, [{ restart: true }])
+    assert.equal(await restart.isEnabled(), true, "restart remains available without another update")
+    assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0, "troubleshooting never resumes a workspace-open continuation")
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, `opencode-troubleshooting-${surface}.png`), fullPage: true })
+    await panel.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector(".opencode-setup-progress"))
+    assert.deepEqual(mutations, [{ restart: true }, { reload: true }])
+    assert.deepEqual(errors, [])
+  } finally { release?.(); await page.close() }
+})
+
+test("troubleshooting remains visible with restart disabled when lifecycle authority is unavailable", async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 800 } })
+  let fail = false, mutations = 0
+  await page.route("**/api/**", route => {
+    if (route.request().method() === "POST" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+    return route.fulfill(fail ? { status: 503, json: { error: "unavailable" } }
+      : { json: { ...healthyStatus, canRestart: false, canReload: false } })
+  })
+  try {
+    await page.goto(`${url}?settings=1&locale=fr&theme=dark`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    await panel.getByText("OpenCode est connecté.", { exact: true }).waitFor()
+    await panel.getByText("Dépannage", { exact: true }).click()
+    const restart = panel.getByRole("button", { name: "Redémarrer le service OpenCode", exact: true })
+    assert.equal(await restart.isDisabled(), true)
+    assert.equal(await panel.getByRole("button", { name: "Recharger la configuration OpenCode", exact: true }).count(), 0)
+    assert.equal(await page.locator("main").evaluate(element => element.scrollWidth <= element.clientWidth), true)
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-troubleshooting-fr-narrow.png"), fullPage: true })
+    fail = true
+    await panel.getByRole("button", { name: "Vérifier l’état et les mises à jour", exact: true }).click()
+    await panel.getByRole("alert").waitFor()
+    assert.equal(await restart.isDisabled(), true)
+    assert.equal(mutations, 0)
+  } finally { await page.close() }
+})
+
+test("superseding a restart confirmation cancels it and unlocks maintenance without a mutation", async () => {
+  for (const replacement of ["alert", "confirm", "prompt"]) {
+    const page = await browser.newPage()
+    let mutations = 0
+    await page.route("**/api/**", route => {
+      if (route.request().method() === "POST" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+      return route.fulfill({ json: { ...healthyStatus, canRestart: true, canReload: true } })
+    })
+    try {
+      await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+      const panel = page.locator(".opencode-setup-panel")
+      await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+      await panel.getByText("Troubleshooting", { exact: true }).click()
+      const restart = panel.getByRole("button", { name: "Restart OpenCode service", exact: true })
+      await restart.click()
+      await page.getByRole("dialog", { name: "Restart OpenCode service", exact: true }).waitFor()
+      await page.evaluate(type => (window as any).fixture.replaceDialog(type), replacement)
+      const next = page.getByRole("dialog", { name: "Fixture replacement", exact: true })
+      await next.waitFor()
+      await next.getByRole("button", { name: replacement === "alert" ? "OK" : "Cancel", exact: true }).click()
+      await next.waitFor({ state: "hidden" })
+      await page.waitForFunction(() => [...document.querySelectorAll(".opencode-setup-panel button")]
+        .filter(button => /^(Restart OpenCode service|Reload OpenCode configuration|Check status and updates)$/.test(button.textContent ?? ""))
+        .every(button => !(button as HTMLButtonElement).disabled))
+      assert.equal(await restart.isEnabled(), true)
+      assert.equal(await panel.getByRole("button", { name: "Reload OpenCode configuration", exact: true }).isEnabled(), true)
+      assert.equal(await panel.getByRole("button", { name: "Check status and updates", exact: true }).isEnabled(), true)
+      assert.equal(mutations, 0)
+      // Superseding a prompt must also settle its caller, without treating the
+      // replacement's dismissal as an affirmative answer to the old dialog.
+      await page.evaluate(() => (window as any).fixture.replaceDialog("prompt"))
+      await page.getByRole("dialog", { name: "Fixture replacement", exact: true }).waitFor()
+      await page.evaluate(() => (window as any).fixture.replaceDialog("alert"))
+      await page.waitForFunction(() => (window as any).fixture.replacementResult() === null)
+      await page.getByRole("dialog", { name: "Fixture replacement", exact: true }).getByRole("button", { name: "OK", exact: true }).click()
+      await restart.click()
+      await page.getByRole("dialog", { name: "Restart OpenCode service", exact: true }).getByRole("button", { name: "Cancel", exact: true }).click()
+      assert.equal(mutations, 0)
+    } finally { await page.close() }
+  }
+})
+
+test("a changed executable or lost restart capability fences a pending confirmation", async () => {
+  for (const change of ["binary", "capability"]) {
+    const page = await browser.newPage()
+    let permitted = true, mutations = 0
+    await page.route("**/api/**", route => {
+      if (route.request().method() === "POST" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) mutations++
+      return route.fulfill({ json: { ...healthyStatus, canRestart: permitted } })
+    })
+    try {
+      await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+      const panel = page.locator(".opencode-setup-panel")
+      await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+      await panel.getByText("Troubleshooting", { exact: true }).click()
+      await panel.getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+      const confirm = page.getByRole("dialog", { name: "Restart OpenCode service", exact: true })
+      await confirm.waitFor()
+      if (change === "binary") {
+        await page.evaluate(() => (window as any).fixture.selectBinary("/replacement/opencode"))
+        await page.waitForFunction(() => (window as any).fixture.selectedBinary() === "/replacement/opencode")
+      } else {
+        permitted = false
+        await page.evaluate(() => (window as any).fixture.refresh())
+      }
+      await confirm.getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+      await confirm.waitFor({ state: "hidden" })
+      assert.equal(mutations, 0)
+    } finally { await page.close() }
+  }
+})
+
+test("settings troubleshooting restart retains a dismissed recovery continuation for explicit Continue", async () => {
+  const page = await browser.newPage()
+  let restarts = 0
+  await page.route("**/api/**", route => {
+    if (route.request().method() === "POST" && /\/api\/opencode\/(service|update)$/.test(route.request().url())) {
+      assert.deepEqual(route.request().postDataJSON(), { restart: true })
+      restarts++
+    }
+    return route.fulfill({ json: { ...healthyStatus, canRestart: true } })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByRole("dialog").getByRole("button", { name: "Close", exact: true }).click()
+    await panel.getByText("Troubleshooting", { exact: true }).click()
+    await panel.getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+    await page.getByRole("dialog", { name: "Restart OpenCode service", exact: true }).getByRole("button", { name: "Restart OpenCode service", exact: true }).click()
+    await page.waitForFunction(() => !document.querySelector(".opencode-setup-progress"))
+    assert.equal(restarts, 1)
+    assert.equal(await page.evaluate(() => (window as any).fixture.resumed()), 0)
+    await page.evaluate(() => (window as any).fixture.reopen())
+    await page.getByRole("dialog").getByRole("button", { name: "Continue", exact: true }).click()
+    await page.waitForFunction(() => (window as any).fixture.resumed() === 1)
+    assert.equal(restarts, 1)
+  } finally { await page.close() }
+})
 
 test("instance info explicitly confirms a global V2 reload and never calls the retired dispose endpoint", async () => {
   const page = await browser.newPage()
@@ -688,7 +872,7 @@ test("settings expose and install an optional update directly, with retry feedba
     await page.getByRole("alert").waitFor()
     assert.equal(await page.getByRole("dialog").count(), 0)
     await update.click()
-    await page.locator(".opencode-setup-panel button:disabled").filter({ hasText: "OpenCode" }).waitFor()
+    await page.locator(".opencode-setup-panel button:disabled:visible").filter({ hasText: "OpenCode" }).waitFor()
     for (let count = 0; count < 100 && !releaseInstall; count++) await page.waitForTimeout(10)
     assert.ok(releaseInstall)
     releaseInstall()
@@ -719,6 +903,161 @@ test("settings distinguish manual updates and failed registry checks from an up-
     await page.getByText("Could not read the installed OpenCode version.", { exact: true }).waitFor()
     assert.equal(await page.getByText("OpenCode is up to date.", { exact: true }).count(), 0)
     assert.equal(await page.getByText("OpenCode 2.0.11 is available.", { exact: true }).count(), 0)
+  } finally { await page.close() }
+})
+
+test("OpenCode 1.x npm replacement is confirmed explicitly and a failure after removal stays retryable", async () => {
+  const page = await browser.newPage({ viewport: { width: 420, height: 900 } })
+  const posts: unknown[] = []
+  let phase: "legacy" | "removed" | "installed" = "legacy"
+  await page.route("**/api/**", route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      posts.push(request.postDataJSON())
+      if (phase === "legacy") { phase = "removed"; return route.fulfill({ status: 502, json: { success: false, error: "legacy_removed_install_failed" } }) }
+      phase = "installed"
+      return route.fulfill({ json: { success: true, version: "2.0.30" } })
+    }
+    return route.fulfill({ json: {
+      state: phase === "installed" ? "ready" : phase === "legacy" ? "update_required" : "missing",
+      currentVersion: phase === "installed" ? "2.0.30" : phase === "legacy" ? "1.18.10" : null, latestVersion: "2.0.30",
+      updateAvailable: phase !== "installed", canUpgrade: phase !== "installed", minimumVersion: "2.0.27", recommendedVersion: "2.0.29",
+      binaryPath: phase === "removed" ? "opencode2" : "C:/Users/fixture/AppData/Roaming/npm/opencode.cmd", installationSource: phase === "removed" ? undefined : "path",
+      ...(phase === "legacy" ? { legacyReplacement: { path: "C:/Users/fixture/AppData/Roaming/npm/opencode.cmd", version: "1.18.10" } } : {}),
+      versionAssessment: phase === "installed" ? "untested" : "incompatible", target: "host", canRestart: false,
+      serviceState: phase === "installed" ? "ready" : undefined, daemonVersion: phase === "installed" ? "2.0.30" : undefined,
+    } })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    const replace = panel.getByRole("button", { name: "Replace OpenCode 1.18.10 with OpenCode 2", exact: true })
+    await replace.waitFor()
+    await panel.getByText(/OpenCode 1\.18\.10 was installed with npm/).waitFor()
+    assert.equal(await panel.getByText(/Select a supported executable/).count(), 0, "a replaceable npm installation is never a manual dead end")
+    await replace.click()
+    const dialog = page.getByRole("dialog", { name: "Replace OpenCode 1.18.10?", exact: true })
+    await dialog.getByText(/imports OpenCode 1\.x conversations itself/).waitFor()
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-legacy-confirm.png") })
+    await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
+    await dialog.waitFor({ state: "hidden" })
+    assert.deepEqual(posts, [], "dismissing the confirmation never installs")
+    await replace.click()
+    await dialog.getByRole("button", { name: "Replace OpenCode 1.18.10 with OpenCode 2", exact: true }).click()
+    await page.getByRole("alert").filter({ hasText: /OpenCode 1\.x was removed, but OpenCode 2 could not be installed/ }).waitFor()
+    const consent = { replaceLegacy: { path: "C:/Users/fixture/AppData/Roaming/npm/opencode.cmd", version: "1.18.10" } }
+    assert.deepEqual(posts, [consent], "the confirmation names the exact installation shown")
+    const retry = panel.getByRole("button", { name: "Install and start OpenCode", exact: true })
+    await retry.click()
+    await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    assert.deepEqual(posts, [consent, {}], "retry is an ordinary installation, never an automatic replay")
+    assert.equal(await page.getByRole("alert").count(), 0)
+  } finally { await page.close() }
+})
+
+test("an older winget OpenCode stays untouched while OpenCode 2 is installed beside it", async () => {
+  const page = await browser.newPage()
+  const posts: unknown[] = []
+  const statusReads: string[] = []
+  let installed = false
+  const foreignInstallation = { path: "C:/Users/fixture/AppData/Local/Microsoft/WinGet/Links/opencode.exe", version: "1.19.0", source: "winget", packageId: "SST.opencode" }
+  await page.route("**/api/**", route => {
+    const request = route.request()
+    if (request.method() === "GET" && new URL(request.url()).pathname === "/api/opencode/update") statusReads.push(new URL(request.url()).search)
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      posts.push(request.postDataJSON()); installed = true
+      return route.fulfill({ json: { success: true, version: "2.0.30" } })
+    }
+    return route.fulfill({ json: { state: installed ? "ready" : "update_required", currentVersion: installed ? "2.0.30" : "1.19.0",
+      latestVersion: "2.0.30", updateAvailable: !installed, canUpgrade: !installed, minimumVersion: "2.0.27", recommendedVersion: "2.0.29",
+      binaryPath: installed ? "C:/Users/fixture/AppData/Roaming/npm/node_modules/@opencode/cli/bin/opencode.exe" : foreignInstallation.path,
+      installationSource: installed ? "managed" : "path", foreignInstallation, versionAssessment: installed ? "untested" : "incompatible",
+      target: "host", canRestart: false, serviceState: installed ? "ready" : undefined, daemonVersion: installed ? "2.0.30" : undefined } })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    const install = panel.getByRole("button", { name: "Install OpenCode 2 for CodeNomad", exact: true })
+    await install.waitFor()
+    const notice = panel.getByRole("note")
+    await notice.getByText(/OpenCode 1\.19\.0 was found at .*WinGet.*requires OpenCode 2\.0\.27 or later and does not modify this installation/).waitFor()
+    await notice.getByText("This older version was installed with winget.", { exact: true }).waitFor()
+    await notice.getByText(/alongside the older version/).waitFor()
+    await notice.getByText(/may still start the older version/).waitFor()
+    assert.equal(await notice.locator("code").innerText(), "winget uninstall SST.opencode")
+    if (process.env.CODENOMAD_SETUP_CAPTURE) await page.screenshot({ path: path.join(process.env.CODENOMAD_SETUP_CAPTURE, "opencode-winget-alongside.png"), fullPage: true })
+    assert.ok(statusReads.length > 0 && statusReads.every(search => search === ""), "automatic reads use cached server probes")
+    await panel.getByRole("button", { name: "Check status and updates", exact: true }).click()
+    await panel.getByText("Status and update check complete.", { exact: true }).waitFor()
+    assert.equal(statusReads.at(-1), "?recheck=1", "the explicit Check re-probes installations")
+    const automaticReads = statusReads.length
+    await install.click()
+    await panel.getByText("OpenCode is connected.", { exact: true }).waitFor()
+    assert.equal(await page.getByRole("dialog").count(), 0, "installing beside a foreign OpenCode needs no removal confirmation")
+    assert.deepEqual(posts, [{}])
+    assert.ok(statusReads.slice(automaticReads).every(search => search === ""), "post-install reads never force a probe")
+    await panel.getByText(/uses its OpenCode 2 installation in your user npm folder/).waitFor()
+    assert.equal(await notice.getByText(/alongside the older version/).count(), 0)
+    await notice.getByText(/may still start the older version/).waitFor()
+    assert.equal(await install.count(), 0)
+  } finally { await page.close() }
+})
+
+test("a broken OpenCode 1.x npm install stays replaceable and a partial removal is reported truthfully", async () => {
+  const page = await browser.newPage()
+  const posts: unknown[] = []
+  const legacyReplacement = { path: "C:/Users/fixture/AppData/Roaming/npm/opencode.cmd", version: "1.18.10" }
+  await page.route("**/api/**", route => {
+    const request = route.request()
+    if (request.url().endsWith("/api/opencode/update") && request.method() === "POST") {
+      posts.push(request.postDataJSON())
+      return route.fulfill({ status: 502, json: { success: false, error: "legacy_partially_removed" } })
+    }
+    // The 1.x placeholder executable fails `--version`, so the probe reports an error state.
+    return route.fulfill({ json: { state: "error", currentVersion: null, latestVersion: "2.0.30", updateAvailable: true, canUpgrade: true,
+      minimumVersion: "2.0.27", recommendedVersion: "2.0.29", binaryPath: legacyReplacement.path, installationSource: "path", legacyReplacement,
+      versionAssessment: "untested", target: "host", canRestart: false } })
+  })
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    await panel.getByRole("button", { name: "Replace OpenCode 1.18.10 with OpenCode 2", exact: true }).click()
+    await page.getByRole("dialog", { name: "Replace OpenCode 1.18.10?", exact: true })
+      .getByRole("button", { name: "Replace OpenCode 1.18.10 with OpenCode 2", exact: true }).click()
+    await page.getByRole("alert").filter({ hasText: /may be only partly removed.*npm uninstall -g opencode-ai/ }).waitFor()
+    assert.deepEqual(posts, [{ replaceLegacy: legacyReplacement }])
+  } finally { await page.close() }
+})
+
+test("an outdated foreign OpenCode 2 is described by the minimum version, not as OpenCode 1.x", async () => {
+  const page = await browser.newPage()
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.20", latestVersion: "2.0.30",
+    updateAvailable: true, canUpgrade: true, minimumVersion: "2.0.27", recommendedVersion: "2.0.29", binaryPath: "/opt/homebrew/bin/opencode",
+    installationSource: "path", foreignInstallation: { path: "/opt/homebrew/bin/opencode", version: "2.0.20", source: "other" },
+    versionAssessment: "incompatible", target: "host", canRestart: false } }))
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const notice = page.locator(".opencode-setup-panel").getByRole("note")
+    await notice.getByText("OpenCode 2.0.20 was found at /opt/homebrew/bin/opencode. CodeNomad requires OpenCode 2.0.27 or later and does not modify this installation.", { exact: true }).waitFor()
+    assert.equal(await notice.getByText(/winget/).count(), 0)
+  } finally { await page.close() }
+})
+
+test("an older OpenCode occupying the user npm folder explains why OpenCode 2 cannot be installed beside it", async () => {
+  const page = await browser.newPage()
+  const occupying = "/home/fixture/.local/bin/opencode"
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "1.17.18", latestVersion: "2.1.2",
+    updateAvailable: true, canUpgrade: false, minimumVersion: "2.1.2", recommendedVersion: "2.1.2", binaryPath: occupying, installationSource: "path",
+    foreignInstallation: { path: occupying, version: "1.17.18", source: "other", blocked: { reason: "occupied", path: occupying } },
+    versionAssessment: "incompatible", target: "host", canRestart: false } }))
+  try {
+    await page.goto(`${url}?settings=1`, { waitUntil: "domcontentloaded", timeout: 90_000 })
+    const panel = page.locator(".opencode-setup-panel")
+    const notice = panel.getByRole("note")
+    await notice.getByText(`OpenCode 2 cannot be installed for CodeNomad while ${occupying} uses the opencode command name in your user npm folder. Move or rename that command, then choose Check status and updates.`, { exact: true }).waitFor()
+    assert.equal(await panel.getByRole("button", { name: "Install OpenCode 2 for CodeNomad", exact: true }).count(), 0)
+    assert.equal(await notice.getByText(/alongside the older version/).count(), 0)
+    await panel.getByRole("button", { name: "Check status and updates", exact: true }).waitFor()
   } finally { await page.close() }
 })
 

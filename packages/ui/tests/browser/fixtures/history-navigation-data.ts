@@ -2,6 +2,21 @@ export const navigationMessageId = (index: number) => `msg_${String(index).padSt
 export const navigationMessage = (index: number) => ({ id: navigationMessageId(index), type: "user" as const,
   time: { created: index + 1 }, text: `Passage ${index}\n\n${"Navigation history content. ".repeat(5 + index % 7)}` })
 
+/**
+ * Long replies (1400 resident, 600 historical) whose only `Deepword<index>` lies
+ * far below their start, each followed by a tall tool row whose measured height
+ * differs from the virtualizer's estimate.
+ */
+export const deepNavigationMessage = (index: number): any => {
+  const id = navigationMessageId(index), model = { providerID: "fixture", id: "fixture" }
+  if (index === 1400 || index === 600) return { id, type: "assistant", agent: "build", model, time: { created: index + 1, completed: index + 2 },
+    content: [{ type: "text", text: `Passage ${index}\n\n${"Filler paragraph content for depth.\n\n".repeat(150)}Deepword${index} occurrence here.\n\nEnd.` }] }
+  if (index === 1401 || index === 601) return { id, type: "assistant", agent: "build", model, time: { created: index + 1, completed: index + 2 },
+    content: [{ type: "tool", id: `${id}-tool`, name: "shell", time: { created: index + 1 },
+      state: { status: "completed", input: { command: "fixture" }, content: [{ type: "text", text: "Output line\n".repeat(200) }] } }] }
+  return navigationMessage(index)
+}
+
 export const mixedNavigationMessage = (index: number): any => {
   const id = navigationMessageId(index)
   if (index % 5 === 0) return navigationMessage(index)

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
+import { createRoot } from "solid-js"
 
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { serverApi } from "../lib/api-client.ts"
@@ -11,10 +12,12 @@ import { beginMessageHistoryTraversal, deleteSession, fetchAgents, fetchProvider
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
 import { getInstanceMetadata, setInstanceMetadata } from "./instance-metadata.ts"
 import { loadInstanceMetadata } from "../lib/hooks/use-instance-metadata.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, projectOpenCodeMessages } from "./opencode-data.ts"
+import { useActiveSessionMessageLoad } from "../lib/hooks/use-active-session-message-load.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision, projectOpenCodeMessages } from "./opencode-data.ts"
 import {
   clearInstanceDeletedSessionAuthority,
   agents,
+  getMessageLoadSignal,
   getSessionListError,
   getSessionListIds,
   getSessionMessagesLoadError,
@@ -24,6 +27,7 @@ import {
   providers,
   prependSessionListId,
   sessions,
+  sessionMessagesNeedLoad,
   setSessions,
   setActiveSession,
 } from "./session-state.ts"
@@ -354,7 +358,7 @@ describe("session request authority", () => {
         assert.deepEqual(store.getSessionMessageIds(sessionId), ["msg_0198", "msg_0199"])
         assert.equal(store.getMessageWindow(sessionId), window)
         assert.deepEqual(store.getScrollSnapshot(sessionId, "message-stream"), snapshot)
-        assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId), false)
+        assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
       } finally { controller.abort(); seek.resolve({ data: [], cursor: {} }); cleanup() }
     })
   }
@@ -455,6 +459,156 @@ describe("session request authority", () => {
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["new-message"])
       assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
     } finally {
+      cleanup()
+    }
+  })
+
+  it("releases a generation-stale initial load so an ordinary load publishes only fresh messages", async () => {
+    const instanceId = "generation-stale-initial-load", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const stale = deferred<any>()
+    let calls = 0
+    client.message = { list: () => ++calls === 1
+      ? stale.promise
+      : Promise.resolve({ data: [apiMessage("fresh")], cursor: {} }) }
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    const request = loadMessages(instanceId, sessionId)
+    try {
+      assert.equal(calls, 1)
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId), true)
+      assert.equal(sessionMessagesNeedLoad(instanceId, sessionId), false)
+      const generation = getOpenCodeInstanceGeneration(instanceId)
+      const signal = getMessageLoadSignal(instanceId, sessionId)!
+      destroyOpenCodeData(instanceId)
+      assert.ok(getOpenCodeInstanceGeneration(instanceId) > generation)
+      assert.equal(getMessageLoadSignal(instanceId, sessionId), signal, "generation invalidation must not advance the load epoch")
+      assert.equal(signal.aborted, false)
+
+      stale.resolve({ data: [apiMessage("stale")], cursor: {} })
+      assert.equal(await request, false)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [])
+      assert.equal(messagesLoaded().get(instanceId)?.has(sessionId) ?? false, false)
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
+      assert.equal(getSessionMessagesLoadError(instanceId, sessionId), undefined)
+      assert.equal(sessionMessagesNeedLoad(instanceId, sessionId), true)
+
+      assert.equal(await loadMessages(instanceId, sessionId), true)
+      assert.equal(calls, 2)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["fresh"])
+      assert.equal(store.getMessage("stale"), undefined)
+      assert.equal(sessionMessagesNeedLoad(instanceId, sessionId), false)
+    } finally {
+      stale.resolve({ data: [], cursor: {} })
+      await request
+      cleanup()
+    }
+  })
+
+  it("releases a failed initial load but suppresses ordinary retries after its load error", async () => {
+    const instanceId = "failed-initial-load-no-retry", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    let calls = 0
+    client.message = { list: async () => { calls += 1; throw new Error("initial transcript unavailable") } }
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    try {
+      await assert.rejects(loadMessages(instanceId, sessionId), /initial transcript unavailable/)
+      assert.match(getSessionMessagesLoadError(instanceId, sessionId)!, /initial transcript unavailable/)
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
+      assert.equal(sessionMessagesNeedLoad(instanceId, sessionId), true)
+      assert.equal(await loadMessages(instanceId, sessionId), false)
+      assert.equal(calls, 1, "reopening the reactive gate must not retry a failed HTTP request")
+      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), [])
+    } finally { cleanup() }
+  })
+
+  it("releases an inherited spinner on a non-spinner load without letting an old load clear a newer spinner", async () => {
+    const instanceId = "inherited-message-spinner", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const stale = deferred<any>(), latest = deferred<any>()
+    let calls = 0
+    client.message = { list: () => {
+      calls += 1
+      if (calls === 1) return stale.promise
+      if (calls === 2) return Promise.resolve({ data: [apiMessage("oldest")], cursor: {} })
+      return latest.promise
+    } }
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    const oldRequest = loadMessages(instanceId, sessionId)
+    let newerRequest: Promise<boolean> | undefined
+    try {
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId), true)
+      assert.equal(await loadMessages(instanceId, sessionId, { force: true, intent: "oldest" }), true)
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["oldest"])
+
+      newerRequest = loadMessages(instanceId, sessionId, { force: true, intent: "latest" })
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId), true)
+      stale.resolve({ data: [apiMessage("stale")], cursor: {} })
+      assert.equal(await oldRequest, false)
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId), true, "the newer load still owns the spinner")
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["oldest"])
+      latest.resolve({ data: [apiMessage("latest")], cursor: {} })
+      assert.equal(await newerRequest, true)
+      assert.equal(calls, 3)
+      assert.equal(loading().loadingMessages.get(instanceId)?.has(sessionId) ?? false, false)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["latest"])
+    } finally {
+      stale.resolve({ data: [], cursor: {} })
+      latest.resolve({ data: [], cursor: {} })
+      await Promise.all([oldRequest, newerRequest])
+      cleanup()
+    }
+  })
+
+  it("automatically reloads the active transcript after a generation-stale load reopens the real store gate", async () => {
+    const instanceId = "reactive-generation-stale-load", sessionId = "session"
+    const { client, cleanup } = setup(instanceId)
+    const stale = deferred<any>(), fresh = deferred<any>()
+    const requests: Promise<boolean>[] = [], errors: unknown[] = []
+    let calls = 0, dispose = () => {}
+    client.message = { list: () => ++calls === 1 ? stale.promise : fresh.promise }
+    setSessions(previous => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+    createRoot(done => {
+      dispose = done
+      useActiveSessionMessageLoad({
+        isActive: () => true,
+        instanceId: () => instances().get(instanceId)!.id,
+        session: () => sessions().get(instanceId)?.get(sessionId),
+        shouldLoad: () => sessionMessagesNeedLoad(instanceId, sessionId),
+        waitForHydration: async () => {},
+        loadMessages: (...args) => {
+          const request = loadMessages(...args)
+          requests.push(request)
+          return request
+        },
+        onError: error => errors.push(error),
+      })
+    })
+    try {
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(calls, 1)
+      destroyOpenCodeData(instanceId)
+      stale.resolve({ data: [apiMessage("stale")], cursor: {} })
+      assert.equal(await requests[0], false)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(calls, 2, "the active hook must reload without navigation or a forced request")
+      const store = messageStoreBus.getOrCreate(instanceId)
+      assert.deepEqual(store.getSessionMessageIds(sessionId), [])
+      fresh.resolve({ data: [apiMessage("fresh")], cursor: {} })
+      assert.equal(await requests[1], true)
+      await new Promise<void>(resolve => setImmediate(resolve))
+      assert.equal(calls, 2, "publishing the fresh session object must not restart the load")
+      assert.deepEqual(store.getSessionMessageIds(sessionId), ["fresh"])
+      assert.equal(store.getMessage("stale"), undefined)
+      assert.equal(sessionMessagesNeedLoad(instanceId, sessionId), false)
+      assert.deepEqual(errors, [])
+    } finally {
+      dispose()
+      stale.resolve({ data: [], cursor: {} })
+      fresh.resolve({ data: [], cursor: {} })
+      await Promise.allSettled(requests)
       cleanup()
     }
   })
@@ -729,7 +883,10 @@ describe("session request authority", () => {
       await loadMessages(instanceId, sessionId, { force: true })
       assert.deepEqual(store.getSessionMessageIds(sessionId), Array.from({ length: 200 }, (_, index) => `message-${index + 201}`))
       assert.equal(store.getMessageInfo("message-1"), undefined)
-      assert.notStrictEqual(store.getMessageInfo("message-201"), retainedInfo)
+      // A forced refresh of identical content must repopulate semantics without
+      // swapping the resident info identity: content-equal infos keep their
+      // object so identity-sensitive render caches stay valid.
+      assert.equal(store.getMessageInfo("message-201"), retainedInfo)
       assert.equal(store.getSessionUsage(sessionId)?.totalCost, 200)
       assert.equal(hasMoreMessages(instanceId, sessionId), true)
 
@@ -1338,7 +1495,7 @@ describe("session request authority", () => {
   })
 
   for (const mutation of ["cancel", "revert"] as const) {
-    it(`rejects pre-${mutation} history after idle disposes the reducer`, async () => {
+    it(`rejects pre-${mutation} history after settlement disposes the reducer`, async () => {
       const instanceId = `stale-${mutation}-idle-page`, sessionId = "session"
       const { client, cleanup } = setup(instanceId)
       const stale = deferred<any>()
@@ -1357,10 +1514,10 @@ describe("session request authority", () => {
           ? { id: "mutation", type: "session.inbox.cancelled", created: 2, data: { sessionID: sessionId, inboxID: "deleted" } } as any
           : { id: "mutation", type: "session.revert.committed", created: 2, data: { sessionID: sessionId, to: "deleted" } } as any)
         const revision = getOpenCodeMutationRevision(instanceId, sessionId)
-        const idle = { id: "idle", type: "session.idle", created: 3, data: { sessionID: sessionId } } as any
-        const data = applyOpenCodeDataEvent(instanceId, "/work", idle)
+        const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 3, data: { sessionID: sessionId } } as any
+        const data = applyOpenCodeDataEvent(instanceId, "/work", settled)
         projectOpenCodeMessages(instanceId, sessionId, data)
-        finishOpenCodeDataEvent(instanceId, idle)
+        finishOpenCodeDataEvent(instanceId, settled)
         assert.equal(getOpenCodeMutationRevision(instanceId, sessionId), revision)
         const next = applyOpenCodeDataEvent(instanceId, "/work", {
           id: "next", type: "permission.replied", created: 4, data: { sessionID: sessionId, requestID: "missing" },
@@ -1369,7 +1526,8 @@ describe("session request authority", () => {
         stale.resolve({ data: [apiMessage("deleted")], cursor: { next: "newer" } })
         assert.equal(await request, false)
         const store = messageStoreBus.getOrCreate(instanceId)
-        assert.deepEqual(store.getSessionMessageIds(sessionId), ["latest"])
+        // The settlement's native idle record is projected; the pre-mutation page is not.
+        assert.deepEqual(store.getSessionMessageIds(sessionId), ["latest", "msg_settled"])
         assert.equal(store.getMessage("deleted"), undefined)
         assert.equal(await loadOldestMessageWindow(instanceId, sessionId), true)
         assert.deepEqual(store.getSessionMessageIds(sessionId), ["survivor"])
@@ -2180,6 +2338,7 @@ describe("session request authority", () => {
   it("preserves roots added while a complete catalog request is in flight", async () => {
     const instanceId = "session-catalog-concurrent-root"
     const { client, cleanup } = setup(instanceId)
+    setInstanceMetadata(instanceId, { project: { id: "project", canonical: "/work" } as any })
     const response = deferred<any>()
     ;(client.session as any).list = () => response.promise
     setSessions((previous) => new Map(previous).set(instanceId, new Map([

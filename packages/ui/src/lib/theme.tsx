@@ -8,6 +8,7 @@ import {
   normalizeColorScheme,
   type NormalizedColorScheme,
 } from "./theme-scheme"
+import { resolveCssColor } from "./css-color"
 
 export type ThemeMode = "system" | "light" | "dark"
 
@@ -65,7 +66,7 @@ const resolvePaletteColors = (dark: boolean): ResolvedPaletteColors => {
   const rootStyle = typeof window !== "undefined" ? getComputedStyle(document.documentElement) : null
 
   return {
-    backgroundDefault: readCssVar("--surface-base", fallbackSet.backgroundDefault, rootStyle),
+    backgroundDefault: rootStyle ? resolveCssColor("--surface-canvas") : fallbackSet.backgroundDefault,
     backgroundPaper: readCssVar("--surface-secondary", fallbackSet.backgroundPaper, rootStyle),
     primary: readCssVar("--accent-primary", fallbackSet.primary, rootStyle),
     primaryContrast: readCssVar("--text-on-accent", fallbackSet.primaryContrast, rootStyle),
@@ -147,6 +148,9 @@ export function ThemeProvider(props: { children: JSX.Element }) {
         borderRadius: 0,
       },
       components: {
+        // No press ripple: pointer and touch presses do not animate, like the Message
+        // content trigger. The keyboard focus ripple stays as the focus-visible cue.
+        MuiButtonBase: { defaultProps: { disableTouchRipple: true } },
         MuiIconButton: {
           styleOverrides: {
             root: {

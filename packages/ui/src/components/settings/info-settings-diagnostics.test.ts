@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import type { ServerMeta } from "../../../../server/src/api-types"
-import { buildDiagnosticReport, getServerOperatingSystem } from "./info-settings-diagnostics"
+import { buildBugReportEnvironment, buildDiagnosticReport, getServerOperatingSystem } from "./info-settings-diagnostics"
 
 const labels = {
   reportTitle: "CodeNomad Diagnostic Report",
@@ -22,6 +22,8 @@ const labels = {
   remoteListener: "Remote listener",
   workspaceRoot: "Workspace root",
   candidateAddresses: "Candidate addresses",
+  opencodeVersion: "OpenCode Version",
+  opencodeService: "Running service",
   modes: { local: "local", all: "all", specific: "specific" },
   scopes: { external: "external", internal: "internal", loopback: "loopback" },
 }
@@ -61,6 +63,25 @@ describe("buildDiagnosticReport", () => {
     assert.match(report, /Server operating system: —/)
     assert.match(report, /Server architecture: —/)
     assert.match(report, /Client operating system: Windows x64/)
+  })
+
+  it("includes the OpenCode version, and the running service only when it differs", () => {
+    const runtime = { host: "tauri", platform: "desktop", windowContext: "local" }
+    const at = new Date("2026-08-10T12:00:00.000Z")
+    const same = buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at, { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.29" })
+    assert.match(same, /OpenCode Version: 2\.0\.29/)
+    assert.doesNotMatch(same, /Running service/)
+    const differing = buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at, { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.28" })
+    assert.match(differing, /OpenCode Version: 2\.0\.29\nRunning service: 2\.0\.28/)
+    assert.match(buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at, { opencodeDaemon: "2.0.28" }), /OpenCode Version: 2\.0\.28/)
+    assert.match(buildDiagnosticReport(meta, "Windows 11 x64", runtime, labels, at), /OpenCode Version: —/)
+  })
+
+  it("prefers the server's readable OS release over its platform family", () => {
+    const named = { ...meta, system: { platform: "win32", arch: "x64", name: "Windows 11 (10.0.26200)" } }
+    assert.equal(getServerOperatingSystem(named), "Windows 11 (10.0.26200)")
+    assert.match(buildDiagnosticReport(named, "Windows 11 x64", { host: "tauri", platform: "desktop", windowContext: "local" }, labels),
+      /Server operating system: Windows 11 \(10\.0\.26200\)/)
   })
 
   it("formats native platform names and preserves unfamiliar server platforms", () => {
@@ -192,5 +213,29 @@ describe("buildDiagnosticReport", () => {
     assert.match(loopback, /Listening mode: local/)
     assert.match(loopback, /ipv6\/loopback: https:\/\/\[::1\]:9898/)
     assert.doesNotMatch(loopback, /https:\/\/127\.0\.0\.1:9898/)
+  })
+})
+
+describe("buildBugReportEnvironment", () => {
+  it("reports differing versions and the web browser without network or path details", () => {
+    const environment = buildBugReportEnvironment({ ...meta, ui: { version: "1.2.4-dev", source: "downloaded" } }, "Windows x64",
+      { host: "web", platform: "mobile", windowContext: "remote" },
+      { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.28", userAgent: "Mozilla/5.0 Test" })
+    assert.deepEqual(environment, {
+      codenomadVersion: "1.2.3 (UI 1.2.4-dev)",
+      opencodeVersion: "2.0.29 (running daemon 2.0.28)",
+      operatingSystem: "Windows x64",
+      additionalContext: "- Client: Web browser (mobile, remote window)\n- UI source: downloaded\n- Server OS: Linux arm64\n- Browser: Mozilla/5.0 Test",
+    })
+    assert.doesNotMatch(JSON.stringify(environment), /192\.168|127\.0\.0\.1|\/home\/user/)
+  })
+
+  it("keeps a single version and omits the browser agent on desktop hosts", () => {
+    const environment = buildBugReportEnvironment(meta, "macOS arm64", { host: "electron", platform: "desktop", windowContext: "local" },
+      { opencodeInstalled: "2.0.29", opencodeDaemon: "2.0.29", userAgent: "Electron UA" })
+    assert.equal(environment.codenomadVersion, "1.2.3")
+    assert.equal(environment.opencodeVersion, "2.0.29")
+    assert.doesNotMatch(environment.additionalContext, /Electron UA/)
+    assert.equal(buildBugReportEnvironment(null, "Unknown", { host: "tauri", platform: "desktop", windowContext: "local" }, {}).opencodeVersion, "")
   })
 })

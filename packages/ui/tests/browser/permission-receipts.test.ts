@@ -113,6 +113,28 @@ test("an empty bounded scan page keeps pagination reachable until a receipt is f
   } finally { await page.close() }
 })
 
+test("drafts never request permission receipts and resume when a real session is selected", async () => {
+  const page = await browser.newPage()
+  try {
+    const requests: Route[] = []
+    const errors = await prepare(page, route => {
+      requests.push(route)
+      return fulfill(route, [])
+    })
+    await page.goto(`${url}?direct`)
+    await waitRequests(requests, 1)
+    await page.evaluate(() => (window as any).receiptFixture.select({ instanceId: "receipt-instance", sessionId: "__no_session_draft__" }))
+    await page.waitForTimeout(50)
+    await page.evaluate(() => (window as any).receiptFixture.reconnect())
+    await page.waitForTimeout(50)
+    assert.equal(requests.length, 1)
+    await page.evaluate(() => (window as any).receiptFixture.select({ instanceId: "receipt-instance", sessionId: "session-a" }))
+    await waitRequests(requests, 2)
+    assert.ok(requests.every(request => !request.request().url().includes("__no_session_draft__")))
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("event bursts reconcile authoritatively with a trailing read, retry preserves snapshots, and stale routes cannot publish", async () => {
   const page = await browser.newPage()
   try {
@@ -151,6 +173,29 @@ test("event bursts reconcile authoritatively with a trailing read, retry preserv
     await page.evaluate(() => (window as any).receiptFixture.active(true))
     await waitRequests(requests, 7)
     await fulfill(requests[6], [])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("remounting a virtualized row reuses its completed snapshot until a change", async () => {
+  const page = await browser.newPage()
+  try {
+    const requests: Route[] = []
+    const errors = await prepare(page, route => { requests.push(route) })
+    await page.goto(`${url}?direct`)
+    await waitRequests(requests, 1)
+    await fulfill(requests[0], [receipt("one", "once")])
+    await page.getByText("Autorisé une fois", { exact: true }).waitFor()
+    for (let i = 0; i < 5; i++) {
+      await page.evaluate(() => (window as any).receiptFixture.active(false))
+      await page.evaluate(() => (window as any).receiptFixture.active(true))
+    }
+    await page.getByText("Autorisé une fois", { exact: true }).waitFor()
+    await page.waitForTimeout(50)
+    assert.equal(requests.length, 1, "a remounted row shows its retained snapshot without another read")
+    await page.evaluate(() => (window as any).receiptFixture.event())
+    await waitRequests(requests, 2)
+    await fulfill(requests[1], [])
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
@@ -214,12 +259,19 @@ test("expanded unanchored receipts participate in latest, anchor and manual scro
     await page.mouse.down()
     await page.waitForTimeout(750)
     const heldOffset = await stream.evaluate(element => element.scrollTop)
+    const heldAnchor = await anchorOffset()
     await refresh(2)
-    assert.ok(Math.abs(await stream.evaluate(element => element.scrollTop) - heldOffset) <= 2, "prefix resize must not move a held native thumb")
+    // The receipts are the transcript's first virtual row: Virtua compensates
+    // their growth under a held thumb like any row's (and a roll's), so the
+    // read content stays in place and the offset absorbs the growth; Chromium
+    // continues the drag from the new offset.
+    const grownOffset = await stream.evaluate(element => element.scrollTop)
+    assert.ok(grownOffset > heldOffset + 300, "the prefix grew above the held thumb's position")
+    assert.ok(Math.abs(await anchorOffset() - heldAnchor) <= 2, "prefix growth under a held native thumb keeps the read content in place")
     await page.mouse.move(thumb.x, thumb.y + 60, { steps: 8 })
     await page.mouse.up()
     await page.waitForTimeout(250)
-    assert.ok(await stream.evaluate(element => element.scrollTop) > heldOffset + 100, "thumb motion owns the new position after growth")
+    assert.ok(await stream.evaluate(element => element.scrollTop) > grownOffset + 100, "thumb motion owns the new position after growth")
 
     await page.getByRole("button", { name: "Aller au premier message", exact: true }).click()
     await stream.hover()

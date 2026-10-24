@@ -4,6 +4,7 @@ import { backgroundReads } from "./background-read-queue"
 import { authenticatedFetch } from "./auth-recovery"
 import { prioritizedRead } from "./prioritized-read"
 import { SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../../../server/src/api-types"
+import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 
 class SDKManager {
   private clients = new Map<string, OpenCodeClient>()
@@ -52,9 +53,12 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
     // scheduling decisions; forwarding must retain the generated URL unchanged.
     const apiPath = requestUrl.pathname.startsWith(basePath)
       ? `/${requestUrl.pathname.slice(basePath.length)}` : requestUrl.pathname
+    const method = init?.method ?? (input instanceof Request ? input.method : "GET")
+    // Transcript pages: CodeNomad defers their large tool images to session-media paths.
+    const requestInit = method === "GET" && /^\/api\/session\/[^/]+\/message\/?$/.test(apiPath) ? withDeferredMedia(input, init) : init
     const read = async () => {
       const response = await authenticatedFetch(input, {
-        ...init,
+        ...requestInit,
         credentials: init?.credentials ?? "include",
       })
       if (response.status === 426) {
@@ -74,7 +78,6 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
       }
       return response
     }
-    const method = init?.method ?? (input instanceof Request ? input.method : "GET")
     // Project identity gates the visible cross-worktree session list. Promote
     // this dependency with selection rather than leaving it behind Git scans.
     if (method === "GET" && /^\/api\/location\/?$/.test(apiPath)) {
@@ -88,6 +91,12 @@ export function createInstanceFetch(baseUrl: string, isForeground: () => boolean
     }
     return read()
   }
+}
+
+export function withDeferredMedia(input: RequestInfo | URL, init: RequestInit | undefined): RequestInit {
+  const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined))
+  headers.set(DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE)
+  return { ...init, headers }
 }
 
 function normalizeProxyPath(proxyPath: string): string {

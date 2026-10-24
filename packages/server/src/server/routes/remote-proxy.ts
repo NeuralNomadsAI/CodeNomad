@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify"
 import { z } from "zod"
 import type { RemoteProxySessionCreateResponse } from "../../api-types"
-import { isLoopbackAddress } from "../../auth/http-auth"
+import { isLocalRequest } from "../../remote-control/request-origin"
 import type { Logger } from "../../logger"
 import type { RemoteProxySessionManager } from "../remote-proxy"
 
@@ -32,7 +32,7 @@ export function registerRemoteProxyRoutes(app: FastifyInstance, deps: RouteDeps)
   })
 
   app.delete("/api/remote-proxy/sessions/:id", async (request, reply): Promise<{ ok: boolean } | { error: string }> => {
-    if (!isLoopbackAddress(request.socket.remoteAddress)) {
+    if (!isLocalRequest(request)) {
       reply.code(404)
       return { error: "Not found" }
     }

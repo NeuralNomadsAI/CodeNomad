@@ -15,13 +15,14 @@
   @apply text-center max-w-sm;
 }
 
-.session-center-column[data-session-center-width="narrow"] .empty-state-logo {
-  height: 9rem;
-}
-
 .session-center-column[data-session-center-width="narrow"] .empty-state-brand-title {
   font-size: 1.5rem;
   line-height: 2rem;
+}
+
+/* The logo follows its title: the narrow title's 1.5rem takes 3.2rem. */
+.session-center-column[data-session-center-width="narrow"] .empty-state-logo {
+  height: 3.2rem;
 }
 
 .empty-state-content h3 {

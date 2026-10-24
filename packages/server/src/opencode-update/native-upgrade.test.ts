@@ -5,6 +5,7 @@ import os from "node:os"
 import path from "node:path"
 import { upgradeSharedOpenCode } from "./native-upgrade"
 import { installSharedOpenCode, npmExecutable, npmCommandDirectory } from "./shared-installation"
+import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
 
 test("native upgrade scopes bundled npm and prefix and cleans its shim on success/failure", async () => {
   for (const platform of ["win32", "linux"] as const) for (const fail of [false, true]) {
@@ -57,18 +58,22 @@ test("shared update delegates to native CLI, verifies publication, and never ret
       execute: async (file: string, args: string[]) => {
         calls++
         assert.equal(file, binary)
-        assert.deepEqual(args, ["upgrade", "2.0.16", "--method", "npm"])
+        assert.deepEqual(args, ["upgrade", minimum, "--method", "npm"])
         throw new Error("native failure")
       },
     }
-    await assert.rejects(installSharedOpenCode("2.0.16", options), /native failure/)
+    await assert.rejects(installSharedOpenCode(minimum, options), /native failure/)
     assert.equal(calls, 1, "no npm fallback after a failed native mutation")
     assert.equal(registrations, 0)
-    await assert.rejects(installSharedOpenCode("2.0.16", { ...options, execute: async () => {} }), /version verification failed/)
-    await installSharedOpenCode("2.0.16", { ...options, execute: async () => { await writeFile(binary, "2.0.16") } })
-    await installSharedOpenCode("2.0.15", options)
+    await assert.rejects(installSharedOpenCode(minimum, { ...options, execute: async () => {} }), /version verification failed/)
+    await installSharedOpenCode(minimum, { ...options, execute: async () => { await writeFile(binary, minimum) } })
+    await installSharedOpenCode(minimum, options)
     assert.equal(calls, 1, "no downgrade or same-version native invocation")
     assert.equal(registrations, 2)
-    assert.equal(await readFile(binary, "utf8"), "2.0.16")
+    assert.equal(await readFile(binary, "utf8"), minimum)
+    await writeFile(binary, "2.1.3")
+    await installSharedOpenCode(minimum, options)
+    assert.equal(await readFile(binary, "utf8"), "2.1.3", "never downgrade a newer verified installation")
+    assert.equal(calls, 1)
   } finally { await rm(home, { recursive: true, force: true }) }
 })

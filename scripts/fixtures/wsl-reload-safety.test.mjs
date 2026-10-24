@@ -1,9 +1,15 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { mkdtemp, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { prepareReloadSafety } from "./wsl-reload-safety.mjs"
+
+test("WSL setup version probe uses the private environment wrapper", async () => {
+  const source = await readFile(new URL("../test-opencode-setup-wsl.mjs", import.meta.url), "utf8")
+  assert.ok(source.includes('await wsl(`${quote(wrapper)} --version`)'))
+  assert.ok(!source.includes('await wsl(`${quote(cli)} --version`)'))
+})
 
 test("event failure before observer return is awaited and releases the held provider", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-reload-consumer-"))

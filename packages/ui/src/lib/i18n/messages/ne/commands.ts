@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "ब्राउजरमा मद्दत खोल्न सकिएन। https://neuralnomadsai.github.io/CodeNomad/ आफैँ खोल्नुहोस्।",
   "commandPalette.title": "कमाण्ड प्यालेट (Command Palette)",
   "commandPalette.description": "कमाण्डहरू खोज्नुहोस् र कार्यान्वयन गर्नुहोस्",
   "commandPalette.searchPlaceholder": "कमाण्ड टाइप गर्नुहोस् वा खोज्नुहोस्...",
@@ -14,6 +15,9 @@ export const commandMessages = {
   "commands.newInstance.label": "नयाँ उदाहरण (New Instance)",
   "commands.newInstance.description": "नयाँ उदाहरण सिर्जना गर्न फोल्डर चयनकर्ता खोल्नुहोस्",
   "commands.newInstance.keywords": "फोल्डर, परियोजना, कार्यस्थान",
+  "commands.newTemporaryInstance.label": "नयाँ अस्थायी उदाहरण",
+  "commands.newTemporaryInstance.description": "फोल्डर नछानी खाली अस्थायी उदाहरण खोल्नुहोस्",
+  "commands.newTemporaryInstance.keywords": "अस्थायी, मस्यौदा, छिटो, खाली, परियोजना, temporary",
   "commands.openWorkspace.folder.label": "परियोजना फोल्डर खोल्नुहोस्",
   "commands.openWorkspace.folder.description": "हालको परियोजना फोल्डर फाइल व्यवस्थापकमा खोल्नुहोस्",
   "commands.openWorkspace.folder.keywords": "फोल्डर, फाइल, एक्सप्लोरर",
@@ -31,9 +35,6 @@ export const commandMessages = {
   "commands.closeInstance.label": "ट्याब बन्द गर्नुहोस्",
   "commands.closeInstance.description": "हालको शीर्ष-स्तरको ट्याब बन्द गर्नुहोस्",
   "commands.closeInstance.keywords": "रोक्नुहोस्, बन्द गर्नुहोस्, ट्याब",
-  "commands.stopInstance.label": "कार्यस्थान रोक्नुहोस्",
-  "commands.stopInstance.description": "सबै विन्डोका लागि साझा कार्यस्थान रोक्नुहोस्",
-  "commands.stopInstance.keywords": "रोक्नुहोस्, कार्यस्थान, सर्भर, साझा",
 
   "commands.nextInstance.label": "अर्को ट्याब",
   "commands.nextInstance.description": "अर्को शीर्ष-स्तरको ट्याबमा जानुहोस्",
@@ -66,6 +67,13 @@ export const commandMessages = {
   "commands.previousSession.label": "अघिल्लो सत्र",
   "commands.previousSession.description": "अघिल्लो सत्र ट्याबमा फर्कनुहोस्",
   "commands.previousSession.keywords": "परिवर्तन, नेभिगेट",
+
+  "commands.previousUserMessage.label": "अघिल्लो प्रयोगकर्ता सन्देश",
+  "commands.previousUserMessage.description": "यो वार्तालापमा तपाईंले पठाएको अघिल्लो सन्देशमा जानुहोस्",
+  "commands.previousUserMessage.keywords": "जानुहोस्, नेभिगेट, प्रम्प्ट, प्रयोगकर्ता सन्देश",
+  "commands.nextUserMessage.label": "अर्को प्रयोगकर्ता सन्देश",
+  "commands.nextUserMessage.description": "यो वार्तालापमा तपाईंले पठाएको अर्को सन्देशमा जानुहोस्",
+  "commands.nextUserMessage.keywords": "जानुहोस्, नेभिगेट, प्रम्प्ट, प्रयोगकर्ता सन्देश",
 
   "commands.compactSession.label": "सत्र संक्षिप्त गर्नुहोस्",
   "commands.compactSession.description": "हालको सत्रलाई संक्षेप र संक्षिप्त गर्नुहोस्",
@@ -113,20 +121,10 @@ export const commandMessages = {
   "commands.clearInput.description": "प्रम्प्ट पाठ क्षेत्र सफा गर्नुहोस्",
   "commands.clearInput.keywords": "सफा, रिसेट",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: नयाँ लाइन, Cmd/Ctrl+Enter: प्रम्प्ट पठाउनुहोस्",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: प्रम्प्ट पठाउनुहोस्, Cmd/Ctrl+Enter: नयाँ लाइन",
-  "commands.promptSubmitShortcut.description": "प्रम्प्ट इनपुटमा Enter र Cmd/Ctrl+Enter को व्यवहार बदल्नुहोस्",
-  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, पठाउनुहोस्, सर्टकट, प्रम्प्ट",
-
   "commands.thinkingBlocks.label.show": "सोचाइ देखाउनुहोस् (Show Thinking)",
   "commands.thinkingBlocks.label.hide": "सोचाइ लुकाउनुहोस् (Hide Thinking)",
   "commands.thinkingBlocks.description": "एआईको सोचाइ खण्डहरू देखाउनुहोस् वा लुकाउनुहोस्",
   "commands.thinkingBlocks.keywords": "सोच, तर्क, टगल, देखाउनुहोस्, लुकाउनुहोस्",
-
-  "commands.timelineToolCalls.label.show": "टाइमलाइन उपकरण कलहरू देखाउनुहोस्",
-  "commands.timelineToolCalls.label.hide": "टाइमलाइन उपकरण कलहरू लुकाउनुहोस्",
-  "commands.timelineToolCalls.description": "सन्देश टाइमलाइनमा उपकरण कल प्रविष्टिहरू टगल गर्नुहोस्",
-  "commands.timelineToolCalls.keywords": "टाइमलाइन, उपकरण, टगल",
 
   "commands.keyboardShortcutHints.label.show": "किबोर्ड सर्टकट संकेतहरू देखाउनुहोस्",
   "commands.keyboardShortcutHints.label.hide": "किबोर्ड सर्टकट संकेतहरू लुकाउनुहोस्",
@@ -173,9 +171,12 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "नयाँ सत्रहरू सिर्जना गर्दा खाली सत्रहरू स्वतः सफा गर्नुहोस्",
   "commands.autoCleanupBlankSessions.keywords": "स्वतः, सफा, खाली, सत्र, टगल",
 
-  "commands.showHelp.label": "मद्दत देखाउनुहोस्",
-  "commands.showHelp.description": "किबोर्ड सर्टकट र मद्दत प्रदर्शन गर्नुहोस्",
-  "commands.showHelp.keywords": "सर्टकट, मद्दत",
+  "commands.openHelp.label": "मद्दत खोल्नुहोस्",
+  "commands.openHelp.description": "आफ्नो ब्राउजरमा CodeNomad प्रयोगकर्ता मार्गदर्शिका खोल्नुहोस्",
+  "commands.openHelp.keywords": "मद्दत, मार्गदर्शिका, दस्तावेज",
+  "commands.openAbout.label": "CodeNomad बारे",
+  "commands.openAbout.description": "सेटिङहरूमा संस्करण, अपडेटहरू र निदान देखाउनुहोस्",
+  "commands.openAbout.keywords": "बारे, संस्करण, अपडेट, निदान",
 
   "commands.custom.argumentsPrompt.message": "/{name} को लागि तर्कहरू (Arguments)",
   "commands.custom.argumentsPrompt.title": "अनुकूल कमाण्ड",

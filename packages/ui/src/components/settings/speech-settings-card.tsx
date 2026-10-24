@@ -8,6 +8,8 @@ import { getLogger } from "../../lib/logger"
 import { useSpeech } from "../../lib/hooks/use-speech"
 import { useTranscriptionTest } from "../../lib/hooks/use-transcription-test"
 import { getSpeechPlaybackSupport } from "../../lib/speech-playback-support"
+import { SettingsInfoTip } from "./settings-info-tip"
+import { SettingsSwitch } from "./settings-switch"
 
 const log = getLogger("actions")
 
@@ -182,7 +184,8 @@ export const SpeechSettingsCard: Component = () => {
     if (drafts().playbackMode === "streaming" && !playbackSupport().available) {
       return t("settings.speech.compatibility.browserStreamingUnavailable")
     }
-    return t("settings.speech.compatibility.runtimeNote")
+    // Only an actual incompatibility is worth a line; the general note was noise.
+    return null
   })
 
   const isDirty = createMemo(() => {
@@ -285,10 +288,7 @@ export const SpeechSettingsCard: Component = () => {
       <div class="settings-card-header">
         <div class="settings-card-heading-with-icon">
           <Volume2 class="settings-card-heading-icon" />
-          <div>
-            <h3 class="settings-card-title">{t("settings.speech.title")}</h3>
-            <p class="settings-card-subtitle">{t("settings.speech.subtitle")}</p>
-          </div>
+          <h3 class="settings-card-title">{t("settings.speech.title")}</h3>
         </div>
         <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
       </div>
@@ -296,13 +296,11 @@ export const SpeechSettingsCard: Component = () => {
       <div class="settings-stack">
         <div class="settings-toggle-row settings-toggle-row-compact">
           <div>
-            <div class="settings-toggle-title">{t("settings.speech.provider.title")}</div>
-            <div class="settings-toggle-caption">{t("settings.speech.provider.subtitle")}</div>
+            <div class="settings-toggle-title">{t("settings.speech.provider.title")}<SettingsInfoTip text={t("settings.speech.provider.subtitle")} /></div>
           </div>
           <div class="settings-toolbar-inline">
-            <span class="settings-inline-note">{t("settings.speech.provider.openaiCompatible")}</span>
             <span class="settings-inline-note">{capabilityLabel()}</span>
-            <span class="settings-inline-note">{saveStatusLabel()}</span>
+            <Show when={saveStatus() === "error"}><span class="settings-inline-note" role="alert">{saveStatusLabel()}</span></Show>
             <button
               type="button"
               class="selector-button selector-button-secondary w-auto whitespace-nowrap inline-flex items-center gap-2"
@@ -361,6 +359,7 @@ export const SpeechSettingsCard: Component = () => {
                     : t("settings.speech.testPlayback.action")}
               </span>
             </button>
+            <SettingsInfoTip text={t("settings.speech.testPlayback.note")} />
             <button
               type="button"
               class="selector-button selector-button-primary w-auto whitespace-nowrap"
@@ -375,28 +374,23 @@ export const SpeechSettingsCard: Component = () => {
         <Show when={serverSupportsSeparateProviders()}>
           <div class="settings-toggle-row settings-toggle-row-compact">
             <div>
-              <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}</div>
-              <div class="settings-toggle-caption">{t("settings.speech.separateProviders.subtitle")}</div>
+              <div class="settings-toggle-title">{t("settings.speech.separateProviders.title")}<SettingsInfoTip text={t("settings.speech.separateProviders.subtitle")} /></div>
             </div>
-            <label class="settings-checkbox-toggle">
-              <input
-                type="checkbox"
-                checked={drafts().separateProviders}
-                disabled={isSaving()}
-                onChange={(event) => {
-                  setSaveStatus("idle")
-                  setDrafts((current) => ({ ...current, separateProviders: event.currentTarget.checked }))
-                }}
-              />
-              <span>{t("settings.common.enabled")}</span>
-            </label>
+            <SettingsSwitch
+              checked={drafts().separateProviders}
+              label={t("settings.speech.separateProviders.title")}
+              disabled={isSaving()}
+              onChange={(separateProviders) => {
+                setSaveStatus("idle")
+                setDrafts((current) => ({ ...current, separateProviders }))
+              }}
+            />
           </div>
         </Show>
 
         <Show when={!drafts().separateProviders}>
           <Field
             label={t("settings.speech.apiKey.title")}
-            caption={t("settings.speech.apiKey.subtitle")}
             value={drafts().apiKey}
             onInput={(value) => updateDraft("apiKey", value)}
             type="password"
@@ -418,26 +412,23 @@ export const SpeechSettingsCard: Component = () => {
           </Show>
           <Field
             label={t("settings.speech.baseUrl.title")}
-            caption={t("settings.speech.baseUrl.subtitle")}
+            info={t("settings.speech.baseUrl.subtitle")}
             value={drafts().baseUrl}
             onInput={(value) => updateDraft("baseUrl", value)}
             placeholder={t("settings.speech.baseUrl.placeholder")}
           />
           <Field
             label={t("settings.speech.sttModel.title")}
-            caption={t("settings.speech.sttModel.subtitle")}
             value={drafts().sttModel}
             onInput={(value) => updateDraft("sttModel", value)}
           />
           <Field
             label={t("settings.speech.ttsModel.title")}
-            caption={t("settings.speech.ttsModel.subtitle")}
             value={drafts().ttsModel}
             onInput={(value) => updateDraft("ttsModel", value)}
           />
           <Field
             label={t("settings.speech.ttsVoice.title")}
-            caption={t("settings.speech.ttsVoice.subtitle")}
             value={drafts().ttsVoice}
             onInput={(value) => updateDraft("ttsVoice", value)}
             icon={<Mic class="w-3.5 h-3.5 icon-muted flex-shrink-0" />}
@@ -450,7 +441,6 @@ export const SpeechSettingsCard: Component = () => {
           </div>
           <Field
             label={t("settings.speech.stt.apiKey.title")}
-            caption={t("settings.speech.stt.apiKey.subtitle")}
             value={drafts().stt.apiKey}
             onInput={(value) => updateDirectionalDraft("stt", "apiKey", value)}
             type="password"
@@ -477,14 +467,13 @@ export const SpeechSettingsCard: Component = () => {
           </Show>
           <Field
             label={t("settings.speech.stt.baseUrl.title")}
-            caption={t("settings.speech.stt.baseUrl.subtitle")}
+            info={t("settings.speech.stt.baseUrl.subtitle")}
             value={drafts().stt.baseUrl}
             onInput={(value) => updateDirectionalDraft("stt", "baseUrl", value)}
             placeholder={t("settings.speech.stt.baseUrl.placeholder")}
           />
           <Field
             label={t("settings.speech.stt.model.title")}
-            caption={t("settings.speech.stt.model.subtitle")}
             value={drafts().stt.model}
             onInput={(value) => updateDirectionalDraft("stt", "model", value)}
           />
@@ -494,7 +483,6 @@ export const SpeechSettingsCard: Component = () => {
           </div>
           <Field
             label={t("settings.speech.tts.apiKey.title")}
-            caption={t("settings.speech.tts.apiKey.subtitle")}
             value={drafts().tts.apiKey}
             onInput={(value) => updateDirectionalDraft("tts", "apiKey", value)}
             type="password"
@@ -521,20 +509,18 @@ export const SpeechSettingsCard: Component = () => {
           </Show>
           <Field
             label={t("settings.speech.tts.baseUrl.title")}
-            caption={t("settings.speech.tts.baseUrl.subtitle")}
+            info={t("settings.speech.tts.baseUrl.subtitle")}
             value={drafts().tts.baseUrl}
             onInput={(value) => updateDirectionalDraft("tts", "baseUrl", value)}
             placeholder={t("settings.speech.tts.baseUrl.placeholder")}
           />
           <Field
             label={t("settings.speech.tts.model.title")}
-            caption={t("settings.speech.tts.model.subtitle")}
             value={drafts().tts.model}
             onInput={(value) => updateDirectionalDraft("tts", "model", value)}
           />
           <Field
             label={t("settings.speech.ttsVoice.title")}
-            caption={t("settings.speech.ttsVoice.subtitle")}
             value={drafts().ttsVoice}
             onInput={(value) => updateDraft("ttsVoice", value)}
             icon={<Mic class="w-3.5 h-3.5 icon-muted flex-shrink-0" />}
@@ -542,7 +528,7 @@ export const SpeechSettingsCard: Component = () => {
         </Show>
         <SelectField
           label={t("settings.speech.playbackMode.title")}
-          caption={t("settings.speech.playbackMode.subtitle")}
+          info={t("settings.speech.playbackMode.subtitle")}
           value={drafts().playbackMode}
           onInput={(value) => updateDraft("playbackMode", value as DraftFields["playbackMode"])}
           options={[
@@ -552,7 +538,7 @@ export const SpeechSettingsCard: Component = () => {
         />
         <SelectField
           label={t("settings.speech.ttsFormat.title")}
-          caption={t("settings.speech.ttsFormat.subtitle")}
+          info={t("settings.speech.ttsFormat.subtitle")}
           value={drafts().ttsFormat}
           onInput={(value) => updateDraft("ttsFormat", value as DraftFields["ttsFormat"])}
           options={[
@@ -563,9 +549,7 @@ export const SpeechSettingsCard: Component = () => {
           ]}
         />
 
-        <div class="settings-inline-note">{t("settings.speech.help")}</div>
-        <Show when={compatibilityMessage()}>{(message) => <div class="settings-inline-note">{message()}</div>}</Show>
-        <div class="settings-inline-note">{t("settings.speech.testPlayback.note")}</div>
+        <Show when={compatibilityMessage()}>{(message) => <div class="settings-inline-note" role="status">{message()}</div>}</Show>
       </div>
     </div>
   )
@@ -573,7 +557,7 @@ export const SpeechSettingsCard: Component = () => {
 
 const Field: Component<{
   label: string
-  caption: string
+  info?: string
   value: string
   type?: string
   placeholder?: string
@@ -583,8 +567,7 @@ const Field: Component<{
   return (
     <div class="settings-toggle-row settings-toggle-row-compact">
       <div>
-        <div class="settings-toggle-title">{props.label}</div>
-        <div class="settings-toggle-caption">{props.caption}</div>
+        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} />}</Show></div>
       </div>
       <div class="flex items-center gap-2 w-full min-w-0 sm:min-w-[18rem] sm:max-w-[24rem]">
         {props.icon}
@@ -602,7 +585,7 @@ const Field: Component<{
 
 const SelectField: Component<{
   label: string
-  caption: string
+  info?: string
   value: string
   onInput: (value: string) => void
   options: Array<{ value: string; label: string }>
@@ -610,8 +593,7 @@ const SelectField: Component<{
   return (
     <div class="settings-toggle-row settings-toggle-row-compact">
       <div>
-        <div class="settings-toggle-title">{props.label}</div>
-        <div class="settings-toggle-caption">{props.caption}</div>
+        <div class="settings-toggle-title">{props.label}<Show when={props.info}>{(info) => <SettingsInfoTip text={info()} />}</Show></div>
       </div>
       <div class="w-full min-w-0 sm:min-w-[18rem] sm:max-w-[24rem]">
         <select value={props.value} onInput={(event) => props.onInput(event.currentTarget.value)} class="selector-input w-full">

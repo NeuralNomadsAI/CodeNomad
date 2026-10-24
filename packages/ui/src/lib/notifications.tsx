@@ -1,7 +1,10 @@
 import toast from "solid-toast"
-import { createSignal } from "solid-js"
+import { createSignal, untrack } from "solid-js"
 import { tGlobal } from "./i18n"
 import { isTauriHost } from "./runtime-env"
+import { notificationTargets, type NotificationCategory } from "./notification-routing"
+import { sendOsNotification } from "./os-notifications"
+import { preferences } from "../stores/preferences"
 
 export type ToastVariant = "info" | "success" | "warning" | "error"
 
@@ -22,6 +25,11 @@ export type ToastPayload = {
   title?: string
   message: string
   variant: ToastVariant
+  /** Settings → Notifications routes each category to screen, history and/or system. */
+  category: NotificationCategory
+  /** Live feedback replaced as it changes (progress, retry countdowns, "up to date"):
+   *  always on screen, never in the history or the system. */
+  transient?: boolean
   duration?: number
   position?: ToastPosition
   action?: ToastAction
@@ -294,7 +302,7 @@ async function openExternalUrl(url: string): Promise<void> {
     window.open(url, "_blank", "noopener,noreferrer")
   } catch (error) {
     console.warn("[notifications] unable to open external url", error)
-    toast.error(tGlobal("toastHistory.openLinkError"))
+    showToastNotification({ category: "settings", message: tGlobal("toastHistory.openLinkError"), variant: "error" })
   }
 }
 
@@ -351,25 +359,47 @@ const variantAccent: Record<
 
 // ==================== Toast Notification ====================
 
+const noToast: ToastHandle = { id: "", dismiss: () => {} }
+
 /**
- * Show toast notification
- *
- * Also adds the notification to history
+ * System delivery is skipped while this window is focused unless the user allowed it.
+ * Visibility alone is not focus: an open window behind another application or on
+ * another screen stays visible.
+ */
+function sendSystemNotification(payload: ToastPayload): void {
+  if (typeof document === "undefined") return
+  const focused = document.visibilityState === "visible" && document.hasFocus()
+  if (!untrack(() => preferences().osNotificationsAllowWhenVisible) && focused) return
+  void sendOsNotification({ title: payload.title ?? "CodeNomad", body: payload.message }).catch((error) => {
+    console.warn("[notifications] failed to send system notification", error)
+  })
+}
+
+/**
+ * Notify through every destination chosen for the payload's category:
+ * a temporary bubble, the history (and its icon badge) and/or the system.
  *
  * @param payload - Toast payload
- * @returns Toast handle
+ * @returns Toast handle (a no-op when no bubble is shown)
  */
 export function showToastNotification(payload: ToastPayload): ToastHandle {
+  // Untracked: an effect that notifies must not re-run whenever a setting changes.
+  const targets = payload.transient
+    ? { screen: true, history: false, system: false }
+    : notificationTargets(untrack(() => preferences().notificationRouting), payload.category, payload.variant)
+  if (targets.history) {
+    addToToastHistory({
+      title: payload.title,
+      message: payload.message,
+      variant: payload.variant,
+      action: payload.action,
+    })
+  }
+  if (targets.system) sendSystemNotification(payload)
+  if (!targets.screen) return noToast
+
   const accent = variantAccent[payload.variant]
   const duration = payload.duration ?? 10000
-
-  // Add to history (non-blocking)
-  addToToastHistory({
-    title: payload.title,
-    message: payload.message,
-    variant: payload.variant,
-    action: payload.action,
-  })
 
   const id = toast.custom(
     () => (

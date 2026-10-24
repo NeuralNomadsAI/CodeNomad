@@ -3,6 +3,7 @@ import { createSignal } from "solid-js"
 import RightPanel from "../../../src/components/instance/shell/right-panel/RightPanel"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
+import { ThemeProvider } from "../../../src/lib/theme"
 import { setSessions } from "../../../src/stores/session-state"
 import { initializeClientState, readClientLayoutValue } from "../../../src/stores/client-state"
 import { RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY } from "../../../src/components/instance/shell/storage"
@@ -31,7 +32,7 @@ function Fixture() {
 }
 
 await initializeClientState()
-render(() => <ConfigProvider><I18nProvider><Fixture /></I18nProvider></ConfigProvider>, document.getElementById("root")!)
+render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).statusFixture = {
   customization: () => JSON.parse(readClientLayoutValue(RIGHT_PANEL_CUSTOMIZATION_STORAGE_KEY) ?? "{}"),
   update: () => setActiveSession(current => ({ ...current, model: { ...current.model },

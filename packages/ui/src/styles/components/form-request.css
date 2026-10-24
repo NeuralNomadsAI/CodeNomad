@@ -5,7 +5,7 @@
   padding: var(--space-md);
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background: var(--surface-base);
+  background: var(--surface-overlay);
   min-width: 0;
 }
 
@@ -64,7 +64,7 @@
   width: 100%;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background: var(--surface-base);
+  background: var(--surface-field);
   color: var(--text-primary);
   padding: var(--space-sm);
   min-height: 2.25rem;

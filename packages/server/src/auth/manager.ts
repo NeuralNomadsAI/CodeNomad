@@ -4,7 +4,8 @@ import type { Logger } from "../logger"
 import { AuthStore } from "./auth-store"
 import { TokenManager } from "./token-manager"
 import { SessionManager } from "./session-manager"
-import { isLoopbackAddress, parseCookies } from "./http-auth"
+import { parseCookies } from "./http-auth"
+import { isLocalRequest, isRemoteRequest, remoteDeviceOf } from "../remote-control/request-origin"
 
 export const BOOTSTRAP_TOKEN_STDOUT_PREFIX = "CODENOMAD_BOOTSTRAP_TOKEN:" as const
 export const DEFAULT_AUTH_USERNAME = "codenomad" as const
@@ -99,11 +100,17 @@ export class AuthManager {
     return this.requireAuthStore().setPassword({ password, markUserProvided: true })
   }
 
+  /** From this machine's own listeners; tunnelled Remote Control traffic never qualifies. */
   isLoopbackRequest(request: FastifyRequest): boolean {
-    return isLoopbackAddress(request.socket.remoteAddress)
+    return isLocalRequest(request)
   }
 
   getSessionFromRequest(request: FastifyRequest): { username: string; sessionId: string } | null {
+    // Remote Control authenticates paired devices only, even when local auth is skipped.
+    if (isRemoteRequest(request)) {
+      const deviceId = remoteDeviceOf(request)
+      return deviceId ? { username: this.init.username, sessionId: `remote-device:${deviceId}` } : null
+    }
     return this.getSessionFromHeaders(request.headers)
   }
 

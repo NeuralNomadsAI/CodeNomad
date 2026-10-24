@@ -7,7 +7,7 @@ use std::{
   cell::{Cell, RefCell},
   collections::{HashSet, VecDeque},
   mem, panic,
-  rc::Rc,
+  sync::Arc,
   time::Instant,
 };
 
@@ -24,7 +24,10 @@ use crate::{
   window::WindowId,
 };
 
-pub(crate) type EventLoopRunnerShared<T> = Rc<EventLoopRunner<T>>;
+// The pinned Tauri runtime clones/drops this handle through unsafe Send/Sync
+// contexts on worker threads. Only the reference count may cross threads;
+// the runner's interior remains confined to the event-loop thread.
+pub(crate) type EventLoopRunnerShared<T> = Arc<EventLoopRunner<T>>;
 pub(crate) struct EventLoopRunner<T: 'static> {
   // The event loop's win32 handles
   thread_msg_target: HWND,

@@ -23,6 +23,7 @@ export const SideCarView: Component<SideCarViewProps> = (props) => {
       title={props.tab.name}
       initialUrl={props.tab.shellUrl}
       proxyBasePath={props.tab.proxyBasePath}
+      trustedSameOrigin
       lockedBaseLabel={lockedBaseLabel()}
       labels={{
         back: t("sidecars.back"),

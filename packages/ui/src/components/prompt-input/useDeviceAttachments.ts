@@ -109,7 +109,7 @@ export function useDeviceAttachments(options: Options) {
           )
         }
         if (result.rejected.length) {
-          showToastNotification({ variant: "warning", title: tGlobal("promptInput.attachFiles.skipped.title"),
+          showToastNotification({ category: "sessions", variant: "warning", title: tGlobal("promptInput.attachFiles.skipped.title"),
             message: result.rejected.map(({ name, reason }) => tGlobal(`promptInput.attachFiles.rejected.${reason}`, { name })).join("\n") })
         }
       } finally {

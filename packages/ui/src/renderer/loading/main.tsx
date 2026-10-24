@@ -2,7 +2,8 @@ import { invoke } from "@tauri-apps/api/core"
 import { listen } from "@tauri-apps/api/event"
 import { Show, createSignal, onCleanup, onMount } from "solid-js"
 import { render } from "solid-js/web"
-import iconUrl from "../../images/CodeNomad-Icon.png"
+// The loading screen is always dark (loading.html): the white hexagon.
+import logoUrl from "../../images/CodeNomad-Logo-OnDark.svg"
 import { tGlobal } from "../../lib/i18n"
 import { runtimeEnv, isTauriHost } from "../../lib/runtime-env"
 import "../../index.css"
@@ -106,7 +107,7 @@ function LoadingApp() {
 
   return (
     <div class="loading-wrapper" role="status" aria-live="polite">
-      <img src={iconUrl} alt={tGlobal("loadingScreen.logoAlt")} class="loading-logo" width="180" height="180" />
+      <img src={logoUrl} alt={tGlobal("loadingScreen.logoAlt")} class="loading-logo" width="73" height="85" />
       <div class="loading-heading">
         <h1 class="loading-title">CodeNomad</h1>
         <Show when={statusKey()}>

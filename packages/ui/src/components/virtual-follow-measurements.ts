@@ -26,5 +26,19 @@ export function remapVirtualMeasurements(
   // of a long reply, which would overshoot bottom then jump back down.
   const probes = candidates.length <= 8 ? candidates : []
   const measuredNextFrame = new Set(probes)
-  return { cache: [nextKeys.map((key, index) => measuredNextFrame.has(index) ? 0 : sizes.get(key) ?? -1), cache[1]], probes }
+  const retained = nextKeys.flatMap(key => sizes.has(key) ? [sizes.get(key)!] : [])
+  // The remount keeps the default as Virtua's `itemSize`, which never re-estimates.
+  // When every retained row is measured, refreshing it resizes no retained row and
+  // only sizes rows this remount inserts. It replaces Virtua's 40px fallback or an
+  // early guess carried by an instance that remounted before estimating.
+  const defaultSize = retained.every(size => size >= 0) ? medianSize(retained) ?? cache[1] : cache[1]
+  return { cache: [nextKeys.map((key, index) => measuredNextFrame.has(index) ? 0 : sizes.get(key) ?? -1), defaultSize], probes }
+}
+
+/** Virtua's own estimate: the median of non-zero measured sizes. */
+function medianSize(sizes: number[]) {
+  const sorted = sizes.filter(size => size > 0).sort((a, b) => a - b)
+  if (sorted.length === 0) return undefined
+  const mid = sorted.length >> 1
+  return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2
 }

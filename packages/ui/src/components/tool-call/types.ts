@@ -1,6 +1,8 @@
 import type { Accessor, JSXElement } from "solid-js"
 import type { ClientPart } from "../../types/message"
 import type { ToolState } from "../../types/tool-state"
+import type { RecordTextRevealTarget } from "../../stores/message-v2/record-display-cache"
+import type { TextSource } from "../../lib/render-text-window"
 
 export type ToolCallPart = Extract<ClientPart, { type: "tool" }>
 
@@ -11,13 +13,23 @@ export interface DiffPayload {
 }
 
 export interface MarkdownRenderOptions {
-  content: string
+  /**
+   * Markdown source, or raw text when `codeLanguage` is set. The full text is
+   * passed (as a `TextSource` when it is joined from parts): rendering shows a
+   * bounded prefix with an in-place reveal of the rest.
+   */
+  content: string | TextSource
+  /** Render the bounded content as a fenced code block in this language ("" for none). */
+  codeLanguage?: string
+  /** Characters rendered before the reveal; defaults to TOOL_OUTPUT_RENDER_CHARACTER_LIMIT. */
+  renderLimit?: number
   size?: "default" | "large"
   disableHighlight?: boolean
   wrap?: boolean
   /**
    * Optional suffix to avoid render-cache collisions when a tool call renders
-   * multiple markdown regions (e.g. task prompt vs task output).
+   * multiple markdown regions (e.g. task prompt vs task output). It also names
+   * the region's reveal state.
    */
   cacheKey?: string
   /**
@@ -27,13 +39,6 @@ export interface MarkdownRenderOptions {
   disableScrollTracking?: boolean
 }
 
-export interface AnsiRenderOptions {
-  content: string
-  size?: "default" | "large"
-  requireAnsi?: boolean
-  variant?: "running" | "final"
-}
-
 export interface DiffRenderOptions {
   variant?: string
   disableScrollTracking?: boolean
@@ -41,9 +46,11 @@ export interface DiffRenderOptions {
   onFullDiffAccess?: (diffText: string) => void
   /**
    * Optional cache key suffix to avoid collisions when rendering multiple diffs
-   * within the same tool call (e.g. apply_patch).
+   * within the same tool call (e.g. apply_patch). It also names the diff's reveal state.
    */
   cacheKey?: string
+  /** Diff characters rendered before the reveal; defaults to TOOL_OUTPUT_RENDER_CHARACTER_LIMIT. */
+  renderLimit?: number
 }
 
 export interface ToolScrollHelpers {
@@ -64,8 +71,9 @@ export interface ToolRendererContext {
   t: (key: string, params?: Record<string, unknown>) => string
   messageVersion?: Accessor<number | undefined>
   partVersion?: Accessor<number | undefined>
+  /** Reveal state of one display-bounded text region of this tool call. */
+  textRevealTarget(section: string): RecordTextRevealTarget
   renderMarkdown(options: MarkdownRenderOptions): JSXElement | null
-  renderAnsi(options: AnsiRenderOptions): JSXElement | null
   renderDiff(payload: DiffPayload, options?: DiffRenderOptions): JSXElement | null
   /**
    * Render another tool call inline. This is provided by the ToolCall shell

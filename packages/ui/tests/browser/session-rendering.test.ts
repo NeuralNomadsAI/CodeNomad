@@ -5,11 +5,15 @@ import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
+import { createFixtureCache } from "./fixture-cache"
 
 const root = fileURLToPath(new URL("../..", import.meta.url))
 let server: ViteDevServer, browser: Browser, baseUrl: string
+let fixtureCache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
 before(async () => {
+  fixtureCache = await createFixtureCache()
   server = await createServer({
+    cacheDir: fixtureCache.cacheDir,
     configFile: false, root, logLevel: "error", plugins: [solid(), {
       name: "browser-fixture",
       configureServer(server) {
@@ -30,7 +34,7 @@ before(async () => {
   baseUrl = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); await server?.close(); await fixtureCache?.dispose() })
 
 async function open(name: string, run: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 }, locale: "en-US" })
@@ -54,7 +58,12 @@ async function open(name: string, run: (page: Page) => Promise<void>) {
       if (window.fixtureScrollEvents.length > 80) window.fixtureScrollEvents.shift();
     }, { capture: true, passive: true });
   })()`)
-  await page.route("**/api/**", route => route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" }))
+  await page.route("**/api/**", route => {
+    if (new URL(route.request().url()).pathname.endsWith("/permission-receipts")) {
+      return route.fulfill({ contentType: "application/json", body: JSON.stringify({ receipts: [] }) })
+    }
+    return route.fulfill({ contentType: route.request().url().includes("events") ? "text/event-stream" : "application/json", body: "" })
+  })
   await runWithDiagnosticCleanup({
     run: async () => {
       await page.goto(`${baseUrl}/fixture?${name}`)
@@ -112,6 +121,10 @@ test("user HTML mode preserves Markdown, pasted disclosures and code source and 
     await page.locator("#pasted summary").click()
     await page.waitForFunction(() => document.querySelector("#pasted .markdown-body")?.textContent?.includes('<div class="sample-html">'))
     assert.equal(await page.locator("#pasted .sample-html").count(), 0)
+    // HTML language completion re-renders every highlighting-enabled Markdown,
+    // including #cache. Finish that real render before observing its synthetic
+    // legacy-cache marker; otherwise the marker can disappear between polls.
+    await page.locator("#user pre.shiki").waitFor()
     assert.equal(await page.locator("#cache .cached-html").count(), 0)
     assert.equal(await page.locator("#cache .markdown-body").textContent(), html)
     await page.evaluate(() => (window as any).fixture.literal(false))
@@ -126,6 +139,28 @@ test("user HTML mode preserves Markdown, pasted disclosures and code source and 
     await page.locator('.message-timeline-segment[data-message-id="assistant-preview"]').hover()
     await page.getByRole("tooltip").locator(".sample-html").waitFor()
     if (process.env.CODENOMAD_HTML_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_HTML_CAPTURE, fullPage: true })
+  })
+})
+
+test("language completion refreshes legacy cached HTML without losing literal-mode fencing", async () => {
+  await open("user-html", async page => {
+    await page.locator("#root").evaluate(root => { root.style.display = "block"; root.style.height = "auto" })
+    await page.locator("#user pre.shiki").waitFor()
+    await page.evaluate(() => (window as any).fixture.literal(false))
+    await page.locator("#cache .cached-html").waitFor()
+    // Load a different real Shiki grammar through the production Markdown
+    // module, rather than simulating a callback or changing DOM ourselves.
+    await page.evaluate(`(async () => {
+      const markdown = await import('/src/lib/markdown.ts');
+      await markdown.renderMarkdown('~~~typescript\\nconst fixtureLanguageRace = true\\n~~~');
+    })()`)
+    await page.locator("#cache .sample-html").waitFor()
+    assert.equal(await page.locator("#cache .cached-html").count(), 0)
+    assert.equal(await page.locator("#cache .sample-html span").textContent(), "who")
+    await page.evaluate(() => (window as any).fixture.literal(true))
+    await page.waitForFunction(() => !document.querySelector("#cache .sample-html, #cache .cached-html"))
+    const html = await page.evaluate(() => (window as any).fixture.html)
+    assert.equal(await page.locator("#cache .markdown-body").textContent(), html)
   })
 })
 
@@ -480,6 +515,23 @@ test("a real send stays rendered across delayed admission, inbox echo and author
       })`)
       assert.equal(stable, true, `The ${phase} prompt must stay visible after its first restored frame`)
     }
+  })
+})
+
+test("a queued follow-up loses its badge when delivered after a history rewrite, while the turn still runs", async () => {
+  await open("session", async page => {
+    const marker = "Queued follow-up outlives a history rewrite"
+    await page.evaluate(() => (window as any).fixture.start())
+    await page.evaluate(text => (window as any).fixture.queueFollowUp("msg_followup", text), marker)
+    const badge = page.locator(".message-stream-block").filter({ hasText: marker }).locator(".message-queued-badge")
+    await badge.waitFor()
+    // Pruning replaces the session's reducer; the follow-up is still parked natively.
+    await page.evaluate(() => (window as any).fixture.prune())
+    await page.waitForTimeout(500)
+    await badge.waitFor()
+    await page.evaluate(() => (window as any).fixture.deliverQueued("msg_followup"))
+    await badge.waitFor({ state: "detached", timeout: 3000 })
+    assert.equal(await page.locator(".message-stream-block").filter({ hasText: marker }).count(), 1, "the delivered follow-up stays rendered")
   })
 })
 

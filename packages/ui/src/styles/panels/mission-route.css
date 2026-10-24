@@ -1,0 +1,14 @@
+.mission-route-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs) var(--space-sm);
+  margin-top: var(--space-xs);
+  color: var(--text-muted);
+  font-size: var(--font-size-xs);
+}
+
+.mission-route-meta span + span::before {
+  margin-inline-end: var(--space-sm);
+  color: var(--border-strong);
+  content: "/";
+}

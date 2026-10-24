@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { NEW_WINDOW_ACCELERATOR, resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
+import { NEW_WINDOW_ACCELERATOR, resolveApplicationTarget, resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
 
 test("New Window has its dedicated shortcut and menu actions target focused then MRU local windows", () => {
   const local = { kind: "local" }
@@ -12,6 +12,10 @@ test("New Window has its dedicated shortcut and menu actions target focused then
   assert.equal(resolveFocusedLocalTarget(remote, other, isLocal), null)
   assert.equal(resolveFocusedLocalTarget(remote, remote, isLocal), null)
   assert.equal(resolveFocusedLocalTarget(null, other, isLocal), other)
+  assert.equal(resolveApplicationTarget(local, other, isLocal), local)
+  assert.equal(resolveApplicationTarget(remote, other, isLocal), other, "Preferences/remote focus hands About to the MRU local window")
+  assert.equal(resolveApplicationTarget(remote, remote, isLocal), null)
+  assert.equal(resolveApplicationTarget(null, null, isLocal), null)
   assert.equal(resolveWindowTarget(remote, other), remote)
   assert.equal(resolveWindowTarget(null, other), other)
 })

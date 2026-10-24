@@ -3,7 +3,8 @@ import { Dynamic } from "solid-js/web"
 import { Copy } from "lucide-solid"
 import type { ToolState } from "../../../types/tool-state"
 import type { ToolRenderer } from "../types"
-import { ensureMarkdownContent, getDefaultToolAction, getToolName, limitToolOutputForRender, limitToolTitleForRender, readToolStatePayload } from "../utils"
+import { getDefaultToolAction, getToolName, hasVisibleText, limitToolTitleForRender, readToolStatePayload } from "../utils"
+import { MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT } from "../../../lib/render-text-window"
 import { messageStoreBus } from "../../../stores/message-v2/bus"
 import { beginMessageHistoryTraversal, isLatestMessageWindow, loadMessages, loadNewerMessageWindow, loadOldestMessageWindow } from "../../../stores/session-api"
 import { getSessionMessagesLoadError, messagesLoaded, sessions } from "../../../stores/session-state"
@@ -230,6 +231,7 @@ export const taskRenderer: ToolRenderer = {
 
     const [childToolKeys, setChildToolKeys] = createSignal<string[]>([])
     const [childToolsTruncated, setChildToolsTruncated] = createSignal(false)
+    const [childStepsOverflow, setChildStepsOverflow] = createSignal(false)
 
     let indexedSessionId = ""
 
@@ -237,6 +239,7 @@ export const taskRenderer: ToolRenderer = {
       indexedSessionId = nextSessionId
       setChildToolKeys([])
       setChildToolsTruncated(false)
+      setChildStepsOverflow(false)
     }
 
     function scanMessageToolParts(messageId: string, startIndex: number, limit: number, budget: TaskScanBudget) {
@@ -278,6 +281,7 @@ export const taskRenderer: ToolRenderer = {
         for (let keyIndex = keys.length - 1; keyIndex >= 0; keyIndex -= 1) nextKeys.unshift(keys[keyIndex])
       }
       setChildToolsTruncated((truncated) => isTaskScanTruncated(truncated, oldestScannedIndex > 0, isTaskStepListTruncated(nextKeys.length)))
+      setChildStepsOverflow(isTaskStepListTruncated(nextKeys.length))
       const keys = nextKeys.slice(-TASK_STEP_RENDER_LIMIT)
       setChildToolKeys(previous => previous.length === keys.length && previous.every((key, index) => key === keys[index]) ? previous : keys)
     }
@@ -308,19 +312,20 @@ export const taskRenderer: ToolRenderer = {
         fullRescanChildTools(id, store.getSessionMessageIds(id))
       })
     })
+    // Prompts and reports are prose: they use the Markdown bound, not the tool-output one.
     const promptContent = createMemo(() => {
       const state = toolState()
       if (!state) return null
       const { input } = readToolStatePayload(state)
       const prompt = typeof input.prompt === "string" ? input.prompt : null
-      return ensureMarkdownContent(prompt ? limitToolOutputForRender(prompt) : prompt, undefined, false)
+      return hasVisibleText(prompt) ? prompt : null
     })
 
     const outputContent = createMemo(() => {
       const state = toolState()
       if (!state) return null
       const output = typeof (state as { output?: unknown }).output === "string" ? ((state as { output?: string }).output as string) : null
-      return ensureMarkdownContent(output ? limitToolOutputForRender(output) : output, undefined, false)
+      return hasVisibleText(output) ? output : null
     })
 
     const agentLabel = createMemo(() => {
@@ -377,13 +382,16 @@ export const taskRenderer: ToolRenderer = {
         return { id, tool, input: fallbackInput, metadata: metadataFromEntry, state: stateValue, status: statusValue, title }
       })
     })
-    const childTranscriptTruncated = () => {
+    // Coverage controls full-copy traversal, not a claim about omitted tool
+    // rows. Native cursors can point to an empty boundary page; scan budgets
+    // and historical windows likewise cannot prove render-limit overflow.
+    const childTranscriptIncomplete = () => {
       const id = childSessionId()
       const window = id ? store.getMessageWindow(id) : undefined
       return childToolsTruncated() || Boolean(window && (window.kind !== "latest" || window.olderCursor))
     }
-    const childSourceActive = () => childToolKeys().length > 0 || childTranscriptTruncated()
-    const stepsTruncated = () => resolveTaskStepTruncation(childSourceActive(), childTranscriptTruncated(), legacySummary().truncated)
+    const childSourceActive = () => childToolKeys().length > 0 || childTranscriptIncomplete()
+    const stepsTruncated = () => resolveTaskStepTruncation(childSourceActive(), childStepsOverflow(), legacySummary().truncated)
 
     const childTaskCopy = useTaskStepCopy({
       childSessionId,
@@ -418,6 +426,7 @@ export const taskRenderer: ToolRenderer = {
             <div class="tool-call-task-section-body">
               {renderMarkdown({
                 content: promptContent()!,
+                renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
                 cacheKey: "task:prompt",
                 disableScrollTracking: true,
                 // Always use the normal markdown render path for prompt (even while running)
@@ -440,7 +449,7 @@ export const taskRenderer: ToolRenderer = {
           )}
         </Show>
 
-        <Show when={childToolKeys().length > 0 || legacyItems().length > 0 || stepsTruncated()}>
+        <Show when={childSourceActive() || legacyItems().length > 0 || stepsTruncated()}>
           <section class="tool-call-task-section">
             <header class="tool-call-task-section-header">
               <span class="tool-call-task-section-title">{t("toolCall.task.sections.steps")}</span>
@@ -448,7 +457,7 @@ export const taskRenderer: ToolRenderer = {
                 <span class="tool-call-task-section-meta">
                   {t("toolCall.task.steps.count", { count: stepsTruncated() ? `${TASK_STEP_RENDER_LIMIT}+` : childSourceActive() ? childToolKeys().length : legacyItems().length })}
                 </span>
-                <Show when={childTranscriptTruncated()}>
+                <Show when={childTranscriptIncomplete()}>
                   <button type="button" class="tool-call-header-icon-button tool-call-io-copy" disabled={childTaskCopy.pending()} onClick={() => void childTaskCopy.copy().catch(() => {})} aria-label={t("toolCall.io.copyOutputAriaLabel")} title={t("toolCall.io.copyOutputTitle")}>
                     <Copy class="w-3.5 h-3.5" aria-hidden="true" />
                   </button>
@@ -559,6 +568,7 @@ export const taskRenderer: ToolRenderer = {
             <div class="tool-call-task-section-body">
               {renderMarkdown({
                 content: outputContent()!,
+                renderLimit: MARKDOWN_TEXT_RENDER_CHARACTER_LIMIT,
                 cacheKey: "task:output",
                 disableScrollTracking: true,
               })}

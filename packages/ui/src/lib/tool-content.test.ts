@@ -21,12 +21,25 @@ test("native images survive normalization without entering copy, local search or
     assert.equal(state.status, "completed")
     if (state.status !== "completed") return
     assert.deepEqual(state.content, content)
+    assert.equal(state.content, content)
     assert.equal(state.content?.filter(isToolImageContent).length, 1)
+    assert.deepEqual(state.output, content.length === 1 ? [] : "Generated image")
     const chrome = defaultRenderer.getOutputChrome!({ toolState: () => state } as ToolRendererContext)
+    const copyText = chrome?.getCopyText?.()
     const search = defaultRenderer.getSearchText!({ toolCall: part, toolState: state, toolName: "mcp_image" })
     const speech = buildToolSpeechText({ title: "Image tool", state, t: key => key })
-    for (const text of [chrome?.copyText ?? "", search.join(" "), speech]) assert.ok(!text.includes("base64"))
-    assert.equal(chrome?.copyText, content.length === 1 ? undefined : "Generated image")
+    for (const text of [copyText ?? "", search.join(" "), speech]) {
+      assert.ok(!text.includes("base64"))
+      assert.ok(!text.includes("c2VjcmV0LWltYWdlLWJ5dGVz"))
+    }
+    assert.equal(copyText, content.length === 1 ? undefined : "Generated image")
+    if (content.length === 1) assert.equal(chrome, undefined)
+    else {
+      assert.equal(chrome?.hasCopyText, true)
+      assert.equal(chrome?.copyText, undefined)
+      assert.ok(search.join(" ").includes("Generated image"))
+      assert.ok(speech.includes("Generated image"))
+    }
   }
 })
 
@@ -39,4 +52,13 @@ test("image loading permits image data and HTTP sources but rejects local/execut
     assert.equal(toolImageSource({ ...file, uri }), undefined)
   }
   assert.equal(isToolImageContent({ type: "text", text: file.uri }), false)
+})
+
+test("a deferred tool image loads from CodeNomad's session-media route on the API base", () => {
+  const uri = `/api/workspaces/w/session-media/ses_1/msg_1/2/0/${"a".repeat(64)}`
+  assert.equal(toolImageSource({ ...file, uri }, "https://codenomad.example/"), `https://codenomad.example${uri}`)
+  assert.equal(toolImageSource({ ...file, uri }, undefined), uri)
+  for (const forged of [`${uri}?x=1`, uri.replace("session-media", "panel-extensions"), `/api/workspaces/w/session-media/ses_1/msg_1/2/0/${"a".repeat(63)}`, `//evil.example${uri}`]) {
+    assert.equal(toolImageSource({ ...file, uri: forged }, "https://codenomad.example"), undefined)
+  }
 })

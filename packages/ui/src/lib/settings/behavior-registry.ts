@@ -6,9 +6,10 @@ import type {
   ToolInputsVisibilityPreference,
   VisibilityPreference,
 } from "../../stores/preferences"
+import { OTHER_TOOL_NAME, resolveToolVisibility } from "../../components/tool-call/tool-presentation"
 import type { Command } from "../commands"
 import { tGlobal } from "../i18n"
-import { isLocalTauriHost, isWebHost } from "../runtime-env"
+import { isLocalTauriHost } from "../runtime-env"
 
 export type BehaviorSettingKind = "toggle" | "enum"
 
@@ -16,7 +17,9 @@ export type BehaviorToggleSetting = {
   kind: "toggle"
   id: string
   titleKey: string
-  subtitleKey: string
+  subtitleKey?: string
+  /** Secondary explanation shown behind an "i" beside the title. */
+  infoKey?: string
   get: (preferences: Preferences) => boolean
   set: (next: boolean) => void | Promise<unknown>
   disabled?: () => boolean
@@ -26,7 +29,8 @@ export type BehaviorEnumSetting<T extends string = string> = {
   kind: "enum"
   id: string
   titleKey: string
-  subtitleKey: string
+  subtitleKey?: string
+  infoKey?: string
   get: (preferences: Preferences) => T
   set: (next: T) => void
   options: Array<{ value: T; labelKey: string }>
@@ -41,12 +45,9 @@ export type BehaviorRegistryActions = {
   setUseTauriNativeEventTransport?: (next: boolean) => void
   updatePreferences?: (updates: Partial<Preferences>) => void | Promise<boolean>
   toggleShowThinkingBlocks: () => void
-  toggleKeyboardShortcutHints: () => void
   toggleShowMessageTimeline: () => void
-  toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
-  togglePromptSubmitOnEnter: () => void
   toggleShowPromptVoiceInput: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
   setToolOutputExpansion: (mode: VisibilityPreference) => void
@@ -68,11 +69,7 @@ function setBooleanByToggle(getCurrent: () => boolean, toggle: () => void, next:
 }
 
 function getToolOutputVisibility(preferences: Preferences): VisibilityPreference {
-  const defaults = preferences.toolCallExpansionDefaults
-  if (defaults.tools.other) return defaults.tools.other
-  if (defaults.preset === "minimal" || defaults.preset === "balanced") return "collapsed"
-  if (defaults.preset === "detailed" || defaults.preset === "everything") return "expanded"
-  return preferences.toolOutputExpansion ?? "expanded"
+  return resolveToolVisibility(preferences, OTHER_TOOL_NAME)
 }
 
 export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorSetting[] {
@@ -80,25 +77,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
   const updatePreferences = actions.updatePreferences
 
   return [
-    {
-      kind: "toggle",
-      id: "behavior.keyboardShortcutHints",
-      titleKey: "settings.behavior.keyboardHints.title",
-      subtitleKey: "settings.behavior.keyboardHints.subtitle",
-      get: (p) => Boolean(p.showKeyboardShortcutHints ?? false),
-      set: (next) => {
-        if (updatePreferences) {
-          updatePreferences({ showKeyboardShortcutHints: next })
-          return
-        }
-        setBooleanByToggle(
-          () => Boolean(prefs().showKeyboardShortcutHints ?? false),
-          actions.toggleKeyboardShortcutHints,
-          next,
-        )
-      },
-      disabled: () => isWebHost(),
-    },
     {
       kind: "toggle",
       id: "behavior.thinkingBlocks",
@@ -139,7 +117,6 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.messageTimeline",
       titleKey: "settings.behavior.messageTimeline.title",
-      subtitleKey: "settings.behavior.messageTimeline.subtitle",
       get: (p) => Boolean(p.showMessageTimeline ?? true),
       set: (next) => {
         if (updatePreferences) {
@@ -155,39 +132,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
     },
     {
       kind: "toggle",
-      id: "behavior.timelineToolCalls",
-      titleKey: "settings.behavior.timelineTools.title",
-      subtitleKey: "settings.behavior.timelineTools.subtitle",
-      get: (p) => Boolean(p.showTimelineTools),
-      set: (next) => {
-        if (updatePreferences) {
-          updatePreferences({ showTimelineTools: next })
-          return
-        }
-        setBooleanByToggle(
-          () => Boolean(prefs().showTimelineTools),
-          actions.toggleShowTimelineTools,
-          next,
-        )
-      },
-    },
-    {
-      kind: "enum",
       id: "behavior.diffViewMode",
       titleKey: "settings.behavior.diffView.title",
-      subtitleKey: "settings.behavior.diffView.subtitle",
-      get: (p) => (p.diffViewMode ?? "split") as "split" | "unified",
+      // Checked shows split diffs; unchecked shows the unified view.
+      get: (p) => (p.diffViewMode ?? "split") === "split",
       set: (next) => {
+        const mode = next ? "split" : "unified"
         if (updatePreferences) {
-          updatePreferences({ diffViewMode: next as "split" | "unified" })
+          updatePreferences({ diffViewMode: mode })
           return
         }
-        actions.setDiffViewMode(next as "split" | "unified")
+        actions.setDiffViewMode(mode)
       },
-      options: [
-        { value: "split", labelKey: "settings.behavior.diffView.option.split" },
-        { value: "unified", labelKey: "settings.behavior.diffView.option.unified" },
-      ],
     },
     {
       kind: "enum",
@@ -260,14 +216,14 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       id: "behavior.usageMetrics",
       titleKey: "settings.behavior.usageMetrics.title",
       subtitleKey: "settings.behavior.usageMetrics.subtitle",
-      get: (p) => Boolean(p.showUsageMetrics ?? true),
+      get: (p) => Boolean(p.showUsageMetrics ?? false),
       set: (next) => {
         if (updatePreferences) {
           updatePreferences({ showUsageMetrics: next })
           return
         }
         setBooleanByToggle(
-          () => Boolean(prefs().showUsageMetrics ?? true),
+          () => Boolean(prefs().showUsageMetrics ?? false),
           actions.toggleUsageMetrics,
           next,
         )
@@ -325,6 +281,14 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
         updatePreferences?.({ showProviderUsageCreditBalance: next })
       },
     },
+    {
+      kind: "toggle",
+      id: "behavior.hideDiffWhitespaceChanges",
+      titleKey: "advancedSettings.hideDiffWhitespace.title",
+      infoKey: "advancedSettings.hideDiffWhitespace.subtitle",
+      get: (p) => p.hideDiffWhitespaceChanges ?? true,
+      set: (next) => updatePreferences?.({ hideDiffWhitespaceChanges: next }),
+    },
     ...(isLocalTauriHost() && actions.useTauriNativeEventTransport && actions.setUseTauriNativeEventTransport
       ? [
           {
@@ -343,7 +307,7 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       kind: "toggle",
       id: "behavior.promptVoiceInput",
       titleKey: "settings.behavior.promptVoiceInput.title",
-      subtitleKey: "settings.behavior.promptVoiceInput.subtitle",
+      infoKey: "settings.behavior.promptVoiceInput.subtitle",
       get: (p) => Boolean(p.showPromptVoiceInput ?? true),
       set: (next) => {
         if (updatePreferences) {
@@ -358,51 +322,18 @@ export function getBehaviorSettings(actions: BehaviorRegistryActions): BehaviorS
       },
     },
     {
-      kind: "enum",
+      kind: "toggle",
       id: "behavior.followUpBehavior",
       titleKey: "settings.behavior.followUpBehavior.title",
-      subtitleKey: "settings.behavior.followUpBehavior.subtitle",
-      get: (p) => p.followUpBehavior,
-      set: (next) => updatePreferences?.({ followUpBehavior: next as FollowUpBehavior }),
-      options: [
-        { value: "steer", labelKey: "settings.behavior.followUpBehavior.option.steer" },
-        { value: "queue", labelKey: "settings.behavior.followUpBehavior.option.queue" },
-      ],
-    },
-    {
-      kind: "toggle",
-      id: "behavior.promptSubmitOnEnter",
-      titleKey: "settings.behavior.promptSubmit.title",
-      subtitleKey: "settings.behavior.promptSubmit.subtitle",
-      get: (p) => Boolean(p.promptSubmitOnEnter),
-      set: (next) => {
-        if (updatePreferences) {
-          updatePreferences({ promptSubmitOnEnter: next })
-          return
-        }
-        setBooleanByToggle(
-          () => Boolean(prefs().promptSubmitOnEnter),
-          actions.togglePromptSubmitOnEnter,
-          next,
-        )
-      },
+      // Checked queues prompts sent during a task; unchecked steers the running task.
+      get: (p) => p.followUpBehavior === "queue",
+      set: (next) => updatePreferences?.({ followUpBehavior: (next ? "queue" : "steer") satisfies FollowUpBehavior }),
     },
   ]
 }
 
 export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[] {
   return [
-    {
-      id: "prompt-submit-shortcut",
-      label: () =>
-        actions.preferences().promptSubmitOnEnter
-          ? tGlobal("commands.promptSubmitShortcut.label.swapped")
-          : tGlobal("commands.promptSubmitShortcut.label.default"),
-      description: () => tGlobal("commands.promptSubmitShortcut.description"),
-      category: "Input & Focus",
-      keywords: () => splitKeywords("commands.promptSubmitShortcut.keywords"),
-      action: actions.togglePromptSubmitOnEnter,
-    },
     {
       id: "thinking",
       label: () =>
@@ -415,38 +346,6 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
       category: "System",
       keywords: () => ["/thinking", ...splitKeywords("commands.thinkingBlocks.keywords")],
       action: actions.toggleShowThinkingBlocks,
-    },
-    {
-      id: "timeline-tools",
-      label: () =>
-        tGlobal(
-          actions.preferences().showTimelineTools
-            ? "commands.timelineToolCalls.label.hide"
-            : "commands.timelineToolCalls.label.show",
-        ),
-      description: () => tGlobal("commands.timelineToolCalls.description"),
-      category: "System",
-      keywords: () => splitKeywords("commands.timelineToolCalls.keywords"),
-      action: actions.toggleShowTimelineTools,
-    },
-    {
-      id: "keyboard-shortcut-hints",
-      label: () =>
-        tGlobal(
-          actions.preferences().showKeyboardShortcutHints
-            ? "commands.keyboardShortcutHints.label.hide"
-            : "commands.keyboardShortcutHints.label.show",
-        ),
-      description: () =>
-        tGlobal(
-          isWebHost()
-            ? "commands.keyboardShortcutHints.description.disabledWeb"
-            : "commands.keyboardShortcutHints.description",
-        ),
-      category: "System",
-      keywords: () => splitKeywords("commands.keyboardShortcutHints.keywords"),
-      disabled: () => isWebHost(),
-      action: actions.toggleKeyboardShortcutHints,
     },
     {
       id: "thinking-default-visibility",
@@ -551,7 +450,7 @@ export function getBehaviorCommands(actions: BehaviorRegistryActions): Command[]
     {
       id: "token-usage-visibility",
       label: () => {
-        const visible = actions.preferences().showUsageMetrics ?? true
+        const visible = actions.preferences().showUsageMetrics ?? false
         const state = visible ? tGlobal("commands.common.visible") : tGlobal("commands.common.hidden")
         return tGlobal("commands.tokenUsageDisplay.label", { state })
       },

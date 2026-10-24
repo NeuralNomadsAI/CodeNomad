@@ -1,12 +1,15 @@
 import { keyboardRegistry } from "../keyboard-registry"
 
-export function registerInputShortcuts(clearInput: () => void, focusInput: () => void) {
-  const isMac = () => navigator.platform.toLowerCase().includes("mac")
+export function registerInputShortcuts(
+  clearInput: () => void,
+  focusInput: () => void,
+  condition: () => boolean = () => true,
+  clearCondition: () => boolean = condition,
+) {
 
   keyboardRegistry.register({
     id: "clear-input",
-    key: "k",
-    modifiers: { ctrl: !isMac(), meta: isMac() },
+    condition: clearCondition,
     handler: clearInput,
     description: "clear input",
     context: "global",
@@ -14,10 +17,10 @@ export function registerInputShortcuts(clearInput: () => void, focusInput: () =>
 
   keyboardRegistry.register({
     id: "focus-input",
-    key: "p",
-    modifiers: { ctrl: !isMac(), meta: isMac() },
+    condition,
     handler: focusInput,
     description: "focus input",
     context: "global",
   })
+  return () => ["clear-input", "focus-input"].forEach(id => keyboardRegistry.unregister(id))
 }

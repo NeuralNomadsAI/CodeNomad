@@ -1,9 +1,10 @@
 import "./process-output"
-import { app, BrowserWindow, ipcMain, nativeImage, screen, session, shell } from "electron"
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session } from "electron"
 import http from "node:http"
 import https from "node:https"
 import { createHash } from "node:crypto"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { fileURLToPath, pathToFileURL } from "node:url"
 import { appendNodeOption, DeveloperMode } from "./developer-mode"
@@ -13,37 +14,68 @@ import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
 import { setupCliIPC } from "./ipc"
+import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
 import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-registry"
 import { clearWorkspaceMenuWindow, createApplicationMenu, setWorkspaceMenuEnabled } from "./menu"
-import { resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
+import { resolveApplicationTarget, resolveFocusedLocalTarget, resolveWindowTarget } from "./menu-target"
 import { MultiwindowLifecycle } from "./multiwindow-lifecycle"
 import { decideNavigation, requireHttpUrl } from "./navigation-security"
 import { configureBrowserPermissionHandlers, configureMediaPermissionHandlers, isAllowedRendererOrigin } from "./permissions"
 import { setupPreferencesIPC } from "./preferences-ipc"
 import { createPreferencesUrl, PreferencesWindowRegistry, type PreferencesRequest } from "./preferences-window"
-import { CliProcessManager } from "./process-manager"
+import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance, type LaunchIntent } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { InvalidProfileError } from "./data-profile"
+import { stripPrivateRelaunchEnvironment, sweepSelectionFolders } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
 import { flushRendererClientStateBeforeShutdown } from "./renderer-client-state-flush"
+import { forwardOpenerStartupState, runStartupStateCommandInWindow, startupStateTargetId } from "./opener-startup-state"
+import { resolveProfileRoots } from "./data-profile-cleanup"
+import { setupDataProfileCleanupIPC } from "./data-profile-cleanup-ipc"
+import { openExternalWithFeedback } from "./open-external"
 
 const mainDirname = dirname(fileURLToPath(import.meta.url))
 const isMac = process.platform === "darwin"
+// The UI draws local application and Preferences title bars. On macOS the native
+// traffic lights keep their standard place at its left and the menus stay in the
+// global menu bar; elsewhere windows are frameless.
+const applicationWindowChrome = isMac ? { titleBarStyle: "hidden" as const } : { frame: false }
 
-function resolveStoragePaths() {
-  const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
-  if (!app.isPackaged) app.setName("CodeNomad")
+function resolveStoragePaths(baseUserDataPath: string, profileKey: string) {
   const scope = resolveStorageScope({
-    appVersion: app.getVersion(), environmentChannel: process.env.CODENOMAD_UPDATE_CHANNEL,
-    cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
+    profileKey, cliConfig: process.env.CLI_CONFIG, cwd: process.cwd(), baseUserDataPath, packaged: app.isPackaged,
   })
+  // The backend must use the exact desktop data profile for paused Mission metadata. It is
+  // handed to the backend command only: in this host CODENOMAD_UPDATE_CHANNEL is a legacy
+  // profile alias that a relaunch would read back as an explicit profile.
+  setBackendProfileScope({ profile: scope.profile, configIdentity: scope.configIdentity })
+  const originalConfig = resolveSelectedConfig(process.env.CLI_CONFIG, process.cwd())
+  if (originalConfig) process.env.CLI_CONFIG = originalConfig
+  else delete process.env.CLI_CONFIG
   const browserDataPath = join(scope.userDataPath, "developer-mode-browser-v2")
   const sessionDataPath = join(browserDataPath, "session-data")
   mkdirSync(scope.userDataPath, { recursive: true })
   app.setPath("userData", scope.userDataPath)
   return { scope, browserDataPath, sessionDataPath }
+}
+
+function resolveInitialProfile(baseUserDataPath: string): LaunchProfile | undefined {
+  try {
+    return resolveLaunchProfile({
+      environment: process.env, packaged: app.isPackaged, cliConfig: process.env.CLI_CONFIG,
+      cwd: process.cwd(), baseUserDataPath,
+    })
+  } catch (error) {
+    // An invalid explicit profile must never silently open another profile.
+    const message = error instanceof InvalidProfileError ? error.message : `Unable to select the CodeNomad data profile: ${error instanceof Error ? error.message : String(error)}`
+    console.error(`[electron-startup] ${message}`)
+    dialog.showErrorBox("CodeNomad cannot start", message)
+    app.exit(1)
+    return undefined
+  }
 }
 
 function configureBrowserStorage(browserDataPath: string, sessionDataPath: string) {
@@ -76,16 +108,34 @@ app.commandLine.appendSwitch("remote-debugging-port", "0")
 app.commandLine.appendSwitch("enable-logging")
 process.env.NODE_OPTIONS = appendNodeOption(process.env.NODE_OPTIONS, "--enable-source-maps")
 process.setSourceMapsEnabled?.(true)
-const { scope: storageScope, browserDataPath, sessionDataPath } = resolveStoragePaths()
-const developerNativeIdentity = `electron:${createHash("sha256")
-  .update(`${storageScope.channel}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
-  .digest("hex")
-  .slice(0, 16)}`
-const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
-startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
-  configureBrowserStorage(browserDataPath, sessionDataPath)
-  runPrimary(initialIntent)
-})
+const baseUserDataPath = app.isPackaged ? app.getPath("userData") : join(app.getPath("appData"), "CodeNomad")
+if (!app.isPackaged) app.setName("CodeNomad")
+let storageScope!: StorageScope
+let profilePinned = false
+let sessionDataPath!: string
+let developerNativeIdentity!: string
+// An older build's profile question may have relaunched into this one: drop its private hand-offs
+// before anything inherits them, and sweep its leftover question folders.
+stripPrivateRelaunchEnvironment(process.env)
+sweepSelectionFolders({ temporaryRoot: tmpdir() })
+const launchProfile = resolveInitialProfile(baseUserDataPath)
+if (launchProfile) startProfile(launchProfile.key, isPinnedLaunch(launchProfile))
+
+function startProfile(profileKey: string, pinned: boolean) {
+  const { scope, browserDataPath, sessionDataPath: profileSessionDataPath } = resolveStoragePaths(baseUserDataPath, profileKey)
+  storageScope = scope
+  profilePinned = pinned
+  sessionDataPath = profileSessionDataPath
+  developerNativeIdentity = `electron:${createHash("sha256")
+    .update(`${storageScope.profile}\0${storageScope.configIdentity}\0${process.execPath}\0${app.getAppPath()}`)
+    .digest("hex")
+    .slice(0, 16)}`
+  const initialIntent = parseLaunchIntent(argvForLaunch(process.argv), process.cwd())
+  startPrimaryInstance(() => app.requestSingleInstanceLock(), () => app.quit(), () => {
+    configureBrowserStorage(browserDataPath, sessionDataPath)
+    runPrimary(initialIntent)
+  })
+}
 
 function runPrimary(firstIntent: LaunchIntent) {
   cleanupPackagedChromiumStorage()
@@ -97,9 +147,11 @@ function runPrimary(firstIntent: LaunchIntent) {
   const developerMode = new DeveloperMode({
     devtoolsDataPath: sessionDataPath,
     nativeIdentity: developerNativeIdentity,
+    // A focused Preferences or remote window is not an automation target: fall back to the
+    // most recently used application window instead of reporting no target at all.
     targetWindowId: () => {
       const focused = BrowserWindow.getFocusedWindow()
-      return focused ? registry.resolve(focused.webContents)?.id : registry.mruRecord()?.id
+      return (focused ? registry.resolve(focused.webContents)?.id : undefined) ?? registry.mruRecord()?.id
     },
     requestRelaunch: () => lifecycle.requestRelaunch(),
   })
@@ -136,6 +188,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     for (const origin of resolveConfiguredRendererOrigins(backendUrl, app.isPackaged, [process.env.VITE_DEV_SERVER_URL, process.env.ELECTRON_RENDERER_URL])) origins.add(origin)
     return [...origins]
   }
+  const bindNotificationBadge = setupNotificationBadgeIPC(ipcMain,
+    sender => registry.resolve(sender)?.window ?? remoteWindows.resolve(sender), getAllowedOrigins,
+    (count, windows) => {
+      if (process.platform !== "win32") { app.setBadgeCount(count); return }
+      const icon = count ? nativeImage.createFromBitmap(notificationBadgeBitmap(count), { width: 32, height: 32 }) : null
+      for (const window of windows) window.setOverlayIcon(icon, count ? String(count) : "")
+    })
   lifecycle = new MultiwindowLifecycle({
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
@@ -227,7 +286,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const window = new BrowserWindow({
       width: bounds?.width ?? DEFAULT_WINDOW_WIDTH, height: bounds?.height ?? DEFAULT_WINDOW_HEIGHT,
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}), useContentSize: true, minWidth: minimum.width, minHeight: minimum.height,
-      frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(),
+      ...applicationWindowChrome, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(),
       webPreferences: {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, webviewTag: true,
         ...(saved ? { zoomFactor: saved.zoomFactor } : {}),
@@ -248,6 +307,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     if (persisted && clientState.isPrimary) restoreWindowState(window, saved, bounds)
     const record: LocalWindowRecord = { id: windowId, persisted, window, navigation, tracker, loading: false, backendUrl: null, pendingFolders: [] }
     registry.add(record)
+    bindNotificationBadge(window)
     bindClientState(window)
     lifecycle.attach(record)
     installWindowZoomInput(window, (level) => tracker ? tracker.setZoomLevel(level) : setWindowZoomLevel(window, level))
@@ -327,12 +387,31 @@ function runPrimary(firstIntent: LaunchIntent) {
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
     browserController,
   })
+  const profileRoots = resolveProfileRoots(baseUserDataPath)
+  setupDataProfileCleanupIPC(ipcMain, {
+    resolveWindow: (sender) => registry.resolve(sender)?.window ?? preferencesWindows.resolve(sender),
+    getAllowedOrigins,
+    roots: () => profileRoots,
+    current: () => ({ key: storageScope.profile, configIdentity: storageScope.configIdentity, defaultIdentity: normalizeConfigIdentity(undefined, process.cwd()), pinned: profilePinned }),
+    relaunch: () => lifecycle.requestRelaunch(),
+  })
   setupPreferencesIPC(ipcMain, {
     resolveLocal: (sender) => registry.resolve(sender),
     resolvePreferences: (sender) => preferencesWindows.resolve(sender),
     getAllowedOrigins,
     openPreferences,
     getRequest: (window) => preferencesWindows.request(window),
+    openerStartupState: async (window, command, epoch) => {
+      let opener = preferencesWindows.opener(window)
+      if (!opener) throw new Error("Preferences window is no longer current")
+      const live = (id: string) => { const target = registry.get(id)?.window; return Boolean(target && !target.isDestroyed()) }
+      const id = startupStateTargetId(opener.id, live, registry.mruRecord()?.id)
+      if (id && id !== opener.id) opener = preferencesWindows.adoptOpener(window, id) ?? opener
+      return forwardOpenerStartupState(opener, command, epoch, (targetId, effective) => {
+        const target = registry.get(targetId)?.window
+        return runStartupStateCommandInWindow(target, effective, (url) => isAllowedRendererOrigin(url, getAllowedOrigins(target ?? null)))
+      })
+    },
     markReady: (window) => preferencesWindows.markReady(window),
     acceptRequest: async (window, request) => {
       await clientState.setPreferences(request)
@@ -406,6 +485,8 @@ function runPrimary(firstIntent: LaunchIntent) {
         const mru = registry.mruRecord()?.window ?? null
         return resolveFocusedLocalTarget(focused, mru, (window) => Boolean(registry.resolve(window.webContents)))
       },
+      getApplicationTarget: () => resolveApplicationTarget(BrowserWindow.getFocusedWindow(), registry.mruRecord()?.window ?? null,
+        (window) => Boolean(registry.resolve(window.webContents))),
       getWindowTarget: () => resolveWindowTarget(BrowserWindow.getFocusedWindow(), registry.mruRecord()?.window ?? null),
       newWindow: () => { void intentQueue.enqueue({ newWindow: true, folders: [] }).catch(() => {}) },
       reload: (window) => { const record = registry.resolve(window.webContents); if (record) void record.navigation.navigate((target) => target.webContents.reload()); else window.webContents.reload() },
@@ -449,13 +530,14 @@ function runPrimary(firstIntent: LaunchIntent) {
       installWindowSizeConstraints(window, () => screen.getDisplayMatching(window.getBounds()).workArea)
       installWindowZoomInput(window, (level) => setWindowZoomLevel(window, level))
       remoteWindows.register(payload.id, window, payload.proxySessionId)
+      bindNotificationBadge(window)
       if (isMac) configureMediaPermissionHandlers(() => BrowserWindow.getAllWindows()
         .filter((candidate) => candidate.webContents.session === remoteSession)
         .flatMap((candidate) => [...(remoteOrigins.get(candidate.id) ?? [])]), remoteSession)
       window.setTitle(title)
       window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle(title) })
       setupNavigationGuards(window, undefined, getAllowedOrigins, getLoadingUrl)
-      lifecycle.attachRemote(window)
+      lifecycle.attachSupportWindow(window)
       window.on("closed", () => { remoteOrigins.delete(nativeWindowId); insecureOrigins.delete(webContentsId) })
       try { await navigateRemoteWindow(window, target, allowedOrigins, remoteOrigins, insecureOrigins, payload.skipTlsVerify) } catch (error) {
         console.warn("[electron] failed to load remote window; showing loading screen", error)
@@ -465,13 +547,13 @@ function runPrimary(firstIntent: LaunchIntent) {
     })
   }
 
-  async function openPreferences(request: PreferencesRequest, toggle = false, resume = false): Promise<void> {
+  async function openPreferences(request: PreferencesRequest, toggle = false, resume = false, openerId?: string): Promise<void> {
     if (resume && clientState.lastPreferences) request = { ...request, section: clientState.lastPreferences.section, scrollTop: clientState.lastPreferences.scrollTop }
     if (toggle && preferencesWindows.current()) {
       preferencesWindows.current()?.close()
       return
     }
-    const reused = preferencesWindows.reuse(request)
+    const reused = preferencesWindows.reuse(request, openerId)
     if (reused) {
       if (!preferencesWindows.isReady(reused)) await clientState.setPreferences(request)
       return
@@ -482,7 +564,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const window = new BrowserWindow({
       width: bounds?.width ?? 1100, height: bounds?.height ?? 760, minWidth: 760, minHeight: 560,
       ...(bounds ? { x: bounds.x, y: bounds.y } : {}), show: false,
-      useContentSize: true, frame: false, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(), title: "Preferences",
+      useContentSize: true, ...applicationWindowChrome, autoHideMenuBar: true, backgroundColor: "#1a1a1a", icon: getIconPath(), title: "Preferences",
       webPreferences: {
         preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac,
         additionalArguments: ["--codenomad-window-context=preferences"],
@@ -491,7 +573,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     const nativeWindowId = window.id
     const webContentsId = window.webContents.id
     if (!isMac) window.setMenuBarVisibility(false)
-    preferencesWindows.register(window, request)
+    preferencesWindows.register(window, request, openerId)
     const tracker = new WindowStateTracker(window, {
       activeWindowId: "preferences",
       saveWindowState: state => clientState.savePreferencesWindow(state),
@@ -509,7 +591,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       lifecycle: navigationLifecycle,
     })
     setupNavigationGuards(window, preferencesNavigation, getAllowedOrigins, getLoadingUrl)
-    lifecycle.attachRemote(window)
+    lifecycle.attachSupportWindow(window)
     window.webContents.on("page-title-updated", (event) => { event.preventDefault(); window.setTitle("Preferences") })
     window.on("closed", () => {
       remoteOrigins.delete(nativeWindowId)
@@ -585,7 +667,7 @@ function setupNavigationGuards(
   allowedOrigins: (window: BrowserWindow) => string[],
   loadingUrl: () => string,
 ) {
-  const external = (url: string) => shell.openExternal(url).catch((error) => console.error("[cli] failed to open external URL", url, error))
+  const external = openExternalWithFeedback
   const decide = (url: string) => decideNavigation(url, allowedOrigins(window), loadingUrl())
   window.webContents.setWindowOpenHandler(({ url }) => {
     if (decide(url) === "external") void external(url)

@@ -1,0 +1,52 @@
+name: Help update reminder
+
+# Non-blocking: comments when a PR changes English UI labels without touching the
+# user help, and removes that comment once the help is updated. It only reads the
+# PR file list through the API and never checks out pull request code.
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  pull-requests: write
+
+# One run per PR at a time, so overlapping events cannot both post a reminder.
+concurrency:
+  group: help-update-reminder-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  remind:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      REPO: ${{ github.repository }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - name: Compare UI labels and help pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker='<!-- help-update-reminder -->'
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR_NUMBER/files" --jq '.[].filename')
+          labels=$(grep -c '^packages/ui/src/lib/i18n/messages/en/' <<<"$files" || true)
+          help=$(grep -c '^docs/help/' <<<"$files" || true)
+          # Only this workflow's own comments: never touch a person's comment that quotes the marker.
+          existing=$(gh api --paginate "repos/$REPO/issues/$PR_NUMBER/comments" --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id")
+
+          if [[ "$labels" -gt 0 && "$help" -eq 0 ]]; then
+            echo "::warning::English UI labels changed without a help update (docs/help)."
+            if [[ -z "$existing" ]]; then
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$marker
+          **Help update reminder:** this PR changes English UI labels (\`packages/ui/src/lib/i18n/messages/en/\`) but no help page (\`docs/help/\`).
+
+          If user-visible behavior changed (labels, controls, steps, defaults, limitations), update the affected help pages in this PR: English first, then the nine translations with each locale's UI labels (see \`dev-docs/USER_HELP.md\`). Otherwise, ignore this reminder; it never blocks merging."
+            fi
+          else
+            for id in $existing; do
+              gh api -X DELETE "repos/$REPO/issues/comments/$id"
+            done
+          fi

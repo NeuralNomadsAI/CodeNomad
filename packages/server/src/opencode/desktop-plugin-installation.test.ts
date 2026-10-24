@@ -1,11 +1,40 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { mkdtemp, readFile, readdir, rm } from "node:fs/promises"
+import { createHash } from "node:crypto"
+import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { installDesktopPluginPresence } from "./desktop-plugin-installation"
 import { DesktopPluginLifecycle } from "./desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./desktop-plugin-paths"
+
+test("a content-addressed Missions bundle cannot be reused with different bytes", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-bundle-"))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const bundle = Buffer.from("trusted"), hash = createHash("sha256").update(bundle).digest("hex")
+  const stop = await installDesktopPluginPresence("missions", bundle, paths)
+  t.after(async () => { await stop(); await rm(root, { recursive: true, force: true }) })
+  const entry = path.join(paths.config, "plugins", "codenomad-missions.ts")
+  const before = await readFile(entry, "utf8")
+  await writeFile(path.join(paths.data, "missions", `${hash}.mjs`), "changed")
+  await assert.rejects(installDesktopPluginPresence("missions", bundle, paths), /bundle differs/)
+  assert.equal(await readFile(entry, "utf8"), before)
+  assert.equal((await readdir(path.join(paths.data, "missions", "presence"))).length, 1)
+})
+
+test("an existing digest-named Missions bundle cannot be a symlink", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-link-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const bundle = Buffer.from("trusted"), hash = createHash("sha256").update(bundle).digest("hex")
+  const directory = path.join(paths.data, "missions")
+  await mkdir(directory, { recursive: true })
+  const target = path.join(root, "target.mjs")
+  await writeFile(target, bundle)
+  await symlink(target, path.join(directory, `${hash}.mjs`), "file")
+  await assert.rejects(installDesktopPluginPresence("missions", bundle, paths), /bundle differs/)
+  await assert.rejects(readFile(path.join(paths.config, "plugins", "codenomad-missions.ts")), { code: "ENOENT" })
+})
 
 test("WSL preserves existing outside-root native storage with a drive-backed config", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-wsl-storage-"))

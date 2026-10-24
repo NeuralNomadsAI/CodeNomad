@@ -8,11 +8,6 @@ const refreshing = new Map<string, { dirty: boolean }>()
 const log = getLogger("sse")
 
 export function handlePruningEvent(instanceId: string, event: { type: string; data: unknown }): boolean {
-  if (event.type === "session.message.content.updated") {
-    const data = event.data as { sessionID?: unknown; messageID?: unknown } | null
-    if (typeof data?.sessionID === "string" && typeof data.messageID === "string") refreshSessionContent(instanceId, data.sessionID)
-    return true
-  }
   if (event.type !== PRUNING_EVENT) return false
   const parsed = prunedEventSchema.safeParse(event.data)
   if (!parsed.success) return true

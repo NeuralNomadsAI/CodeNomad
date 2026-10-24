@@ -23,8 +23,8 @@ export const OpenCodeSettingsSection: Component = () => {
 
   return (
     <div class="settings-section-stack">
-      <OpenCodeExecutableCard />
       <OpenCodeUpdateCard />
+      <OpenCodeExecutableCard />
 
       <div class="settings-card">
         <div class="settings-card-header">
@@ -32,7 +32,6 @@ export const OpenCodeSettingsSection: Component = () => {
             <h3 class="settings-card-title">{t("settings.opencode.logLevel.title")}</h3>
             <p class="settings-card-subtitle">{t("settings.opencode.logLevel.subtitle")}</p>
           </div>
-          <span class="settings-scope-badge settings-scope-badge-server">{t("settings.scope.server")}</span>
         </div>
         <div class="settings-card-body">
           <div class="settings-toggle-row settings-toggle-row-compact">

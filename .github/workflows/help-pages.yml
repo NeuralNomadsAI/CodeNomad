@@ -1,0 +1,66 @@
+name: Publish help
+
+on:
+  push:
+    branches: [dev]
+    paths:
+      - 'docs/help/**'
+      - 'docs/screenshots/**'
+      - 'images/**'
+      - 'scripts/*help*.mjs'
+      - 'packages/ui/src/lib/help-url.ts'
+      - 'package.json'
+      - 'packages/**/package.json'
+      - 'package-lock.json'
+      - '.node-version'
+      - '.github/workflows/help-pages.yml'
+  pull_request:
+    paths:
+      - 'docs/help/**'
+      - 'docs/screenshots/**'
+      - 'images/**'
+      - 'scripts/*help*.mjs'
+      - 'packages/ui/src/lib/help-url.ts'
+      - 'package.json'
+      - 'packages/**/package.json'
+      - 'package-lock.json'
+      - '.node-version'
+      - '.github/workflows/help-pages.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm run test:help
+      - run: node scripts/build-help.mjs
+      - uses: actions/upload-pages-artifact@v5.0.0
+        with:
+          path: dist/help
+
+  deploy:
+    if: github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      pages: write
+      id-token: write
+    concurrency:
+      group: help-pages
+      cancel-in-progress: false
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/configure-pages@v6.0.0
+      - uses: actions/deploy-pages@v5.0.1
+        id: deployment

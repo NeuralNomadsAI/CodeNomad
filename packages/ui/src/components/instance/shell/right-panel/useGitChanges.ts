@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, on, onCleanup, type Accessor } from "solid-js"
+import { createEffect, createMemo, createSelector, createSignal, on, onCleanup, type Accessor } from "solid-js"
 import type { PromptInputApi } from "../../../prompt-input/types"
 import type { GitChangeEntry, GitChangeListItem, GitSelectionDescriptor, RightPanelTab } from "./types"
 
@@ -7,7 +7,9 @@ import { instances } from "../../../../stores/instances"
 import { getWorktrees } from "../../../../stores/worktrees"
 import { serverApi } from "../../../../lib/api-client"
 import { showToastNotification } from "../../../../lib/notifications"
-import { adaptSdkGitStatusEntries, buildGitChangeListItems } from "./git-changes-model"
+import { adaptSdkGitStatusEntries, buildGitChangeListItemId, buildGitChangeListItems, hideWhitespaceOnlyChanges, reuseUnchanged } from "./git-changes-model"
+import { createGitChangeWindows } from "./git-change-window"
+import { preferences } from "../../../../stores/preferences"
 import { createDebouncedRefresh, filesystemInvalidationVersion, invalidateFilesystemCaches } from "../../../../lib/filesystem-events"
 import { backgroundReads } from "../../../../lib/background-read-queue"
 import { closeFilePreview, getFilePreview, openFilePreview } from "../../../../stores/files-preview"
@@ -25,7 +27,11 @@ type UseGitChangesOptions = {
 }
 
 export function useGitChanges(options: UseGitChangesOptions) {
-  const [gitStatusEntries, setGitStatusEntries] = createSignal<GitChangeEntry[] | null>(null)
+  const [gitStatusInventory, setGitStatusEntries] = createSignal<GitChangeEntry[] | null>(null)
+  const hideWhitespace = createMemo(() => preferences().hideDiffWhitespaceChanges ?? true)
+  // Every list, count and bulk action reads the visible inventory, so hidden
+  // whitespace-only files can never be selected, dragged or staged in bulk.
+  const gitStatusEntries = createMemo(() => hideWhitespaceOnlyChanges(gitStatusInventory(), hideWhitespace()))
   const [gitStatusLoading, setGitStatusLoading] = createSignal(false)
   const [gitStatusError, setGitStatusError] = createSignal<string | null>(null)
   const [gitSelectedItemId, setGitSelectedItemId] = createSignal<string | null>(null)
@@ -49,11 +55,28 @@ export function useGitChanges(options: UseGitChangesOptions) {
   let previousGitChangesActivationKey: string | null = null
   let seenFilesystemInvalidation = filesystemInvalidationVersion(options.instanceId)
 
-  const gitListItems = createMemo(() => buildGitChangeListItems(gitStatusEntries()))
+  // Unchanged rows keep their item objects, so keyed rows survive refreshes.
+  const gitListItems = createMemo<GitChangeListItem[]>(previous =>
+    reuseUnchanged(previous, buildGitChangeListItems(gitStatusEntries()), item => item.id), [])
   const gitActionItems = createMemo(() => {
     const selected = gitBulkSelectedItemIds()
     return gitListItems().filter(item => selected.size > 0 ? selected.has(item.id) : item.id === gitSelectedItemId())
   })
+  // Rows only subscribe to their own state: a selection change updates the rows it changes.
+  const isGitItemSelected = createSelector(createMemo(() => new Set(gitActionItems().map(item => item.id))),
+    (id: string, selected: Set<string>) => selected.has(id))
+  const isGitItemCurrent = createSelector(gitSelectedItemId)
+  const gitPreviewItemId = createMemo(() => {
+    const target = options.externalDiff ? getFilePreview(options.instanceId) : null
+    return target && target.kind !== "workspace" && !target.commit && target.slug === options.worktreeSlug()
+      ? buildGitChangeListItemId(target.scope ?? "unstaged", target.path) : null
+  })
+  // Sections render a bounded window; rows once current, previewed or bulk-selected stay rendered (sticky).
+  const gitWindows = createGitChangeWindows(gitListItems, createMemo(() => {
+    const pinned = new Set(gitBulkSelectedItemIds())
+    for (const id of [gitSelectedItemId(), gitPreviewItemId()]) if (id) pinned.add(id)
+    return pinned
+  }), () => gitStatusEntries() !== null)
   const gitActive = createMemo(() => options.isActive() && options.rightPanelTab() === "git-changes")
   const cancelGitReads = () => {
     lifecycle += 1
@@ -92,7 +115,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
   }
 
   const addGitBulkRange = (anchorId: string, itemId: string) => {
-    const items = gitListItems()
+    const items = gitWindows.rendered()
     const anchorIndex = items.findIndex((entry) => entry.id === anchorId)
     const itemIndex = items.findIndex((entry) => entry.id === itemId)
     if (anchorIndex < 0 || itemIndex < 0) {
@@ -230,6 +253,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     if (disposed || !gitActive()) return false
     if (!force && gitStatusEntries() !== null) return true
     const slug = options.worktreeSlug()
+    const hide = hideWhitespace()
     const client = getRootClient(options.instanceId)
     const requestVersion = ++gitStatusRequestVersion
     statusController?.abort()
@@ -247,13 +271,17 @@ export function useGitChanges(options: UseGitChangesOptions) {
         finally { clearTimeout(timeout) }
       }, "visible").catch(() => null)
       const detailList = await backgroundReads.run(controller.signal, () =>
-        serverApi.fetchWorktreeGitStatus(options.instanceId, slug, controller.signal),
+        serverApi.fetchWorktreeGitStatus(options.instanceId, slug, controller.signal, { hideWhitespace: hide }),
         "visible",
       )
-      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
+      // A read made under the other whitespace option is stale; its refresh follows.
+      const stale = () => requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug() || hide !== hideWhitespace()
+      if (stale()) return false
       const sdkList = await sdkStatusPromise
-      if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
-      setGitStatusEntries(adaptSdkGitStatusEntries(sdkList, detailList))
+      if (stale()) return false
+      // An identical inventory keeps the previous array: nothing downstream recomputes.
+      const next = adaptSdkGitStatusEntries(sdkList, detailList)
+      setGitStatusEntries(previous => reuseUnchanged(previous, next, entry => entry.path))
       return true
     } catch (error) {
       if (requestVersion !== gitStatusRequestVersion || slug !== options.worktreeSlug()) return false
@@ -383,7 +411,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
       await reconcileGitSelection(previous)
     } catch (error) {
       if (!context.current()) return
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: error instanceof Error ? error.message : `Failed to ${action} file`,
         variant: "error",
       })
@@ -428,13 +456,13 @@ export function useGitChanges(options: UseGitChangesOptions) {
       if (!await loadGitStatus(true) || !context.current()) return
       await reconcileGitSelection(previous)
       if (!context.current()) return
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: options.t("instanceShell.gitChanges.commit.success"),
         variant: "success",
       })
     } catch (error) {
       if (!context.current()) return
-      showToastNotification({
+      showToastNotification({ category: "files",
         message: error instanceof Error ? error.message : options.t("instanceShell.gitChanges.commit.error"),
         variant: "error",
       })
@@ -463,6 +491,7 @@ export function useGitChanges(options: UseGitChangesOptions) {
     setGitStatusLoading(false)
     setGitSelectedItemId(null)
     clearGitBulkSelection()
+    gitWindows.reset()
     setGitSelectedLoading(false)
     clearSelectedGitDiff()
     setGitCommitMessage("")
@@ -496,6 +525,13 @@ export function useGitChanges(options: UseGitChangesOptions) {
     if (gitStatusEntries() === null || gitStatusError() !== null) void passiveRefreshGitStatus()
   }))
 
+  // The whitespace option is part of the status read: revalidate while visible,
+  // otherwise drop the cached rows so the next activation reads them again.
+  createEffect(on(hideWhitespace, () => {
+    if (gitActive()) void passiveRefreshGitStatus()
+    else setGitStatusEntries(null)
+  }, { defer: true }))
+
   const filesystemRefresh = createDebouncedRefresh(() => void passiveRefreshGitStatus({ forceReloadSelectedDiff: true }))
   createEffect(() => {
     const version = filesystemInvalidationVersion(options.instanceId)
@@ -516,11 +552,16 @@ export function useGitChanges(options: UseGitChangesOptions) {
 
   return {
     gitStatusEntries,
+    gitListItems,
+    gitChangeWindow: gitWindows.window,
+    revealGitChanges: gitWindows.reveal,
     gitStatusLoading,
     gitStatusError,
     gitSelectedItemId,
     gitBulkSelectedItemIds,
     gitActionItems,
+    isGitItemSelected,
+    isGitItemCurrent,
     gitSelectedLoading,
     gitSelectedError,
     gitSelectedBefore,

@@ -1,6 +1,8 @@
 export type FollowMode = { type: "following" } | { type: "escaped" }
 
 export const BOTTOM_FOLLOW_EPSILON_PX = 48
+/** How long a user gesture keeps ownership of the scroll events it causes. */
+export const USER_SCROLL_INTENT_WINDOW_MS = 600
 export const ANCHOR_RESTORE_MAX_FRAMES = 300
 export const ANCHOR_RESTORE_STABLE_FRAMES = 10
 export const ANCHOR_RESTORE_REISSUE_INTERVAL_FRAMES = 12
@@ -15,26 +17,61 @@ export function getPrimaryPointerDragDirection(previousY: number, nextY: number,
   return nextY < previousY ? "up" : "down"
 }
 
+export const SCROLL_INTENT_KEYS = new Set(["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " ", "Spacebar"])
+// Space activates these instead of scrolling (keyboard only: pointer presses
+// use the gesture routing's POINTER_CONTROL_SELECTOR).
+const INTERACTIVE_KEY_TARGET_SELECTOR = ["button", "a", "summary", "input", "textarea", "select", "[contenteditable='true']",
+  ...["button", "link", "textbox", "checkbox", "switch", "radio", "option", "menuitem", "menuitemcheckbox", "menuitemradio", "tab", "treeitem"].map(role => `[role='${role}']`)].join(", ")
+const TEXT_EDITING_KEY_TARGET_SELECTOR = "input, textarea, select, [contenteditable='true'], [role='textbox']"
+// Widgets that consume arrows (and Space). Plain buttons and links do not:
+// Chromium scrolls their scroller, so their arrows remain scroll intent.
+const ARROW_KEY_WIDGET_SELECTOR = ["listbox", "menu", "menubar", "radiogroup", "slider", "spinbutton", "combobox", "tablist", "tree", "treegrid", "grid"]
+  .map(role => `[role='${role}']`).join(", ")
+
+/** Which scroll keys a focused key target consumes instead of its scroller. */
+export function describeKeyTarget(target: EventTarget | null) {
+  const element = target as Element | null
+  return {
+    textEditing: Boolean(element?.closest?.(TEXT_EDITING_KEY_TARGET_SELECTOR)),
+    interactive: Boolean(element?.closest?.(INTERACTIVE_KEY_TARGET_SELECTOR)),
+    arrowWidget: Boolean(element?.closest?.(ARROW_KEY_WIDGET_SELECTOR)),
+  }
+}
+
 export type KeyboardScrollIntent =
   | { type: "top" }
   | { type: "bottom" }
-  | { type: "direction"; direction: "up" | "down" }
+  | { type: "direction"; direction: "up" | "down"; distance: number }
 
+/**
+ * `distance` is Chromium's step in the scroller's own pixels, never more
+ * (measured): a page is 0.875 of the viewport; a line is 40 DIP, which native
+ * page zoom shrinks too. The renderer cannot separate that zoom from the display
+ * scale, so dividing by CSS zoom × devicePixelRatio can only under-predict, and
+ * an under-predicted landing just falls back to being observed.
+ */
 export function getKeyboardScrollIntent(input: {
   key: string
   shiftKey: boolean
   interactive: boolean
   textEditing: boolean
+  arrowWidget: boolean
+  viewportHeight: number
+  zoom: number
+  devicePixelRatio: number
 }): KeyboardScrollIntent | null {
   if (input.textEditing) return null
   if (input.key === "End") return { type: "bottom" }
   if (input.key === "Home") return { type: "top" }
-  if (input.interactive && input.key !== "PageUp" && input.key !== "PageDown") return null
-  if (input.key === "ArrowUp" || input.key === "PageUp" || (input.shiftKey && (input.key === " " || input.key === "Spacebar"))) {
-    return { type: "direction", direction: "up" }
+  const arrow = input.key.startsWith("Arrow")
+  const space = input.key === " " || input.key === "Spacebar"
+  if ((space && (input.interactive || input.arrowWidget)) || (arrow && input.arrowWidget)) return null
+  const distance = arrow ? 40 / (input.zoom * Math.max(1, input.devicePixelRatio)) : Math.floor(input.viewportHeight * 0.875)
+  if (input.key === "ArrowUp" || input.key === "PageUp" || (input.shiftKey && space)) {
+    return { type: "direction", direction: "up", distance }
   }
-  if (input.key === "ArrowDown" || input.key === "PageDown" || input.key === " " || input.key === "Spacebar") {
-    return { type: "direction", direction: "down" }
+  if (input.key === "ArrowDown" || input.key === "PageDown" || space) {
+    return { type: "direction", direction: "down", distance }
   }
   return null
 }
@@ -50,10 +87,6 @@ export function isScrollRestoreMeasurementReady(input: {
 
 export function getBottomAnchoredViewportOffset(offset: number, viewportHeightDelta: number): number {
   return Math.max(0, offset + viewportHeightDelta)
-}
-
-export function shouldAdvanceBottomPin(offset: number, maxOffset: number): boolean {
-  return maxOffset > offset + 1
 }
 
 export interface BottomPinSettlementState {
@@ -75,12 +108,18 @@ export function advanceBottomPinSettlement(
   }
 }
 
+// scrollHeight/clientHeight are rounded to integers while CSS zoom quantizes
+// offsets to 1/zoom px: a viewport clamped at its bottom was measured 1.27px
+// (zoom 1.1) and 1.33px (zoom 0.75) above the reported bottom.
+export const SCROLL_EDGE_TOLERANCE_PX = 2
+
+/** The single scroll-edge test; a viewport within the tolerance is at its true bottom. */
 export function canScrollInDirection(
   metrics: { scrollTop: number; scrollHeight: number; clientHeight: number },
   direction: "up" | "down",
 ): boolean {
   if (direction === "up") return metrics.scrollTop > 0
-  return metrics.scrollTop + metrics.clientHeight < metrics.scrollHeight - 1
+  return metrics.scrollTop + metrics.clientHeight < metrics.scrollHeight - SCROLL_EDGE_TOLERANCE_PX
 }
 
 export function shouldNavigateAtBoundary(input: {
@@ -205,26 +244,17 @@ export function selectTopViewportAnchor(
   return visible.sort((a, b) => a.top - b.top)[0]
 }
 
-export function isScrollRestoreGenerationCurrent(
-  startedSessionId: string,
-  startedGeneration: number,
-  currentSessionId: string,
-  currentGeneration: number,
-) {
-  return startedSessionId === currentSessionId && startedGeneration === currentGeneration
-}
-
 export type FollowEffect =
   | { type: "none" }
   | { type: "scroll-top"; immediate: boolean }
   | { type: "scroll-bottom"; immediate: boolean }
-  | { type: "scroll-key"; key: string; block: ScrollLogicalPosition; smooth: boolean }
+  | { type: "scroll-key"; key: string }
 
 export type FollowEvent =
   | { type: "user-scroll"; direction: "up" | "down" | null; atBottom: boolean }
   | { type: "jump-top"; immediate: boolean }
   | { type: "jump-bottom"; immediate: boolean; explicit: boolean }
-  | { type: "jump-key"; key: string; block: ScrollLogicalPosition; smooth: boolean }
+  | { type: "jump-key"; key: string }
   | { type: "content-grew"; canPinToBottom: boolean }
   | { type: "set-follow"; enabled: boolean }
   | { type: "reset"; follow: boolean }
@@ -240,13 +270,11 @@ export interface ScrollControllerMetrics {
   offset: number
   scrollHeight: number
   clientHeight: number
-  sentinelMarginPx: number
 }
 
 export interface ScrollControllerState {
   mode: FollowMode
   lastObservedOffset: number
-  lastObservedAtBottom: boolean
   userIntentDirection: ScrollDirection
   userIntentUntil: number
   restoring: boolean
@@ -255,15 +283,6 @@ export interface ScrollControllerState {
 export interface ScrollControllerResult {
   effect: FollowEffect
   state: ScrollControllerState
-}
-
-export interface ScrollControllerSnapshot {
-  mode: FollowMode
-  lastObservedOffset: number
-  lastObservedAtBottom: boolean
-  userIntentDirection: ScrollDirection
-  userIntentUntil: number
-  restoring: boolean
 }
 
 export interface FollowSnapshotState {
@@ -329,7 +348,7 @@ export function transitionFollowMode(mode: FollowMode, event: FollowEvent): Foll
     case "jump-key":
       return {
         mode: { type: "escaped" },
-        effect: { type: "scroll-key", key: event.key, block: event.block, smooth: event.smooth },
+        effect: { type: "scroll-key", key: event.key },
       }
 
     case "content-grew":
@@ -351,7 +370,16 @@ export function getDistanceFromBottom(metrics: ScrollControllerMetrics) {
 }
 
 export function isAtBottom(metrics: ScrollControllerMetrics) {
-  return getDistanceFromBottom(metrics) <= metrics.sentinelMarginPx
+  return getDistanceFromBottom(metrics) <= BOTTOM_FOLLOW_EPSILON_PX
+}
+
+export function hasReachedBottom(metrics: ScrollControllerMetrics) {
+  return !canScrollInDirection({ scrollTop: metrics.offset, scrollHeight: metrics.scrollHeight, clientHeight: metrics.clientHeight }, "down")
+}
+
+/** The proximity tolerance only maintains an active follow pin; a manual reader is at the bottom only at the true bottom. */
+export function isAtBottomForMode(mode: FollowMode, metrics: ScrollControllerMetrics) {
+  return isAutoFollowing(mode) ? isAtBottom(metrics) : hasReachedBottom(metrics)
 }
 
 export class VirtualScrollController {
@@ -361,14 +389,13 @@ export class VirtualScrollController {
     this.state = {
       mode: initialFollow ? { type: "following" } : { type: "escaped" },
       lastObservedOffset: 0,
-      lastObservedAtBottom: false,
       userIntentDirection: null,
       userIntentUntil: 0,
       restoring: false,
     }
   }
 
-  snapshot(): ScrollControllerSnapshot {
+  snapshot(): ScrollControllerState {
     return { ...this.state, mode: { ...this.state.mode } }
   }
 
@@ -379,6 +406,22 @@ export class VirtualScrollController {
   setUserIntent(direction: ScrollDirection, until: number) {
     this.state.userIntentDirection = direction
     this.state.userIntentUntil = until
+  }
+
+  /**
+   * Records a user gesture before it scrolls. Upward intent escapes at once. A
+   * downward gesture whose amplitude (`distance`, in scroller pixels) reaches
+   * the bottom laid out now resumes follow at once: the browser clamps a wheel
+   * to an earlier frame's bottom, and animates keys towards the bottom captured
+   * when they start, so streamed growth leaves the landing short of the bottom.
+   */
+  userGesture(direction: ScrollDirection, until: number, metrics: ScrollControllerMetrics | null, distance = 0): ScrollControllerResult {
+    this.setUserIntent(direction, until)
+    if (direction === "up") return this.setFollow(false)
+    if (direction === "down" && metrics && isAtBottomForMode(this.state.mode, { ...metrics, offset: metrics.offset + distance })) {
+      return this.setFollow(true)
+    }
+    return this.result(noFollowEffect)
   }
 
   clearExpiredUserIntent(now: number) {
@@ -395,7 +438,6 @@ export class VirtualScrollController {
     const next = transitionFollowMode(this.state.mode, { type: "reset", follow })
     this.state.mode = next.mode
     this.state.lastObservedOffset = 0
-    this.state.lastObservedAtBottom = false
     this.state.userIntentDirection = null
     this.state.userIntentUntil = 0
     this.state.restoring = false
@@ -429,8 +471,8 @@ export class VirtualScrollController {
     return this.result(next.effect)
   }
 
-  jumpKey(key: string, block: ScrollLogicalPosition, smooth: boolean): ScrollControllerResult {
-    const next = transitionFollowMode(this.state.mode, { type: "jump-key", key, block, smooth })
+  jumpKey(key: string): ScrollControllerResult {
+    const next = transitionFollowMode(this.state.mode, { type: "jump-key", key })
     this.state.mode = next.mode
     return this.result(next.effect)
   }
@@ -443,7 +485,6 @@ export class VirtualScrollController {
     const atBottom = isAtBottom(metrics)
 
     this.state.lastObservedOffset = offset
-    this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
     this.clearExpiredUserIntent(now)
 
     const hasFreshIntent = now <= this.state.userIntentUntil
@@ -470,22 +511,20 @@ export class VirtualScrollController {
       return this.result(noFollowEffect)
     }
 
-    const next = transitionFollowMode(this.state.mode, { type: "user-scroll", direction, atBottom })
+    const next = transitionFollowMode(this.state.mode, { type: "user-scroll", direction, atBottom: isAtBottomForMode(this.state.mode, metrics) })
     this.state.mode = next.mode
-    this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
     return this.result(next.effect)
   }
 
-  contentRendered(_metrics: ScrollControllerMetrics, canPinToBottom: boolean): ScrollControllerResult {
+  contentRendered(canPinToBottom: boolean): ScrollControllerResult {
     if (this.state.restoring) return this.result(noFollowEffect)
     const next = transitionFollowMode(this.state.mode, { type: "content-grew", canPinToBottom })
     this.state.mode = next.mode
     return this.result(next.effect)
   }
 
-  recordProgrammaticOffset(offset: number, atBottom: boolean) {
+  recordProgrammaticOffset(offset: number) {
     this.state.lastObservedOffset = offset
-    this.state.lastObservedAtBottom = this.isAutoFollowing() && atBottom
   }
 
   private result(effect: FollowEffect): ScrollControllerResult {

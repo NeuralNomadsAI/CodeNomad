@@ -1,4 +1,3 @@
-import { spawn, spawnSync } from "child_process"
 import path from "path"
 
 interface ShellCommand {
@@ -75,67 +74,4 @@ export function getUserShellEnv(): NodeJS.ProcessEnv {
     throw new Error("User shell invocation is only supported on POSIX platforms")
   }
   return sanitizeShellEnv(process.env)
-}
-
-export function runUserShellCommand(userCommand: string, timeoutMs = 5000): Promise<string> {
-  if (!supportsUserShell()) {
-    return Promise.reject(new Error("User shell invocation is only supported on POSIX platforms"))
-  }
-
-  const { command, args } = buildUserShellCommand(userCommand)
-  const env = getUserShellEnv()
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      stdio: ["ignore", "pipe", "pipe"],
-      env,
-    })
-
-    let stdout = ""
-    let stderr = ""
-
-    const timeout = setTimeout(() => {
-      child.kill("SIGTERM")
-      reject(new Error(`Shell command timed out after ${timeoutMs}ms`))
-    }, timeoutMs)
-
-    child.stdout?.on("data", (data) => {
-      stdout += data.toString()
-    })
-
-    child.stderr?.on("data", (data) => {
-      stderr += data.toString()
-    })
-
-    child.on("error", (error) => {
-      clearTimeout(timeout)
-      reject(error)
-    })
-
-    child.on("close", (code) => {
-      clearTimeout(timeout)
-      if (code === 0) {
-        resolve(stdout.trim())
-      } else {
-        reject(new Error(stderr.trim() || `Shell command exited with code ${code}`))
-      }
-    })
-  })
-}
-
-export function runUserShellCommandSync(userCommand: string): string {
-  if (!supportsUserShell()) {
-    throw new Error("User shell invocation is only supported on POSIX platforms")
-  }
-
-  const { command, args } = buildUserShellCommand(userCommand)
-  const env = getUserShellEnv()
-  const result = spawnSync(command, args, { encoding: "utf-8", env })
-
-  if (result.status !== 0) {
-    const stderr = (result.stderr || "").toString().trim()
-    throw new Error(stderr || "Shell command failed")
-  }
-
-  return (result.stdout || "").toString().trim()
 }

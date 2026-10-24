@@ -126,7 +126,7 @@ try {
   } }`)
   env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     model: "fixture/fixture", permissions: [{ action: "*", resource: "*", effect: "allow" }],
-    providers: { fixture: { package: `${version === "0.0.0-beta-19271" ? "@opencode-ai" : "@opencode"}/ai/providers/openai-compatible`,
+    providers: { fixture: { package: "@opencode/ai/providers/openai-compatible",
       settings: { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture" }, models: { fixture: {} } } },
     plugins: [path.join(root, "fixture-plugin")],
   })

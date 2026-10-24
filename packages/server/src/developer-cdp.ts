@@ -1,10 +1,12 @@
 import { WebSocket } from "undici"
+import { bindRefs, performAction, snapshotPage, type PageActionResult, type PageSession } from "./automation/page/actions"
+import type { RefAction } from "./automation/page/parse"
+import { RefTable } from "./automation/page/refs"
+import { SnapshotScopeError } from "./automation/page/snapshot"
 
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_MAX_SCREENSHOT_BYTES = 5 * 1024 * 1024
 const DIAGNOSTIC_LIMIT = 1_000
-const SNAPSHOT_NODE_LIMIT = 750
-const SNAPSHOT_TEXT_LIMIT = 64 * 1024
 const DIAGNOSTIC_TEXT_LIMIT = 512
 const DISCOVERY_TEXT_LIMIT = 256 * 1024
 const DISCOVERY_TARGET_LIMIT = 64
@@ -36,15 +38,6 @@ export interface DeveloperCdpContext {
   sessionId: string | null
 }
 
-export interface DeveloperCdpNode {
-  ref?: string
-  role: string
-  name: string
-  description?: string
-  value?: string
-  states?: string[]
-}
-
 export interface DeveloperCdpDiagnostic {
   level: "log" | "warning" | "error"
   text: string
@@ -53,13 +46,18 @@ export interface DeveloperCdpDiagnostic {
 export interface DeveloperCdpInspection {
   target: { id: string; title: string; url: string }
   context: DeveloperCdpContext
-  nodes: DeveloperCdpNode[]
+  /** Indented accessibility outline with refs (`automation/page/snapshot.ts`). */
+  snapshot: string
+  /** Lines that hide part of the page; inspect their ref to expand them. */
+  collapsed: number
   diagnostics: DeveloperCdpDiagnostic[]
 }
 
-export type DeveloperCdpAction =
-  | (DeveloperCdpIdentity & { kind: "click"; ref: string })
-  | (DeveloperCdpIdentity & { kind: "type"; ref: string; text: string })
+/** A full inspection, or one limited to a ref's subtree and/or matching text. */
+export interface DeveloperCdpInspectOptions {
+  ref?: string
+  query?: string
+}
 
 export interface DeveloperCdpScreenshot {
   mediaType: "image/png"
@@ -114,29 +112,21 @@ interface RunState {
   target?: CdpTarget
   socket?: CdpSocket
   open?: Promise<void>
+  /** Distinguishes this run's refs from an earlier state's on the same target. */
+  stamp: number
   nextCommandId: number
   navigationEpoch: number
   pending: Map<number, PendingCommand>
-  refs: Map<string, { backendNodeId: number; targetId: string; epoch: number }>
   diagnostics: DeveloperCdpDiagnostic[]
-}
-
-interface AxValue { value?: unknown }
-interface AxNode {
-  ignored?: boolean
-  backendDOMNodeId?: number
-  role?: AxValue
-  name?: AxValue
-  description?: AxValue
-  value?: AxValue
-  properties?: Array<{ name?: string; value?: AxValue }>
 }
 
 export class DeveloperCdp {
   private readonly dependencies: DeveloperCdpDependencies
   private readonly runs = new Map<string, RunState>()
   private readonly operations = new Map<string, Promise<void>>()
-  private nextRefId = 0
+  /** Shared by runs so a ref name is never reused for another element. */
+  private readonly refs = new RefTable()
+  private stamps = 0
 
   constructor(dependencies: Partial<DeveloperCdpDependencies> = {}) {
     this.dependencies = {
@@ -148,67 +138,49 @@ export class DeveloperCdp {
     }
   }
 
-  async inspect(identity: DeveloperCdpIdentity): Promise<DeveloperCdpInspection> {
+  async inspect(identity: DeveloperCdpIdentity, options: DeveloperCdpInspectOptions = {}): Promise<DeveloperCdpInspection> {
     return this.exclusive(identity.runId, async () => {
       const state = await this.ensure(identity)
-      const epoch = state.navigationEpoch
-      const result = await this.command(state, "Accessibility.getFullAXTree")
-      await this.assertContextCurrent(state, epoch, "Page changed during inspection; inspect again")
-
-      state.refs.clear()
-      const nodes = Array.isArray(result.nodes) ? result.nodes as AxNode[] : []
-      const snapshot: DeveloperCdpNode[] = []
-      let textSize = 0
-      for (const node of nodes) {
-        if (node.ignored || !Number.isInteger(node.backendDOMNodeId)) continue
-        const role = valueOf(node.role)
-        const name = valueOf(node.name)
-        if (!role || (!name && ["generic", "none", "StaticText", "InlineTextBox"].includes(role))) continue
-        const description = valueOf(node.description)
-        const value = valueOf(node.value)
-        const states = (node.properties ?? [])
-          .filter((property) => ["checked", "disabled", "expanded", "focused", "selected"].includes(property.name ?? ""))
-          .map((property) => `${property.name}=${String(property.value?.value)}`)
-        const size = role.length + name.length + description.length + value.length + states.join(" ").length
-        if (snapshot.length >= SNAPSHOT_NODE_LIMIT || textSize + size > SNAPSHOT_TEXT_LIMIT) break
-        textSize += size
-        const ref = `ax${++this.nextRefId}`
-        state.refs.set(ref, {
-          backendNodeId: node.backendDOMNodeId!,
-          targetId: state.target!.id,
-          epoch,
-        })
-        snapshot.push({
-          ref,
-          role,
-          name,
-          ...(description ? { description } : {}),
-          ...(value ? { value } : {}),
-          ...(states.length ? { states } : {}),
-        })
+      const generation = this.generation(state)
+      const root = options.ref === undefined ? undefined : this.refs.resolve(options.ref, generation)
+      let snapshot
+      try {
+        snapshot = await snapshotPage(this.session(state, state.navigationEpoch, "Page changed during inspection; inspect again"),
+          () => this.refs.issuer(generation), { rootBackendNodeId: root, query: options.query })
+      } catch (error) {
+        if (error instanceof SnapshotScopeError) throw new Error(`${options.ref} is no longer in the page; inspect again`)
+        throw error
       }
       return {
         target: { id: state.target!.id, title: state.target!.title, url: state.target!.url },
         context: state.context!,
-        nodes: snapshot,
+        snapshot: snapshot.text,
+        collapsed: snapshot.collapsed,
         diagnostics: state.diagnostics.splice(0),
       }
     })
   }
 
-  async act(action: DeveloperCdpAction): Promise<void> {
-    return this.exclusive(action.runId, async () => {
-      const state = await this.ensure(action)
-      const node = this.resolveRef(state, action.ref)
-      if (action.kind === "click") {
-        await this.click(state, node.backendNodeId, node.epoch)
-        return
-      }
-      await this.command(state, "DOM.focus", { backendNodeId: node.backendNodeId })
-      await this.assertContextCurrent(state, node.epoch, "Page changed during action; inspect again")
-      await this.command(state, "Input.insertText", { text: action.text })
-      await this.assertContextCurrent(state, node.epoch, "Page changed during action; inspect again")
+  async act(identity: DeveloperCdpIdentity, action: RefAction): Promise<PageActionResult> {
+    return this.exclusive(identity.runId, async () => {
+      const state = await this.ensure(identity)
+      const epoch = state.navigationEpoch, generation = this.generation(state)
+      const page = bindRefs(action, ref => this.refs.resolve(ref, generation))
+      return performAction(this.session(state, epoch, "Page changed during action; inspect again"), page)
     })
+  }
+
+  /** Refs belong to one target and navigation epoch. */
+  private generation(state: RunState): string {
+    return `${state.stamp}\0${state.target!.id}\0${state.navigationEpoch}`
+  }
+
+  private session(state: RunState, epoch: number, message: string): PageSession {
+    return {
+      channel: { send: (method, params) => this.command(state, method, params) },
+      checkpoint: () => this.assertContextCurrent(state, epoch, message),
+      markAutomation: true,
+    }
   }
 
   async screenshot(identity: DeveloperCdpIdentity): Promise<DeveloperCdpScreenshot> {
@@ -267,10 +239,10 @@ export class DeveloperCdp {
       windowId,
       sessionId,
       instanceId,
+      stamp: ++this.stamps,
       nextCommandId: 0,
       navigationEpoch: 0,
       pending: new Map(),
-      refs: new Map(),
       diagnostics: [],
     }
   }
@@ -419,8 +391,7 @@ export class DeveloperCdp {
       return
     }
     if (message.method === "Page.frameNavigated") {
-      state.navigationEpoch++
-      state.refs.clear()
+      this.invalidateRefs(state)
       return
     }
     const diagnostic = readDiagnostic(message)
@@ -428,28 +399,6 @@ export class DeveloperCdp {
       state.diagnostics.push(diagnostic)
       if (state.diagnostics.length > DIAGNOSTIC_LIMIT) state.diagnostics.splice(0, state.diagnostics.length - DIAGNOSTIC_LIMIT)
     }
-  }
-
-  private resolveRef(state: RunState, ref: string): { backendNodeId: number; epoch: number } {
-    const node = state.refs.get(ref)
-    if (!node || node.targetId !== state.target?.id || node.epoch !== state.navigationEpoch) {
-      throw new Error(`Unknown or stale accessibility ref: ${ref}`)
-    }
-    return node
-  }
-
-  private async click(state: RunState, backendNodeId: number, epoch: number): Promise<void> {
-    await this.command(state, "DOM.scrollIntoViewIfNeeded", { backendNodeId })
-    await this.assertContextCurrent(state, epoch, "Page changed during action; inspect again")
-    const result = await this.command(state, "DOM.resolveNode", { backendNodeId })
-    await this.assertContextCurrent(state, epoch, "Page changed during action; inspect again")
-    const objectId = (result.object as { objectId?: unknown } | undefined)?.objectId
-    if (typeof objectId !== "string") throw new Error("Chrome could not resolve the element")
-    await this.command(state, "Runtime.callFunctionOn", {
-      objectId,
-      functionDeclaration: "function () { const element = this.nodeType === Node.ELEMENT_NODE ? this : this.parentElement; if (!(element instanceof HTMLElement)) throw new Error('Element is unavailable'); element.click(); }",
-    })
-    await this.assertContextCurrent(state, epoch, "Page changed during action; inspect again")
   }
 
   private async assertContextCurrent(state: RunState, epoch: number, message: string): Promise<void> {
@@ -478,9 +427,9 @@ export class DeveloperCdp {
     })
   }
 
+  /** A new epoch makes every ref issued before it stale. */
   private invalidateRefs(state: RunState): void {
     state.navigationEpoch++
-    state.refs.clear()
   }
 
   private disconnect(state: RunState, error: Error): void {
@@ -537,10 +486,6 @@ function isLoopbackWebSocketUrl(value: string): boolean {
   } catch {
     return false
   }
-}
-
-function valueOf(value: AxValue | undefined): string {
-  return typeof value?.value === "string" ? value.value : ""
 }
 
 function readDiagnostic(message: CdpResponse): DeveloperCdpDiagnostic | undefined {

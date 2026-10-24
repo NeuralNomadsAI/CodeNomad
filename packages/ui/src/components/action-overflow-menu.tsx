@@ -1,6 +1,7 @@
 import { DropdownMenu } from "@kobalte/core/dropdown-menu"
 import { For, Show, createSignal, onCleanup, type JSXElement } from "solid-js"
 import { MoreHorizontal } from "lucide-solid"
+import { suppressCompatibilityClick } from "../lib/compatibility-click"
 
 export interface ActionOverflowMenuItem {
   key: string
@@ -24,6 +25,7 @@ interface ActionOverflowMenuProps {
 
 export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
   let selectedAction: ActionOverflowMenuItem["onSelect"] | undefined
+  let pointerType: string | undefined
   const [hoveredItem, setHoveredItem] = createSignal<ActionOverflowMenuItem | null>(null)
   const enabledItems = () => props.items.filter((item) => !item.disabled)
   const hasItems = () => props.items.length >= (props.minItems ?? 1)
@@ -80,9 +82,14 @@ export default function ActionOverflowMenu(props: ActionOverflowMenuProps) {
                     if (hoveredItem() === item) setHoveredItem(null)
                     item.onMouseLeave?.()
                   }}
+                  // Kobalte selects on pointerup; record it for the selection below.
+                  onPointerUp={(event) => { pointerType = event.pointerType }}
+                  onKeyDown={() => { pointerType = undefined }}
                   onSelect={() => {
                     clearHoveredItem()
                     selectedAction = item.onSelect
+                    if (pointerType && pointerType !== "mouse") suppressCompatibilityClick()
+                    pointerType = undefined
                   }}
                 >
                   <Show when={item.icon} fallback={<span class="action-overflow-item-icon" aria-hidden="true" />}>

@@ -19,8 +19,9 @@
   margin-bottom: 1.5rem;
 }
 
+/* Brand logos follow their title, never the window (dev-docs/UI_CONVENTIONS.md). */
 .folder-home-logo {
-  height: 8rem;
+  height: 4rem;
 }
 
 .folder-home-content,
@@ -68,7 +69,7 @@
   padding: 0.125rem 0.5rem;
   border: 1px solid var(--border-base);
   border-radius: 0;
-  background-color: var(--surface-base);
+  background-color: var(--surface-control);
   color: var(--text-secondary);
   font-size: 0.625rem;
   font-weight: 500;
@@ -141,18 +142,8 @@
 
 }
 
-@media (min-width: 640px) and (min-height: 721px) {
-  .folder-home-logo {
-    height: 12rem;
-  }
-}
-
 @media (max-height: 720px) and (min-width: 1024px) {
   .folder-home-hero {
     margin-bottom: var(--space-md);
-  }
-
-  .folder-home-logo {
-    height: 8rem;
   }
 }

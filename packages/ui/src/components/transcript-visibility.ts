@@ -1,5 +1,86 @@
-import type { Preferences, VisibilityPreference } from "../stores/preferences"
-import { getConfigurableToolEntries, OTHER_TOOL_NAME, resolveToolVisibility, THINKING_EXPANSION_PRESETS } from "./tool-call/tool-presentation"
+import type { Preferences, ToolCallExpansionPreset, ToolCallExpansionPresetSelection, VisibilityPreference } from "../stores/preferences"
+import {
+  buildToolExpansionPresetDefaults,
+  getConfigurableToolEntries,
+  OTHER_TOOL_NAME,
+  resolveToolVisibility,
+  THINKING_EXPANSION_PRESETS,
+} from "./tool-call/tool-presentation"
+
+export const TRANSCRIPT_PRESETS: ToolCallExpansionPreset[] = ["nothing", "minimal", "balanced", "everything"]
+
+const transcriptDetailPresets = {
+  nothing: {
+    systemMessagesVisibility: "hidden",
+    showThinkingBlocks: false,
+    diagnosticsExpansion: "hidden",
+    toolInputsVisibility: "hidden",
+    showUsageMetrics: false,
+    usageMetricsExpansion: "collapsed",
+  },
+  minimal: {
+    systemMessagesVisibility: "hidden",
+    showThinkingBlocks: false,
+    diagnosticsExpansion: "collapsed",
+    toolInputsVisibility: "hidden",
+    showUsageMetrics: false,
+    usageMetricsExpansion: "collapsed",
+  },
+  balanced: {
+    systemMessagesVisibility: "hidden",
+    showThinkingBlocks: false,
+    diagnosticsExpansion: "expanded",
+    toolInputsVisibility: "collapsed",
+    showUsageMetrics: false,
+    usageMetricsExpansion: "collapsed",
+  },
+  everything: {
+    systemMessagesVisibility: "expanded",
+    showThinkingBlocks: true,
+    diagnosticsExpansion: "expanded",
+    toolInputsVisibility: "expanded",
+    showUsageMetrics: true,
+    usageMetricsExpansion: "expanded",
+  },
+} as const satisfies Record<
+  ToolCallExpansionPreset,
+  Pick<
+    Preferences,
+    | "showThinkingBlocks"
+    | "diagnosticsExpansion"
+    | "systemMessagesVisibility"
+    | "toolInputsVisibility"
+    | "showUsageMetrics"
+    | "usageMetricsExpansion"
+  >
+>
+
+/** The saved preset while every non-tool row still matches it; any manual change is Custom. */
+export function transcriptPreset(current: Preferences): ToolCallExpansionPresetSelection {
+  const preset = current.toolCallExpansionDefaults.preset
+  if (preset === "custom") return preset
+  const detail = transcriptDetailPresets[preset]
+  const expectedThinking = detail.showThinkingBlocks ? THINKING_EXPANSION_PRESETS[preset] : "hidden"
+  return transcriptVisibility(current, { kind: "thinking", key: "thinking", label: "" }) === expectedThinking &&
+    current.diagnosticsExpansion === detail.diagnosticsExpansion &&
+    current.systemMessagesVisibility === detail.systemMessagesVisibility &&
+    current.toolInputsVisibility === detail.toolInputsVisibility &&
+    current.showUsageMetrics === detail.showUsageMetrics &&
+    current.usageMetricsExpansion === detail.usageMetricsExpansion
+    ? preset
+    : "custom"
+}
+
+export function transcriptPresetPatch(preset: ToolCallExpansionPreset): Partial<Preferences> {
+  const tools = buildToolExpansionPresetDefaults(preset)
+  const thinking = THINKING_EXPANSION_PRESETS[preset]
+  return {
+    ...transcriptDetailPresets[preset],
+    toolCallExpansionDefaults: { preset, thinking, tools },
+    thinkingBlocksExpansion: thinking,
+    toolOutputExpansion: tools[OTHER_TOOL_NAME] === "expanded" ? "expanded" : "collapsed",
+  }
+}
 
 export type TranscriptVisibilityRow =
   | { kind: "thinking"; key: "thinking"; label: string }

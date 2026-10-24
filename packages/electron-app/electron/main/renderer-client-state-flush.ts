@@ -15,10 +15,10 @@ export interface RendererFlushWindow {
 
 export type RendererFlushResult = "flushed" | "not-primary" | "window-unavailable" | "untrusted-origin"
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, operation = "Renderer client-state flush"): Promise<T> {
   return new Promise<T>((resolve, reject) => {
     const timer = setTimeout(
-      () => reject(new Error(`Renderer client-state flush timed out after ${timeoutMs}ms`)),
+      () => reject(new Error(`${operation} timed out after ${timeoutMs}ms`)),
       timeoutMs,
     )
     promise.then(

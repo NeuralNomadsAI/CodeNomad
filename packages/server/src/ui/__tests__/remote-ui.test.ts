@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { mkdir } from "node:fs/promises"
+import { createServer } from "node:http"
+import type { AddressInfo } from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { afterEach, beforeEach, describe, it } from "node:test"
@@ -81,5 +83,36 @@ describe("resolveUi local version preference", () => {
     assert.equal(result.source, "bundled")
     assert.equal(result.uiStaticDir, bundledDir)
     assert.equal(result.uiVersion, "0.8.1")
+  })
+})
+
+describe("resolveUi manifest request", () => {
+  it("identifies the server version in its User-Agent", async () => {
+    const bundledDir = path.join(tempRoot, "bundled")
+    await mkdir(bundledDir, { recursive: true })
+    writeFileSync(path.join(bundledDir, "index.html"), "<html>bundled</html>")
+
+    const userAgents: Array<string | undefined> = []
+    const manifestHost = createServer((request, response) => {
+      userAgents.push(request.headers["user-agent"])
+      response.writeHead(404).end()
+    })
+    await new Promise<void>((resolve) => manifestHost.listen(0, "127.0.0.1", resolve))
+    try {
+      const { port } = manifestHost.address() as AddressInfo
+      const result = await resolveUi({
+        serverVersion: "1.0.0",
+        bundledUiDir: bundledDir,
+        autoUpdate: true,
+        manifestUrl: `http://127.0.0.1:${port}/version.json`,
+        configDir: path.join(tempRoot, "config"),
+        logger: noopLogger,
+      })
+
+      assert.deepEqual(userAgents, ["CodeNomad-CLI/1.0.0"])
+      assert.equal(result.source, "bundled")
+    } finally {
+      await new Promise((resolve) => manifestHost.close(resolve))
+    }
   })
 })

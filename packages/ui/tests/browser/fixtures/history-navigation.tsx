@@ -1,13 +1,15 @@
 import { createEffect, createRoot, createSignal, Show } from "solid-js"
 import { render } from "solid-js/web"
 import SessionView from "../../../src/components/session/session-view"
+import { MissionPicker } from "../../../src/components/mission-picker"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
+import { transcriptPresetPatch } from "../../../src/components/transcript-visibility"
 import { setSessionSearchOpen } from "../../../src/stores/session-search"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { serverApi } from "../../../src/lib/api-client"
-import { addInstance } from "../../../src/stores/instances"
+import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import { sessions, setSessions, setActiveSession, setProviders } from "../../../src/stores/session-state"
 import { messageStoreBus } from "../../../src/stores/message-v2/bus"
 import { sseManager } from "../../../src/lib/sse-manager"
@@ -15,14 +17,19 @@ import { loadMessages, loadLatestMessageWindow } from "../../../src/stores/sessi
 import { historyWindowCursor } from "../../../src/stores/history-window"
 import { createSessionOutline, captureSessionOutlineIndexes, seedSessionOutlineIndexes } from "../../../src/stores/session-outline"
 import { encodeClientSnapshotV2, decodeClientSnapshotV2 } from "../../../src/stores/client-state-partitions"
-import { navigationMessage, navigationMessageId, mixedNavigationMessage } from "./history-navigation-data"
+import { navigationMessage, navigationMessageId, mixedNavigationMessage, deepNavigationMessage } from "./history-navigation-data"
+import { applyUiSettings } from "./ui-settings"
 import "../../../src/index.css"
 
 const instanceId = "navigation", sessionId = "s", count = 1500
-const makeMessage = location.search.includes("mixed") ? mixedNavigationMessage : navigationMessage
+const makeMessage = location.search.includes("mixed") ? mixedNavigationMessage
+  : location.search.includes("deep") ? deepNavigationMessage : navigationMessage
 const model = { providerID: "fixture", id: "fixture" }
 const assistantId = "msg_streaming"
 let nativeLists = 0, time = 10000, live = "", streaming = false
+let steps = 0
+const prompts: string[] = []
+let listHold: Promise<void> | undefined, releaseListHold: (() => void) | undefined, listPending = false
 let releaseMessages!: () => void
 const messagesGate = new Promise<void>(resolve => { releaseMessages = resolve })
 if (!location.search.includes("holdMessages")) releaseMessages()
@@ -37,11 +44,20 @@ const client: any = {
   session: { active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
     get: async () => ({ id: sessionId, title: "Long navigation", location: { directory: "/fixture" }, time: { created: 1, updated: 1 } }),
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
+    switchAgent: async () => ({}), switchModel: async () => ({}),
+    prompt: async ({ id }: any) => { prompts.push(id); return {} },
   },
   model: { default: async () => ({ data: model }) },
   message: { list: async ({ cursor, limit = 200, order }: any = {}) => {
     nativeLists++
     await messagesGate
+    if (listHold) {
+      const hold = listHold
+      listHold = undefined
+      listPending = true
+      await hold
+      listPending = false
+    }
     if (order === 'asc' || cursor?.startsWith('asc:')) {
       const start = cursor ? Number(cursor.slice(4)) : 0
       const end = Math.min(count, start + limit)
@@ -71,14 +87,28 @@ if (savedIndexes) {
   const tab = decoded?.session?.tabs[0]
   if (tab?.kind === "workspace") seedSessionOutlineIndexes(instanceId, tab.outlineIndexes)
 }
+if (location.search.includes("hiddenTimeline")) await applyUiSettings({ locale: "en", showMessageTimeline: false })
 const [visible, setVisible] = createSignal(true)
 const store = messageStoreBus.getOrCreate(instanceId)
+// A field-driven list beside the conversation: its search moves the active option with every arrow key.
+const missionPicker = location.search.includes("missionPicker")
+const missionEntries = Array.from({ length: 40 }, (_, index) => ({ key: `mission:${index}`, title: `Mission ${index}`, status: "In progress", mark: "running" }))
+const [missionsExpanded, setMissionsExpanded] = createSignal(false)
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}>
   <SessionView sessionId={sessionId} activeSessions={sessions().get(instanceId)!} instanceId={instanceId} instanceFolder="/fixture" escapeInDebounce={false} isActive={true} />
+</Show><Show when={missionPicker}>
+  <div class="mission-control" style={{ position: "fixed", top: "0", left: "0", width: "280px", "z-index": "10" }}>
+    <MissionPicker entries={missionEntries} expanded={missionsExpanded()} onExpandedChange={setMissionsExpanded}
+      onSelect={() => {}} onCreate={() => {}} createDisabled />
+  </div>
 </Show></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   id: navigationMessageId,
   releaseMessages,
+  /** Holds the next native page read until `releaseList`. */
+  holdNextList: () => { listHold = new Promise<void>(resolve => { releaseListHold = resolve }) },
+  listPending: () => listPending,
+  releaseList: () => { listHold = undefined; releaseListHold?.() },
   index: () => captureSessionOutlineIndexes(instanceId)?.[sessionId],
   saveIndexes: async (projectID?: string) => {
     const indexes = captureSessionOutlineIndexes(instanceId)!
@@ -96,7 +126,9 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
       })
     })
   },
-  tools: (showTimelineTools: boolean) => updatePreferences({ showTimelineTools }),
+  // Timeline tool markers follow Message content: Everything shows them, Nothing hides them.
+  tools: (visible: boolean) => updatePreferences(transcriptPresetPatch(visible ? "everything" : "nothing")),
+  pruneTool: (index: number) => store.removeMessagePart(navigationMessageId(index), `${navigationMessageId(index)}-tool`, sessionId),
   status: (status: 'idle' | 'working') => setSessions(previous => {
     const next = new Map(previous), group = new Map(next.get(instanceId)!)
     group.set(sessionId, { ...group.get(sessionId)!, status })
@@ -120,6 +152,27 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider><Show when={visible()}
     live += delta
     emit("session.text.delta", { assistantMessageID: assistantId, ordinal: 0, delta })
   },
+  /**
+   * Runs `count` agent steps, each a new assistant message rolling the oldest
+   * one out of the 200-message window. A `text` step answers before it ends;
+   * an `empty` step ends at once, which hides its message.
+   */
+  steps: (count: number, kind: "text" | "empty" = "text") => {
+    for (let index = 0; index < count; index++) {
+      const assistantMessageID = `msg_step_${String(++steps).padStart(4, "0")}`
+      emit("session.step.started", { assistantMessageID, agent: "build", model })
+      if (kind === "text") {
+        const text = `Step ${steps}\n\nA short agent step.`
+        emit("session.text.started", { assistantMessageID })
+        emit("session.text.delta", { assistantMessageID, ordinal: 0, delta: text })
+        emit("session.text.ended", { assistantMessageID, ordinal: 0, text })
+      }
+      emit("session.step.ended", { assistantMessageID, finish: "stop" })
+    }
+  },
+  prompts: () => prompts,
+  /** The composer opens its `/` and `@` picker only for the active instance. */
+  activateInstance: () => setActiveInstanceId(instanceId),
   snapshot: () => ({ nativeLists, ids: store.getSessionMessageIds(sessionId), window: store.getMessageWindow(sessionId),
     scroll: store.getScrollSnapshot(sessionId, "message-stream"), model: sessions().get(instanceId)?.get(sessionId)?.model }),
 }

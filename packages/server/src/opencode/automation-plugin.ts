@@ -1,13 +1,19 @@
-import { randomBytes } from "node:crypto"
+import { randomBytes, timingSafeEqual } from "node:crypto"
 import { execFileSync, spawn } from "node:child_process"
 import { mkdir, open, opendir, readFile, rename, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import type { Plugin } from "@opencode/plugin"
+import { MissionControlError } from "../missions/control-error"
+import { signNativeRecurrenceControl, type RecurrenceControlProofBody } from "../missions/recurrence-control-proof"
+import { missionRecoveryError } from "../missions/recovery-error"
+import { PAGE_ACTION_PROPERTIES, PAGE_ACTIONS, parsePageAction, type RefAction } from "../automation/page/parse"
 
 export const AUTOMATION_BRIDGE_PATH = "/api/opencode-plugin/automation"
 const REQUEST_TIMEOUT_MS = 95_000
 const PROBE_TIMEOUT_MS = 5_000
+// Mission ownership may require a cold, validated linked-worktree inventory.
+const MISSION_PROBE_TIMEOUT_MS = 30_000
 const INSPECTION_TIMEOUT_MS = 15_000
 const RECONNECT_INTERVAL_MS = 250
 const MAX_REGISTRATIONS = 64
@@ -20,18 +26,18 @@ const WINDOWS_INTEROP = Symbol("windowsInterop")
 let cachedWslWindowsLocalAppData: string | null | undefined
 
 export type DeveloperAction =
-  | { action: "inspect" }
-  | { action: "click"; ref: string }
-  | { action: "type"; ref: string; text: string }
+  | { action: "inspect"; ref?: string; query?: string }
+  | RefAction
   | { action: "restart" }
   | { action: "screenshot" }
+
+const MAX_QUERY_LENGTH = 200
 
 export type BrowserAction =
   | { action: "open"; url: string }
   | { action: "navigate"; url: string }
-  | { action: "snapshot" }
-  | { action: "click"; ref: string }
-  | { action: "type"; ref: string; text: string; clear?: boolean }
+  | { action: "snapshot"; ref?: string; query?: string }
+  | RefAction
   | { action: "screenshot" }
 
 export interface AutomationBridgeRegistration {
@@ -50,6 +56,7 @@ interface AutomationPluginContext {
 interface BridgeResponse {
   result?: unknown
   error?: string
+  code?: unknown
 }
 
 interface ProbedBridge {
@@ -223,18 +230,17 @@ export function parseDeveloperAction(input: unknown): DeveloperAction {
   if (!input || typeof input !== "object") throw new Error("Native automation input must be an object")
   const value = input as Record<string, unknown>
   switch (value.action) {
-    case "inspect":
+    case "inspect": {
+      return { action: "inspect", ...inspectionScope(value, "inspect") }
+    }
     case "restart":
     case "screenshot":
       return { action: value.action }
-    case "click":
-      if (typeof value.ref !== "string") throw new Error("click requires ref from the latest inspection")
-      return { action: "click", ref: value.ref }
-    case "type":
-      if (typeof value.ref !== "string" || typeof value.text !== "string") throw new Error("type requires ref and text")
-      return { action: "type", ref: value.ref, text: value.text }
-    default:
-      throw new Error("Unsupported native automation action")
+    default: {
+      const page = parsePageAction(value, "inspection")
+      if (!page) throw new Error("Unsupported native automation action")
+      return page
+    }
   }
 }
 
@@ -247,20 +253,43 @@ export function parseBrowserAction(input: unknown): BrowserAction {
       if (typeof value.url !== "string") throw new Error(`${value.action} requires url`)
       return { action: value.action, url: value.url }
     case "snapshot":
+      return { action: "snapshot", ...inspectionScope(value, "snapshot") }
     case "screenshot":
       return { action: value.action }
-    case "click":
-      if (typeof value.ref !== "string") throw new Error("click requires ref from the latest snapshot")
-      return { action: "click", ref: value.ref }
-    case "type":
-      if (typeof value.ref !== "string" || typeof value.text !== "string") throw new Error("type requires ref and text")
-      return { action: "type", ref: value.ref, text: value.text, clear: value.clear !== false }
-    default:
-      throw new Error("Unsupported browser action")
+    default: {
+      const page = parsePageAction(value, "snapshot")
+      if (!page) throw new Error("Unsupported browser action")
+      return page
+    }
   }
 }
 
-async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
+function inspectionScope(value: Record<string, unknown>, action: string): { ref?: string; query?: string } {
+  if (value.ref !== undefined && typeof value.ref !== "string") throw new Error(`${action} ref must be a ref from the latest inspection`)
+  if (value.query !== undefined && (typeof value.query !== "string" || value.query.length > MAX_QUERY_LENGTH)) {
+    throw new Error(`${action} query must be text of at most ${MAX_QUERY_LENGTH} characters`)
+  }
+  return { ...(value.ref ? { ref: value.ref as string } : {}),
+    ...(typeof value.query === "string" && value.query.trim() ? { query: value.query } : {}) }
+}
+
+/** Fixed human-answer proof callback. The cookie exists only in this private
+ * transport envelope; native storage/model output never receives it. */
+export async function verifyHumanAnswerBridge(body: import("../missions/human-answer").HumanAnswerProof, proof: string): Promise<boolean> {
+  const { assertHumanAnswerFresh, humanAnswerProof } = await import("../missions/human-answer")
+  assertHumanAnswerFresh(body)
+  for (const registration of await registrations()) {
+    if (humanAnswerProof(body, registration.token) !== proof) continue
+    try {
+      const result = await callBridge(registration, { mode: "human-answer-verify", sessionID: body.sessionID, command: body })
+      assertHumanAnswerFresh(body)
+      return result.status === 200 && (result.body.result as { admitted?: unknown } | undefined)?.admitted === true
+    } catch { return false }
+  }
+  return false
+}
+
+async function registrations(pruneStale = true): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   const directories = automationBridgeDirectories()
   for (const [directoryIndex, directory] of directories.entries()) {
@@ -288,7 +317,7 @@ async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
       const registration = await readRegistration(target) as DiscoveredBridgeRegistration | undefined
       if (!registration) continue
       if (directoryIndex === 0 && !isProcessAlive(registration.pid)) {
-        await rm(target, { force: true }).catch(() => undefined)
+        if (pruneStale) await rm(target, { force: true }).catch(() => undefined)
         continue
       }
       if (process.platform === "linux" && process.env.WSL_DISTRO_NAME && directoryIndex > 0) registration[WINDOWS_INTEROP] = true
@@ -296,6 +325,22 @@ async function registrations(): Promise<DiscoveredBridgeRegistration[]> {
     }
   }
   return found.sort((left, right) => right.startedAt - left.startedAt).slice(0, MAX_REGISTRATIONS)
+}
+
+/** An HMAC alone could identify an old registration. Demand a fresh response
+ * from the selected live backend's existing authenticated bridge as well. */
+export async function verifyRecurrenceBridge(body: RecurrenceControlProofBody, proof: string): Promise<boolean> {
+  if (!/^[a-f0-9]{64}$/.test(proof)) return false
+  for (const registration of await registrations(false)) {
+    const digest = Buffer.from(signNativeRecurrenceControl(body, registration.token), "hex")
+    if (!timingSafeEqual(digest, Buffer.from(proof, "hex"))) continue
+    try {
+      const reply = await callBridge(registration, { mode: "recurrence-control-verify", sessionID: body.sessionID, command: body })
+      if (reply.status === 200 && reply.body.result && typeof reply.body.result === "object"
+        && "admitted" in reply.body.result && reply.body.result.admitted === true) return true
+    } catch { /* Missing backend is not a reusable human grant. */ }
+  }
+  return false
 }
 
 async function callBridge(
@@ -398,8 +443,42 @@ function callWindowsBridge(
   })
 }
 
+interface InspectionResult {
+  target: { title: string; url: string }
+  context: { windowId: string; instanceId: string | null; sessionId: string | null }
+  snapshot: string
+  collapsed: number
+  diagnostics: Array<{ level: string; text: string }>
+}
+
+/** Plain text: an indented outline reads far cheaper than the same tree as indented JSON. */
+export function formatInspection(result: InspectionResult): string {
+  const { target, context } = result
+  const lines = [
+    `CodeNomad window ${context.windowId} · workspace ${context.instanceId ?? "none"} · conversation ${context.sessionId ?? "none"}`,
+    `${target.title} — ${target.url}`,
+    "",
+    result.snapshot,
+  ]
+  if (result.collapsed > 0) {
+    lines.push("", "A line ending in (+N hidden) collapses that element: inspect its ref to expand it. (+N more) stands for omitted siblings: inspect their parent's ref, or use query to find them.")
+  }
+  if (result.diagnostics.length) lines.push("", "Runtime diagnostics:", ...result.diagnostics.map(item => `- ${item.level}: ${item.text}`))
+  return lines.join("\n")
+}
+
+export function formatBrowserSnapshot(result: { url: string; snapshot: string; collapsed?: number }): string {
+  return `${result.url}\n\n${result.snapshot}${result.collapsed ? "\n\nCollapsed elements: snapshot with their ref to expand them. (+N more) omits siblings: use their parent's ref or query to find them." : ""}`
+}
+
 function formatBridgeResult(resultValue: unknown, screenshot = { text: "Captured the connected CodeNomad build.", name: "codenomad.png" }) {
   const result = resultValue as { image?: { data: string; mime: string }; [key: string]: unknown } | undefined
+  if (typeof result?.snapshot === "string" && result.target && result.context && Array.isArray(result.diagnostics)) {
+    return { content: formatInspection(result as unknown as InspectionResult) }
+  }
+  if (typeof result?.snapshot === "string" && typeof result.url === "string") {
+    return { content: formatBrowserSnapshot(result as { url: string; snapshot: string; collapsed?: number }) }
+  }
   if (result?.image) {
     const content = [
       { type: "text", text: screenshot.text },
@@ -445,12 +524,15 @@ async function probeBrowserBridges(
   active: DiscoveredBridgeRegistration[],
   sessionID: string,
   mode: "browser-claim" | "browser-probe",
+  timeoutMs = PROBE_TIMEOUT_MS,
+  purpose?: "mission",
 ): Promise<DiscoveredBridgeRegistration[]> {
   const found: DiscoveredBridgeRegistration[] = []
   for (let index = 0; index < active.length && found.length < 2; index += PROBE_CONCURRENCY) {
     const batch = await Promise.all(active.slice(index, index + PROBE_CONCURRENCY).map(async (registration) => {
       try {
-        return (await callBridge(registration, { mode, sessionID })).status === 200 ? registration : undefined
+        return (await callBridge(registration, { mode, sessionID, ...(purpose ? { purpose } : {}) }, timeoutMs)).status === 200
+          ? registration : undefined
       } catch {
         return undefined
       }
@@ -460,6 +542,20 @@ async function probeBrowserBridges(
     }
   }
   return found.slice(0, 2)
+}
+
+export async function sendMissionInput(sessionID: string,
+  kind: "prompt" | "synthetic" | "cleanup" | "lifecycle" | "create-root" | "prepare" | "task-sessions" | "interrupt", input: unknown): Promise<unknown> {
+  // `purpose` lets a backend without native browsers claim the session for dispatch only.
+  const targets = await probeBrowserBridges(await registrations(), sessionID, "browser-claim", MISSION_PROBE_TIMEOUT_MS, "mission")
+  if (targets.length !== 1) throw new Error("Mission dispatch requires exactly one owning CodeNomad backend")
+  const response = await callBridge(targets[0], { mode: "mission-input", sessionID, command: { kind, input } }, REQUEST_TIMEOUT_MS)
+  if (response.status !== 200) {
+    const recovery = missionRecoveryError(response.body.code)
+    if (recovery && recovery.status === response.status) throw new MissionControlError(recovery.message, recovery.code)
+    throw new Error("CodeNomad could not admit the mission input; inspect ownership/environment and retry the same task")
+  }
+  return response.body.result
 }
 
 export async function executeBrowserTool(sessionID: string, input: unknown) {
@@ -546,20 +642,27 @@ export function createDeveloperToolTransform() {
   return (draft: Pick<ToolDraft, "add">) => {
     draft.add({
       name: "inspect",
-      description: "Inspect the accessibility tree, runtime feedback, and visible session in the connected CodeNomad desktop build.",
-      input: { type: "object", properties: {}, additionalProperties: false },
-      options: { namespace: "codenomad", codemode: false },
-      execute: (_input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID, { action: "inspect" }),
-    })
-    draft.add({
-      name: "act",
-      description: "Click or type using a ref from the latest codenomad.inspect result, or gracefully relaunch CodeNomad and wait for reconnection.",
+      description: "Inspect the connected CodeNomad desktop build: an indented accessibility outline with element refs, runtime diagnostics and the visible conversation. Large parts are collapsed and say so; pass ref to expand one element's subtree, or query to keep only elements whose text or role matches, with their ancestors.",
       input: {
         type: "object",
         properties: {
-          action: { type: "string", enum: ["click", "type", "restart"] },
-          ref: { type: "string", description: "Element ref from the latest inspection" },
-          text: { type: "string", description: "Text for type" },
+          ref: { type: "string", description: "Expand only this element's subtree (a ref from the latest inspection)" },
+          query: { type: "string", description: "Keep only elements whose name, value or description contains this text, or whose role is exactly this text" },
+        },
+        additionalProperties: false,
+      },
+      options: { namespace: "codenomad", codemode: false },
+      execute: (input, tool) => executeDeveloperTool(inspectedTargets, tool.sessionID,
+        parseDeveloperAction({ ...(input && typeof input === "object" ? input : {}), action: "inspect" })),
+    })
+    draft.add({
+      name: "act",
+      description: "Act on refs from the latest codenomad.inspect like a user: click (real pointer at the element's visible centre, refused when covered), type into a field (replacing its text unless clear is false), select native <select> options by label or value, hover, drag onto another ref, scroll (a ref or the page), press a key or chord (optionally after focusing a ref), or wait for text to appear or disappear. restart gracefully relaunches CodeNomad and waits for reconnection.",
+      input: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: [...PAGE_ACTIONS, "restart"] },
+          ...PAGE_ACTION_PROPERTIES,
         },
         required: ["action"],
         additionalProperties: false,

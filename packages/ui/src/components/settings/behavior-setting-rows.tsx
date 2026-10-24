@@ -1,9 +1,11 @@
 import { Select } from "@kobalte/core/select"
 import { ChevronDown } from "lucide-solid"
-import { createEffect, createMemo, createSignal, For, type Accessor, type Component } from "solid-js"
+import { createEffect, createMemo, createSignal, For, Show, type Accessor, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
 import type { BehaviorSetting } from "../../lib/settings/behavior-registry"
 import type { Preferences } from "../../stores/preferences"
+import { SettingsInfoTip } from "./settings-info-tip"
+import { SettingsChoiceRow, SettingsSwitch } from "./settings-switch"
 
 type SelectOption = { value: string; label: string }
 
@@ -41,6 +43,9 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
     if (changed) setOverrides(next)
   })
 
+  // Several on/off settings together read as a checklist; a lone one keeps a switch.
+  const groupedToggles = createMemo(() => props.settings().filter((setting) => setting.kind === "toggle").length > 1)
+
   const readValue = (setting: BehaviorSetting) => {
     const current = overrides()
     return current.has(setting.id) ? current.get(setting.id) : setting.get(props.preferences())
@@ -50,24 +55,38 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
     const setting = rowProps.setting
     const disabled = createMemo(() => Boolean(setting.disabled?.()))
 
-    if (setting.kind === "toggle") {
-      const options = createMemo<SelectOption[]>(() => [
-        { value: "true", label: t("settings.common.enabled") },
-        { value: "false", label: t("settings.common.disabled") },
-      ])
-      const selectedOption = createMemo(() => options().find((option) => option.value === String(Boolean(readValue(setting)))))
+    if (setting.kind === "toggle" && groupedToggles()) {
+      return (
+        <SettingsChoiceRow
+          checked={Boolean(readValue(setting))}
+          title={t(setting.titleKey)}
+          caption={setting.subtitleKey ? t(setting.subtitleKey) : undefined}
+          info={setting.infoKey ? t(setting.infoKey) : undefined}
+          disabled={disabled()}
+          onChange={async (next) => {
+            try {
+              await setting.set(next)
+              setOverride(setting.id, next)
+            } catch {
+              return
+            }
+          }}
+        />
+      )
+    }
 
+    if (setting.kind === "toggle") {
       return (
         <div class={`settings-toggle-row ${disabled() ? "opacity-60" : ""}`}>
           <div>
-            <div class="settings-toggle-title">{t(setting.titleKey)}</div>
-            <div class="settings-toggle-caption">{t(setting.subtitleKey)}</div>
+            <div class="settings-toggle-title">{t(setting.titleKey)}<Show when={setting.infoKey}>{(key) => <SettingsInfoTip text={t(key())} />}</Show></div>
+            <Show when={setting.subtitleKey}>{(key) => <div class="settings-toggle-caption">{t(key())}</div>}</Show>
           </div>
-          <Select<SelectOption>
-            value={selectedOption()}
-            onChange={async (option) => {
-              if (!option) return
-              const next = option.value === "true"
+          <SettingsSwitch
+            checked={Boolean(readValue(setting))}
+            label={t(setting.titleKey)}
+            disabled={disabled()}
+            onChange={async (next) => {
               try {
                 await setting.set(next)
                 setOverride(setting.id, next)
@@ -75,32 +94,7 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
                 return
               }
             }}
-            options={options()}
-            optionValue="value"
-            optionTextValue="label"
-            disabled={disabled()}
-            itemComponent={(itemProps) => (
-              <Select.Item item={itemProps.item} class="selector-option">
-                <Select.ItemLabel class="selector-option-label">{itemProps.item.rawValue.label}</Select.ItemLabel>
-              </Select.Item>
-            )}
-          >
-            <Select.Trigger class="selector-trigger" aria-label={t(setting.titleKey)}>
-              <div class="flex-1 min-w-0">
-                <Select.Value<SelectOption>>
-                  {(state) => <span class="selector-trigger-primary selector-trigger-primary--align-left">{state.selectedOption()?.label}</span>}
-                </Select.Value>
-              </div>
-              <Select.Icon class="selector-trigger-icon">
-                <ChevronDown class="w-3 h-3" />
-              </Select.Icon>
-            </Select.Trigger>
-            <Select.Portal>
-              <Select.Content class="selector-popover">
-                <Select.Listbox class="selector-listbox" />
-              </Select.Content>
-            </Select.Portal>
-          </Select>
+          />
         </div>
       )
     }
@@ -113,8 +107,8 @@ export const BehaviorSettingRows: Component<BehaviorSettingRowsProps> = (props) 
     return (
       <div class={`settings-toggle-row ${disabled() ? "opacity-60" : ""}`}>
         <div>
-          <div class="settings-toggle-title">{t(setting.titleKey)}</div>
-          <div class="settings-toggle-caption">{t(setting.subtitleKey)}</div>
+          <div class="settings-toggle-title">{t(setting.titleKey)}<Show when={setting.infoKey}>{(key) => <SettingsInfoTip text={t(key())} />}</Show></div>
+          <Show when={setting.subtitleKey}>{(key) => <div class="settings-toggle-caption">{t(key())}</div>}</Show>
         </div>
         <Select<SelectOption>
           value={selectedOption()}

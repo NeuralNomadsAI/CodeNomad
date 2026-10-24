@@ -5,7 +5,7 @@ function getPositiveNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined
 }
 
-function getTimeValue(source: unknown, key: "created" | "updated" | "completed" | "end" | "start"): number | undefined {
+function getTimeValue(source: unknown, key: "created" | "completed" | "ran"): number | undefined {
   return getPositiveNumber((source as any)?.time?.[key])
 }
 
@@ -28,12 +28,18 @@ export function getMessageDurationMs(messageInfo?: MessageInfo, _status?: Messag
   return getDurationBetween(getTimeValue(messageInfo, "created"), getMessageCompletedAt(messageInfo))
 }
 
+// Part timing comes only from OpenCode: time.created/completed, and tools add
+// time.ran when execution starts.
 export function getPartStartedAt(part?: ClientPart): number | undefined {
-  return getTimeValue(part, "start") ?? getTimeValue(part, "created")
+  return getTimeValue(part, "ran") ?? getTimeValue(part, "created")
+}
+
+export function getPartEndedAt(part?: ClientPart): number | undefined {
+  return getTimeValue(part, "completed")
 }
 
 export function getPartDurationMs(part?: ClientPart): number | undefined {
-  return getDurationBetween(getTimeValue(part, "start"), getTimeValue(part, "end"))
+  return getDurationBetween(getPartStartedAt(part), getPartEndedAt(part))
 }
 
 export function inferReasoningDurationMs(
@@ -45,22 +51,36 @@ export function inferReasoningDurationMs(
   return getPartDurationMs(reasoningPart)
 }
 
-export function formatElapsedClock(durationMs?: number, locale?: string): string {
+/** A short, localized duration ("3s", "1m 5s", "1h 2m"), not a clock reading
+ * that could be mistaken for a time of day. While `live` (ticking), the trailing
+ * unit is always shown with two digits ("1m 05s", "2m 00s") so the width stays
+ * steady and the header layout does not shift every minute. Durations under a
+ * second are not shown: the point is spotting slow steps, and a "1s" on every
+ * quick tool call is noise. */
+export function formatElapsedDuration(durationMs?: number, locale?: string, live = false): string {
   const safeDuration = getPositiveNumber(durationMs)
-  if (!safeDuration) {
+  if (!safeDuration || safeDuration < 1000) {
     return ""
   }
 
-  const formatNumber = (value: number, minimumIntegerDigits = 1) =>
-    new Intl.NumberFormat(locale, { minimumIntegerDigits, useGrouping: false }).format(value)
+  const formatUnit = (unit: "hour" | "minute" | "second", value: number, padded = false) =>
+    new Intl.NumberFormat(locale, {
+      style: "unit",
+      unit,
+      unitDisplay: "narrow",
+      useGrouping: false,
+      minimumIntegerDigits: padded ? 2 : 1,
+    }).format(value)
   const totalSeconds = Math.max(1, Math.round(safeDuration / 1000))
   const hours = Math.floor(totalSeconds / 3600)
   const minutes = Math.floor((totalSeconds % 3600) / 60)
   const seconds = totalSeconds % 60
 
   if (hours > 0) {
-    return `${formatNumber(hours)}:${formatNumber(minutes, 2)}:${formatNumber(seconds, 2)}`
+    return minutes || live ? `${formatUnit("hour", hours)} ${formatUnit("minute", minutes, live)}` : formatUnit("hour", hours)
   }
-
-  return `${formatNumber(minutes)}:${formatNumber(seconds, 2)}`
+  if (minutes > 0) {
+    return seconds || live ? `${formatUnit("minute", minutes)} ${formatUnit("second", seconds, live)}` : formatUnit("minute", minutes)
+  }
+  return formatUnit("second", seconds)
 }

@@ -44,13 +44,6 @@ export interface SessionRecord {
   messageWindow?: MessageWindowState
 }
 
-export interface PendingPartEntry {
-  messageId: string
-  sessionId?: string
-  part: ClientPart
-  receivedAt: number
-}
-
 export interface PermissionEntry {
   permission: PermissionRequest
   messageId?: string
@@ -114,7 +107,6 @@ export interface InstanceMessageState {
   messages: Record<string, MessageRecord>
   lastAssistantMessageIds: Record<string, string | undefined>
   messageInfoVersion: Record<string, number>
-  pendingParts: Record<string, PendingPartEntry[]>
   sessionRevisions: Record<string, number>
   permissions: InstancePermissionState
   usage: Record<string, SessionUsageState>
@@ -140,12 +132,6 @@ export interface MessageUpsertInput {
   updatedAt?: number
   isEphemeral?: boolean
   clientPromptDisplayMetadata?: PromptDisplayMetadata
-  bumpRevision?: boolean
-}
-
-export interface PartUpdateInput {
-  messageId: string
-  part: ClientPart
   bumpRevision?: boolean
 }
 

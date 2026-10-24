@@ -21,7 +21,7 @@
   justify-self: start;
   border-color: var(--border-base);
   color: var(--text-muted);
-  background-color: var(--surface-base);
+  background-color: var(--surface-control);
 }
 
 .plugin-controls .icon-button-compact:hover:not(:disabled) {

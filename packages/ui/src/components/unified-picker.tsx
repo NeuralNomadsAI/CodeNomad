@@ -444,12 +444,13 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       items.push({ type: "file", file: rootFile })
     }
 
+    // Match the placeholder and the rendered groups: files, agents, then skills.
+    files().forEach((file) => items.push({ type: "file", file }))
     // Don't show agents or skills for exact root path queries
     if (!isExactRootQuery) {
       filteredAgents().forEach((agent) => items.push({ type: "agent", agent }))
       filteredSkills().forEach((skill) => items.push({ type: "skill", skill }))
     }
-    files().forEach((file) => items.push({ type: "file", file }))
     return items
   }
 
@@ -486,7 +487,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       e.stopPropagation()
       // Solid delegates textarea key handlers at document too, so propagation
       // alone cannot keep modified submit shortcuts out of this listener.
-      if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) return
+      if (e.key === "Enter" && (e.ctrlKey || e.metaKey || e.altKey)) return
       const selected = items[selectedIndex()]
       if (selected) {
         const action: PickerSelectAction = e.key === "Tab" ? "tab" : e.shiftKey ? "shiftEnter" : "enter"
@@ -529,6 +530,7 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
       <div
         ref={containerRef}
         class="dropdown-surface bottom-full left-0 mb-1"
+        data-prompt-picker
       >
         <div class="dropdown-header">
           <div class="dropdown-header-title">
@@ -582,21 +584,112 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
             </For>
           </Show>
 
+          <Show when={mode() === "mention" && (fileCount() > 0 || props.searchQuery === "." || props.searchQuery === "./")}>
+            <div class="dropdown-section-header">
+              {t("unifiedPicker.sections.files")}
+            </div>
+            <Show when={props.searchQuery === "." || props.searchQuery === "./"}>
+              <div
+                class={`dropdown-item py-1.5 ${
+                  selectedIndex() === 0 ? "dropdown-item-highlight" : ""
+                }`}
+                data-picker-selected={selectedIndex() === 0}
+                onClick={() => {
+                  const rootFile: FileItem = {
+                    path: ".",
+                    relativePath: ".",
+                    isDirectory: true,
+                    isGitFile: false,
+                  }
+                  props.onSelect({ type: "file", file: rootFile }, "click")
+                }}
+              >
+                <div class="flex items-center gap-2 text-sm">
+                  <svg class="dropdown-icon h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path
+                      stroke-linecap="round"
+                      stroke-linejoin="round"
+                      stroke-width="2"
+                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                    />
+                  </svg>
+                  <span class="font-mono">. {t("unifiedPicker.sections.workspaceRoot")}</span>
+                </div>
+              </div>
+            </Show>
+            <For each={files()}>
+              {(file) => {
+                const itemIndex = () => allItems().findIndex(
+                  (item) => item.type === "file" && item.file.relativePath === file.relativePath,
+                )
+                const isFolder = file.isDirectory
+                const displayPath = splitDisplayPath(file.path)
+                return (
+                  <div
+                    class={`dropdown-item py-1.5 ${
+                      itemIndex() === selectedIndex() ? "dropdown-item-highlight" : ""
+                    }`}
+                    data-picker-selected={itemIndex() === selectedIndex()}
+                    onClick={() => props.onSelect({ type: "file", file }, "click")}
+                  >
+                    <div class="flex min-w-full w-max items-center gap-2 text-sm">
+                      <Show
+                        when={isFolder}
+                        fallback={
+                          <svg class="dropdown-icon h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path
+                              stroke-linecap="round"
+                              stroke-linejoin="round"
+                              stroke-width="2"
+                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
+                            />
+                          </svg>
+                        }
+                      >
+                        <svg class="dropdown-icon-accent h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                            stroke-width="2"
+                            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
+                          />
+                        </svg>
+                      </Show>
+                      <span class="min-w-0 flex-1" title={file.path}>
+                        <span class="sr-only">{file.path}</span>
+                        <span aria-hidden="true">
+                          <span class="block whitespace-nowrap">
+                            {displayPath.name}
+                          </span>
+                          <Show when={displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[11px]" style="color: var(--text-muted)">{displayPath.parent}/</span>
+                          </Show>
+                          <Show when={displayPath.directory && displayPath.directory !== displayPath.parent}>
+                            <span class="block whitespace-nowrap text-[10px]" style="color: var(--text-muted)">{displayPath.directory}</span>
+                          </Show>
+                        </span>
+                      </span>
+                    </div>
+                  </div>
+                )
+              }}
+            </For>
+          </Show>
           <Show when={mode() === "mention" && agentCount() > 0 && !(props.searchQuery === "." || props.searchQuery === "./")}>
             <div class="dropdown-section-header">
               {t("unifiedPicker.sections.agents")}
             </div>
             <For each={filteredAgents()}>
               {(agent) => {
-                const itemIndex = allItems().findIndex(
+                const itemIndex = () => allItems().findIndex(
                   (item) => item.type === "agent" && item.agent.name === agent.name,
                 )
                 return (
                   <div
                     class={`dropdown-item ${
-                      itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
+                      itemIndex() === selectedIndex() ? "dropdown-item-highlight" : ""
                     }`}
-                    data-picker-selected={itemIndex === selectedIndex()}
+                    data-picker-selected={itemIndex() === selectedIndex()}
                     onClick={() => props.onSelect({ type: "agent", agent }, "click")}
                   >
                     <div class="flex items-start gap-2">
@@ -643,15 +736,15 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
             </div>
             <For each={filteredSkills()}>
               {(skill) => {
-                const itemIndex = allItems().findIndex(
+                const itemIndex = () => allItems().findIndex(
                   (item) => item.type === "skill" && item.skill.id === skill.id,
                 )
                 return (
                   <div
                     class={`dropdown-item ${
-                      itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
+                      itemIndex() === selectedIndex() ? "dropdown-item-highlight" : ""
                     }`}
-                    data-picker-selected={itemIndex === selectedIndex()}
+                    data-picker-selected={itemIndex() === selectedIndex()}
                     onClick={() => props.onSelect({ type: "skill", skill }, "click")}
                   >
                     <div class="flex items-start gap-2">
@@ -686,106 +779,8 @@ const UnifiedPicker: Component<UnifiedPickerProps> = (props) => {
               }}
             </For>
           </Show>
-
-          <Show when={mode() === "mention" && (fileCount() > 0 || props.searchQuery === "." || props.searchQuery === "./")}>
-            <div class="dropdown-section-header">
-              {t("unifiedPicker.sections.files")}
-            </div>
-            <Show when={props.searchQuery === "." || props.searchQuery === "./"}>
-              <div
-                class={`dropdown-item py-1.5 ${
-                  selectedIndex() === 0 ? "dropdown-item-highlight" : ""
-                }`}
-                data-picker-selected={selectedIndex() === 0}
-                onClick={() => {
-                  const rootFile: FileItem = {
-                    path: ".",
-                    relativePath: ".",
-                    isDirectory: true,
-                    isGitFile: false,
-                  }
-                  props.onSelect({ type: "file", file: rootFile }, "click")
-                }}
-              >
-                <div class="flex items-center gap-2 text-sm">
-                  <svg class="dropdown-icon h-4 w-4 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-                    />
-                  </svg>
-                  <span class="font-mono">. {t("unifiedPicker.sections.workspaceRoot")}</span>
-                </div>
-              </div>
-            </Show>
-            <For each={files()}>
-              {(file) => {
-                const itemIndex = allItems().findIndex(
-                  (item) => item.type === "file" && item.file.relativePath === file.relativePath,
-                )
-                const isFolder = file.isDirectory
-                const displayPath = splitDisplayPath(file.path)
-                return (
-                  <div
-                    class={`dropdown-item py-1.5 ${
-                      itemIndex === selectedIndex() ? "dropdown-item-highlight" : ""
-                    }`}
-                    data-picker-selected={itemIndex === selectedIndex()}
-                    onClick={() => props.onSelect({ type: "file", file }, "click")}
-                  >
-                    <div class="flex min-w-full w-max items-center gap-2 text-sm">
-                      <Show
-                        when={isFolder}
-                        fallback={
-                          <svg class="dropdown-icon h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path
-                              stroke-linecap="round"
-                              stroke-linejoin="round"
-                              stroke-width="2"
-                              d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"
-                            />
-                          </svg>
-                        }
-                      >
-                        <svg class="dropdown-icon-accent h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path
-                            stroke-linecap="round"
-                            stroke-linejoin="round"
-                            stroke-width="2"
-                            d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"
-                          />
-                        </svg>
-                      </Show>
-                      <span class="min-w-0 flex-1" title={file.path}>
-                        <span class="sr-only">{file.path}</span>
-                        <span aria-hidden="true">
-                          <span class="block whitespace-nowrap">
-                            {displayPath.name}
-                          </span>
-                          <Show when={displayPath.parent}>
-                            <span class="block whitespace-nowrap text-[11px]" style="color: var(--text-muted)">{displayPath.parent}/</span>
-                          </Show>
-                          <Show when={displayPath.directory && displayPath.directory !== displayPath.parent}>
-                            <span class="block whitespace-nowrap text-[10px]" style="color: var(--text-muted)">{displayPath.directory}</span>
-                          </Show>
-                        </span>
-                      </span>
-                    </div>
-                  </div>
-                )
-              }}
-            </For>
-          </Show>
         </div>
 
-        <div class="dropdown-footer">
-          <div>
-            <span class="font-medium">↑↓</span> {t("unifiedPicker.footer.navigate")} • <span class="font-medium">Tab/Enter</span> {t("unifiedPicker.footer.select")} •{" "}
-            <span class="font-medium">Esc</span> {t("unifiedPicker.footer.close")}
-          </div>
-        </div>
       </div>
     </Show>
   )

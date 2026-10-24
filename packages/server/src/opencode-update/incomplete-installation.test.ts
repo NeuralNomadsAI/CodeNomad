@@ -6,6 +6,7 @@ import path from "node:path"
 import { isIncompleteWindowsNpmShim } from "./incomplete-installation"
 import { installSharedOpenCode, npmExecutable, resolveDefaultInstallation, sharedInstallPrefix } from "./shared-installation"
 import { OpenCodeUpdateService } from "./service"
+import { MINIMUM_OPENCODE_VERSION } from "../opencode/runtime-support"
 
 const shim = '@ECHO off\r\nGOTO start\r\n:find_dp0\r\nSET dp0=%~dp0\r\nEXIT /b\r\n:start\r\nSETLOCAL\r\nCALL :find_dp0\r\n"%dp0%\\node_modules\\@opencode\\cli\\bin\\opencode.exe"   %*\r\n'
 
@@ -46,7 +47,7 @@ test("an explicit retry repairs leftover launchers and restores update status", 
     const service = new OpenCodeUpdateService({
       resolveBinary: () => ({ ...resolveDefaultInstallation(host), label: "fixture" }),
       probeBinary: probe,
-      resolveLatestVersion: async () => "2.0.16",
+      resolveLatestVersion: async () => MINIMUM_OPENCODE_VERSION,
       canUpgradeBinary: () => Boolean(sharedInstallPrefix(host)),
       upgradeBinary: async (_binary, version) => {
         await installSharedOpenCode(version, { ...host, npm: "fixture-npm.js", probe, registerPath: async () => {},

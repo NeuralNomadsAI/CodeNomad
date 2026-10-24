@@ -17,13 +17,14 @@ export function runtimeIdentity(endpoint: Endpoint): RuntimeIdentity | undefined
   return (endpoint as Endpoint & { [RUNTIME_IDENTITY]?: RuntimeIdentity })[RUNTIME_IDENTITY]
 }
 
-export type ContractProfile = "modern" | "legacy" | "unknown"
+export type ContractProfile = "modern" | "unknown"
 export function contractProfile(identity: RuntimeIdentity | undefined): ContractProfile {
   // Custom embedded/test lifecycles that don't negotiate use the pinned contract.
   if (!identity) return "modern"
   if (identity.contract?.profile) return identity.contract.profile
-  // Publication contracts reviewed from the native timestamp boundary through
-  // the qualification target. Unlisted versions still negotiate their schema.
-  if (/^2\.0\.(?:7|8|9|10|11)$/.test(identity.version)) return "modern"
+  // Publication contract reviewed and exercised by the isolated native suites
+  // (minimum and qualification target). Unlisted versions still negotiate their
+  // authenticated schema.
+  if (identity.version === "2.1.2" || identity.version === "2.1.4") return "modern"
   return "unknown"
 }

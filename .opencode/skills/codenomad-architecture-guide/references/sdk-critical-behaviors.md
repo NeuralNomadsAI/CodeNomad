@@ -2,12 +2,12 @@
 
 ## Contract
 
-- Server and UI pin `@opencode/client@2.0.21`. Manage the runtime CLI independently: startup checks authenticated loopback `/api/status`, then `/api/health`, then `/api/info`, advancing only on HTTP 404. All probes share the endpoint, credentials, 64 KiB response bound and absolute deadline; authentication, transport and malformed response failures do not trigger fallback. The shared transport maps canonical `server.info()` to the discovered route. Older services do not provide `paths.tmp`; never infer that path from the backend host. Discovery alone does not prove client/API compatibility. Review documentation, installed declarations and proxy/API parity whenever the client contract changes.
-- The package root is the generated zero-Effect Promise client. Use installed declarations, not current public `@opencode-ai/sdk` examples.
+- Server and UI pin `@opencode/client@2.1.0`. Manage the runtime CLI independently: startup checks authenticated loopback `/api/info`, then (only to identify an outdated daemon) `/api/status`, then `/api/health`, advancing only on HTTP 404. All probes share the endpoint, credentials, 64 KiB response bound and absolute deadline; authentication, transport and malformed response failures end discovery without fallback. The shared transport forwards canonical `server.info()` unchanged. Review documentation, installed declarations and proxy/API parity whenever the client contract changes.
+- The package root is the generated zero-Effect Promise client. Use installed declarations; never follow `@opencode-ai/sdk` examples.
 - Native routes are `/api/*`; CodeNomad exposes them only through the authorized `/workspaces/:id/instance` proxy.
-- That proxy is an explicit method/path allowlist. Future upstream APIs are not exposed automatically.
+- That proxy is an explicit method/path allowlist: expose each new upstream API only after review.
 - Proxy authorization and forwarding share one acquired connection. A stale generation must be rejected at actual HTTP dispatch, including after asynchronous body preparation; late streams cannot invalidate a replacement connection.
-- The technical minimum is 2.0.7: native `session.step.started.data.started` is consumed directly after removing its older fallback. Recommendation/qualification 2.0.21 is independent. Unknown version labels, prereleases and future majors require bounded authenticated API recognition, including session environment support; they are not rejected solely by label. Legacy HTTP inbox and event conversions are retired. Native `session.inbox.enqueued` still has a distinct shape: its timestamp belongs to event metadata, not an HTTP inbox record.
+- The technical minimum is 2.1.2 for Code Mode's JavaScript job ordering and the `native` replay and `metadata.keepID` compaction shapes consumed by the pinned client reducer; the recommendation is independent. Plugins use host-owned Effect/public SDK modules through the shared native build settings. Unknown version labels, prereleases and future majors undergo bounded authenticated API recognition, including session environment support. Native `session.inbox.enqueued` has its own shape: its timestamp lives in event metadata, unlike an HTTP inbox record.
 - Never retry a write using another contract after a 400/404/transport failure. Keep the setup/recovery path distinct from functional transport and never replay prompts.
 
 ## Location Is Authority
@@ -15,16 +15,16 @@
 - A CodeNomad workspace must validate through `client.location.get` before becoming ready.
 - Directory-bearing proxy input is untrusted and must resolve to the workspace root or one of its Git worktrees.
 - Session ID alone is insufficient: the proxy fetches the session and verifies `session.location.directory`.
-- Explicit Stop Workspace evicts the native location/resources and removes CodeNomad's logical workspace. Ordinary tab/window close only detaches local UI and never evicts.
+- Closing a project tab immediately detaches it and requests deletion of its logical workspace record; failures notify without automatic retry. Native sessions continue; CodeNomad never evicts Locations. Whole-window close, quit and reload preserve restoration behavior.
 
 ## Shared Lifecycle
 
 - There is one externally owned global service, one server client and one upstream event subscription. CodeNomad uses official host/WSL CLI status/start/password commands, owns no private service state or PID, and never stops the daemon on backend shutdown.
 - WSL requires Windows localhost forwarding, executes lifecycle commands inside Linux, and never uses cross-namespace PID operations.
-- A workspace stop evicts its location; it does not stop a dedicated process or the global daemon.
+- Deleting a workspace removes only CodeNomad's logical record; it never unloads native resources or stops the global daemon.
 - The worktree deletion fence covers OpenCode proxy writes plus CodeNomad file and Git mutations for the same canonical worktree identity.
 - OpenCode owns standard state/database. Allowed configured environment variables are passed when starting a missing daemon; existing daemons are unchanged, and `OPENCODE_DB`/`XDG_STATE_HOME` are ignored. Independently, before each session prompt/command/shell send, the authorized proxy awaits `session.environment` with the profile's complete execution-host snapshot. A failure blocks the send; it is never silently skipped or retried.
-- The native event stream is volatile. Reconnect must reconcile authoritative state; use current `session.*`, `filesystem.changed`, and `config.updated` names rather than obsolete event aliases.
+- The native event stream is volatile. Reconnect must reconcile authoritative state; consume the `session.*`, `filesystem.changed` and `config.updated` events.
 
 ## Ownership Matrix
 
@@ -39,4 +39,4 @@
 | Yolo policy/persistence/auto-reply | CodeNomad |
 | Browser event multiplexing | CodeNomad `/api/events` |
 
-Background Shell output uses native cursor pagination; interactive PTYs remain separate. Do not restore `@opencode-ai/sdk`, per-workspace processes, `packages/opencode-plugin`, server plugin/background-process tools, or deleted plugin/runtime file paths.
+Background Shell output uses native cursor pagination; interactive PTYs remain separate. Never use `@opencode-ai/sdk`, per-workspace processes or server plugin/background-process tools.

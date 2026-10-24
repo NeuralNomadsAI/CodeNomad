@@ -9,7 +9,7 @@ function object(value: unknown): ObjectValue {
 
 // Unknown release numbers are not a startup/version gate. Read their declared
 // HTTP contract before selecting a serializer; never trial a write operation.
-export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch, signal: AbortSignal): Promise<Exclude<ContractProfile, "unknown">> {
+export async function readRuntimeContract(endpoint: Endpoint, fetcher: typeof fetch, signal: AbortSignal): Promise<ObjectValue> {
   const response = await fetcher(new URL("/openapi.json", endpoint.url), {
     headers: Service.headers(endpoint), redirect: "error",
     signal: AbortSignal.any([signal, AbortSignal.timeout(5_000)]),
@@ -32,7 +32,11 @@ export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch
     }
   } catch (error) { await reader.cancel().catch(() => {}); throw error }
   finally { reader.releaseLock() }
-  const document = object(JSON.parse(Buffer.concat(chunks, length).toString("utf8")))
+  return object(JSON.parse(Buffer.concat(chunks, length).toString("utf8")))
+}
+
+export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch, signal: AbortSignal): Promise<Exclude<ContractProfile, "unknown">> {
+  const document = await readRuntimeContract(endpoint, fetcher, signal)
   const paths = object(document.paths)
   const resolve = (input: unknown) => {
     const schema = object(input)
@@ -52,20 +56,21 @@ export async function negotiateRuntime(endpoint: Endpoint, fetcher: typeof fetch
     && body(`${session}/fork`, "before") && body(`${session}/command`, "name")
     && body(`${session}/permission/{requestID}/reply`, "decision")
     && "time" in inbox && !("timeCreated" in inbox)
-  const legacy = has(`${session}/rename`, "post") && has("/api/form/request", "get")
-    && has(`${session}/form/{formID}/cancel`, "post") && has(`${session}/wait`, "post")
-    && body(`${session}/fork`, "boundary") && body(`${session}/command`, "command")
-    && body(`${session}/permission/{requestID}/reply`, "reply")
-    && "timeCreated" in inbox && !("time" in inbox)
-  if (modern === legacy) throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "canonical_api")
-  if (modern && !body(`${session}/environment`, "variables", "put")) {
+  // Retired (pre-2.0.4) and unrecognised contracts alike are refused.
+  if (!modern) throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "canonical_api")
+  if (!body(`${session}/environment`, "variables", "put")) {
     throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "session_environment")
   }
-  const profile = modern ? "modern" : "legacy"
+  // The pinned client reducer consumes 2.1's replay shape: `native`, never `state`/`recent`.
+  const fields = (name: string) => object(object(document.components?.schemas?.[name]).properties)
+  const text = fields("Session.Message.Assistant.Text"), compaction = fields("Session.Message.Compaction.Completed")
+  if (!("native" in text && !("state" in text) && "metadata" in compaction && !("recent" in compaction))) {
+    throw new UnsupportedOpenCodeError(runtimeIdentity(endpoint)?.version ?? "unknown", "native_contract")
+  }
   const identity = runtimeIdentity(endpoint)
   if (identity?.contract) {
-    identity.contract.profile = profile
+    identity.contract.profile = "modern"
     identity.contract.reload = has("/api/location/reload", "post")
   }
-  return profile
+  return "modern"
 }

@@ -3,6 +3,7 @@ import { test } from "node:test"
 import { OpenCode } from "@opencode/client"
 import { createRuntimeFetch } from "./transport"
 import { rememberRuntime } from "./runtime"
+import { MINIMUM_OPENCODE_VERSION } from "../runtime-support"
 import {
   LOCATION_CONTEXT_HEADER, applyLocationContext, locationRequestOptions,
   moveSessionToLocation, readLocationContext, readLocationRef, sameLocation,
@@ -10,7 +11,7 @@ import {
 
 test("generated calls preserve obsolete identity for rejection before upstream dispatch", async () => {
   const endpoint = { url: "http://localhost:1234" }
-  rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const location = { directory: "/work/100% 工作", workspaceID: "workspace-1" }
   let calls = 0
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async () => {
@@ -101,7 +102,7 @@ test("session routes ignore ambient location context without a native slot", () 
 
 test("directory-only credential context remains global", async () => {
   const endpoint = { url: "http://localhost:1234" }
-  rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async (input, init) => {
     const request = new Request(input, init)
     assert.equal(request.headers.has(LOCATION_CONTEXT_HEADER), false)
@@ -113,7 +114,7 @@ test("directory-only credential context remains global", async () => {
 
 test("generated worktree methods preserve project payloads without location serialization", async () => {
   const endpoint = { url: "http://localhost:4321", auth: { type: "basic" as const, username: "fixture", password: "fixture" } }
-  rememberRuntime(endpoint, { version: "2.0.11", pid: 1, discovery: "info" })
+  rememberRuntime(endpoint, { version: MINIMUM_OPENCODE_VERSION, pid: 1, discovery: "info" })
   const requests: Array<{ method: string; url: URL; body: any }> = []
   const client = OpenCode.make({ baseUrl: endpoint.url, fetch: createRuntimeFetch(endpoint, async (input, init) => {
     const request = new Request(input, init)

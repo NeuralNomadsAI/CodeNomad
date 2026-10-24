@@ -119,7 +119,7 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
                   <div class="w-full border-t border-base" />
                 </div>
                 <div class="relative flex justify-center text-sm">
-                  <span class="px-2 bg-surface-base text-muted">{t("sessionPicker.divider.or")}</span>
+                  <span class="px-2 bg-surface-overlay text-muted">{t("sessionPicker.divider.or")}</span>
                 </div>
               </div>
 
@@ -173,9 +173,6 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
                         </span>
                       </Show>
                     </div>
-                    <kbd class="kbd ml-2 kbd-hint">
-                      Cmd+Enter
-                    </kbd>
                   </button>
                 </div>
               </div>

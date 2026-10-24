@@ -15,11 +15,14 @@ const CONTEXT_SCRIPT: &str = "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; windo
 const SECTIONS: &[&str] = &[
     "general",
     "chat",
+    "hotkeys",
     "notifications",
     "speech",
     "remote",
     "opencode",
     "providers",
+    "missions",
+    "usage",
     "sidecars",
     "config-files",
     "advanced",
@@ -43,12 +46,30 @@ pub(crate) struct PreferencesRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) instance_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) workspace_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) location: Option<PreferencesLocation>,
+}
+
+/// Host-observed local window label that opened Preferences, never renderer-supplied.
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+struct PreferencesOpener {
+    label: Option<String>,
+    epoch: u64,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OpenerStartupStateResult {
+    epoch: u64,
+    state: Option<crate::client_state::StartupStateSnapshot>,
+    applied: bool,
 }
 
 #[derive(Debug)]
 struct PreferencesState {
     request: PreferencesRequest,
+    opener: PreferencesOpener,
     renderer_ready: bool,
     close_approved: bool,
     transition_id: u64,
@@ -81,8 +102,10 @@ impl Default for PreferencesWindow {
                     section: DEFAULT_SECTION.to_string(),
                     scroll_top: None,
                     instance_id: None,
+                    workspace_path: None,
                     location: None,
                 },
+                opener: PreferencesOpener::default(),
                 renderer_ready: false,
                 close_approved: false,
                 transition_id: 0,
@@ -98,6 +121,26 @@ impl PreferencesWindow {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         state.request = request;
         state.close_approved = false;
+    }
+
+    /// A new Preferences window always starts a new opener epoch; reuse rotates
+    /// it only when another local window asks for Preferences.
+    fn set_opener(&self, label: Option<String>, new_window: bool) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if new_window || (label.is_some() && label != state.opener.label) {
+            state.opener = PreferencesOpener {
+                label,
+                epoch: state.opener.epoch.wrapping_add(1),
+            };
+        }
+    }
+
+    fn opener(&self) -> PreferencesOpener {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .opener
+            .clone()
     }
 
     fn request(&self) -> PreferencesRequest {
@@ -134,6 +177,13 @@ pub(crate) fn validate_request(request: PreferencesRequest) -> Result<Preference
         .is_some_and(|value| value.is_empty() || value.len() > 512)
     {
         return Err("Invalid Preferences instance ID".to_string());
+    }
+    if request
+        .workspace_path
+        .as_ref()
+        .is_some_and(|value| value.is_empty() || value.len() > 32768 || value.contains('\0'))
+    {
+        return Err("Invalid Preferences workspace path".to_string());
     }
     if let Some(location) = &request.location {
         if location.directory.is_empty() || location.directory.len() > 32768 {
@@ -242,6 +292,7 @@ pub(crate) async fn open_preferences_window(
         &preferences,
         request,
         toggle.unwrap_or(false),
+        Some(webview.label().to_string()),
     )
 }
 
@@ -251,6 +302,7 @@ fn open_preferences(
     preferences: &PreferencesWindow,
     request: PreferencesRequest,
     toggle: bool,
+    opener: Option<String>,
 ) -> Result<(), String> {
     let request = validate_request(request)?;
     let _operation = preferences
@@ -272,6 +324,8 @@ fn open_preferences(
                 .set_preferences(Some(request.clone()))?;
             preferences.set_request(request.clone());
         }
+        // Startup state follows the newest opener even while other drafts are guarded.
+        preferences.set_opener(opener.clone(), false);
         if existing.emit(SECTION_EVENT, &request).is_ok() && focus(&existing).is_ok() {
             return Ok(());
         }
@@ -284,10 +338,17 @@ fn open_preferences(
         .ok_or("Local CodeNomad server is unavailable")?;
     suspend_guard(app);
     preferences.set_request(request.clone());
+    preferences.set_opener(opener, true);
     let data_directory = app_state.webview_data_directory.join("local");
     let builder = WebviewWindowBuilder::new(app, LABEL, WebviewUrl::App("loading.html".into()))
         .data_directory(data_directory)
-        .initialization_script(CONTEXT_SCRIPT);
+        .initialization_script(CONTEXT_SCRIPT)
+        .on_page_load(|window, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Finished {
+                let zoom = crate::client_state::local_window_zoom(window.app_handle(), LABEL);
+                crate::title_bar::publish_page_zoom(window.as_ref(), zoom);
+            }
+        });
     #[cfg(windows)]
     let developer_browser_arguments = app_state.developer_browser_arguments.clone();
     #[cfg(windows)]
@@ -302,19 +363,17 @@ fn open_preferences(
     } else {
         builder
     };
-    let preferences_window = crate::window_zoom::configure(builder)
+    let preferences_window = crate::title_bar::configure(crate::window_zoom::configure(builder))
         .title("Preferences")
         .inner_size(1100.0, 760.0)
         .min_inner_size(760.0, 560.0)
         .resizable(true)
         .fullscreen(false)
-        .decorations(false)
         .background_color(tauri::window::Color(26, 26, 26, 255))
         .visible(false)
         .build()
         .map_err(|error| error.to_string())?;
-    #[cfg(not(target_os = "macos"))]
-    let _ = preferences_window.hide_menu();
+    crate::menu_bar::hide(&preferences_window.as_ref().window());
 
     if let Err(error) =
         crate::client_state::setup_local_window(app, &preferences_window, LABEL, true)
@@ -354,7 +413,10 @@ pub(crate) fn navigate_backend(app: &AppHandle) {
         {
             let app_state = app.state::<AppState>();
             let preferences = app.state::<PreferencesWindow>();
-            if let Err(error) = open_preferences(app, &app_state, &preferences, request, false) {
+            // A restored window has no host-observed opener: the most recent local window answers startup state.
+            if let Err(error) =
+                open_preferences(app, &app_state, &preferences, request, false, None)
+            {
                 eprintln!("[tauri] failed to restore preferences window: {error}");
             }
         }
@@ -445,6 +507,70 @@ pub(crate) fn preferences_accept_request(
     Ok(())
 }
 
+/// A mutation prepared against an older opener degrades to a read of the
+/// current one, so a change is never applied to a window the user did not see.
+fn effective_startup_command(
+    opener: &PreferencesOpener,
+    command: &'static str,
+    expected_epoch: Option<u64>,
+) -> &'static str {
+    if command != "read" && expected_epoch != Some(opener.epoch) {
+        "read"
+    } else {
+        command
+    }
+}
+
+/// Startup state is each window's own. When the opener is unknown (Preferences
+/// restored at launch) or closed, the most recently used local window is
+/// adopted as the opener, with a new epoch fencing changes prepared before.
+fn startup_state_target(
+    opener: Option<String>,
+    is_live: impl Fn(&str) -> bool,
+    recent: Option<String>,
+) -> Option<String> {
+    opener.filter(|label| is_live(label)).or(recent)
+}
+
+#[tauri::command]
+pub(crate) async fn preferences_opener_startup_state(
+    webview: tauri::Webview,
+    app: AppHandle,
+    app_state: tauri::State<'_, AppState>,
+    preferences: tauri::State<'_, PreferencesWindow>,
+    command: String,
+    epoch: Option<u64>,
+) -> Result<OpenerStartupStateResult, String> {
+    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    if webview.label() != LABEL {
+        return Err("Opener startup state requires the Preferences window".to_string());
+    }
+    let command = crate::client_state::startup_state_command(&command)?;
+    let current = preferences.opener();
+    let target = startup_state_target(
+        current.label.clone(),
+        |label| app.get_webview_window(label).is_some(),
+        app.state::<crate::local_windows::LocalWindows>()
+            .mru_label(),
+    );
+    if target.is_some() && target != current.label {
+        preferences.set_opener(target, false);
+    }
+    let opener = preferences.opener();
+    let effective = effective_startup_command(&opener, command, epoch);
+    let state = match opener.label.as_deref() {
+        Some(label) => {
+            crate::client_state::run_startup_state_command(&app, label, effective).await?
+        }
+        None => None,
+    };
+    Ok(OpenerStartupStateResult {
+        epoch: opener.epoch,
+        state,
+        applied: effective != "read" && state.is_some(),
+    })
+}
+
 #[tauri::command]
 pub(crate) fn preferences_resolve_transition(
     webview: tauri::Webview,
@@ -469,6 +595,8 @@ pub(crate) fn preferences_resolve_transition(
         state.pending_transition.take().map(|pending| pending.1)
     };
     if !approved {
+        // The kept page still owns an update it started; report its failure now.
+        crate::desktop_updater::notify_preferences_failure(&app);
         return Ok(());
     }
     match transition {
@@ -586,16 +714,29 @@ mod tests {
             scroll_top: None,
             section: "providers".into(),
             instance_id: Some("workspace-1".into()),
+            workspace_path: Some("C:\\repo".into()),
             location: Some(PreferencesLocation {
-                directory: "C:\\repo".into(),
+                directory: "/mnt/c/repo".into(),
                 workspace_id: Some("worktree-1".into()),
             }),
         })
         .unwrap();
         assert_eq!(
-            serde_json::to_value(request).unwrap()["location"]["workspaceID"],
+            serde_json::to_value(&request).unwrap()["location"]["workspaceID"],
             "worktree-1"
         );
+        let serialized = serde_json::to_value(&request).unwrap();
+        assert_eq!(serialized["workspacePath"], "C:\\repo");
+        assert_eq!(serialized["location"]["directory"], "/mnt/c/repo");
+        assert_eq!(
+            serde_json::from_value::<PreferencesRequest>(serialized).unwrap(),
+            request
+        );
+        assert!(validate_request(PreferencesRequest {
+            workspace_path: Some("bad\0path".into()),
+            ..request
+        })
+        .is_err());
     }
 
     #[test]
@@ -652,6 +793,85 @@ mod tests {
             .as_array()
             .unwrap()
             .contains(&json!("preferences-window")));
+    }
+
+    #[test]
+    fn startup_state_follows_the_latest_opener_and_fences_stale_mutations() {
+        let preferences = PreferencesWindow::default();
+        let window_a = "local-11111111-2222-4333-8444-555555555555".to_string();
+        let window_b = "local-66666666-2222-4333-8444-555555555555".to_string();
+        preferences.set_opener(Some(window_a.clone()), true);
+        let first = preferences.opener();
+        assert_eq!(first.label.as_deref(), Some(window_a.as_str()));
+        assert_eq!(
+            effective_startup_command(&first, "disable-restore", Some(first.epoch)),
+            "disable-restore"
+        );
+        assert_eq!(effective_startup_command(&first, "clear", None), "read");
+
+        preferences.set_opener(Some(window_a.clone()), false);
+        assert_eq!(preferences.opener(), first);
+        preferences.set_opener(None, false);
+        assert_eq!(preferences.opener(), first);
+        preferences.set_opener(Some(window_b.clone()), false);
+        let second = preferences.opener();
+        assert_eq!(second.label.as_deref(), Some(window_b.as_str()));
+        assert!(second.epoch > first.epoch);
+        assert_eq!(
+            effective_startup_command(&second, "enable-restore", Some(first.epoch)),
+            "read"
+        );
+
+        // A restored Preferences window has no opener, even if one existed before.
+        preferences.set_opener(None, true);
+        let restored = preferences.opener();
+        assert_eq!(restored.label, None);
+        assert!(restored.epoch > second.epoch);
+    }
+
+    #[test]
+    fn startup_state_targets_a_live_opener_otherwise_the_most_recent_window() {
+        let live = |label: &str| label != "closed";
+        let target = |opener: Option<&str>, recent: Option<&str>| {
+            startup_state_target(opener.map(str::to_string), live, recent.map(str::to_string))
+        };
+        assert_eq!(
+            target(Some("window-a"), Some("window-b")).as_deref(),
+            Some("window-a")
+        );
+        assert_eq!(
+            target(Some("closed"), Some("window-b")).as_deref(),
+            Some("window-b")
+        );
+        assert_eq!(target(None, Some("window-b")).as_deref(), Some("window-b"));
+        assert_eq!(target(None, None), None);
+
+        // Adopting the target as opener rotates the epoch, fencing earlier changes.
+        let preferences = PreferencesWindow::default();
+        preferences.set_opener(None, true);
+        let restored = preferences.opener();
+        preferences.set_opener(target(restored.label.as_deref(), Some("window-b")), false);
+        let adopted = preferences.opener();
+        assert_eq!(adopted.label.as_deref(), Some("window-b"));
+        assert!(adopted.epoch > restored.epoch);
+        assert_eq!(
+            effective_startup_command(&adopted, "clear", Some(restored.epoch)),
+            "read"
+        );
+    }
+
+    #[test]
+    fn startup_state_capabilities_keep_preferences_non_authoritative() {
+        let preferences: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/preferences-window.json")).unwrap();
+        let preferences = preferences["permissions"].as_array().unwrap();
+        assert!(preferences.contains(&json!("allow-preferences-opener-startup-state")));
+        assert!(!preferences.contains(&json!("allow-client-state-startup-command-result")));
+        let local: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/main-window.json")).unwrap();
+        let local = local["permissions"].as_array().unwrap();
+        assert!(local.contains(&json!("allow-client-state-startup-command-result")));
+        assert!(!local.contains(&json!("allow-preferences-opener-startup-state")));
     }
 
     #[test]

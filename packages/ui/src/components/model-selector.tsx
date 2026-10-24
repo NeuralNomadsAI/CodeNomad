@@ -5,6 +5,7 @@ import { waitForInstanceInitialSessionHydration } from "../stores/instances"
 import { ChevronDown, PlugZap, Star } from "lucide-solid"
 import type { Model } from "../types/session"
 import { useI18n } from "../lib/i18n"
+import { withHotkey } from "../lib/hotkeys"
 import { getLogger } from "../lib/logger"
 import { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, setFavoritesOnlyPreference, uiState, toggleFavoriteModelPreference } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
@@ -370,7 +371,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
         <ComboboxInputValue value={inputValue()} />
         <Combobox.Control class="relative w-full" data-model-selector-control>
           <Combobox.Input class="sr-only" data-model-selector aria-label={currentModelAccessibleLabel()} />
-          <Combobox.Trigger class="selector-trigger" aria-label={currentModelAccessibleLabel()} title={currentModelAccessibleLabel()}>
+          <Combobox.Trigger class="selector-trigger" aria-label={currentModelAccessibleLabel()} title={withHotkey(currentModelAccessibleLabel(), "focus-model")}>
             <div class="selector-trigger-label selector-trigger-label--stacked flex-1 min-w-0">
               <span class="selector-trigger-primary selector-trigger-primary--align-left">
                 <span class="session-sidebar-selector-prefix">{t("modelSelector.trigger.primary", { model: "" }).trim()}</span>{" "}

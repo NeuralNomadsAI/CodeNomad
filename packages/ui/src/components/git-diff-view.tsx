@@ -1,4 +1,4 @@
-import { Show, Suspense, createEffect, createSignal, lazy, on, onCleanup } from "solid-js"
+import { Show, Suspense, createEffect, createMemo, createSignal, lazy, on, onCleanup } from "solid-js"
 import { WrapText, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { serverApi } from "../lib/api-client"
@@ -12,6 +12,8 @@ import DiffToolbar from "./instance/shell/right-panel/components/DiffToolbar"
 import type { DiffViewMode, DiffContextMode } from "./instance/shell/right-panel/types"
 import { writeClientLayoutValue } from "../stores/client-state"
 import { readStoredEnum, RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY } from "./instance/shell/storage"
+import { preferences } from "../stores/preferences"
+import { classifyHiddenDiffChange } from "./file-viewer/diff-whitespace"
 
 const MonacoDiffViewer = lazy(() => import("./file-viewer/monaco-diff-viewer").then(module => ({ default: module.MonacoDiffViewer })))
 
@@ -26,6 +28,17 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
   createEffect(() => writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_VIEW_MODE_KEY, view()))
   createEffect(() => writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_CONTEXT_MODE_KEY, context()))
   createEffect(() => writeClientLayoutValue(RIGHT_PANEL_CHANGES_DIFF_WORD_WRAP_KEY, wrap() ? "on" : "off"))
+  // Display-only: reads, staging and commits always use the exact contents.
+  const hideWhitespace = () => preferences().hideDiffWhitespaceChanges ?? true
+  // Explain differences Monaco never draws so the reader is not silently blank.
+  const hiddenChange = createMemo(() => {
+    const value = content()
+    return value && !value.image ? classifyHiddenDiffChange(value.before, value.after) : null
+  })
+  // Factual in both setting states: Monaco 0.52 never draws same-length
+  // trailing-whitespace swaps, so advising to turn the setting off could mislead.
+  const hiddenNotice = () => hiddenChange() === "invisible" ? t("instanceShell.diff.lineEndingsOnly")
+    : hiddenChange() === "whitespace" ? t("instanceShell.diff.whitespaceOnly") : null
   let controller: AbortController | undefined
   let pending = false
 
@@ -55,7 +68,19 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     }
   }
   function cancel() { controller?.abort(); controller = undefined; pending = false; setLoading(false) }
-  createEffect(on(() => props.target, () => { cancel(); setContent(null); setError(null); void load() }))
+  // Git status reconciliation reopens a fresh target object for the same file
+  // to reload it. Reload that file in place: clearing would remount the editor
+  // and drop the reader's selection, scroll position and insert action.
+  const fileIdentity = (target: FilePreviewTarget) => JSON.stringify([target.slug, target.directory,
+    target.serviceDirectory ?? null, target.path, target.originalPath ?? null, target.scope ?? null, target.commit ?? null])
+  let shownFile: string | undefined
+  createEffect(on(() => props.target, target => {
+    const file = fileIdentity(target)
+    cancel()
+    if (file !== shownFile) { setContent(null); setError(null) }
+    shownFile = file
+    void load()
+  }))
   createEffect(on(() => props.active, active => { if (!active) cancel(); else void load() }, { defer: true }))
   const refresh = createDebouncedRefresh(() => void load())
   createEffect(on(() => filesystemInvalidationVersion(props.instanceId), () => {
@@ -84,11 +109,13 @@ export function GitDiffView(props: { instanceId: string; target: FilePreviewTarg
     </header>
     <Show when={error()}><div class="p-3 text-error" role="alert">{error()} <button onClick={() => void load()}>{t("instanceShell.rightPanel.actions.refresh")}</button></div></Show>
     <Show when={loading() && !content()}><div class="p-3 text-secondary">{t("instanceInfo.loading")}</div></Show>
+    <Show when={hiddenNotice()}>{notice => <div class="git-diff-notice" role="status">{notice()}</div>}</Show>
     <Show when={content()}>{value => <Show when={value().image} fallback={<div class="git-diff-content">
       <Suspense fallback={<div class="p-3">{t("instanceInfo.loading")}</div>}>
         <MonacoDiffViewer scopeKey={`${props.instanceId}:${props.target.slug}:${props.target.commit ?? props.target.scope}`} path={props.target.path}
           onRequestInsertContext={insertContext} insertContextLabel={t("instanceShell.gitChanges.actions.insertContext")}
-          before={value().before} after={value().after} viewMode={view()} contextMode={context()} wordWrap={wrap() ? "on" : "off"} />
+          before={value().before} after={value().after} viewMode={view()} contextMode={context()} wordWrap={wrap() ? "on" : "off"}
+          ignoreTrimWhitespace={hideWhitespace()} />
       </Suspense>
     </div>}>{image => <GitImagePreview image={image()} path={props.target.path} view={view()} />}</Show>}</Show>
   </section>

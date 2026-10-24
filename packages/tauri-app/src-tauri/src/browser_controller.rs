@@ -1,6 +1,5 @@
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
@@ -11,6 +10,9 @@ use tauri::{AppHandle, Emitter, Manager, PhysicalPosition, PhysicalSize, Window}
 #[cfg(windows)]
 #[path = "browser_emulation.rs"]
 mod emulation;
+
+#[path = "browser_controller_page.rs"]
+mod page;
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,9 +46,10 @@ pub(crate) struct BrowserTargetAction {
     action: String,
     url: Option<String>,
     preset: Option<String>,
+    entry_id: Option<i64>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, PartialEq, Eq)]
 struct Registration {
     session_id: String,
     registration_id: String,
@@ -77,7 +80,7 @@ struct Inner {
     emulation_profiles: HashMap<String, String>,
     registrations: HashMap<String, Registration>,
     renderer_versions: HashMap<String, u64>,
-    refs: HashMap<String, HashMap<String, i64>>,
+    page_leases: HashMap<String, page::PageLease>,
     navigation_versions: HashMap<String, u64>,
     page_load_sequence: u64,
     page_load_expectations: HashMap<String, PageLoadExpectation>,
@@ -90,15 +93,21 @@ pub(crate) struct BrowserController {
     inner: Arc<(Mutex<Inner>, Condvar)>,
     profile: Arc<std::path::PathBuf>,
     registration_sequence: Arc<AtomicU64>,
+    run_id: Arc<String>,
 }
 
 impl BrowserController {
+    fn storage_directory(&self) -> std::path::PathBuf {
+        self.profile.join("shared-v1")
+    }
+
     pub(crate) fn new(profile: std::path::PathBuf) -> Self {
         Self {
             emulation_lock: Arc::new(Mutex::new(())),
             inner: Arc::new((Mutex::new(Inner::default()), Condvar::new())),
             profile: Arc::new(profile),
             registration_sequence: Arc::new(AtomicU64::new(1)),
+            run_id: Arc::new(uuid::Uuid::new_v4().to_string()),
         }
     }
 
@@ -126,16 +135,16 @@ impl BrowserController {
         let navigation_registration_id = registration_id.clone();
         let policy_controller = self.clone();
         let policy_registration_id = registration_id.clone();
-        let profile = self
-            .profile
-            .join(format!("{:x}", Sha256::digest(input.session_id.as_bytes())));
+        // Every preview is a tab in the same browser profile. Its navigation
+        // history and automation attachment remain owned by its session.
+        let profile = self.storage_directory();
         let builder = WebviewBuilder::new(label.clone(), WebviewUrl::External(blank))
             .data_directory(profile)
             .on_navigation(move |url| {
                 let allowed = url.as_str() == "about:blank" || is_allowed_url(url);
                 if allowed {
                     policy_controller
-                        .clear_refs_for_generation(&policy_registration_id, generation);
+                        .invalidate_page_for_generation(&policy_registration_id, generation);
                 }
                 allowed
             })
@@ -146,7 +155,7 @@ impl BrowserController {
                     && payload.url().as_str() != "about:blank"
                 {
                     navigation_controller
-                        .clear_refs_for_generation(&navigation_registration_id, generation);
+                        .invalidate_page_for_generation(&navigation_registration_id, generation);
                     let _ = webview.window().emit(
                         "browser-target:navigated",
                         json!({ "registrationId": registration_id, "url": payload.url().as_str() }),
@@ -160,6 +169,8 @@ impl BrowserController {
                 PhysicalSize::new(input.bounds.width, input.bounds.height),
             )
             .map_err(|error| format!("failed to create browser preview: {error}"))?;
+        #[cfg(windows)]
+        crate::windows_browser_accelerators::bind(&webview);
         if let Err(error) = install_webview2_handlers(
             &webview,
             self.clone(),
@@ -232,7 +243,9 @@ impl BrowserController {
         }
         let id = registration.registration_id.clone();
         let previous = inner.registrations.insert(id.clone(), registration);
-        inner.refs.remove(&id);
+        inner
+            .page_leases
+            .retain(|_, lease| lease.registration.registration_id != id);
         inner.navigation_versions.insert(id.clone(), 0);
         inner.page_load_sequence = inner.page_load_sequence.wrapping_add(1);
         let sequence = inner.page_load_sequence;
@@ -281,6 +294,18 @@ impl BrowserController {
                 .and_then(|()| webview.show())
                 .map_err(|error| error.to_string())?;
         } else {
+            // Revoke authority before the native hide's UI-thread round trip.
+            let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
+            let current = inner
+                .registrations
+                .get_mut(&input.registration_id)
+                .filter(|current| current.generation == registration.generation)
+                .ok_or("Browser target changed before visibility update")?;
+            current.visible = false;
+            inner
+                .page_leases
+                .retain(|_, lease| lease.registration.registration_id != input.registration_id);
+            drop(inner);
             webview.hide().map_err(|error| error.to_string())?;
         }
         let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
@@ -298,11 +323,41 @@ impl BrowserController {
         app: &AppHandle,
         window_label: &str,
         input: BrowserTargetAction,
-    ) -> Result<(), String> {
+    ) -> Result<Value, String> {
         let registration = self.owned_registration(window_label, &input.registration_id)?;
         let webview = app
             .get_webview(&registration.webview_label)
             .ok_or_else(|| "Browser preview is no longer available".to_string())?;
+        if input.action == "history" || input.action == "history-go" {
+            let deadline = Instant::now() + Duration::from_secs(5);
+            let result = cdp(&webview, "Page.getNavigationHistory", json!({}), deadline)?;
+            if input.action == "history-go" {
+                let id = input.entry_id.ok_or("Browser history entry is required")?;
+                let entry = result["entries"]
+                    .as_array()
+                    .and_then(|entries| {
+                        entries
+                            .iter()
+                            .find(|entry| entry["id"].as_i64() == Some(id))
+                    })
+                    .ok_or("Invalid browser history entry")?;
+                allowed_url(entry["url"].as_str().ok_or("Invalid browser history URL")?)?;
+                if self
+                    .owned_registration(window_label, &input.registration_id)?
+                    .generation
+                    != registration.generation
+                {
+                    return Err("Browser target changed before history navigation".to_string());
+                }
+                return cdp(
+                    &webview,
+                    "Page.navigateToHistoryEntry",
+                    json!({ "entryId": id }),
+                    deadline,
+                );
+            }
+            return bounded_history(result);
+        }
         match input.action.as_str() {
             "emulate" => self.emulate(app, window_label, &input),
             "back" => webview
@@ -316,6 +371,7 @@ impl BrowserController {
                 .map_err(|error| error.to_string()),
             _ => Err("Unsupported browser target action".to_string()),
         }
+        .map(|()| Value::Null)
     }
 
     #[cfg(not(windows))]
@@ -324,7 +380,7 @@ impl BrowserController {
         _app: &AppHandle,
         _window_label: &str,
         _input: BrowserTargetAction,
-    ) -> Result<(), String> {
+    ) -> Result<Value, String> {
         Err(unsupported())
     }
 
@@ -344,7 +400,9 @@ impl BrowserController {
         }
         let registration = inner.registrations.remove(registration_id).unwrap();
         inner.emulation_profiles.remove(registration_id);
-        inner.refs.remove(registration_id);
+        inner
+            .page_leases
+            .retain(|_, lease| lease.registration.registration_id != registration_id);
         inner.navigation_versions.remove(registration_id);
         inner.page_load_expectations.remove(registration_id);
         drop(inner);
@@ -424,7 +482,9 @@ impl BrowserController {
             let labels = ids
                 .into_iter()
                 .filter_map(|id| {
-                    inner.refs.remove(&id);
+                    inner
+                        .page_leases
+                        .retain(|_, lease| lease.registration.registration_id != id);
                     inner.navigation_versions.remove(&id);
                     inner.page_load_expectations.remove(&id);
                     inner
@@ -481,6 +541,8 @@ impl BrowserController {
                 .and_then(Value::as_str)
                 .ok_or_else(|| "Invalid browser request".to_string())?;
             match method {
+                "browser.page.begin" | "browser.page.send" | "browser.page.check"
+                | "browser.page.end" => self.page_request(app, method, &input, deadline),
                 "browser.probe" => {
                     self.resolve(app, session_id)?;
                     Ok(json!({ "available": true }))
@@ -524,34 +586,6 @@ impl BrowserController {
                 let url = allowed_url(command_url(&command)?)?;
                 self.navigate_and_wait(&registration, &webview, &url, deadline)?;
                 Ok(json!({ "url": webview.url().map_err(|error| error.to_string())? }))
-            }
-            "snapshot" => self.snapshot(&registration, &webview, deadline),
-            "click" => {
-                let target = command_ref(&command)?;
-                self.click(&registration, &webview, target, deadline)?;
-                Ok(
-                    json!({ "clicked": target, "url": webview.url().map_err(|error| error.to_string())? }),
-                )
-            }
-            "type" => {
-                let target = command_ref(&command)?;
-                self.click(&registration, &webview, target, deadline)?;
-                if command.get("clear").and_then(Value::as_bool) != Some(false) {
-                    clear_focused_field(&webview, deadline)?;
-                }
-                let text = command
-                    .get("text")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| "Browser text is required".to_string())?;
-                cdp(
-                    &webview,
-                    "Input.insertText",
-                    json!({ "text": text }),
-                    deadline,
-                )?;
-                Ok(
-                    json!({ "typed": target, "url": webview.url().map_err(|error| error.to_string())? }),
-                )
             }
             "screenshot" => {
                 let result = cdp(
@@ -723,120 +757,6 @@ impl BrowserController {
     }
 
     #[cfg(windows)]
-    fn snapshot(
-        &self,
-        registration: &Registration,
-        webview: &tauri::Webview,
-        deadline: Instant,
-    ) -> Result<Value, String> {
-        let navigation_version = self
-            .inner
-            .0
-            .lock()
-            .map_err(|error| error.to_string())?
-            .navigation_versions
-            .get(&registration.registration_id)
-            .copied();
-        cdp(webview, "Accessibility.enable", json!({}), deadline)?;
-        let result = cdp(webview, "Accessibility.getFullAXTree", json!({}), deadline)?;
-        let mut refs = HashMap::new();
-        let mut lines = Vec::new();
-        let mut length = 0;
-        for node in result
-            .get("nodes")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-        {
-            if node.get("ignored").and_then(Value::as_bool) == Some(true) {
-                continue;
-            }
-            let Some(backend_id) = node.get("backendDOMNodeId").and_then(Value::as_i64) else {
-                continue;
-            };
-            let role = ax_string(node.get("role"));
-            let name = ax_string(node.get("name"));
-            if role.is_empty()
-                || (name.is_empty()
-                    && ["generic", "none", "StaticText", "InlineTextBox"].contains(&role.as_str()))
-            {
-                continue;
-            }
-            let reference = format!("e{}", refs.len() + 1);
-            refs.insert(reference.clone(), backend_id);
-            let value = ax_string(node.get("value"));
-            let states = node
-                .get("properties")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(|property| {
-                    let key = property.get("name")?.as_str()?;
-                    if !["checked", "disabled", "expanded", "focused", "selected"].contains(&key) {
-                        return None;
-                    }
-                    Some(format!("{key}={}", property.pointer("/value/value")?))
-                })
-                .collect::<Vec<_>>();
-            let line = format!(
-                "[{reference}] {role}{}{}{}",
-                (!name.is_empty())
-                    .then(|| format!(" {name:?}"))
-                    .unwrap_or_default(),
-                (!value.is_empty())
-                    .then(|| format!(" value={value:?}"))
-                    .unwrap_or_default(),
-                (!states.is_empty())
-                    .then(|| format!(" {}", states.join(" ")))
-                    .unwrap_or_default(),
-            );
-            if lines.len() >= 750 || length + line.len() > 64 * 1024 {
-                break;
-            }
-            length += line.len() + 1;
-            lines.push(line);
-        }
-        let url = self.finish_snapshot(registration, navigation_version, refs, || {
-            webview.url().map_err(|error| error.to_string())
-        })?;
-        Ok(json!({
-            "url": url,
-            "snapshot": if lines.is_empty() { "No accessible elements found".to_string() } else { lines.join("\n") },
-        }))
-    }
-
-    fn finish_snapshot(
-        &self,
-        registration: &Registration,
-        navigation_version: Option<u64>,
-        refs: HashMap<String, i64>,
-        read_url: impl FnOnce() -> Result<tauri::Url, String>,
-    ) -> Result<tauri::Url, String> {
-        // Native getters wait for the UI thread, whose navigation callbacks
-        // need inner. Read without the lock, then fence publication against
-        // navigation or target replacement while that getter was pending.
-        let url = read_url()?;
-        let mut inner = self.inner.0.lock().map_err(|error| error.to_string())?;
-        if navigation_version.is_some()
-            && inner
-                .navigation_versions
-                .get(&registration.registration_id)
-                .copied()
-                == navigation_version
-            && inner
-                .registrations
-                .get(&registration.registration_id)
-                .map(|item| item.generation)
-                == Some(registration.generation)
-        {
-            inner
-                .refs
-                .insert(registration.registration_id.clone(), refs);
-        }
-        Ok(url)
-    }
-
-    #[cfg(windows)]
     fn navigate_and_wait(
         &self,
         registration: &Registration,
@@ -844,7 +764,7 @@ impl BrowserController {
         url: &tauri::Url,
         deadline: Instant,
     ) -> Result<(), String> {
-        self.clear_refs(&registration.registration_id);
+        self.invalidate_page(&registration.registration_id);
         let sequence = self.prepare_page_load(&registration.registration_id, url.as_str())?;
         let result = cdp(
             webview,
@@ -866,88 +786,6 @@ impl BrowserController {
         self.wait_for_page_load(&registration.registration_id, sequence, deadline)
     }
 
-    #[cfg(windows)]
-    fn click(
-        &self,
-        registration: &Registration,
-        webview: &tauri::Webview,
-        target: &str,
-        deadline: Instant,
-    ) -> Result<(), String> {
-        let (backend_node_id, navigation_version) = {
-            let inner = self.inner.0.lock().map_err(|error| error.to_string())?;
-            let backend_node_id = inner
-                .refs
-                .get(&registration.registration_id)
-                .and_then(|refs| refs.get(target))
-                .copied()
-                .ok_or_else(|| format!("Unknown browser ref {target}; take a new snapshot"))?;
-            (
-                backend_node_id,
-                inner
-                    .navigation_versions
-                    .get(&registration.registration_id)
-                    .copied(),
-            )
-        };
-        cdp(
-            webview,
-            "DOM.scrollIntoViewIfNeeded",
-            json!({ "backendNodeId": backend_node_id }),
-            deadline,
-        )?;
-        let result = cdp(
-            webview,
-            "DOM.getBoxModel",
-            json!({ "backendNodeId": backend_node_id }),
-            deadline,
-        )?;
-        let box_model = result
-            .pointer("/model/content")
-            .and_then(Value::as_array)
-            .filter(|values| values.len() == 8)
-            .ok_or_else(|| format!("Browser ref {target} is not visible"))?;
-        let x = [0, 2, 4, 6]
-            .into_iter()
-            .filter_map(|index| box_model[index].as_f64())
-            .sum::<f64>()
-            / 4.0;
-        let y = [1, 3, 5, 7]
-            .into_iter()
-            .filter_map(|index| box_model[index].as_f64())
-            .sum::<f64>()
-            / 4.0;
-        for (kind, extra) in [
-            ("mouseMoved", json!({})),
-            ("mousePressed", json!({ "button": "left", "clickCount": 1 })),
-            (
-                "mouseReleased",
-                json!({ "button": "left", "clickCount": 1 }),
-            ),
-        ] {
-            if self.page_navigation_version(&registration.registration_id) != navigation_version {
-                return Err(format!("Unknown browser ref {target}; take a new snapshot"));
-            }
-            let mut params = json!({ "type": kind, "x": x, "y": y });
-            params
-                .as_object_mut()
-                .unwrap()
-                .extend(extra.as_object().unwrap().clone());
-            cdp(webview, "Input.dispatchMouseEvent", params, deadline)?;
-        }
-        Ok(())
-    }
-
-    fn page_navigation_version(&self, registration_id: &str) -> Option<u64> {
-        self.inner
-            .0
-            .lock()
-            .ok()?
-            .navigation_versions
-            .get(registration_id)
-            .copied()
-    }
-
     fn owned_registration(&self, window_label: &str, id: &str) -> Result<Registration, String> {
         let inner = self.inner.0.lock().map_err(|error| error.to_string())?;
         let registration = inner
@@ -960,16 +798,18 @@ impl BrowserController {
         Ok(registration.clone())
     }
 
-    fn clear_refs(&self, registration_id: &str) {
+    fn invalidate_page(&self, registration_id: &str) {
         if let Ok(mut inner) = self.inner.0.lock() {
-            inner.refs.remove(registration_id);
+            inner
+                .page_leases
+                .retain(|_, lease| lease.registration.registration_id != registration_id);
             if let Some(version) = inner.navigation_versions.get_mut(registration_id) {
                 *version = version.wrapping_add(1);
             }
         }
     }
 
-    fn clear_refs_for_generation(&self, registration_id: &str, generation: u64) {
+    fn invalidate_page_for_generation(&self, registration_id: &str, generation: u64) {
         if let Ok(mut inner) = self.inner.0.lock() {
             if inner
                 .registrations
@@ -979,7 +819,9 @@ impl BrowserController {
             {
                 return;
             }
-            inner.refs.remove(registration_id);
+            inner
+                .page_leases
+                .retain(|_, lease| lease.registration.registration_id != registration_id);
             if let Some(version) = inner.navigation_versions.get_mut(registration_id) {
                 *version = version.wrapping_add(1);
             }
@@ -1131,6 +973,34 @@ impl BrowserController {
     }
 }
 
+fn bounded_history(result: Value) -> Result<Value, String> {
+    let index = result["currentIndex"]
+        .as_u64()
+        .ok_or("Invalid browser history cursor")? as usize;
+    let source = result["entries"]
+        .as_array()
+        .ok_or("Invalid browser history entries")?;
+    let current_id = source.get(index).and_then(|entry| entry["id"].as_i64());
+    let entries = source
+        .iter()
+        .skip(index.saturating_sub(16))
+        .take(32)
+        .filter_map(|entry| {
+            let url = entry["url"].as_str()?;
+            if url.len() > 2048 || allowed_url(url).is_err() {
+                return None;
+            }
+            Some(json!({ "id": entry["id"].as_i64()?, "url": url }))
+        })
+        .collect::<Vec<_>>();
+    let index = entries
+        .iter()
+        .position(|entry| entry["id"].as_i64() == current_id)
+        .map(|index| index as i64)
+        .unwrap_or(-1);
+    Ok(json!({ "entries": entries, "index": index }))
+}
+
 fn validate_id(value: &str, max: usize) -> Result<(), String> {
     if value.is_empty()
         || value.len() > max
@@ -1199,45 +1069,6 @@ fn command_url(command: &Value) -> Result<&str, String> {
 }
 
 #[cfg(windows)]
-fn command_ref(command: &Value) -> Result<&str, String> {
-    command
-        .get("ref")
-        .and_then(Value::as_str)
-        .filter(|value| !value.is_empty() && value.len() <= 32)
-        .ok_or_else(|| "Browser ref is required".to_string())
-}
-
-#[cfg(windows)]
-fn ax_string(value: Option<&Value>) -> String {
-    value
-        .and_then(|value| value.get("value"))
-        .and_then(Value::as_str)
-        .map(|value| value.split_whitespace().collect::<Vec<_>>().join(" "))
-        .unwrap_or_default()
-        .chars()
-        .take(500)
-        .collect()
-}
-
-#[cfg(windows)]
-fn select_all_key_events() -> [Value; 4] {
-    [
-        json!({ "type": "rawKeyDown", "key": "Control", "code": "ControlLeft", "modifiers": 2, "windowsVirtualKeyCode": 17 }),
-        json!({ "type": "rawKeyDown", "key": "a", "code": "KeyA", "modifiers": 2, "windowsVirtualKeyCode": 65, "commands": ["selectAll"] }),
-        json!({ "type": "keyUp", "key": "a", "code": "KeyA", "modifiers": 2, "windowsVirtualKeyCode": 65 }),
-        json!({ "type": "keyUp", "key": "Control", "code": "ControlLeft", "windowsVirtualKeyCode": 17 }),
-    ]
-}
-
-#[cfg(windows)]
-fn clear_focused_field(webview: &tauri::Webview, deadline: Instant) -> Result<(), String> {
-    for params in select_all_key_events() {
-        cdp(webview, "Input.dispatchKeyEvent", params, deadline)?;
-    }
-    Ok(())
-}
-
-#[cfg(windows)]
 fn install_webview2_handlers(
     webview: &tauri::Webview,
     controller: BrowserController,
@@ -1290,8 +1121,10 @@ fn install_webview2_handlers(
 
                 let completed_controller = controller.clone();
                 let completed_registration_id = registration_id.clone();
+                let completed_app = app.clone();
+                let completed_window_label = window_label.clone();
                 let completed =
-                    NavigationCompletedEventHandler::create(Box::new(move |_, args| {
+                    NavigationCompletedEventHandler::create(Box::new(move |core, args| {
                         let Some(args) = args else {
                             return Ok(());
                         };
@@ -1312,6 +1145,23 @@ fn install_webview2_handlers(
                             navigation_id,
                             error,
                         );
+                        if succeeded.as_bool() {
+                            if let Some(core) = core {
+                                let mut raw = Default::default();
+                                unsafe { core.Source(&mut raw)? };
+                                if let Some(webview) =
+                                    completed_app.get_webview(&completed_window_label)
+                                {
+                                    let _ = webview.emit(
+                                        "browser-target:navigated",
+                                        json!({
+                                            "registrationId": completed_registration_id,
+                                            "url": CoTaskMemPWSTR::from(raw).to_string(),
+                                        }),
+                                    );
+                                }
+                            }
+                        }
                         Ok(())
                     }));
                 let mut completed_token = 0;
@@ -1324,7 +1174,7 @@ fn install_webview2_handlers(
                     let mut raw = Default::default();
                     unsafe { core.Source(&mut raw)? };
                     let url = CoTaskMemPWSTR::from(raw).to_string();
-                    controller.clear_refs_for_generation(&registration_id, generation);
+                    controller.invalidate_page_for_generation(&registration_id, generation);
                     if let Some(webview) = app.get_webview(&window_label) {
                         let _ = webview.emit(
                             "browser-target:navigated",
@@ -1363,12 +1213,32 @@ fn cdp(
     params: Value,
     deadline: Instant,
 ) -> Result<Value, String> {
+    cdp_guarded(
+        webview,
+        method,
+        params,
+        deadline,
+        || Ok(()),
+        24 * 1024 * 1024,
+    )
+}
+
+#[cfg(windows)]
+fn cdp_guarded(
+    webview: &tauri::Webview,
+    method: &str,
+    params: Value,
+    deadline: Instant,
+    guard: impl Fn() -> Result<(), String> + Send + 'static,
+    response_limit: usize,
+) -> Result<Value, String> {
     use std::sync::mpsc;
     use webview2_com::{CallDevToolsProtocolMethodCompletedHandler, CoTaskMemPWSTR};
 
     let (sender, receiver) = mpsc::sync_channel(1);
     let method = method.to_string();
     let params = params.to_string();
+    guard()?;
     run_before_deadline(deadline, || {
         webview
             .with_webview(move |platform| {
@@ -1391,13 +1261,16 @@ fn cdp(
                 let params = CoTaskMemPWSTR::from(params.as_str());
                 // Dispatch can outlive the caller's wait. Fence the actual protocol
                 // side effect too, not just the operation that queues this closure.
-                if let Err(error) = run_before_deadline(deadline, || unsafe {
-                    core.CallDevToolsProtocolMethod(
-                        *method.as_ref().as_pcwstr(),
-                        *params.as_ref().as_pcwstr(),
-                        &handler,
-                    )
-                    .map_err(|error| error.to_string())
+                if let Err(error) = run_before_deadline(deadline, || {
+                    guard()?;
+                    unsafe {
+                        core.CallDevToolsProtocolMethod(
+                            *method.as_ref().as_pcwstr(),
+                            *params.as_ref().as_pcwstr(),
+                            &handler,
+                        )
+                        .map_err(|error| error.to_string())
+                    }
                 }) {
                     let _ = sender.send(Err(error));
                 }
@@ -1413,6 +1286,9 @@ fn cdp(
     let result = receiver
         .recv_timeout(timeout)
         .map_err(|_| "WebView2 browser command timed out".to_string())??;
+    if result.len() > response_limit {
+        return Err("Browser page response is too large".to_string());
+    }
     serde_json::from_str(&result).map_err(|error| format!("Invalid WebView2 response: {error}"))
 }
 
@@ -1578,16 +1454,5 @@ mod tests {
                 Instant::now() + Duration::from_secs(1),
             )
             .unwrap();
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn clear_shortcut_uses_chromium_editing_command_and_virtual_keys() {
-        let events = select_all_key_events();
-        assert_eq!(events[0]["type"], "rawKeyDown");
-        assert_eq!(events[0]["windowsVirtualKeyCode"], 17);
-        assert_eq!(events[1]["type"], "rawKeyDown");
-        assert_eq!(events[1]["windowsVirtualKeyCode"], 65);
-        assert_eq!(events[1]["commands"], json!(["selectAll"]));
     }
 }

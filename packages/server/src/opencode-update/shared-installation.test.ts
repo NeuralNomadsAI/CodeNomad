@@ -8,6 +8,9 @@ import { registerUserPath } from "./user-path"
 import { withInstallationLock } from "./installation-lock"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
+import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
+
+const validV2 = () => ({ valid: true, version: "2.1.2" })
 
 async function npmFixture(prefix: string, version: string) {
   const binary = npmExecutable(prefix)
@@ -28,10 +31,10 @@ test("private copies and their receipts are ignored; PATH wins over the user npm
   const host = { home, env }
   try {
     const root = path.join(home, ".local/share/codenomad/opencode")
-    const legacy = path.join(root, "2.0.99/node_modules/@opencode/cli/bin/opencode.exe")
+    const legacy = path.join(root, "2.1.99/node_modules/@opencode/cli/bin/opencode.exe")
     await mkdir(path.dirname(legacy), { recursive: true }); await writeFile(legacy, "legacy")
-    await mkdir(path.join(root, "selected")); await writeFile(path.join(root, "selected/2.0.99"), "")
-    await writeFile(path.join(root, "current"), "2.0.99")
+    await mkdir(path.join(root, "selected")); await writeFile(path.join(root, "selected/2.1.99"), "")
+    await writeFile(path.join(root, "current"), "2.1.99")
     assert.deepEqual(resolveDefaultInstallation(host), { path: "opencode2" })
     assert.equal(sharedInstallPrefix(host), userNpmPrefix(host))
     const prefix = userNpmPrefix(host)
@@ -54,6 +57,11 @@ test("normal global-user npm install publishes terminal command and retries PATH
   const options = { home, env, node: process.execPath, npm: "fixture-npm.js",
     execute: async (_file: string, args: string[]) => {
       installs++
+      if (args[0] === "upgrade") {
+        assert.deepEqual(args, ["upgrade", "2.1.3", "--method", "npm"])
+        await npmFixture(prefix, args[1]!)
+        return
+      }
       assert.ok(args.includes("--global"))
       assert.equal(args[args.indexOf("--prefix") + 1], prefix)
       await npmFixture(prefix, args.at(-1)!.split("@").at(-1)!)
@@ -67,22 +75,22 @@ test("normal global-user npm install publishes terminal command and retries PATH
     },
   }
   try {
-    await assert.rejects(installSharedOpenCode("2.0.11", options), /PATH write failed/)
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.0.11", "installation survives PATH failure")
+    await assert.rejects(installSharedOpenCode(minimum, options), /PATH write failed/)
+    assert.equal((await options.probe(npmExecutable(prefix))).version, minimum, "installation survives PATH failure")
     assert.equal((resolveDefaultInstallation(options)).source, "user", "repair remains discoverable")
-    assert.equal(await installSharedOpenCode("2.0.11", options), npmExecutable(prefix))
+    assert.equal(await installSharedOpenCode(minimum, options), npmExecutable(prefix))
     assert.equal(installs, 1)
     assert.equal(resolveDefaultInstallation(options).path, findPathOpenCode(options))
     assert.equal(resolveDefaultInstallation(options).source, "path")
-    await installSharedOpenCode("2.0.12", options)
+    await installSharedOpenCode("2.1.3", options)
     assert.equal(installs, 2)
-    await installSharedOpenCode("2.0.11", options)
+    await installSharedOpenCode(minimum, options)
     assert.equal(installs, 2, "never downgrade a newer common installation")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.0.12")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.3")
     await rm(findPathOpenCode(options)!)
-    await installSharedOpenCode("2.0.11", options)
+    await installSharedOpenCode(minimum, options)
     assert.equal(installs, 3, "missing command is repaired at the newer installed version")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.0.12")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.3")
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 
@@ -105,7 +113,7 @@ test("standalone opencode commands and custom npm prefixes are discovered withou
   const home = await mkdtemp(path.join(os.tmpdir(), "shared-opencode-prefix-"))
   try {
     const prefix = path.join(home, "custom npm")
-    const host = { home, env: { PATH: "", NPM_CONFIG_PREFIX: prefix } }
+    const host = { home, env: { PATH: "", NPM_CONFIG_PREFIX: prefix }, probeForeign: validV2 }
     assert.equal(userNpmPrefix(host), prefix)
     await npmFixture(prefix, "2.0.12")
     assert.equal(resolveDefaultInstallation(host).path, npmExecutable(prefix))
@@ -165,7 +173,7 @@ test("PATH executable precedence wins over npm shims in the same prefix", async 
       await writeFile(standalone, "standalone", { mode: 0o755 })
       await symlink(npmExecutable(prefix), path.join(directory, "opencode"))
     }
-    const host = { home, env: { PATH: directory } }
+    const host = { home, env: { PATH: directory }, probeForeign: validV2 }
     assert.equal(resolveDefaultInstallation(host).path, standalone)
     assert.equal(sharedInstallPrefix(host), undefined)
     if (process.platform !== "win32") {
@@ -173,8 +181,8 @@ test("PATH executable precedence wins over npm shims in the same prefix", async 
       await mkdir(sibling)
       const unrelated = path.join(sibling, "opencode2")
       await writeFile(unrelated, "standalone", { mode: 0o755 })
-      assert.equal(resolveDefaultInstallation({ home, env: { PATH: sibling } }).path, unrelated)
-      assert.equal(sharedInstallPrefix({ home, env: { PATH: sibling } }), undefined)
+      assert.equal(resolveDefaultInstallation({ home, env: { PATH: sibling }, probeForeign: validV2 }).path, unrelated)
+      assert.equal(sharedInstallPrefix({ home, env: { PATH: sibling }, probeForeign: validV2 }), undefined)
     }
   } finally { await rm(home, { recursive: true, force: true }) }
 })
@@ -193,7 +201,7 @@ test("custom Windows command wrapper in an npm prefix wins over the package alia
     await writeFile(standalone, "standalone")
     const command = path.join(prefix, "opencode2.cmd")
     await writeFile(command, `@echo off\r\n"${standalone}" %*\r\n`)
-    const host = { home, env: { PATH: prefix } }
+    const host = { home, env: { PATH: prefix }, probeForeign: validV2 }
     assert.equal(resolveDefaultInstallation(host).path, command)
     assert.equal(sharedInstallPrefix(host), undefined)
   } finally { await rm(home, { recursive: true, force: true }) }
@@ -204,10 +212,10 @@ test("non-npm PATH executables are reused without allowing npm to shadow them", 
   try {
     const binary = path.join(home, process.platform === "win32" ? "opencode2.exe" : "opencode2")
     await writeFile(binary, "custom", { mode: 0o755 })
-    const options = { home, env: { PATH: home }, npm: "fixture-npm.js" }
+    const options = { home, env: { PATH: home }, npm: "fixture-npm.js", probeForeign: validV2 }
     assert.equal(resolveDefaultInstallation(options).path, binary)
     assert.equal(sharedInstallPrefix(options), undefined)
-    await assert.rejects(installSharedOpenCode("2.0.11", options), /not a writable npm installation/)
+    await assert.rejects(installSharedOpenCode(minimum, options), /not a writable npm installation/)
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 

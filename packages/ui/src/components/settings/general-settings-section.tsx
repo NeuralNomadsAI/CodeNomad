@@ -7,9 +7,12 @@ import { BehaviorSettingRows } from "./behavior-setting-rows"
 import { ThemeSchemeSettings } from "./theme-scheme-settings"
 
 const StartupStateSettingsCard = lazy(() => import("./startup-state-settings-card").then((module) => ({ default: module.StartupStateSettingsCard })))
+const OpenerStartupStateSettingsCard = lazy(() => import("./opener-startup-state-settings-card").then((module) => ({ default: module.OpenerStartupStateSettingsCard })))
 
 interface GeneralSettingsSectionProps {
   showStartupState?: boolean
+  /** "opener": the native Preferences window, which never owns client state. */
+  startupStateOwner?: "self" | "opener"
 }
 
 export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (props) => {
@@ -18,30 +21,30 @@ export const GeneralSettingsSection: Component<GeneralSettingsSectionProps> = (p
   const generalSettings = createMemo(() =>
     getBehaviorSettings(config).filter(
       (setting) =>
-        setting.id === "behavior.keyboardShortcutHints" ||
         setting.id === "behavior.messageTimeline" ||
-        setting.id === "behavior.timelineToolCalls" ||
         setting.id === "behavior.diffViewMode" ||
-        setting.id === "behavior.followUpBehavior" ||
-        setting.id === "behavior.promptSubmitOnEnter",
+        setting.id === "behavior.followUpBehavior",
     ),
   )
 
   return (
     <div class="settings-section-stack">
       <div class="settings-card">
-        <div class="settings-card-header">
+        <div class="settings-card-header settings-language-row">
           <div>
             <h3 class="settings-card-title">{t("folderSelection.language.ariaLabel")}</h3>
             <p class="settings-card-subtitle">{t("settings.general.language.subtitle")}</p>
           </div>
-          <span class="settings-scope-badge">{t("settings.scope.device")}</span>
+          <LocaleSelector />
         </div>
-        <LocaleSelector />
       </div>
       <ThemeSchemeSettings />
 
-      <Show when={props.showStartupState !== false}><StartupStateSettingsCard /></Show>
+      <Show when={props.showStartupState !== false}>
+        <Show when={props.startupStateOwner === "opener"} fallback={<StartupStateSettingsCard />}>
+          <OpenerStartupStateSettingsCard />
+        </Show>
+      </Show>
 
       <div class="settings-card">
         <div class="settings-stack">

@@ -111,6 +111,25 @@ fn committed_local_close_retains_exact_authority_until_consumed() {
 }
 
 #[test]
+fn pending_and_approved_local_closes_remain_visible_to_final_window_decisions() {
+    let coordinator = ShutdownCoordinator::default();
+    let generation = coordinator
+        .begin_local_close("local-a".into(), "window-a".into(), true)
+        .unwrap();
+    assert!(coordinator.local_close_in_flight("local-a"));
+    let pending = coordinator
+        .acknowledge_local("local-a", "window-a", generation)
+        .unwrap();
+    assert!(coordinator.commit_local_close("local-a".into(), pending));
+    assert!(coordinator.local_close_in_flight("local-a"));
+    coordinator.take_committed_local_close("local-a").unwrap();
+    coordinator.approve_local_close("local-a".into());
+    assert!(coordinator.local_close_in_flight("local-a"));
+    coordinator.local_window_destroyed("local-a");
+    assert!(!coordinator.local_close_in_flight("local-a"));
+}
+
+#[test]
 fn local_close_dispatch_rollback_reopens_close_authority() {
     let coordinator = ShutdownCoordinator::default();
     let generation = coordinator
@@ -209,7 +228,7 @@ fn timed_out_global_shutdown_reopens_navigation_authority() {
         .unwrap();
 
     let PendingShutdownTimeoutAction::Cancel(mut cancellations) =
-        coordinator.expire_pending_shutdown()
+        coordinator.expire_pending_shutdown(&requests)
     else {
         panic!("ordinary shutdown timeout should cancel");
     };
@@ -224,11 +243,11 @@ fn timed_out_global_shutdown_reopens_navigation_authority() {
 #[test]
 fn windows_session_end_promotes_an_ordinary_shutdown_timeout_to_cleanup() {
     let coordinator = ShutdownCoordinator::default();
-    coordinator.begin_shutdown(["local-a".to_string()]).unwrap();
+    let requests = coordinator.begin_shutdown(["local-a".to_string()]).unwrap();
     coordinator.begin_windows_session_end(["local-a".to_string()]);
 
     assert!(matches!(
-        coordinator.expire_pending_shutdown(),
+        coordinator.expire_pending_shutdown(&requests),
         PendingShutdownTimeoutAction::Cleanup
     ));
     assert!(coordinator.begin_cleanup(true));

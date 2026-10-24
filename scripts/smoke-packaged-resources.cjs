@@ -66,9 +66,13 @@ function run(command, args, options = {}) {
 function smokeServer(resourcesRoot, target) {
   const serverRoot = path.join(resourcesRoot, "server")
   const entrypoint = path.join(serverRoot, "dist", "bin.js")
+  // Remote Control's self-contained OpenTunnel bundle, loaded on demand.
+  const remoteTunnel = path.join(serverRoot, "dist", "remote-control", "tunnel-runtime.js")
+  // The web app's icon, which also names Tauri's notifications on Windows.
+  const appIcon = path.join(serverRoot, "public", "pwa-192x192.png")
   const node = nodeBinary(resourcesRoot, target)
 
-  for (const requiredPath of [node, entrypoint, path.join(serverRoot, "node_modules")]) {
+  for (const requiredPath of [node, entrypoint, remoteTunnel, appIcon, path.join(serverRoot, "node_modules")]) {
     if (!fs.existsSync(requiredPath)) throw new Error(`Missing packaged runtime path: ${requiredPath}`)
   }
 
@@ -93,6 +97,8 @@ function smokeServer(resourcesRoot, target) {
 
   const importScript = [
     `for (const name of ${JSON.stringify(requiredPackages)}) await import(name);`,
+    `const tunnel = await import(${JSON.stringify(require("url").pathToFileURL(remoteTunnel).href)});`,
+    "if (typeof tunnel.openRemoteTunnel !== 'function') throw new Error('Remote Control tunnel runtime is incomplete');",
     "console.log('packaged dependency imports ok');",
   ].join(" ")
 

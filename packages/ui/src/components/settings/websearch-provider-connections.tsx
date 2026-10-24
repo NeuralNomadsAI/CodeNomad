@@ -57,7 +57,7 @@ export function WebSearchProviderConnections(props: Props) {
       </Select>
       <button type="button" class="selector-button selector-button-primary" disabled={props.busy || !selected()?.methods.some(method => method.type === "key")}
         onClick={() => { setActiveId(selected()?.id ?? ""); setKey("") }}>{t("settings.providers.actions.connect")}</button>
-      <button type="button" class="settings-pill-button" disabled={props.busy} onClick={props.onRefresh}>
+      <button type="button" class="selector-button selector-button-secondary w-auto" disabled={props.busy} onClick={props.onRefresh}>
         <RefreshCw class={props.busy ? "providers-spin-icon" : "providers-button-icon"} />{t("settings.providers.refresh")}
       </button>
     </div>

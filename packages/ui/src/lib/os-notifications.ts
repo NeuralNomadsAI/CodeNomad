@@ -1,3 +1,4 @@
+import { invoke } from "@tauri-apps/api/core"
 import { isElectronHost, isTauriHost } from "./runtime-env"
 import { getLogger } from "./logger"
 
@@ -46,10 +47,8 @@ async function sendWebNotification(payload: OsNotificationPayload): Promise<void
     throw new Error("Web notifications not supported")
   }
 
-  // Browsers generally require permission prior to sending.
-  if (getWebPermission() !== "granted") {
-    throw new Error("Web notification permission not granted")
-  }
+  // Routed notifications wait for permission: until it is granted nothing is sent, silently.
+  if (getWebPermission() !== "granted") return
 
   // eslint-disable-next-line no-new
   new (window as any).Notification(payload.title, { body: payload.body })
@@ -59,19 +58,6 @@ function hasElectronNotifier(): boolean {
   if (typeof window === "undefined") return false
   const api = (window as Window & { electronAPI?: any }).electronAPI
   return Boolean(api && typeof api.showNotification === "function")
-}
-
-export function isOsNotificationSupportedSync(): boolean {
-  if (typeof window === "undefined") return false
-  if (isElectronHost()) {
-    return hasElectronNotifier()
-  }
-  if (isTauriHost()) {
-    // The authoritative check requires async import; treat Tauri as supported and let the
-    // settings modal surface missing plugin/capability errors.
-    return true
-  }
-  return hasWebNotificationApi()
 }
 
 async function sendElectronNotification(payload: OsNotificationPayload): Promise<void> {
@@ -96,7 +82,9 @@ async function getTauriPermission(): Promise<OsNotificationPermission> {
   const mod = await getTauriNotificationModule()
   if (!mod) return "unsupported"
   try {
-    const granted = await mod.isPermissionGranted()
+    // Ask the native plugin: its page script reports "denied" on Windows until the
+    // page requests permission, though Windows never asks.
+    const granted = await invoke<boolean | null>("plugin:notification|is_permission_granted")
     return granted ? "granted" : "default"
   } catch (error) {
     log.warn("[os-notifications] failed to check tauri notification permission", error)

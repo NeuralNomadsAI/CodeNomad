@@ -55,6 +55,8 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     getServiceLocation: () => location,
     getWorktrees: async () => ({ worktrees: [] }),
     getSharedServiceClient: async () => client,
+    // The isolated fixture provisions and registers the plugin before routes are used.
+    desktopPluginsReady: async () => {},
     getSessionEnvironment: async () => {
       const { sessionEnvironment } = await tsImport("../packages/server/src/workspaces/session-environment.ts", import.meta.url)
       return sessionEnvironment({})
@@ -168,6 +170,17 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
 
     const groupTarget = tools.at(-2)
     const group = page.locator(`.message-stream-block[data-message-id="${groupTarget.id}"] .message-exploration-group`).first()
+    // Steps ending with tools pass their usage on to the response text, so visible
+    // usage draws one line after the conclusion and none between the tool steps:
+    // their tools form one group across messages for the cleanup below.
+    const conclusion = before.slice(before.indexOf(selected) + 1).find(message => message.type === "assistant")
+    const usageLines = id => page.locator(`.message-stream-block[data-message-id="${id}"] .message-step-usage-toggle`)
+    await usageLines(conclusion.id).waitFor()
+    await group.getByText("Shell: 3", { exact: true }).waitFor()
+    assert.equal(await usageLines(groupTarget.id).count(), 0)
+    assert.equal(await usageLines(selected.id).count(), 0)
+    assert.equal(await page.locator(`.tool-call[data-message-id="${selected.id}"]`).count(), 1)
+    console.log("PASS: UI response usage keeps tool steps in one group across messages")
     // A collapsed group exposes a single trash action for every member.
     const toggle = group.locator(".message-technical-group-toggle").first()
     if (await toggle.getAttribute("aria-expanded") === "true") await toggle.click()
@@ -185,10 +198,25 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
     console.log("PASS: UI whole tool group deletion")
 
     const responseAction = page.getByRole("button", { name: "Remove tools and reasoning from this response", exact: true }).last()
-    await responseAction.locator('xpath=ancestor::div[contains(@class,"message-item-header-row")][1]').hover()
-    await responseAction.focus()
-    await responseAction.click()
-    await page.getByRole("dialog").getByRole("button", { name: "Remove", exact: true }).click()
+    // Header actions take pointer events only while their message is hovered or
+    // focused, and the virtualized row can be replaced while focus scrolls it
+    // into view. Activate from the keyboard only while the live button holds
+    // focus, retry transient detachment, and never press once the dialog shows.
+    const openResponseCleanup = async () => {
+      const dialog = page.getByRole("dialog")
+      for (let attempt = 1; ; attempt++) {
+        if (await dialog.isVisible()) return dialog
+        try {
+          await responseAction.focus({ timeout: 2000 })
+          if (await responseAction.evaluate(element => element === document.activeElement, null, { timeout: 2000 })) {
+            await page.keyboard.press("Enter")
+          }
+          await dialog.waitFor({ timeout: 2000 })
+          return dialog
+        } catch (error) { if (attempt >= 8) throw error }
+      }
+    }
+    await (await openResponseCleanup()).getByRole("button", { name: "Remove", exact: true }).click()
     await page.waitForFunction(ids => ids.every(id => window.fixture.snapshot().find(message => message.id === id)?.partIds.length === 0), [groupTarget.id, selected.id])
     console.log("PASS: UI response cleanup after cross-message group deletion")
 
@@ -213,11 +241,9 @@ export async function testPruningUI({ client, baseUrl, root, location, generate,
       && message.type === "assistant" && message.content.some(part => part.type === "tool"))
     assert.equal(freshTechnical.length, 2)
     await page.waitForFunction(ids => ids.every(id => window.fixture.snapshot().some(message => message.id === id && message.status === "complete")), fresh.map(message => message.id))
-    await responseAction.locator('xpath=ancestor::div[contains(@class,"message-item-header-row")][1]').hover()
-    await responseAction.focus()
-    await responseAction.click()
-    assert.match(await page.getByRole("dialog").textContent(), /Tool outputs: 4; reasoning blocks: 2/)
-    await page.getByRole("dialog").getByRole("button", { name: "Remove", exact: true }).click()
+    const freshCleanup = await openResponseCleanup()
+    assert.match(await freshCleanup.textContent(), /Tool outputs: 4; reasoning blocks: 2/)
+    await freshCleanup.getByRole("button", { name: "Remove", exact: true }).click()
     await page.waitForFunction(ids => ids.every(id => window.fixture.snapshot().find(message => message.id === id)?.partIds.length === 0), freshTechnical.map(message => message.id))
     for (const message of freshTechnical) assert.deepEqual((await client.session.message.get({ sessionID: session.id, messageID: message.id })).content, [])
     console.log("PASS: UI response confirmation removes both tools and reasoning across messages")

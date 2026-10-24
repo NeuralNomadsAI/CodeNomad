@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "无法在浏览器中打开帮助。请手动访问 https://neuralnomadsai.github.io/CodeNomad/。",
   "commandPalette.title": "命令面板",
   "commandPalette.description": "搜索并执行命令",
   "commandPalette.searchPlaceholder": "输入命令或搜索...",
@@ -14,6 +15,9 @@ export const commandMessages = {
   "commands.newInstance.label": "新建实例",
   "commands.newInstance.description": "打开文件夹选择器以创建新实例",
   "commands.newInstance.keywords": "folder, project, workspace, 文件夹, 项目, 工作区",
+  "commands.newTemporaryInstance.label": "新建临时实例",
+  "commands.newTemporaryInstance.description": "无需选择文件夹即可打开一个空的临时实例",
+  "commands.newTemporaryInstance.keywords": "临时, 草稿, 快速, 空, 项目, temporary",
   "commands.openWorkspace.folder.label": "打开项目文件夹",
   "commands.openWorkspace.folder.description": "在文件管理器中打开当前项目文件夹",
   "commands.openWorkspace.folder.keywords": "文件夹, 资源管理器, 文件",
@@ -31,9 +35,6 @@ export const commandMessages = {
   "commands.closeInstance.label": "关闭标签页",
   "commands.closeInstance.description": "关闭当前顶层标签页",
   "commands.closeInstance.keywords": "stop, quit, close, 停止, 退出, 关闭, 标签",
-  "commands.stopInstance.label": "停止工作区",
-  "commands.stopInstance.description": "为所有窗口停止共享工作区",
-  "commands.stopInstance.keywords": "停止, 工作区, 服务器, 共享",
 
   "commands.nextInstance.label": "下一个标签页",
   "commands.nextInstance.description": "切换到下一个顶层标签页",
@@ -66,6 +67,13 @@ export const commandMessages = {
   "commands.previousSession.label": "上一个会话",
   "commands.previousSession.description": "切换到上一个会话标签页",
   "commands.previousSession.keywords": "switch, navigate, 切换, 导航",
+
+  "commands.previousUserMessage.label": "上一条用户消息",
+  "commands.previousUserMessage.description": "跳到你在此对话中发送的上一条消息",
+  "commands.previousUserMessage.keywords": "jump, prompt, navigate, 跳转, 导航, 用户消息",
+  "commands.nextUserMessage.label": "下一条用户消息",
+  "commands.nextUserMessage.description": "跳到你在此对话中发送的下一条消息",
+  "commands.nextUserMessage.keywords": "jump, prompt, navigate, 跳转, 导航, 用户消息",
 
   "commands.compactSession.label": "压缩会话",
   "commands.compactSession.description": "总结并压缩当前会话",
@@ -113,20 +121,10 @@ export const commandMessages = {
   "commands.clearInput.description": "清空 prompt 输入框",
   "commands.clearInput.keywords": "clear, reset, 清空, 重置",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: 换行, Cmd/Ctrl+Enter: 提交提示词",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: 提交提示词, Cmd/Ctrl+Enter: 换行",
-  "commands.promptSubmitShortcut.description": "在提示词输入框中交换 Enter 与 Cmd/Ctrl+Enter 的行为",
-  "commands.promptSubmitShortcut.keywords": "enter, 换行, 提交, 发送, 快捷键, cmd, ctrl, 提示词",
-
   "commands.thinkingBlocks.label.show": "显示思考",
   "commands.thinkingBlocks.label.hide": "隐藏思考",
   "commands.thinkingBlocks.description": "显示或隐藏 AI 思考部分",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, toggle, show, hide, 思考, 推理, 切换, 显示, 隐藏",
-
-  "commands.timelineToolCalls.label.show": "显示时间轴工具调用",
-  "commands.timelineToolCalls.label.hide": "隐藏时间轴工具调用",
-  "commands.timelineToolCalls.description": "切换消息时间轴中的工具调用条目",
-  "commands.timelineToolCalls.keywords": "timeline, tool, toggle, 时间轴, 工具, 切换",
 
   "commands.keyboardShortcutHints.label.show": "显示键盘快捷键提示",
   "commands.keyboardShortcutHints.label.hide": "隐藏键盘快捷键提示",
@@ -173,9 +171,12 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "在创建新会话时自动清理空白会话",
   "commands.autoCleanupBlankSessions.keywords": "auto, cleanup, blank, sessions, toggle, 自动, 清理, 空白, 会话, 切换",
 
-  "commands.showHelp.label": "显示帮助",
-  "commands.showHelp.description": "显示键盘快捷键与帮助",
-  "commands.showHelp.keywords": "shortcuts, help, 快捷键, 帮助",
+  "commands.openHelp.label": "打开帮助",
+  "commands.openHelp.description": "在浏览器中打开 CodeNomad 用户指南",
+  "commands.openHelp.keywords": "帮助, 指南, 文档",
+  "commands.openAbout.label": "关于 CodeNomad",
+  "commands.openAbout.description": "在设置中显示版本、更新和诊断信息",
+  "commands.openAbout.keywords": "关于, 版本, 更新, 诊断",
 
   "commands.custom.argumentsPrompt.message": "/{name} 的参数",
   "commands.custom.argumentsPrompt.title": "自定义命令",

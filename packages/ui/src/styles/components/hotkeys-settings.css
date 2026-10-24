@@ -1,0 +1,40 @@
+.hotkeys-settings { min-width: 0; container: hotkeys-settings / inline-size; }
+.hotkeys-toolbar { gap: var(--space-sm); flex-wrap: wrap; }
+.hotkeys-filter, .hotkeys-shortcut {
+  min-width: 0;
+  padding: var(--space-xs) var(--space-sm);
+  background: var(--surface-field);
+  color: var(--text-primary);
+  border: 1px solid var(--border-base);
+  border-radius: 0;
+  font: inherit;
+}
+.hotkeys-filter { flex: 1; }
+.hotkeys-shortcut { display: flex; align-items: center; min-height: var(--control-height); padding: 0; }
+.hotkeys-capture { width: 100%; border: 0; background: transparent; color: inherit; font: inherit; outline: none; }
+.hotkeys-shortcut > .hotkeys-binding, .hotkeys-capture { flex: 1; min-width: 0; padding: var(--space-xs) var(--space-sm); }
+.hotkeys-shortcut .window-icon-button:disabled { opacity: 0.5; cursor: not-allowed; }
+.hotkeys-filter:focus-visible, .hotkeys-shortcut:focus-within {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+.hotkeys-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 12rem) auto;
+  align-items: center;
+  gap: var(--space-sm);
+  padding-block: var(--space-sm);
+  border-bottom: 1px solid var(--border-base);
+}
+.hotkeys-action { min-width: 0; overflow-wrap: anywhere; font-size: var(--font-size-sm); }
+.hotkeys-binding { font-size: var(--font-size-sm); overflow-wrap: anywhere; }
+.hotkeys-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); }
+@media (max-width: 640px) {
+  .hotkeys-settings .selector-button, .hotkeys-shortcut .window-icon-button { min-height: 2.25rem; }
+  .hotkeys-shortcut .window-icon-button { min-width: 2.25rem; }
+}
+.hotkeys-warning { margin: var(--space-xs) 0 0; font-size: var(--font-size-sm); color: var(--status-warning); }
+@container hotkeys-settings (max-width: 600px) {
+  .hotkeys-row { grid-template-columns: minmax(0, 1fr) minmax(7rem, 1fr); }
+  .hotkeys-actions { grid-column: 1 / -1; justify-content: flex-end; }
+}

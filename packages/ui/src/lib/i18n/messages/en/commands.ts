@@ -1,4 +1,5 @@
 export const commandMessages = {
+  "commands.openHelp.failed": "Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.",
   "commandPalette.title": "Command Palette",
   "commandPalette.description": "Search and execute commands",
   "commandPalette.searchPlaceholder": "Type a command or search...",
@@ -14,6 +15,9 @@ export const commandMessages = {
   "commands.newInstance.label": "New Instance",
   "commands.newInstance.description": "Open folder picker to create new instance",
   "commands.newInstance.keywords": "folder, project, workspace",
+  "commands.newTemporaryInstance.label": "New Temporary Instance",
+  "commands.newTemporaryInstance.description": "Open an empty temporary instance without choosing a folder",
+  "commands.newTemporaryInstance.keywords": "temporary, scratch, quick, empty, project",
   "commands.openWorkspace.folder.label": "Open Project Folder",
   "commands.openWorkspace.folder.description": "Open the current project folder in the file manager",
   "commands.openWorkspace.folder.keywords": "folder, explorer, finder, files",
@@ -31,9 +35,6 @@ export const commandMessages = {
   "commands.closeInstance.label": "Close Tab",
   "commands.closeInstance.description": "Close the current top-level tab",
   "commands.closeInstance.keywords": "stop, quit, close, tab",
-  "commands.stopInstance.label": "Stop Workspace",
-  "commands.stopInstance.description": "Stop the shared workspace for every window",
-  "commands.stopInstance.keywords": "stop, workspace, server, shared",
 
   "commands.nextInstance.label": "Next Tab",
   "commands.nextInstance.description": "Cycle to the next top-level tab",
@@ -66,6 +67,13 @@ export const commandMessages = {
   "commands.previousSession.label": "Previous Session",
   "commands.previousSession.description": "Cycle to previous session tab",
   "commands.previousSession.keywords": "switch, navigate",
+
+  "commands.previousUserMessage.label": "Previous User Message",
+  "commands.previousUserMessage.description": "Jump to the previous message you sent in this conversation",
+  "commands.previousUserMessage.keywords": "jump, prompt, navigate, user message",
+  "commands.nextUserMessage.label": "Next User Message",
+  "commands.nextUserMessage.description": "Jump to the next message you sent in this conversation",
+  "commands.nextUserMessage.keywords": "jump, prompt, navigate, user message",
 
   "commands.compactSession.label": "Compact Session",
   "commands.compactSession.description": "Summarize and compact the current session",
@@ -113,20 +121,10 @@ export const commandMessages = {
   "commands.clearInput.description": "Clear the prompt textarea",
   "commands.clearInput.keywords": "clear, reset",
 
-  "commands.promptSubmitShortcut.label.default": "Enter: New Line, Cmd/Ctrl+Enter: Submit Prompt",
-  "commands.promptSubmitShortcut.label.swapped": "Enter: Submit Prompt, Cmd/Ctrl+Enter: New Line",
-  "commands.promptSubmitShortcut.description": "Swap Enter and Cmd/Ctrl+Enter behavior in the prompt input",
-  "commands.promptSubmitShortcut.keywords": "enter, cmd, ctrl, submit, send, newline, shortcut, keybind, prompt",
-
   "commands.thinkingBlocks.label.show": "Show Thinking",
   "commands.thinkingBlocks.label.hide": "Hide Thinking",
   "commands.thinkingBlocks.description": "Show or hide AI thinking sections",
   "commands.thinkingBlocks.keywords": "thinking, reasoning, toggle, show, hide",
-
-  "commands.timelineToolCalls.label.show": "Show Timeline Tool Calls",
-  "commands.timelineToolCalls.label.hide": "Hide Timeline Tool Calls",
-  "commands.timelineToolCalls.description": "Toggle tool call entries in the message timeline",
-  "commands.timelineToolCalls.keywords": "timeline, tool, toggle",
 
   "commands.keyboardShortcutHints.label.show": "Show Keyboard Shortcut Hints",
   "commands.keyboardShortcutHints.label.hide": "Hide Keyboard Shortcut Hints",
@@ -173,9 +171,12 @@ export const commandMessages = {
   "commands.autoCleanupBlankSessions.description": "Automatically clean up blank sessions when creating new ones",
   "commands.autoCleanupBlankSessions.keywords": "auto, cleanup, blank, sessions, toggle",
 
-  "commands.showHelp.label": "Show Help",
-  "commands.showHelp.description": "Display keyboard shortcuts and help",
-  "commands.showHelp.keywords": "shortcuts, help",
+  "commands.openHelp.label": "Open help",
+  "commands.openHelp.description": "Open the CodeNomad user guide in your browser",
+  "commands.openHelp.keywords": "help, guide, documentation",
+  "commands.openAbout.label": "About CodeNomad",
+  "commands.openAbout.description": "Show the version, updates and diagnostics in Settings",
+  "commands.openAbout.keywords": "about, version, updates, diagnostics",
 
   "commands.custom.argumentsPrompt.message": "Arguments for /{name}",
   "commands.custom.argumentsPrompt.title": "Custom command",

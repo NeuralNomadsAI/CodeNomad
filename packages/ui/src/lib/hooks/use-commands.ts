@@ -6,7 +6,7 @@ import type {
   ToolInputsVisibilityPreference,
   VisibilityPreference,
 } from "../../stores/preferences"
-import { createCommandRegistry, type Command } from "../commands"
+import { createCommandRegistry, resolveResolvable, type Command } from "../commands"
 import { activeInstanceId } from "../../stores/instances"
 import { selectNextAppTab, selectPreviousAppTab } from "../../stores/app-tabs"
 import type { ClientPart, MessageInfo } from "../../types/message"
@@ -18,12 +18,16 @@ import { messageStoreBus } from "../../stores/message-v2/bus"
 import { cleanupBlankSessions } from "../../stores/session-state"
 import { getLogger } from "../logger"
 import { emitSessionSidebarRequest } from "../session-sidebar-events"
-import { tGlobal } from "../i18n"
+import { tGlobal, useI18n } from "../i18n"
+import { helpUrl } from "../help-url"
+import { openExternalUrl } from "../external-url"
+import { openSettings } from "../../stores/settings-screen"
 import { registerBehaviorCommands } from "../settings/behavior-registry"
 import { canOpenWorkspacePaths, openWorkspacePath, type WorkspaceEditor, type WorkspaceOpenTarget } from "../workspace-open"
 import { getDefaultWorktreeSlug, getWorktreeSlugForSession } from "../../stores/worktrees"
 import { compactSession, executeSessionTechnicalPartDeletion, planSessionTechnicalPartDeletion, stageSessionRevert } from "../../stores/session-actions"
 import { beginSessionCleanup } from "../../stores/session-cleanup-progress"
+import { requestUserMessageJump } from "../../components/user-message-navigation"
 
 const log = getLogger("actions")
 
@@ -38,12 +42,9 @@ function splitKeywords(key: string): string[] {
 export interface UseCommandsOptions {
   preferences: Accessor<Preferences>
   toggleShowThinkingBlocks: () => void
-  toggleKeyboardShortcutHints: () => void
   toggleShowMessageTimeline: () => void
-  toggleShowTimelineTools: () => void
   toggleUsageMetrics: () => void
   toggleAutoCleanupBlankSessions: () => void
-  togglePromptSubmitOnEnter: () => void
   toggleShowPromptVoiceInput: () => void
   setDiffViewMode: (mode: "split" | "unified") => void
   setToolOutputExpansion: (mode: VisibilityPreference) => void
@@ -51,8 +52,8 @@ export interface UseCommandsOptions {
   setThinkingBlocksExpansion: (mode: ExpansionPreference) => void
   setToolInputsVisibility: (mode: ToolInputsVisibilityPreference) => void
   handleNewInstanceRequest: () => void
+  handleNewTemporaryInstance: () => Promise<void>
   handleCloseActiveTab: () => Promise<void>
-  handleStopInstance: (instanceId: string) => Promise<void>
   handleNewSession: (instanceId: string) => Promise<void>
   handleCloseSession: (instanceId: string, sessionId: string) => Promise<void>
   getActiveInstance: () => Instance | null
@@ -72,6 +73,7 @@ function extractUserTextFromRecord(record?: MessageRecord): string | null {
 }
 
 export function useCommands(options: UseCommandsOptions) {
+  const { locale } = useI18n()
   const commandRegistry = createCommandRegistry()
   const [commands, setCommands] = createSignal<Command[]>([])
 
@@ -119,8 +121,17 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.newInstance.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.newInstance.keywords"),
-      shortcut: { key: "N", meta: true },
+      shortcutId: "new-instance",
       action: options.handleNewInstanceRequest,
+    })
+
+    commandRegistry.register({
+      id: "new-temporary-instance",
+      label: () => tGlobal("commands.newTemporaryInstance.label"),
+      description: () => tGlobal("commands.newTemporaryInstance.description"),
+      category: "Instance",
+      keywords: () => splitKeywords("commands.newTemporaryInstance.keywords"),
+      action: options.handleNewTemporaryInstance,
     })
 
     commandRegistry.register({
@@ -129,22 +140,9 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.closeInstance.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.closeInstance.keywords"),
-      shortcut: { key: "W", meta: true },
+      shortcutId: "close-instance",
       action: async () => {
         await options.handleCloseActiveTab()
-      },
-    })
-
-    commandRegistry.register({
-      id: "stop-instance",
-      label: () => tGlobal("commands.stopInstance.label"),
-      description: () => tGlobal("commands.stopInstance.description"),
-      category: "Instance",
-      keywords: () => splitKeywords("commands.stopInstance.keywords"),
-      disabled: () => !activeInstance(),
-      action: async () => {
-        const instance = activeInstance()
-        if (instance) await options.handleStopInstance(instance.id)
       },
     })
 
@@ -192,7 +190,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.nextInstance.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.nextInstance.keywords"),
-      shortcut: { key: "]", meta: true },
+      shortcutId: "instance-next",
       action: () => selectNextAppTab(),
     })
 
@@ -202,7 +200,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.previousInstance.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.previousInstance.keywords"),
-      shortcut: { key: "[", meta: true },
+      shortcutId: "instance-prev",
       action: () => selectPreviousAppTab(),
     })
 
@@ -212,7 +210,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.newSession.description"),
       category: "Session",
       keywords: () => splitKeywords("commands.newSession.keywords"),
-      shortcut: { key: "N", meta: true, shift: true },
+      shortcutId: "session-new",
       action: async () => {
         const instance = activeInstance()
         if (!instance) return
@@ -226,7 +224,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.closeSession.description"),
       category: "Session",
       keywords: () => splitKeywords("commands.closeSession.keywords"),
-      shortcut: { key: "W", meta: true, shift: true },
+      shortcutId: "close-session",
       action: async () => {
         const instance = activeInstance()
         const sessionId = activeSessionIdForInstance()
@@ -254,7 +252,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.instanceInfo.description"),
       category: "Instance",
       keywords: () => splitKeywords("commands.instanceInfo.keywords"),
-      shortcut: { key: "L", meta: true, shift: true },
+      shortcutId: "switch-to-info",
       action: () => {
         const instance = activeInstance()
         if (instance) setActiveSession(instance.id, "info")
@@ -267,7 +265,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.nextSession.description"),
       category: "Session",
       keywords: () => splitKeywords("commands.nextSession.keywords"),
-      shortcut: { key: "]", meta: true, shift: true },
+      shortcutId: "session-next",
       action: () => {
         const instanceId = activeInstanceId()
         if (!instanceId) return
@@ -292,7 +290,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.previousSession.description"),
       category: "Session",
       keywords: () => splitKeywords("commands.previousSession.keywords"),
-      shortcut: { key: "[", meta: true, shift: true },
+      shortcutId: "session-prev",
       action: () => {
         const instanceId = activeInstanceId()
         if (!instanceId) return
@@ -311,6 +309,26 @@ export function useCommands(options: UseCommandsOptions) {
         }
       },
     })
+
+    for (const [id, direction, key] of [["user-message-prev", "previous", "previousUserMessage"], ["user-message-next", "next", "nextUserMessage"]] as const) {
+      commandRegistry.register({
+        id,
+        label: () => tGlobal(`commands.${key}.label`),
+        description: () => tGlobal(`commands.${key}.description`),
+        category: "Session",
+        keywords: () => splitKeywords(`commands.${key}.keywords`),
+        shortcutId: id,
+        disabled: () => {
+          const sessionId = activeSessionIdForInstance()
+          return !activeInstance() || !sessionId || sessionId === "info"
+        },
+        action: () => {
+          const instance = activeInstance()
+          const sessionId = activeSessionIdForInstance()
+          if (instance && sessionId && sessionId !== "info") requestUserMessageJump({ instanceId: instance.id, sessionId, direction })
+        },
+      })
+    }
 
     commandRegistry.register({
       id: "compact",
@@ -530,7 +548,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.openModelSelector.description"),
       category: "Agent & Model",
       keywords: () => splitKeywords("commands.openModelSelector.keywords"),
-      shortcut: { key: "M", meta: true, shift: true },
+      shortcutId: "focus-model",
       action: () => {
         const instance = activeInstance()
         if (!instance) return
@@ -544,7 +562,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.selectModelVariant.description"),
       category: "Agent & Model",
       keywords: () => splitKeywords("commands.selectModelVariant.keywords"),
-      shortcut: { key: "T", meta: true, shift: true },
+      shortcutId: "focus-variant",
       action: () => {
         const instance = activeInstance()
         if (!instance) return
@@ -558,7 +576,7 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.openAgentSelector.description"),
       category: "Agent & Model",
       keywords: () => splitKeywords("commands.openAgentSelector.keywords"),
-      shortcut: { key: "A", meta: true, shift: true },
+      shortcutId: "open-agent-selector",
       action: () => {
         const instance = activeInstance()
         if (!instance) return
@@ -572,22 +590,20 @@ export function useCommands(options: UseCommandsOptions) {
       description: () => tGlobal("commands.clearInput.description"),
       category: "Input & Focus",
       keywords: () => splitKeywords("commands.clearInput.keywords"),
-      shortcut: { key: "K", meta: true },
+      shortcutId: "clear-input",
       action: () => {
-        const textarea = findVisiblePromptTextarea()
-        if (textarea) textarea.value = ""
+        const instance = activeInstance()
+        if (!instance) return
+        emitSessionSidebarRequest({ instanceId: instance.id, action: "clear-prompt" })
       },
     })
 
     registerBehaviorCommands((command) => commandRegistry.register(command), {
       preferences: options.preferences,
       toggleShowThinkingBlocks: options.toggleShowThinkingBlocks,
-      toggleKeyboardShortcutHints: options.toggleKeyboardShortcutHints,
       toggleShowMessageTimeline: options.toggleShowMessageTimeline,
-      toggleShowTimelineTools: options.toggleShowTimelineTools,
       toggleUsageMetrics: options.toggleUsageMetrics,
       toggleAutoCleanupBlankSessions: options.toggleAutoCleanupBlankSessions,
-      togglePromptSubmitOnEnter: options.togglePromptSubmitOnEnter,
       toggleShowPromptVoiceInput: options.toggleShowPromptVoiceInput,
       setDiffViewMode: options.setDiffViewMode,
       setToolOutputExpansion: options.setToolOutputExpansion,
@@ -597,14 +613,26 @@ export function useCommands(options: UseCommandsOptions) {
     })
  
     commandRegistry.register({
-      id: "help",
-      label: () => tGlobal("commands.showHelp.label"),
-      description: () => tGlobal("commands.showHelp.description"),
+      id: "open-help",
+      label: () => tGlobal("commands.openHelp.label"),
+      description: () => tGlobal("commands.openHelp.description"),
       category: "System",
-      keywords: () => ["/help", ...splitKeywords("commands.showHelp.keywords")],
-      action: () => {
-        log.info("Show help modal (not implemented)")
+      keywords: () => splitKeywords("commands.openHelp.keywords"),
+      action: async () => {
+        if (!await openExternalUrl(helpUrl(locale()), "help")) showAlertDialog(tGlobal("commands.openHelp.failed"), {
+          title: tGlobal("commands.openHelp.label"), variant: "error",
+        })
       },
+    })
+
+    // Also the native About menu item: Settings → Info, not the bare native panel.
+    commandRegistry.register({
+      id: "open-about",
+      label: () => tGlobal("commands.openAbout.label"),
+      description: () => tGlobal("commands.openAbout.description"),
+      category: "System",
+      keywords: () => splitKeywords("commands.openAbout.keywords"),
+      action: () => openSettings("info"),
     })
   }
 
@@ -621,8 +649,14 @@ export function useCommands(options: UseCommandsOptions) {
     }
   }
 
+  function executeMenuCommand(action: string) {
+    const command = commands().find((candidate) => candidate.id === action)
+    if (command && !(command.disabled && resolveResolvable(command.disabled))) executeCommand(command)
+  }
+
   onMount(() => {
     registerCommands()
+    for (const command of commandRegistry.getAll()) command.shortcutId ??= command.id
     refreshCommands()
   })
 
@@ -631,5 +665,6 @@ export function useCommands(options: UseCommandsOptions) {
     commandRegistry,
     refreshCommands,
     executeCommand,
+    executeMenuCommand,
   }
 }

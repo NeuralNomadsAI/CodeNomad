@@ -49,6 +49,8 @@ const readLegacyLayoutValue = (key: string) =>
   })
 const writeLegacyLayoutValue = (key: string, value: string) =>
   useLocalStorage(undefined, (storage) => storage.setItem(key, value))
+const removeLegacyLayoutValue = (key: string) =>
+  useLocalStorage(undefined, (storage) => storage.removeItem(key))
 function legacyLayoutKeys(storage: Storage): string[] {
   const keys = new Set(Object.keys(layout))
   for (let index = 0; index < storage.length; index += 1) {
@@ -90,7 +92,7 @@ function enqueuePendingSave(): Promise<void> {
     revision: ++revision,
     savedAt: Date.now(),
     layout: { ...layout },
-    session: partitionProtocolVersion === 1 ? loadedRestorableSession() : withoutOutlineIndexes(loadedRestorableSession()),
+    session: partitionProtocolVersion === 1 ? loadedRestorableSession() : withoutPartitionCaches(loadedRestorableSession()),
   }
   const normalizedSnapshot = decodeClientSnapshot(snapshot)
   if (!normalizedSnapshot) return Promise.reject(new Error("Client snapshot normalization failed"))
@@ -128,10 +130,10 @@ function enqueuePendingSave(): Promise<void> {
   return saveAttempt
 }
 
-function withoutOutlineIndexes(state: RestorableSessionState | null): RestorableSessionState | null {
+function withoutPartitionCaches(state: RestorableSessionState | null): RestorableSessionState | null {
   return state && { ...state, tabs: state.tabs.map(tab => {
     if (tab.kind !== "workspace") return tab
-    const { outlineIndexes: _, ...rest } = tab
+    const { outlineIndexes: _, sessionCatalog: _catalog, ...rest } = tab
     return rest
   }) }
 }
@@ -172,7 +174,10 @@ async function executeDestructiveTransaction(operation: () => Promise<boolean>, 
     writeBlock = "snapshot"
   } catch (error) {
     retryDirty ||= dirty
-    for (const key of transactionLayoutWrites) writeLegacyLayoutValue(key, layout[key]!)
+    for (const key of transactionLayoutWrites) {
+      if (hasLayoutKey(key)) writeLegacyLayoutValue(key, layout[key]!)
+      else removeLegacyLayoutValue(key)
+    }
     transactionLayoutWrites.clear()
     writeBlock = previousWriteBlock
     dirty = retryDirty
@@ -225,6 +230,22 @@ export function writeClientLayoutValue(key: string, value: string): void {
   writeLegacyLayoutValue(key, value)
   if (layout[key] === value) return
   layout[key] = value
+  scheduleSave()
+}
+
+export function removeClientLayoutValue(key: string): void {
+  if (!isValidLayoutKey(key)) return
+  if (!clientStateIsPrimary()) return removeLegacyLayoutValue(key)
+  if (writeBlock === "transaction") {
+    dirty ||= hasLayoutKey(key)
+    delete layout[key]
+    transactionLayoutWrites.add(key)
+    return
+  }
+  if (!restorePreviousStateEnabled() || writeBlock) return
+  removeLegacyLayoutValue(key)
+  if (!hasLayoutKey(key)) return
+  delete layout[key]
   scheduleSave()
 }
 

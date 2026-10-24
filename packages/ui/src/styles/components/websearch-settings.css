@@ -7,6 +7,7 @@
   padding-block-start: var(--space-lg);
 }
 
+
 .websearch-settings {
   display: grid;
   gap: var(--space-md);
@@ -46,7 +47,7 @@
 }
 
 .websearch-settings-defaults {
-  border-block-start: 1px solid var(--border-divider);
+  border-block-start: 1px solid var(--border-row);
   padding-block-start: var(--space-md);
 }
 
