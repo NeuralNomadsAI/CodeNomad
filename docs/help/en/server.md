@@ -8,7 +8,7 @@ The same UI supports [multiple project tabs and worktrees](projects.md), [conver
 
 1. Install Node.js 24 LTS and npm; the repository's pinned build runtime is 24.20.0. Desktop packages include Node/npm.
 2. Put Git on the **backend process's PATH**. Git inside WSL alone does not satisfy a Windows backend.
-3. Install or select OpenCode: the required minimum is **2.1.2**, with **2.1.3** the recommended qualification target. Newer or custom builds undergo compatibility checks, not a tested-version allowlist. See [OpenCode setup](opencode.md).
+3. Install or select OpenCode: the required minimum is **2.1.2**, with **2.1.4** the recommended qualification target. Newer or custom builds undergo compatibility checks, not a tested-version allowlist. See [OpenCode setup](opencode.md).
 4. Choose the folder from which to start the server, or pass `--workspace-root` explicitly.
 
 Without Git, conversations remain available only in the explicitly opened physical folder; Git and worktree operations fail. Install Git and restart the backend after a PATH change. A workspace root limits opening/browsing, not agent execution: see [Security](security.md).
