@@ -3,7 +3,7 @@ import { requireHttpUrl } from "./navigation-security"
 
 export const PREFERENCES_SECTIONS = [
   "general", "chat", "hotkeys", "notifications", "speech", "remote", "opencode",
-  "providers", "missions", "usage", "sidecars", "config-files", "advanced", "info",
+  "providers", "preview", "missions", "usage", "sidecars", "config-files", "advanced", "info",
 ] as const
 
 export type PreferencesSection = typeof PREFERENCES_SECTIONS[number]

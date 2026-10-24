@@ -13,6 +13,7 @@ export type SettingsSectionId =
   | "remote"
   | "opencode"
   | "providers"
+  | "preview"
   | "missions"
   | "usage"
   | "sidecars"
