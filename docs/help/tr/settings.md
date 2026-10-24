@@ -79,4 +79,4 @@ Yalnızca Geçmiş'e yönlendirilen bildirimleri sayan zil/okunmamış geçmiş 
 | Uzun asistan yanıtlarını beklet | Bir akış yanıtı görünümün ötesine geçtiğinde otomatik takibi durdurur. |
 | Ortam Değişkenleri | Her istem veya oturum komutundan önce sunucu tarafında uygulanır; okumalar halihazırda çalışmakta olan yürütmeyi güncellemez. Bkz. [OpenCode kurulumu](opencode.md). |
 
-Klavye yapılandırması için [Klavye kısayolları](shortcuts.md); ses kontrolleri için [Ses girişi ve oynatma](voice.md)'yi kullanın. Başlangıç geri yükleme ve kayıtlı masaüstü profillerini silme, [Masaüstü pencereleri ve veriler](desktop.md) kapsamında ele alınmaktadır.
+Klavye yapılandırması için [Klavye kısayolları](shortcuts.md); ses kontrolleri için [Ses girişi ve oynatma](voice.md)'yi kullanın. Başlangıç geri yükleme ve masaüstü veri profilleri, [Masaüstü pencereleri ve veriler](desktop.md) kapsamında ele alınmaktadır.

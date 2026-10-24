@@ -22,15 +22,15 @@ La ventana de Preferencias no tiene un estado de restauración independiente: es
 
 La configuración del navegador y remota está integrada en lugar de tener un segundo propietario nativo de Preferencias. Se informa de un error al abrir Preferencias nativas; no es motivo para suponer que se abrió una pantalla integrada oculta en su lugar.
 
-## Perfiles explícitos de datos de escritorio {#data-profiles}
+## Perfiles de datos de escritorio {#data-profiles}
 
-Sin un perfil explícito, los inicios empaquetados reutilizan el perfil recordado para esa configuración. Si no se recuerda ninguna elección, la aplicación busca trabajo restaurable en los perfiles predeterminado, `dev` y `dev-v2`: selecciona el único candidato, pregunta si hay varios o usa el predeterminado si no hay ninguno. La selección no mueve, combina ni elimina datos de perfiles. Usa `CODENOMAD_PROFILE` para abrir otro perfil explícitamente.
+1. En **Configuración → General** nativo, bajo **Restaurar el estado anterior**, despliega **Perfil de datos**. Muestra todos los perfiles de este equipo con su tamaño, fecha de creación y último uso, con el abierto primero.
+2. Selecciona el perfil que abrirá el siguiente inicio, o elige **Nuevo perfil** e introduce un nombre de 1–64 letras minúsculas, dígitos, puntos, guiones o guiones bajos, que empiece por una letra o un dígito.
+3. Elige **Reiniciar en** para cambiar ahora; si no, el perfil elegido se abre en el siguiente inicio. Volver a seleccionar el perfil abierto cancela el cambio.
 
-1. Para un aislamiento deliberado del escritorio, establece `CODENOMAD_PROFILE` antes de iniciar el ejecutable.
-2. Usa un nombre de 1–64 letras/dígitos ASCII, puntos, guiones bajos o guiones, que empiece por letra o dígito. Los nombres se normalizan a minúsculas; `default` o `stable` selecciona el perfil predeterminado.
-3. Comprueba **Configuración → General → Restaurar el estado anterior → Perfil de datos** para un perfil con nombre. Un nombre inválido impide el inicio en lugar de seleccionar otro perfil.
+Los perfiles de otra configuración aparecen en la lista, pero no se pueden elegir aquí. Sin una elección recordada, un inicio empaquetado busca trabajo restaurable en los perfiles predeterminado, `dev` y `dev-v2` y abre el usado más recientemente, o el predeterminado si ninguno lo tiene. Elegir un perfil no mueve, combina ni elimina datos de perfiles.
 
-Por ejemplo, en PowerShell, antes de iniciar el ejecutable de escritorio deseado:
+`CODENOMAD_PROFILE` establecido antes de iniciar el ejecutable prevalece sobre la elección; **Perfil de datos** muestra entonces los perfiles sin permitir elegir uno. `default` o `stable` selecciona el perfil predeterminado, y un nombre inválido impide el inicio en lugar de seleccionar otro perfil. Por ejemplo, en PowerShell, antes de iniciar el ejecutable de escritorio deseado:
 
 ```powershell
 $env:CODENOMAD_PROFILE = "review"
@@ -46,13 +46,13 @@ Para una configuración de servidor independiente, establece también `CLI_CONFI
 
 En Tauri para macOS, los perfiles separados comparten almacenamiento WebKit del sistema, inicios de sesión y caché; no uses nombres de perfiles como aislamiento de seguridad de cuentas. Electron almacena los datos web en su perfil. La versión instalada y **Canal de actualizaciones** nunca seleccionan otro perfil de datos. Los inicios de desarrollo sin empaquetar usan el perfil `dev` salvo selección explícita.
 
-## Eliminar otros perfiles guardados {#delete-profiles}
+## Eliminar un perfil guardado {#delete-profiles}
 
-1. En **Configuración → General** nativo, busca **Otros perfiles guardados** debajo de **Restaurar el estado anterior**. Solo aparece si hay otros perfiles en el equipo.
-2. Actualiza la lista si es necesario, elige **Eliminar…** y lee los destinos enumerados y los perfiles omitidos.
+1. Despliega **Perfil de datos** como se indica arriba y actualiza la lista si es necesario.
+2. Elige el botón de eliminar del perfil que quieras quitar. El perfil abierto no lo tiene.
 3. Confirma solo después de conservar los borradores/inicios de sesión que necesites. Inspecciona cualquier informe de eliminación incompleta antes de reintentar.
 
-La eliminación borra las pestañas, borradores, disposición y almacenamiento web/caché/inicios de sesión propios de otros perfiles, incluidos perfiles enumerados de otra configuración. Conserva el perfil abierto, las conversaciones OpenCode y los archivos del proyecto. Se omiten los perfiles abiertos o de estado desconocido; cierra las ventanas de CodeNomad relevantes antes de actualizar explícitamente y reintentar. El contenido no reconocido se conserva y se notifica en lugar de eliminarse indiscriminadamente.
+La eliminación borra las pestañas, borradores, disposición y almacenamiento web/caché/inicios de sesión propios de ese perfil, incluido un perfil enumerado de otra configuración. Conserva el perfil abierto, las conversaciones OpenCode y los archivos del proyecto. Un perfil abierto o en estado desconocido no se puede eliminar; cierra las ventanas de CodeNomad relevantes, actualiza la lista y reintenta. El contenido no reconocido se conserva y se notifica en lugar de eliminarse indiscriminadamente.
 
 El almacén WebKit compartido de Tauri en macOS se conserva porque borrarlo afectaría a otros perfiles. Esta limpieza no se puede deshacer: que sobreviva una conversación nativa no restaura un borrador sin enviar eliminado. **Borrar el estado de inicio guardado** es la acción más limitada cuando solo quieres restablecer la ventana actual.
 

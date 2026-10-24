@@ -17,6 +17,8 @@
     "allow-preferences-opener-startup-state",
     "allow-data-profiles-list-others",
     "allow-data-profiles-delete-others",
+    "allow-data-profiles-set-next-launch",
+    "allow-data-profiles-relaunch",
     "allow-window-control",
     "dialog:allow-open",
     {

@@ -36,14 +36,12 @@ pub(crate) fn local_window_id(label: &str) -> Result<String, String> {
     Ok(id.to_string())
 }
 
-#[derive(Debug)]
-pub(crate) enum LaunchProfile {
-    Ready(String),
-    Ask {
-        candidates: Vec<profile_transition::Candidate>,
-        lock: profile_transition::SelectionLock,
-        context: profile_transition::TransitionContext,
-    },
+#[derive(Debug, Eq, PartialEq)]
+pub(crate) struct LaunchProfile {
+    pub(crate) key: String,
+    /// `CODENOMAD_PROFILE`, its alias or a development run chose the profile, so a remembered
+    /// choice cannot apply.
+    pub(crate) pinned: bool,
 }
 
 /// Resolves the data profile before the identifier, singleton or WebView data directory is fixed.
@@ -59,7 +57,10 @@ pub(crate) fn resolve_launch_profile(
     if let Some(explicit) =
         data_profile::resolve_explicit_profile(profile, legacy_channel, packaged)?
     {
-        return Ok(LaunchProfile::Ready(explicit.key));
+        return Ok(LaunchProfile {
+            key: explicit.key,
+            pinned: true,
+        });
     }
     let user_data_base = electron_user_data_base(home);
     let context = profile_transition::TransitionContext {
@@ -68,28 +69,13 @@ pub(crate) fn resolve_launch_profile(
         default_state_files: crate::client_state::default_state_files(&user_data_base),
         user_data_base,
     };
-    Ok(
-        match profile_transition::resolve_transition_profile(
-            &context,
-            SystemTime::now,
-            std::thread::sleep,
-        )
-        .map_err(|error| format!("Unable to select the CodeNomad data profile: {error}"))?
-        {
-            profile_transition::TransitionResult::Resolved { key, reason } => {
-                eprintln!(
-                    "[startup] data profile {} ({reason:?})",
-                    data_profile::profile_display_name(&key)
-                );
-                LaunchProfile::Ready(key)
-            }
-            profile_transition::TransitionResult::Ask { candidates, lock } => LaunchProfile::Ask {
-                candidates,
-                lock,
-                context,
-            },
-        },
-    )
+    let profile_transition::TransitionResult { key, reason } =
+        profile_transition::resolve_transition_profile(&context, SystemTime::now());
+    eprintln!(
+        "[startup] data profile {} ({reason:?})",
+        data_profile::profile_display_name(&key)
+    );
+    Ok(LaunchProfile { key, pinned: false })
 }
 
 fn lexical_normalize(path: PathBuf) -> PathBuf {
@@ -261,13 +247,11 @@ mod tests {
     #[test]
     fn explicit_launch_profiles_never_consult_the_transition() {
         let root = Path::new("/nonexistent-codenomad-home");
-        let ready = |profile, channel, packaged| match resolve_launch_profile(
-            profile, channel, None, packaged, root, root,
-        )
-        .unwrap()
-        {
-            LaunchProfile::Ready(key) => key,
-            LaunchProfile::Ask { .. } => panic!("unexpected question"),
+        let ready = |profile, channel, packaged| {
+            let launch =
+                resolve_launch_profile(profile, channel, None, packaged, root, root).unwrap();
+            assert!(launch.pinned, "an explicit profile pins the launch");
+            launch.key
         };
         assert_eq!(ready(Some("Team"), Some("dev"), true), "team");
         assert_eq!(ready(None, Some("dev-v2"), true), "dev-v2");

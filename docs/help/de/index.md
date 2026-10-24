@@ -45,7 +45,7 @@ Die genauen Grenzen erläutern [Browser-Vorschauen und SideCars](browser-sidecar
 | CodeNomad-Backend | Der Server für Arbeitsbereiche, Git, Authentifizierung und Client-Verbindungen. Sein Konto und seine Umgebung bestimmen den Dateisystemzugriff des Backends. |
 | Konfiguration | CodeNomad-Einstellungen im Konfigurationsverzeichnis des Servers; globale/projektbezogene OpenCode-Einstellungen haben ihren eigenen nativen Geltungsbereich. |
 | Fenster | Eigene Tabs, Navigation, Entwürfe und wiederhergestellte Ansicht. Der native Verlauf wird gemeinsam genutzt, nicht für jedes Fenster kopiert. |
-| Desktop-Datenprofil | Explizite Auswahl des nativen/Client-Speichers; isoliert nicht automatisch OpenCode-Sitzungen oder jede gemeinsam genutzte Konfiguration. |
+| Desktop-Datenprofil | In den Einstellungen gewählter nativer/Client-Speicher; isoliert nicht automatisch OpenCode-Sitzungen oder jede gemeinsam genutzte Konfiguration. |
 
 Das Arbeitsbereichs-Stammverzeichnis begrenzt, welche Ordner CodeNomad öffnet; es ist keine Agenten-Sandbox. Lesen Sie die [Sicherheitshinweise](security.md), bevor Sie einen Host zugänglich machen oder umfassenden Werkzeugzugriff erlauben.
 

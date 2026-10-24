@@ -139,19 +139,6 @@ test("the preview feed never offers an older stable release through the SemVer f
   } finally { await page.close() }
 })
 
-test("Info leaves the data profile to the startup card", async () => {
-  const page = await browser.newPage({ locale: "en-US" })
-  await setup(page, "electron")
-  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json",
-    body: JSON.stringify(new URL(route.request().url()).pathname === "/api/meta" ? { ...baseMeta, desktopProfile: "dev-v2" } : {}) }))
-  try {
-    await page.goto(url)
-    await rowValue(page, "Server operating system").waitFor()
-    assert.equal(await page.getByTestId("settings-data-profile").count(), 0)
-    assert.equal(await page.getByText("dev-v2", { exact: true }).count(), 0)
-  } finally { await page.close() }
-})
-
 for (const published of ["current", "renamed"] as const) test(`Report a bug opens the ${published === "current" ? "prefilled issue form" : "blank issue fallback"}`, async () => {
   const page = await browser.newPage({ locale: "en-US", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" })
   const body = (await issueTemplate).replace("id: os-version", "id: operating-system")

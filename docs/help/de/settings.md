@@ -79,4 +79,4 @@ Die ungelesene Glocken-/Verlaufszahl, die nur an den Verlauf geleitete Benachric
 | Lange Assistentenantworten anhalten | Stoppt automatisches Folgen, wenn eine gestreamte Antwort über die Ansicht hinauswächst. |
 | Umgebungsvariablen | Serverseitig vor jedem Prompt/Sitzungsbefehl angewandt; Lesen aktualisiert keine bereits laufende Ausführung. Siehe [OpenCode-Einrichtung](opencode.md). |
 
-Tastaturkonfiguration siehe [Tastenkürzel](shortcuts.md); Sprachsteuerung siehe [Spracheingabe und Wiedergabe](voice.md). Startwiederherstellung und Löschen gespeicherter Desktop-Profile behandelt [Desktop-Fenster und Daten](desktop.md).
+Tastaturkonfiguration siehe [Tastenkürzel](shortcuts.md); Sprachsteuerung siehe [Spracheingabe und Wiedergabe](voice.md). Startwiederherstellung und Desktop-Datenprofile behandelt [Desktop-Fenster und Daten](desktop.md).

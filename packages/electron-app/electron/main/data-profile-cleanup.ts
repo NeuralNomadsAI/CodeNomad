@@ -3,16 +3,20 @@ import { lstat, readdir, readFile, readlink, rm, unlink } from "node:fs/promises
 import { homedir, hostname } from "node:os"
 import { basename, dirname, join, posix, resolve, win32 } from "node:path"
 import { isPidAlive } from "./client-state-process"
-import { DEFAULT_PROFILE_KEY, profileDisplayName, profileScope } from "./data-profile"
-import { choiceKey, forgetChoices, selectionDirectory, type ForgetChoicesOutcome } from "./profile-transition"
+import { DEFAULT_PROFILE_KEY, parseProfileName, profileDisplayName, profileScope } from "./data-profile"
+import {
+  choiceKey, defaultProfileStateFiles, forgetChoices, rememberedChoice, rememberNextLaunch, scopeStateFile, selectionDirectory,
+  stateLastModified, type ForgetChoicesOutcome, type NextLaunchOutcome,
+} from "./profile-transition"
 
 /**
- * Lists and deletes the desktop data profiles other than the open one (see
- * dev-docs/DESKTOP_DATA_PROFILES.md). Mirrored by Tauri's `data_profile_cleanup.rs`; both hosts
- * enumerate the same folders and apply the same in-use rules, because a profile can be open in
- * either host. The renderer only ever sends IDs returned by the listing: every deletion
- * re-enumerates, re-validates and rechecks activity host-side. Only direct children of known roots
- * with the expected names are removed, never through a symlink or junction, and never a root.
+ * Lists the desktop data profiles (the open one and the others), deletes the others and remembers
+ * the one the next launch opens (see dev-docs/DESKTOP_DATA_PROFILES.md). Mirrored by Tauri's
+ * `data_profile_cleanup.rs`; both hosts enumerate the same folders and apply the same in-use rules,
+ * because a profile can be open in either host. The renderer only ever sends IDs returned by the
+ * listing: every deletion re-enumerates, re-validates and rechecks activity host-side. Only direct
+ * children of known roots with the expected names are removed, never through a symlink or junction,
+ * and never a root.
  */
 export const TAURI_IDENTIFIER = "ai.neuralnomads.codenomad.client"
 const TAURI_SCOPE_PREFIX = `${TAURI_IDENTIFIER}.scope.s`
@@ -50,12 +54,21 @@ export interface CurrentProfile {
   key: string
   configIdentity: string
   defaultIdentity: string
+  /** `CODENOMAD_PROFILE`, its alias or an unpackaged run decided this launch, so a remembered choice never applies. */
+  pinned: boolean
 }
 
 export type OtherProfileKind = "scope" | "default" | "orphan"
 export type OtherProfileStatus = "available" | "in-use" | "unknown"
 
-export interface OtherProfile {
+interface ProfileDates {
+  /** Birth time of the profile's main folder in epoch milliseconds; null when unknown or missing. */
+  createdAt: number | null
+  /** Newest modification time of its client-state files in epoch milliseconds; null when none exists. */
+  lastUsedAt: number | null
+}
+
+export interface OtherProfile extends ProfileDates {
   id: string
   kind: OtherProfileKind
   /** Profile name as used with CODENOMAD_PROFILE (`default` for the default profile); lock-folder hash for orphans. */
@@ -68,8 +81,19 @@ export interface OtherProfile {
   status: OtherProfileStatus
 }
 
+export interface OpenProfile extends ProfileDates {
+  /** `default` for the default profile. */
+  name: string
+  sizeBytes: number
+  sizeComplete: boolean
+}
+
 export interface OtherProfilesListing {
+  current: OpenProfile
   profiles: OtherProfile[]
+  /** The profile name remembered for the open configuration, or null. */
+  nextLaunch: string | null
+  pinned: boolean
   /**
    * macOS only: Tauri keeps web storage in WebKit's store, shared by every scoped profile (one fixed
    * data-store identifier) or WebKit's default store for the default profile. No profile owns it,
@@ -104,11 +128,15 @@ interface ActivityProbe {
   webview?: string
 }
 
-interface Candidate extends Omit<OtherProfile, "sizeBytes" | "sizeComplete" | "status"> {
+interface Candidate extends Omit<OtherProfile, "sizeBytes" | "sizeComplete" | "status" | keyof ProfileDates> {
   key?: string
   targets: Target[]
   probe: ActivityProbe
   keptRoots: Array<{ root: string; ignore: ReadonlySet<string> }>
+  /** The folder holding the profile's client state, whose birth time is its creation date. */
+  home: string
+  /** Its client-state files, read the way the one-time transition reads them. */
+  stateFiles: string[]
 }
 
 export interface CleanupDependencies {
@@ -165,9 +193,7 @@ async function scopeNames(root: string): Promise<Set<string>> {
 
 async function candidates(roots: ProfileRoots, current: CurrentProfile): Promise<Candidate[]> {
   const currentScope = profileScope(current.key, current.configIdentity, current.defaultIdentity)
-  const electronScopes = join(roots.electronBase, "scopes")
-  const webviewScopes = join(roots.webviewRoot, "scopes")
-  const [electronNames, webviewNames] = await Promise.all([scopeNames(electronScopes), scopeNames(webviewScopes)])
+  const [electronNames, webviewNames] = await Promise.all([scopeNames(join(roots.electronBase, "scopes")), scopeNames(join(roots.webviewRoot, "scopes"))])
   const scopes = new Set([...electronNames, ...webviewNames])
   if (currentScope.scoped) scopes.delete(currentScope.scopeName)
   const tauriScopes = new Set<string>()
@@ -181,22 +207,9 @@ async function candidates(roots: ProfileRoots, current: CurrentProfile): Promise
   for (const scopeName of [...scopes].sort()) {
     const [, key, suffix] = SCOPE_NAME.exec(scopeName)!
     claimedSuffixes.add(suffix!)
-    const targets: Target[] = []
-    if (electronNames.has(scopeName)) targets.push({ root: electronScopes, name: scopeName, directory: true })
-    if (webviewNames.has(scopeName)) targets.push({ root: webviewScopes, name: scopeName, directory: true })
-    const tauriName = `${TAURI_SCOPE_PREFIX}${suffix}`
-    if (tauriScopes.has(suffix!)) targets.push({ root: roots.tauriDataParent, name: tauriName, directory: true })
-    const electronData = join(electronScopes, scopeName)
-    result.push({
-      id: `scope:${scopeName}`,
-      kind: "scope",
-      key: key!,
-      name: profileDisplayName(key!),
-      otherConfiguration: scopeSuffix(key!, current.configIdentity) !== suffix,
-      targets,
-      probe: { electronData, election: join(electronData, "client-state", "election"), tauriData: join(roots.tauriDataParent, tauriName), webview: join(webviewScopes, scopeName) },
-      keptRoots: [],
-    })
+    result.push(scopeCandidate(roots, current, key!, suffix!, {
+      electron: electronNames.has(scopeName), webview: webviewNames.has(scopeName), tauri: tauriScopes.has(suffix!),
+    }))
   }
   for (const suffix of [...tauriScopes].sort()) {
     if (claimedSuffixes.has(suffix)) continue
@@ -209,17 +222,70 @@ async function candidates(roots: ProfileRoots, current: CurrentProfile): Promise
       targets: [{ root: roots.tauriDataParent, name, directory: true }],
       probe: { tauriData: join(roots.tauriDataParent, name) },
       keptRoots: [],
+      home: join(roots.tauriDataParent, name),
+      stateFiles: [],
     })
   }
   if (currentScope.scoped) {
     const defaultCandidate = await defaultProfileCandidate(roots, current)
-    if (defaultCandidate) result.unshift(defaultCandidate)
+    if (defaultCandidate.targets.length) result.unshift(defaultCandidate)
   }
   return result
 }
 
+/** A named scope (or the default profile of another configuration): its folders on both hosts that exist as plain folders. */
+function scopeCandidate(
+  roots: ProfileRoots,
+  current: CurrentProfile,
+  key: string,
+  suffix: string,
+  present: { electron: boolean; webview: boolean; tauri: boolean },
+): Candidate {
+  const scopeName = `${key}-${suffix}`
+  const electronScopes = join(roots.electronBase, "scopes")
+  const webviewScopes = join(roots.webviewRoot, "scopes")
+  const tauriName = `${TAURI_SCOPE_PREFIX}${suffix}`
+  const targets: Target[] = []
+  if (present.electron) targets.push({ root: electronScopes, name: scopeName, directory: true })
+  if (present.webview) targets.push({ root: webviewScopes, name: scopeName, directory: true })
+  if (present.tauri) targets.push({ root: roots.tauriDataParent, name: tauriName, directory: true })
+  const electronData = join(electronScopes, scopeName)
+  return {
+    id: `scope:${scopeName}`,
+    kind: "scope",
+    key,
+    name: profileDisplayName(key),
+    otherConfiguration: scopeSuffix(key, current.configIdentity) !== suffix,
+    targets,
+    probe: { electronData, election: join(electronData, "client-state", "election"), tauriData: join(roots.tauriDataParent, tauriName), webview: join(webviewScopes, scopeName) },
+    keptRoots: [],
+    home: electronData,
+    stateFiles: [scopeStateFile(roots.electronBase, scopeName)],
+  }
+}
+
+/** The open profile with the folders the deletion table would remove for it. */
+async function openProfileCandidate(roots: ProfileRoots, current: CurrentProfile): Promise<Candidate> {
+  const scope = profileScope(current.key, current.configIdentity, current.defaultIdentity)
+  if (!scope.scoped) return defaultProfileCandidate(roots, current)
+  const [electron, webview, tauri] = await Promise.all([
+    plainDirectory(join(roots.electronBase, "scopes", scope.scopeName)),
+    plainDirectory(join(roots.webviewRoot, "scopes", scope.scopeName)),
+    plainDirectory(join(roots.tauriDataParent, `${TAURI_SCOPE_PREFIX}${scope.suffix}`)),
+  ])
+  return scopeCandidate(roots, current, current.key, scope.suffix, { electron, webview, tauri })
+}
+
+/** The default profile's client-state files in the transition's order (startup.ts `resolveLaunchProfile`). */
+const defaultStateFiles = (roots: ProfileRoots) => [
+  join(roots.homeClientState, "v2", "client-state.json"),
+  join(roots.homeClientState, "client-state.json"),
+  join(roots.electronBase, "client-state.json"),
+  join(roots.tauriDataParent, TAURI_IDENTIFIER, "client-state.json"),
+]
+
 /** The default profile owns its roots' own children only; `scopes/` and the selection folder are never its data. */
-async function defaultProfileCandidate(roots: ProfileRoots, current: CurrentProfile): Promise<Candidate | undefined> {
+async function defaultProfileCandidate(roots: ProfileRoots, current: CurrentProfile): Promise<Candidate> {
   const tauriDefault = join(roots.tauriDataParent, TAURI_IDENTIFIER)
   const sharedState = join(roots.homeClientState, "v2")
   const planned: Target[] = [
@@ -233,7 +299,6 @@ async function defaultProfileCandidate(roots: ProfileRoots, current: CurrentProf
   ]
   const targets: Target[] = []
   for (const target of planned) if (await exists(join(target.root, target.name))) targets.push(target)
-  if (!targets.length) return undefined
   const owned = (root: string) => new Set(targets.filter((target) => target.root === root).map((target) => target.name))
   return {
     id: "default",
@@ -249,6 +314,8 @@ async function defaultProfileCandidate(roots: ProfileRoots, current: CurrentProf
       { root: sharedState, ignore: new Set(["election", ...owned(sharedState)]) },
       { root: tauriDefault, ignore: new Set([...TAURI_BOOKKEEPING, ...owned(tauriDefault)]) },
     ],
+    home: sharedState,
+    stateFiles: defaultProfileStateFiles(defaultStateFiles(roots)),
   }
 }
 
@@ -373,14 +440,35 @@ async function measure(targets: Target[], limit = MAX_SIZE_ENTRIES): Promise<{ b
   return { bytes, complete }
 }
 
+/**
+ * A birth time Node reports reliably, or null: Linux filesystems without btime give 0, and without
+ * statx libuv substitutes the change time.
+ */
+export function reliableBirthTime(stats: { birthtimeMs: number; ctimeMs: number }, platform: NodeJS.Platform): number | null {
+  if (!(stats.birthtimeMs > 0) || (platform === "linux" && stats.birthtimeMs === stats.ctimeMs)) return null
+  return Math.floor(stats.birthtimeMs)
+}
+
+async function profileDates(candidate: Candidate, platform: NodeJS.Platform): Promise<ProfileDates> {
+  let createdAt: number | null = null
+  try {
+    const stats = await lstat(candidate.home)
+    if (stats.isDirectory() && !stats.isSymbolicLink()) createdAt = reliableBirthTime(stats, platform)
+  } catch {}
+  return { createdAt, lastUsedAt: stateLastModified(candidate.stateFiles) }
+}
+
 export async function listOtherProfiles(
   roots: ProfileRoots,
   current: CurrentProfile,
   dependencies: CleanupDependencies = defaultDependencies,
 ): Promise<OtherProfilesListing> {
+  const platform = dependencies.platform ?? process.platform
   const profiles: OtherProfile[] = []
   for (const candidate of await candidates(roots, current)) {
-    const [size, activity] = await Promise.all([measure(candidate.targets, dependencies.sizeEntries), probeActivity(candidate.probe, dependencies)])
+    const [size, activity, dates] = await Promise.all([
+      measure(candidate.targets, dependencies.sizeEntries), probeActivity(candidate.probe, dependencies), profileDates(candidate, platform),
+    ])
     profiles.push({
       id: candidate.id,
       kind: candidate.kind,
@@ -389,9 +477,34 @@ export async function listOtherProfiles(
       sizeBytes: size.bytes,
       sizeComplete: size.complete,
       status: activity === "idle" ? "available" : activity,
+      ...dates,
     })
   }
-  return { profiles, sharedWebKitStorage: (dependencies.platform ?? process.platform) === "darwin" }
+  const open = await openProfileCandidate(roots, current)
+  const [openSize, openDates] = await Promise.all([measure(open.targets, dependencies.sizeEntries), profileDates(open, platform)])
+  return {
+    current: { name: profileDisplayName(current.key), sizeBytes: openSize.bytes, sizeComplete: openSize.complete, ...openDates },
+    profiles,
+    nextLaunch: rememberedChoice(selectionDirectory(roots.electronBase), current.configIdentity),
+    pinned: current.pinned,
+    sharedWebKitStorage: platform === "darwin",
+  }
+}
+
+export type NextLaunchResult = { outcome: NextLaunchOutcome | "invalid" }
+
+/** Remembers the profile the next launch of the open configuration opens; `default` names the default profile. */
+export async function setNextLaunchProfile(
+  roots: ProfileRoots,
+  current: CurrentProfile,
+  name: unknown,
+  dependencies: CleanupDependencies = defaultDependencies,
+): Promise<NextLaunchResult> {
+  let key: string | undefined
+  try { key = typeof name === "string" ? parseProfileName(name) : undefined } catch {}
+  if (key === undefined) return { outcome: "invalid" }
+  const context = { configIdentity: current.configIdentity, defaultIdentity: current.defaultIdentity, userDataBase: roots.electronBase }
+  return { outcome: rememberNextLaunch(context, key, dependencies.now) }
 }
 
 /** A target is removable only as a plain, link-free direct child of a link-free root with the planned name. */

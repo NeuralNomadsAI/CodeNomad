@@ -1701,49 +1701,25 @@ fn local_close_event_action(consumed: Option<bool>, in_flight: bool) -> LocalClo
 }
 
 /// Resolves the data profile before the identifier, singleton or WebView storage exists. An
-/// invalid explicit profile fails visibly; a needed question is asked here, synchronously, so no
-/// profile is opened or written before the answer is recorded.
+/// invalid explicit profile fails visibly.
 fn resolve_launch_profile_or_exit(
     cli_config: Option<&str>,
     cwd: &std::path::Path,
     home: &std::path::Path,
-) -> String {
-    let fail = |message: String| -> ! {
-        eprintln!("[startup] {message}");
-        profile_selection_dialog::show_startup_error(&message);
-        std::process::exit(1);
-    };
-    let resolved = identity::resolve_launch_profile(
+) -> identity::LaunchProfile {
+    identity::resolve_launch_profile(
         std::env::var(data_profile::PROFILE_ENVIRONMENT).ok().as_deref(),
         std::env::var(data_profile::LEGACY_CHANNEL_ENVIRONMENT).ok().as_deref(),
         cli_config,
         !is_dev_mode(),
         cwd,
         home,
-    );
-    match resolved {
-        Ok(identity::LaunchProfile::Ready(profile)) => profile,
-        Ok(identity::LaunchProfile::Ask {
-            candidates,
-            lock,
-            context,
-        }) => {
-            let heartbeat = lock.start_heartbeat();
-            let chosen = profile_selection_dialog::ask(&candidates);
-            drop(heartbeat);
-            let Some(profile) = chosen else {
-                lock.release();
-                std::process::exit(0);
-            };
-            if !lock.commit(&context, &profile) {
-                // The answer still applies to this launch; the question returns next time.
-                eprintln!("[startup] the profile choice could not be remembered");
-            }
-            lock.release();
-            profile
-        }
-        Err(message) => fail(message),
-    }
+    )
+    .unwrap_or_else(|message| {
+        eprintln!("[startup] {message}");
+        profile_selection_dialog::show_startup_error(&message);
+        std::process::exit(1);
+    })
 }
 
 fn main() {
@@ -1760,20 +1736,20 @@ fn main() {
     let backend_config = identity::resolve_selected_config(cli_config.as_deref(), &cwd, &home);
     // Native listening/certificate readers and every backend spawn must select
     // this same ORIGINAL source, resolved before any startup cwd can change.
-    // Process-wide set_var happens while the process is still single-threaded: before the profile
-    // question may start heartbeat or dialog-toolkit threads. Only the Windows-only WebView2
-    // variables below follow it, where environment access is OS-synchronized.
+    // Process-wide set_var happens while the process is still single-threaded: before the startup
+    // error dialog may start dialog-toolkit threads. Only the Windows-only WebView2 variables
+    // below follow it, where environment access is OS-synchronized.
     if let Some(config) = backend_config.as_deref() {
         std::env::set_var("CLI_CONFIG", config);
     } else {
         std::env::remove_var("CLI_CONFIG");
     }
     configure_developer_environment();
-    let profile = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
+    let identity::LaunchProfile {
+        key: profile,
+        pinned: profile_pinned,
+    } = resolve_launch_profile_or_exit(cli_config.as_deref(), &cwd, &home);
     let scope = identity::resolve_scope(&profile, cli_config.as_deref(), &cwd, &home, &local_data);
-    // The backend reports the active profile; it is applied only to the backend Command (see
-    // cli_manager), never through the process environment.
-    data_profile::set_backend_profile(&profile);
     let (devtools_active_port, webview_data_directory, developer_browser_arguments) =
         configure_developer_webview(&scope).expect("configure native automation browser profile");
     let executable = std::env::current_exe()
@@ -1853,11 +1829,15 @@ fn main() {
                 tauri_data_parent: dirs::data_dir().unwrap_or_else(|| home.clone()),
                 home_client_state: client_state::home_client_state_directory()
                     .unwrap_or_else(|| home.join(".codenomad").join("client-state")),
+                default_state_files: client_state::default_state_files(
+                    &identity::electron_user_data_base(&home),
+                ),
             },
             data_profile_cleanup::CurrentProfile {
                 key: scope.profile.clone(),
                 config_identity: scope.config_identity.clone(),
                 default_identity: identity::normalize_config_identity(None, &cwd, &home),
+                pinned: profile_pinned,
             },
         ))
         .manage(AppState {
@@ -1999,6 +1979,8 @@ fn main() {
             client_state::client_state_startup_command_result,
             data_profile_cleanup::data_profiles_list_others,
             data_profile_cleanup::data_profiles_delete_others,
+            data_profile_cleanup::data_profiles_set_next_launch,
+            data_profile_cleanup::data_profiles_relaunch,
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,

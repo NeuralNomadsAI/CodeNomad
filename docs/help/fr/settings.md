@@ -79,4 +79,4 @@ Le nombre de non-lus de la cloche/de l’historique, qui ne compte que les notif
 | Retenir les longues réponses de l’assistant | Arrête le suivi automatique lorsqu’une réponse en cours dépasse la zone visible. |
 | Variables d’environnement | Appliquées côté serveur avant chaque prompt ou commande de session ; les lectures ne mettent pas à jour une exécution déjà active. Voir [Configuration d’OpenCode](opencode.md). |
 
-Pour configurer le clavier, voir [Raccourcis clavier](shortcuts.md) ; pour les commandes vocales, voir [Saisie et lecture vocales](voice.md). La restauration au démarrage et la suppression de profils de bureau enregistrés sont décrites dans [Fenêtres de bureau et données](desktop.md).
+Pour configurer le clavier, voir [Raccourcis clavier](shortcuts.md) ; pour les commandes vocales, voir [Saisie et lecture vocales](voice.md). La restauration au démarrage et les profils de données de bureau sont décrits dans [Fenêtres de bureau et données](desktop.md).

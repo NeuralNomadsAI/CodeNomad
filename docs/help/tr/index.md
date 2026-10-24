@@ -45,7 +45,7 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | CodeNomad arka uç | Çalışma alanı, Git, kimlik doğrulama ve istemci bağlantısı sağlayan sunucu. Hesabı ve ortamı, arka uç dosya sistemi erişimini belirler. |
 | Yapılandırma | sunucunun yapılandırma dizini altındaki CodeNomad ayarları; Global/Project OpenCode ayarlarının kendi yerel kapsamları vardır. |
 | Pencere | Kendi sekmeleri, gezinmesi, taslakları ve geri yüklenen görünümü. Yerel geçmiş her pencere için kopyalanmaz, paylaşılır. |
-| Masaüstü veri profili | Açık yerel/istemci depolama seçimi; OpenCode oturumlarını veya paylaşılan her yapılandırmayı otomatik olarak yalıtmaz. |
+| Masaüstü veri profili | Ayarlar'da seçilen yerel/istemci depolama; OpenCode oturumlarını veya paylaşılan her yapılandırmayı otomatik olarak yalıtmaz. |
 
 Çalışma alanı kökü, CodeNomad'in açabileceği klasörleri sınırlar; ajan için korumalı alan değildir. Ana bilgisayarı dışarı açmadan veya geniş araç erişimi vermeden önce [güvenlik](security.md) sayfasını inceleyin.
 

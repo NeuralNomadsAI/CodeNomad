@@ -5,7 +5,7 @@ import { isAbsolute, join, normalize, resolve } from "node:path"
 import { parse as parseYaml } from "yaml"
 import { resolveCrossHostStatePath, resolveLegacyCrossHostStatePath, resolveLegacyTauriDataDirectory } from "./client-state-cross-host"
 import { profileDisplayName, profileScope, resolveExplicitProfile, type ExplicitProfile } from "./data-profile"
-import { resolveTransitionProfile, type SelectionLock, type TransitionCandidate, type TransitionContext, type TransitionResult } from "./profile-transition"
+import { resolveTransitionProfile, type TransitionContext, type TransitionResult } from "./profile-transition"
 
 export interface LaunchIntent {
   newWindow: boolean
@@ -108,9 +108,14 @@ export function normalizeConfigIdentity(raw: string | undefined, cwd: string): s
   return process.platform === "win32" ? target.toLowerCase() : target
 }
 
-export type LaunchProfile =
-  | { kind: "ready"; key: string; source: ExplicitProfile["source"] | "transition" }
-  | { kind: "ask"; candidates: TransitionCandidate[]; lock: SelectionLock; context: TransitionContext }
+export interface LaunchProfile {
+  key: string
+  /** `transition`: a remembered choice, detection or the default profile. */
+  source: ExplicitProfile["source"] | "transition"
+}
+
+/** `CODENOMAD_PROFILE`, its alias or an unpackaged run decide every launch, so a remembered choice never applies. */
+export const isPinnedLaunch = (profile: LaunchProfile) => profile.source !== "transition"
 
 /** Resolves the data profile before any profile path, singleton or Chromium storage is fixed. */
 export function resolveLaunchProfile(options: {
@@ -119,16 +124,10 @@ export function resolveLaunchProfile(options: {
   cliConfig?: string
   cwd: string
   baseUserDataPath: string
-  /** Unremembered answer handed to this relaunch by the asking process (already validated). */
-  selectionAnswer?: string
   transition?: (context: TransitionContext) => TransitionResult
 }): LaunchProfile {
   const explicit = resolveExplicitProfile(options.environment, options.packaged)
-  if (explicit) return { kind: "ready", ...explicit }
-  if (options.selectionAnswer) {
-    console.info(`[electron-startup] data profile ${profileDisplayName(options.selectionAnswer)} (unremembered answer)`)
-    return { kind: "ready", key: options.selectionAnswer, source: "transition" }
-  }
+  if (explicit) return explicit
   const context: TransitionContext = {
     configIdentity: normalizeConfigIdentity(options.cliConfig, options.cwd),
     defaultIdentity: normalizeConfigIdentity(undefined, options.cwd),
@@ -141,9 +140,8 @@ export function resolveLaunchProfile(options: {
     ],
   }
   const result = (options.transition ?? resolveTransitionProfile)(context)
-  if (result.kind === "ask") return { kind: "ask", candidates: result.candidates, lock: result.lock, context }
   console.info(`[electron-startup] data profile ${profileDisplayName(result.key)} (${result.reason})`)
-  return { kind: "ready", key: result.key, source: "transition" }
+  return { key: result.key, source: "transition" }
 }
 
 export function resolveStorageScope(options: {

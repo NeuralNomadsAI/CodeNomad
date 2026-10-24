@@ -15,11 +15,21 @@ impl Fixture {
     fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
         let base = directory.path();
+        let electron_base = base.join("Roaming").join("CodeNomad");
+        let home_client_state = base.join("home").join(".codenomad").join("client-state");
         let roots = ProfileRoots {
-            electron_base: base.join("Roaming").join("CodeNomad"),
+            default_state_files: vec![
+                home_client_state.join("v2").join("client-state.json"),
+                home_client_state.join("client-state.json"),
+                electron_base.join("client-state.json"),
+                base.join("Roaming")
+                    .join(STABLE_IDENTIFIER)
+                    .join("client-state.json"),
+            ],
+            electron_base,
             webview_root: base.join("Local").join(format!("{STABLE_IDENTIFIER}-v2")),
             tauri_data_parent: base.join("Roaming"),
-            home_client_state: base.join("home").join(".codenomad").join("client-state"),
+            home_client_state,
         };
         Self {
             _directory: directory,
@@ -187,6 +197,7 @@ fn current(key: &str, config: &str) -> CurrentProfile {
         key: key.to_string(),
         config_identity: config.to_string(),
         default_identity: CONFIG.to_string(),
+        pinned: false,
     }
 }
 
@@ -893,15 +904,34 @@ fn serialized_listing_matches_the_shared_renderer_contract() {
     let listing = list_other_profiles(&fixture.roots, &current("dev", CONFIG), &standard());
     let value = serde_json::to_value(&listing).unwrap();
     assert_eq!(value["sharedWebKitStorage"], false);
+    assert_eq!(value["pinned"], false);
+    assert_eq!(value["nextLaunch"], serde_json::Value::Null);
     let first = &value["profiles"][0];
     assert_eq!(first["id"], "default");
     assert_eq!(first["kind"], "default");
+    assert_eq!(first["name"], "default");
     assert_eq!(first["status"], "available");
     assert!(
         first["sizeBytes"].is_u64()
             && first["sizeComplete"].is_boolean()
             && first["otherConfiguration"].is_boolean()
     );
+    let orphan = &value["profiles"][3];
+    assert!(orphan["createdAt"].is_u64() || orphan["createdAt"].is_null());
+    assert_eq!(orphan["lastUsedAt"], serde_json::Value::Null);
+    let open = &value["current"];
+    assert_eq!(open["name"], "dev");
+    assert!(open["sizeBytes"].is_u64() && open["sizeComplete"].is_boolean());
+    assert!(open["lastUsedAt"].is_u64());
+    assert!(open["createdAt"].is_u64() || open["createdAt"].is_null());
+    let next = serde_json::to_value(set_next_launch(
+        &fixture.roots,
+        &current("dev", CONFIG),
+        "nope!",
+        SystemTime::now(),
+    ))
+    .unwrap();
+    assert_eq!(next, serde_json::json!({ "outcome": "invalid" }));
     let deletion = serde_json::to_value(delete_other_profiles(
         &fixture.roots,
         &current("dev", CONFIG),
@@ -914,3 +944,7 @@ fn serialized_listing_matches_the_shared_renderer_contract() {
         serde_json::json!({ "results": [{ "id": "nope", "name": "nope", "outcome": "missing", "remaining": [], "kept": [] }], "choices": "unchanged" })
     );
 }
+
+/// The open profile, the next launch's profile and the restart into it.
+#[path = "data_profile_manager_tests.rs"]
+mod manager;

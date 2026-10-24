@@ -79,4 +79,4 @@ El recuento de no leídos de la campana/historial, que solo cuenta las notificac
 | Retener respuestas largas del asistente | Detiene el seguimiento automático cuando una respuesta en streaming supera el área visible. |
 | Variables de entorno | Se aplican en el servidor antes de cada mensaje o comando de sesión; las lecturas no actualizan ejecuciones ya iniciadas. Consulta [configuración de OpenCode](opencode.md). |
 
-Para configurar el teclado usa [Atajos de teclado](shortcuts.md); para controles de voz usa [Entrada y reproducción de voz](voice.md). La restauración al iniciar y la eliminación de perfiles de escritorio guardados se cubren en [Ventanas y datos de escritorio](desktop.md).
+Para configurar el teclado usa [Atajos de teclado](shortcuts.md); para controles de voz usa [Entrada y reproducción de voz](voice.md). La restauración al iniciar y los perfiles de datos de escritorio se cubren en [Ventanas y datos de escritorio](desktop.md).

@@ -1,13 +1,18 @@
-//! Lists and deletes the desktop data profiles other than the open one, mirrored by Electron's
-//! `data-profile-cleanup.ts` (see dev-docs/DESKTOP_DATA_PROFILES.md). Both hosts enumerate the same
+//! Manages the desktop data profiles, mirrored by Electron's `data-profile-cleanup.ts` (see
+//! dev-docs/DESKTOP_DATA_PROFILES.md): lists the open profile and the others, deletes others,
+//! records the profile the next launch opens and restarts into it. Both hosts enumerate the same
 //! folders and apply the same in-use rules, because a profile can be open in either host. The
-//! renderer only sends IDs returned by the listing: every deletion re-enumerates, re-validates and
-//! rechecks activity here. Only direct children of known roots with the expected names are
-//! removed, never through a symlink or junction, and never a root.
-use crate::data_profile::{profile_display_name, profile_scope, DEFAULT_PROFILE_KEY};
+//! renderer only sends IDs returned by the listing or a profile name: every deletion re-enumerates,
+//! re-validates and rechecks activity here. Only direct children of known roots with the expected
+//! names are removed, never through a symlink or junction, and never a root.
+use crate::data_profile::{
+    parse_profile_name, profile_display_name, profile_scope, DEFAULT_PROFILE_KEY,
+};
 use crate::identity::STABLE_IDENTIFIER;
 use crate::profile_transition::{
-    choice_key, forget_choices, selection_directory, ForgetOutcome, ForgottenChoices,
+    choice_key, choose_next_launch, chosen_key, default_profile_state_files, forget_choices,
+    scope_state_file, selection_directory, ForgetOutcome, ForgottenChoices, NextLaunchOutcome,
+    TransitionContext,
 };
 use serde::Serialize;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -16,6 +21,7 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
+use tauri::Manager;
 
 const MAX_SCOPE_ENTRIES: usize = 512;
 const MAX_DIRECTORY_ENTRIES: usize = 10_000;
@@ -55,6 +61,8 @@ pub(crate) struct ProfileRoots {
     pub(crate) tauri_data_parent: PathBuf,
     /// `~/.codenomad/client-state`: the default profile's shared client state (`v2/`) and legacy file.
     pub(crate) home_client_state: PathBuf,
+    /// The default profile's client-state files as the one-time transition reads them.
+    pub(crate) default_state_files: Vec<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -62,6 +70,8 @@ pub(crate) struct CurrentProfile {
     pub(crate) key: String,
     pub(crate) config_identity: String,
     pub(crate) default_identity: String,
+    /// `CODENOMAD_PROFILE`, its alias or a development run chose this launch's profile.
+    pub(crate) pinned: bool,
 }
 
 struct ContextInner {
@@ -111,12 +121,30 @@ pub(crate) struct OtherProfile {
     pub(crate) size_bytes: u64,
     pub(crate) size_complete: bool,
     pub(crate) status: ProfileStatus,
+    pub(crate) created_at: Option<u64>,
+    pub(crate) last_used_at: Option<u64>,
+}
+
+/// The open profile; dates are milliseconds since the epoch, `None` when unknown.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct OpenProfile {
+    pub(crate) name: String,
+    pub(crate) size_bytes: u64,
+    pub(crate) size_complete: bool,
+    pub(crate) created_at: Option<u64>,
+    pub(crate) last_used_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct OtherProfilesListing {
+    pub(crate) current: OpenProfile,
     pub(crate) profiles: Vec<OtherProfile>,
+    /// The profile remembered for this configuration's next launch.
+    pub(crate) next_launch: Option<String>,
+    /// This launch's profile was chosen explicitly, so a remembered choice cannot apply.
+    pub(crate) pinned: bool,
     /// macOS only: Tauri keeps web storage in WebKit's store, shared by every scoped profile (one
     /// fixed data-store identifier) or WebKit's default store for the default profile. No profile
     /// owns it, so it is never deleted and the confirmation must say so.
@@ -148,6 +176,11 @@ pub(crate) struct ProfileDeletion {
 pub(crate) struct DeleteOtherProfilesResult {
     pub(crate) results: Vec<ProfileDeletion>,
     pub(crate) choices: ForgetOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct NextLaunch {
+    pub(crate) outcome: NextLaunchOutcome,
 }
 
 pub(crate) struct Dependencies<'a> {
@@ -232,6 +265,10 @@ struct Candidate {
     targets: Vec<Target>,
     probe: Probe,
     kept_roots: Vec<(PathBuf, HashSet<String>)>,
+    /// The folder whose birth time is the profile's creation date.
+    created: PathBuf,
+    /// Client-state files whose newest modification is the profile's last use.
+    state_files: Vec<PathBuf>,
 }
 
 /// `Some(entries)` (empty for a missing folder) or `None` when the folder cannot be read. Bounded;
@@ -308,10 +345,8 @@ fn candidates(roots: &ProfileRoots, current: &CurrentProfile) -> Vec<Candidate> 
         &current.config_identity,
         &current.default_identity,
     );
-    let electron_scopes = roots.electron_base.join("scopes");
-    let webview_scopes = roots.webview_root.join("scopes");
-    let electron_names = scope_names(&electron_scopes);
-    let webview_names = scope_names(&webview_scopes);
+    let electron_names = scope_names(&roots.electron_base.join("scopes"));
+    let webview_names = scope_names(&roots.webview_root.join("scopes"));
     let mut scopes: BTreeSet<String> = electron_names.union(&webview_names).cloned().collect();
     if current_scope.scoped {
         scopes.remove(&current_scope.scope_name);
@@ -333,51 +368,14 @@ fn candidates(roots: &ProfileRoots, current: &CurrentProfile) -> Vec<Candidate> 
     for scope_name in &scopes {
         let (key, suffix) = parse_scope_name(scope_name).expect("validated scope name");
         claimed.insert(suffix.to_string());
-        let tauri_name = format!("{}{suffix}", tauri_scope_prefix());
-        let mut targets = Vec::new();
-        if electron_names.contains(scope_name) {
-            targets.push(Target {
-                root: electron_scopes.clone(),
-                name: scope_name.clone(),
-                directory: true,
-            });
-        }
-        if webview_names.contains(scope_name) {
-            targets.push(Target {
-                root: webview_scopes.clone(),
-                name: scope_name.clone(),
-                directory: true,
-            });
-        }
-        if tauri_scopes.contains(suffix) {
-            targets.push(Target {
-                root: roots.tauri_data_parent.clone(),
-                name: tauri_name.clone(),
-                directory: true,
-            });
-        }
-        let electron_data = electron_scopes.join(scope_name);
-        result.push(Candidate {
-            id: format!("scope:{scope_name}"),
-            kind: ProfileKind::Scope,
-            key: Some(key.to_string()),
-            name: profile_display_name(key).to_string(),
-            other_configuration: profile_scope(key, &current.config_identity, "").suffix != suffix,
-            targets,
-            probe: Probe {
-                election: Some(electron_data.join("client-state").join("election")),
-                electron_data: Some(electron_data),
-                tauri_data: Some(roots.tauri_data_parent.join(&tauri_name)),
-                webview: Some(webview_scopes.join(scope_name)),
-            },
-            kept_roots: Vec::new(),
-        });
+        result.push(scope_candidate(roots, current, key, suffix));
     }
     for suffix in &tauri_scopes {
         if claimed.contains(suffix) {
             continue;
         }
         let name = format!("{}{suffix}", tauri_scope_prefix());
+        let folder = roots.tauri_data_parent.join(&name);
         result.push(Candidate {
             id: format!("orphan:{suffix}"),
             kind: ProfileKind::Orphan,
@@ -386,26 +384,87 @@ fn candidates(roots: &ProfileRoots, current: &CurrentProfile) -> Vec<Candidate> 
             other_configuration: false,
             targets: vec![Target {
                 root: roots.tauri_data_parent.clone(),
-                name: name.clone(),
+                name,
                 directory: true,
             }],
             probe: Probe {
-                tauri_data: Some(roots.tauri_data_parent.join(name)),
+                tauri_data: Some(folder.clone()),
                 ..Probe::default()
             },
             kept_roots: Vec::new(),
+            created: folder,
+            state_files: Vec::new(),
         });
     }
     if current_scope.scoped {
-        if let Some(candidate) = default_profile_candidate(roots, current) {
+        let candidate = default_profile_candidate(roots, current);
+        if !candidate.targets.is_empty() {
             result.insert(0, candidate);
         }
     }
     result
 }
 
+/// A scope's folders on both hosts, each only while it is a plain folder.
+fn scope_candidate(
+    roots: &ProfileRoots,
+    current: &CurrentProfile,
+    key: &str,
+    suffix: &str,
+) -> Candidate {
+    let scope_name = format!("{key}-{suffix}");
+    let electron_scopes = roots.electron_base.join("scopes");
+    let webview_scopes = roots.webview_root.join("scopes");
+    let tauri_name = format!("{}{suffix}", tauri_scope_prefix());
+    let targets = [
+        (&electron_scopes, &scope_name),
+        (&webview_scopes, &scope_name),
+        (&roots.tauri_data_parent, &tauri_name),
+    ]
+    .into_iter()
+    .filter(|(root, name)| plain_directory(&root.join(name)))
+    .map(|(root, name)| Target {
+        root: root.clone(),
+        name: name.clone(),
+        directory: true,
+    })
+    .collect();
+    let electron_data = electron_scopes.join(&scope_name);
+    Candidate {
+        id: format!("scope:{scope_name}"),
+        kind: ProfileKind::Scope,
+        key: Some(key.to_string()),
+        name: profile_display_name(key).to_string(),
+        other_configuration: profile_scope(key, &current.config_identity, "").suffix != suffix,
+        targets,
+        probe: Probe {
+            election: Some(electron_data.join("client-state").join("election")),
+            electron_data: Some(electron_data.clone()),
+            tauri_data: Some(roots.tauri_data_parent.join(&tauri_name)),
+            webview: Some(webview_scopes.join(&scope_name)),
+        },
+        kept_roots: Vec::new(),
+        created: electron_data,
+        state_files: vec![scope_state_file(&roots.electron_base, &scope_name)],
+    }
+}
+
+/// The open profile with the folders that deleting it would remove.
+fn open_profile_candidate(roots: &ProfileRoots, current: &CurrentProfile) -> Candidate {
+    let scope = profile_scope(
+        &current.key,
+        &current.config_identity,
+        &current.default_identity,
+    );
+    if scope.scoped {
+        scope_candidate(roots, current, &current.key, &scope.suffix)
+    } else {
+        default_profile_candidate(roots, current)
+    }
+}
+
 /// The default profile owns its roots' own children only; `scopes/` and the selection folder are never its data.
-fn default_profile_candidate(roots: &ProfileRoots, current: &CurrentProfile) -> Option<Candidate> {
+fn default_profile_candidate(roots: &ProfileRoots, current: &CurrentProfile) -> Candidate {
     let tauri_default = roots.tauri_data_parent.join(STABLE_IDENTIFIER);
     let shared_state = roots.home_client_state.join("v2");
     let target = |root: &Path, name: &str, directory: bool| Target {
@@ -437,9 +496,6 @@ fn default_profile_candidate(roots: &ProfileRoots, current: &CurrentProfile) -> 
         .into_iter()
         .filter(|target| exists(&target.path()))
         .collect();
-    if targets.is_empty() {
-        return None;
-    }
     let owned = |root: &Path| -> Vec<String> {
         targets
             .iter()
@@ -458,7 +514,7 @@ fn default_profile_candidate(roots: &ProfileRoots, current: &CurrentProfile) -> 
         ignore(&shared_state, &["election"]),
         ignore(&tauri_default, &TAURI_BOOKKEEPING),
     ];
-    Some(Candidate {
+    Candidate {
         id: "default".to_string(),
         kind: ProfileKind::Default,
         key: Some(DEFAULT_PROFILE_KEY.to_string()),
@@ -472,7 +528,9 @@ fn default_profile_candidate(roots: &ProfileRoots, current: &CurrentProfile) -> 
             webview: Some(roots.webview_root.clone()),
         },
         kept_roots,
-    })
+        created: shared_state,
+        state_files: default_profile_state_files(&roots.default_state_files),
+    }
 }
 
 /// Entries of the default profile's roots that no host code identifies; reported, never deleted.
@@ -679,6 +737,38 @@ fn measure(targets: &[Target], limit: usize) -> (u64, bool) {
     (bytes, complete)
 }
 
+fn epoch_millis(time: SystemTime) -> Option<u64> {
+    let millis = time
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    u64::try_from(millis).ok().filter(|millis| *millis > 0)
+}
+
+/// Birth time of a plain folder, never through a link; `None` where the filesystem records none.
+fn created_millis(folder: &Path) -> Option<u64> {
+    let metadata = fs::symlink_metadata(folder).ok()?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return None;
+    }
+    epoch_millis(metadata.created().ok()?)
+}
+
+/// Newest modification among the existing plain state files, whatever they hold.
+fn last_used_millis(files: &[PathBuf]) -> Option<u64> {
+    files
+        .iter()
+        .filter_map(|file| {
+            fs::symlink_metadata(file)
+                .ok()
+                .filter(fs::Metadata::is_file)?
+                .modified()
+                .ok()
+        })
+        .max()
+        .and_then(epoch_millis)
+}
+
 pub(crate) fn list_other_profiles(
     roots: &ProfileRoots,
     current: &CurrentProfile,
@@ -695,6 +785,8 @@ pub(crate) fn list_other_profiles(
                     Activity::InUse => ProfileStatus::InUse,
                     Activity::Unknown => ProfileStatus::Unknown,
                 },
+                created_at: created_millis(&candidate.created),
+                last_used_at: last_used_millis(&candidate.state_files),
                 id: candidate.id,
                 kind: candidate.kind,
                 name: candidate.name,
@@ -704,8 +796,23 @@ pub(crate) fn list_other_profiles(
             }
         })
         .collect();
+    let open = open_profile_candidate(roots, current);
+    let (size_bytes, size_complete) = measure(&open.targets, dependencies.size_entries);
     OtherProfilesListing {
+        current: OpenProfile {
+            created_at: created_millis(&open.created),
+            last_used_at: last_used_millis(&open.state_files),
+            name: open.name,
+            size_bytes,
+            size_complete,
+        },
         profiles,
+        next_launch: chosen_key(
+            &selection_directory(&roots.electron_base),
+            &current.config_identity,
+        )
+        .map(|key| profile_display_name(&key).to_string()),
+        pinned: current.pinned,
         shared_web_kit_storage: dependencies.macos,
     }
 }
@@ -876,6 +983,29 @@ pub(crate) fn delete_other_profiles(
     DeleteOtherProfilesResult { results, choices }
 }
 
+/// Remembers the profile the next launch of this configuration opens (see `choose_next_launch`).
+pub(crate) fn set_next_launch(
+    roots: &ProfileRoots,
+    current: &CurrentProfile,
+    name: &str,
+    now: SystemTime,
+) -> NextLaunch {
+    let Ok(key) = parse_profile_name(name) else {
+        return NextLaunch {
+            outcome: NextLaunchOutcome::Invalid,
+        };
+    };
+    let context = TransitionContext {
+        config_identity: current.config_identity.clone(),
+        default_identity: current.default_identity.clone(),
+        user_data_base: roots.electron_base.clone(),
+        default_state_files: roots.default_state_files.clone(),
+    };
+    NextLaunch {
+        outcome: choose_next_launch(&context, &key, now),
+    }
+}
+
 /// Only identifiers of the listing's shape are accepted from the renderer; duplicates collapse.
 pub(crate) fn require_profile_ids(ids: Vec<String>) -> Result<Vec<String>, String> {
     if ids.is_empty() || ids.len() > MAX_SCOPE_ENTRIES {
@@ -947,6 +1077,33 @@ pub(crate) async fn data_profiles_delete_others(
         delete_other_profiles(roots, current, &ids, &SYSTEM)
     })
     .await
+}
+
+#[tauri::command]
+pub(crate) async fn data_profiles_set_next_launch(
+    webview: tauri::Webview,
+    app_state: tauri::State<'_, crate::AppState>,
+    context: tauri::State<'_, CleanupContext>,
+    name: String,
+) -> Result<NextLaunch, String> {
+    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    run(&context, move |roots, current| {
+        set_next_launch(roots, current, &name, SystemTime::now())
+    })
+    .await
+}
+
+/// The graceful restart developer mode uses; the new process resolves its profile as any launch
+/// does, so it opens the remembered choice. Queued behind a profile operation still running.
+#[tauri::command]
+pub(crate) async fn data_profiles_relaunch(
+    webview: tauri::Webview,
+    app_state: tauri::State<'_, crate::AppState>,
+    context: tauri::State<'_, CleanupContext>,
+) -> Result<(), String> {
+    crate::require_preferences_or_local_app_webview(&webview, &app_state)?;
+    let app = webview.app_handle().clone();
+    run(&context, move |_, _| crate::shutdown::request_restart(app)).await
 }
 
 #[cfg(test)]

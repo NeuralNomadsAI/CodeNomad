@@ -45,7 +45,7 @@ Pour les limites précises, consultez [aperçus navigateur et SideCars](browser-
 | Backend CodeNomad | Serveur fournissant l’espace de travail, Git, l’authentification et la connectivité des clients. Son compte et son environnement déterminent l’accès au système de fichiers du backend. |
 | Configuration | Paramètres CodeNomad dans le répertoire de configuration du serveur ; les paramètres OpenCode Global/Projet ont leur propre portée native. |
 | Fenêtre | Ses propres onglets, navigation, brouillons et vue restaurée. L’historique natif est partagé, pas copié pour chaque fenêtre. |
-| Profil de données de bureau | Sélection explicite du stockage natif/client ; n’isole pas automatiquement les sessions OpenCode ni toute la configuration partagée. |
+| Profil de données de bureau | Stockage natif/client choisi dans les Paramètres ; n’isole pas automatiquement les sessions OpenCode ni toute la configuration partagée. |
 
 La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce n’est pas un bac à sable pour l’agent. Consultez la [sécurité](security.md) avant d’exposer un hôte ou d’autoriser un accès étendu aux outils.
 

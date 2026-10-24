@@ -79,4 +79,4 @@ timeline मा कुराकानीमा देखिने प्रत�
 | लामो assistant reply रोक्ने | streaming reply viewport भन्दा लामो हुँदा स्वतः पछ्याउन रोक्छ। |
 | वातावरण variable | हरेक prompt वा session command अघि server-side लागू; read ले चलिरहेको execution update गर्दैन। [OpenCode सेटअप](opencode.md) हेर्नुहोस्। |
 
-keyboard कन्फिगरेसनका लागि [किबोर्ड सर्टकट](shortcuts.md); आवाज नियन्त्रणका लागि [आवाज input र playback](voice.md) हेर्नुहोस्। startup restore र saved desktop profile मेटाइ [डेस्कटप विन्डो र डेटा](desktop.md) मा छन्।
+keyboard कन्फिगरेसनका लागि [किबोर्ड सर्टकट](shortcuts.md); आवाज नियन्त्रणका लागि [आवाज input र playback](voice.md) हेर्नुहोस्। startup restore र डेस्कटप डेटा प्रोफाइल [डेस्कटप विन्डो र डेटा](desktop.md) मा छन्।

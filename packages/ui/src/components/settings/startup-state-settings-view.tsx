@@ -1,7 +1,6 @@
 import type { Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
-import { CurrentProfileSettingsRow } from "./current-profile-settings-row"
-import { OtherProfilesSettingsRow } from "./other-profiles-settings-row"
+import { DataProfilesSettings } from "./data-profiles-settings"
 import { SettingsSwitch } from "./settings-switch"
 
 interface StartupStateSettingsViewProps {
@@ -41,8 +40,7 @@ export const StartupStateSettingsView: Component<StartupStateSettingsViewProps> 
           </button>
         </div>
 
-        <CurrentProfileSettingsRow />
-        <OtherProfilesSettingsRow />
+        <DataProfilesSettings />
       </div>
     </div>
   )
