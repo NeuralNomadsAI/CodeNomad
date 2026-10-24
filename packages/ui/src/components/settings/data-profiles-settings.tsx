@@ -85,9 +85,22 @@ export const DataProfilesSettings: Component = () => {
   onMount(() => void load())
 
   const displayName = (name: string) => name === "default" ? t(`${key}.default`) : name
+  /** The profile key whose folder (`<key>-<hash>`) was listed; "stable" for the default profile. */
+  const folderKey = (profile: OtherDataProfile) =>
+    profile.kind === "default" ? "stable" : profile.id.replace(/^scope:/, "").replace(/-[0-9a-f]{16}$/, "")
+  /**
+   * Only a profile whose name leads the next launch back to its own folder can be chosen: a folder
+   * made by the `CODENOMAD_UPDATE_CHANNEL` alias, such as `default-<hash>`, is listed under a name
+   * that opens another profile, or under no valid name.
+   */
+  const reachable = (profile: OtherDataProfile) => {
+    const name = normalizeDataProfileName(profile.name)
+    return profile.kind !== "orphan" && name !== null && folderKey(profile) === (name === "default" ? "stable" : name)
+  }
   const label = (profile: OtherDataProfile) => {
     if (profile.kind === "orphan") return t(`${others}.label.orphan`, { name: profile.name })
-    return profile.otherConfiguration ? t(`${others}.label.otherConfiguration`, { name: displayName(profile.name) }) : displayName(profile.name)
+    const name = folderKey(profile) === "stable" ? t(`${key}.default`) : profile.name
+    return profile.otherConfiguration ? t(`${others}.label.otherConfiguration`, { name }) : name
   }
   const size = (bytes: number, complete: boolean) => {
     const formatted = formatProfileSize(bytes, locale())
@@ -114,7 +127,7 @@ export const DataProfilesSettings: Component = () => {
         name: profile.name,
         label: label(profile),
         current: false,
-        choosable: profile.kind !== "orphan" && !profile.otherConfiguration,
+        choosable: reachable(profile) && !profile.otherConfiguration,
         other: profile,
         sizeBytes: profile.sizeBytes,
         sizeComplete: profile.sizeComplete,
@@ -126,7 +139,8 @@ export const DataProfilesSettings: Component = () => {
   /** The profile the next launch opens: the remembered choice, else the open one. */
   const next = () => listing()?.nextLaunch ?? listing()?.current.name
 
-  const choose = async (name: string) => {
+  let radios: HTMLDivElement | undefined
+  const choose = async (name: string, focusKey?: string) => {
     if (busy()) return
     setBusy(true)
     try {
@@ -137,6 +151,8 @@ export const DataProfilesSettings: Component = () => {
     } finally {
       setBusy(false)
       await load()
+      // The refreshed rows replace the radio that had focus; keep keyboard users on the profile they chose.
+      if (focusKey) radios?.querySelector<HTMLInputElement>(`input[data-key="${CSS.escape(focusKey)}"]`)?.focus()
     }
   }
 
@@ -197,11 +213,19 @@ export const DataProfilesSettings: Component = () => {
     }
   }
 
-  const restart = async () => {
+  /** Restarts only while the next launch still opens `target`: another window may have chosen since this one listed. */
+  const restart = async (target: string) => {
+    if (busy()) return
+    setBusy(true)
     try {
-      await relaunchIntoNextDataProfile()
+      const request = ++sequence
+      const listed = await listOtherDataProfiles()
+      if (request === sequence) setListing(listed)
+      if (!listed.pinned && (listed.nextLaunch ?? listed.current.name) === target) await relaunchIntoNextDataProfile()
     } catch {
       showToastNotification({ category: "settings", message: t(`${key}.restartError`), variant: "error" })
+    } finally {
+      setBusy(false)
     }
   }
 
@@ -210,7 +234,7 @@ export const DataProfilesSettings: Component = () => {
       {(value) => (
         <details class="settings-disclosure profile-manager" data-testid="data-profiles-settings">
           <summary>{t(`${key}.summary`, { name: displayName(value().current.name) })}</summary>
-          <div class="profile-manager-list" role="radiogroup" aria-label={t(`${key}.nextLaunch`)}>
+          <div class="profile-manager-list" role="radiogroup" aria-label={t(`${key}.nextLaunch`)} ref={radios}>
             <For each={entries()}>
               {(entry) => (
                 <div class="profile-manager-entry" data-testid="data-profile-entry" data-current={entry.current ? "" : undefined}>
@@ -219,9 +243,10 @@ export const DataProfilesSettings: Component = () => {
                       type="radio"
                       name="codenomad-next-launch-profile"
                       value={entry.name}
+                      data-key={entry.key}
                       checked={entry.choosable && next() === entry.name}
                       disabled={!entry.choosable || value().pinned || busy()}
-                      onChange={() => void choose(entry.name)}
+                      onChange={() => void choose(entry.name, entry.key)}
                     />
                     <span class="profile-manager-text">
                       <span class="profile-manager-name">
@@ -307,7 +332,12 @@ export const DataProfilesSettings: Component = () => {
           </Show>
           <Show when={!value().pinned && next() !== value().current.name}>
             <div class="profile-manager-restart">
-              <button type="button" class="selector-button selector-button-primary w-auto" onClick={() => void restart()}>
+              <button
+                type="button"
+                class="selector-button selector-button-primary w-auto"
+                disabled={busy() || loading()}
+                onClick={() => void restart(next() ?? "")}
+              >
                 {t(`${key}.restart`, { name: displayName(next() ?? "") })}
               </button>
               <span class="settings-help-text">{t(`${key}.restartHint`)}</span>

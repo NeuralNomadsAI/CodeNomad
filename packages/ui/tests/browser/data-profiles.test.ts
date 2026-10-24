@@ -203,6 +203,46 @@ for (const host of ["electron", "tauri"] as const) {
   })
 }
 
+test("a folder the alias made under another profile's name is listed but cannot be chosen", async () => {
+  const alias = profile("scope:default-0011223344556677", "default", 5_000_000, { lastUsedAt: day(22) })
+  const { page, errors } = await open("preferences", "electron", [...SEVERAL, alias])
+  try {
+    await unfold(page)
+    const aliasEntry = entries(page).filter({ has: page.locator('input[data-key="scope:default-0011223344556677"]') })
+    assert.match(await aliasEntry.innerText(), /^default\n5 MB/, "named as stored, never as the default profile")
+    assert.equal(await aliasEntry.getByRole("radio").isDisabled(), true, "\"default\" would open the default profile instead")
+    assert.equal(await entries(page).filter({ has: page.locator('input[data-key="default"]') }).getByRole("radio").isDisabled(), false)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a restart follows another window's later choice instead of the stale one", async () => {
+  const { page, errors } = await open("preferences", "tauri", SEVERAL)
+  try {
+    await unfold(page)
+    await entries(page).nth(2).getByRole("radio").check()
+    const stale = page.getByRole("button", { name: "Restart in Default", exact: true })
+    await stale.waitFor()
+    await page.evaluate(() => { (window as any).profileHost.nextLaunch = "dev" })
+    await stale.click()
+    await page.getByRole("button", { name: "Restart in dev", exact: true }).waitFor()
+    assert.equal((await hostState(page)).relaunches, 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("choosing with the keyboard keeps focus on the chosen profile", async () => {
+  const { page, errors } = await open("preferences", "electron", SEVERAL)
+  try {
+    await unfold(page)
+    await entries(page).nth(1).getByRole("radio").focus()
+    await page.keyboard.press("Space")
+    await page.getByRole("button", { name: "Restart in dev", exact: true }).waitFor()
+    await page.waitForFunction(() => (document.activeElement as HTMLElement | null)?.dataset.key === "scope:dev-0123456789abcdef")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a new profile needs a valid name and becomes the next launch's", async () => {
   const { page, errors } = await open("preferences", "electron", SEVERAL)
   try {
