@@ -726,6 +726,8 @@ export interface RemoteControlStatus {
   enabled: boolean
   /** The user started Remote Control and has not stopped it: it reconnects at launch. */
   startsOnLaunch: boolean
+  /** Paired devices may open web previews (on by default; only the host changes it). */
+  previews: boolean
   state: "stopped" | "connecting" | "connected" | "reconnecting" | "error"
   /** Public HTTPS origin while the tunnel is connected. */
   remoteUrl?: string
@@ -877,8 +879,8 @@ export interface ServerMeta {
   updateFeed?: UpdateFeed
   /** Newest release offered by the preview feed; stable updates use `support`. */
   update?: LatestReleaseInfo | null
-  /** Set when this request arrived through Remote Control, which serves no preview content. */
-  remoteControl?: true
+  /** Set when this request arrived through Remote Control while its host keeps web previews off. */
+  previewsUnavailable?: true
 }
 
 export type {

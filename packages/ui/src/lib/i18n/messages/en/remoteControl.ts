@@ -12,6 +12,8 @@ export const remoteControlMessages = {
   "remoteControl.start": "Start Remote Control",
   "remoteControl.newLink": "Create new pairing link",
   "remoteControl.stop": "Stop Remote Control",
+  "remoteControl.previews.title": "Web previews",
+  "remoteControl.previews.caption": "Paired devices can open the web preview. Each preview address opens its page without pairing, so keep it private.",
   "remoteControl.pairing.title": "Connect another device",
   "remoteControl.pairing.description": "Scan this QR code or open the one-time link on your other device.",
   "remoteControl.pairing.qrAlt": "Remote Control pairing QR code",

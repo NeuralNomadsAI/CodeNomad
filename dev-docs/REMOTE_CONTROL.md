@@ -45,8 +45,11 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 
 - `ingress.ts` marks every accepted socket as remote before any request is
   parsed and routes requests into the same Fastify application, with the
-  local listener's timeouts (no request timeout, 72 s keep-alive). Upgrades are
-  refused: the remote surface exposes no WebSocket endpoint.
+  local listener's timeouts (no request timeout, 72 s keep-alive). Its only
+  WebSocket endpoints are web previews: `gate.ts` `admitRemoteUpgrade()` parses
+  the target as the preview proxy does, then the manager hands the socket to the
+  application's path-preview upgrade handler, never to the shared upgrade event.
+  Every other upgrade gets 404.
 - `request-origin.ts` is the only authority for local privileges:
   `isLocalRequest()` requires a loopback peer **and** a non-ingress socket.
 - `gate.ts` runs before CORS, authentication and routing. It requires the exact
@@ -55,7 +58,13 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   or fragment, which the router would reinterpret) and judges the path the
   router routes (`server/routed-path.ts`). It denies host-only paths: login and token
   bootstrap, Remote Control management, remote windows/proxy, SideCars,
-  previews and the automation bridge. Static UI bundle files stay public, as
+  previews and the automation bridge. A live `/previews/<token>/…` capability
+  is admitted without a device cookie or public `Origin` (its sandboxed document
+  sends neither) while the host's **Web previews** switch is on, the default:
+  `devices.ts` stores only the opt-out, `PUT /api/remote-control/previews` is
+  host-only, and turning it off also closes live preview WebSockets. Remote
+  `/api/meta` reports `previewsUnavailable` while it is off, so the UI hides
+  its preview entry. Static UI bundle files stay public, as
   on local listeners, because browsers fetch the PWA manifest without cookies.
   Every other path requires a paired device. Refusals close the connection,
   because an unread body would otherwise break the client's next keep-alive
@@ -86,7 +95,8 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
 - `remote-surface.test.ts` drives the real `createHttpServer` through the
   ingress. It covers unpaired access, pairing, `Origin`/`Host` checks,
   host-only paths including encoded ones, loopback privileges, spoofed headers,
-  upgrades, revocation of a live stream, skipped local auth and tunnel failure.
+  upgrades, web previews and their switch, revocation of a live stream, skipped
+  local auth and tunnel failure.
 - `manager.test.ts` covers resuming after a restart, Stop, never-started
   installations, failed resumes and backends sharing a configuration;
   `owner-lease.test.ts` the lease; `tests/browser/remote-control-settings.test.ts`

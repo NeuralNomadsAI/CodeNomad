@@ -87,7 +87,7 @@ import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 import { runtimeEnv } from "../../lib/runtime-env"
-import { getServerMeta, remoteControlClient } from "../../lib/server-meta"
+import { getServerMeta, previewsUnavailable } from "../../lib/server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
 
 const log = getLogger("session")
@@ -283,7 +283,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     onCleanup(() => document.removeEventListener("pointerdown", handleFloatingDrawerPointerDown, true))
   })
 
-  // Remote Control serves no previews: its clients hide the preview entry points.
+  // Remote Control clients hide the preview entry points while their host keeps previews off.
   onMount(() => { void getServerMeta().catch(() => undefined) })
 
   onMount(() => {
@@ -667,7 +667,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       icon: <Search class="w-4 h-4" aria-hidden="true" />,
       onSelect: handleChatSearchClick,
     })
-    if (!remoteControlClient()) items.push({
+    if (!previewsUnavailable()) items.push({
       key: "preview",
       label: previewToggleLabel(),
       checked: activeSessionPreview()?.mode === "preview",
@@ -1132,7 +1132,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           >
                             <Search class="w-5 h-5" aria-hidden="true" />
                           </IconButton>
-                          <Show when={!remoteControlClient()}>{renderPreviewToggleButton()}</Show>
+                          <Show when={!previewsUnavailable()}>{renderPreviewToggleButton()}</Show>
                           {renderFullscreenButton()}
                           <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}
                             overflowAnchor={() => headerActionsCollapsed()

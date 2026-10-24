@@ -12,6 +12,8 @@ export const remoteControlMessages = {
   "remoteControl.start": "启动远程控制",
   "remoteControl.newLink": "创建新的配对链接",
   "remoteControl.stop": "停止远程控制",
+  "remoteControl.previews.title": "网页预览",
+  "remoteControl.previews.caption": "已配对设备可以打开网页预览。每个预览地址无需配对即可打开对应页面，请勿泄露。",
   "remoteControl.pairing.title": "连接其他设备",
   "remoteControl.pairing.description": "扫描二维码，或在其他设备上打开一次性链接。",
   "remoteControl.pairing.qrAlt": "远程控制配对二维码",

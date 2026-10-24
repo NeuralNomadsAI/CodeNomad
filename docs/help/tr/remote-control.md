@@ -57,8 +57,9 @@ Eşleştirilen cihazlar sıradan proje/konuşma API'lerini kullanabilir, istemle
 | Uzaktan Kontrol durumu | Eşleştirilmiş bir cihaz tarafından okunabilir; yönetim mevcut değildir. Başlat/Durdur, eşleştirme oluşturma, cihaz listesi ve iptal etme, ana bilgisayar erişim yolunda kalır. |
 | Masaüstü uzak pencere/sunucu yönetimi ve proxy rotaları | Kullanılamıyor (`/api/remote-servers/`, `/api/remote-proxy/`). |
 | SideCar **içerik proxy'si** | Kullanılamaz (`/sidecars/`). Bu, tüm SideCar API'lerinin engellendiği anlamına **gelmez**: eşleştirilmiş istemciler yine de `/api/sidecars` kayıt API'lerine erişebilir. |
-| Önizleme içeriği ve otomasyon köprüsü | Kullanılamaz (`/previews/`, `/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. Konuşma eylemleri **Web önizlemesini aç** seçeneğini gizler. |
-| WebSocket yükseltmeleri | Uzaktan Kontrol girişinde kullanılamaz. |
+| Web önizleme içeriği | Ana bilgisayarda **Ayarlar → Uzak Erişim → Uzaktan Kontrol** altında **Web önizlemeleri** açık olduğu sürece (varsayılan) kullanılabilir. Her önizleme adresi sayfasını eşleştirme olmadan açar; bu yüzden gizli tutun. Anahtarı kapatmak sunulan önizlemeleri ve WebSocket bağlantılarını durdurur; eşleştirilmiş cihazlar yeniden yüklendiğinde **Web önizlemesini aç** seçeneğini gizler. |
+| Otomasyon köprüsü | Kullanılamaz (`/api/opencode-plugin/`). Native masaüstü yetenekleri tarayıcı yeteneğine dönüşmez. |
+| WebSocket yükseltmeleri | Yalnızca web önizlemeleri için kullanılabilir. |
 
 Bir iş akışı engellenmiş bir proxy/WebSocket yüzeyi gerektirdiğinde uygun şekilde korunan bir [doğrudan bağlantı](remote-access.md) kullanın. Uzaktan Kontrol otomatik olarak bu yola geçmez.
 

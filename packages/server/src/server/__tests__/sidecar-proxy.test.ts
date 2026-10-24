@@ -251,6 +251,25 @@ it("preview HTTP requests never forward the app's cookies to the previewed site"
   } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
 })
 
+it("path previews stay opaque however they are opened, on every response type", async () => {
+  const server = await startServer()
+  try {
+    const token = server.preview.token
+    const sandbox = "sandbox allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+    for (const [request, isolated] of [
+      [{ url: `/previews/${token}/data.json` }, true],
+      [{ url: "/assets/app.js", headers: { cookie: server.cookie, referer: `${server.origin}/previews/${token}/page` } }, true],
+      // The per-token host already has an origin of its own.
+      [{ url: "/data.json", headers: { host: `${token}.preview.localhost` } }, false],
+    ] as const) {
+      const response = await server.app.inject({ method: "GET", ...request })
+      assert.equal(response.statusCode, 200, request.url)
+      assert.equal(response.headers["content-security-policy"], isolated ? sandbox : undefined, request.url)
+      assert.equal(response.headers["referrer-policy"], isolated ? "same-origin" : undefined, request.url)
+    }
+  } finally { await fs.rm(server.cleanupDirectory, { recursive: true, force: true }) }
+})
+
 it("opaque-origin frames cannot reach SideCar routes while same-origin frames can", async () => {
   const server = await startServer()
   try {

@@ -37,7 +37,7 @@ Das Eingabefeld behält Agent, Modell und Denken in der Fußzeile. Seine Größe
 | Projekte, Unterhaltungen, Dateien und Berechtigungen | Arbeiten auf dem verbundenen Backend-Host unter dessen Zugriffskontrollen. Geräteanhänge werden vom Telefon hochgeladen; Projektreferenzen auf dem Host aufgelöst. |
 | Native Desktop-Fenster, OS-Menüs und hostnative Automatisierung | Werden nicht durch PWA-Installation bereitgestellt. |
 | Browser-Vorschau | Erhält keine nativen Gastbrowserfähigkeiten; Ersatzdarstellung bleibt browserbegrenzt. |
-| SideCar-Inhalte und WebSockets | Hängen vom Verbindungsweg ab; Fernsteuerung blockiert SideCar-Inhaltsproxy, Vorschauinhalte und WebSocket-Upgrades. Siehe deren [genaue Einschränkungen](remote-control.md). |
+| SideCar-Inhalte und WebSockets | Hängen vom Verbindungsweg ab; Fernsteuerung blockiert den SideCar-Inhaltsproxy und liefert Web-Vorschauen samt WebSockets aus, solange der Host sie erlaubt. Siehe deren [genaue Einschränkungen](remote-control.md). |
 | Mikrofon, Zwischenablage, Benachrichtigungen und Installationsaufforderung | Hängen von Browser-/OS-Unterstützung, sicherem Kontext und Benutzerrechten ab. |
 | Offline-Arbeit | Kein Offline-Backend und kein zwischengespeicherter API-Verlauf. Statische Oberflächendateien können im Cache liegen, Dokumente und API-Antworten sind aber kein Offline-Arbeitsbereich. |
 

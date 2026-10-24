@@ -57,8 +57,9 @@ Paired devices can use ordinary project/conversation APIs, send prompts, inspect
 | Remote Control status | Readable by a paired device; management is unavailable. Start/Stop, pairing creation, device list and revocation stay on the host access path. |
 | Desktop remote-window/server management and proxy routes | Unavailable (`/api/remote-servers/`, `/api/remote-proxy/`). |
 | SideCar **content proxy** | Unavailable (`/sidecars/`). This does **not** mean all SideCar APIs are blocked: paired clients can still access the `/api/sidecars` registration APIs. |
-| Preview content and automation bridge | Unavailable (`/previews/`, `/api/opencode-plugin/`). Native desktop capabilities do not become browser capabilities. Conversation actions hide **Open web preview**. |
-| WebSocket upgrades | Unavailable on the Remote Control ingress. |
+| Web preview content | Available while **Web previews** is on (the default) under **Settings → Remote Access → Remote Control** on the host. Each preview address opens its page without pairing, so keep it private. Turning the switch off stops served previews and their WebSockets; paired devices hide **Open web preview** once they reload. |
+| Automation bridge | Unavailable (`/api/opencode-plugin/`). Native desktop capabilities do not become browser capabilities. |
+| WebSocket upgrades | Available for web previews only. |
 
 Use a suitably protected [direct connection](remote-access.md) when a workflow requires a blocked proxy/WebSocket surface. Remote Control does not automatically switch to that path.
 

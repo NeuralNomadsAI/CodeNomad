@@ -37,7 +37,7 @@ navigation र tool खोल्न **बायाँ प्यानल** र *
 | project, कुराकानी, file र permission | access control अन्तर्गत जोडिएको backend host मा चल्छन्। device attachment phone बाट upload हुन्छन्; project reference host मा resolve हुन्छन्। |
 | native desktop window, OS menu र host-native automation | PWA स्थापनाले दिँदैन। |
 | browser preview | native guest-browser क्षमता पाउँदैन; fallback rendering browser सीमामै रहन्छ। |
-| SideCar content र WebSocket | connection path मा निर्भर; Remote Control ले SideCar content proxy, preview content र WebSocket upgrade रोक्छ। [ठ्याक्कै प्रतिबन्ध](remote-control.md) हेर्नुहोस्। |
+| SideCar content र WebSocket | connection path मा निर्भर; Remote Control ले SideCar content proxy रोक्छ र host ले अनुमति दिँदा वेब पूर्वावलोकन तिनका WebSocket सहित दिन्छ। [ठ्याक्कै प्रतिबन्ध](remote-control.md) हेर्नुहोस्। |
 | microphone, clipboard, notification र install prompt | browser/OS support, secure context र user permission मा निर्भर। |
 | offline काम | offline backend वा cached API history छैन। static UI asset cache हुन सक्छन्, तर document र API response offline workspace होइनन्। |
 
