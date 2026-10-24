@@ -2323,7 +2323,9 @@ function handleInstanceInvalidation(instanceId: string, event: Parameters<NonNul
       : current
     const location = event.location ?? sessions().get(instanceId)?.get(sessionId)?.location
     for (const form of remote) {
-      if (!hasSettledForm(instanceId, form.id)) addPendingForm(instanceId, form, location)
+      // Like recovery, keep a global Form's location: its reply and cancellation are addressed there.
+      const queued = sessionId === "global" && event.location ? { ...form, location: event.location } : form
+      if (!hasSettledForm(instanceId, form.id)) addPendingForm(instanceId, queued, location)
     }
     if (event.type === "form.replied" || event.type === "form.cancelled") {
       markFormSettled(instanceId, event.data.id)
