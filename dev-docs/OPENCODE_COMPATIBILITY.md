@@ -11,7 +11,7 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
-Minimum runtime **2.1.2**, recommended **2.1.3** (`runtime-support.ts`), with
+Minimum runtime **2.1.2**, recommended **2.1.4** (`runtime-support.ts`), with
 **2.1.0** client/plugin pins. Earlier native Code Mode breaks JavaScript
 run-to-completion (lost shared updates, async caller resumed before its first await);
 `scripts/test-codemode-jobs-native.mjs` keeps the red/green regression, run in
