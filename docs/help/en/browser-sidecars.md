@@ -14,7 +14,7 @@ Saved history restores only when you explicitly reopen that session's browser, n
 
 ## Preview origins and permissions {#preview-origins}
 
-Previews stay inside the conversation; CodeNomad opens no separate preview window. **Settings → Preview** sets one policy for the entire CodeNomad server. It applies to previews shown in browser and remote views. Desktop local previews use an isolated per-token origin instead, and Electron and Windows Tauri native webviews keep their own permission, download and popup behavior.
+Previews stay inside the conversation; CodeNomad opens no separate preview window. **Settings → Preview** sets one policy for the entire CodeNomad server. It applies to previews shown in browser and remote views. Desktop previews shown in an iframe keep an isolated per-token origin instead; Electron and Windows Tauri native webviews keep their own permission, download and popup behavior, and Tauri on Linux uses that iframe and follows these toggles.
 
 | Origin mode | What it does |
 | --- | --- |

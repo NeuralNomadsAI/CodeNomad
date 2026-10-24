@@ -14,7 +14,7 @@ El historial guardado solo se restaura cuando vuelves a abrir explícitamente el
 
 ## Orígenes y permisos de las vistas previas {#preview-origins}
 
-Las vistas previas permanecen en la conversación; CodeNomad no abre una ventana de vista previa separada. **Configuración → Vista previa** establece una política para todo el servidor CodeNomad. Se aplica a las vistas previas de las vistas de navegador y remota. Las vistas previas locales de escritorio usan en su lugar un origen aislado por token, y las vistas web nativas de Electron y Tauri en Windows conservan su propio comportamiento de permisos, descargas y ventanas emergentes.
+Las vistas previas permanecen en la conversación; CodeNomad no abre una ventana de vista previa separada. **Configuración → Vista previa** establece una política para todo el servidor CodeNomad. Se aplica a las vistas previas de las vistas de navegador y remota. Las vistas previas de escritorio mostradas en un iframe conservan en su lugar un origen aislado por token; las vistas web nativas de Electron y Tauri en Windows conservan su propio comportamiento de permisos, descargas y ventanas emergentes, y Tauri en Linux usa ese iframe y sigue estos interruptores.
 
 | Modo de origen | Efecto |
 | --- | --- |

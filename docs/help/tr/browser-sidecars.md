@@ -14,7 +14,7 @@ Kaydedilen geçmiş, başlangıç/oturum seçiminde değil, yalnızca o oturumun
 
 ## Önizleme origin'leri ve izinleri {#preview-origins}
 
-Önizlemeler görüşmenin içinde kalır; CodeNomad ayrı bir önizleme penceresi açmaz. **Ayarlar → Önizleme** tüm CodeNomad sunucusu için tek bir politika belirler. Bu politika tarayıcı ve uzak görünümlerdeki önizlemelere uygulanır. Masaüstü yerel önizlemeleri bunun yerine token başına yalıtılmış bir origin kullanır ve Electron ile Windows Tauri yerel webview'ları kendi izin, indirme ve açılır pencere davranışlarını korur.
+Önizlemeler görüşmenin içinde kalır; CodeNomad ayrı bir önizleme penceresi açmaz. **Ayarlar → Önizleme** tüm CodeNomad sunucusu için tek bir politika belirler. Bu politika tarayıcı ve uzak görünümlerdeki önizlemelere uygulanır. iframe içinde gösterilen masaüstü önizlemeleri bunun yerine token başına yalıtılmış bir origin kullanır; Electron ile Windows Tauri yerel webview'ları kendi izin, indirme ve açılır pencere davranışlarını korur ve Linux'ta Tauri bu iframe'i kullanarak bu anahtarlara uyar.
 
 | Origin modu | Etkisi |
 | --- | --- |

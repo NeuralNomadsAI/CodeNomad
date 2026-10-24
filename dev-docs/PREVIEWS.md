@@ -16,9 +16,9 @@ Session web previews: token capabilities, origin policy, server-enforced documen
 `PreviewManager` (`packages/server/src/previews/manager.ts`) creates a random UUID token for each preview and keeps the target URL in memory; tokens are not persisted. The target must be an `http:` or `https:` URL without credentials. The server exposes two capability shapes:
 
 - Path previews: `/previews/<token>/...` at the app origin, or at the configured custom origin. The proxy rewrites root-relative and target-origin URLs in HTML, CSS, JavaScript imports, import maps and redirects into that namespace, and the runtime bridge does the same for fetches, `XMLHttpRequest`, WebSocket, `EventSource`, history entries, links and forms, so target-origin behavior survives the proxy.
-- Desktop capability host: `<token>.preview.localhost[:port]` for a local Electron or Tauri window, with the target path and query. This is a per-token isolated origin and does not depend on the path origin mode.
+- Desktop capability host: `<token>.preview.localhost[:port]` for a local Tauri window whose parent URL is loopback, with the target path and query. The Tauri iframe renders this per-token isolated origin, which does not depend on the path origin mode. Electron and Windows Tauri use native guests instead.
 
-The proxy strips the app's request cookies before forwarding and strips target `Set-Cookie`/`Set-Cookie2` response headers. The preview document therefore never carries the CodeNomad session cookie to the target. The app-origin referer fallback resolves a root-relative request whose referer names a preview token; it stays an app-origin behavior and never claims the custom origin.
+The proxy strips the app's request cookies before forwarding and strips target `Set-Cookie`/`Set-Cookie2` response headers. The preview document therefore never carries the CodeNomad session cookie to the target. The referer fallback resolves a root-relative request whose referer names a preview token and applies the same resolved policy; the custom-origin contract does not include root-relative requests.
 
 ## Origin modes
 
@@ -64,7 +64,7 @@ The capability-host route injects no CSP because the frame already has its own o
 
 ### Frame source
 
-Desktop local capability hosts are resolved first: a local Electron or Tauri window whose parent URL is loopback keeps `<token>.preview.localhost`. Otherwise `custom` uses `${customOrigin}${proxyUrl}`; `opaque` and `app` use the app-origin `proxyUrl`. The custom origin is only a browser-visible base URL; desktop capability hosts are unchanged.
+Desktop local capability hosts are resolved first: a local Electron or Tauri window whose parent URL is loopback computes `<token>.preview.localhost`, which the Tauri iframe renders. Otherwise `custom` uses `${customOrigin}${proxyUrl}`; `opaque` and `app` use the app-origin `proxyUrl`. The custom origin is only a browser-visible base URL; desktop capability hosts are unchanged.
 
 ### Sandbox and browser features
 
@@ -89,7 +89,7 @@ A mismatch is ignored. This keeps same-origin, custom-origin and capability-host
 
 ## Desktop capability hosts and native webviews
 
-Electron and Windows Tauri local previews use native guests. They keep host permission, download and popup handling and are outside the iframe sandbox/feature policy. Tauri on Linux uses the capability-host iframe: it keeps the isolated per-token origin but follows the sandbox and feature toggles. The path origin mode is irrelevant to all desktop capability hosts.
+Electron and Windows Tauri local previews use native guests. They keep host permission, download and popup handling and are outside the iframe sandbox/feature policy. Tauri on Linux uses the capability-host iframe: it keeps the isolated per-token origin but follows the sandbox and feature toggles. The path origin mode is irrelevant to desktop capability hosts.
 
 ## Custom-origin deployment contract
 
