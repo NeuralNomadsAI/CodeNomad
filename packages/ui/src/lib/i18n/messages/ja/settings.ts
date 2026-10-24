@@ -780,7 +780,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "クリップボードの読み取り",
   "settings.preview.features.clipboardWrite": "クリップボードへの書き込み",
   "settings.preview.features.geolocation": "位置情報",
-  "settings.preview.features.notifications": "通知",
   "settings.preview.features.fullscreen": "全画面表示",
   "settings.preview.features.browserNote": "ブラウザーは引き続き許可を求め、ブラウザーのサイト設定が機能をブロックすることがあります。CodeNomad はプレビューに要求を許可するだけです。",
   "settings.preview.serviceWorkers.title": "Service Worker",

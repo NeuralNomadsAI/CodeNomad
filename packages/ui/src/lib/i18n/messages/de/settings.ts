@@ -779,7 +779,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "Zwischenablage lesen",
   "settings.preview.features.clipboardWrite": "Zwischenablage schreiben",
   "settings.preview.features.geolocation": "Standort",
-  "settings.preview.features.notifications": "Benachrichtigungen",
   "settings.preview.features.fullscreen": "Vollbild",
   "settings.preview.features.browserNote": "Der Browser fragt weiterhin nach der Berechtigung, und Ihre Website-Einstellungen im Browser können eine Funktion blockieren. CodeNomad erlaubt einer Vorschau nur, danach zu fragen.",
   "settings.preview.serviceWorkers.title": "Service Worker",

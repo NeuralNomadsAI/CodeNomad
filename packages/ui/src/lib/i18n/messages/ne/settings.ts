@@ -779,7 +779,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "Clipboard पढ्ने",
   "settings.preview.features.clipboardWrite": "Clipboard लेख्ने",
   "settings.preview.features.geolocation": "Geolocation",
-  "settings.preview.features.notifications": "सूचनाहरू",
   "settings.preview.features.fullscreen": "Fullscreen",
   "settings.preview.features.browserNote": "ब्राउजरले अझै अनुमति माग्छ, र तपाईंको ब्राउजरको साइट सेटिङले सुविधा रोक्न सक्छ। CodeNomad ले पूर्वावलोकनलाई माग्न मात्र दिन्छ।",
   "settings.preview.serviceWorkers.title": "Service workers",

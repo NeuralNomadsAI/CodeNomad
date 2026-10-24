@@ -14,7 +14,6 @@ const PREVIEW_FEATURES: ReadonlyArray<readonly [keyof PreviewFeatureSettings, st
   ["clipboardRead", "clipboard-read"],
   ["clipboardWrite", "clipboard-write"],
   ["geolocation", "geolocation"],
-  ["notifications", "notifications"],
   ["fullscreen", "fullscreen"],
 ]
 

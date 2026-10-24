@@ -30,7 +30,6 @@ const featureOptions: ReadonlyArray<{ id: keyof PreviewFeatureSettings; labelKey
   { id: "clipboardRead", labelKey: "settings.preview.features.clipboardRead" },
   { id: "clipboardWrite", labelKey: "settings.preview.features.clipboardWrite" },
   { id: "geolocation", labelKey: "settings.preview.features.geolocation" },
-  { id: "notifications", labelKey: "settings.preview.features.notifications" },
   { id: "fullscreen", labelKey: "settings.preview.features.fullscreen" },
 ]
 

@@ -780,7 +780,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "קריאה מלוח",
   "settings.preview.features.clipboardWrite": "כתיבה ללוח",
   "settings.preview.features.geolocation": "מיקום גיאוגרפי",
-  "settings.preview.features.notifications": "התראות",
   "settings.preview.features.fullscreen": "מסך מלא",
   "settings.preview.features.browserNote": "הדפדפן עדיין יבקש הרשאה, והגדרות האתר בדפדפן עשויות לחסום תכונה. CodeNomad רק מאפשר לתצוגה המקדימה לבקש.",
   "settings.preview.serviceWorkers.title": "Service Workers",

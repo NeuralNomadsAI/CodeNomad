@@ -142,6 +142,63 @@ test("the configured sandbox and feature policy reach the preview iframe", async
   }
 })
 
+test("custom mode gives the loopback frame its sandbox and explicit feature denials", async () => {
+  const page = await browser.newPage()
+  try {
+    await openFixture(page, "?mode=custom&camera=on")
+    await page.waitForFunction(() =>
+      (document.querySelector("#loopback-preview-root iframe")?.getAttribute("src") ?? "").startsWith("https://preview.example.test"))
+
+    const sandbox = new Set(await sandboxTokens(page, "#loopback-preview-root"))
+    assert.equal(sandbox.has("allow-same-origin"), true)
+    assert.equal(sandbox.has("allow-scripts"), true)
+    assert.equal(sandbox.has("allow-forms"), true)
+
+    const allow = await allowTokens(page, "#loopback-preview-root")
+    assert.equal(allow.includes("camera"), true)
+    assert.equal(allow.includes("microphone 'none'"), true)
+    assert.equal(allow.includes("clipboard-read 'none'"), true)
+    assert.equal(allow.includes("geolocation 'none'"), true)
+  } finally {
+    await page.close()
+  }
+})
+
+test("a live policy change replaces a stale same-origin preview frame", async () => {
+  const page = await browser.newPage()
+  try {
+    await openFixture(page, "?mode=app")
+    await page.waitForFunction(() =>
+      (document.querySelector("#loopback-preview-root iframe")?.getAttribute("sandbox") ?? "").split(" ").includes("allow-same-origin"))
+
+    const staleFrameAlive = await page.evaluate(() => {
+      const frame = document.querySelector("#loopback-preview-root iframe") as HTMLIFrameElement & { __staleFrame?: boolean }
+      frame.__staleFrame = true
+      return true
+    })
+    assert.equal(staleFrameAlive, true)
+
+    await page.evaluate(async () => {
+      await (window as any).fixture.setPreviewPolicy({
+        originMode: "opaque",
+        customOrigin: "",
+        sandbox: { forms: true, modals: true, popups: true, downloads: true },
+        features: { camera: false, microphone: false, clipboardRead: false, clipboardWrite: false, geolocation: false, fullscreen: false },
+      })
+    })
+
+    await page.waitForFunction(() => {
+      const frame = document.querySelector("#loopback-preview-root iframe") as (HTMLIFrameElement & { __staleFrame?: boolean }) | null
+      return Boolean(frame) && !frame!.__staleFrame && !(frame!.getAttribute("sandbox") ?? "").split(" ").includes("allow-same-origin")
+    })
+
+    assert.equal(await frameSource(page, "#loopback-preview-root"), "/previews/fixture-session-loopback/")
+    assert.deepEqual(new Set(await sandboxTokens(page, "#loopback-preview-root")).has("allow-same-origin"), false)
+  } finally {
+    await page.close()
+  }
+})
+
 test("the location bridge accepts the expected origin and ignores foreign ones", async () => {
   const page = await browser.newPage()
   try {

@@ -780,7 +780,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "Lectura del portapapeles",
   "settings.preview.features.clipboardWrite": "Escritura en el portapapeles",
   "settings.preview.features.geolocation": "Geolocalización",
-  "settings.preview.features.notifications": "Notificaciones",
   "settings.preview.features.fullscreen": "Pantalla completa",
   "settings.preview.features.browserNote": "El navegador seguirá pidiendo permiso, y la configuración del sitio en tu navegador puede bloquear una función. CodeNomad solo permite que la vista previa lo solicite.",
   "settings.preview.serviceWorkers.title": "Service workers",

@@ -65,7 +65,7 @@ test("custom origin validation blocks invalid and app origins, then saves the po
     assert.deepEqual(saved.patch.preview.sandbox, { forms: true, modals: true, popups: true, downloads: true })
     assert.deepEqual(saved.patch.preview.features, {
       camera: false, microphone: false, clipboardRead: false, clipboardWrite: false,
-      geolocation: false, notifications: false, fullscreen: false,
+      geolocation: false, fullscreen: false,
     })
     assert.equal(await input.inputValue(), "https://preview.example.test")
     assert.deepEqual(errors, [])
@@ -94,7 +94,7 @@ test("sandbox and browser feature toggles save immediately and always keep scrip
     assert.deepEqual(logged[1].patch.preview.sandbox, { forms: false, modals: true, popups: true, downloads: true })
     assert.deepEqual(logged[1].patch.preview.features, {
       camera: true, microphone: false, clipboardRead: false, clipboardWrite: false,
-      geolocation: false, notifications: false, fullscreen: false,
+      geolocation: false, fullscreen: false,
     })
     assert.deepEqual(errors, [])
   } finally { await page.close() }

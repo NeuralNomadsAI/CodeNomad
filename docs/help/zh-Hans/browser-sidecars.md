@@ -26,7 +26,9 @@
 
 对于**专用预览源**，请使用与 CodeNomad 所有源都不同的主机名，并将 `/previews/*`（包括 WebSocket 升级）路由到同一服务器。保留 `Host` 头、响应头以及注入的内容安全策略，并通过 TLS 提供该源以使用安全上下文 API。CodeNomad 无法测试该源是否可达；路由损坏会导致预览失败。绕过重写后的 `/previews/<token>/...` 命名空间的根相对 Worker 和 Service Worker 在专用源上不受支持。隔离 Cookie 依靠不同的主机名，而不是不同的端口。
 
-**沙箱**开关允许 iframe 预览使用表单、模态对话框、弹出窗口和下载；脚本始终必需。**浏览器功能**开关只允许预览请求摄像头、麦克风、读取/写入剪贴板、地理位置、通知或全屏。浏览器仍会弹出提示，浏览器站点设置仍是最终决定：CodeNomad 开关无法覆盖浏览器阻止，浏览器允许也无法恢复已禁用的功能。Electron 和 Windows Tauri 原生 WebView 不遵循这些 iframe 开关。
+CodeNomad 将专用预览源自身的 Cookie 与 CodeNomad 源隔离。如果预览源是同级子域，它仍属于同一站点，因此浏览器在向 CodeNomad 发起请求时会带上 `SameSite=Lax` 的 CodeNomad 会话 Cookie；CodeNomad 会拒绝在 `Origin` 或 `Referer` 中携带该源的应用程序 API 请求（`/api/`、`/workspaces/`、`/sidecars/`）。需要严格隔离 Cookie 时，请使用不同的站点。
+
+**沙箱**开关允许 iframe 预览使用表单、模态对话框、弹出窗口和下载；脚本始终必需。**浏览器功能**开关只允许预览请求摄像头、麦克风、读取/写入剪贴板、地理位置或全屏。浏览器仍会弹出提示，浏览器站点设置仍是最终决定：CodeNomad 开关无法覆盖浏览器阻止，浏览器允许也无法恢复已禁用的功能。Electron 和 Windows Tauri 原生 WebView 不遵循这些 iframe 开关。
 
 更改源模式、专用源、沙箱或功能策略会重新加载已打开的预览，因此降低信任级别后，先前更受信任的文档不会继续存活。
 

@@ -25,7 +25,6 @@ function previewSettings(overrides: Partial<PreviewSettings> = {}): PreviewSetti
       clipboardRead: false,
       clipboardWrite: false,
       geolocation: false,
-      notifications: false,
       fullscreen: false,
     },
     ...overrides,
@@ -131,10 +130,9 @@ describe("previewAllowAttribute", () => {
         clipboardRead: false,
         clipboardWrite: false,
         geolocation: false,
-        notifications: false,
         fullscreen: false,
       }),
-      "camera 'none'; microphone 'none'; clipboard-read 'none'; clipboard-write 'none'; geolocation 'none'; notifications 'none'; fullscreen 'none'",
+      "camera 'none'; microphone 'none'; clipboard-read 'none'; clipboard-write 'none'; geolocation 'none'; fullscreen 'none'",
     )
   })
 
@@ -146,10 +144,9 @@ describe("previewAllowAttribute", () => {
         clipboardRead: true,
         clipboardWrite: false,
         geolocation: true,
-        notifications: false,
         fullscreen: true,
       }),
-      "camera; microphone 'none'; clipboard-read; clipboard-write 'none'; geolocation; notifications 'none'; fullscreen",
+      "camera; microphone 'none'; clipboard-read; clipboard-write 'none'; geolocation; fullscreen",
     )
   })
 })

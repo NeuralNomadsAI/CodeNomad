@@ -780,7 +780,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "Lecture du presse-papiers",
   "settings.preview.features.clipboardWrite": "Écriture dans le presse-papiers",
   "settings.preview.features.geolocation": "Géolocalisation",
-  "settings.preview.features.notifications": "Notifications",
   "settings.preview.features.fullscreen": "Plein écran",
   "settings.preview.features.browserNote": "Le navigateur demande toujours l'autorisation, et les paramètres de site de votre navigateur peuvent bloquer une fonctionnalité. CodeNomad permet seulement à l'aperçu de la demander.",
   "settings.preview.serviceWorkers.title": "Service workers",

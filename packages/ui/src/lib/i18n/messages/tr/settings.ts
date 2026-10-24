@@ -767,7 +767,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "Pano okuma",
   "settings.preview.features.clipboardWrite": "Panoya yazma",
   "settings.preview.features.geolocation": "Konum",
-  "settings.preview.features.notifications": "Bildirimler",
   "settings.preview.features.fullscreen": "Tam ekran",
   "settings.preview.features.browserNote": "Tarayıcı yine de izin ister ve tarayıcı site ayarlarınız bir özelliği engelleyebilir. CodeNomad yalnızca önizlemenin istemesine izin verir.",
   "settings.preview.serviceWorkers.title": "Service worker'lar",

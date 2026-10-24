@@ -30,6 +30,10 @@ type UpstreamOptions = {
   body?: string
   permissionsPolicy?: string
   featurePolicy?: string
+  cacheControl?: string
+  etag?: string
+  expires?: string
+  lastModified?: string
 }
 
 afterEach(async () => {
@@ -58,6 +62,10 @@ async function startSideCarUpstream(options: UpstreamOptions = {}) {
     if (options.cookies) response.setHeader("Set-Cookie", options.cookies)
     if (options.permissionsPolicy) response.setHeader("Permissions-Policy", options.permissionsPolicy)
     if (options.featurePolicy) response.setHeader("Feature-Policy", options.featurePolicy)
+    if (options.cacheControl) response.setHeader("Cache-Control", options.cacheControl)
+    if (options.etag) response.setHeader("ETag", options.etag)
+    if (options.expires) response.setHeader("Expires", options.expires)
+    if (options.lastModified) response.setHeader("Last-Modified", options.lastModified)
     const headers: http.OutgoingHttpHeaders = { "content-security-policy": "default-src *" }
     const contentType = options.contentType ?? (options.html ? "text/html" : "application/json")
     if (contentType) headers["content-type"] = contentType
@@ -128,6 +136,7 @@ async function startServer(options: UpstreamOptions & {
   cookieName?: string
   prefixMode?: SideCar["prefixMode"]
   preview?: PreviewSettings
+  bindHost?: string
 } = {}) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "codenomad-sidecar-proxy-"))
   const logger = pino({ level: "silent" })
@@ -167,9 +176,9 @@ async function startServer(options: UpstreamOptions & {
   const previewManager = new PreviewManager()
   const preview = previewManager.create("fixture", `http://127.0.0.1:${port}`)
   const { instance: app } = createHttpServer({
-    bindHost: "127.0.0.1", bindPort: 0, defaultPort: 0, protocol: "http",
+    bindHost: options.bindHost ?? "127.0.0.1", bindPort: 0, defaultPort: 0, protocol: "http",
     workspaceManager: stub, settings, fileSystemBrowser: stub, eventBus: stub,
-    serverMeta: { localUrl: "http://app.example.com:8443", eventsUrl: "/api/events", listeningMode: "local", localPort: 8443, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
+    serverMeta: { localUrl: "http://app.example.com:8443", eventsUrl: "/api/events", host: "127.0.0.1", listeningMode: "local", localPort: 8443, hostLabel: "test", workspaceRoot: directory, addresses: [] } as never,
     instanceStore: stub, speechService: stub, sidecarManager: sidecarManager as never, previewManager,
     clientConnectionManager: stub, remoteProxySessionManager: stub, yoloManager: stub,
     authManager, logger, nativeParent: stub, automationBridgeToken: "fixture-token",
@@ -453,8 +462,39 @@ it("custom origin mode refuses the app's own origin from the stored policy", asy
   }
 })
 
-it("capability-host preview responses stay untouched by the origin tier", async () => {
-  const server = await startServer({ html: true })
+it("path-proxied responses are never cacheable with a stale origin tier", async () => {
+  const server = await startServer({
+    html: true,
+    preview: appPreviewSettings,
+    cacheControl: "public, max-age=600",
+    etag: "\"preview-v1\"",
+    expires: "Wed, 21 Oct 2037 07:28:00 GMT",
+    lastModified: "Wed, 21 Oct 2026 07:28:00 GMT",
+  })
+  try {
+    for (const url of [server.preview.proxyUrl, "/fallback-document"]) {
+      const headers: Record<string, string> = { origin: server.origin, cookie: server.cookie }
+      if (url === "/fallback-document") headers.referer = `${server.origin}${server.preview.proxyUrl}`
+      const response = await server.app.inject({ url, headers })
+      assert.equal(response.statusCode, 200, url)
+      assert.equal(response.headers["cache-control"], "no-store", url)
+      assert.equal(response.headers["pragma"], "no-cache", url)
+      assert.equal(response.headers["expires"], undefined, url)
+      assert.equal(response.headers["etag"], undefined, url)
+      assert.equal(response.headers["last-modified"], undefined, url)
+    }
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("capability-host preview responses keep the target cache headers", async () => {
+  const server = await startServer({
+    html: true,
+    cacheControl: "public, max-age=600",
+    etag: "\"preview-v1\"",
+    lastModified: "Wed, 21 Oct 2026 07:28:00 GMT",
+  })
   try {
     const response = await server.app.inject({
       url: "/",
@@ -462,6 +502,62 @@ it("capability-host preview responses stay untouched by the origin tier", async 
     })
     assert.equal(response.statusCode, 200)
     assert.equal(response.headers["content-security-policy"], undefined)
+    assert.equal(response.headers["cache-control"], "public, max-age=600")
+    assert.equal(response.headers["etag"], "\"preview-v1\"")
+    assert.equal(response.headers["last-modified"], "Wed, 21 Oct 2026 07:28:00 GMT")
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("a custom preview origin cannot call authenticated app APIs", async () => {
+  const server = await startServer({ html: true, preview: customPreviewSettings })
+  try {
+    const fromPreviewOrigin = await server.app.inject({
+      url: "/api/meta",
+      headers: { origin: "http://preview.example.com", cookie: server.cookie },
+    })
+    assert.equal(fromPreviewOrigin.statusCode, 403)
+
+    const fromPreviewReferer = await server.app.inject({
+      url: "/workspaces/example/files?path=.",
+      headers: { referer: "http://preview.example.com/previews/fixture/", cookie: server.cookie },
+    })
+    assert.equal(fromPreviewReferer.statusCode, 403)
+
+    const fromAppOrigin = await server.app.inject({
+      url: "/api/meta",
+      headers: { origin: server.origin, cookie: server.cookie },
+    })
+    assert.equal(fromAppOrigin.statusCode, 200)
+
+    // The preview proxy itself remains reachable from the custom origin.
+    const previewAtCustomOrigin = await server.app.inject({
+      url: server.preview.proxyUrl,
+      headers: { host: "preview.example.com", cookie: server.cookie },
+    })
+    assert.equal(previewAtCustomOrigin.statusCode, 200)
+  } finally {
+    await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
+  }
+})
+
+it("the broad non-loopback CORS allow explicitly excludes the custom preview origin", async () => {
+  const server = await startServer({ preview: customPreviewSettings, bindHost: "0.0.0.0" })
+  try {
+    const previewOrigin = await server.app.inject({
+      url: "/api/meta",
+      headers: { origin: "http://preview.example.com", cookie: server.cookie },
+    })
+    assert.equal(previewOrigin.statusCode, 403)
+    assert.equal(previewOrigin.headers["access-control-allow-origin"], undefined)
+
+    const otherOrigin = await server.app.inject({
+      url: "/api/meta",
+      headers: { origin: "https://elsewhere.example", cookie: server.cookie },
+    })
+    assert.equal(otherOrigin.statusCode, 200)
+    assert.equal(otherOrigin.headers["access-control-allow-origin"], "https://elsewhere.example")
   } finally {
     await fs.rm(server.cleanupDirectory, { recursive: true, force: true })
   }

@@ -15,7 +15,6 @@ const preview = {
     clipboardRead: false,
     clipboardWrite: false,
     geolocation: false,
-    notifications: false,
     fullscreen: false,
   },
 }

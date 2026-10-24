@@ -21,7 +21,6 @@ export const DEFAULT_PREVIEW_SETTINGS: PreviewSettings = {
     clipboardRead: false,
     clipboardWrite: false,
     geolocation: false,
-    notifications: false,
     fullscreen: false,
   },
 }
@@ -177,7 +176,6 @@ function normalizeFeatures(value: unknown): PreviewFeatureSettings {
     clipboardRead: booleanOr(record.clipboardRead, DEFAULT_PREVIEW_SETTINGS.features.clipboardRead),
     clipboardWrite: booleanOr(record.clipboardWrite, DEFAULT_PREVIEW_SETTINGS.features.clipboardWrite),
     geolocation: booleanOr(record.geolocation, DEFAULT_PREVIEW_SETTINGS.features.geolocation),
-    notifications: booleanOr(record.notifications, DEFAULT_PREVIEW_SETTINGS.features.notifications),
     fullscreen: booleanOr(record.fullscreen, DEFAULT_PREVIEW_SETTINGS.features.fullscreen),
   }
 }

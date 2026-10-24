@@ -10,30 +10,37 @@ const CUSTOM_ORIGIN = "https://preview.example.test"
 // The preferences store loads itself as soon as it is imported, so the API
 // doubles have to be installed before any store module is pulled in.
 const { serverApi } = await import("../../../src/lib/api-client")
-serverApi.fetchConfigOwner = async (owner: string) => (owner === "server"
-  ? {
-    preview: {
-      originMode,
-      customOrigin: CUSTOM_ORIGIN,
-      sandbox: {
-        forms: query.get("forms") !== "off",
-        modals: true,
-        popups: true,
-        downloads: true,
-      },
-      features: {
-        camera: query.get("camera") === "on",
-        microphone: false,
-        clipboardRead: false,
-        clipboardWrite: false,
-        geolocation: false,
-        notifications: false,
-        fullscreen: false,
-      },
+
+function initialPreviewPolicy() {
+  return {
+    originMode,
+    customOrigin: CUSTOM_ORIGIN,
+    sandbox: {
+      forms: query.get("forms") !== "off",
+      modals: true,
+      popups: true,
+      downloads: true,
+    },
+    features: {
+      camera: query.get("camera") === "on",
+      microphone: false,
+      clipboardRead: false,
+      clipboardWrite: false,
+      geolocation: false,
+      fullscreen: false,
     },
   }
+}
+
+let serverPreviewPolicy = initialPreviewPolicy()
+serverApi.fetchConfigOwner = async (owner: string) => (owner === "server"
+  ? { preview: serverPreviewPolicy }
   : { settings: { locale: "en" } }) as any
 serverApi.fetchStateOwner = async () => ({}) as any
+serverApi.patchConfigOwner = async (owner: string, patch: any) => {
+  if (owner === "server" && patch?.preview) serverPreviewPolicy = patch.preview
+  return { preview: serverPreviewPolicy } as any
+}
 serverApi.createPreview = async ({ sessionId, url }: { sessionId: string; url: string }) => ({
   token: `fixture-${sessionId}`,
   sessionId,
@@ -43,6 +50,7 @@ serverApi.createPreview = async ({ sessionId, url }: { sessionId: string; url: s
 }) as any
 serverApi.deletePreview = async () => undefined as any
 
+const { storage } = await import("../../../src/lib/storage")
 const { SessionPreviewView } = await import("../../../src/components/session-preview-view")
 const { openSessionPreview, sessionPreviews } = await import("../../../src/stores/session-previews")
 const { ConfigProvider, useConfig } = await import("../../../src/stores/preferences")
@@ -90,3 +98,9 @@ render(
   ),
   document.getElementById("root")!,
 )
+
+;(window as any).fixture = {
+  setPreviewPolicy: async (next: unknown) => {
+    await storage.patchConfigOwner("server", { preview: next })
+  },
+}

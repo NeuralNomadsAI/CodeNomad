@@ -30,7 +30,6 @@ describe("normalizeServerConfig", () => {
         clipboardRead: false,
         clipboardWrite: false,
         geolocation: false,
-        notifications: false,
         fullscreen: false,
       },
     })
@@ -54,7 +53,6 @@ describe("normalizeServerConfig", () => {
         clipboardRead: false,
         clipboardWrite: false,
         geolocation: false,
-        notifications: false,
         fullscreen: false,
       },
     })
@@ -71,7 +69,6 @@ describe("normalizeServerConfig", () => {
         clipboardRead: false,
         clipboardWrite: false,
         geolocation: false,
-        notifications: false,
         fullscreen: false,
       },
     })

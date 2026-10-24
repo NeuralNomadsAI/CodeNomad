@@ -780,7 +780,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "Чтение буфера обмена",
   "settings.preview.features.clipboardWrite": "Запись в буфер обмена",
   "settings.preview.features.geolocation": "Геолокация",
-  "settings.preview.features.notifications": "Уведомления",
   "settings.preview.features.fullscreen": "Полноэкранный режим",
   "settings.preview.features.browserNote": "Браузер всё равно запросит разрешение, а настройки сайта в браузере могут заблокировать функцию. CodeNomad лишь разрешает предпросмотру запросить её.",
   "settings.preview.serviceWorkers.title": "Service workers",

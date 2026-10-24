@@ -38,8 +38,10 @@ preview may ask and what its document sandbox permits.
 - Let the user choose sandbox capabilities for preview documents:
   forms, modals, popups and downloads. Scripts remain required.
 - Let the user delegate browser features to previews: camera, microphone,
-  clipboard read/write, geolocation, notifications and fullscreen. The browser
-  still prompts and may block; CodeNomad never claims to grant them itself.
+  clipboard read/write, geolocation and fullscreen. The browser
+  still prompts and may block; CodeNomad never grants them itself.
+  Notification permission is not a Permissions Policy-controlled feature and
+  cross-origin frames cannot request it, so it is not a preview toggle.
 - Keep service worker consequences tied to the origin decision: unavailable
   in `opaque`, scoped to the preview origin in `custom`, and an explicit
   full-trust warning in `app`.
@@ -131,7 +133,6 @@ server:
       clipboardRead: false
       clipboardWrite: false
       geolocation: false
-      notifications: false
       fullscreen: false
 ```
 
@@ -312,7 +313,7 @@ Cards:
 
 3. **Browser features**
    - Toggles for camera, microphone, clipboard read, clipboard write,
-     geolocation, notifications and fullscreen.
+     geolocation and fullscreen.
    - Each row says the browser still prompts and may be blocked by site
      settings. CodeNomad only delegates the ability to ask.
 
@@ -441,10 +442,14 @@ preview policy and cover all three modes.
   malicious preview can affect another preview's storage/service worker. This
   is acceptable for the initial design; per-token preview origins remain a
   future option.
-- Custom origins on a different host avoid app cookies; a different port does
-  not isolate cookies (cookies ignore ports), so deployments should prefer a
-  different host/site when API/cookie isolation matters. App CORS and CSRF
-  protections must not allow the preview origin. The docs state this.
+- A custom origin on a different host avoids app cookies; a different port does
+  not isolate cookies (cookies ignore ports). A sibling-subdomain custom origin
+  is still same-site, so the browser sends the `SameSite=Lax` session cookie
+  with requests to the app origin. The server withholds CORS consent and rejects
+  `/api/`, `/workspaces/` and `/sidecars/` requests whose `Origin` or `Referer`
+  names the resolved custom origin; `/previews/` stays reachable for the proxy.
+  Deployments that need strict cookie isolation use a different site. The docs
+  state this.
 - Browser feature toggles only delegate; the browser's own site settings and
   prompts are the final gate. A configured feature does not bypass a browser
   block and a browser allow does not bypass a missing delegation. The target's

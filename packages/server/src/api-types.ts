@@ -571,7 +571,6 @@ export interface PreviewFeatureSettings {
   clipboardRead: boolean
   clipboardWrite: boolean
   geolocation: boolean
-  notifications: boolean
   fullscreen: boolean
 }
 

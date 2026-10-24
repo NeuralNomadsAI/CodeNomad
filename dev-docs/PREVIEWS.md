@@ -56,6 +56,8 @@ A custom-origin preview knows its token and can navigate to or embed the same `/
 
 Every path-proxied response gets `Content-Security-Policy: sandbox <flags>` built from the resolved policy. Target `Content-Security-Policy`, `Content-Security-Policy-Report-Only`, `Permissions-Policy`, `Permissions-Policy-Report-Only` and `Feature-Policy` are removed, as are `X-Frame-Options` and target cookies. The injected CSP is the authoritative document sandbox and the Settings feature toggles are the authoritative delegation; a custom-origin reverse proxy must not strip or replace them.
 
+The same responses force `Cache-Control: no-store` with `Pragma: no-cache` and drop `Expires`, `ETag` and `Last-Modified`, so a browser cache cannot replay an `allow-same-origin` document after the policy changes. The capability-host route keeps the target's cache headers because its response carries no injected tier.
+
 The capability-host route injects no CSP because the frame already has its own origin. Both routes keep request cookies and target `Set-Cookie` stripped.
 
 ## UI frame policy
@@ -70,7 +72,7 @@ Desktop local capability hosts are resolved first: a local Electron or Tauri win
 
 `previewSandboxFlags` emits `allow-scripts` plus the configured forms/modals/popups/downloads. `getBrowserFramePolicy` appends `allow-same-origin` only when the frame is trusted. A path preview is trusted only for a loopback target in `app` mode, or in `custom` mode with a configured origin; a capability-host preview is trusted by its own origin. Opaque and external targets are never trusted.
 
-`previewAllowAttribute` covers camera, microphone, clipboard read/write, geolocation, notifications and fullscreen. Enabled features are delegated; disabled features are serialized as `'none'` so a same-origin frame cannot inherit the `self` default. The iframe `sandbox` and `allow` attributes are the only consumers: Electron and Windows Tauri native webviews are not sandboxed, while Tauri on macOS and Linux uses an iframe and follows both.
+`previewAllowAttribute` covers camera, microphone, clipboard read/write, geolocation and fullscreen. Enabled features are delegated; disabled features are serialized as `'none'` so a same-origin frame cannot inherit the `self` default. Notification permission is not a Permissions Policy-controlled feature and cross-origin frames cannot request it, so it is not offered. The iframe `sandbox` and `allow` attributes are the only consumers: Electron and Windows Tauri native webviews are not sandboxed, while Tauri on macOS and Linux uses an iframe and follows both.
 
 ### Comment and location bridge
 
@@ -101,7 +103,8 @@ The operator supplies DNS, TLS and a reverse proxy; CodeNomad does not start a p
 - Preserve response headers, specifically the injected `Content-Security-Policy`; do not overwrite it with the target's policy.
 - Serve the origin over TLS when previews need secure-context APIs such as camera, clipboard or service workers.
 - Root-relative Workers and service workers that bypass the rewritten `/previews/<token>/...` namespace are unsupported. The contract covers the rewritten namespace only.
-- App CORS and CSRF protections must not allow the preview origin. A custom origin on another host avoids app cookies; another port does not isolate cookies.
+- App CORS and CSRF protections must not allow the preview origin. The server rejects the resolved custom origin in its CORS callback and returns 403 for `/api/`, `/workspaces/` and `/sidecars/` requests whose `Origin` or `Referer` names it; `/previews/` remains reachable. A custom origin on another host avoids app cookies; another port does not isolate cookies.
+- A sibling-subdomain custom origin is still same-site, so the browser attaches the `SameSite=Lax` CodeNomad session cookie to requests and forms sent to the app origin. Use a different site when strict cookie isolation is required.
 - If the origin is unreachable or its route is broken, previews fail; the server has no fallback listener.
 
 Previews on one custom origin share that origin with each other, so a malicious preview can affect another preview's storage or service worker; per-token custom origins are not provided.

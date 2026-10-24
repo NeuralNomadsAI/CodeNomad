@@ -780,7 +780,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "读取剪贴板",
   "settings.preview.features.clipboardWrite": "写入剪贴板",
   "settings.preview.features.geolocation": "地理位置",
-  "settings.preview.features.notifications": "通知",
   "settings.preview.features.fullscreen": "全屏",
   "settings.preview.features.browserNote": "浏览器仍会请求权限，浏览器站点设置也可能阻止某项功能。CodeNomad 只允许预览发起请求。",
   "settings.preview.serviceWorkers.title": "Service Worker",

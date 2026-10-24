@@ -781,7 +781,6 @@ export const settingsMessages = {
   "settings.preview.features.clipboardRead": "Clipboard read",
   "settings.preview.features.clipboardWrite": "Clipboard write",
   "settings.preview.features.geolocation": "Geolocation",
-  "settings.preview.features.notifications": "Notifications",
   "settings.preview.features.fullscreen": "Fullscreen",
   "settings.preview.features.browserNote": "The browser still prompts for access, and your browser site settings can block a feature. CodeNomad only lets a preview ask.",
   "settings.preview.serviceWorkers.title": "Service workers",

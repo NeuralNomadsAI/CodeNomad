@@ -407,7 +407,6 @@ const defaultPreviewSettings: PreviewSettings = {
     clipboardRead: false,
     clipboardWrite: false,
     geolocation: false,
-    notifications: false,
     fullscreen: false,
   },
 }
@@ -451,7 +450,6 @@ function normalizePreviewFeatures(value: unknown): PreviewFeatureSettings {
     clipboardRead: typeof record.clipboardRead === "boolean" ? record.clipboardRead : defaultPreviewSettings.features.clipboardRead,
     clipboardWrite: typeof record.clipboardWrite === "boolean" ? record.clipboardWrite : defaultPreviewSettings.features.clipboardWrite,
     geolocation: typeof record.geolocation === "boolean" ? record.geolocation : defaultPreviewSettings.features.geolocation,
-    notifications: typeof record.notifications === "boolean" ? record.notifications : defaultPreviewSettings.features.notifications,
     fullscreen: typeof record.fullscreen === "boolean" ? record.fullscreen : defaultPreviewSettings.features.fullscreen,
   }
 }
