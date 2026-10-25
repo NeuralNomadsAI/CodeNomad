@@ -96,7 +96,9 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile }: {
     async warmup(definition) {
       const url = await this.register({ name: "__warmup", ...definition })
       const { chromium } = await import("playwright")
+      const { armFixtureNavigationBudget } = await import("../fixture-navigation-budget")
       const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+      armFixtureNavigationBudget(browser)
       try {
         const page = await browser.newPage()
         await page.goto(url, { waitUntil: "load" })

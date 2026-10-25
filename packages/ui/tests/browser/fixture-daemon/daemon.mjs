@@ -1,18 +1,33 @@
 #!/usr/bin/env node
 // The shared fixture daemon entry: one canonical Vite server per machine,
 // discoverable through a ready file, controlled over HTTP by borrowers.
-import { createHash } from "node:crypto"
-import { mkdir, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
+import { mkdir, readFile, rm } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { startFixtureDaemon } from "./server.ts"
+import { readyDirectoryFor } from "./paths.ts"
 
 const uiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..")
-const runKey = createHash("sha1").update(uiRoot).digest("hex").slice(0, 12)
-const readyDirectory = path.join(tmpdir(), `codenomad-fixture-daemon-${runKey}`)
+const readyDirectory = readyDirectoryFor(uiRoot)
 const readyFile = path.join(readyDirectory, "ready")
 const idleTimeoutMs = 10 * 60 * 1000
+
+// Claim the discovery directory atomically: yield to a live daemon, replace
+// a stale claim left behind by an unclean shutdown.
+let claimed = false
+for (let attempt = 0; attempt < 2 && !claimed; attempt++) {
+  try { await mkdir(readyDirectory, { recursive: false }); claimed = true }
+  catch (error) {
+    if (error.code !== "EEXIST") throw error
+    const existing = await readFile(readyFile, "utf8").then(JSON.parse, () => null)
+    const alive = existing
+      ? await fetch(`http://127.0.0.1:${existing.port}/__daemon/health`).then(() => true, () => false)
+      : false
+    if (alive) process.exit(0)
+    await rm(readyDirectory, { recursive: true, force: true })
+  }
+}
+if (!claimed) process.exit(0)
 
 const daemon = await startFixtureDaemon({ directory: uiRoot, readyFile })
 let lastActivity = Date.now()
