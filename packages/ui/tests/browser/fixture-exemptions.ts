@@ -51,6 +51,7 @@ export const exemptions: Record<string, string> = {
   "remote-control-settings.test.ts": "Vite config diverges from the canonical daemon config",
   "remote-server-pairing.test.ts": "Vite config diverges from the canonical daemon config",
   "render-cost.test.ts": "custom Vite transform/load hook",
+  "reveal-truncated-text.test.ts": "upstream repairs this test separately; borrow migration deferred to that change",
   "search-highlight-harness.ts": "harness serving search fixtures from its own server",
   "search-highlight.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
   "service-usage.test.ts": "served by a harness that borrows from the daemon",
