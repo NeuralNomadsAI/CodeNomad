@@ -31,7 +31,7 @@ test("PR builds and both release channels share the ordering without bypassing P
   assert.equal(workflow("dev-release.yml").jobs.prerelease.uses, "./.github/workflows/reusable-release.yml")
   assert.equal(workflow("release.yml").jobs.release.uses, "./.github/workflows/reusable-release.yml")
   assert.deepEqual(pr.needs, [
-    "authorize", "tests", "tests-tauri-windows", "tests-opencode-compatibility",
+    "authorize", "tests", "tests-browser", "tests-tauri-windows", "tests-opencode-compatibility",
     "tests-session-pruning-native", "tests-runtime-contracts", "tests-tauri-macos",
   ])
   assert.equal(pr.with.upload, false)
