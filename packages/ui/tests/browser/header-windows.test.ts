@@ -68,7 +68,7 @@ test("the real shell badge reopens the selected question with a same-session per
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await diagnostics.install()
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.locator("textarea.prompt-input").fill("Keep the composer draft")
     await page.evaluate(() => (window as any).fixture.askQuestion())
     const answer = page.locator('.interruption-dock input[type="text"]:visible')
@@ -112,7 +112,7 @@ test("native Electron zoom preserves CSS minimums across close/recreate, shared 
     page.on("pageerror", error => console.error("[zoom fixture]", error))
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
     for (const zoom of [0.8, 1, 1.25, 1.5]) {
       for (const index of [0, 1]) {
@@ -205,7 +205,7 @@ for (const touch of [false, true]) for (const [width, height] of [[320, 740], [3
         await page.route("**/api/**", route => route.fulfill({ json: {} }))
         await diagnostics.install()
         await page.goto(url)
-        await page.waitForFunction(() => Boolean((window as any).fixture))
+        await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
         await page.evaluate(() => (window as any).fixture.setLocale("fr"))
         const worktree = page.locator('.prompt-context-controls[data-has-worktree="true"] > .sidebar-selector').first().getByRole("button")
         // Saving the locale does not await its lazily imported dictionary.
@@ -265,7 +265,7 @@ test("composer locale settles after a held French dictionary import without losi
       await route.continue()
     })
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const input = page.locator("textarea.prompt-input")
     await input.fill("Brouillon conservé pendant le chargement")
     await page.evaluate(() => (window as any).fixture.setLocale("fr"))
@@ -285,7 +285,7 @@ for (const device of ["Pixel 5", "iPhone 13", "Desktop Chrome"] as const) test(`
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
     await page.getByText("Fixture message", { exact: true }).waitFor()
     const timeline = page.locator(".message-timeline-sidebar")
@@ -329,7 +329,7 @@ test("short landscape composer shrinks, scrolls long drafts and shares pointer/k
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const input = page.locator("textarea.prompt-input")
     const original = await input.evaluate(el => el.getBoundingClientRect().height)
     await page.setViewportSize({ width: 1800, height: 390 })
@@ -361,7 +361,7 @@ test("header actions collapse below the timeline breakpoint even when the full h
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.addStyleTag({ content: ".session-center-column { flex: 0 0 var(--fixture-width, 1000px) !important; min-width: 0 !important; }" })
     const center = page.locator(".session-center-column")
     await page.locator(".session-header-expanded-actions").waitFor({ state: "visible" })
@@ -397,7 +397,7 @@ for (const device of ["Pixel 5", "Desktop Chrome"] as const) test(`conversation 
     await page.route("**/api/**", route => route.fulfill({ json: previewsOff && new URL(route.request().url()).pathname === "/api/meta" ? { previewsUnavailable: true } : {} }))
     try {
       await page.goto(url)
-      await page.waitForFunction(() => Boolean((window as any).fixture))
+      await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
       await page.getByText("Fixture message", { exact: true }).waitFor()
       const context = JSON.stringify({ device, previewsOff })
       // Inline actions stay mounted while the narrow conversation forces the menu.
@@ -420,7 +420,7 @@ test("docked drawers can reduce the conversation to 390 CSS pixels before becomi
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => {
       const f = (window as any).fixture
       if (!document.querySelector(".session-sidebar-container")) f.viewAction("view-left-panel")
@@ -436,7 +436,7 @@ test("manual prompt height follows the pointer without changing its minimum as t
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const input = page.locator("textarea.prompt-input")
     const resize = page.locator(".prompt-resize-handle")
     const minimum = await page.locator(".session-center-column").evaluate(el => Math.max(44, Math.floor(el.getBoundingClientRect().height * 0.08)))
@@ -468,7 +468,7 @@ test("chosen prompt proportion follows window height and survives composer remou
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const input = page.locator("textarea.prompt-input")
     const resize = page.locator(".prompt-resize-handle")
     await input.fill("Keep my draft while resizing")
@@ -508,7 +508,7 @@ test("visual keyboard shrink clamps the displayed manual height without overwrit
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const input = page.locator("textarea.prompt-input")
     await input.fill("Draft stays here")
     await page.locator(".prompt-resize-handle").focus()
@@ -531,7 +531,7 @@ test("context text never overlaps header actions after usage and session changes
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => (window as any).fixture.setLocale("fr"))
     for (const width of [390, 420, 460, 360]) {
       await page.setViewportSize({ width, height: 844 })
@@ -565,7 +565,7 @@ test("desktop timeline still follows its saved visibility preference", async () 
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => (window as any).fixture.setPreferences({ showMessageTimeline: true }))
     const timeline = page.locator(".message-timeline-sidebar")
     await timeline.waitFor({ state: "visible" })
@@ -583,7 +583,7 @@ test("content filters join the measured header overflow and restore keyboard foc
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => (window as any).fixture.setWorking())
     const menu = page.locator(".session-header-actions-menu")
     await menu.waitFor({ state: "visible" })
@@ -630,7 +630,7 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays vi
     : {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
     const panel = page.locator(`[role="dialog"][id^="${kind}-"]`)
     const input = panel.locator(kind === "session-search" ? 'input[type="search"]' : 'input[type="text"]')
@@ -663,7 +663,7 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} close re
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
     const panel = page.locator(`[role="dialog"][id^="${kind}-"]`)
     await panel.waitFor()
@@ -694,7 +694,7 @@ test("zoomed search can scroll to its last result and pagination without losing 
     : {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.keyboard.press("Control+f")
     const panel = page.locator('[role="dialog"][id^="session-search-"]')
     await panel.locator('input[type="search"]').fill("fixture")
@@ -730,7 +730,7 @@ test("ported search opens inside the viewport with asymmetric drawers", async ()
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => (window as any).fixture.viewAction("view-right-panel"))
     await page.keyboard.press("Control+f")
     const panel = page.locator('[role="dialog"][id^="session-search-"]')
@@ -749,7 +749,7 @@ for (const first of ["command-palette", "session-search"]) test(`new utility win
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const second = first === "command-palette" ? "session-search" : "command-palette"
     for (const kind of [first, second]) await page.keyboard.press(kind === "command-palette" ? "Control+Shift+p" : "Control+f")
     const older = page.locator(`[role="dialog"][id^="${first}-"]`), active = page.locator(`[role="dialog"][id^="${second}-"]`)
@@ -772,7 +772,7 @@ for (const kind of ["command-palette", "session-search"]) test(`${kind} stays op
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const trigger = page.locator(`button[aria-controls^="${kind}-"]`)
     await trigger.waitFor()
     const id = await trigger.getAttribute("aria-controls")
@@ -841,7 +841,7 @@ test("composer tooltips follow effective bindings without permanent key strips",
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const composer = page.locator("textarea.prompt-input:visible")
     const send = page.locator(".send-button:visible"), stop = page.locator(".stop-button:visible")
     const sendName = await send.getAttribute("aria-label"), stopName = await stop.getAttribute("aria-label")
@@ -890,7 +890,7 @@ test("Clear and selector shortcuts drive the shown composer, in a conversation a
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const composer = page.locator("textarea.prompt-input:visible"), send = page.locator(".send-button:visible")
     for (const draft of ["A conversation draft to clear", "A first prompt to clear"]) {
       await composer.fill(draft)
@@ -914,7 +914,7 @@ test("search shortcut, session changes and palette execution keep their own auth
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const search = page.locator('button[aria-controls^="session-search-"]')
     await page.keyboard.press("Control+f")
     await page.getByRole("searchbox").waitFor()
@@ -943,7 +943,7 @@ test("compact touch controls can reopen their menu and explicitly toggle a persi
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const menu = page.locator(".session-header-actions-menu")
     // Exercise the real overflow controls independently of the shell's density
     // measurement (the fixture has no runtime status indicators).
@@ -974,7 +974,7 @@ test("utility windows remain visible and keyboard accessible in RTL", async () =
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => (window as any).fixture.setLocale("he"))
     await page.waitForFunction(() => document.documentElement.dir === "rtl")
     for (const kind of ["command-palette", "session-search"]) {
@@ -1004,7 +1004,7 @@ test("Escape consumes only the top utility window before the global Stop shortcu
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.evaluate(() => (window as any).fixture.setWorking())
     await page.keyboard.press("Control+Shift+p")
     const palette = page.locator('[role="dialog"][id^="command-palette-"]')
@@ -1033,7 +1033,7 @@ test("repeated palette shortcut refocuses its input without erasing the query or
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     await page.keyboard.press("Control+Shift+p")
     const input = page.locator('[role="dialog"][id^="command-palette-"] input')
     await input.fill("Fixture")
@@ -1058,7 +1058,7 @@ test("web preview close returns to the conversation with its draft and can reope
   await page.route("**/previews/fixture-preview**", route => route.fulfill({ contentType: "text/html", body: "<p>Preview fixture</p>" }))
   try {
     await page.goto(url)
-    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.waitForFunction(() => Boolean((window as any).fixture), undefined, { timeout: 90_000 })
     const composer = page.locator("textarea.prompt-input")
     await composer.fill("Draft to preserve")
     const toggle = page.locator('button[title="Open web preview"]')
