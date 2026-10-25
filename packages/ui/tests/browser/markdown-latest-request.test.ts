@@ -1,18 +1,19 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { readFile } from "node:fs/promises"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
 
-let server: ViteDevServer, browser: Browser, url: string, cacheDirectory: string
+let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
-  cacheDirectory = await mkdtemp(join(tmpdir(), "codenomad-markdown-latest-"))
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cacheDirectory,
-    plugins: [{ name: "markdown-latest-instrumentation", enforce: "pre",
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, { name: "markdown-latest-instrumentation", enforce: "pre",
       configureServer(s) {
         s.middlewares.use("/fixture", async (_req, res) => {
           res.setHeader("Content-Type", "text/html")
@@ -48,14 +49,15 @@ before(async () => {
     }, solid()], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
   })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => {
   await browser?.close()
   await server?.close()
-  if (cacheDirectory) await rm(cacheDirectory, { recursive: true, force: true })
 })
 
 async function open(run: (page: Page) => Promise<void>) {

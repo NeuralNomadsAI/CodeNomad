@@ -2,13 +2,17 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "badge-fixture", configureServer(s) {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, solid(), { name: "badge-fixture", configureServer(s) {
       s.middlewares.use("/badge-fixture", async (req, res) => {
         res.setHeader("Content-Type", "text/html")
         const icons = req.url?.includes("no-icon") ? "" : '<link rel="icon" href="/original.ico" type="image/x-icon"><link rel="shortcut icon" href="/alternate.png">'
@@ -17,9 +21,11 @@ before(async () => {
     } }], resolve: { dedupe: ["solid-js"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
   })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/badge-fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close() })
 

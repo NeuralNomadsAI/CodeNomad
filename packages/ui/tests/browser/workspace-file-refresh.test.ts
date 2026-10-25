@@ -4,6 +4,7 @@ import { mkdtemp, mkdir, writeFile, rename, unlink, symlink, rm } from "node:fs/
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium } from "playwright"
 import { createServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -45,6 +46,7 @@ test("actual file creation, rename and deletion refresh the Workspace tree throu
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
   shutdown.own(server)
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
   t.after(async () => {
     await browser.close()
     watches.close()

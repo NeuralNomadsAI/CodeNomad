@@ -6,6 +6,9 @@ import { join } from "node:path"
 import { tmpdir } from "node:os"
 import electronPath from "electron"
 import { chromium, _electron, type Browser, type Page } from "playwright"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { build } from "esbuild"
@@ -14,8 +17,9 @@ let server: ViteDevServer, browser: Browser, base: string
 const pageRequests: string[] = []
 let holdHistoryRequest: ((release: () => void) => void) | undefined
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "session-browser-history", configureServer(s) {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, solid(), { name: "session-browser-history", configureServer(s) {
       s.middlewares.use("/history-fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/history-fixture", '<html><head><style>webview{display:flex}</style></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/session-browser-history.tsx"></script></body></html>'))
@@ -45,9 +49,11 @@ before(async () => {
       })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  shutdown.own(server)
   await server.listen()
   base = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close() })
 

@@ -1,19 +1,17 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
-import { mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { chromium, type Browser } from "playwright"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 let server: ViteDevServer, browser: Browser, url: string
-let cacheDir: string
 before(async () => {
-  // Independent invocations must not replace each other's optimized modules.
-  cacheDir = await mkdtemp(join(tmpdir(), "opencode", "provider-accounts-vite-"))
-  server = await createServer({ configFile: false, cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "accounts-fixture", configureServer(s) {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, solid(), { name: "accounts-fixture", configureServer(s) {
       for (const [route, fixture] of [["/fixture", "provider-accounts"], ["/design", "provider-accounts-preview"]]) {
         s.middlewares.use(route, async (_req, res) => {
           res.setHeader("Content-Type", "text/html")
@@ -21,11 +19,13 @@ before(async () => {
         })
       }
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close(); if (cacheDir) await rm(cacheDir, { recursive: true, force: true }) })
+after(async () => { await browser?.close(); await server?.close() })
 
 test("native account dropdown activates by identity and preserves failed rename drafts", async () => {
   const page = await browser.newPage({ viewport: { width: 380, height: 900 }, locale: "en-US" })

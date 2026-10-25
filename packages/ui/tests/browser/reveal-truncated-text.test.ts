@@ -3,6 +3,7 @@ import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, errors, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -29,6 +30,7 @@ before(async () => {
     await server.listen()
     url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
   } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 })
 after(async () => { try { await browser?.close() } finally { await server?.close() } })
@@ -38,11 +40,14 @@ async function withFixture(run: (page: Page) => Promise<void>, query = "") {
     permissions: ["clipboard-read", "clipboard-write"] })
   const page = await context.newPage()
   page.setDefaultTimeout(15_000)
+  // Tight actions, cold-start-friendly navigation: page-level defaults would
+  // otherwise outrank the context's armed navigation budget.
+  page.setDefaultNavigationTimeout(120_000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
-    await page.goto(`${url}${query}`, { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await page.goto(`${url}${query}`, { waitUntil: "domcontentloaded" })
     await page.waitForFunction(() => Boolean((window as any).fixture))
     // A loaded dev server can serve the lazily imported Markdown renderer seconds late. Until
     // then parts show their plain-text placeholder, up to twice as tall as the render, and

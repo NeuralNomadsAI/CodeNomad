@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -30,6 +31,7 @@ before(async () => {
   shutdown.own(server); await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/passage`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close() })
 const mission: MissionMap = { version: 1, id: "msn_passage", projectID: "project", projectCanonical: "/fixture", objective: "Finite recurring review", template: "custom",

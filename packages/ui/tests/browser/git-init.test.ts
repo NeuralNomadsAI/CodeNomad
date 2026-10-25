@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { prepareGitPrototypeAssets } from "./fixtures/git-history-assets.mjs"
@@ -13,10 +15,11 @@ let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   prepareGitPrototypeAssets()
   cache = await createFixtureCache()
+  const shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
     cacheDir: cache.cacheDir,
     publicDir: fileURLToPath(new URL("../../src/renderer/public", import.meta.url)),
-    plugins: [solid(), { name: "git-init-fixture", configureServer(s) {
+    plugins: [shutdown.plugin, solid(), { name: "git-init-fixture", configureServer(s) {
       s.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/git-history.tsx"></script></body></html>'))
@@ -24,9 +27,11 @@ before(async () => {
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
   })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture?uninitialized`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 

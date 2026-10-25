@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
@@ -9,17 +11,20 @@ import { createFixtureCache } from "./fixture-cache"
 let server: ViteDevServer, browser: Browser, url: string, cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   cache = await createFixtureCache()
+  const shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), cacheDir: cache.cacheDir,
-    logLevel: "error", plugins: [solid(), { name: "mission-list-fixture", configureServer(s) {
+    logLevel: "error", plugins: [shutdown.plugin, solid(), { name: "mission-list-fixture", configureServer(s) {
       s.middlewares.use("/mission-list-fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/mission-list-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-list-item.tsx"></script></body></html>'))
       })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-list-fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
 async function prepare(page: Page) {
