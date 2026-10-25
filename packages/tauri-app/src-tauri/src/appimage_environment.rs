@@ -3,7 +3,8 @@
 //! prefixed `XDG_DATA_DIRS`, ...) for this process's own WebKit. The backend,
 //! the shared OpenCode service it starts, the editors CodeNomad opens and link
 //! handlers outlive that mount, so they get the host's environment: variables
-//! inside the mount are dropped and mount entries are removed from path lists.
+//! inside the mount are dropped, mount entries are removed from path lists and
+//! they start outside the mount.
 //! Paths are bytes on Linux; nothing here assumes UTF-8.
 
 use std::collections::HashMap;
@@ -13,9 +14,10 @@ use std::process::Command;
 
 /// GTK prefers X11 (XWayland) and falls back to Wayland where no X server runs,
 /// unless the session chooses: the F11 fullscreen shortcut is an X11 key grab.
+/// Only this process's GTK: children keep the session's own backend choice.
 pub(crate) fn prefer_x11_display() {
     if std::env::var_os("GDK_BACKEND").is_none() {
-        std::env::set_var("GDK_BACKEND", "x11,wayland");
+        gtk::gdk::set_allowed_backends("x11,wayland");
     }
 }
 
@@ -47,11 +49,17 @@ fn without_mount_in(
         .collect()
 }
 
-/// Gives a child that inherits this process's environment the host's environment.
+/// Gives a child that inherits this process's environment the host's environment,
+/// and `/` as its working directory while ours is inside the mount (AppRun's
+/// `usr`); a caller may still choose another one.
 pub(crate) fn use_host_environment(command: &mut Command) {
     let Some(mount) = mount() else {
         return;
     };
+    let cwd = std::env::current_dir();
+    if cwd.is_ok_and(|dir| inside(dir.as_os_str().as_bytes(), mount.as_bytes())) {
+        command.current_dir("/");
+    }
     for (key, value) in std::env::vars_os() {
         match without_mount(value.as_bytes(), mount.as_bytes()) {
             Some(kept) if kept.is_empty() => {

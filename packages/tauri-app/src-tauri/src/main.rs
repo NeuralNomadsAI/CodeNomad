@@ -1827,7 +1827,11 @@ fn main() {
                     }
 
                     if fullscreen_shortcut().as_ref() == Some(shortcut) {
-                        toggle_fullscreen_window(app);
+                        // Linux calls this on the shortcut thread, which the main
+                        // thread can be waiting on to re-register F11 as focus
+                        // changes: queue the toggle instead of blocking on the window.
+                        let handle = app.clone();
+                        let _ = app.run_on_main_thread(move || toggle_fullscreen_window(&handle));
                     }
                 })
                 .build(),
