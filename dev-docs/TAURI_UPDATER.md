@@ -151,10 +151,18 @@ unusable musl ELF and aborts. For local rebuilds after a failed packaging run, r
 `target/release/bundle/appimage` and `target/release/bundle/appimage_deb` staging
 directories: the latter can retain removed resources between bundle attempts.
 
+The display and GPU stack comes from the host: the Tauri CLI (at least 2.12.1)
+runs a linuxdeploy that leaves `libwayland-*`, `libxkbcommon`, `libxcb*`,
+`libX11*`, `libXau`, `libXdmcp` and the EGL/GL/gbm/drm libraries out of the
+image, and its GTK hook leaves `GDK_BACKEND` to the session, so GTK runs natively
+on Wayland. A build-runner copy on AppRun's library path makes Mesa's EGL fail on
+newer distributions (an Ubuntu 24.04 `libwayland-client` with Mesa 26), and
+WebKit's window then stays black.
+
 Verification extracts via an absolute artifact path, checks `AppRun` and
-`usr/bin/codenomad-tauri`, smoke-tests bundled Node/server/UI resources, resolves
-ELF dependencies against bundled library directories and reports the binary's
-glibc floor.
+`usr/bin/codenomad-tauri`, rejects an image that bundles those host libraries,
+smoke-tests bundled Node/server/UI resources, resolves ELF dependencies against
+bundled library directories and reports the binary's glibc floor.
 
 The AppImage runtime unmounts the bundle as soon as the main process exits, while
 WebKit's helper processes started from it can outlive that process briefly; a

@@ -959,6 +959,18 @@ jobs:
             echo "Expected exactly one desktop entry in the Tauri AppImage, found $desktop_entries" >&2
             exit 1
           fi
+          # The display and GPU stack must come from the user's system. A copy from
+          # the build runner shadows it through AppRun's library path, and Mesa's
+          # EGL on newer distributions then fails to initialize: the window stays
+          # black ("Could not create surfaceless EGL display").
+          host_only=$(cd "$root/usr/lib" && find . -maxdepth 2 \( -name 'libwayland-*' -o -name 'libxkbcommon*' \
+            -o -name 'libxcb*' -o -name 'libX11*' -o -name 'libXau*' -o -name 'libXdmcp*' \
+            -o -name 'libEGL*' -o -name 'libGL*' -o -name 'libgbm*' -o -name 'libdrm*' \) | sort)
+          if [ -n "$host_only" ]; then
+            echo "Tauri AppImage bundles host display libraries:" >&2
+            echo "$host_only" >&2
+            exit 1
+          fi
           node scripts/smoke-packaged-resources.cjs \
             --resources "$root/usr/lib/CodeNomad/resources" \
             --loading "$root/usr/lib/CodeNomad/resources/ui-loading" \
