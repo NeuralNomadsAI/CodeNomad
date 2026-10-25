@@ -17,17 +17,23 @@ function opaqueWindow(): Record<string, unknown> {
   return window
 }
 
-/** An opaque-origin document: cookie reads are empty and writes are dropped. */
+/** An opaque-origin document: storage and cookie reads throw SecurityError. */
 function opaqueDocument(): Record<string, unknown> {
   const document: Record<string, unknown> = {}
-  Object.defineProperty(document, "cookie", { configurable: true, get: () => "", set: () => {} })
+  Object.defineProperty(document, "cookie", {
+    configurable: true,
+    get() {
+      throw new Error("SecurityError")
+    },
+    set() {},
+  })
   return document
 }
 
 const runShim = (window: Record<string, unknown>, document: Record<string, unknown>) =>
   new Function("window", "document", previewStorageShim())(window, document)
 
-function workingStorage() {
+function workingStorage(writes: string[]) {
   const jar = new Map<string, string>()
   return {
     get length() {
@@ -35,23 +41,39 @@ function workingStorage() {
     },
     key: (index: number) => [...jar.keys()][index] ?? null,
     getItem: (key: string) => (jar.has(String(key)) ? jar.get(String(key)) : null),
-    setItem: (key: string, value: string) => void jar.set(String(key), String(value)),
-    removeItem: (key: string) => void jar.delete(String(key)),
+    setItem: (key: string, value: string) => {
+      writes.push(`setItem:${key}`)
+      jar.set(String(key), String(value))
+    },
+    removeItem: (key: string) => {
+      writes.push(`removeItem:${key}`)
+      jar.delete(String(key))
+    },
     clear: () => void jar.clear(),
   }
 }
 
 describe("previewStorageShim", () => {
-  it("provides a working in-memory localStorage behind a throwing accessor", () => {
+  it("provides a stable Storage object with methods, property access and enumeration", () => {
     const window = opaqueWindow()
     runShim(window, opaqueDocument())
-    const storage = window.localStorage as Storage
+    const storage = window.localStorage as Storage & Record<string, unknown>
+    assert.equal(window.localStorage, window.localStorage)
+
     assert.equal(storage.getItem("token"), null)
     storage.setItem("token", "abc")
     storage.setItem("theme", "dark")
     assert.equal(storage.getItem("token"), "abc")
     assert.equal(storage.length, 2)
     assert.equal(storage.key(0), "token")
+
+    storage.flavor = "mint"
+    assert.equal(storage.flavor, "mint")
+    assert.equal(storage.getItem("flavor"), "mint")
+    assert.equal("flavor" in storage, true)
+    assert.equal("missing" in storage, false)
+    assert.deepEqual(Object.keys(storage), ["token", "theme", "flavor"])
+
     storage.removeItem("theme")
     assert.equal(storage.getItem("theme"), null)
     storage.clear()
@@ -67,36 +89,39 @@ describe("previewStorageShim", () => {
     assert.equal((window.localStorage as Storage).getItem("a"), "1")
   })
 
-  it("serves document.cookie from memory with attribute and expiry handling", () => {
+  it("serves document.cookie from memory with Max-Age winning over Expires", () => {
     const document = opaqueDocument()
     runShim(opaqueWindow(), document)
     document.cookie = "session=xyz; Path=/"
     document.cookie = "flash=1; Max-Age=0"
     document.cookie = "stale=1; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
-    assert.equal(document.cookie, "session=xyz")
-    document.cookie = "extra=2"
-    assert.equal(document.cookie, "session=xyz; extra=2")
+    document.cookie = "keep=1; Expires=Thu, 01 Jan 1970 00:00:00 GMT; Max-Age=60"
+    document.cookie = "hold=2; Max-Age=60; Expires=Thu, 01 Jan 1970 00:00:00 GMT"
+    assert.equal(document.cookie, "session=xyz; keep=1; hold=2")
     document.cookie = "session=; Max-Age=0"
-    assert.equal(document.cookie, "extra=2")
+    assert.equal(document.cookie, "keep=1; hold=2")
   })
 
-  it("leaves working real storage untouched", () => {
+  it("detects by reading only, leaving working real storage untouched without writes", () => {
+    const writes: string[] = []
     const window: Record<string, unknown> = {
-      localStorage: workingStorage(),
-      sessionStorage: workingStorage(),
+      localStorage: workingStorage(writes),
+      sessionStorage: workingStorage(writes),
     }
     const document: Record<string, unknown> = {}
     let cookieValue = ""
+    const cookieWrites: string[] = []
     Object.defineProperty(document, "cookie", {
       configurable: true,
       get: () => cookieValue,
       set: (value: string) => {
-        if (value.includes("=") && !value.includes("Max-Age=0")) cookieValue = value.split(";")[0]
-        else cookieValue = ""
+        cookieWrites.push(value)
+        cookieValue = value.includes("Max-Age=0") ? "" : value.split(";")[0]
       },
     })
     runShim(window, document)
-    assert.equal(window.localStorage, (window as Record<string, unknown>).localStorage)
+    assert.deepEqual(writes, [])
+    assert.deepEqual(cookieWrites, [])
     ;(window.localStorage as Storage).setItem("kept", "yes")
     assert.equal((window.localStorage as Storage).getItem("kept"), "yes")
     document.cookie = "real=1"

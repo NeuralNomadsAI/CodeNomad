@@ -1,25 +1,73 @@
 /** Opaque-origin preview documents cannot use `localStorage`,
- * `sessionStorage` or `document.cookie` — access throws or writes are
- * dropped, which breaks common development apps. This in-memory shim keeps
- * them working without granting the frame a real origin: state lives only
- * for the current page load, storage jars are per API, and real storage is
- * left untouched whenever it already works (for example if previews ever
- * gain a same-origin mode). */
+ * `sessionStorage` or `document.cookie` — access throws, which breaks
+ * common development apps. This in-memory shim keeps them working without
+ * granting the frame a real origin: each API gets one stable Storage-like
+ * object (property access and enumeration included) backed by its own jar,
+ * and cookies parse `name=value` plus attributes with `Max-Age` taking
+ * precedence over `Expires`. Accessing a working storage API is detected by
+ * reading alone and leaves it untouched, so contexts with real storage (a
+ * per-token preview host opened on its own) keep native behavior. State
+ * lives only for the current page load. */
 export function previewStorageShim(): string {
   return `(function(){
 function memoryStorage(jar){
-return{get length(){return jar.size},key:function(index){var keys=Array.from(jar.keys());return index>=0&&index<keys.length?keys[index]:null},getItem:function(key){key=String(key);return jar.has(key)?jar.get(key):null},setItem:function(key,value){jar.set(String(key),String(value))},removeItem:function(key){jar.delete(String(key))},clear:function(){jar.clear()}}}
+var methods={
+key:function(index){var keys=Array.from(jar.keys());return index>=0&&index<keys.length?keys[index]:null},
+getItem:function(key){key=String(key);return jar.has(key)?jar.get(key):null},
+setItem:function(key,value){jar.set(String(key),String(value))},
+removeItem:function(key){jar.delete(String(key))},
+clear:function(){jar.clear()}
+};
+return new Proxy({},{
+get:function(target,property){
+if(typeof property==="symbol")return target[property];
+if(property==="length")return jar.size;
+if(jar.has(property))return jar.get(property);
+return methods[property]
+},
+set:function(target,property,value){
+if(typeof property==="symbol"){target[property]=value;return true}
+jar.set(String(property),String(value));return true
+},
+has:function(target,property){
+if(typeof property==="symbol")return property in target;
+return property==="length"||jar.has(property)||Object.prototype.hasOwnProperty.call(methods,property)
+},
+deleteProperty:function(target,property){
+if(typeof property==="symbol"){delete target[property];return true}
+jar.delete(String(property));return true
+},
+ownKeys:function(target){return Array.from(jar.keys()).concat(Object.getOwnPropertySymbols(target))},
+getOwnPropertyDescriptor:function(target,property){
+if(typeof property==="symbol")return Object.getOwnPropertyDescriptor(target,property);
+if(jar.has(property))return{value:jar.get(property),writable:true,enumerable:true,configurable:true};
+if(property==="length")return{value:jar.size,writable:false,enumerable:false,configurable:true};
+if(Object.prototype.hasOwnProperty.call(methods,property))return{value:methods[property],writable:false,enumerable:false,configurable:true};
+return undefined
+}
+})
+}
 function shimStorage(name){
-try{var real=window[name];if(real){real.setItem("__codenomad_storage_probe","1");var works=real.getItem("__codenomad_storage_probe")==="1";real.removeItem("__codenomad_storage_probe");if(works)return}}catch(e){}
-var jar=new Map();
-try{Object.defineProperty(window,name,{configurable:true,get:function(){return memoryStorage(jar)},set:function(){}})}catch(e){}
+try{window[name]}catch(e){
+var storage=memoryStorage(new Map());
+try{Object.defineProperty(window,name,{configurable:true,get:function(){return storage},set:function(){}})}catch(err){}
+}
 }
 shimStorage("localStorage");shimStorage("sessionStorage");
-var cookiesWork=false;
-try{document.cookie="__codenomad_cookie_probe=1";if(document.cookie.indexOf("__codenomad_cookie_probe=1")>=0){cookiesWork=true;document.cookie="__codenomad_cookie_probe=1; Max-Age=0"}}catch(e){}
-if(!cookiesWork){
+try{document.cookie}catch(e){
 var cookieJar=new Map();
-try{Object.defineProperty(document,"cookie",{configurable:true,get:function(){var now=Date.now();var out=[];cookieJar.forEach(function(entry,name){if(entry.expires<=now)return;out.push(name+"="+entry.value)});return out.join("; ")},set:function(value){var parts=String(value).split(";");var pair=parts[0];var eq=pair.indexOf("=");if(eq<0)return;var name=pair.slice(0,eq).trim();var cookieValue=pair.slice(eq+1);var expires=Infinity;for(var index=1;index<parts.length;index++){var attr=parts[index].trim();var eqIndex=attr.indexOf("=");var key=(eqIndex<0?attr:attr.slice(0,eqIndex)).toLowerCase();var attrValue=eqIndex<0?"":attr.slice(eqIndex+1);if(key==="max-age"){var seconds=parseFloat(attrValue);expires=isNaN(seconds)?Infinity:Date.now()+seconds*1000}else if(key==="expires"){var parsed=Date.parse(attrValue);expires=isNaN(parsed)?Infinity:parsed}}if(name==="__codenomad_cookie_probe")return;if(expires<=Date.now())cookieJar.delete(name);else cookieJar.set(name,{value:cookieValue,expires:expires})}})}catch(e){}
+try{Object.defineProperty(document,"cookie",{configurable:true,get:function(){var now=Date.now();var out=[];cookieJar.forEach(function(entry,name){if(entry.expires<=now)return;out.push(name+"="+entry.value)});return out.join("; ")},set:function(value){
+var parts=String(value).split(";");var pair=parts[0];var eq=pair.indexOf("=");if(eq<0)return;
+var name=pair.slice(0,eq).trim();var cookieValue=pair.slice(eq+1);
+var maxAge=null;var expiresAt=null;
+for(var index=1;index<parts.length;index++){
+var attr=parts[index].trim();var eqIndex=attr.indexOf("=");var key=(eqIndex<0?attr:attr.slice(0,eqIndex)).toLowerCase();var attrValue=eqIndex<0?"":attr.slice(eqIndex+1);
+if(key==="max-age"){var seconds=parseFloat(attrValue);maxAge=isNaN(seconds)?null:seconds}
+else if(key==="expires"){var parsed=Date.parse(attrValue);expiresAt=isNaN(parsed)?null:parsed}
+}
+var expires=maxAge!==null?Date.now()+maxAge*1000:(expiresAt!==null?expiresAt:Infinity);
+if(expires<=Date.now())cookieJar.delete(name);else cookieJar.set(name,{value:cookieValue,expires:expires})
+}})}catch(err){}
 }
 })();`
 }
