@@ -2241,6 +2241,12 @@ async function proxySideCarWebSocketUpgrade(args: {
     return
   }
 
+  // Upgrades bypass the HTTP preHandler: refuse opaque origins here as it does.
+  if (request.headers.origin === "null") {
+    rejectUpgrade(socket, 403, "Forbidden")
+    return
+  }
+
   const session = authManager.getSessionFromHeaders(request.headers)
   if (!session) {
     rejectUpgrade(socket, 401, "Unauthorized")
