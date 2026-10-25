@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
-import { chromium, type Browser, type Locator, type Page } from "playwright"
+import { chromium, errors, type Browser, type Locator, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { createFixtureCache } from "./fixture-cache"
@@ -46,6 +46,10 @@ async function withFixture(run: (page: Page) => Promise<void>, query = "") {
   try {
     await page.goto(`${url}${query}`, { waitUntil: "domcontentloaded", timeout: 30_000 })
     await page.waitForFunction(() => Boolean((window as any).fixture))
+    // A loaded dev server can serve the lazily imported Markdown renderer seconds late. Until
+    // then parts show their plain-text placeholder, up to twice as tall as the render, and
+    // its arrival moves whatever the test was scrolling to.
+    await page.waitForFunction(() => document.querySelector(".message-stream .markdown-body p") !== null, undefined, { timeout: 30_000 })
     await page.evaluate(() => navigator.clipboard.writeText("clipboard sentinel"))
     await run(page)
     assert.deepEqual(errors, [])
@@ -76,8 +80,10 @@ function textOffset(page: Page, selector: string, label: string) {
 }
 
 /**
- * Scrolls the transcript with real wheel gestures until `target` is mounted (upwards
- * first, then downwards from the top, since a restored position may lie on either side).
+ * Scrolls the transcript with real wheel gestures until `target` is mounted, then into view.
+ * The search starts upwards and turns at either end, since a restored position may lie on
+ * either side. A target found at the edge of the rendered window can unmount again while the
+ * list measures the rows it just mounted; the search then continues.
  */
 async function scrollTo(page: Page, target: Locator) {
   const stream = page.locator(".message-stream")
@@ -85,12 +91,22 @@ async function scrollTo(page: Page, target: Locator) {
   const box = (await stream.boundingBox())!
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2)
   let direction = -1
-  for (let step = 0; step < 300 && await target.count() === 0; step++) {
-    if (direction < 0 && await stream.evaluate(element => element.scrollTop <= 0)) direction = 1
+  for (let step = 0; step < 300; step++) {
+    if (await target.count() > 0) {
+      try {
+        await target.first().scrollIntoViewIfNeeded({ timeout: 2_000 })
+        return
+      } catch (error) {
+        if (!(error instanceof errors.TimeoutError || String(error).includes("not attached to the DOM"))) throw error
+      }
+    }
+    const end = await stream.evaluate(element => element.scrollTop <= 0 ? -1
+      : element.scrollTop + element.clientHeight >= element.scrollHeight - 1 ? 1 : 0)
+    if (end === direction) direction = -direction
     await page.mouse.wheel(0, direction * 1200)
     await page.waitForTimeout(30)
   }
-  await target.first().scrollIntoViewIfNeeded()
+  throw new Error("scrollTo: the target never stayed mounted")
 }
 
 async function scrollToBottom(page: Page) {

@@ -54,7 +54,7 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
          transformCallback: fn => { callback = fn; return 1 },
          invoke: async (command, args) => {
            if (command === 'plugin:event|listen') { handler = args.handler; window.deliverMenu = payload => callback({payload}); return handler }
-           if (command === 'plugin:opener|open_url') { if(window.failOpen) throw new Error('opener failure'); window.opened.push([command, args]) }
+           if (command === 'open_external_url') { if(window.failOpen) throw new Error('opener failure'); window.opened.push([command, args]) }
            if (command === 'open_preferences_window') window.preferences.push(args.request.section)
          },
        }
@@ -73,7 +73,7 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
     await page.waitForFunction(() => (window as any).opened.length === 1)
     const readUrl = () => page.evaluate(() => {
       const opened = (window as any).opened.at(-1)
-      return opened[0] === "plugin:opener|open_url" ? opened[1].url : opened[0]
+      return opened[0] === "open_external_url" ? opened[1].url : opened[0]
     })
      assert.equal(await readUrl(), "https://neuralnomadsai.github.io/CodeNomad/fr/")
      if (context === "local") {
