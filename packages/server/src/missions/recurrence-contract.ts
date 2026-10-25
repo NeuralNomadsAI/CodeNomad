@@ -1,6 +1,7 @@
 import { z } from "zod"
 import { authorityRootSchema, canonicalAuthority } from "./authority-protocol"
 import { stableToken } from "./journal"
+import { isMissionCoordinatorSession, missionCoordinatorSessionID } from "./session-identity"
 export { recurrenceMessageID } from "./receipt-identity"
 import { recurrenceMessageID } from "./receipt-identity"
 import { dailyClockSchema, dailyOccurrence } from "./recurrence-clock"
@@ -122,9 +123,10 @@ export function recurrencePassageID(projectToken: string, scheduleID: string, sc
   return `rcp_${stableToken(`${projectToken}\0${scheduleID}\0${scheduleRevision}\0${dueIdentity}`, 40)}`
 }
 
-export function recurrenceCoordinatorSessionID(projectID: string, passageID: string): string {
-  const missionID = `msn_${stableToken(`${projectID}\0${passageID}`, 24)}`
-  return `ses_${stableToken(`${missionID}\0coordinator`, 26)}`
+const passageMissionID = (projectID: string, passageID: string) => `msn_${stableToken(`${projectID}\0${passageID}`, 24)}`
+
+export function recurrenceCoordinatorSessionID(projectID: string, passageID: string, createdAt: number): string {
+  return missionCoordinatorSessionID(passageMissionID(projectID, passageID), createdAt)
 }
 
 /** Strict bounded codec, including stored identity/placement relationships. No
@@ -161,7 +163,7 @@ export function parseRecurrenceDocument(input: unknown, projectID: string, proje
     if (passage.scheduleRevision > doc.scheduleRevision || passage.createdAt < doc.createdAt || passage.createdAt < passage.due.at
       || passage.id !== recurrencePassageID(projectToken, doc.id, passage.scheduleRevision, passage.due)
       || passage.messageID !== recurrenceMessageID(passage.id)
-      || passage.coordinatorSessionID !== recurrenceCoordinatorSessionID(projectID, passage.id)) fail()
+      || !isMissionCoordinatorSession(passage.coordinatorSessionID, passageMissionID(projectID, passage.id))) fail()
     if (passage.scheduleRevision < previousScheduleRevision) fail()
     previousScheduleRevision = passage.scheduleRevision
     if (passage.due.kind === "manual" && (passage.due.expectedRevision >= doc.revision || passage.due.at !== passage.createdAt)) fail()

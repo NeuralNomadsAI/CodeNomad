@@ -4,6 +4,7 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { MissionMap } from "../../missions/model"
 import { stableToken } from "../../missions/journal"
+import { isMissionCoordinatorSession } from "../../missions/session-identity"
 import { isMissionCreateNoEffectError } from "../../missions/rpc-errors"
 import { compareModelError, freezeCompareProfiles, missionProfilesInputSchema, sameMissionProfiles, validateMissionProfiles } from "../../missions/playbook-profiles"
 import { missionTaskModeInputSchema } from "../../missions/task-execution-mode"
@@ -88,7 +89,9 @@ export async function prepareMissionCreation(input: {
     locations.push(coordinator.location)
   }
   const missionID = `msn_${stableToken(`${projectID}\0${request.requestId}`, 24)}`
-  const sessionID = request.coordinatorSessionId ?? `ses_${stableToken(`${missionID}\0coordinator`, 26)}`
+  // An attached coordinator is exact; a created one carries the plugin's creation time.
+  const sessionID = request.coordinatorSessionId
+  const isCoordinator = (id: string) => sessionID === undefined ? isMissionCoordinatorSession(id, missionID) : id === sessionID
   // Reserved identity seam only: prepared creation emits NO native message.
   // Same derivation as the durable recurrence passage, never a fresh retry ID.
   const creationMessageID = `msg_${stableToken(request.requestId, 28)}`
@@ -145,9 +148,9 @@ export async function prepareMissionCreation(input: {
           if (isMissionCreateNoEffectError(error, nativeInput.requestID, missionID)) admission.settled()
           throw error
         }
-        const coordinator = result.mission?.actors?.find(actor => actor.sessionId === sessionID && actor.kind === "coordinator")
+        const coordinator = result.mission?.actors?.find(actor => actor.sessionId === result.mission.coordinatorSessionId && actor.kind === "coordinator")
         if (result.mission?.id !== missionID || result.mission.projectID !== projectID
-          || result.mission.coordinatorSessionId !== sessionID || !coordinator || result.mission.title !== nativeInput.title
+          || !isCoordinator(result.mission.coordinatorSessionId) || !coordinator || result.mission.title !== nativeInput.title
           || !sameLocation(coordinator.location, nativeInput.expectedCoordinatorLocation)
           || result.mission.preparedBy?.missionId !== input.preparedBy?.missionID
           || result.mission.preparedBy?.coordinatorSessionId !== input.preparedBy?.coordinatorSessionID
