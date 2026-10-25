@@ -6,4 +6,6 @@ export const markdownMessages = {
   "markdown.codeBlock.wrap.disable": "लाइन र्‍याप असक्षम गर्नुहोस्",
 
   "markdown.copy": "प्रतिलिपि गर्नुहोस्",
+
+  "markdown.link.previewOpens": "वेब पूर्वावलोकनमा खुल्छ। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले यसलाई browser मा खोल्छ।",
 } as const

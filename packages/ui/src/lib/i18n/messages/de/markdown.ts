@@ -6,4 +6,6 @@ export const markdownMessages = {
   "markdown.codeBlock.wrap.disable": "Zeilenumbruch deaktivieren",
 
   "markdown.copy": "Kopieren",
+
+  "markdown.link.previewOpens": "Wird in der Web-Vorschau geöffnet. Strg+Klick (⌘-Klick auf macOS) oder Mittelklick öffnet ihn im Browser.",
 } as const
