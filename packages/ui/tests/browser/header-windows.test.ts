@@ -415,7 +415,7 @@ for (const device of ["Pixel 5", "Desktop Chrome"] as const) test(`conversation 
   }
 })
 
-test("docked drawers can reduce the conversation to 390 CSS pixels before becoming overlays", async () => {
+test("docked drawers can reduce the conversation to 390 CSS pixels", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 1000 } })
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   try {
