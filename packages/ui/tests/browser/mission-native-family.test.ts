@@ -6,33 +6,40 @@ import path from "node:path"
 import { tmpdir } from "node:os"
 import { createHash } from "node:crypto"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
-import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Locator, type Page, type Request } from "playwright"
+import { createServer, type ViteDevServer } from "vite"
+import solid from "vite-plugin-solid"
 import type { MissionMap, MissionActivityProjection } from "../../../server/src/api-types"
 import type { V2Event, SessionMessageUser } from "@opencode/client"
 import { outlineInputSchema, outlineResultSchema, outlinePreviewInputSchema, outlinePreviewResultSchema,
   navigationWindowInputSchema, navigationWindowResultSchema } from "../../../server/src/opencode/session-pruning/navigation-contract"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
 import { missionPicker, missionPopupOption } from "./mission-actions"
 import type {} from "./fixtures/mission-native-family"
 
-let browser: Browser, url: string, output: string
+let server: ViteDevServer, browser: Browser, url: string, output: string
 before(async () => {
-  const fixture = await borrowFixture({
-      name: "mission-native-family",
-      routes: [
-        { path: "/mission-native-family", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-native-family.tsx\"></script></body></html>" },
-      ],
-    })
   const root = process.env.CODENOMAD_NATIVE_FAMILY_EVIDENCE || path.join(tmpdir(), "opencode")
   assert(path.isAbsolute(root)); await mkdir(root, { recursive: true })
   output = await mkdtemp(path.join(root, "mission-native-family-"))
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   try {
-    url = fixture.url
+    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+      plugins: [solid(), shutdown.plugin, { name: "mission-native-family", configureServer(s) {
+        s.middlewares.use("/api/events", (_req, res) => { res.setHeader("Content-Type", "text/event-stream"); res.write(": isolated fake transport; native frames use the real dispatcher\n\n") })
+        s.middlewares.use("/mission-native-family", async (_req, res) => {
+        res.setHeader("Content-Type", "text/html")
+        res.end(await s.transformIndexHtml("/mission-native-family", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-native-family.tsx"></script></body></html>'))
+      }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
+      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+    shutdown.own(server); await server.listen()
+    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-native-family`
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
     armFixtureNavigationBudget(browser)
-  } catch (error) { throw error }
+  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 }, { timeout: 60000 })
-after(async () => { await browser?.close(); console.info(`Family fixture logs: ${output}`) })
+after(async () => { try { await browser?.close() } finally { await server?.close() }; console.info(`Family fixture logs: ${output}`) })
 function mission(id: string, independent = false): MissionMap {
   const actor = (name: string, kind: "coordinator" | "specialist") => ({ sessionId: `ses_${name}`, kind, managed: false,
     title: `Declared ${name}`, roles: [kind], location: { directory: "/fixture" }, joinedAt: 1 })
