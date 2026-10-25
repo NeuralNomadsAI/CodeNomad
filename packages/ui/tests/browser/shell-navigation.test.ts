@@ -331,6 +331,19 @@ test("phone list selection reveals the conversation; history buttons keep the se
   } finally { await context.close() }
 })
 
+for (const side of ["left", "right"] as const) test(`the ${side} panel closed for room hands keyboard focus to its toggle`, async () => {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 900 } })
+  const { page, errors } = await open(context)
+  try {
+    await waitDrawers(page, "pinned", "pinned")
+    await page.locator(side === "left" ? ".session-sidebar-header button" : ".right-panel-tab-bar button").first().focus()
+    await page.setViewportSize({ width: 390, height: 900 })
+    await waitDrawers(page, "closed", "closed")
+    await page.waitForFunction(side => document.activeElement?.closest(`.shell-panel-toggle--${side}`) !== null, side)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
 test("panels that lose their docked room close instead of covering the conversation and return with it", async () => {
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } })
   const { page, errors } = await open(context)
