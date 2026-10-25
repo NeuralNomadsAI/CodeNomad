@@ -12,6 +12,7 @@ import { focusInterruption } from "../../../../../stores/interruption-navigation
 import { getSessionPreview, showSessionChatFor } from "../../../../../stores/session-previews"
 import { forgetMissionView, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
+import { missionEditor, openMissionEditor, settleMissionEditor } from "../../../../../stores/mission-editor-state"
 import { MissionTracking } from "../../../../mission-tracking"
 import { missionIncludesSession, selectMissionAttention } from "../../../../mission-attention-model"
 import { MissionPicker } from "../../../../mission-picker"
@@ -51,7 +52,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
   const selectedMissionId = () => missionProjectView(scope()).selected
   const selectedSchedule = () => missionProjectView(scope()).selectedRecurrence
-  const [editor, setEditor] = createSignal<MissionEditorAction & { current: () => boolean }>()
+  const editorScope = () => JSON.stringify([props.instanceId, scope()])
+  const editor = () => missionEditor(editorScope())
   const [navigationError, setNavigationError] = createSignal(false)
   const [recurrenceRefresh, setRecurrenceRefresh] = createSignal(0)
   // The selected item's unconfirmed control, resent only by an explicit refresh click.
@@ -76,9 +78,13 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const selectMission = (id: string) => { intent++; updateMissionProjectView(scope(), { selected: id, selectedRecurrence: undefined }) }
   const openEditor = (action: MissionEditorAction) => {
     intent++
-    setEditor({ ...action, current: captureView() })
+    openMissionEditor(editorScope(), action)
   }
-  const closeEditor = () => { intent++; setEditor(undefined) }
+  const closeEditor = () => {
+    intent++
+    const open = editor()
+    if (open) settleMissionEditor(open)
+  }
   const openPreferences = () => void openSettings("missions")
 
   const conversation = () => ({ session: props.activeSessionId(), parent: activeParentSessionId().get(props.instanceId),
@@ -300,8 +306,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       <Show when={navigationError()}><p class="mission-control-stale" role="alert">{props.t("sessionList.reload.error")}</p></Show>
       <Show when={editor()} keyed>{action => {
         let completionCurrent: () => boolean = () => false
+        // Live view activity; each operation captures its own view fence.
         return <MissionEditor instanceId={props.instanceId} viewDirectory={directory()} projectID={projectID()} action={action}
-        active={() => action.current() && editor() === action}
+        active={() => (props.isActive?.() ?? true) && editor() === action}
+        onDispose={draft => settleMissionEditor(action, draft && { ...action, draft })}
         captureOperation={() => {
           const origin = captureView(), operation = intent
           completionCurrent = () => origin() && operation === intent
@@ -309,11 +317,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         }}
         onCancel={closeEditor} onOpenPreferences={openPreferences}
         onRecurrenceRefresh={() => setRecurrenceRefresh(value => value + 1)}
-        onRecurrenceSaved={() => { if (!completionCurrent() || editor() !== action) return; setEditor(undefined); setRecurrenceRefresh(value => value + 1) }}
+        onRecurrenceSaved={() => { if (!completionCurrent() || editor() !== action) return; settleMissionEditor(action); setRecurrenceRefresh(value => value + 1) }}
         onSaved={saved => {
           if (!completionCurrent() || editor() !== action) return
           const instanceId = props.instanceId, current = completionCurrent
-          setEditor(undefined)
+          settleMissionEditor(action)
           if (!saved && action.mission) forgetMissionView(scope(), action.mission.id)
           void missionStore.refresh(instanceId).then(() => {
             if (saved && current() && !editor() && missions().some(mission => mission.id === saved.id)) selectMission(saved.id)

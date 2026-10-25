@@ -105,6 +105,8 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
         await reached.promise
         if (phase === "refresh") await page.locator("form.mission-editor").waitFor({ state: "detached" })
         await transition(page, change)
+        // A request in flight settles through its own hold, never as a reopened draft.
+        if (change === "unmount") assert.equal(await page.locator("form.mission-editor").count(), 0)
         const response = page.waitForResponse(r => r.request().method() === (phase === "mutation" ? method : "GET") && r.url().includes("/fixture/missions"))
         hold.release(); await response
         // Read-only native invalidation makes the durable result visible even
@@ -152,6 +154,68 @@ for (const method of ["POST", "PATCH"] as const) test(`current legitimate ${meth
     await selectedMissionTitle(page).filter({ hasText: /^Saved result$/ }).waitFor()
     assert.equal(await page.locator("form.mission-editor").count(), 0); assert.equal(writes, 1)
     assert.equal((await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).slice(before).filter(id => id === (method === "POST" ? "saved" : "one")).length, 1)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const method of ["POST", "PATCH"] as const) test(`an unsent ${method} draft survives a hidden view, a panel remount and an instance round trip`, async () => {
+  const { page, errors } = await setup(), writes: Array<Record<string, unknown>> = []
+  let list = [mission("one")]
+  try {
+    await page.route("**/api/workspaces/*/missions**", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: list, generatedAt: 1, discardedEvents: 0 } })
+      writes.push(route.request().postDataJSON() as Record<string, unknown>)
+      const saved = { ...mission(method === "POST" ? "saved" : "one"), objective: "Kept draft", revision: method === "POST" ? 1 : 2 }
+      list = method === "POST" ? [...list, saved] : [saved]
+      return route.fulfill({ json: { mission: saved } })
+    })
+    await page.goto(url)
+    if (method === "POST") await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    else await clickMissionAction(page, EDIT, "Objective one")
+    const form = page.locator("form.mission-editor"), submit = form.locator("button[type=submit]")
+    await form.locator("textarea").first().fill("Kept draft")
+    if (method === "POST") {
+      await form.locator("summary").filter({ hasText: /^Options$/ }).click()
+      await form.getByLabel("Playbook", { exact: true }).selectOption("debug")
+      await form.getByLabel("Notes", { exact: true }).fill("Kept notes")
+    }
+    for (const change of ["inactive-aba", "unmount", "instance-aba"] as const) {
+      if (change === "inactive-aba") {
+        await page.evaluate(() => window.missionEditorLifetime.activate(false))
+        await page.evaluate(() => window.missionEditorLifetime.activate(true))
+      } else if (change === "unmount") {
+        await page.evaluate(() => window.missionEditorLifetime.mount(false))
+        await page.evaluate(() => window.missionEditorLifetime.mount(true))
+      } else {
+        await page.evaluate(() => window.missionEditorLifetime.instance("other"))
+        assert.equal(await form.count(), 0, "another panel scope has no editor open")
+        await page.evaluate(() => window.missionEditorLifetime.instance("fixture"))
+      }
+      assert.equal(await form.locator("textarea").first().inputValue(), "Kept draft", change)
+      if (method === "POST") {
+        assert.equal(await form.getByLabel("Playbook", { exact: true }).inputValue(), "debug", change)
+        assert.equal(await form.getByLabel("Notes", { exact: true }).inputValue(), "Kept notes", change)
+      }
+      await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+    }
+    await submit.click()
+    await form.waitFor({ state: "detached" })
+    assert.equal(writes.length, 1)
+    assert.equal(writes[0].objective, "Kept draft")
+    if (method === "POST") { assert.equal(writes[0].template, "debug"); assert.equal(writes[0].notes, "Kept notes") }
+    else assert.equal(writes[0].expectedRevision, 1)
+    // A closed editor stays closed, and the next one starts blank.
+    await page.evaluate(() => window.missionEditorLifetime.mount(false))
+    await page.evaluate(() => window.missionEditorLifetime.mount(true))
+    assert.equal(await form.count(), 0)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await form.locator("textarea").first().fill("Discarded draft")
+    await page.getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.evaluate(() => window.missionEditorLifetime.mount(false))
+    await page.evaluate(() => window.missionEditorLifetime.mount(true))
+    assert.equal(await form.count(), 0)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    assert.equal(await form.locator("textarea").first().inputValue(), "")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
