@@ -54,7 +54,6 @@ before(async () => {
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    cacheDir: path.join(root, "vite"),
     plugins: [shutdown.plugin, solid(), { name: "extension-fixture", configureServer(vite) {
       vite.middlewares.use("/fixture", async (_req, res) => {
         res.setHeader("Content-Type", "text/html")
