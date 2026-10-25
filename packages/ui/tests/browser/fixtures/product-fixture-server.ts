@@ -1,5 +1,5 @@
 import { fileURLToPath } from "node:url"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { armFixtureNavigationBudget } from "../fixture-navigation-budget"
 import { chromium } from "playwright"
 import { createServer } from "vite"
 import solid from "vite-plugin-solid"
