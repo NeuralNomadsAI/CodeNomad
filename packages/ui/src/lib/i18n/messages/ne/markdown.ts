@@ -7,5 +7,5 @@ export const markdownMessages = {
 
   "markdown.copy": "प्रतिलिपि गर्नुहोस्",
 
-  "markdown.link.previewOpens": "web preview मा खुल्छ। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले यसलाई browser मा खोल्छ।",
+  "markdown.link.previewOpens": "वेब पूर्वावलोकनमा खुल्छ। Ctrl+क्लिक (macOS मा ⌘+क्लिक) वा मध्य-क्लिकले यसलाई browser मा खोल्छ।",
 } as const
