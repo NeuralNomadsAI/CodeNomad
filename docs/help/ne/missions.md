@@ -102,7 +102,7 @@ creation time ले पनि eligible दैनिक काम सीमि�
 | --- | --- |
 | CodeNomad परियोजना ट्याब | त्यो परियोजना CodeNomad मा बन्द हुन्छ; native काम वा OpenCode सेवा रोकिँदैन। फेरि खोल्दा सत्र भेटिन्छन्। |
 | पूरै विन्डो, एप बन्द वा renderer reload | पुनर्स्थापनाका लागि परियोजना जडान राख्छ; native काम वा OpenCode सेवा रोकिँदैन। |
-| CodeNomad backend | OpenCode रोकिँदैन। चलिरहेको एकपटकको मिसन जारी रहन्छ: यसको coordinator, native subagent task र मिसन tool OpenCode मा चल्छन्। Independent task session, coordinator ले तयार गरेका मिसन, retired task का कुराकानी रोक्ने काम, recovery र मिसन नियन्त्रण backend को प्रतीक्षा गर्छन्; OpenCode service restart पछि एकपटकको मिसन जारी राख्न पनि त्यस्तै हो। |
+| CodeNomad backend | OpenCode रोकिँदैन। चलिरहेको एकपटकको मिसन जारी रहन्छ: यसको coordinator, native subagent task र मिसन tool OpenCode मा चल्छन्। Independent session मा task तोक्ने र तिनका report coordinator लाई पुर्‍याउने काम, coordinator ले तयार गरेका मिसन, retired task का कुराकानी रोक्ने काम, recovery र मिसन नियन्त्रण backend को प्रतीक्षा गर्छन्; OpenCode service restart पछि एकपटकको मिसन जारी राख्न पनि त्यस्तै हो। |
 | चलिरहेको daily schedule | clock र passage execution OpenCode plugin/service मा चल्छन्, CodeNomad UI र backend बन्द हुँदासमेत। execution host र OpenCode सेवा चलिरहनुपर्छ। |
 | OpenCode service restart | process-local schedule job हराउँछन्। चल्नुपर्ने schedule **अवरुद्ध** हुन्छ र स्पष्ट **पुनः सुरु गर्नुहोस्** नगरेसम्म त्यस्तै रहन्छ; CodeNomad फेरि खोल्दा rearm हुँदैन। |
 
