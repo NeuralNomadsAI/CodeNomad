@@ -49,6 +49,7 @@ jobs:
     needs:
       - authorize
       - tests
+      - tests-browser
       - tests-tauri-windows
       - tests-opencode-compatibility
       - tests-session-pruning-native
@@ -479,12 +480,6 @@ jobs:
       - name: Test Stats restoration and connection fences explicitly
         run: node --import tsx --test packages/server/src/opencode/service-usage.test.ts
 
-      - name: Install Chromium for UI rendering regressions
-        run: npx playwright install --with-deps chromium
-
-      - name: Test browser transcript rendering and navigation
-        run: xvfb-run -a npm run test:browser --workspace @codenomad/ui
-
       - name: Prepare Tauri test resources
         run: >-
           npm run dev:prep --workspace @codenomad/tauri-app &&
@@ -496,6 +491,40 @@ jobs:
 
       - name: Test owned Tauri zoom input script
         run: node --test packages/tauri-app/tests/window-zoom-script.test.mjs
+
+  # Browser rendering regressions shard four-wide: each runner executes its
+  # slice serially (the proven-stable mode) while the wall clock divides by
+  # the shard count. Interleaved slicing keeps letter-adjacent heavy clusters
+  # spread across shards.
+  tests-browser:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for UI rendering regressions
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser shard
+        run: xvfb-run -a node packages/ui/tests/browser/shard.mjs ${{ matrix.shard }} 4
 
   tests-tauri-windows:
     needs: authorize
