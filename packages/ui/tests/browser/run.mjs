@@ -15,7 +15,7 @@ const files = (await readdir(directory)).filter(file => file.endsWith(".test.ts"
 const exemptionSource = await readFile(path.join(directory, "fixture-exemptions.ts"), "utf8")
 const exempt = new Set([...exemptionSource.matchAll(/"([^"]+)":/g)].map(match => match[1]))
 const borrowed = files.filter(file => !exempt.has(file))
-const owned = files.filter(file => exempt.has(file) && !file.startsWith("fixture-"))
+const owned = files.filter(file => exempt.has(file))
 
 console.log(`tiered run: ${borrowed.length} borrowed (4-wide) + ${owned.length} exempt (2-wide)`)
 if (dryRun) { console.log(borrowed.join("\n")); process.exit(0) }

@@ -2,6 +2,7 @@
  * borrowing from the shared daemon — the single source of truth shared by the
  * wiring checker and the tiered local runner. Each name maps to its reason. */
 export const exemptions: Record<string, string> = {
+  "automation-forms.test.ts": "electron automation harness; its machine-specific a11y flakiness pre-dates the daemon",
   "fixture-daemon/server.ts": "the shared canonical server itself",
   "fixture-shutdown.test.ts": "tests the owned-server shutdown mechanics themselves",
   "fixture-daemon/daemon.test.ts": "tests the daemon core directly",

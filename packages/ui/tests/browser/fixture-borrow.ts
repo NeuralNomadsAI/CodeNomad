@@ -66,12 +66,15 @@ async function registerOn(ready: ReadyFile, definition: FixtureDefinition): Prom
 }
 
 /** Borrowed routes are namespaced under the fixture's name so distinct
- * fixtures never collide on common paths like "/fixture". */
+ * fixtures never collide on common paths like "/fixture". The original path
+ * is preserved verbatim after the prefix: tests derive sibling route URLs
+ * from the borrowed url by string substitution, and a uniform prefix keeps
+ * those derivations working. */
 function namespaced(definition: FixtureDefinition): FixtureDefinition {
   return {
     name: definition.name,
     routes: definition.routes.map(route => ({
-      path: route.path === "/fixture" ? `/${definition.name}` : `/${definition.name}${route.path}`,
+      path: `/${definition.name}${route.path}`,
       html: route.html,
     })),
   }

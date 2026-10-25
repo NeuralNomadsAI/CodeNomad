@@ -46,7 +46,7 @@ test("search derives page progress from search responses without a separate coun
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(result) })
   })
   try {
-    await page.goto(`${baseUrl}/fixture`)
+    await page.goto(baseUrl)
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => (window as any).fixture.open())
     await page.getByRole("searchbox").waitFor()
