@@ -35,7 +35,7 @@ test("passage journal isolates its exact key and repeats the publication fence",
   // The codec refuses arbitrary passage IDs, so use the canonical reserved ID.
   doc.pending!.passage.id = recurrencePassageID(stableToken("project\0/owned/project", 24), doc.id, 0, doc.pending!.passage.due)
   doc.pending!.passage.messageID = recurrenceMessageID(doc.pending!.passage.id)
-  doc.pending!.passage.coordinatorSessionID = recurrenceCoordinatorSessionID(doc.projectID, doc.pending!.passage.id)
+  doc.pending!.passage.coordinatorSessionID = recurrenceCoordinatorSessionID(doc.projectID, doc.pending!.passage.id, doc.pending!.passage.createdAt)
   const scope = recurrencePassage(storage, doc, current)
   await assert.rejects(scope.storage.get("codenomad-missions/authority-v2/namespace"), /scope conflict/)
   await assert.rejects(scope.journal.append({ version: 1, type: "mission.created", id: "evt_wrong", projectID: "project",

@@ -55,7 +55,7 @@ const { registerAutomationPluginRoute } = await tsImport("../packages/server/src
 const { registerMissionRoutes } = await tsImport("../packages/server/src/server/routes/missions.ts", import.meta.url)
 const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
 const { CODENOMAD_MISSIONS_RPC } = await tsImport("../packages/server/src/missions/rpc.ts", import.meta.url)
-const { stableToken } = await tsImport("../packages/server/src/missions/journal.ts", import.meta.url)
+const { isMissionTaskSession } = await tsImport("../packages/server/src/missions/session-identity.ts", import.meta.url)
 let child, stopped, manager, plugin, removeBridge, output = "", failure, held, hold = false, stage = "setup"
 const diagnosticReads = []
 const gates = [], failedGates = [], failures = []
@@ -170,7 +170,7 @@ try {
         const task = mission?.tasks.find(value => value.key === command.input?.taskKey)
         const actor = mission?.actors.find(value => value.sessionId === task?.actorSessionId)
         Object.assign(receipt.rejectedAdmission, { taskStatus: task?.status, actorSessionID: actor?.sessionId, actorManaged: actor?.managed,
-          expectedFreshActorSessionID: task && `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}` })
+          actorDerivedFromTask: task && actor ? isMissionTaskSession(actor.sessionId, mission.id, task.id) : undefined })
         receipt.failureSnapshot = snapshot
       })().catch(() => { receipt.rejectedAdmission.observation = "unknown" }))
       return

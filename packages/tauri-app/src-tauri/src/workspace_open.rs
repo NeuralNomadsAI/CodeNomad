@@ -251,6 +251,9 @@ fn spawn_candidate(
 ) -> std::io::Result<()> {
     let mut command = Command::new(&candidate.command);
     command.args(&candidate.args);
+    // The editor outlives this AppImage's mount.
+    #[cfg(target_os = "linux")]
+    crate::appimage_environment::use_host_environment(&mut command);
     if candidate.pass_path {
         command.arg(selected_path);
     }

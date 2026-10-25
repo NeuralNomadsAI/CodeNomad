@@ -12,14 +12,7 @@
     "allow-window-control",
     "allow-popup-titlebar-menu",
     "dialog:allow-open",
-    {
-      "identifier": "opener:allow-open-url",
-      "allow": [
-        { "url": "http://*" },
-        { "url": "https://*" },
-        { "url": "mailto:*" }
-      ]
-    },
+    "allow-open-external-url",
     "notification:allow-is-permission-granted",
     "notification:allow-request-permission",
     "notification:allow-notify",

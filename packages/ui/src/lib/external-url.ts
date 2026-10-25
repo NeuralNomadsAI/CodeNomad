@@ -5,11 +5,11 @@ export async function openExternalUrl(url: string, context = "ui"): Promise<bool
     return false
   }
 
-  // Application and Preferences windows hold the opener permission; remote windows do not.
+  // Application and Preferences windows hold the host's opener command; remote windows do not.
   if (isTauriHost() && isNativeApplicationWindow()) {
     try {
-      const { openUrl } = await import("@tauri-apps/plugin-opener")
-      await openUrl(url)
+      const { invoke } = await import("@tauri-apps/api/core")
+      await invoke("open_external_url", { url })
       return true
     } catch (error) {
       console.warn(`[${context}] unable to open via system opener`, error)

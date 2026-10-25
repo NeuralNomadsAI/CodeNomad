@@ -1,4 +1,5 @@
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, stableToken, type MissionStorage } from "./journal"
+import { isMissionCoordinatorSession } from "./session-identity"
 import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
 import { parseRecurrenceDocument, RECURRENCE_STORAGE_PREFIX, type RecurrenceDocument } from "./recurrence-contract"
 
@@ -25,7 +26,7 @@ export function archivedRecurrencePassage(storage: MissionStorage, input: Recurr
   if (!receipt || !("missionID" in receipt.result)) throw new Error("Archived recurrence result unavailable")
   const isolated = passageJournal(storage, doc, receipt.passage.id, () => { throw new Error("Archived recurrence is read-only") })
   if (receipt.result.missionID !== isolated.missionID
-    || receipt.result.conversationID !== `ses_${stableToken(`${isolated.missionID}\0coordinator`, 26)}`)
+    || !isMissionCoordinatorSession(receipt.result.conversationID, isolated.missionID))
     throw new Error("Archived recurrence mission conflict")
   return { receipt, ...isolated }
 }

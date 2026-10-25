@@ -6,6 +6,7 @@ import { projectMissionActivity } from "../../missions/activity"
 import { recurrenceIDSchema } from "../../missions/recurrence-contract"
 import { recurrenceCurrentContentInput, recurrenceCurrentContentPage } from "../../missions/recurrence-current"
 import { stableToken } from "../../missions/journal"
+import { isMissionCoordinatorSession } from "../../missions/session-identity"
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import type { WorkspaceManager } from "../../workspaces/manager"
@@ -62,7 +63,7 @@ export function registerMissionRecurrenceCurrent(app: FastifyInstance, deps: Dep
         const missionID = result.passageID ? `msn_${stableToken(`${result.projectID}\0${result.passageID}`, 24)}` : undefined
         if ("mission" in result && result.mission && (result.mission.id !== missionID || result.mission.projectID !== result.projectID
           || result.mission.projectCanonical !== result.projectCanonical
-          || result.mission.coordinatorSessionId !== `ses_${stableToken(`${missionID}\0coordinator`, 26)}`
+          || !missionID || !isMissionCoordinatorSession(result.mission.coordinatorSessionId, missionID)
           || result.mission.actors.length > 8 || result.mission.tasks.length > 96)) throw new Error("Foreign current recurrence mission")
         if ("missionID" in result && (result.passageID !== params.data.passageID || result.missionID !== missionID)) throw new Error("Foreign current recurrence content")
       }

@@ -6,4 +6,6 @@ export const markdownMessages = {
   "markdown.codeBlock.wrap.disable": "Отключить перенос строк",
 
   "markdown.copy": "Копировать",
+
+  "markdown.link.previewOpens": "Открывается в веб-предпросмотре. Ctrl+щелчок (⌘-щелчок на macOS) или щелчок средней кнопкой открывает ссылку в браузере.",
 } as const

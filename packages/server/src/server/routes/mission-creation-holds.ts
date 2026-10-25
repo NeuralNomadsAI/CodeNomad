@@ -7,7 +7,8 @@ export interface MissionCreationOperation {
   workspaceID: string
   projectID: string
   missionID: string
-  sessionID: string
+  /** The root session when known before creation. */
+  sessionID?: string
   requestDigest: string
 }
 interface Binding extends MissionCreationOperation {

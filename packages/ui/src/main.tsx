@@ -8,7 +8,7 @@ import { runtimeEnv } from "./lib/runtime-env"
 import { I18nProvider, preloadLocaleMessages } from "./lib/i18n"
 import { storage } from "./lib/storage"
 import { applyColorScheme, normalizeColorScheme } from "./lib/theme-scheme"
-import { usesClientState } from "./lib/runtime-env"
+import { isNativeApplicationWindow, isTauriHost, usesClientState } from "./lib/runtime-env"
 import "./index.css"
 import "@git-diff-view/solid/styles/diff-view-pure.css"
 
@@ -26,6 +26,10 @@ if (typeof document !== "undefined") {
 }
 
 async function bootstrap() {
+  if (isTauriHost() && isNativeApplicationWindow()) {
+    const { installExternalLinkClicks } = await import("./lib/native/external-link-clicks")
+    installExternalLinkClicks(window)
+  }
   let RootComponent: Component = PreferencesWindow
   if (usesClientState(runtimeEnv)) {
     const [{ initializeClientState }, { runStartupStateCommand }, { installNativeStartupStateCommandHandler }, appModule] = await Promise.all([
