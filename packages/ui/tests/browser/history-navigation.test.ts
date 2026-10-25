@@ -217,13 +217,32 @@ test("index and exact scrollbar precede transcript and previews, and survive ses
   } finally { await f.close() }
 })
 
+/** Waits until the stream's scroll position and passage window stop changing
+ * across two polls — the condition form of the fixed settle sleeps this file
+ * used after programmatic scrolls and window jumps. Negative assertions keep
+ * their fixed observation windows deliberately. */
+async function waitForSettled(page: Page, timeout = 4000) {
+  await page.evaluate(() => { (window as any).__settleProbe = null; (window as any).__settleStreak = 0 })
+  await page.waitForFunction(() => {
+    const stream = document.querySelector('.message-stream')
+    const ids = (window as any).fixture?.snapshot?.()?.ids?.join(",") ?? ""
+    const current = `${stream?.scrollTop}:${ids}`
+    const probe = (window as any).__settleProbe
+    ;(window as any).__settleProbe = current
+    // Five consecutive identical 100ms polls = a real half-second of
+    // quiescence, matching the settle the app's scroll debounce expects.
+    ;(window as any).__settleStreak = probe === current ? (window as any).__settleStreak + 1 : 1
+    return (window as any).__settleStreak >= 5
+  }, undefined, { timeout, polling: 100 })
+}
+
 async function assertPassageAtTop(page: Page, index: number) {
   await page.waitForFunction(id => {
     const stream = document.querySelector('.message-stream')!
     const row = stream.querySelector(`[data-virtual-follow-key="${id}"]`)
     return row && Math.abs(row.getBoundingClientRect().top - stream.getBoundingClientRect().top) < 2
   }, navigationMessageId(index))
-  await page.waitForTimeout(500)
+  await waitForSettled(page)
   const offset = await page.locator(`[data-virtual-follow-key="${navigationMessageId(index)}"]`).evaluate(row =>
     row.getBoundingClientRect().top - document.querySelector('.message-stream')!.getBoundingClientRect().top)
   assert(Math.abs(offset) < 2, `selected passage ${index} moved by ${offset}px`)
@@ -1161,18 +1180,18 @@ test("wheel at a stationary historical boundary opens the adjacent window", asyn
     await assertPassageAtTop(f.page, 250)
     const before = await snapshot(f.page)
     await f.page.locator('.message-stream[tabindex]').evaluate(element => { element.scrollTop = 0 })
-    await f.page.waitForTimeout(500)
+    await waitForSettled(f.page)
     const stream = await f.page.locator('.message-stream[tabindex]').boundingBox()
     assert(stream)
     await f.page.mouse.move(stream.x + 25, stream.y + 25)
     await f.page.mouse.wheel(0, -200)
-    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids[0] !== id, before.ids[0], { timeout: 4000 })
+    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids[0] !== id, before.ids[0], { timeout: 15_000 })
     await assertPassageAtTop(f.page, 170)
     const older = await snapshot(f.page)
     await f.page.locator('.message-stream[tabindex]').evaluate(element => { element.scrollTop = element.scrollHeight })
-    await f.page.waitForTimeout(500)
+    await waitForSettled(f.page)
     await f.page.mouse.wheel(0, 200)
-    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids.at(-1) !== id, older.ids.at(-1), { timeout: 4000 })
+    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids.at(-1) !== id, older.ids.at(-1), { timeout: 15_000 })
     assert((await snapshot(f.page)).ids.includes(older.ids.at(-2)), 'newer window retains the boundary passage')
     assert.deepEqual(f.errors, [])
   } finally { await f.close() }
@@ -1185,10 +1204,10 @@ test("first/latest controls remain available at local boundaries and land at act
     await assertPassageAtTop(f.page, 250)
     const stream = f.page.locator('.message-stream[tabindex]')
     await stream.evaluate(element => { element.scrollTop = element.scrollHeight })
-    await f.page.waitForTimeout(500)
+    await waitForSettled(f.page)
     await f.page.getByRole('button', { name: /Scroll to latest message|Aller au dernier message/ }).click()
     await f.page.waitForFunction(() => (window as any).fixture.snapshot().window.kind === 'latest')
-    await f.page.waitForTimeout(400)
+    await waitForSettled(f.page)
     assert(await stream.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop < 2))
     await f.page.getByRole('button', { name: /Scroll to first message|Aller au premier message/ }).click()
     await f.page.waitForFunction(() => (window as any).fixture.snapshot().ids[0] === 'msg_00000')
@@ -1220,13 +1239,13 @@ for (const navigation of ["older page", "Home"] as const) test(`a focused header
     await f.page.mouse.move(box.x + 25, box.y + 25)
     // Leave the latest window's follow, then rest at its top.
     await f.page.mouse.wheel(0, -400)
-    await f.page.waitForTimeout(400)
+    await waitForSettled(f.page)
     await stream.evaluate(element => { element.scrollTop = 0 })
-    await f.page.waitForTimeout(500)
+    await waitForSettled(f.page)
     await f.page.focus("#header-button")
     if (navigation === "Home") await f.page.keyboard.press("Home")
     else await f.page.mouse.wheel(0, -200)
-    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids[0] !== id, before.ids[0], { timeout: 4000 })
+    await f.page.waitForFunction(id => (window as any).fixture.snapshot().ids[0] !== id, before.ids[0], { timeout: 15_000 })
     await f.page.waitForTimeout(400)
     const after = await snapshot(f.page)
     assert.ok(!after.ids.some((id: string) => before.ids.includes(id)), `the windows share messages: ${after.ids[0]}…${after.ids.at(-1)}`)

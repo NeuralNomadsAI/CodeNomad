@@ -62,7 +62,7 @@ async function fixture(run: (page: Page) => Promise<void>) {
     return route.continue()
   })
   try {
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await page.goto(url, { waitUntil: "domcontentloaded" })
     await page.waitForFunction(() => Boolean((window as any).compactionFixture), undefined, { timeout: 30_000 })
     await page.waitForTimeout(300)
     await run(page)
