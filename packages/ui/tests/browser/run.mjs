@@ -13,9 +13,10 @@ const dryRun = process.argv.includes("--dry-run")
 
 const files = (await readdir(directory)).filter(file => file.endsWith(".test.ts")).sort()
 const exemptionSource = await readFile(path.join(directory, "fixture-exemptions.ts"), "utf8")
-const exempt = new Set([...exemptionSource.matchAll(/"([^"]+)":/g)].map(match => match[1]))
-const borrowed = files.filter(file => !exempt.has(file))
-const owned = files.filter(file => exempt.has(file))
+const reasons = new Map([...exemptionSource.matchAll(/"([^"]+)":\s*"([^"]+)"/g)].map(match => [match[1], match[2]]))
+const heavy = reason => /owns its server|electron|stateful|diagnostic|instruments|config diverges|custom Vite|pending/i.test(reason)
+const borrowed = files.filter(file => !reasons.has(file) || !heavy(reasons.get(file)))
+const owned = files.filter(file => reasons.has(file) && heavy(reasons.get(file)))
 
 console.log(`tiered run: ${borrowed.length} borrowed (4-wide) + ${owned.length} exempt (2-wide)`)
 if (dryRun) { console.log(borrowed.join("\n")); process.exit(0) }
