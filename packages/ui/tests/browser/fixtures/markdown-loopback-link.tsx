@@ -20,17 +20,20 @@ serverApi.deletePreview = async () => undefined as any
 
 addInstance({ id: "instance", folder: "/fixture", port: 0, pid: 0, proxyPath: "", status: "ready", client: undefined as never })
 
+const resolvePreviews = async (meta: Record<string, unknown>) => {
+  const original = serverApi.fetchServerMeta
+  serverApi.fetchServerMeta = async () => meta as any
+  try {
+    await getServerMeta(true)
+  } finally {
+    serverApi.fetchServerMeta = original
+  }
+}
+
 ;(window as any).fixture = {
   created: () => created,
-  setPreviewsUnavailable: async () => {
-    const meta = serverApi.fetchServerMeta
-    serverApi.fetchServerMeta = async () => ({ previewsUnavailable: true }) as any
-    try {
-      await getServerMeta(true)
-    } finally {
-      serverApi.fetchServerMeta = meta
-    }
-  },
+  resolvePreviewsAvailable: () => resolvePreviews({}),
+  setPreviewsUnavailable: () => resolvePreviews({ previewsUnavailable: true }),
 }
 
 render(
@@ -39,7 +42,7 @@ render(
       <I18nProvider>
         <div id="markdown-root">
           <Markdown
-            part={{ id: "part-link-fixture", type: "text", text: "[dev](http://localhost:3000/) and [ext](https://example.com/) and [other](http://localhost:9999/)" }}
+            part={{ id: "part-link-fixture", type: "text", text: "[dev](http://localhost:3000/) and [ext](https://example.com/) and [other](http://localhost:9999/) and [titled](http://localhost:9998/ \"Custom title\") and [dns](https://127.example.com/)" }}
             instanceId="instance"
             sessionId="session-link"
           />

@@ -17,9 +17,13 @@ import { isLoopbackHttpUrl } from "./browser-frame-security"
 import { openSessionPreview } from "../stores/session-previews"
 import { instances } from "../stores/instances"
 import { showAlertDialog } from "../stores/alerts"
-import { previewsUnavailable } from "../lib/server-meta"
+import { previewsUnavailable, previewsAvailabilityResolved, getServerMeta } from "../lib/server-meta"
 
 const log = getLogger("session")
+
+// One session-bound Markdown instance asks for the server meta; the answer
+// decides whether loopback links may open the web preview on this client.
+let loopbackPreviewMetaRequested = false
 
 type MarkdownModule = typeof import("../lib/markdown")
 
@@ -147,9 +151,17 @@ export function Markdown(props: MarkdownProps) {
   }
 
   // Whether clicking a loopback link opens the web preview on this client.
-  // Remote Control clients whose host keeps web previews off have no working
-  // preview surface, so links there keep their default browser behavior.
-  const loopbackLinksOpenPreview = () => !previewsUnavailable()
+  // Availability must be known first: through Remote Control with previews
+  // off the default false would otherwise open a dead preview before the
+  // server meta answers. Other callers (update checks, settings) usually
+  // resolve the meta earlier.
+  const loopbackLinksOpenPreview = () => previewsAvailabilityResolved() && !previewsUnavailable()
+  if (props.instanceId && props.sessionId && !previewsAvailabilityResolved() && !loopbackPreviewMetaRequested) {
+    loopbackPreviewMetaRequested = true
+    void getServerMeta().catch(() => {
+      loopbackPreviewMetaRequested = false
+    })
+  }
 
   const [html, setHtml] = createSignal("")
   // Whether `html` is the Markdown render rather than its plain-text fallback. The
@@ -391,8 +403,11 @@ export function Markdown(props: MarkdownProps) {
 
   createEffect(() => {
     html()
-    const previewAvailable = loopbackLinksOpenPreview()
-    const title = previewAvailable ? t("markdown.link.previewOpens") : ""
+    // Decorate exactly the links that intercept: only session-bound loopback
+    // links while previews are known available, and never over an author's
+    // own title attribute.
+    const decorate = Boolean(props.instanceId && props.sessionId) && loopbackLinksOpenPreview()
+    const title = decorate ? t("markdown.link.previewOpens") : ""
     Promise.resolve().then(() => {
       if (disposed || !containerRef) {
         return
@@ -402,9 +417,13 @@ export function Markdown(props: MarkdownProps) {
           continue
         }
         if (title) {
-          anchor.setAttribute("title", title)
-        } else {
+          if (!anchor.hasAttribute("title")) {
+            anchor.setAttribute("title", title)
+            anchor.setAttribute("data-preview-link-title", "true")
+          }
+        } else if (anchor.getAttribute("data-preview-link-title") === "true") {
           anchor.removeAttribute("title")
+          anchor.removeAttribute("data-preview-link-title")
         }
       }
     })
