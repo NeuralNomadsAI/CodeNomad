@@ -7,10 +7,9 @@
 //   node tests/browser/shard.mjs <index-1-based> <total> [--dry-run]
 import { spawn } from "node:child_process"
 import { mkdir, readFile, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
 import path from "node:path"
-import { createHash } from "node:crypto"
 import { fileURLToPath } from "node:url"
+import { readyDirectoryFor } from "./fixture-daemon/paths.ts"
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const [index = "1", total = "1", dryRun] = process.argv.slice(2)
@@ -50,8 +49,7 @@ child.on("close", async code => {
 })
 
 async function ensureDaemon() {
-  const runKey = createHash("sha1").update(uiRoot).digest("hex").slice(0, 12)
-  const readyDirectory = path.join(tmpdir(), `codenomad-fixture-daemon-${runKey}`)
+  const readyDirectory = readyDirectoryFor(uiRoot)
   const readyFile = path.join(readyDirectory, "ready")
   const probe = async () => readFile(readyFile, "utf8")
     .then(JSON.parse)

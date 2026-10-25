@@ -2,6 +2,7 @@
 // The shared fixture daemon entry: one canonical Vite server per machine,
 // discoverable through a ready file, controlled over HTTP by borrowers.
 import { mkdir, readFile, rm } from "node:fs/promises"
+import { createWriteStream } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import { startFixtureDaemon } from "./server.ts"
@@ -29,6 +30,15 @@ for (let attempt = 0; attempt < 2 && !claimed; attempt++) {
 }
 if (!claimed) process.exit(0)
 
+// Everything the daemon says — including crash traces — lands beside its
+// ready file instead of a detached process's black hole.
+const logStream = createWriteStream(path.join(readyDirectory, "daemon.log"), { flags: "a" })
+const emit = (...args) => logStream.write(`${args.join(" ")}\n`)
+const originalLog = console.log.bind(console), originalError = console.error.bind(console)
+console.log = (...args) => { emit(...args); originalLog(...args) }
+console.error = (...args) => { emit(...args); originalError(...args) }
+process.on("uncaughtException", error => { emit("uncaughtException", error?.stack ?? String(error)); void shutdown(1) })
+
 const daemon = await startFixtureDaemon({ directory: uiRoot })
 let lastActivity = Date.now()
 // Controls first, then startup warmup (one real page load settles Vite's lazy
@@ -55,8 +65,11 @@ daemon.installControl(async (request, response) => {
   return false
 })
 
-await daemon.warmup({ routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/alert-dialog.tsx"></script></body></html>' }] })
 await daemon.announce(readyFile)
+// Warm up after announcing: controls are already installed, so the health
+// probe is honest; the first borrower may still pay part of the cold graph,
+// but no spawn deadline is held hostage by a full page load.
+void daemon.warmup({ routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/alert-dialog.tsx"></script></body></html>' }] })
 
 const idleTimer = setInterval(() => {
   if (Date.now() - lastActivity > idleTimeoutMs) void shutdown(0)
@@ -65,6 +78,7 @@ idleTimer.unref()
 
 async function shutdown(code) {
   clearInterval(idleTimer)
+  emit(JSON.stringify({ kind: "fixture-daemon-shutdown", rssMB: Math.round(process.memoryUsage().rss / 1048576), transforms: daemon.stats.transforms, registeredRoutes: daemon.registeredCount }))
   try { await daemon.close() } catch { /* the ready file is removed regardless */ }
   await rm(readyDirectory, { recursive: true, force: true })
   process.exit(code)

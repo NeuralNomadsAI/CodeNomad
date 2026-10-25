@@ -18,7 +18,11 @@ const borrowed = files.filter(file => !heavyServers.has(file))
 const owned = files.filter(file => heavyServers.has(file))
 
 console.log(`tiered run: ${borrowed.length} borrowed + ${owned.length} exempt (widths via CODENOMAD_TIERED_LIGHT_WIDTH/HEAVY_WIDTH)`)
-if (dryRun) { console.log(borrowed.join("\n")); process.exit(0) }
+if (dryRun) {
+  console.log("--- borrowed:"); for (const file of borrowed) console.log(file)
+  console.log("--- exempt:"); for (const file of owned) console.log(file)
+  process.exit(0)
+}
 
 let failures = 0
 for (const [label, slice, concurrency] of [["borrowed", borrowed, Number(process.env.CODENOMAD_TIERED_LIGHT_WIDTH ?? 3)], ["exempt", owned, Number(process.env.CODENOMAD_TIERED_HEAVY_WIDTH ?? 2)]]) {

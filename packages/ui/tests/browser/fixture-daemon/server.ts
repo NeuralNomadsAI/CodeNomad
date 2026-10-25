@@ -17,6 +17,7 @@ export interface FixtureDaemon {
   readonly baseUrl: string
   readonly secret: string
   readonly stats: { transforms: number }
+  readonly registeredCount: number
   register(definition: FixtureDefinition): Promise<string>
   installControl(handler: ControlHandler): void
   announce(readyFile: string): Promise<void>
@@ -72,6 +73,7 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile }: {
 
   return {
     port, baseUrl, secret, stats,
+    get registeredCount() { return urls.size },
     async register(definition) {
       if (!/^[\w-]+$/.test(definition.name) || !definition.routes?.length) throw new Error("invalid fixture definition")
       const fingerprint = createHash("sha256").update(JSON.stringify(definition)).digest("hex")
