@@ -35,6 +35,16 @@ test("an armed budget covers pages created through newContext and keeps context 
   await context.close()
 })
 
+test("an armed budget also bounds action waits, not only navigation", async () => {
+  armFixtureNavigationBudget(browser, 500)
+  const page = await browser.newPage()
+  await page.goto("about:blank")
+  const started = performance.now()
+  await assert.rejects(page.waitForFunction(() => false), error => error.name === "TimeoutError")
+  assert.ok(performance.now() - started < 5_000, "armed budget must cut the default 30 s action-wait too")
+  await page.close()
+})
+
 test("arming twice stays safe and unarmed pages keep Playwright's own default", async () => {
   armFixtureNavigationBudget(browser, 500)
   armFixtureNavigationBudget(browser, 500)
