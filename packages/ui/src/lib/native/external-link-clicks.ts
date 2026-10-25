@@ -6,13 +6,15 @@ const EXTERNAL_PROTOCOLS = new Set(["http:", "https:", "mailto:"])
  * Opens anchors that ask for a new window (`target="_blank"`, or a Ctrl/Shift
  * click) in the system handler through the host's opener command, as the Tauri
  * opener plugin's click handler would. The host disables that handler: its
- * plugin command would bypass the host's environment and URL policy.
+ * plugin command would bypass the host's environment and URL policy. `target`
+ * may be a trusted same-origin frame's window (SideCars), whose nodes belong to
+ * another realm, so anchors are recognized by name rather than by prototype.
  */
 export function installExternalLinkClicks(target: Window): () => void {
   const onClick = (event: MouseEvent) => {
     if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.altKey) return
     const anchor = event.composedPath().find((node): node is HTMLAnchorElement =>
-      node instanceof Node && node.nodeName.toUpperCase() === "A")
+      String((node as { nodeName?: unknown }).nodeName).toUpperCase() === "A")
     if (!anchor?.href || (anchor.target !== "_blank" && !event.ctrlKey && !event.shiftKey)) return
     let url: URL
     try {

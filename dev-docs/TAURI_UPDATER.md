@@ -170,7 +170,9 @@ through `external_open.rs`, including the renderer's `open_external_url`
 command; the windows hold no opener plugin permission that would bypass it, and
 the plugin's injected click handler is off: `lib/native/external-link-clicks.ts`
 opens anchors that ask for a new window (`target="_blank"`, Ctrl or Shift)
-through `openExternalUrl` instead.
+through `openExternalUrl` instead, in the application and Preferences windows
+and in each document a trusted same-origin SideCar frame loads; opaque preview
+and panel-extension frames get no opener.
 
 Verification extracts via an absolute artifact path, checks `AppRun` and
 `usr/bin/codenomad-tauri`, rejects an image that bundles those host libraries,
