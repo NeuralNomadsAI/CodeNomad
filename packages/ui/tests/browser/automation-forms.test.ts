@@ -1,19 +1,16 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import type { Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { launchAutomationBrowser, openAutomationPage } from "./automation-session"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-editor-lifetime"
 
 // The real codenomad.inspect/act controller drives real pages over Chromium's DevTools
 // endpoint, exactly as it drives the CodeNomad window (#1008).
-let server: ViteDevServer, automation: Awaited<ReturnType<typeof launchAutomationBrowser>>, base: string
+let automation: Awaited<ReturnType<typeof launchAutomationBrowser>>, base: string
 
 const FORM = `<!doctype html><html lang="en"><body><main>
   <label>Title <input id="title" value="Prefilled"></label>
@@ -51,26 +48,19 @@ const EDGES = `<!doctype html><html lang="en"><body><main>
 
 
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [solid(), shutdown.plugin, { name: "automation-forms", configureServer(s) {
-      s.middlewares.use("/automation-form", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(FORM) })
-      s.middlewares.use("/automation-edges", (_req, res) => { res.setHeader("Content-Type", "text/html"); res.end(EDGES) })
-      s.middlewares.use("/automation-editor", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/automation-editor", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-lifetime.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  shutdown.own(server)
-  await server.listen()
-  base = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}`
+  const fixture = await borrowFixture({
+      name: "automation-forms",
+      routes: [
+        { path: "/automation-editor", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-editor-lifetime.tsx\"></script></body></html>" },
+      ],
+    })
+  base = fixture.url
   automation = await launchAutomationBrowser()
 })
 
 after(async () => {
   await automation?.close()
-  await server?.close()
-})
+  })
 
 const open = (pathname: string, setup?: (page: Page) => Promise<void>) => openAutomationPage(automation, `${base}${pathname}`, setup)
 
