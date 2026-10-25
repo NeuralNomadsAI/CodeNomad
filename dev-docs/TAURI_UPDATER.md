@@ -167,7 +167,10 @@ hook also points GTK, GIO and GSettings at modules inside the mount
 and through it the shared OpenCode service, the editors CodeNomad opens and link
 handlers outlive the mount, so they start without those mount paths. Links open
 through `external_open.rs`, including the renderer's `open_external_url`
-command; the windows hold no opener plugin permission that would bypass it.
+command; the windows hold no opener plugin permission that would bypass it, and
+the plugin's injected click handler is off: `lib/native/external-link-clicks.ts`
+opens anchors that ask for a new window (`target="_blank"`, Ctrl or Shift)
+through `openExternalUrl` instead.
 
 Verification extracts via an absolute artifact path, checks `AppRun` and
 `usr/bin/codenomad-tauri`, rejects an image that bundles those host libraries,

@@ -7,7 +7,7 @@
 //! Paths are bytes on Linux; nothing here assumes UTF-8.
 
 use std::collections::HashMap;
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::process::Command;
 
@@ -21,9 +21,19 @@ pub(crate) fn prefer_x11_display() {
 
 /// `environment`, to replace a child's whole environment, without this AppImage's mount paths.
 pub(crate) fn host_environment(environment: HashMap<String, String>) -> HashMap<String, String> {
-    let Some(mount) = mount() else {
-        return environment;
-    };
+    match mount() {
+        Some(mount) => without_mount_in(environment, &mount),
+        None => environment,
+    }
+}
+
+/// A Unicode environment snapshot (the login shell's, serialized by Node) spells
+/// a non-UTF-8 mount with U+FFFD, as the lossy conversion does.
+fn without_mount_in(
+    environment: HashMap<String, String>,
+    mount: &OsStr,
+) -> HashMap<String, String> {
+    let mount = mount.to_string_lossy();
     environment
         .into_iter()
         .filter_map(
@@ -84,7 +94,33 @@ fn inside(entry: &[u8], mount: &[u8]) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::without_mount;
+    use super::{without_mount, without_mount_in};
+    use std::collections::HashMap;
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+
+    #[test]
+    fn a_unicode_snapshot_matches_a_non_utf8_mount_lossily() {
+        let mount = OsStr::from_bytes(b"/tmp/.mount_Code\xff");
+        let snapshot = HashMap::from([
+            (
+                "GIO_MODULE_DIR".to_string(),
+                "/tmp/.mount_Code\u{fffd}/usr/lib/gio/modules".to_string(),
+            ),
+            (
+                "LD_LIBRARY_PATH".to_string(),
+                "/tmp/.mount_Code\u{fffd}/usr/lib:/usr/lib".to_string(),
+            ),
+            ("HOME".to_string(), "/home/u".to_string()),
+        ]);
+        assert_eq!(
+            without_mount_in(snapshot, mount),
+            HashMap::from([
+                ("LD_LIBRARY_PATH".to_string(), "/usr/lib".to_string()),
+                ("HOME".to_string(), "/home/u".to_string()),
+            ])
+        );
+    }
 
     const MOUNT: &[u8] = b"/tmp/.mount_CodeNoAb12";
 
