@@ -172,6 +172,10 @@ it("SideCar WebSocket upgrades require the SameSite session cookie a same-origin
     const anonymous = await webSocketUpgrade(server.port, "/sidecars/fixture/ws", {})
     assert.equal(anonymous.status, 401)
 
+    // An opaque-origin frame is refused even with the session cookie, as over HTTP.
+    const opaque = await webSocketUpgrade(server.port, "/sidecars/fixture/ws", { cookie: server.cookie, origin: "null" })
+    assert.equal(opaque.status, 403)
+
     const authenticated = await webSocketUpgrade(server.port, "/sidecars/fixture/ws", { cookie: server.cookie })
     assert.equal(authenticated.status, 101)
     assert.match(authenticated.head, /^HTTP\/1\.1 101 Switching Protocols/i)
