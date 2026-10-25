@@ -151,13 +151,21 @@ unusable musl ELF and aborts. For local rebuilds after a failed packaging run, r
 `target/release/bundle/appimage` and `target/release/bundle/appimage_deb` staging
 directories: the latter can retain removed resources between bundle attempts.
 
-The display and GPU stack comes from the host: the Tauri CLI (at least 2.12.1)
-runs a linuxdeploy that leaves `libwayland-*`, `libxkbcommon`, `libxcb*`,
-`libX11*`, `libXau`, `libXdmcp` and the EGL/GL/gbm/drm libraries out of the
-image, and its GTK hook leaves `GDK_BACKEND` to the session, so GTK runs natively
-on Wayland. A build-runner copy on AppRun's library path makes Mesa's EGL fail on
+The display and GPU stack comes from the host. The Linux job's
+`APPIMAGE_HOST_LIBRARIES` (`libwayland-*`, `libxkbcommon`, `libxcb*`, `libX11*`,
+`libXau`, `libXdmcp`, EGL/GL/gbm/drm) reaches linuxdeploy as
+`LINUXDEPLOY_EXCLUDED_LIBRARIES`, on top of the excludelist of Tauri CLI 2.12.1
+or later. A build-runner copy on AppRun's library path makes Mesa's EGL fail on
 newer distributions (an Ubuntu 24.04 `libwayland-client` with Mesa 26), and
 WebKit's window then stays black.
+
+The AppRun hook leaves `GDK_BACKEND` to the session; `appimage_environment.rs`
+makes GTK prefer X11 (XWayland) and fall back to Wayland without an X server
+unless it is set, because the F11 fullscreen shortcut is an X11 key grab. The
+hook also points GTK, GIO and GSettings at modules inside the mount
+(`GIO_MODULE_DIR`, `GTK_PATH`, a prefixed `XDG_DATA_DIRS`, ...). The backend,
+and through it the shared OpenCode service, and the editors CodeNomad opens
+outlive the mount, so they start without those mount paths.
 
 Verification extracts via an absolute artifact path, checks `AppRun` and
 `usr/bin/codenomad-tauri`, rejects an image that bundles those host libraries,
@@ -188,7 +196,8 @@ from elsewhere, such as the shared OpenCode service, keep running.
   admission, conflict with an existing quit and Windows logout.
 - The vendored Windows launch regression checks success-only ownership release.
 - On Linux, `appimage_exit.rs` tests stop a child running from a temporary
-  mount while sparing one running elsewhere. A real AppImage must quit without
+  mount while sparing one running elsewhere; `appimage_environment.rs` tests drop
+  mount entries from path lists and keep host values. A real AppImage must quit without
   leaving WebKit helpers or a crash report in `/var/crash`.
 - Browser tests exercise the real update store and toast actions, explicit install,
   duplicate gestures, failure recovery (including after a reload), feed

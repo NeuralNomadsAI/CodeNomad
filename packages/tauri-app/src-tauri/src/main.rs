@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(target_os = "linux")]
+mod appimage_environment;
+#[cfg(target_os = "linux")]
 mod appimage_exit;
 mod browser_controller;
 #[allow(dead_code)]
@@ -1745,6 +1747,8 @@ fn main() {
         std::env::remove_var("CLI_CONFIG");
     }
     configure_developer_environment();
+    #[cfg(target_os = "linux")]
+    appimage_environment::prefer_x11_display();
     let identity::LaunchProfile {
         key: profile,
         pinned: profile_pinned,
