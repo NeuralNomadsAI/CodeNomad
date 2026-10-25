@@ -3,36 +3,26 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 const captures = fileURLToPath(new URL("../../../../.tmp/message-tokens/", import.meta.url))
 before(async () => {
-  await mkdir(captures, { recursive: true })
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  try {
-    server = await createServer({
-      configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-      plugins: [shutdown.plugin, solid(), { name: "usage-metrics", configureServer(s) {
-        s.middlewares.use("/fixture", async (_req, res) => {
-          res.setHeader("Content-Type", "text/html")
-          res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/usage-metrics.tsx"></script></body></html>'))
-        })
-      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+  const fixture = await borrowFixture({
+      name: "usage-metrics",
+      routes: [
+        { path: "/fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/usage-metrics.tsx\"></script></body></html>" },
+      ],
     })
-    shutdown.own(server)
-    await server.listen()
-    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  await mkdir(captures, { recursive: true })
+  try {
+    url = fixture.url
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
     armFixtureNavigationBudget(browser)
-  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
+  } catch (error) { throw error }
 })
-after(async () => { try { await browser?.close() } finally { await server?.close() } })
+after(async () => { try { await browser?.close() } finally { } })
 
 async function open(run: (page: Page) => Promise<void>) {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, locale: "en-US", reducedMotion: "reduce" })

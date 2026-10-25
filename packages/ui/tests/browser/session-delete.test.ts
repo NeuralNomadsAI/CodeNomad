@@ -1,35 +1,24 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, webkit, type Browser } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  try {
-    server = await createServer({
-      configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-      cacheDir: cache.cacheDir,
-      plugins: [shutdown.plugin, solid(), { name: "session-delete-fixture", configureServer(s) {
-        s.middlewares.use("/fixture", async (_req, res) => {
-          res.setHeader("Content-Type", "text/html")
-          res.end(await s.transformIndexHtml("/fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1.0"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/header-windows.tsx"></script></body></html>'))
-        })
-      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+  const fixture = await borrowFixture({
+      name: "session-delete",
+      routes: [
+        { path: "/fixture", html: "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/header-windows.tsx\"></script></body></html>" },
+      ],
     })
-    shutdown.own(server)
-    await server.listen()
-    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  try {
+    url = fixture.url
     browser = await (process.env.CODENOMAD_TEST_BROWSER === "webkit" ? webkit : chromium)
       .launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
-  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
+  } catch (error) { throw error }
 })
-after(async () => { try { await browser?.close() } finally { await server?.close() } })
+after(async () => { try { await browser?.close() } finally { } })
 
 for (const { touch, width, name } of [
   { touch: true, width: 390, name: "phone tap" },

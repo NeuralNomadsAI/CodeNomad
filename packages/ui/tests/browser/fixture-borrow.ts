@@ -65,21 +65,34 @@ async function registerOn(ready: ReadyFile, definition: FixtureDefinition): Prom
   return (await response.json()).url
 }
 
+/** Borrowed routes are namespaced under the fixture's name so distinct
+ * fixtures never collide on common paths like "/fixture". */
+function namespaced(definition: FixtureDefinition): FixtureDefinition {
+  return {
+    name: definition.name,
+    routes: definition.routes.map(route => ({
+      path: route.path === "/fixture" ? `/${definition.name}` : `/${definition.name}${route.path}`,
+      html: route.html,
+    })),
+  }
+}
+
 /** Borrows a fixture page. On Linux this registers on the machine's shared
  * fixture daemon (lazily spawned); elsewhere each borrower runs its own
  * canonical server, keeping the suite usable with zero speedup. */
 export async function borrowFixture(definition: FixtureDefinition, options: BorrowOptions = {}): Promise<BorrowedFixture> {
+  const request = namespaced(definition)
   const platform = options.platform ?? process.platform
   if (platform !== "linux") {
     const { startFixtureDaemon } = await import("./fixture-daemon/server")
     const local = await startFixtureDaemon({ directory: uiRoot })
-    const url = await local.register(definition)
+    const url = await local.register(request)
     return { url, close: () => local.close() }
   }
   for (let attempt = 0; attempt < 2; attempt++) {
     const ready = await ensureDaemon()
     try {
-      return { url: await registerOn(ready, definition), close: async () => {} }
+      return { url: await registerOn(ready, request), close: async () => {} }
     } catch (error) {
       spawning = null
       if (attempt === 1) {

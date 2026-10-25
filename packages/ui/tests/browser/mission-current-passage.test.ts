@@ -4,11 +4,8 @@ import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionRecurrenceSnapshot } from "../../src/stores/mission-recurrence"
 /** The plugin wire also carries project identity, which the HTTP route does not project. */
@@ -18,22 +15,19 @@ import { currentRecurrenceContent } from "../../../server/src/missions/recurrenc
 import { captureMissionView } from "./mission-view-capture"
 import { missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [solid(), shutdown.plugin, { name: "current-passage", configureServer(s) {
-      s.middlewares.use("/api/events", (_req, res) => { res.setHeader("Content-Type", "text/event-stream"); res.write(": isolated event dispatcher\n\n") })
-      s.middlewares.use("/passage", async (_req, res) => {
-      res.setHeader("Content-Type", "text/html")
-      res.end(await s.transformIndexHtml("/passage", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-current-passage.tsx"></script></body></html>'))
-    }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  shutdown.own(server); await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/passage`
+  const fixture = await borrowFixture({
+      name: "mission-current-passage",
+      routes: [
+        { path: "/passage", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-current-passage.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); })
 const mission: MissionMap = { version: 1, id: "msn_passage", projectID: "project", projectCanonical: "/fixture", objective: "Finite recurring review", template: "custom",
   status: "active", runState: "running", coordinatorSessionId: "ses_coordinator", revision: 4, createdAt: 1, updatedAt: 4, history: [], historyTruncated: false,
   frontier: [], claims: [], actors: [

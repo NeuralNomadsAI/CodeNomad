@@ -1,35 +1,104 @@
 import assert from "node:assert/strict"
-import { readdir, readFile } from "node:fs/promises"
-import { access } from "node:fs/promises"
+import { readdir, readFile, access } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
 
 const browserTestsDirectory = fileURLToPath(new URL("./", import.meta.url))
 
-/** Files exempt from a rule because they genuinely cannot satisfy it, each
- * name mapped to the rules it may skip and why. Anything not listed here is
- * required to follow the standard fixture wiring. */
-const exemptions: Record<string, Record<string, string>> = {}
+/** Files that keep their own server (or no fixture page at all) instead of
+ * borrowing from the shared daemon. Each name maps to the reason; Vite-hosting
+ * entries must also satisfy the owned-server rules below. Anything not listed
+ * must borrow. */
+const exemptions: Record<string, string> = {
+  "fixture-daemon/server.ts": "the shared canonical server itself",
+  "fixture-shutdown.test.ts": "tests the owned-server shutdown mechanics themselves",
+  "fixture-daemon/daemon.test.ts": "tests the daemon core directly",
+"alert-dialog.test.ts": "instruments the server object directly",
+  "auth-recovery.test.ts": "stateful SSE middleware driven by the test",
+  "automation-input.test.ts": "served by a dedicated harness module that owns its server",
+  "automation-preview.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "browser-emulation-native.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "browser-frame-native.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "compaction-notification.test.ts": "Vite config diverges from the canonical daemon config",
+  "compaction-responsiveness.test.ts": "custom Vite transform/load hook",
+  "composer-alternate-send.test.ts": "served by a dedicated harness module that owns its server",
+  "composer-draft-safety.test.ts": "served by a dedicated harness module that owns its server",
+  "composer-picker-enter.test.ts": "served by a dedicated harness module that owns its server",
+  "composer-resume-typing.test.ts": "served by a dedicated harness module that owns its server",
+  "data-profiles.test.ts": "Vite config diverges from the canonical daemon config",
+  "desktop-updates.test.ts": "instruments the server object directly",
+  "device-upload-lifecycle.test.ts": "served by a dedicated harness module that owns its server",
+  "device-upload.test.ts": "served by a dedicated harness module that owns its server",
+  "drawer-accessibility.test.ts": "Vite config diverges from the canonical daemon config",
+  "event-subscriber-isolation.test.ts": "Vite config diverges from the canonical daemon config",
+  "fixture-cache.test.ts": "no fixture page of its own",
+  "fixture-diagnostic-boundary.test.ts": "no fixture page of its own",
+  "fixture-navigation-budget.test.ts": "no fixture page of its own",
+  "fixture-shutdown.test.ts": "tests the owned-server shutdown mechanics themselves",
+  "fixture-wiring.test.ts": "no fixture page of its own",
+  "git-changes-scale.test.ts": "Vite config diverges from the canonical daemon config",
+  "git-history.test.ts": "Vite config diverges from the canonical daemon config",
+  "git-init.test.ts": "Vite config diverges from the canonical daemon config",
+  "header-fixture-diagnostics.test.ts": "diagnostic harness owns the server lifecycle",
+  "header-windows.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "hotkeys-settings.test.ts": "Vite config diverges from the canonical daemon config",
+  "http-admission-responsiveness.test.ts": "Vite config diverges from the canonical daemon config",
+  "icon-toggle-active.test.ts": "served by a dedicated harness module that owns its server",
+  "interruption-dock.test.ts": "served by a dedicated harness module that owns its server",
+  "markdown-latest-request.test.ts": "custom Vite transform/load hook",
+  "message-scroll.test.ts": "stateful SSE middleware driven by the test",
+  "mission-control-feedback.test.ts": "stateful SSE middleware driven by the test",
+  "mission-lifecycle-navigation.test.ts": "diagnostic harness owns the server lifecycle",
+  "mission-lifecycle-revision.test.ts": "diagnostic harness owns the server lifecycle",
+  "mission-navigation.test.ts": "instruments the server object directly",
+  "mission-recurrence-predispatch.test.ts": "no fixture page of its own",
+  "notification-icon-badge.test.ts": "Vite config diverges from the canonical daemon config",
+  "panel-extensions.test.ts": "stateful SSE middleware driven by the test",
+  "plugin-packages.test.ts": "served by a dedicated harness module that owns its server",
+  "preferences-startup-state.test.ts": "Vite config diverges from the canonical daemon config",
+  "provider-usage.test.ts": "stateful SSE middleware driven by the test",
+  "remote-control-settings.test.ts": "Vite config diverges from the canonical daemon config",
+  "remote-server-pairing.test.ts": "Vite config diverges from the canonical daemon config",
+  "render-cost.test.ts": "custom Vite transform/load hook",
+  "search-highlight.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "service-usage.test.ts": "served by a dedicated harness module that owns its server",
+  "session-aside-harness.test.ts": "served by a dedicated harness module that owns its server",
+  "session-aside.test.ts": "served by a dedicated harness module that owns its server",
+  "session-browser-history.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "session-rendering.test.ts": "diagnostic harness owns the server lifecycle",
+  "shell-navigation.test.ts": "Vite config diverges from the canonical daemon config",
+  "sidecar-sandbox.test.ts": "Vite config diverges from the canonical daemon config",
+  "status-tokens.test.ts": "served by a dedicated harness module that owns its server",
+  "streaming-outline.test.ts": "custom Vite transform/load hook",
+  "system-notification-focus.test.ts": "Vite config diverges from the canonical daemon config",
+  "tab-chrome.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "timeline-sync.test.ts": "served by a dedicated harness module that owns its server",
+  "timeline-tool-filters.test.ts": "served by a dedicated harness module that owns its server",
+  "transcript-presets.test.ts": "served by a dedicated harness module that owns its server",
+  "view-menu-electron.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
+  "workspace-file-refresh.test.ts": "stateful SSE middleware driven by the test",
+}
 
-/** Helper modules every fixture wiring depends on; imports naming them must
- * resolve to a real file, so a wrong relative specifier fails here instead of
- * failing six test files at module load. */
-const helperModules = ["fixture-navigation-budget", "fixture-cache", "fixture-shutdown"]
+/** Helper modules every fixture depends on; imports naming them must resolve
+ * to a real file, so a wrong relative specifier fails here instead of failing
+ * six test files at module load. */
+const helperModules = ["fixture-navigation-budget", "fixture-cache", "fixture-shutdown", "fixture-borrow", "fixture-daemon/server", "fixture-daemon/paths"]
 
 const RULES = {
-  ownedCache: "creates a Vite server but does not use createFixtureCache()",
-  cacheDir: "creates a Vite server but no `cacheDir: <cache>.cacheDir` from the owned cache (a default or fixed node_modules/.vite dir corrupts under parallel optimizer writes)",
-  shutdownPlugin: "creates a Vite server but shutdown.plugin is not in the server plugins",
-  shutdownOwn: "creates a Vite server but shutdown.own(server) is never called, leaving teardown to hang on the optimizer",
+  ownedCache: "hosts a Vite server but does not use createFixtureCache()",
+  cacheDir: "hosts a Vite server but no `cacheDir: <cache>.cacheDir` from the owned cache (a default or fixed node_modules/.vite dir corrupts under parallel optimizer writes)",
+  shutdownPlugin: "hosts a Vite server but shutdown.plugin is not in the server plugins",
+  shutdownOwn: "hosts a Vite server but shutdown.own(server) is never called, leaving teardown to hang on the optimizer",
   navigationBudget: "launches chromium but never calls armFixtureNavigationBudget(browser), so parallel cold starts can exceed the 30 s default navigation timeout",
   importsResolve: "imports a fixture helper module through a specifier that does not resolve to an existing file",
+  mustBorrow: "test file neither borrows from the shared daemon nor is listed in the exemption map — add borrowFixture() or exempt it with a reason",
+  noSelfServer: "test file imports createServer from vite although it is not exempted — borrow from the shared daemon or exempt it with a reason",
 } as const
 type Rule = keyof typeof RULES
 
-/** Any form of module reference to vite: static import, re-export, namespace
- * import or dynamic import — paired with a createServer( call-site below. */
 const referencesVite = /(\bfrom\s*["']vite["'])|(import\(\s*["']vite["']\s*\))/
+const createsViteServerImport = /import\s*\{[^}]*createServer[^}]*\}\s*from\s*["']vite["']/
 
 async function resolves(specifier: string, fromFile: string): Promise<boolean> {
   const base = path.resolve(path.dirname(fromFile), specifier)
@@ -47,32 +116,38 @@ async function scan(): Promise<Map<string, Set<Rule>>> {
     .filter(file => !file.endsWith("fixture-wiring.test.ts"))
   for (const file of files) {
     let source: string
-    try { source = await readFile(file, "utf8") } catch { continue } // not text (binary fixture assets)
+    try { source = await readFile(file, "utf8") } catch { continue } // binary fixture assets
     const relative = path.relative(browserTestsDirectory, file).split(path.sep).join("/")
     const missing = new Set<Rule>()
-    if (referencesVite.test(source) && /createServer\(/.test(source)) {
+    const exempt = exemptions[relative]
+    const isTest = /\.test\.ts$/.test(relative)
+    const createsViteServer = referencesVite.test(source) && /createServer\(/.test(source)
+    if (createsViteServer) {
       if (!/createFixtureCache\(/.test(source)) missing.add("ownedCache")
       if (!/cacheDir:\s*\w+\.cacheDir\b/.test(source)) missing.add("cacheDir")
       if (!/shutdown\.plugin/.test(source)) missing.add("shutdownPlugin")
       if (!/shutdown\.own\(/.test(source)) missing.add("shutdownOwn")
     }
     if (/chromium\.launch/.test(source) && !/armFixtureNavigationBudget\(/.test(source)) missing.add("navigationBudget")
+    if (isTest && !exempt) {
+      if (!/borrowFixture\(/.test(source)) missing.add("mustBorrow")
+      if (createsViteServerImport.test(source)) missing.add("noSelfServer")
+    }
     const specifiers = [...source.matchAll(/(?:^|\n)\s*import\s+[^;]*?from\s*["'](\.[^"']+)["']/g)].map(match => match[1])
     for (const specifier of specifiers) {
       if (!helperModules.some(helper => specifier.includes(helper))) continue
       if (!(await resolves(specifier, file))) { missing.add("importsResolve"); break }
     }
-    const exempt = exemptions[relative]
-    for (const rule of [...missing]) if (exempt?.[rule]) missing.delete(rule)
     if (missing.size) violations.set(relative, missing)
   }
   return violations
 }
 
-test("every vite fixture owns its cache, protects its shutdown and arms its navigation budget", async () => {
+test("every fixture borrows from the daemon or carries an explicit exemption with owned-server wiring", async () => {
   const violations = await scan()
   const summary = [...violations.entries()]
     .map(([file, rules]) => `${file}: ${[...rules].map(rule => RULES[rule]).join("; ")}`)
     .sort()
-  assert.deepEqual(summary, [], `fixture wiring violations (${summary.length} files):\n${summary.join("\n")}`)
+  assert.deepEqual(summary, [], `fixture wiring violations (${summary.length} files):
+${summary.join("\n")}`)
 })
