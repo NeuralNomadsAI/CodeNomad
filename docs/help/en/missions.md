@@ -102,7 +102,7 @@ Creation time also bounds eligible daily work; starting a new schedule is not pe
 | --- | --- |
 | CodeNomad project tab | Closes the project in CodeNomad; native sessions continue in OpenCode. Reopen the project to find them again. |
 | Whole window, app quit or renderer reload | Preserves project connections for restoration; does not stop native work or the OpenCode service. |
-| CodeNomad backend | Does not stop OpenCode. One-time CodeNomad coordination depends on backend presence; do not assume new one-time dispatch/control remains available while it is closed. |
+| CodeNomad backend | Does not stop OpenCode. A running one-time mission continues: its coordinator, native subagent tasks and mission tools run in OpenCode. Assigning tasks to independent sessions and delivering their reports to the coordinator, missions the coordinator prepares, stopping a retired task's conversations, recovery and Mission Control wait for the backend, as does continuing a one-time mission after an OpenCode service restart. |
 | Running daily schedule | Its clock and passage execution run in the OpenCode plugin/service, including with CodeNomad UI and backend closed. The execution host and OpenCode service must stay running. |
 | OpenCode service restart | Loses process-local schedule jobs. A desired-running schedule becomes **Interrupted** until an explicit **Resume**; reopening CodeNomad does not rearm it. |
 
