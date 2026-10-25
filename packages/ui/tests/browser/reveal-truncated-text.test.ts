@@ -40,11 +40,14 @@ async function withFixture(run: (page: Page) => Promise<void>, query = "") {
     permissions: ["clipboard-read", "clipboard-write"] })
   const page = await context.newPage()
   page.setDefaultTimeout(15_000)
+  // Tight actions, cold-start-friendly navigation: page-level defaults would
+  // otherwise outrank the context's armed navigation budget.
+  page.setDefaultNavigationTimeout(120_000)
   const errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
-    await page.goto(`${url}${query}`, { waitUntil: "domcontentloaded", timeout: 30_000 })
+    await page.goto(`${url}${query}`, { waitUntil: "domcontentloaded" })
     await page.waitForFunction(() => Boolean((window as any).fixture))
     // A loaded dev server can serve the lazily imported Markdown renderer seconds late. Until
     // then parts show their plain-text placeholder, up to twice as tall as the render, and
