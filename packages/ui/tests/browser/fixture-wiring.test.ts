@@ -3,6 +3,7 @@ import { readdir, readFile, access } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import test from "node:test"
+import { exemptions } from "./fixture-exemptions"
 
 const browserTestsDirectory = fileURLToPath(new URL("./", import.meta.url))
 
@@ -10,75 +11,7 @@ const browserTestsDirectory = fileURLToPath(new URL("./", import.meta.url))
  * borrowing from the shared daemon. Each name maps to the reason; Vite-hosting
  * entries must also satisfy the owned-server rules below. Anything not listed
  * must borrow. */
-const exemptions: Record<string, string> = {
-  "fixture-daemon/server.ts": "the shared canonical server itself",
-  "fixture-shutdown.test.ts": "tests the owned-server shutdown mechanics themselves",
-  "fixture-daemon/daemon.test.ts": "tests the daemon core directly",
-"alert-dialog.test.ts": "instruments the server object directly",
-  "auth-recovery.test.ts": "stateful SSE middleware driven by the test",
-  "automation-input.test.ts": "served by a dedicated harness module that owns its server",
-  "automation-preview.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
-  "browser-emulation-native.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
-  "browser-frame-native.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
-  "compaction-notification.test.ts": "Vite config diverges from the canonical daemon config",
-  "compaction-responsiveness.test.ts": "custom Vite transform/load hook",
-  "composer-alternate-send.test.ts": "served by a dedicated harness module that owns its server",
-  "composer-draft-safety.test.ts": "served by a dedicated harness module that owns its server",
-  "composer-picker-enter.test.ts": "served by a dedicated harness module that owns its server",
-  "composer-resume-typing.test.ts": "served by a dedicated harness module that owns its server",
-  "data-profiles.test.ts": "Vite config diverges from the canonical daemon config",
-  "desktop-updates.test.ts": "instruments the server object directly",
-  "device-upload-lifecycle.test.ts": "served by a dedicated harness module that owns its server",
-  "device-upload.test.ts": "served by a dedicated harness module that owns its server",
-  "drawer-accessibility.test.ts": "Vite config diverges from the canonical daemon config",
-  "event-subscriber-isolation.test.ts": "Vite config diverges from the canonical daemon config",
-  "fixture-cache.test.ts": "no fixture page of its own",
-  "fixture-diagnostic-boundary.test.ts": "no fixture page of its own",
-  "fixture-navigation-budget.test.ts": "no fixture page of its own",
-  "fixture-shutdown.test.ts": "tests the owned-server shutdown mechanics themselves",
-  "fixture-wiring.test.ts": "no fixture page of its own",
-  "git-changes-scale.test.ts": "Vite config diverges from the canonical daemon config",
-  "git-history.test.ts": "Vite config diverges from the canonical daemon config",
-  "git-init.test.ts": "Vite config diverges from the canonical daemon config",
-  "header-fixture-diagnostics.test.ts": "diagnostic harness owns the server lifecycle",
-  "header-windows.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
-  "hotkeys-settings.test.ts": "Vite config diverges from the canonical daemon config",
-  "http-admission-responsiveness.test.ts": "Vite config diverges from the canonical daemon config",
-  "icon-toggle-active.test.ts": "served by a dedicated harness module that owns its server",
-  "interruption-dock.test.ts": "served by a dedicated harness module that owns its server",
-  "markdown-latest-request.test.ts": "custom Vite transform/load hook",
-  "message-scroll.test.ts": "stateful SSE middleware driven by the test",
-  "mission-control-feedback.test.ts": "stateful SSE middleware driven by the test",
-  "mission-lifecycle-navigation.test.ts": "diagnostic harness owns the server lifecycle",
-  "mission-lifecycle-revision.test.ts": "diagnostic harness owns the server lifecycle",
-  "mission-navigation.test.ts": "instruments the server object directly",
-  "mission-recurrence-predispatch.test.ts": "no fixture page of its own",
-  "notification-icon-badge.test.ts": "Vite config diverges from the canonical daemon config",
-  "panel-extensions.test.ts": "stateful SSE middleware driven by the test",
-  "plugin-packages.test.ts": "served by a dedicated harness module that owns its server",
-  "preferences-startup-state.test.ts": "Vite config diverges from the canonical daemon config",
-  "provider-usage.test.ts": "stateful SSE middleware driven by the test",
-  "remote-control-settings.test.ts": "Vite config diverges from the canonical daemon config",
-  "remote-server-pairing.test.ts": "Vite config diverges from the canonical daemon config",
-  "render-cost.test.ts": "custom Vite transform/load hook",
-  "search-highlight.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
-  "service-usage.test.ts": "served by a dedicated harness module that owns its server",
-  "session-aside-harness.test.ts": "served by a dedicated harness module that owns its server",
-  "session-aside.test.ts": "served by a dedicated harness module that owns its server",
-  "session-browser-history.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
-  "session-rendering.test.ts": "diagnostic harness owns the server lifecycle",
-  "shell-navigation.test.ts": "Vite config diverges from the canonical daemon config",
-  "sidecar-sandbox.test.ts": "Vite config diverges from the canonical daemon config",
-  "status-tokens.test.ts": "served by a dedicated harness module that owns its server",
-  "streaming-outline.test.ts": "custom Vite transform/load hook",
-  "system-notification-focus.test.ts": "Vite config diverges from the canonical daemon config",
-  "tab-chrome.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
-  "timeline-sync.test.ts": "served by a dedicated harness module that owns its server",
-  "timeline-tool-filters.test.ts": "served by a dedicated harness module that owns its server",
-  "transcript-presets.test.ts": "served by a dedicated harness module that owns its server",
-  "view-menu-electron.test.ts": "electron fixture: runs a real Electron host with its own inline Vite define overrides",
-  "workspace-file-refresh.test.ts": "stateful SSE middleware driven by the test",
-}
+
 
 /** Helper modules every fixture depends on; imports naming them must resolve
  * to a real file, so a wrong relative specifier fails here instead of failing
@@ -117,7 +50,7 @@ async function scan(): Promise<Map<string, Set<Rule>>> {
   for (const file of files) {
     let source: string
     try { source = await readFile(file, "utf8") } catch { continue } // binary fixture assets
-    const relative = path.relative(browserTestsDirectory, file).split(path.sep).join("/")
+    const relative = path.relative(browserTestsDirectory, file)
     const missing = new Set<Rule>()
     const exempt = exemptions[relative]
     const isTest = /\.test\.ts$/.test(relative)
