@@ -164,8 +164,10 @@ makes GTK prefer X11 (XWayland) and fall back to Wayland without an X server
 unless it is set, because the F11 fullscreen shortcut is an X11 key grab. The
 hook also points GTK, GIO and GSettings at modules inside the mount
 (`GIO_MODULE_DIR`, `GTK_PATH`, a prefixed `XDG_DATA_DIRS`, ...). The backend,
-and through it the shared OpenCode service, and the editors CodeNomad opens
-outlive the mount, so they start without those mount paths.
+and through it the shared OpenCode service, the editors CodeNomad opens and link
+handlers outlive the mount, so they start without those mount paths. Links open
+through `external_open.rs`, including the renderer's `open_external_url`
+command; the windows hold no opener plugin permission that would bypass it.
 
 Verification extracts via an absolute artifact path, checks `AppRun` and
 `usr/bin/codenomad-tauri`, rejects an image that bundles those host libraries,

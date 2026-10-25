@@ -1,11 +1,14 @@
 //! Linux AppImage environment. The AppImage's AppRun hook points GTK, GIO and
 //! GSettings at modules inside its mount (`GIO_MODULE_DIR`, `GTK_PATH`, a
 //! prefixed `XDG_DATA_DIRS`, ...) for this process's own WebKit. The backend,
-//! the shared OpenCode service it starts and the editors CodeNomad opens outlive
-//! that mount, so they get the host's environment: variables inside the mount
-//! are dropped and mount entries are removed from path lists.
+//! the shared OpenCode service it starts, the editors CodeNomad opens and link
+//! handlers outlive that mount, so they get the host's environment: variables
+//! inside the mount are dropped and mount entries are removed from path lists.
+//! Paths are bytes on Linux; nothing here assumes UTF-8.
 
 use std::collections::HashMap;
+use std::ffi::OsString;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::process::Command;
 
 /// GTK prefers X11 (XWayland) and falls back to Wayland where no X server runs,
@@ -23,11 +26,14 @@ pub(crate) fn host_environment(environment: HashMap<String, String>) -> HashMap<
     };
     environment
         .into_iter()
-        .filter_map(|(key, value)| match without_mount(&value, &mount) {
-            Some(kept) if kept.is_empty() => None,
-            Some(kept) => Some((key, kept)),
-            None => Some((key, value)),
-        })
+        .filter_map(
+            |(key, value)| match without_mount(value.as_bytes(), mount.as_bytes()) {
+                Some(kept) if kept.is_empty() => None,
+                // The kept entries of a UTF-8 value, split at ':', are UTF-8.
+                Some(kept) => String::from_utf8(kept).ok().map(|kept| (key, kept)),
+                None => Some((key, value)),
+            },
+        )
         .collect()
 }
 
@@ -37,15 +43,12 @@ pub(crate) fn use_host_environment(command: &mut Command) {
         return;
     };
     for (key, value) in std::env::vars_os() {
-        let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
-            continue;
-        };
-        match without_mount(value, &mount) {
+        match without_mount(value.as_bytes(), mount.as_bytes()) {
             Some(kept) if kept.is_empty() => {
-                command.env_remove(key);
+                command.env_remove(&key);
             }
             Some(kept) => {
-                command.env(key, kept);
+                command.env(&key, OsString::from_vec(kept));
             }
             None => {}
         }
@@ -53,61 +56,74 @@ pub(crate) fn use_host_environment(command: &mut Command) {
 }
 
 /// The mount, as AppRun's hooks spell it, when this process runs from an AppImage.
-fn mount() -> Option<String> {
+fn mount() -> Option<OsString> {
     let appimage = std::env::var_os("APPIMAGE")?;
-    let appdir = std::env::var("APPDIR").ok()?;
-    let appdir = appdir.trim_end_matches('/');
-    (!appimage.is_empty() && !appdir.is_empty()).then(|| appdir.to_string())
+    let mut appdir = std::env::var_os("APPDIR")?.into_vec();
+    while appdir.last() == Some(&b'/') {
+        appdir.pop();
+    }
+    (!appimage.is_empty() && !appdir.is_empty()).then(|| OsString::from_vec(appdir))
 }
 
 /// `value` without its colon-separated entries inside `mount`, when it has any.
-fn without_mount(value: &str, mount: &str) -> Option<String> {
-    let entries: Vec<&str> = value.split(':').collect();
-    let kept: Vec<&str> = entries
+fn without_mount(value: &[u8], mount: &[u8]) -> Option<Vec<u8>> {
+    let entries: Vec<&[u8]> = value.split(|byte| *byte == b':').collect();
+    let kept: Vec<&[u8]> = entries
         .iter()
         .copied()
         .filter(|entry| !inside(entry, mount))
         .collect();
-    (kept.len() != entries.len()).then(|| kept.join(":"))
+    (kept.len() != entries.len()).then(|| kept.join(&b':'))
 }
 
-fn inside(entry: &str, mount: &str) -> bool {
+fn inside(entry: &[u8], mount: &[u8]) -> bool {
     entry
         .strip_prefix(mount)
-        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+        .is_some_and(|rest| rest.is_empty() || rest[0] == b'/')
 }
 
 #[cfg(test)]
 mod tests {
     use super::without_mount;
 
-    const MOUNT: &str = "/tmp/.mount_CodeNoAb12";
+    const MOUNT: &[u8] = b"/tmp/.mount_CodeNoAb12";
 
     #[test]
     fn drops_mount_paths_and_keeps_host_entries() {
-        for (value, expected) in [
-            ("/tmp/.mount_CodeNoAb12//usr/lib/gio/modules", Some("")),
-            ("/tmp/.mount_CodeNoAb12", Some("")),
+        let cases: [(&[u8], &[u8]); 5] = [
+            (b"/tmp/.mount_CodeNoAb12//usr/lib/gio/modules", b""),
+            (b"/tmp/.mount_CodeNoAb12", b""),
             (
-                "/tmp/.mount_CodeNoAb12/usr/share:/usr/share:/home/u/.local/share",
-                Some("/usr/share:/home/u/.local/share"),
+                b"/tmp/.mount_CodeNoAb12/usr/share:/usr/share:/home/u/.local/share",
+                b"/usr/share:/home/u/.local/share",
             ),
             (
-                "/tmp/.mount_CodeNoAb12/usr/share:/usr/share:",
-                Some("/usr/share:"),
+                b"/tmp/.mount_CodeNoAb12/usr/share:/usr/share:",
+                b"/usr/share:",
             ),
-        ] {
-            assert_eq!(without_mount(value, MOUNT).as_deref(), expected, "{value}");
+            // A host entry need not be UTF-8.
+            (
+                b"/tmp/.mount_CodeNoAb12/usr/lib:/opt/caf\xe9/lib",
+                b"/opt/caf\xe9/lib",
+            ),
+        ];
+        for (value, expected) in cases {
+            assert_eq!(without_mount(value, MOUNT).as_deref(), Some(expected));
         }
         for untouched in [
-            "/usr/lib/x86_64-linux-gnu/gio/modules",
-            "/tmp/.mount_CodeNoAb123/usr/lib",
-            "/home/u/CodeNomad.AppImage",
-            "https://example.com:8443/tmp/.mount_CodeNoAb12",
-            "x11,wayland",
-            "",
+            &b"/usr/lib/x86_64-linux-gnu/gio/modules"[..],
+            b"/tmp/.mount_CodeNoAb123/usr/lib",
+            b"/home/u/CodeNomad.AppImage",
+            b"https://example.com:8443/tmp/.mount_CodeNoAb12",
+            b"x11,wayland",
+            b"",
         ] {
-            assert_eq!(without_mount(untouched, MOUNT), None, "{untouched}");
+            assert_eq!(without_mount(untouched, MOUNT), None);
         }
+        let non_utf8_mount: &[u8] = b"/tmp/.mount_\xff";
+        assert_eq!(
+            without_mount(b"/tmp/.mount_\xff/usr/lib:/usr/lib", non_utf8_mount).as_deref(),
+            Some(&b"/usr/lib"[..])
+        );
     }
 }

@@ -46,5 +46,6 @@ windows-core = "0.61"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_Security_Cryptography", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
+open = "5.3"
 webkit2gtk = "2.0.2"
 gtk = "0.18"

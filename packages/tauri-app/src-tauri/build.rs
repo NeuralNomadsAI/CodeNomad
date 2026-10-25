@@ -64,6 +64,7 @@ fn main() {
             "owned_webview_zoom",
             "popup_titlebar_menu",
             "open_remote_window",
+            "open_external_url",
             "client_state_claim_access",
             "client_state_load",
             "client_state_save",
