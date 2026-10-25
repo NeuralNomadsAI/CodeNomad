@@ -18,10 +18,11 @@ const heavy = reason => /owns its server|electron|stateful|diagnostic|instrument
 const borrowed = files.filter(file => !reasons.has(file) || !heavy(reasons.get(file)))
 const owned = files.filter(file => reasons.has(file) && heavy(reasons.get(file)))
 
-console.log(`tiered run: ${borrowed.length} borrowed (4-wide) + ${owned.length} exempt (2-wide)`)
+console.log(`tiered run: ${borrowed.length} borrowed + ${owned.length} exempt (widths via CODENOMAD_TIERED_LIGHT_WIDTH/HEAVY_WIDTH)`)
 if (dryRun) { console.log(borrowed.join("\n")); process.exit(0) }
 
-for (const [label, slice, concurrency] of [["borrowed", borrowed, 4], ["exempt", owned, 2]]) {
+let failures = 0
+for (const [label, slice, concurrency] of [["borrowed", borrowed, Number(process.env.CODENOMAD_TIERED_LIGHT_WIDTH ?? 3)], ["exempt", owned, Number(process.env.CODENOMAD_TIERED_HEAVY_WIDTH ?? 2)]]) {
   if (!slice.length) continue
   console.log(`— ${label}: ${slice.length} files at ${concurrency}-wide`)
   const child = spawn(process.execPath, [
@@ -29,5 +30,6 @@ for (const [label, slice, concurrency] of [["borrowed", borrowed, 4], ["exempt",
     ...slice.map(file => path.join(directory, file)),
   ], { stdio: "inherit", cwd: path.resolve(directory, "../..") })
   const code = await new Promise(resolve => child.on("close", resolve))
-  if (code) process.exit(code)
+  failures ||= code ? 1 : 0
 }
+process.exit(failures)
