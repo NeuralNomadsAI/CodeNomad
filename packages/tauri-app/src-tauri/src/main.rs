@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 #[cfg(target_os = "linux")]
+mod appimage_environment;
+#[cfg(target_os = "linux")]
 mod appimage_exit;
 mod browser_controller;
 #[allow(dead_code)]
@@ -10,6 +12,7 @@ mod client_state;
 mod data_profile;
 mod data_profile_cleanup;
 mod developer_mode;
+mod external_open;
 mod identity;
 mod launch;
 #[cfg(target_os = "linux")]
@@ -63,7 +66,6 @@ use tauri::{
 use tauri_plugin_global_shortcut::{
     Code as ShortcutCode, GlobalShortcutExt, Shortcut, ShortcutState,
 };
-use tauri_plugin_opener::OpenerExt;
 use url::Url;
 
 #[cfg(windows)]
@@ -796,6 +798,16 @@ fn should_open_external_url(url: &Url) -> bool {
     matches!(url.scheme(), "http" | "https" | "mailto")
 }
 
+/// The renderer's system opener (application and Preferences windows).
+#[tauri::command]
+fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    let url = Url::parse(&url).map_err(|error| error.to_string())?;
+    if !should_open_external_url(&url) {
+        return Err(format!("{} links do not open externally", url.scheme()));
+    }
+    external_open::open_url(&app, url.as_str())
+}
+
 // Remote documents have no opener IPC capability. Only this owned policy may
 // hand the public help site to the system browser; never create a native guest.
 fn open_remote_external_url(url: &Url, open: impl FnOnce(&Url)) -> bool {
@@ -827,11 +839,7 @@ fn intercept_navigation<R: Runtime>(webview: &Webview<R>, url: &Url) -> bool {
     }
 
     let open = |url: &Url| {
-        if let Err(err) = webview
-            .app_handle()
-            .opener()
-            .open_url(url.as_str(), None::<&str>)
-        {
+        if let Err(err) = external_open::open_url(webview.app_handle(), url.as_str()) {
             eprintln!("[tauri] failed to open external link {}: {}", url, err);
         }
     };
@@ -1050,7 +1058,7 @@ fn open_remote_window_locked(
             .and_then(|entries| entries.get(&external_label).map(|entry| entry.window_generation));
         if current == Some(window_generation) {
             open_remote_external_url(&url, |url| {
-                if let Err(error) = external_app.opener().open_url(url.as_str(), None::<&str>) {
+                if let Err(error) = external_open::open_url(&external_app, url.as_str()) {
                     eprintln!("[tauri] failed to open help: {error}");
                     tauri_plugin_dialog::DialogExt::dialog(&external_app)
                         .message("Could not open help in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/ manually.")
@@ -1745,6 +1753,8 @@ fn main() {
         std::env::remove_var("CLI_CONFIG");
     }
     configure_developer_environment();
+    #[cfg(target_os = "linux")]
+    appimage_environment::prefer_x11_display();
     let identity::LaunchProfile {
         key: profile,
         pinned: profile_pinned,
@@ -1801,7 +1811,13 @@ fn main() {
     desktop_updater::register(tauri::Builder::default(), context.config())
         .plugin(single_instance)
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_opener::init())
+        // Opens links outside Linux (external_open). The renderer's own click
+        // handler (lib/native/external-link-clicks.ts) replaces the plugin's.
+        .plugin(
+            tauri_plugin_opener::Builder::new()
+                .open_js_links_on_click(false)
+                .build(),
+        )
         .plugin(tauri_plugin_process::init())
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
@@ -1967,6 +1983,7 @@ fn main() {
             window_zoom::owned_webview_zoom,
             popup_titlebar_menu,
             open_remote_window,
+            open_external_url,
             client_state::client_state_claim_access,
             client_state::client_state_load,
             client_state::client_state_save,
@@ -2078,7 +2095,7 @@ fn main() {
 
                 "open-help" => {
                     if !emit_menu_action(app_handle, "open-help") {
-                        if let Err(err) = app_handle.opener().open_url(HELP_URL, None::<&str>) {
+                        if let Err(err) = external_open::open_url(app_handle, HELP_URL) {
                             eprintln!("[tauri] failed to open CodeNomad help: {err}");
                             rfd::MessageDialog::new()
                                 .set_title("CodeNomad Help")
@@ -2563,7 +2580,7 @@ fn releases_page(version: &str) -> &'static str {
 
 fn open_releases_page(app_handle: &AppHandle) {
     let page = releases_page(&app_handle.package_info().version.to_string());
-    if let Err(err) = app_handle.opener().open_url(page, None::<&str>) {
+    if let Err(err) = external_open::open_url(app_handle, page) {
         eprintln!("[tauri] failed to open the CodeNomad releases page: {err}");
     }
 }
@@ -2868,30 +2885,24 @@ mod menu_tests {
     }
 
     #[test]
-    fn renderer_opener_permission_excludes_tel_and_unscoped_access() {
-        let capability: serde_json::Value =
-            serde_json::from_str(include_str!("../capabilities/main-window.json")).unwrap();
-        let opener = capability["permissions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|permission| permission["identifier"] == "opener:allow-open-url")
-            .unwrap();
-
-        assert_eq!(
-            opener["allow"],
-            json!([
-                { "url": "http://*" },
-                { "url": "https://*" },
-                { "url": "mailto:*" }
-            ])
-        );
-        assert!(!capability["permissions"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|permission| permission == "opener:allow-default-urls"
-                || permission == "opener:allow-open-url"));
+    fn renderer_links_open_only_through_the_owned_opener() {
+        for source in [
+            include_str!("../capabilities/main-window.json"),
+            include_str!("../capabilities/preferences-window.json"),
+        ] {
+            let capability: serde_json::Value = serde_json::from_str(source).unwrap();
+            let permissions = capability["permissions"].as_array().unwrap();
+            // open_external_url applies should_open_external_url and, on Linux,
+            // the host environment; the plugin's own command would bypass both.
+            assert!(permissions.contains(&json!("allow-open-external-url")));
+            assert!(!permissions.iter().any(|permission| {
+                let identifier = permission
+                    .as_str()
+                    .or_else(|| permission["identifier"].as_str())
+                    .unwrap_or_default();
+                identifier.starts_with("opener:")
+            }));
+        }
     }
 
     #[test]

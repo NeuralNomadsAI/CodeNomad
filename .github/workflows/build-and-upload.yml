@@ -847,6 +847,10 @@ jobs:
       VERSION: ${{ inputs.version }}
       TAG: ${{ inputs.tag }}
       TAURI_UPDATER_PUBKEY: ${{ inputs.upload && inputs.tag != '' && secrets.TAURI_UPDATER_PUBKEY || '' }}
+      # The display and GPU stack comes from the user's system. A build-runner copy
+      # shadows it through AppRun's library path, and Mesa's EGL on newer
+      # distributions then fails to initialize: the window stays black.
+      APPIMAGE_HOST_LIBRARIES: libwayland-*;libxkbcommon*;libxcb*;libX11*;libXau*;libXdmcp*;libEGL*;libGL*;libgbm*;libdrm*
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
@@ -908,6 +912,8 @@ jobs:
           # Run the bundling tools in extraction mode without requiring FUSE.
           # --verbose retains linuxdeploy diagnostics if packaging fails.
           APPIMAGE_EXTRACT_AND_RUN: "1"
+          # linuxdeploy's own excludelist leaves part of the display stack in.
+          LINUXDEPLOY_EXCLUDED_LIBRARIES: ${{ env.APPIMAGE_HOST_LIBRARIES }}
         run: npm exec -- tauri build --bundles appimage --verbose --config src-tauri/tauri.prebuilt.conf.json
 
       - name: Package and verify Tauri AppImage
@@ -957,6 +963,16 @@ jobs:
           desktop_entries=$(find "$root" -maxdepth 1 -name '*.desktop' | wc -l)
           if [ "$desktop_entries" -ne 1 ]; then
             echo "Expected exactly one desktop entry in the Tauri AppImage, found $desktop_entries" >&2
+            exit 1
+          fi
+          # APPIMAGE_HOST_LIBRARIES must come from the user's system.
+          IFS=';' read -ra host_patterns <<< "$APPIMAGE_HOST_LIBRARIES"
+          host_only=$(cd "$root/usr/lib" && for pattern in "${host_patterns[@]}"; do
+            find . -maxdepth 2 -name "$pattern"
+          done | sort)
+          if [ -n "$host_only" ]; then
+            echo "Tauri AppImage bundles host display libraries:" >&2
+            echo "$host_only" >&2
             exit 1
           fi
           node scripts/smoke-packaged-resources.cjs \

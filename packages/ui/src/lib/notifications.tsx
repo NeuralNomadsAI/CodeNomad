@@ -288,8 +288,8 @@ async function openExternalUrl(url: string): Promise<void> {
 
   try {
     if (isTauriHost()) {
-      const { openUrl } = await import("@tauri-apps/plugin-opener")
-      await openUrl(url)
+      const { invoke } = await import("@tauri-apps/api/core")
+      await invoke("open_external_url", { url })
       return
     }
   } catch (error) {

@@ -1171,7 +1171,13 @@ impl CliProcessManager {
             ) {
                 Ok(environment) => {
                     resolution.node_binary = environment.executable;
-                    Some(environment.env)
+                    // The shell inherited this AppImage's mount paths; the backend
+                    // and the daemon it may start outlive the mount.
+                    #[cfg(target_os = "linux")]
+                    let env = crate::appimage_environment::host_environment(environment.env);
+                    #[cfg(not(target_os = "linux"))]
+                    let env = environment.env;
+                    Some(env)
                 }
                 Err(_) => {
                     // Startup files may prompt (GPG, SSH, etc.). Never run the backend
@@ -1206,6 +1212,10 @@ impl CliProcessManager {
             let mut c = Command::new(&cmd.program);
             #[cfg(not(windows))]
             c.args(&cmd.args);
+            #[cfg(target_os = "linux")]
+            if shell_env.is_none() {
+                crate::appimage_environment::use_host_environment(&mut c);
+            }
             #[cfg(unix)]
             if let Some(env) = shell_env {
                 c.env_clear().envs(env);

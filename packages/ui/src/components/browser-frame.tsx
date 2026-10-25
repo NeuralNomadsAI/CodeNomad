@@ -1,6 +1,7 @@
 import { ArrowLeft, ArrowRight, ChevronDown, Expand, MessageSquarePlus, Monitor, RefreshCw, RotateCw, Smartphone, Tablet } from "lucide-solid"
 import { Show, createEffect, createMemo, createSignal, onCleanup, untrack, type Component } from "solid-js"
-import { runtimeEnv } from "../lib/runtime-env"
+import { isNativeApplicationWindow, isTauriHost, runtimeEnv } from "../lib/runtime-env"
+import { installExternalLinkClicks } from "../lib/native/external-link-clicks"
 import { useI18n } from "../lib/i18n"
 import emulationProfiles from "../lib/native/browser-emulation.json"
 import type { BrowserEmulationPreset } from "../lib/native/browser-emulation"
@@ -398,6 +399,10 @@ export const BrowserFrame: Component<BrowserFrameProps> = (props) => {
       setPathInput(getEditablePathFromUrl(frameSrc()))
     }
     attachCommentListeners()
+    // A trusted same-origin document (SideCar) opens its new-window links like the app's own.
+    if (props.trustedSameOrigin && isTauriHost() && isNativeApplicationWindow() && iframeRef?.contentWindow) {
+      try { installExternalLinkClicks(iframeRef.contentWindow) } catch { /* the frame left the app's origin */ }
+    }
   }
 
   const reportNativeError = (error: unknown) => {

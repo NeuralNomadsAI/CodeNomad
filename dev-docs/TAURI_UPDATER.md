@@ -151,10 +151,33 @@ unusable musl ELF and aborts. For local rebuilds after a failed packaging run, r
 `target/release/bundle/appimage` and `target/release/bundle/appimage_deb` staging
 directories: the latter can retain removed resources between bundle attempts.
 
+The display and GPU stack comes from the host. The Linux job's
+`APPIMAGE_HOST_LIBRARIES` (`libwayland-*`, `libxkbcommon`, `libxcb*`, `libX11*`,
+`libXau`, `libXdmcp`, EGL/GL/gbm/drm) reaches linuxdeploy as
+`LINUXDEPLOY_EXCLUDED_LIBRARIES`, on top of the excludelist of Tauri CLI 2.12.1
+or later. A build-runner copy on AppRun's library path makes Mesa's EGL fail on
+newer distributions (an Ubuntu 24.04 `libwayland-client` with Mesa 26), and
+WebKit's window then stays black.
+
+The AppRun hook leaves `GDK_BACKEND` to the session; `appimage_environment.rs`
+makes GTK prefer X11 (XWayland) and fall back to Wayland without an X server
+unless it is set, because the F11 fullscreen shortcut is an X11 key grab. The
+hook also points GTK, GIO and GSettings at modules inside the mount
+(`GIO_MODULE_DIR`, `GTK_PATH`, a prefixed `XDG_DATA_DIRS`, ...). The backend,
+and through it the shared OpenCode service, the editors CodeNomad opens and link
+handlers outlive the mount, so they start without those mount paths. Links open
+through `external_open.rs`, including the renderer's `open_external_url`
+command; the windows hold no opener plugin permission that would bypass it, and
+the plugin's injected click handler is off: `lib/native/external-link-clicks.ts`
+opens anchors that ask for a new window (`target="_blank"`, Ctrl or Shift)
+through `openExternalUrl` instead, in the application and Preferences windows
+and in each document a trusted same-origin SideCar frame loads; opaque preview
+and panel-extension frames get no opener.
+
 Verification extracts via an absolute artifact path, checks `AppRun` and
-`usr/bin/codenomad-tauri`, smoke-tests bundled Node/server/UI resources, resolves
-ELF dependencies against bundled library directories and reports the binary's
-glibc floor.
+`usr/bin/codenomad-tauri`, rejects an image that bundles those host libraries,
+smoke-tests bundled Node/server/UI resources, resolves ELF dependencies against
+bundled library directories and reports the binary's glibc floor.
 
 The AppImage runtime unmounts the bundle as soon as the main process exits, while
 WebKit's helper processes started from it can outlive that process briefly; a
@@ -180,7 +203,8 @@ from elsewhere, such as the shared OpenCode service, keep running.
   admission, conflict with an existing quit and Windows logout.
 - The vendored Windows launch regression checks success-only ownership release.
 - On Linux, `appimage_exit.rs` tests stop a child running from a temporary
-  mount while sparing one running elsewhere. A real AppImage must quit without
+  mount while sparing one running elsewhere; `appimage_environment.rs` tests drop
+  mount entries from path lists and keep host values. A real AppImage must quit without
   leaving WebKit helpers or a crash report in `/var/crash`.
 - Browser tests exercise the real update store and toast actions, explicit install,
   duplicate gestures, failure recovery (including after a reload), feed
