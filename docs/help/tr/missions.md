@@ -102,7 +102,7 @@ Oluşturulma zamanı da uygun günlük işleri sınırlar; yeni bir zamanlamayı
 | --- | --- |
 | CodeNomad proje sekmesi | Projeyi CodeNomad'de kapatır; yerel işler OpenCode'da devam eder ve projeyi yeniden açtığınızda konuşmalar bulunur. |
 | Pencerenin tamamı, uygulamadan çıkış veya arayüzün yeniden yüklenmesi | Proje bağlantılarını geri yükleme için korur; OpenCode işlerini veya hizmetini durdurmaz. |
-| CodeNomad arka ucu | OpenCode'u durdurmaz. Tek seferlik CodeNomad koordinasyonu arka ucun varlığına bağlıdır; kapalıyken yeni tek seferlik iş atama/kontrol olanaklarının kullanılabilir kalacağını varsaymayın. |
+| CodeNomad arka ucu | OpenCode'u durdurmaz. Çalışan tek seferlik bir görev sürer: koordinatörü, OpenCode alt ajanı olarak yürüyen görevleri ve görev araçları OpenCode içinde çalışır. Bağımsız görev oturumları, koordinatörün hazırladığı görevler, plandan çıkarılan bir görevin konuşmalarını durdurma, kurtarma ve Görev Kontrolü arka ucu bekler; OpenCode hizmetinin yeniden başlatılmasından sonra tek seferlik bir görevi sürdürmek de öyle. |
 | Çalışan günlük zamanlama | Saat ve çalıştırma yürütmesi, CodeNomad arayüzü ve arka ucu kapalıyken de OpenCode eklentisinde/hizmetinde sürer. Yürütme ana bilgisayarı ve OpenCode hizmeti çalışır durumda kalmalıdır. |
 | OpenCode hizmetinin yeniden başlatılması | Sürece bağlı zamanlama işleri kaybolur. Çalışması istenen zamanlama, açıkça **Sürdür** seçilene kadar **Kesintiye uğradı** durumuna geçer; CodeNomad'i yeniden açmak onu devreye almaz. |
 

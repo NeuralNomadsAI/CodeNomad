@@ -102,7 +102,7 @@ La fecha de creación también limita el trabajo diario elegible; iniciar una pr
 | --- | --- |
 | Pestaña de proyecto de CodeNomad | Cierra el proyecto en CodeNomad; las sesiones nativas siguen en OpenCode. Vuelve a abrir el proyecto para encontrarlas. |
 | Ventana entera, salir de la aplicación o recargar el renderer | Conserva las conexiones de proyecto para restaurarlas; no detiene el trabajo nativo ni el servicio OpenCode. |
-| Backend de CodeNomad | No detiene OpenCode. La coordinación puntual de CodeNomad depende de la presencia del backend; no supongas que se pueden seguir enviando/controlando tareas puntuales mientras está cerrado. |
+| Backend de CodeNomad | No detiene OpenCode. Una misión puntual en curso continúa: su coordinador, sus tareas como subagentes nativos y las herramientas de misión se ejecutan en OpenCode. Las sesiones de tareas independientes, las misiones que prepara el coordinador, detener las conversaciones de una tarea retirada, la recuperación y el Control de misión esperan al backend, igual que continuar una misión puntual tras un reinicio del servicio OpenCode. |
 | Programación diaria en ejecución | Su reloj y la ejecución de sus pasadas se ejecutan en el plugin/servicio OpenCode, incluso con la interfaz y el backend de CodeNomad cerrados. El equipo de ejecución y el servicio OpenCode deben seguir funcionando. |
 | Reinicio del servicio OpenCode | Pierde los trabajos de programación locales del proceso. Una programación que debía ejecutarse pasa a **Interrumpido** hasta una **Reanudar** explícita; reabrir CodeNomad no la reactiva. |
 

@@ -102,7 +102,7 @@ Auch die Erstellungszeit begrenzt zulässige tägliche Arbeit; der Start eines n
 | --- | --- |
 | CodeNomad-Projekt-Tab | Schließt das Projekt in CodeNomad; native Sitzungen laufen in OpenCode weiter. Öffnen Sie das Projekt erneut, um sie wiederzufinden. |
 | Ganzes Fenster, App beenden oder Renderer neu laden | Bewahrt Projektverbindungen für die Wiederherstellung; stoppt weder native Arbeit noch den OpenCode-Dienst. |
-| CodeNomad-Backend | Stoppt OpenCode nicht. Einmalige CodeNomad-Koordination hängt von der Backend-Präsenz ab; nehmen Sie keine weitere Verfügbarkeit neuer einmaliger Vergaben/Steuerung bei geschlossenem Backend an. |
+| CodeNomad-Backend | Stoppt OpenCode nicht. Eine laufende einmalige Mission läuft weiter: Ihr Koordinator, ihre Aufgaben als native Subagenten und die Missionswerkzeuge laufen in OpenCode. Unabhängige Aufgabensitzungen, vom Koordinator vorbereitete Missionen, das Stoppen der Unterhaltungen einer zurückgezogenen Aufgabe, Wiederherstellung und die Missionszentrale warten auf das Backend, ebenso das Fortsetzen einer einmaligen Mission nach einem OpenCode-Dienstneustart. |
 | Laufender täglicher Zeitplan | Uhr und Durchlauf laufen im OpenCode-Plugin/-Dienst, auch bei geschlossener CodeNomad-Oberfläche und Backend. Ausführungshost und OpenCode-Dienst müssen weiterlaufen. |
 | OpenCode-Dienstneustart | Verliert prozesslokale Zeitplanjobs. Ein auf laufend gesetzter Zeitplan wird **Unterbrochen** bis zu einem ausdrücklichen **Fortsetzen**; erneutes Öffnen von CodeNomad aktiviert ihn nicht wieder. |
 
