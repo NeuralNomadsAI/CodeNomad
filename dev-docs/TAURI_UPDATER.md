@@ -159,13 +159,15 @@ or later. A build-runner copy on AppRun's library path makes Mesa's EGL fail on
 newer distributions (an Ubuntu 24.04 `libwayland-client` with Mesa 26), and
 WebKit's window then stays black.
 
-The AppRun hook leaves `GDK_BACKEND` to the session; `appimage_environment.rs`
-makes GTK prefer X11 (XWayland) and fall back to Wayland without an X server
-unless it is set, because the F11 fullscreen shortcut is an X11 key grab. The
-hook also points GTK, GIO and GSettings at modules inside the mount
-(`GIO_MODULE_DIR`, `GTK_PATH`, a prefixed `XDG_DATA_DIRS`, ...). The backend,
-and through it the shared OpenCode service, the editors CodeNomad opens and link
-handlers outlive the mount, so they start without those mount paths. Links open
+The AppRun hook leaves `GDK_BACKEND` to the session. Unless it is set,
+`appimage_environment.rs` makes CodeNomad's own GTK prefer X11 (XWayland) and
+fall back to Wayland without an X server (`gdk_set_allowed_backends`, on every
+Linux build), because the F11 fullscreen shortcut is an X11 key grab; child
+processes keep the session's choice. The hook also points GTK, GIO and GSettings
+at modules inside the mount (`GIO_MODULE_DIR`, `GTK_PATH`, a prefixed
+`XDG_DATA_DIRS`, ...). The backend, and through it the shared OpenCode service,
+the editors CodeNomad opens and link handlers outlive the mount, so they start
+without those mount paths and outside the mount. Links open
 through `external_open.rs`, including the renderer's `open_external_url`
 command; the windows hold no opener plugin permission that would bypass it, and
 the plugin's injected click handler is off: `lib/native/external-link-clicks.ts`
