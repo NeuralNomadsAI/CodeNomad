@@ -36,7 +36,7 @@ Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégr
 2. Ouvrez **Personnaliser le panneau droit** dans le panneau droit. Utilisez les cases pour choisir les onglets intégrés et sections Statut ; au moins une section Statut reste visible.
 3. Faites glisser les onglets du panneau droit pour les réordonner. Utilisez **Réinitialiser** pour restaurer les choix de disposition intégrée.
 
-Statut inclut les informations de tokens, le mode Yolo, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites font flotter les panneaux sur la conversation au lieu de la comprimer ; ouvrir un panneau flottant ferme l’autre.
+Statut inclut les informations de tokens, le mode Yolo, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
 
 La disposition intégrée est propre à la fenêtre, pas une modification du projet. Les cases d’extension sont différentes : elles activent du code dans tous les projets utilisant la configuration. **Réinitialiser** ne change pas le consentement aux extensions. Voir [Extensions de panneau](extensions.md).
 

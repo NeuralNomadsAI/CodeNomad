@@ -114,6 +114,29 @@ test("touch tablets remember drawers per orientation; portrait opens closed", as
   } finally { await context.close() }
 })
 
+test("a tablet without room for both panels in portrait keeps each orientation's drawers", async () => {
+  // 768 px fits either panel alone beside the conversation, not both.
+  const context = await browser.newContext({ viewport: { width: 1024, height: 768 }, hasTouch: true, isMobile: true })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await waitForPinned(page, true, true)
+    for (const round of [1, 2]) {
+      await page.setViewportSize({ width: 768, height: 1024 })
+      await waitForPinned(page, false, false)
+      await page.waitForTimeout(300)
+      assert.deepEqual(await pinned(page), { left: false, right: false, floating: 0 }, `portrait ${round} opens closed`)
+      await page.setViewportSize({ width: 1024, height: 768 })
+      await waitForPinned(page, true, true)
+    }
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
 test("a drawer closed by rotation hands keyboard focus to its toggle", async () => {
   // Tablet sizes on both sides of the 1280 px desktop breakpoint.
   for (const [width, height] of [[1180, 820], [1366, 1024]]) {

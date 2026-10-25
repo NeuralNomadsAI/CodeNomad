@@ -1050,6 +1050,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const handleSidebarSessionSelect = (sessionId: string) => {
     if (sessionId === "info" && showingInfoView()) handleBackToConversation()
     else handleSessionSelect(sessionId)
+    // A floating session panel covers the conversation: choosing from its list, the shown
+    // session included, reveals the choice. Back/Forward select without closing it.
+    if (!leftPinned() && leftOpen()) closeLeftDrawer()
   }
 
   function handleProjectInterruptionClick() {
