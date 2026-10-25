@@ -48,7 +48,7 @@ async function scan(): Promise<Map<string, Set<Rule>>> {
   for (const file of files) {
     let source: string
     try { source = await readFile(file, "utf8") } catch { continue } // not text (binary fixture assets)
-    const relative = path.relative(browserTestsDirectory, file)
+    const relative = path.relative(browserTestsDirectory, file).split(path.sep).join("/")
     const missing = new Set<Rule>()
     if (referencesVite.test(source) && /createServer\(/.test(source)) {
       if (!/createFixtureCache\(/.test(source)) missing.add("ownedCache")
