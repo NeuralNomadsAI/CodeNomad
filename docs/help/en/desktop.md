@@ -60,8 +60,8 @@ macOS Tauri's shared WebKit store is kept because deleting it would affect other
 
 1. Use native **View → Zoom In**, **Zoom Out** or **Actual Size**; keyboard/wheel input also follows host support.
 2. Use **Left panel** and **Right panel** at the fixed outer header corners to toggle panels. Pin/unpin drawers when that layout permits it.
-3. If controls no longer fit, reduce zoom or widen the window; narrow layouts move controls into menus and panels into overlays.
+3. If controls no longer fit, reduce zoom or widen the window; narrow layouts move controls into menus and close panels that no longer fit.
 
 Main local and remote desktop windows reserve at least 390 × 600 CSS pixels, scaled by application zoom and bounded by the monitor work area. Zooming in can enlarge a window that is too small; zooming out does not shrink an already larger one. Preferences and browser-preview children have separate size rules.
 
-Panels leave a minimum conversation width before floating. Below 420 CSS pixels of conversation width, the timeline hides and header actions use their overflow menu; the saved timeline preference is preserved. These geometry changes do not alter your prompt draft or native session. See [Settings and layout](settings.md) and [Browser previews and SideCars](browser-sidecars.md).
+Panels leave a minimum conversation width. A docked panel that no longer fits closes, and returns when the window has room again unless you opened or closed it meanwhile; a panel you open without room floats over the conversation. Below 420 CSS pixels of conversation width, the timeline hides and header actions use their overflow menu; the saved timeline preference is preserved. These geometry changes do not alter your prompt draft or native session. See [Settings and layout](settings.md) and [Browser previews and SideCars](browser-sidecars.md).
