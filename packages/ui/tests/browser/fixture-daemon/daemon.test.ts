@@ -3,9 +3,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { after, before, test } from "node:test"
+import { fileURLToPath } from "node:url"
 import { startFixtureDaemon } from "./server"
 
-const uiRoot = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../../..")
+const uiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..")
 const html = (script: string) => `<html><body><div id="root"></div><script type="module" src="${script}"></script></body></html>`
 const script = "/tests/browser/fixtures/alert-dialog.tsx"
 
@@ -17,8 +18,9 @@ before(async () => {
 after(async () => { await rm(cacheDir, { recursive: true, force: true }); await rm(path.dirname(readyFile), { recursive: true, force: true }) })
 
 test("the daemon serves registered fixtures and re-registers idempotently", { timeout: 120_000 }, async t => {
-  const daemon = await startFixtureDaemon({ directory: uiRoot, cacheDir, readyFile })
+  const daemon = await startFixtureDaemon({ directory: uiRoot, cacheDir })
   t.after(async () => { await daemon.close(); await rm(cacheDir, { recursive: true, force: true }) })
+  await daemon.announce(readyFile)
 
   const url = await daemon.register({ name: "alert-dialog", routes: [{ path: "/fixture/alert-dialog", html: html(script) }] })
   assert.equal(url, `${daemon.baseUrl}/fixture/alert-dialog`)

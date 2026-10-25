@@ -9,7 +9,6 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionPopupOption,
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
 
 let browser: Browser, url: string

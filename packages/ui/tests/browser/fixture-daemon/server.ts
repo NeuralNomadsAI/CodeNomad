@@ -19,6 +19,7 @@ export interface FixtureDaemon {
   readonly stats: { transforms: number }
   register(definition: FixtureDefinition): Promise<string>
   installControl(handler: ControlHandler): void
+  announce(readyFile: string): Promise<void>
   warmup(definition: FixtureDefinition): Promise<void>
   close(): Promise<void>
 }
@@ -68,7 +69,6 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile }: {
   const port = (server.httpServer!.address() as { port: number }).port
   const baseUrl = `http://127.0.0.1:${port}`
   const secret = randomBytes(16).toString("hex")
-  if (readyFile) await writeFile(readyFile, JSON.stringify({ port, pid: process.pid, secret, startedAt: Date.now() }))
 
   return {
     port, baseUrl, secret, stats,
@@ -90,6 +90,7 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile }: {
       return url
     },
     installControl(handler) { controls.push(handler) },
+    async announce(target) { await writeFile(target, JSON.stringify({ port, pid: process.pid, secret, startedAt: Date.now() })) },
     // Browser-driven warmup: a real page load is the only honest way to drive
     // Vite's lazy dependency discovery and optimizer to settle — direct
     // transformRequest calls cancel in-flight esbuild builds instead.

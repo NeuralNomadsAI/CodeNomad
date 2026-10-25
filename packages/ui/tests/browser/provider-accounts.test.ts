@@ -3,7 +3,6 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
-import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
 let browser: Browser, url: string
 before(async () => {

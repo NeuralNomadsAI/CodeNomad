@@ -8,7 +8,7 @@ import { startFixtureDaemon } from "./server.ts"
 import { readyDirectoryFor } from "./paths.ts"
 
 const uiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..")
-const readyDirectory = readyDirectoryFor(uiRoot)
+const readyDirectory = process.env.CODENOMAD_FIXTURE_READY_DIR ?? readyDirectoryFor(uiRoot)
 const readyFile = path.join(readyDirectory, "ready")
 const idleTimeoutMs = 10 * 60 * 1000
 
@@ -29,11 +29,14 @@ for (let attempt = 0; attempt < 2 && !claimed; attempt++) {
 }
 if (!claimed) process.exit(0)
 
-const daemon = await startFixtureDaemon({ directory: uiRoot, readyFile })
+const daemon = await startFixtureDaemon({ directory: uiRoot })
 let lastActivity = Date.now()
+// Controls first, then startup warmup (one real page load settles Vite's lazy
+// dependency discovery), and only then announce readiness: a borrower that
+// wins the poll must never see a daemon whose controls or graph aren't ready.
 daemon.installControl(async (request, response) => {
+  lastActivity = Date.now() // every request keeps the daemon alive, not just control calls
   if (!request.url?.startsWith("/__daemon/")) return false
-  lastActivity = Date.now()
   if (request.url.split("?")[0] === "/__daemon/health") {
     response.setHeader("Content-Type", "application/json")
     response.end(JSON.stringify({ pid: process.pid, ready: true }))
@@ -51,6 +54,9 @@ daemon.installControl(async (request, response) => {
   }
   return false
 })
+
+await daemon.warmup({ routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/alert-dialog.tsx"></script></body></html>' }] })
+await daemon.announce(readyFile)
 
 const idleTimer = setInterval(() => {
   if (Date.now() - lastActivity > idleTimeoutMs) void shutdown(0)

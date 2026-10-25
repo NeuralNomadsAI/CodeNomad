@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Tiered local runner: borrowed fixtures run four-wide (their heavy work is
+// Tiered local runner: borrowed fixtures run wide (their heavy work is
 // shared and cached on the daemon), exempt files run two-wide (each owns a
 // full Vite+Chromium tree). CI keeps shard.mjs's serial slices.
 //   node tests/browser/run.mjs [--dry-run]
@@ -11,12 +11,11 @@ import { fileURLToPath } from "node:url"
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const dryRun = process.argv.includes("--dry-run")
 
-const files = (await readdir(directory)).filter(file => file.endsWith(".test.ts")).sort()
+const files = (await readdir(directory, { recursive: true })).filter(file => file.endsWith(".test.ts")).sort()
 const exemptionSource = await readFile(path.join(directory, "fixture-exemptions.ts"), "utf8")
-const reasons = new Map([...exemptionSource.matchAll(/"([^"]+)":\s*"([^"]+)"/g)].map(match => [match[1], match[2]]))
-const heavy = reason => /owns its server|electron|stateful|diagnostic|instruments|config diverges|custom Vite|pending/i.test(reason)
-const borrowed = files.filter(file => !reasons.has(file) || !heavy(reasons.get(file)))
-const owned = files.filter(file => reasons.has(file) && heavy(reasons.get(file)))
+const { exemptions, heavyServers } = await import("./fixture-exemptions.ts")
+const borrowed = files.filter(file => !heavyServers.has(file))
+const owned = files.filter(file => heavyServers.has(file))
 
 console.log(`tiered run: ${borrowed.length} borrowed + ${owned.length} exempt (widths via CODENOMAD_TIERED_LIGHT_WIDTH/HEAVY_WIDTH)`)
 if (dryRun) { console.log(borrowed.join("\n")); process.exit(0) }

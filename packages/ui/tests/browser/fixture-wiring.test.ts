@@ -66,6 +66,7 @@ async function scan(): Promise<Map<string, Set<Rule>>> {
       if (!/borrowFixture\(/.test(source)) missing.add("mustBorrow")
       if (createsViteServerImport.test(source)) missing.add("noSelfServer")
     }
+    if (!isTest && !exempt && createsViteServerImport.test(source)) missing.add("noSelfServer")
     const specifiers = [...source.matchAll(/(?:^|\n)\s*import\s+[^;]*?from\s*["'](\.[^"']+)["']/g)].map(match => match[1])
     for (const specifier of specifiers) {
       if (!helperModules.some(helper => specifier.includes(helper))) continue
