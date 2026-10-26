@@ -16,7 +16,7 @@ const browserTestsDirectory = fileURLToPath(new URL("./", import.meta.url))
 /** Helper modules every fixture depends on; imports naming them must resolve
  * to a real file, so a wrong relative specifier fails here instead of failing
  * six test files at module load. */
-const helperModules = ["fixture-navigation-budget", "fixture-cache", "fixture-shutdown", "fixture-borrow", "fixture-daemon/server", "fixture-daemon/paths"]
+const helperModules = ["fixture-navigation-budget", "fixture-cache", "fixture-shutdown", "fixture-borrow", "fixture-daemon/server", "fixture-daemon/run"]
 
 const RULES = {
   ownedCache: "hosts a Vite server but does not use createFixtureCache()",

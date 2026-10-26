@@ -1,5 +1,4 @@
 import { createHash, randomBytes } from "node:crypto"
-import { rename, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -18,25 +17,19 @@ export interface FixtureDaemon {
   readonly secret: string
   readonly stats: { transforms: number }
   readonly registeredCount: number
-  /** The staleness baseline: source mtimes after this instant invalidate the daemon. */
-  readonly startedAt: number
   register(definition: FixtureDefinition): Promise<string>
   installControl(handler: ControlHandler): void
-  announce(readyFile: string): Promise<void>
   warmup(definition: FixtureDefinition): Promise<void>
   close(): Promise<void>
 }
 
-export async function startFixtureDaemon({ directory, cacheDir, readyFile, freshnessRoots }: {
-  directory: string, cacheDir?: string, readyFile?: string, freshnessRoots?: string[]
+export async function startFixtureDaemon({ directory, cacheDir }: {
+  directory: string, cacheDir?: string
 }): Promise<FixtureDaemon> {
-  // The staleness baseline predates every side effect below: any source edit
-  // with an mtime after this instant invalidates the daemon for new borrowers.
-  const startedAt = Date.now()
   // Vite's non-middleware dev server registers its own SIGTERM and stdin-end
   // handlers while createServer() runs — they close the server and then
   // hard-exit the process (code 0), racing every teardown this daemon
-  // promises its callers. This daemon owns its process's lifecycle; drop
+  // promises its owner. This daemon owns its process's lifecycle; drop
   // exactly the listeners Vite added, leaving whatever was registered
   // before intact.
   const signalListenersBefore = new Set(process.listeners("SIGTERM"))
@@ -87,20 +80,10 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile, fresh
   const secret = randomBytes(16).toString("hex")
 
   return {
-    port, baseUrl, secret, stats, startedAt,
+    port, baseUrl, secret, stats,
     get registeredCount() { return urls.size },
     async register(definition) {
       if (!/^[\w-]+$/.test(definition.name) || !definition.routes?.length) throw new Error("invalid fixture definition")
-      if (freshnessRoots) {
-        const { newestSourceMtime } = await import("./freshness")
-        const newest = await newestSourceMtime(freshnessRoots)
-        // mtimeMs carries sub-millisecond precision while startedAt is a
-        // whole-millisecond Date.now(): an edit in the same millisecond as
-        // the daemon's start is pre-start, not stale.
-        if (Math.floor(newest) > startedAt) {
-          throw Object.assign(new Error(`fixture daemon is stale: sources under ${freshnessRoots.join(",")} changed since start (newest mtime ${newest} > startedAt ${startedAt})`), { code: "ERR_FIXTURE_DAEMON_STALE" })
-        }
-      }
       const fingerprint = createHash("sha256").update(JSON.stringify(definition)).digest("hex")
       const known = fingerprints.get(definition.name)
       if (known) {
@@ -117,13 +100,6 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile, fresh
       return url
     },
     installControl(handler) { controls.push(handler) },
-    // The ready file carries the secret; write it atomically at 0600 so no
-    // other local user can read it and no borrower ever parses a half file.
-    async announce(target) {
-      const staging = `${target}.staging`
-      await writeFile(staging, JSON.stringify({ port, pid: process.pid, secret, startedAt }), { mode: 0o600 })
-      await rename(staging, target)
-    },
     // Browser-driven warmup: a real page load is the only honest way to drive
     // Vite's lazy dependency discovery and optimizer to settle — direct
     // transformRequest calls cancel in-flight esbuild builds instead.

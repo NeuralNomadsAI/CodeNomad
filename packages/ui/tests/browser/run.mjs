@@ -1,25 +1,25 @@
 #!/usr/bin/env node
-// Tiered local runner: borrowed fixtures run wide (their heavy work is
-// shared and cached on the invocation's fixture daemon), exempt files run
-// serially (each owns a full Vite+Chromium tree, and the Git fixtures race
-// on shared Monaco prototype assets — #1139's reviewer pinned the local
-// suite at one heavy file at a time). The runner owns the daemon for its
-// light tier: adopted if fresh, replaced if stale, stopped afterwards.
-// CI keeps shard.mjs's serial slices.
+// Tiered local runner: borrowed fixtures run one file at a time (the local
+// suite's proven-stable mode; the Git fixtures rebuild one checkout-wide
+// Monaco asset directory that is concurrently unsafe, and wide runs grow
+// load-sensitive failures on slow machines) against a daemon this runner
+// owns — spawned here, its endpoint handed to the test processes through
+// the environment, stopped portably when the tier ends. Exempt files keep
+// their own full Vite+Chromium trees. CI keeps shard.mjs's serial slices.
+// Widths stay tunable for braver machines.
 //   node tests/browser/run.mjs [--dry-run]
 import { spawn } from "node:child_process"
-import { readdir, readFile } from "node:fs/promises"
+import { readdir } from "node:fs/promises"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import { readyDirectoryFor } from "./fixture-daemon/paths.ts"
-import { ensureInvocationDaemon } from "./fixture-daemon/orchestrate.ts"
+import { startRunDaemon } from "./fixture-daemon/run.ts"
 
 const directory = path.dirname(fileURLToPath(import.meta.url))
 const dryRun = process.argv.includes("--dry-run")
 
 const entries = await readdir(directory, { recursive: true })
 const files = entries.map(file => file.split(path.sep).join("/")).filter(file => file.endsWith(".test.ts")).sort()
-const { exemptions, heavyServers } = await import("./fixture-exemptions.ts")
+const { heavyServers } = await import("./fixture-exemptions.ts")
 const borrowed = files.filter(file => !heavyServers.has(file))
 const owned = files.filter(file => heavyServers.has(file))
 
@@ -33,25 +33,21 @@ if (dryRun) {
 const uiRoot = path.resolve(directory, "../..")
 let failures = 0
 for (const [label, slice, concurrency] of [
-  // Both tiers default to one file at a time — #1139's reviewer pinned the
-  // local suite there after the Git fixtures raced on shared Monaco assets,
-  // and 3-wide light runs added their own load-sensitive failures on slow
-  // machines. The width knobs stay for braver machines.
   ["borrowed", borrowed, Number(process.env.CODENOMAD_TIERED_LIGHT_WIDTH ?? 1)],
   ["exempt", owned, Number(process.env.CODENOMAD_TIERED_HEAVY_WIDTH ?? 1)],
 ]) {
   if (!slice.length) continue
   console.log(`— ${label}: ${slice.length} files at ${concurrency}-wide`)
   const daemon = label === "borrowed"
-    ? await ensureInvocationDaemon({ uiRoot, readyDirectory: readyDirectoryFor(uiRoot) }).catch(error => {
-        console.error(`fixture daemon unavailable (${error}); borrowers will use private daemons`)
+    ? await startRunDaemon({ uiRoot }).catch(error => {
+        console.error(`fixture daemon unavailable (${error}); borrowers will use standalone daemons`)
         return null
       })
     : null
   const child = spawn(process.execPath, [
     "--import", "tsx", "--test", `--test-concurrency=${concurrency}`,
     ...slice.map(file => path.join(directory, file)),
-  ], { stdio: "inherit", cwd: uiRoot })
+  ], { stdio: "inherit", cwd: uiRoot, env: daemon ? { ...process.env, ...daemon.env } : process.env })
   const code = await new Promise(resolve => {
     child.on("error", error => { console.error(error); resolve(1) })
     child.on("close", resolve)

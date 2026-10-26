@@ -536,8 +536,8 @@ jobs:
         with:
           name: fixture-daemon-shard-${{ matrix.shard }}
           path: |
-            /tmp/codenomad-fixture-daemon-*
-            /tmp/codenomad-fixture-private-*
+            /tmp/codenomad-fixture-run-*
+            /tmp/codenomad-fixture-standalone-*
           if-no-files-found: ignore
           retention-days: 7
 

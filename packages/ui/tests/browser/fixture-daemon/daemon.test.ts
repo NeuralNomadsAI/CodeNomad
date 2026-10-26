@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises"
+import { mkdtemp, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { after, before, test } from "node:test"
@@ -10,17 +10,13 @@ const uiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..
 const html = (script: string) => `<html><body><div id="root"></div><script type="module" src="${script}"></script></body></html>`
 const script = "/tests/browser/fixtures/alert-dialog.tsx"
 
-let cacheDir: string, readyFile: string
-before(async () => {
-  cacheDir = await mkdtemp(path.join(tmpdir(), "daemon-test-"))
-  readyFile = path.join(await mkdtemp(path.join(tmpdir(), "daemon-ready-")), "ready")
-})
-after(async () => { await rm(cacheDir, { recursive: true, force: true }); await rm(path.dirname(readyFile), { recursive: true, force: true }) })
+let cacheDir: string
+before(async () => { cacheDir = await mkdtemp(path.join(tmpdir(), "daemon-test-")) })
+after(async () => { await rm(cacheDir, { recursive: true, force: true }) })
 
 test("the daemon serves registered fixtures and re-registers idempotently", { timeout: 120_000 }, async t => {
   const daemon = await startFixtureDaemon({ directory: uiRoot, cacheDir })
   t.after(async () => { await daemon.close(); await rm(cacheDir, { recursive: true, force: true }) })
-  await daemon.announce(readyFile)
 
   const url = await daemon.register({ name: "alert-dialog", routes: [{ path: "/fixture/alert-dialog", html: html(script) }] })
   assert.equal(url, `${daemon.baseUrl}/fixture/alert-dialog`)
@@ -38,12 +34,6 @@ test("the daemon serves registered fixtures and re-registers idempotently", { ti
   ])
   for (const target of [second, third]) assert.equal((await fetch(target)).status, 200)
 
-  // The ready file carries everything a borrower needs to find the daemon.
-  const ready = JSON.parse(await readFile(readyFile, "utf8"))
-  assert.equal(ready.port, daemon.port)
-  assert.ok(Number.isInteger(ready.pid))
-  assert.ok(ready.secret.length >= 16)
-
   // Warmup loads a real page once; serving the same module afterwards is a cache hit.
   await daemon.warmup({ routes: [{ path: "/__warmup", html: html(script) }] })
   const before = daemon.stats.transforms
@@ -52,41 +42,34 @@ test("the daemon serves registered fixtures and re-registers idempotently", { ti
   await warmed.text()
   assert.equal(daemon.stats.transforms, before, "the warmed module graph must not transform again")
 
-  // Late dependency — the #1139 review's optimizer-invalidation regression:
-  // a fixture module outside the warmed graph registers afterwards, and its
-  // first serve must not 504 ("Outdated Optimize Dep") while the optimizer
-  // discovers the imports warmup never saw. One daemon serializes that
-  // discovery; per-borrower servers were the race.
-  const lateScript = "/tests/browser/fixtures/history-navigation.tsx"
-  const late = await daemon.register({ name: "late-dependency", routes: [{ path: "/fixture/late-dependency", html: html(lateScript) }] })
-  assert.equal((await fetch(late)).status, 200)
-  const lateModule = await fetch(`${daemon.baseUrl}${lateScript}`)
-  assert.equal(lateModule.status, 200, "a late-discovered module must serve, not 504 as an outdated optimized dep")
-  await lateModule.text()
-
   await daemon.close()
   await assert.rejects(fetch(url))
 })
 
-test("registering on a daemon whose source tree moved past it rejects as stale", { timeout: 120_000 }, async t => {
-  const staleRoot = await mkdtemp(path.join(tmpdir(), "daemon-stale-"))
-  const source = path.join(staleRoot, "fixture.tsx")
-  await writeFile(source, "export {}")
-  const daemon = await startFixtureDaemon({ directory: uiRoot, cacheDir, freshnessRoots: [staleRoot] })
-  t.after(async () => { await daemon.close().catch(() => {}); await rm(staleRoot, { recursive: true, force: true }) })
+test("a late dependency outside the warmed graph loads in a real browser without a 504", { timeout: 180_000 }, async t => {
+  const daemon = await startFixtureDaemon({ directory: uiRoot, cacheDir })
+  t.after(async () => { await daemon.close().catch(() => {}); await rm(cacheDir, { recursive: true, force: true }) })
 
-  const fresh = await daemon.register({ name: "stale-probe", routes: [{ path: "/fixture/stale-probe", html: html(script) }] })
-  assert.equal((await fetch(fresh)).status, 200)
+  // Warm the graph on one module…
+  await daemon.warmup({ routes: [{ path: "/__warmup", html: html(script) }] })
 
-  // A source edit dated after the daemon's start must bar new registrations:
-  // the surviving module graph would serve transforms of code that no
-  // longer exists.
-  const edited = new Date(Date.now() + 10_000)
-  await utimes(source, edited, edited)
-  await assert.rejects(
-    daemon.register({ name: "stale-second", routes: [{ path: "/fixture/stale-second", html: html(script) }] }),
-    (error: Error & { code?: string }) => error.code === "ERR_FIXTURE_DAEMON_STALE",
-  )
-  // The already-registered fixture keeps serving the started graph.
-  assert.equal((await fetch(fresh)).status, 200)
+  // …then register a fixture whose module warmup never saw. The #1139
+  // review's optimizer-invalidation regression: a real browser loads the
+  // page, the optimizer discovers the imports late, and no request may 504
+  // as an outdated optimized dep — per-borrower servers were the race.
+  const lateScript = "/tests/browser/fixtures/history-navigation.tsx"
+  const late = await daemon.register({ name: "late-dependency", routes: [{ path: "/fixture/late-dependency", html: html(lateScript) }] })
+  const { chromium } = await import("playwright")
+  const { armFixtureNavigationBudget } = await import("../fixture-navigation-budget")
+  const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
+  t.after(() => browser.close())
+  const statuses: Array<{ url: string, status: number }> = []
+  const page = await browser.newPage()
+  page.on("response", response => { if (response.url().startsWith(daemon.baseUrl)) statuses.push({ url: response.url(), status: response.status() }) })
+  await page.goto(late, { waitUntil: "load" })
+  assert.ok(statuses.length > 0, "the page made requests against the daemon")
+  const outdated = statuses.filter(entry => entry.status === 504 || entry.status === 500)
+  assert.deepEqual(outdated.map(entry => entry.url), [], "no late-discovered dependency may 504")
+  await page.close()
 })

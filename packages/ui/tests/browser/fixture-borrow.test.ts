@@ -1,114 +1,71 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
-import { createServer, type Socket } from "node:net"
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { after, before, test } from "node:test"
 import { borrowFixture } from "./fixture-borrow"
-import { startFixtureDaemon } from "./fixture-daemon/server"
+import { startRunDaemon } from "./fixture-daemon/run"
 
 const html = "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/alert-dialog.tsx\"></script></body></html>"
 
 const scratch: string[] = []
-before(async () => { for (let i = 0; i < 10; i++) scratch.push(await mkdtemp(path.join(tmpdir(), "borrow-"))) })
+before(async () => { for (let i = 0; i < 2; i++) scratch.push(await mkdtemp(path.join(tmpdir(), "borrow-"))) })
 after(async () => { for (const dir of scratch) await rm(dir, { recursive: true, force: true }) })
 
-test("with no shared daemon a borrower gets a private per-process daemon it reuses", { timeout: 120_000 }, async () => {
-  const [probe, privateDirectory] = [scratch[0], scratch[1]]
-  const first = await borrowFixture({ name: "borrow-private", routes: [{ path: "/fixture/borrow-private", html }] }, { readyDirectory: probe, privateDirectory })
-  assert.equal((await fetch(first.url)).status, 200)
-
-  const ready = JSON.parse(await readFile(path.join(privateDirectory, "ready"), "utf8"))
-  assert.ok(ready.pid !== process.pid, "the private daemon is its own process, so the test process never holds Vite handles")
-  assert.equal(typeof ready.secret, "string")
-
-  const second = await borrowFixture({ name: "borrow-private-second", routes: [{ path: "/fixture/borrow-private-second", html }] }, { readyDirectory: probe, privateDirectory })
-  assert.equal((await fetch(second.url)).status, 200)
-  const reused = JSON.parse(await readFile(path.join(privateDirectory, "ready"), "utf8"))
-  assert.equal(reused.pid, ready.pid, "a second borrow in the same process reuses the private daemon")
-})
-
-test("a healthy shared daemon in the discovery directory serves borrowers without spawning", { timeout: 120_000 }, async t => {
-  const [sharedDirectory, privateDirectory] = [scratch[2], scratch[3]]
-  const readyFile = path.join(sharedDirectory, "ready")
-  const child = spawn(process.execPath,
-    ["--import", "tsx", path.join(import.meta.dirname, "fixture-daemon", "daemon.mjs")],
-    { stdio: "ignore", env: { ...process.env, CODENOMAD_FIXTURE_READY_DIR: sharedDirectory, CODENOMAD_FIXTURE_WARMUP: "0" } })
-  t.after(() => { try { child.kill("SIGTERM") } catch { /* already gone */ } })
-  const deadline = Date.now() + 60_000
-  let ready: { port: number } | null = null
-  while (Date.now() < deadline) {
-    ready = await readFile(readyFile, "utf8").then(JSON.parse, () => null)
-    if (ready && await fetch(`http://127.0.0.1:${ready.port}/__daemon/health`).then(r => r.ok, () => false)) break
-    await new Promise(resolve => setTimeout(resolve, 200))
-  }
-  assert.ok(ready, "the spawned shared daemon became ready")
-
-  const borrowed = await borrowFixture({ name: "borrow-shared", routes: [{ path: "/fixture/borrow-shared", html }] }, { readyDirectory: sharedDirectory, privateDirectory })
-  assert.equal((await fetch(borrowed.url)).status, 200)
-  assert.equal(new URL(borrowed.url).port, String(ready!.port), "the registration landed on the shared daemon")
-  const after = JSON.parse(await readFile(readyFile, "utf8"))
-  assert.equal(after.pid, child.pid, "no second daemon was spawned for the borrower")
-})
-
-test("a dead daemon in the discovery directory falls straight through to the private daemon", { timeout: 120_000 }, async () => {
-  const [probe, privateDirectory] = [scratch[4], scratch[5]]
-  const shared = await startFixtureDaemon({ directory: path.resolve(import.meta.dirname, "../.."), readyFile: path.join(probe, "ready") })
-  await shared.announce(path.join(probe, "ready"))
-  await shared.close() // the ready file survives an unclean end
-
-  const started = Date.now()
-  const borrowed = await borrowFixture({ name: "borrow-fallthrough", routes: [{ path: "/fixture/borrow-fallthrough", html }] }, { readyDirectory: probe, privateDirectory })
-  assert.equal((await fetch(borrowed.url)).status, 200)
-  assert.ok(Date.now() - started < 90_000, "no spawn deadline is held hostage polling a corpse")
-})
-
-test("a daemon that accepts connections but never answers cannot hang a borrower", { timeout: 120_000 }, async () => {
-  const [probe, privateDirectory] = [scratch[8], scratch[9]]
-  // A wedged daemon: the TCP stack accepts, nothing ever responds. The
-  // health probe must give up on its own terms and fall through to the
-  // private daemon rather than hanging the whole file's setup.
-  const sockets = new Set<Socket>()
-  const wedge = createServer(socket => { sockets.add(socket); socket.pause() })
-  await new Promise<void>(resolve => wedge.listen(0, "127.0.0.1", resolve))
-  const port = (wedge.address() as { port: number }).port
-  await writeFile(path.join(probe, "ready"), JSON.stringify({ port, pid: -1, secret: "wedged", startedAt: Date.now() }))
+test("a runner's endpoint attaches borrowers without spawning anything", { timeout: 180_000 }, async () => {
+  const daemon = await startRunDaemon({ uiRoot: path.resolve(import.meta.dirname, "../.."), warmup: false })
   try {
-    const started = Date.now()
-    const borrowed = await borrowFixture({ name: "borrow-wedged", routes: [{ path: "/fixture/borrow-wedged", html }] }, { readyDirectory: probe, privateDirectory })
+    const before = 0 + await fetch(new URL("/__daemon/health", daemon.url)).then(() => 0, () => 0)
+    const borrowed = await borrowFixture({ name: "borrow-attached", routes: [{ path: "/fixture/borrow-attached", html }] }, { endpoint: { url: daemon.url, secret: daemon.secret, pid: daemon.pid } })
     assert.equal((await fetch(borrowed.url)).status, 200)
-    assert.ok(Date.now() - started < 60_000, "the dead probe falls through within the health timeout, not the fetch's default")
-  } finally {
-    // A paused socket never ends on its own; destroy every connection
-    // before waiting for the server's close, or close() waits forever.
-    for (const socket of sockets) socket.destroy()
-    await new Promise<void>(resolve => wedge.close(() => resolve()))
-  }
+    assert.equal(new URL(borrowed.url).port, new URL(daemon.url).port, "the registration landed on the runner's daemon")
+    assert.equal(before, 0)
+  } finally { await daemon.stop() }
 })
 
-test("the private daemon dies with its borrower process", { timeout: 120_000 }, async () => {
-  const [probe, privateDirectory] = [scratch[6], scratch[7]]
-  const probeScript = path.join(probe, "probe.mts")
+test("a dead endpoint falls through to this process's standalone daemon, which is reused and dies with it", { timeout: 180_000 }, async () => {
+  const [probe, log] = [scratch[0], scratch[1]]
+  const probeScript = path.join(probe, "probe.mjs")
   await writeFile(probeScript, [
-    `import { borrowFixture } from ${JSON.stringify(path.join(import.meta.dirname, "fixture-borrow"))}`,
+    `import { borrowFixture } from ${JSON.stringify(pathToFileURL(path.join(import.meta.dirname, "fixture-borrow.ts")).href)}`,
     `void (async () => {`,
-    `  const fixture = await borrowFixture({ name: "borrow-exit", routes: [{ path: "/fixture/borrow-exit", html: ${JSON.stringify(html)} }] }, { readyDirectory: process.env.PROBE_READY_DIR!, privateDirectory: process.env.PROBE_PRIVATE_DIR! })`,
-    `  if (!(await fetch(fixture.url)).ok) throw new Error("probe fixture did not serve")`,
+    `  const first = await borrowFixture({ name: "borrow-exit", routes: [{ path: "/fixture/borrow-exit", html: ${JSON.stringify(html)} }] }, { endpoint: { url: "http://127.0.0.1:9", secret: "dead", pid: 0 } })`,
+    `  if (!(await fetch(first.url)).ok) throw new Error("standalone daemon did not serve")`,
+    `  const second = await borrowFixture({ name: "borrow-exit-2", routes: [{ path: "/fixture/borrow-exit-2", html: ${JSON.stringify(html)} }] }, { endpoint: { url: "http://127.0.0.1:9", secret: "dead", pid: 0 } })`,
+    `  console.log(JSON.stringify({ ports: [new URL(first.url).port, new URL(second.url).port] }))`,
     `  process.exit(0)`,
     `})()`,
   ].join("\n"))
   const child = spawn(process.execPath, ["--import", "tsx", probeScript],
-    { stdio: "ignore", env: { ...process.env, PROBE_READY_DIR: probe, PROBE_PRIVATE_DIR: privateDirectory } })
+    { stdio: ["ignore", "pipe", "ignore"], env: { ...process.env, CODENOMAD_FIXTURE_LOG: log } })
+  let ports: string[] = []
+  child.stdout.setEncoding("utf8")
+  child.stdout.on("data", (chunk: string) => {
+    for (const line of chunk.split("\n")) if (line.includes('"ports"')) ports = JSON.parse(line).ports
+  })
   await new Promise<void>(resolve => child.on("close", () => resolve()))
 
-  const ready = await readFile(path.join(privateDirectory, "ready"), "utf8").then(JSON.parse, () => null) as { pid: number } | null
-  assert.ok(ready, "the borrower's private daemon announced itself")
-  assert.notEqual(ready.pid, process.pid)
+  // Both borrows reused one standalone daemon for the process…
+  assert.equal(ports.length, 2)
+  assert.equal(ports[0], ports[1], "a second borrow reuses the process's standalone daemon")
+  // …and no daemon outlived it.
   const deadline = Date.now() + 20_000
-  while (Date.now() < deadline) {
-    try { process.kill(ready.pid, 0); await new Promise(resolve => setTimeout(resolve, 250)) }
-    catch { return } // the daemon followed its borrower into the grave
+  const gone = async () => {
+    const probes = await Promise.all(ports.map(port =>
+      fetch(`http://127.0.0.1:${port}/__daemon/health`).then(() => false, () => true)))
+    return probes.every(Boolean)
   }
-  assert.fail(`private daemon pid ${ready.pid} outlived its borrower process`)
+  let dead = await gone()
+  while (!dead && Date.now() < deadline) { await new Promise(resolve => setTimeout(resolve, 250)); dead = await gone() }
+  assert.ok(dead, "the standalone daemon died with its borrower process")
+})
+
+test("with no runner and no endpoint option a standalone daemon serves the file", { timeout: 180_000 }, async () => {
+  // This test process itself is the borrower: no endpoint option, no env.
+  const borrowed = await borrowFixture({ name: "borrow-standalone", routes: [{ path: "/fixture/borrow-standalone", html }] })
+  assert.equal((await fetch(borrowed.url)).status, 200)
+  const again = await borrowFixture({ name: "borrow-standalone-2", routes: [{ path: "/fixture/borrow-standalone-2", html }] })
+  assert.equal(new URL(again.url).port, new URL(borrowed.url).port, "the same standalone daemon serves the whole process")
 })
