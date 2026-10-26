@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
+import { createServer, type Socket } from "node:net"
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
@@ -10,7 +11,7 @@ import { startFixtureDaemon } from "./fixture-daemon/server"
 const html = "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/alert-dialog.tsx\"></script></body></html>"
 
 const scratch: string[] = []
-before(async () => { for (let i = 0; i < 8; i++) scratch.push(await mkdtemp(path.join(tmpdir(), "borrow-"))) })
+before(async () => { for (let i = 0; i < 10; i++) scratch.push(await mkdtemp(path.join(tmpdir(), "borrow-"))) })
 after(async () => { for (const dir of scratch) await rm(dir, { recursive: true, force: true }) })
 
 test("with no shared daemon a borrower gets a private per-process daemon it reuses", { timeout: 120_000 }, async () => {
@@ -61,6 +62,29 @@ test("a dead daemon in the discovery directory falls straight through to the pri
   const borrowed = await borrowFixture({ name: "borrow-fallthrough", routes: [{ path: "/fixture/borrow-fallthrough", html }] }, { readyDirectory: probe, privateDirectory })
   assert.equal((await fetch(borrowed.url)).status, 200)
   assert.ok(Date.now() - started < 90_000, "no spawn deadline is held hostage polling a corpse")
+})
+
+test("a daemon that accepts connections but never answers cannot hang a borrower", { timeout: 120_000 }, async () => {
+  const [probe, privateDirectory] = [scratch[8], scratch[9]]
+  // A wedged daemon: the TCP stack accepts, nothing ever responds. The
+  // health probe must give up on its own terms and fall through to the
+  // private daemon rather than hanging the whole file's setup.
+  const sockets = new Set<Socket>()
+  const wedge = createServer(socket => { sockets.add(socket); socket.pause() })
+  await new Promise<void>(resolve => wedge.listen(0, "127.0.0.1", resolve))
+  const port = (wedge.address() as { port: number }).port
+  await writeFile(path.join(probe, "ready"), JSON.stringify({ port, pid: -1, secret: "wedged", startedAt: Date.now() }))
+  try {
+    const started = Date.now()
+    const borrowed = await borrowFixture({ name: "borrow-wedged", routes: [{ path: "/fixture/borrow-wedged", html }] }, { readyDirectory: probe, privateDirectory })
+    assert.equal((await fetch(borrowed.url)).status, 200)
+    assert.ok(Date.now() - started < 60_000, "the dead probe falls through within the health timeout, not the fetch's default")
+  } finally {
+    // A paused socket never ends on its own; destroy every connection
+    // before waiting for the server's close, or close() waits forever.
+    for (const socket of sockets) socket.destroy()
+    await new Promise<void>(resolve => wedge.close(() => resolve()))
+  }
 })
 
 test("the private daemon dies with its borrower process", { timeout: 120_000 }, async () => {

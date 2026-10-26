@@ -41,7 +41,7 @@ function namespaced(definition: FixtureDefinition): FixtureDefinition {
 }
 
 async function healthy(ready: ReadyFile): Promise<boolean> {
-  return fetch(`http://127.0.0.1:${ready.port}/__daemon/health`)
+  return fetch(`http://127.0.0.1:${ready.port}/__daemon/health`, { signal: AbortSignal.timeout(5_000) })
     .then(response => (response.ok ? response.json() : null))
     .then((body: { pid?: number, ready?: boolean } | null) => body?.ready === true && body.pid === ready.pid)
     .catch(() => false)
@@ -56,6 +56,7 @@ async function registerOn(ready: ReadyFile, definition: FixtureDefinition): Prom
     method: "POST",
     headers: { "content-type": "application/json", "x-fixture-secret": ready.secret },
     body: JSON.stringify(definition),
+    signal: AbortSignal.timeout(15_000),
   })
   if (!response.ok) throw new Error(`fixture registration failed: ${await response.text()}`)
   return (await response.json()).url

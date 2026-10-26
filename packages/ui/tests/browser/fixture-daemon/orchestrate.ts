@@ -42,7 +42,7 @@ async function readReady(readyFile: string): Promise<ReadyFile | null> {
 }
 
 async function healthy(ready: ReadyFile): Promise<boolean> {
-  return fetch(`http://127.0.0.1:${ready.port}/__daemon/health`)
+  return fetch(`http://127.0.0.1:${ready.port}/__daemon/health`, { signal: AbortSignal.timeout(5_000) })
     .then(response => (response.ok ? response.json() : null))
     .then((body: { pid?: number, ready?: boolean } | null) => body?.ready === true && body.pid === ready.pid)
     .catch(() => false)

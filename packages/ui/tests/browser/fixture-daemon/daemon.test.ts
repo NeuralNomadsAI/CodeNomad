@@ -52,6 +52,18 @@ test("the daemon serves registered fixtures and re-registers idempotently", { ti
   await warmed.text()
   assert.equal(daemon.stats.transforms, before, "the warmed module graph must not transform again")
 
+  // Late dependency — the #1139 review's optimizer-invalidation regression:
+  // a fixture module outside the warmed graph registers afterwards, and its
+  // first serve must not 504 ("Outdated Optimize Dep") while the optimizer
+  // discovers the imports warmup never saw. One daemon serializes that
+  // discovery; per-borrower servers were the race.
+  const lateScript = "/tests/browser/fixtures/history-navigation.tsx"
+  const late = await daemon.register({ name: "late-dependency", routes: [{ path: "/fixture/late-dependency", html: html(lateScript) }] })
+  assert.equal((await fetch(late)).status, 200)
+  const lateModule = await fetch(`${daemon.baseUrl}${lateScript}`)
+  assert.equal(lateModule.status, 200, "a late-discovered module must serve, not 504 as an outdated optimized dep")
+  await lateModule.text()
+
   await daemon.close()
   await assert.rejects(fetch(url))
 })

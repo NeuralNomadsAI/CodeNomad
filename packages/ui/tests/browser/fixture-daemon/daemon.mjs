@@ -32,7 +32,7 @@ const readJson = (file, fallback = null) => readFile(file, "utf8").then(JSON.par
 // The health endpoint reports the serving process's pid; a ready file whose
 // port now serves a different process (stale file plus port reuse) must not
 // be mistaken for the daemon it names.
-const serving = async ready => Boolean(ready && await fetch(`http://127.0.0.1:${ready.port}/__daemon/health`)
+const serving = async ready => Boolean(ready && await fetch(`http://127.0.0.1:${ready.port}/__daemon/health`, { signal: AbortSignal.timeout(5_000) })
   .then(response => (response.ok ? response.json() : null))
   .then(body => body?.ready === true && body.pid === ready.pid)
   .catch(() => false))
@@ -76,6 +76,13 @@ for (let attempt = 0; attempt < 5 && !claimed; attempt++) {
   } catch (error) {
     if (error.code !== "EEXIST") throw error
     const owner = await readJson(claimFile)
+    if (owner === null) {
+      // A claim file can exist before its content lands (create-with-flag is
+      // not create-with-content). Give the writer a poll cycle before
+      // treating a live owner's half-written claim as unowned residue.
+      await sleep(250)
+      owner = await readJson(claimFile)
+    }
     if (owner && Number.isInteger(owner.pid) && pidAlive(owner.pid)) {
       const deadline = Date.now() + starterGraceMs
       while (Date.now() < deadline) {
@@ -92,7 +99,17 @@ for (let attempt = 0; attempt < 5 && !claimed; attempt++) {
 }
 if (!claimed) await die(`could not claim ${claimFile}`)
 
-const daemon = await startFixtureDaemon({ directory: uiRoot, freshnessRoots })
+// A failure between claiming and a live daemon (Vite refusing to start, a
+// port problem, an optimizer crash) must flush its story and remove the
+// claim — shutdown() cannot run here: the daemon object it reads does not
+// exist yet, and an unguarded handler would die on the temporal dead zone
+// instead of cleaning up.
+let daemon = null
+try {
+  daemon = await startFixtureDaemon({ directory: uiRoot, freshnessRoots })
+} catch (error) {
+  await die(`fixture daemon failed to start: ${error?.stack ?? String(error)}`)
+}
 let lastActivity = Date.now()
 
 // A private fallback daemon (borrowFixture) is tied to its borrower: when the

@@ -61,6 +61,11 @@ only an edit made while a daemon serves goes unnoticed.
   skipped where `process.getuid` does not exist. If a daemon is wedged,
   delete its discovery directory — the next starter reclaims a dead claim by
   pid verification.
+- One checkout, one invocation: two concurrent local runs against the same
+  checkout share the adopted daemon, and whichever runner started it stops
+  it when its slice ends — the other's in-flight pages die and its later
+  files fall back to private daemons. Run one invocation per checkout at a
+  time (CI's shards each own their runner).
 
 ## Agent conventions
 

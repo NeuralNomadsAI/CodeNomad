@@ -9,7 +9,6 @@ import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 import { captureMissionView } from "./mission-view-capture"
 
 let browser: Browser, url: string
-let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
   const fixture = await borrowFixture({
       name: "mission-result-reader",
@@ -17,13 +16,11 @@ before(async () => {
         { path: "/mission-result-reader", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-result-reader.tsx\"></script></body></html>" },
       ],
     })
-  try {
-    url = fixture.url
-    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
-    armFixtureNavigationBudget(browser)
-  } catch (error) { try { } finally { await cache.dispose() }; throw error }
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { try { await browser?.close() } finally { try { } finally { await cache?.dispose() } } })
+after(async () => { await browser?.close() })
 
 function snapshot() {
   const report: MissionReport = { id: "late", taskKey: "work", sessionId: "actor", createdAt: 2, outcome: "completed", late: true,
