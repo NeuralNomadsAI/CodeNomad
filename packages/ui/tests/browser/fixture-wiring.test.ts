@@ -50,7 +50,7 @@ async function scan(): Promise<Map<string, Set<Rule>>> {
   for (const file of files) {
     let source: string
     try { source = await readFile(file, "utf8") } catch { continue } // binary fixture assets
-    const relative = path.relative(browserTestsDirectory, file)
+    const relative = path.relative(browserTestsDirectory, file).split(path.sep).join("/")
     const missing = new Set<Rule>()
     const exempt = exemptions[relative]
     const isTest = /\.test\.ts$/.test(relative)

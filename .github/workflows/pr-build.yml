@@ -526,6 +526,17 @@ jobs:
       - name: Run browser shard
         run: xvfb-run -a node packages/ui/tests/browser/shard.mjs ${{ matrix.shard }} 4
 
+      - name: Upload fixture daemon diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: fixture-daemon-shard-${{ matrix.shard }}
+          path: |
+            /tmp/codenomad-fixture-daemon-*
+            /tmp/codenomad-fixture-private-*
+          if-no-files-found: ignore
+          retention-days: 7
+
   tests-tauri-windows:
     needs: authorize
     if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
