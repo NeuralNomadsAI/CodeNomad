@@ -48,6 +48,7 @@ Start with [README](../README.md) for installation and usage, then
 ## Desktop automation and validation
 
 - [Desktop instrumentation and browser automation](BROWSER_AUTOMATION.md): always-available automation tools, authenticated transport, owned native previews and targeting.
+- [Browser test suite](BROWSER_TESTING.md): the fixture daemon, tiered local runner, CI shards, discovery cleanup and exemption map.
 - [Device emulation](BROWSER_DEVICE_EMULATION.md): touch profiles and sizing contracts.
 - [Desktop data profiles](DESKTOP_DATA_PROFILES.md): profile resolution, isolation and cleanup.
 - [Tauri updates](TAURI_UPDATER.md): signed updates, the update feed and Linux AppImage distribution.

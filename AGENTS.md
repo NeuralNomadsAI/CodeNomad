@@ -58,7 +58,7 @@ File size is a refactoring signal, never by itself a reason to refactor. When a 
 ## Tooling Preferences
 - Modify existing files with the `edit` tool; use `write` only to create new files.
 - Browser rendering regressions live in `packages/ui/tests/browser/` (deterministic HTTP fixtures in `fixtures/`) and exercise the real Solid components and native event dispatcher, never reimplemented rendering logic. Run `npm run test:browser --workspace @codenomad/ui` after `npx playwright install chromium`; `CODENOMAD_BROWSER_PATH` may select an existing Chromium executable.
-- Concurrent Vite browser fixtures use `tests/browser/fixture-cache.ts` for per-server optimized-dependency caches; close the server before disposing its owned temporary cache. Never clear the checkout's shared cache to repair a fixture or make parallel tests share mutable optimizer output.
+- Concurrent Vite browser fixtures use `tests/browser/fixture-cache.ts` for per-server optimized-dependency caches; close the server before disposing its owned temporary cache. Never clear the checkout's shared cache to repair a fixture or make parallel tests share mutable optimizer output. The one sanctioned exception is the shared fixture daemon (`dev-docs/BROWSER_TESTING.md`): a single daemon process owns one cache dir and serves read-only borrowers over HTTP, and an mtime fingerprint invalidates it — it refuses registrations and retires rather than serve a graph older than the sources.
 
 ## Desktop Runtime Launch
 - Native automation instrumentation starts automatically. Do not configure a fixed CDP port or a manual WebView2 profile.
