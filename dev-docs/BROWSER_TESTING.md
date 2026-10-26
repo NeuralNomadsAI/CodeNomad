@@ -37,7 +37,9 @@ process to the grave.
 Staleness is keyed on source mtimes (`tests/browser/fixture-daemon/freshness.ts`):
 the daemon refuses new registrations once any served tree is newer than its
 start and retires itself, so a test can never pass against transforms of
-code that no longer exists.
+code that no longer exists. Dependency installs and tsconfig edits are
+accepted blind spots — every runner binds a fresh daemon per invocation, so
+only an edit made while a daemon serves goes unnoticed.
 
 ## Discovery, cleanup and platform limits
 
@@ -53,8 +55,10 @@ code that no longer exists.
 - Per-server optimizer caches (`tests/browser/fixture-cache.ts`) land in
   `codenomad-browser-vite-*` directories and are disposed by protected
   shutdown. Never clear the checkout's shared cache to repair a fixture.
-- There is no platform split: discovery, claiming and the HTTP control plane
-  are plain Node and work everywhere the suite runs. If a daemon is wedged,
+- Discovery, claiming and the HTTP control plane use only plain-Node
+  primitives available on every platform the suite runs on; the one
+  POSIX-only step, the discovery directory's uid ownership check, is
+  skipped where `process.getuid` does not exist. If a daemon is wedged,
   delete its discovery directory — the next starter reclaims a dead claim by
   pid verification.
 

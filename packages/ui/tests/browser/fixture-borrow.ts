@@ -43,7 +43,7 @@ function namespaced(definition: FixtureDefinition): FixtureDefinition {
 async function healthy(ready: ReadyFile): Promise<boolean> {
   return fetch(`http://127.0.0.1:${ready.port}/__daemon/health`)
     .then(response => (response.ok ? response.json() : null))
-    .then((body: { ready?: boolean } | null) => body?.ready === true)
+    .then((body: { pid?: number, ready?: boolean } | null) => body?.ready === true && body.pid === ready.pid)
     .catch(() => false)
 }
 
@@ -86,7 +86,7 @@ async function spawnPrivateDaemon(directory?: string): Promise<PrivateDaemon> {
   const readyFile = path.join(readyDirectory, "ready")
   const child: ChildProcess = spawn(process.execPath,
     ["--import", "tsx", path.join(path.dirname(fileURLToPath(import.meta.url)), "fixture-daemon", "daemon.mjs")],
-    { detached: true, stdio: "ignore", cwd: uiRoot, env: {
+    { detached: true, stdio: ["ignore", "ignore", "inherit"], cwd: uiRoot, env: {
       ...process.env,
       CODENOMAD_FIXTURE_READY_DIR: readyDirectory,
       CODENOMAD_FIXTURE_WARMUP: "0",
@@ -99,7 +99,7 @@ async function spawnPrivateDaemon(directory?: string): Promise<PrivateDaemon> {
     if (ready && await healthy(ready)) return { ready }
     await new Promise(resolve => setTimeout(resolve, 250))
   }
-  throw new Error(`private fixture daemon did not become ready at ${readyFile}`)
+  throw new Error(`private fixture daemon did not become ready at ${readyFile} (see ${path.join(readyDirectory, "daemon.log")})`)
 }
 
 /** Borrows a fixture page. A runner-owned shared daemon (shard.mjs, run.mjs)

@@ -44,7 +44,7 @@ async function readReady(readyFile: string): Promise<ReadyFile | null> {
 async function healthy(ready: ReadyFile): Promise<boolean> {
   return fetch(`http://127.0.0.1:${ready.port}/__daemon/health`)
     .then(response => (response.ok ? response.json() : null))
-    .then((body: { ready?: boolean } | null) => body?.ready === true)
+    .then((body: { pid?: number, ready?: boolean } | null) => body?.ready === true && body.pid === ready.pid)
     .catch(() => false)
 }
 
@@ -82,22 +82,34 @@ export async function ensureInvocationDaemon(options: InvocationDaemonOptions): 
     await stopDaemon(serving.pid)
   }
 
-  spawn(process.execPath, ["--import", "tsx", daemonScript], {
-    detached: true, stdio: "ignore", cwd: uiRoot,
+  // stderr is inherited: a starter that dies before claiming (uid refusal,
+  // live-owner refusal, crash) stays visible in the runner's output instead
+  // of vanishing into a 90 s poll against nothing.
+  const starter = spawn(process.execPath, ["--import", "tsx", daemonScript], {
+    detached: true, stdio: ["ignore", "ignore", "inherit"], cwd: uiRoot,
     env: {
       ...process.env,
       CODENOMAD_FIXTURE_READY_DIR: readyDirectory,
       ...(warmup ? {} : { CODENOMAD_FIXTURE_WARMUP: "0" }),
     },
-  }).unref()
+  })
+  starter.unref()
+  // The starter that won the claim BECOMES the daemon and writes its own pid
+  // into the ready file; one that lost yields with exit 0 and someone else's
+  // pid appears there. Owning the stop right is exactly pid equality — a
+  // runner whose starter yielded adopts the winner and must never stop
+  // another runner's daemon out from under its slice.
+  const starterPid = starter.pid
 
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const ready = await readReady(readyFile)
     if (ready && await healthy(ready)) {
+      const owned = ready.pid === starterPid
+      if (!owned) { try { starter.kill("SIGTERM") } catch { /* already yielded */ } }
       return {
-        pid: ready.pid, readyDirectory, owned: true,
-        stop: () => stopDaemon(ready.pid),
+        pid: ready.pid, readyDirectory, owned,
+        stop: owned ? () => stopDaemon(ready.pid) : (async () => {}),
       }
     }
     await new Promise(resolve => setTimeout(resolve, pollIntervalMs))

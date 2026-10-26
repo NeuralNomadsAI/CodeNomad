@@ -33,11 +33,12 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile, fresh
   // The staleness baseline predates every side effect below: any source edit
   // with an mtime after this instant invalidates the daemon for new borrowers.
   const startedAt = Date.now()
-  // Vite's non-middleware dev server installs its own SIGTERM and stdin-end
-  // handlers that close the server and then hard-exit the process (code 0),
-  // racing every teardown this daemon promises its callers. This daemon owns
-  // its process's lifecycle; drop exactly the listeners Vite added, leaving
-  // whatever was registered before intact.
+  // Vite's non-middleware dev server registers its own SIGTERM and stdin-end
+  // handlers while createServer() runs — they close the server and then
+  // hard-exit the process (code 0), racing every teardown this daemon
+  // promises its callers. This daemon owns its process's lifecycle; drop
+  // exactly the listeners Vite added, leaving whatever was registered
+  // before intact.
   const signalListenersBefore = new Set(process.listeners("SIGTERM"))
   const stdinEndListenersBefore = new Set(process.stdin.listeners("end"))
   const owned = cacheDir ? { cacheDir, dispose: async () => {} } : await createFixtureCache()

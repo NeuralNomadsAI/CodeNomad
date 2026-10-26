@@ -14,6 +14,31 @@ after(async () => { await rm(discovery, { recursive: true, force: true }); await
 
 const alive = (pid: number) => { try { process.kill(pid, 0); return true } catch { return false } }
 
+test("two concurrent runners never both own the daemon between them", { timeout: 180_000 }, async () => {
+  const options = { uiRoot: path.resolve(import.meta.dirname, "../.."), readyDirectory: discovery, warmup: false as const, freshnessRoots: [sources] }
+  await writeFile(path.join(sources, "concurrent.tsx"), "export {}")
+  await rm(path.join(discovery, "ready"), { force: true })
+  await rm(path.join(discovery, "claim"), { force: true })
+
+  // Both runners contend for a cold discovery directory: one starter wins
+  // the claim and serves; the loser yields. Exactly the winner's runner may
+  // stop the daemon — the loser adopting it must never gain stop rights, or
+  // the first finisher kills the daemon out from under the second's slice.
+  const [first, second] = await Promise.all([
+    ensureInvocationDaemon(options),
+    ensureInvocationDaemon(options),
+  ])
+  assert.equal(first.pid, second.pid, "both runners settle on the same daemon")
+  const owners = [first, second].filter(handle => handle.owned)
+  assert.equal(owners.length, 1, "exactly one runner owns the daemon, the other adopted it")
+
+  const owner = owners[0], adopter = [first, second].find(handle => !handle.owned)!
+  await adopter.stop() // a no-op by contract: adopters never stop what they did not start
+  assert.ok(alive(owner.pid), "an adopter's stop() must leave the daemon serving")
+  await owner.stop()
+  assert.ok(!alive(owner.pid), "the owner's stop() ends the daemon")
+})
+
 test("a runner starts one daemon, adopts it while fresh, and replaces it once stale", { timeout: 180_000 }, async () => {
   const options = { uiRoot: path.resolve(import.meta.dirname, "../.."), readyDirectory: discovery, warmup: false as const, freshnessRoots: [sources] }
   await writeFile(path.join(sources, "fixture.tsx"), "export {}")

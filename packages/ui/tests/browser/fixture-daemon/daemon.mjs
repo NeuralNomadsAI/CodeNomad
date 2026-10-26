@@ -14,8 +14,8 @@ const readyFile = path.join(readyDirectory, "ready")
 const claimFile = path.join(readyDirectory, "claim")
 const idleTimeoutMs = 10 * 60 * 1000
 // Longer than a starter's own spawn budget, so a healthy-but-slow starter is
-// never declared dead by the peer waiting on it.
-const starterGraceMs = 95_000
+// never declared dead by the peer waiting on it; tunable for tests.
+const starterGraceMs = Number(process.env.CODENOMAD_FIXTURE_STARTER_GRACE_MS ?? 95_000)
 const warmupEnabled = process.env.CODENOMAD_FIXTURE_WARMUP !== "0"
 const parentPid = Number(process.env.CODENOMAD_FIXTURE_PARENT_PID)
 // The source trees whose transforms this daemon serves; an edit dated after
@@ -28,8 +28,14 @@ const freshnessRoots = [
 
 const pidAlive = pid => { try { process.kill(pid, 0); return true } catch { return false } }
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
-const serving = async ready => Boolean(ready && await fetch(`http://127.0.0.1:${ready.port}/__daemon/health`).then(response => response.ok, () => false))
 const readJson = (file, fallback = null) => readFile(file, "utf8").then(JSON.parse, () => fallback)
+// The health endpoint reports the serving process's pid; a ready file whose
+// port now serves a different process (stale file plus port reuse) must not
+// be mistaken for the daemon it names.
+const serving = async ready => Boolean(ready && await fetch(`http://127.0.0.1:${ready.port}/__daemon/health`)
+  .then(response => (response.ok ? response.json() : null))
+  .then(body => body?.ready === true && body.pid === ready.pid)
+  .catch(() => false))
 
 // Claim the discovery directory through an exclusive claim file. The
 // directory itself persists at 0700 so the daemon log survives teardown;
@@ -38,11 +44,29 @@ const readJson = (file, fallback = null) => readFile(file, "utf8").then(JSON.par
 // is alive is waited for and yielded to — never removed out from under it.
 await mkdir(readyDirectory, { recursive: true })
 const directoryStat = await stat(readyDirectory)
-if (process.getuid() !== -1 && directoryStat.uid !== process.getuid()) {
+if (typeof process.getuid === "function" && process.getuid() !== directoryStat.uid) {
   console.error(`refusing to use ${readyDirectory}: another local user owns it`)
   process.exit(1)
 }
 await chmod(readyDirectory, 0o700)
+
+// Everything the daemon says — including claim-protocol refusals and crash
+// traces, which happen before any claim is won — lands in daemon.log beside
+// the discovery files instead of a detached process's black hole.
+const logStream = createWriteStream(path.join(readyDirectory, "daemon.log"), { flags: "a" })
+const emit = (...args) => logStream.write(`${args.join(" ")}\n`)
+const originalLog = console.log.bind(console), originalError = console.error.bind(console)
+console.log = (...args) => { emit(...args); originalLog(...args) }
+console.error = (...args) => { emit(...args); originalError(...args) }
+process.on("uncaughtException", error => { emit("uncaughtException", error?.stack ?? String(error)); void shutdown(1) })
+
+// Declared before any handler can fire: an early crash must not hit the
+// temporal dead zone of interval bindings shutdown clears.
+let idleTimer = null, staleWatch = null
+
+// Flush the log before an abnormal exit so the refusal itself is
+// post-mortemable; the intercept's writes are buffered until the stream ends.
+const die = async message => { console.error(message); await new Promise(resolve => logStream.end(resolve)); process.exit(1) }
 
 let claimed = false
 for (let attempt = 0; attempt < 5 && !claimed; attempt++) {
@@ -59,27 +83,14 @@ for (let attempt = 0; attempt < 5 && !claimed; attempt++) {
         if (!pidAlive(owner.pid)) break // it died mid-start: reclaim below
         await sleep(250)
       }
-      if (pidAlive(owner.pid)) { console.error(`claim at ${claimFile} held by live pid ${owner.pid} that never became ready`); process.exit(1) }
+      if (pidAlive(owner.pid)) await die(`claim at ${claimFile} held by live pid ${owner.pid} that never became ready`)
     }
     // The owner is verifiably gone: clear its residue and contend again.
     await rm(claimFile, { force: true })
     await rm(readyFile, { force: true })
   }
 }
-if (!claimed) { console.error(`could not claim ${claimFile}`); process.exit(1) }
-
-// Everything the daemon says — including crash traces — lands beside its
-// ready file instead of a detached process's black hole.
-const logStream = createWriteStream(path.join(readyDirectory, "daemon.log"), { flags: "a" })
-const emit = (...args) => logStream.write(`${args.join(" ")}\n`)
-const originalLog = console.log.bind(console), originalError = console.error.bind(console)
-console.log = (...args) => { emit(...args); originalLog(...args) }
-console.error = (...args) => { emit(...args); originalError(...args) }
-process.on("uncaughtException", error => { emit("uncaughtException", error?.stack ?? String(error)); void shutdown(1) })
-
-// Declared before any handler can fire: an early crash must not hit the
-// temporal dead zone of interval bindings shutdown clears.
-let idleTimer = null, staleWatch = null
+if (!claimed) await die(`could not claim ${claimFile}`)
 
 const daemon = await startFixtureDaemon({ directory: uiRoot, freshnessRoots })
 let lastActivity = Date.now()
@@ -129,7 +140,10 @@ await daemon.announce(readyFile)
 // fallback daemons skip it — their first fixture page pays the cold graph
 // exactly like the old per-file owned servers did.
 if (warmupEnabled) {
-  void daemon.warmup({ routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/alert-dialog.tsx"></script></body></html>' }] })
+  // A failed warmup (bad browser path, missing Chromium) degrades the first
+  // borrower to a cold graph; it must never take an announced daemon down.
+  daemon.warmup({ routes: [{ path: "/fixture", html: '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/alert-dialog.tsx"></script></body></html>' }] })
+    .catch(error => console.error(JSON.stringify({ kind: "fixture-daemon-warmup-failed", error: String(error) })))
 }
 
 idleTimer = setInterval(() => {

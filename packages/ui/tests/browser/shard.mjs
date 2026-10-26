@@ -21,8 +21,7 @@ if (!Number.isInteger(shard) || shard < 1 || !Number.isInteger(shards) || shards
   process.exit(2)
 }
 
-const files = (await import("node:fs/promises")).readdir(directory, { recursive: true })
-const slice = (await files)
+const slice = (await readdir(directory, { recursive: true }))
   .filter(file => file.endsWith(".test.ts"))
   .sort()
   .filter((_, position) => position % shards === shard - 1)

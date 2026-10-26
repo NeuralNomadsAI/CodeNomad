@@ -1,8 +1,11 @@
 import { readdir, stat } from "node:fs/promises"
 import path from "node:path"
 
-/** Directories whose contents never take part in the daemon-served module
- * graph; mtime changes inside them must not invalidate a live daemon. */
+/** Directories excluded from the staleness walk. node_modules and dot
+ * directories would make the walk unbounded and nondeterministic; the
+ * accepted blind spots are dependency installs and tsconfig edits — every
+ * runner binds a fresh daemon per invocation anyway, so only an edit made
+ * *while* a daemon serves goes unnoticed, and installs don't happen there. */
 const noiseDirectoryNames = new Set(["node_modules", ".git", ".codegraph", "dist"])
 
 /** The daemon's staleness fingerprint: the newest mtime across the source
