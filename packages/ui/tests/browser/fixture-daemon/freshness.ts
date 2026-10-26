@@ -2,11 +2,16 @@ import { readdir, stat } from "node:fs/promises"
 import path from "node:path"
 
 /** Directories excluded from the staleness walk. node_modules and dot
- * directories would make the walk unbounded and nondeterministic; the
- * accepted blind spots are dependency installs and tsconfig edits — every
- * runner binds a fresh daemon per invocation anyway, so only an edit made
- * *while* a daemon serves goes unnoticed, and installs don't happen there. */
-const noiseDirectoryNames = new Set(["node_modules", ".git", ".codegraph", "dist"])
+ * directories would make the walk unbounded and nondeterministic. `public`
+ * directories hold verbatim static assets, never transformed modules — and
+ * the git fixtures copy Monaco's tree into src/renderer/public at run time,
+ * which on CI retired a healthy daemon the moment a git fixture ran beside
+ * borrowed files (shards interleave; the tiered local runner never showed
+ * it). The accepted blind spots are dependency installs and tsconfig edits
+ * — every runner binds a fresh daemon per invocation anyway, so only an
+ * edit made *while* a daemon serves goes unnoticed, and installs don't
+ * happen there. */
+const noiseDirectoryNames = new Set(["node_modules", ".git", ".codegraph", "dist", "public"])
 
 /** The daemon's staleness fingerprint: the newest mtime across the source
  * trees its transformed module graph serves. A daemon started before this

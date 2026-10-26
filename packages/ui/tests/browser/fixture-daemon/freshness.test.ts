@@ -35,6 +35,36 @@ test("the newest source mtime follows deep files and ignores noise directories",
   assert.equal(await newestSourceMtime([root]), newer.getTime(), "node_modules and dot directories never count")
 })
 
+test("generated public asset directories never count, but real source edits do", async () => {
+  const tree = await mkdtemp(path.join(tmpdir(), "freshness-public-"))
+  try {
+    const base = new Date(Date.now() - 60_000)
+    await mkdir(path.join(tree, "src/renderer/public/monaco/vs"), { recursive: true })
+    await mkdir(path.join(tree, "src/renderer"), { recursive: true })
+    await writeFile(path.join(tree, "src/renderer/app.tsx"), "app")
+    await writeFile(path.join(tree, "src/renderer/public/monaco/vs/loader.js"), "loader")
+    for (const file of ["src/renderer/app.tsx", "src/renderer/public/monaco/vs/loader.js"]) {
+      await utimes(path.join(tree, file), base, base)
+    }
+    const baseline = await newestSourceMtime([tree])
+    assert.equal(baseline, base.getTime(), "only the real source counts")
+
+    // The git fixtures copy Monaco's assets into src/renderer/public at run
+    // time — discovered on CI, where that copy retired the shared daemon and
+    // degraded every later borrower to a private one. Asset copies landing
+    // after a daemon's start must not invalidate it.
+    const assetCopy = new Date(Date.now() + 5_000)
+    await writeFile(path.join(tree, "src/renderer/public/monaco/vs/editor.js"), "editor")
+    await utimes(path.join(tree, "src/renderer/public/monaco/vs/editor.js"), assetCopy, assetCopy)
+    await utimes(path.join(tree, "src/renderer/public/monaco/vs/loader.js"), assetCopy, assetCopy)
+    assert.equal(await newestSourceMtime([tree]), baseline, "a generated public asset copy is invisible")
+
+    const sourceEdit = new Date(Date.now() + 8_000)
+    await utimes(path.join(tree, "src/renderer/app.tsx"), sourceEdit, sourceEdit)
+    assert.equal(await newestSourceMtime([tree]), sourceEdit.getTime(), "a real source edit still counts")
+  } finally { await rm(tree, { recursive: true, force: true }) }
+})
+
 test("an empty or missing tree yields 0 rather than throwing", async () => {
   assert.equal(await newestSourceMtime([]), 0)
   assert.equal(await newestSourceMtime([path.join(root, "does-not-exist")]), 0)

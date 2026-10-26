@@ -143,7 +143,12 @@ daemon.installControl(async (request, response) => {
       response.statusCode = 409
       response.end(String(error))
       // A stale graph must not survive the rejection that exposed it.
-      if (error?.code === "ERR_FIXTURE_DAEMON_STALE") void shutdown(0)
+      // Emit the marker the 30 s watcher uses, so an artifact shows WHY the
+      // daemon retired even when no watcher tick was due.
+      if (error?.code === "ERR_FIXTURE_DAEMON_STALE") {
+        emit(JSON.stringify({ kind: "fixture-daemon-stale", via: "register" }))
+        void shutdown(0)
+      }
     }
     return true
   }
