@@ -1,58 +1,90 @@
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
+import { spawn } from "node:child_process"
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
-import { after, test } from "node:test"
-import { fileURLToPath } from "node:url"
+import { after, before, test } from "node:test"
 import { borrowFixture } from "./fixture-borrow"
+import { startFixtureDaemon } from "./fixture-daemon/server"
 
-const html = (script: string) => `<html><body><div id="root"></div><script type="module" src="${script}"></script></body></html>`
-const script = "/tests/browser/fixtures/alert-dialog.tsx"
-const definition = { name: "borrow-check", routes: [{ path: "/fixture/borrow-check", html: html(script) }] }
+const html = "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/alert-dialog.tsx\"></script></body></html>"
 
-// A private discovery directory isolates this test's daemon lifecycle from any
-// machine-wide daemon other files are borrowing through.
-const isolation = await mkdtemp(path.join(tmpdir(), "borrow-check-"))
-const readyDirectory = path.join(isolation, "discovery")
-const options = { readyDirectory }
+const scratch: string[] = []
+before(async () => { for (let i = 0; i < 8; i++) scratch.push(await mkdtemp(path.join(tmpdir(), "borrow-"))) })
+after(async () => { for (const dir of scratch) await rm(dir, { recursive: true, force: true }) })
 
-after(async () => {
-  const { readFile } = await import("node:fs/promises")
-  const ready = await readFile(path.join(readyDirectory, "ready"), "utf8").then(JSON.parse, () => null)
-  if (ready) process.kill(ready.pid, "SIGTERM")
-  await new Promise(resolve => setTimeout(resolve, 500))
-  await rm(isolation, { recursive: true, force: true })
+test("with no shared daemon a borrower gets a private per-process daemon it reuses", { timeout: 120_000 }, async () => {
+  const [probe, privateDirectory] = [scratch[0], scratch[1]]
+  const first = await borrowFixture({ name: "borrow-private", routes: [{ path: "/fixture/borrow-private", html }] }, { readyDirectory: probe, privateDirectory })
+  assert.equal((await fetch(first.url)).status, 200)
+
+  const ready = JSON.parse(await readFile(path.join(privateDirectory, "ready"), "utf8"))
+  assert.ok(ready.pid !== process.pid, "the private daemon is its own process, so the test process never holds Vite handles")
+  assert.equal(typeof ready.secret, "string")
+
+  const second = await borrowFixture({ name: "borrow-private-second", routes: [{ path: "/fixture/borrow-private-second", html }] }, { readyDirectory: probe, privateDirectory })
+  assert.equal((await fetch(second.url)).status, 200)
+  const reused = JSON.parse(await readFile(path.join(privateDirectory, "ready"), "utf8"))
+  assert.equal(reused.pid, ready.pid, "a second borrow in the same process reuses the private daemon")
 })
 
-test("linux borrowers lazily spawn the daemon and re-register idempotently", { timeout: 120_000 }, async t => {
-  if (process.platform !== "linux") return t.skip("daemon path is linux-only")
-  const first = await borrowFixture(definition, options)
-  t.after(() => first.close())
-  assert.match(first.url, /\/borrow-check\/fixture\/borrow-check$/)
-  assert.match(await (await fetch(first.url)).text(), new RegExp(`src="${script}"`))
-  const second = await borrowFixture(definition, options)
-  assert.equal(second.url, first.url)
+test("a healthy shared daemon in the discovery directory serves borrowers without spawning", { timeout: 120_000 }, async t => {
+  const [sharedDirectory, privateDirectory] = [scratch[2], scratch[3]]
+  const readyFile = path.join(sharedDirectory, "ready")
+  const child = spawn(process.execPath,
+    ["--import", "tsx", path.join(import.meta.dirname, "fixture-daemon", "daemon.mjs")],
+    { stdio: "ignore", env: { ...process.env, CODENOMAD_FIXTURE_READY_DIR: sharedDirectory, CODENOMAD_FIXTURE_WARMUP: "0" } })
+  t.after(() => { try { child.kill("SIGTERM") } catch { /* already gone */ } })
+  const deadline = Date.now() + 60_000
+  let ready: { port: number } | null = null
+  while (Date.now() < deadline) {
+    ready = await readFile(readyFile, "utf8").then(JSON.parse, () => null)
+    if (ready && await fetch(`http://127.0.0.1:${ready.port}/__daemon/health`).then(r => r.ok, () => false)) break
+    await new Promise(resolve => setTimeout(resolve, 200))
+  }
+  assert.ok(ready, "the spawned shared daemon became ready")
+
+  const borrowed = await borrowFixture({ name: "borrow-shared", routes: [{ path: "/fixture/borrow-shared", html }] }, { readyDirectory: sharedDirectory, privateDirectory })
+  assert.equal((await fetch(borrowed.url)).status, 200)
+  assert.equal(new URL(borrowed.url).port, String(ready!.port), "the registration landed on the shared daemon")
+  const after = JSON.parse(await readFile(readyFile, "utf8"))
+  assert.equal(after.pid, child.pid, "no second daemon was spawned for the borrower")
 })
 
-test("a killed daemon respawns once and a persistent failure surfaces diagnostics", { timeout: 120_000 }, async t => {
-  if (process.platform !== "linux") return t.skip("daemon path is linux-only")
-  const { readFile } = await import("node:fs/promises")
-  const ready = JSON.parse(await readFile(path.join(readyDirectory, "ready"), "utf8"))
-  process.kill(ready.pid, "SIGKILL")
-  await new Promise(resolve => setTimeout(resolve, 300))
-  const revived = await borrowFixture({ name: "borrow-revive", routes: [{ path: "/fixture/borrow-revive", html: html(script) }] }, options)
-  t.after(() => revived.close())
-  assert.equal((await fetch(revived.url)).status, 200)
+test("a dead daemon in the discovery directory falls straight through to the private daemon", { timeout: 120_000 }, async () => {
+  const [probe, privateDirectory] = [scratch[4], scratch[5]]
+  const shared = await startFixtureDaemon({ directory: path.resolve(import.meta.dirname, "../.."), readyFile: path.join(probe, "ready") })
+  await shared.announce(path.join(probe, "ready"))
+  await shared.close() // the ready file survives an unclean end
 
-  // A deterministic persistent failure: re-registering a name with a different
-  // payload is rejected on both attempts and the error names the ready file.
-  await assert.rejects(borrowFixture({ name: "borrow-revive", routes: [{ path: "/fixture/other", html: html(script) }] }, options),
-    /failed twice.*ready|already registered with a different payload/)
+  const started = Date.now()
+  const borrowed = await borrowFixture({ name: "borrow-fallthrough", routes: [{ path: "/fixture/borrow-fallthrough", html }] }, { readyDirectory: probe, privateDirectory })
+  assert.equal((await fetch(borrowed.url)).status, 200)
+  assert.ok(Date.now() - started < 90_000, "no spawn deadline is held hostage polling a corpse")
 })
 
-test("off linux each borrower runs its own canonical server and closes it", { timeout: 60_000 }, async () => {
-  const fixture = await borrowFixture(definition, { ...options, platform: "win32" })
-  assert.match(await (await fetch(fixture.url)).text(), new RegExp(`src="${script}"`))
-  await fixture.close()
-  await assert.rejects(fetch(fixture.url))
+test("the private daemon dies with its borrower process", { timeout: 120_000 }, async () => {
+  const [probe, privateDirectory] = [scratch[6], scratch[7]]
+  const probeScript = path.join(probe, "probe.mts")
+  await writeFile(probeScript, [
+    `import { borrowFixture } from ${JSON.stringify(path.join(import.meta.dirname, "fixture-borrow"))}`,
+    `void (async () => {`,
+    `  const fixture = await borrowFixture({ name: "borrow-exit", routes: [{ path: "/fixture/borrow-exit", html: ${JSON.stringify(html)} }] }, { readyDirectory: process.env.PROBE_READY_DIR!, privateDirectory: process.env.PROBE_PRIVATE_DIR! })`,
+    `  if (!(await fetch(fixture.url)).ok) throw new Error("probe fixture did not serve")`,
+    `  process.exit(0)`,
+    `})()`,
+  ].join("\n"))
+  const child = spawn(process.execPath, ["--import", "tsx", probeScript],
+    { stdio: "ignore", env: { ...process.env, PROBE_READY_DIR: probe, PROBE_PRIVATE_DIR: privateDirectory } })
+  await new Promise<void>(resolve => child.on("close", () => resolve()))
+
+  const ready = await readFile(path.join(privateDirectory, "ready"), "utf8").then(JSON.parse, () => null) as { pid: number } | null
+  assert.ok(ready, "the borrower's private daemon announced itself")
+  assert.notEqual(ready.pid, process.pid)
+  const deadline = Date.now() + 20_000
+  while (Date.now() < deadline) {
+    try { process.kill(ready.pid, 0); await new Promise(resolve => setTimeout(resolve, 250)) }
+    catch { return } // the daemon followed its borrower into the grave
+  }
+  assert.fail(`private daemon pid ${ready.pid} outlived its borrower process`)
 })

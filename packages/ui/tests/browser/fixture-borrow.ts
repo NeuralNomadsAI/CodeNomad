@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process"
-import { readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile } from "node:fs/promises"
+import { tmpdir } from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import type { FixtureDefinition } from "./fixture-daemon/server"
@@ -13,10 +14,12 @@ export interface BorrowedFixture {
 }
 
 export interface BorrowOptions {
-  /** Test seam for the fallback path; defaults to the host platform. */
-  platform?: NodeJS.Platform
-  /** Test seam: a private discovery directory instead of the machine's. */
+  /** Test seam: probe a private discovery directory instead of the machine's. */
   readyDirectory?: string
+  /** Test seam: where the per-process fallback daemon announces itself.
+   * Production callers leave this unset and get a fresh temporary directory,
+   * so a borrower never claims the shared discovery location a runner owns. */
+  privateDirectory?: string
 }
 
 interface ReadyFile { port: number, pid: number, secret: string }
@@ -37,8 +40,6 @@ function namespaced(definition: FixtureDefinition): FixtureDefinition {
   }
 }
 
-let spawning: Promise<ReadyFile> | null = null
-
 async function healthy(ready: ReadyFile): Promise<boolean> {
   return fetch(`http://127.0.0.1:${ready.port}/__daemon/health`)
     .then(response => (response.ok ? response.json() : null))
@@ -46,27 +47,8 @@ async function healthy(ready: ReadyFile): Promise<boolean> {
     .catch(() => false)
 }
 
-async function ensureDaemon(readyDirectory: string, readyFile: string): Promise<ReadyFile> {
-  spawning ??= spawnDaemon(readyDirectory, readyFile).catch(error => { spawning = null; throw error })
-  return spawning
-}
-
-async function spawnDaemon(readyDirectory: string, readyFile: string): Promise<ReadyFile> {
-  const read = () => readFile(readyFile, "utf8").then(JSON.parse, () => null)
-  const existing: ReadyFile | null = await read()
-  if (existing && await healthy(existing)) return existing
-  await rm(readyDirectory, { recursive: true, force: true })
-  const child: ChildProcess = spawn(process.execPath,
-    ["--import", "tsx", path.join(path.dirname(fileURLToPath(import.meta.url)), "fixture-daemon", "daemon.mjs")],
-    { detached: true, stdio: "ignore", cwd: uiRoot, env: { ...process.env, CODENOMAD_FIXTURE_READY_DIR: readyDirectory } })
-  child.unref()
-  const deadline = Date.now() + 90_000
-  while (Date.now() < deadline) {
-    const ready: ReadyFile | null = await read()
-    if (ready && ready.pid !== process.pid && await healthy(ready)) return ready
-    await new Promise(resolve => setTimeout(resolve, 250))
-  }
-  throw new Error(`fixture daemon did not become ready at ${readyFile}`)
+async function readReady(readyFile: string): Promise<ReadyFile | null> {
+  return readFile(readyFile, "utf8").then(JSON.parse, () => null)
 }
 
 async function registerOn(ready: ReadyFile, definition: FixtureDefinition): Promise<string> {
@@ -79,31 +61,61 @@ async function registerOn(ready: ReadyFile, definition: FixtureDefinition): Prom
   return (await response.json()).url
 }
 
-/** Borrows a fixture page. On Linux this registers on the machine's shared
- * fixture daemon (lazily spawned, revived once if it dies); elsewhere each
- * borrower runs its own canonical server, keeping the suite usable with zero
- * speedup. */
+interface PrivateDaemon { ready: ReadyFile }
+const privateDaemons = new Map<string, Promise<PrivateDaemon>>()
+
+async function ensurePrivateDaemon(directory?: string): Promise<PrivateDaemon> {
+  const key = directory ?? "default"
+  let entry = privateDaemons.get(key)
+  if (!entry) {
+    entry = spawnPrivateDaemon(directory).catch(error => { privateDaemons.delete(key); throw error })
+    privateDaemons.set(key, entry)
+  }
+  return entry
+}
+
+/** The fallback when no shared daemon is serving: one private daemon child
+ * per borrower process, in its own temporary discovery directory (never the
+ * shared one — claiming that is the runners' job). The child skips warmup
+ * (the first fixture page pays the cold graph, exactly like the old
+ * per-file owned servers) and follows its parent to the grave through
+ * CODENOMAD_FIXTURE_PARENT_PID, so the borrower process never holds Vite
+ * handles that outlive it. */
+async function spawnPrivateDaemon(directory?: string): Promise<PrivateDaemon> {
+  const readyDirectory = directory ?? await mkdtemp(path.join(tmpdir(), "codenomad-fixture-private-"))
+  const readyFile = path.join(readyDirectory, "ready")
+  const child: ChildProcess = spawn(process.execPath,
+    ["--import", "tsx", path.join(path.dirname(fileURLToPath(import.meta.url)), "fixture-daemon", "daemon.mjs")],
+    { detached: true, stdio: "ignore", cwd: uiRoot, env: {
+      ...process.env,
+      CODENOMAD_FIXTURE_READY_DIR: readyDirectory,
+      CODENOMAD_FIXTURE_WARMUP: "0",
+      CODENOMAD_FIXTURE_PARENT_PID: String(process.pid),
+    } })
+  child.unref()
+  const deadline = Date.now() + 90_000
+  while (Date.now() < deadline) {
+    const ready = await readReady(readyFile)
+    if (ready && await healthy(ready)) return { ready }
+    await new Promise(resolve => setTimeout(resolve, 250))
+  }
+  throw new Error(`private fixture daemon did not become ready at ${readyFile}`)
+}
+
+/** Borrows a fixture page. A runner-owned shared daemon (shard.mjs, run.mjs)
+ * serves when healthy; otherwise this process gets a private daemon child
+ * that dies with it. Borrowers never spawn or claim the shared discovery
+ * directory themselves — that is what kept stale module graphs alive across
+ * runs. */
 export async function borrowFixture(definition: FixtureDefinition, options: BorrowOptions = {}): Promise<BorrowedFixture> {
   const request = namespaced(definition)
-  const platform = options.platform ?? process.platform
-  if (platform !== "linux") {
-    const { startFixtureDaemon } = await import("./fixture-daemon/server")
-    const local = await startFixtureDaemon({ directory: uiRoot })
-    const url = await local.register(request)
-    return { url, close: () => local.close() }
-  }
-  const readyDirectory = options.readyDirectory ?? readyDirectoryFor(uiRoot)
-  const readyFile = path.join(readyDirectory, "ready")
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const ready = await ensureDaemon(readyDirectory, readyFile)
+  const sharedDirectory = options.readyDirectory ?? readyDirectoryFor(uiRoot)
+  const sharedReady = await readReady(path.join(sharedDirectory, "ready"))
+  if (sharedReady && await healthy(sharedReady)) {
     try {
-      return { url: await registerOn(ready, request), close: async () => {} }
-    } catch (error) {
-      spawning = null
-      if (attempt === 1) {
-        throw new Error(`fixture daemon at ${readyFile} (pid ${ready.pid}, port ${ready.port}) failed twice: ${error}`)
-      }
-    }
+      return { url: await registerOn(sharedReady, request), close: async () => {} }
+    } catch { /* the daemon fell over mid-flight; the private fallback takes it */ }
   }
-  throw new Error("unreachable")
+  const priv = await ensurePrivateDaemon(options.privateDirectory)
+  return { url: await registerOn(priv.ready, request), close: async () => {} }
 }

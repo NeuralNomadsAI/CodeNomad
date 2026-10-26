@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtemp, readFile, rm } from "node:fs/promises"
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
 import { after, before, test } from "node:test"
@@ -54,4 +54,27 @@ test("the daemon serves registered fixtures and re-registers idempotently", { ti
 
   await daemon.close()
   await assert.rejects(fetch(url))
+})
+
+test("registering on a daemon whose source tree moved past it rejects as stale", { timeout: 120_000 }, async t => {
+  const staleRoot = await mkdtemp(path.join(tmpdir(), "daemon-stale-"))
+  const source = path.join(staleRoot, "fixture.tsx")
+  await writeFile(source, "export {}")
+  const daemon = await startFixtureDaemon({ directory: uiRoot, cacheDir, freshnessRoots: [staleRoot] })
+  t.after(async () => { await daemon.close().catch(() => {}); await rm(staleRoot, { recursive: true, force: true }) })
+
+  const fresh = await daemon.register({ name: "stale-probe", routes: [{ path: "/fixture/stale-probe", html: html(script) }] })
+  assert.equal((await fetch(fresh)).status, 200)
+
+  // A source edit dated after the daemon's start must bar new registrations:
+  // the surviving module graph would serve transforms of code that no
+  // longer exists.
+  const edited = new Date(Date.now() + 10_000)
+  await utimes(source, edited, edited)
+  await assert.rejects(
+    daemon.register({ name: "stale-second", routes: [{ path: "/fixture/stale-second", html: html(script) }] }),
+    (error: Error & { code?: string }) => error.code === "ERR_FIXTURE_DAEMON_STALE",
+  )
+  // The already-registered fixture keeps serving the started graph.
+  assert.equal((await fetch(fresh)).status, 200)
 })

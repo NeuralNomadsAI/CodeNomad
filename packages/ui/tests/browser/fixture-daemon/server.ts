@@ -18,6 +18,8 @@ export interface FixtureDaemon {
   readonly secret: string
   readonly stats: { transforms: number }
   readonly registeredCount: number
+  /** The staleness baseline: source mtimes after this instant invalidate the daemon. */
+  readonly startedAt: number
   register(definition: FixtureDefinition): Promise<string>
   installControl(handler: ControlHandler): void
   announce(readyFile: string): Promise<void>
@@ -25,9 +27,12 @@ export interface FixtureDaemon {
   close(): Promise<void>
 }
 
-export async function startFixtureDaemon({ directory, cacheDir, readyFile }: {
-  directory: string, cacheDir?: string, readyFile?: string
+export async function startFixtureDaemon({ directory, cacheDir, readyFile, freshnessRoots }: {
+  directory: string, cacheDir?: string, readyFile?: string, freshnessRoots?: string[]
 }): Promise<FixtureDaemon> {
+  // The staleness baseline predates every side effect below: any source edit
+  // with an mtime after this instant invalidates the daemon for new borrowers.
+  const startedAt = Date.now()
   const owned = cacheDir ? { cacheDir, dispose: async () => {} } : await createFixtureCache()
   const shutdown = createFixtureShutdown(owned)
   const stats = { transforms: 0 }
@@ -72,10 +77,16 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile }: {
   const secret = randomBytes(16).toString("hex")
 
   return {
-    port, baseUrl, secret, stats,
+    port, baseUrl, secret, stats, startedAt,
     get registeredCount() { return urls.size },
     async register(definition) {
       if (!/^[\w-]+$/.test(definition.name) || !definition.routes?.length) throw new Error("invalid fixture definition")
+      if (freshnessRoots) {
+        const { newestSourceMtime } = await import("./freshness")
+        if (await newestSourceMtime(freshnessRoots) > startedAt) {
+          throw Object.assign(new Error(`fixture daemon is stale: sources under ${freshnessRoots.join(",")} changed since start`), { code: "ERR_FIXTURE_DAEMON_STALE" })
+        }
+      }
       const fingerprint = createHash("sha256").update(JSON.stringify(definition)).digest("hex")
       const known = fingerprints.get(definition.name)
       if (known) {
