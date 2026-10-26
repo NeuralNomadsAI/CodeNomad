@@ -93,8 +93,12 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile, fresh
       if (!/^[\w-]+$/.test(definition.name) || !definition.routes?.length) throw new Error("invalid fixture definition")
       if (freshnessRoots) {
         const { newestSourceMtime } = await import("./freshness")
-        if (await newestSourceMtime(freshnessRoots) > startedAt) {
-          throw Object.assign(new Error(`fixture daemon is stale: sources under ${freshnessRoots.join(",")} changed since start`), { code: "ERR_FIXTURE_DAEMON_STALE" })
+        const newest = await newestSourceMtime(freshnessRoots)
+        // mtimeMs carries sub-millisecond precision while startedAt is a
+        // whole-millisecond Date.now(): an edit in the same millisecond as
+        // the daemon's start is pre-start, not stale.
+        if (Math.floor(newest) > startedAt) {
+          throw Object.assign(new Error(`fixture daemon is stale: sources under ${freshnessRoots.join(",")} changed since start (newest mtime ${newest} > startedAt ${startedAt})`), { code: "ERR_FIXTURE_DAEMON_STALE" })
         }
       }
       const fingerprint = createHash("sha256").update(JSON.stringify(definition)).digest("hex")

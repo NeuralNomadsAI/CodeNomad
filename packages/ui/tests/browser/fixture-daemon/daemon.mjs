@@ -174,7 +174,9 @@ idleTimer.unref()
 const { newestSourceMtime } = await import("./freshness.ts")
 staleWatch = setInterval(() => {
   void newestSourceMtime(freshnessRoots).then(newest => {
-    if (newest > daemon.startedAt) { emit(JSON.stringify({ kind: "fixture-daemon-stale", newest })); void shutdown(0) }
+    // Same-millisecond floor as the register guard: mtimeMs is fractional,
+    // Date.now() is whole milliseconds.
+    if (Math.floor(newest) > daemon.startedAt) { emit(JSON.stringify({ kind: "fixture-daemon-stale", newest })); void shutdown(0) }
   })
 }, 30_000)
 staleWatch.unref()

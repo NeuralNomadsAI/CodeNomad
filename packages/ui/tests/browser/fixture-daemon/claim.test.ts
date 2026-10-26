@@ -21,7 +21,12 @@ async function awaitReady(readyDirectory: string, timeoutMs = 90_000): Promise<{
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     const ready = await readFile(readyFile, "utf8").then(JSON.parse, () => null)
-    if (ready && await fetch(`http://127.0.0.1:${ready.port}/__daemon/health`).then(r => r.ok, () => false)) return ready
+    // Compare the serving pid from /health against the ready file's: a stale
+    // entry whose port another process reused must not masquerade as it.
+    if (ready && await fetch(`http://127.0.0.1:${ready.port}/__daemon/health`)
+      .then(response => (response.ok ? response.json() : null))
+      .then((body: { pid?: number } | null) => body?.pid === ready.pid)
+      .catch(() => false)) return ready
     await new Promise(resolve => setTimeout(resolve, 200))
   }
   throw new Error(`daemon at ${readyDirectory} never became ready`)

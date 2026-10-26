@@ -33,7 +33,11 @@ if (dryRun) {
 const uiRoot = path.resolve(directory, "../..")
 let failures = 0
 for (const [label, slice, concurrency] of [
-  ["borrowed", borrowed, Number(process.env.CODENOMAD_TIERED_LIGHT_WIDTH ?? 3)],
+  // Both tiers default to one file at a time — #1139's reviewer pinned the
+  // local suite there after the Git fixtures raced on shared Monaco assets,
+  // and 3-wide light runs added their own load-sensitive failures on slow
+  // machines. The width knobs stay for braver machines.
+  ["borrowed", borrowed, Number(process.env.CODENOMAD_TIERED_LIGHT_WIDTH ?? 1)],
   ["exempt", owned, Number(process.env.CODENOMAD_TIERED_HEAVY_WIDTH ?? 1)],
 ]) {
   if (!slice.length) continue

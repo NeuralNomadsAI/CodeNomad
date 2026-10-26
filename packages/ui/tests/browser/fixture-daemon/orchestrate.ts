@@ -75,7 +75,9 @@ export async function ensureInvocationDaemon(options: InvocationDaemonOptions): 
   const serving = await readReady(readyFile)
   if (serving && await healthy(serving)) {
     const newest = await newestSourceMtime(freshnessRoots)
-    if (newest <= serving.startedAt) {
+    // Same-millisecond floor as the daemon's register guard (mtimeMs is
+    // fractional, startedAt is whole milliseconds).
+    if (Math.floor(newest) <= serving.startedAt) {
       return { pid: serving.pid, readyDirectory, owned: false, stop: async () => {} }
     }
     console.log(`fixture daemon pid ${serving.pid} is stale (sources newer than ${new Date(serving.startedAt).toISOString()}); replacing`)
