@@ -504,7 +504,11 @@ jobs:
       matrix:
         shard: [1, 2, 3, 4]
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # The slowest slice runs ~28 min of tests plus ~1 min of setup; a slow
+    # runner's dependency install once took 16.5 min and finished 33 s under
+    # the previous 45 min ceiling — infra spikes, not hangs, were the only
+    # thing the old margin caught (per-test timeouts bound real hangs).
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v7.0.1
