@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto"
-import { writeFile } from "node:fs/promises"
+import { rename, writeFile } from "node:fs/promises"
 import type { IncomingMessage, ServerResponse } from "node:http"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -33,6 +33,13 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile, fresh
   // The staleness baseline predates every side effect below: any source edit
   // with an mtime after this instant invalidates the daemon for new borrowers.
   const startedAt = Date.now()
+  // Vite's non-middleware dev server installs its own SIGTERM and stdin-end
+  // handlers that close the server and then hard-exit the process (code 0),
+  // racing every teardown this daemon promises its callers. This daemon owns
+  // its process's lifecycle; drop exactly the listeners Vite added, leaving
+  // whatever was registered before intact.
+  const signalListenersBefore = new Set(process.listeners("SIGTERM"))
+  const stdinEndListenersBefore = new Set(process.stdin.listeners("end"))
   const owned = cacheDir ? { cacheDir, dispose: async () => {} } : await createFixtureCache()
   const shutdown = createFixtureShutdown(owned)
   const stats = { transforms: 0 }
@@ -72,6 +79,8 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile, fresh
   })
   shutdown.own(server)
   await server.listen()
+  for (const listener of process.listeners("SIGTERM")) if (!signalListenersBefore.has(listener)) process.removeListener("SIGTERM", listener as (...args: unknown[]) => void)
+  for (const listener of process.stdin.listeners("end")) if (!stdinEndListenersBefore.has(listener)) process.stdin.removeListener("end", listener as () => void)
   const port = (server.httpServer!.address() as { port: number }).port
   const baseUrl = `http://127.0.0.1:${port}`
   const secret = randomBytes(16).toString("hex")
@@ -103,7 +112,13 @@ export async function startFixtureDaemon({ directory, cacheDir, readyFile, fresh
       return url
     },
     installControl(handler) { controls.push(handler) },
-    async announce(target) { await writeFile(target, JSON.stringify({ port, pid: process.pid, secret, startedAt: Date.now() })) },
+    // The ready file carries the secret; write it atomically at 0600 so no
+    // other local user can read it and no borrower ever parses a half file.
+    async announce(target) {
+      const staging = `${target}.staging`
+      await writeFile(staging, JSON.stringify({ port, pid: process.pid, secret, startedAt }), { mode: 0o600 })
+      await rename(staging, target)
+    },
     // Browser-driven warmup: a real page load is the only honest way to drive
     // Vite's lazy dependency discovery and optimizer to settle — direct
     // transformRequest calls cancel in-flight esbuild builds instead.
