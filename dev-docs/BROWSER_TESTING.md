@@ -11,11 +11,12 @@ for every Chromium launch).
 ## Commands
 
 - Local, tiered: `npm run test:browser --workspace @codenomad/ui` runs
-  `tests/browser/run.mjs` — borrowed fixtures three-wide against one
-  invocation daemon, exempt fixtures serially (widths via
-  `CODENOMAD_TIERED_LIGHT_WIDTH`/`CODENOMAD_TIERED_HEAVY_WIDTH`; the heavy
-  tier defaults to one at a time because the Git fixtures rebuild one
-  checkout-wide Monaco asset directory concurrently unsafe).
+  `tests/browser/run.mjs` — one file at a time in both tiers by default (the
+  Git fixtures rebuild one checkout-wide Monaco asset directory that is
+  concurrently unsafe, and wide runs grow load-sensitive failures on slow
+  machines), with the shared daemon serving the borrowed tier.
+  `CODENOMAD_TIERED_LIGHT_WIDTH`/`CODENOMAD_TIERED_HEAVY_WIDTH` raise the
+  widths for braver machines.
 - One file: `xvfb-run -a node --import tsx --test tests/browser/<file>.test.ts`
   from `packages/ui`. Without a runner daemon the borrower gets a private
   daemon child that dies with it.
