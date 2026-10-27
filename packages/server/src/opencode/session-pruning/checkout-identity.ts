@@ -38,12 +38,12 @@ const mayBeGitDirectory = (directory: string) => Promise.all(["HEAD", "commondir
   .then(() => true, error => (error as NodeJS.ErrnoException).code !== "ENOENT"))).then(found => found.some(Boolean))
 
 // Git discovery: the nearest ancestor holding `.git`, without crossing devices.
-async function findCheckoutRoot(directory: string, signal?: AbortSignal, stopAt?: string): Promise<string | undefined> {
+async function findCheckoutRoot(directory: string, signal?: AbortSignal, stopAt?: string, maxDepth = Infinity): Promise<string | undefined> {
   let current = await realpath(directory)
   const info = await stat(current)
   if (!info.isDirectory()) throw new Error("Not a directory")
   const device = info.dev
-  for (let depth = 0; depth < 128; depth++) {
+  for (let depth = 0; depth < maxDepth; depth++) {
     signal?.throwIfAborted()
     if (path.basename(current).toLowerCase() === ".git") throw new Error("Directory is inside a Git directory")
     try {
@@ -65,11 +65,11 @@ async function findCheckoutRoot(directory: string, signal?: AbortSignal, stopAt?
 
 // Undefined means discovery verified the absence of a checkout. Errors retain
 // ambiguity (permissions, administrative markers, environment and depth bounds).
-export async function discoverCheckoutCommonDirectory(directory: string, signal?: AbortSignal, stopAt?: string): Promise<string | undefined> {
+export async function discoverCheckoutCommonDirectory(directory: string, signal?: AbortSignal, stopAt?: string, maxDepth = Infinity): Promise<string | undefined> {
   if (gitLocationOverridden() || DISCOVERY_ENVIRONMENT.some(key => process.env[key] !== undefined)) {
     throw new Error("Git discovery is configured by the environment")
   }
-  const root = await findCheckoutRoot(directory, signal, stopAt)
+  const root = await findCheckoutRoot(directory, signal, stopAt, maxDepth)
   if (root === undefined) return undefined
   const { gitDirectory, common } = await readCheckoutIdentity(root)
   // Mirror Git's repository check before trusting the layout; Git skips an

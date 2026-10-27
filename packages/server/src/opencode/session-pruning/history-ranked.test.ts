@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { DatabaseSync } from "node:sqlite"
 import { queryRankedHistory, RANKED_LIMITS } from "./history-ranked-store"
 import { historyRankedInputSchema, historyRankedPageSchema } from "./history-ranked-contract"
-import { idfWeights, searchTerms, termPrefilterSQL, textJudge } from "./history-ranking"
+import { idfWeights, termMask, searchTerms, textJudge } from "./history-ranking"
 import type { HistoryScope } from "./history-store"
 
 const scope: HistoryScope = { directory: "/repo", projectID: "p" }
@@ -23,21 +23,20 @@ async function search(db: DatabaseSync, query: string, options = {}, owner = sco
   return page
 }
 
-test("SQL prefilter covers ASCII, supported accented case forms and JSON escapes", () => {
+test("substring mask covers Unicode case equivalence and JSON escapes", () => {
   const db = fixture()
   try {
     for (const [query, text, data] of [
       ["GitHub", "gItHuB", undefined], ["été", "ÉTÉ", undefined],
+      ["kelvin", "KELVIN", undefined], ["shell", "ſHELL", undefined],
       ["github", "github", '{"text":"\\u0067ithub"}'],
       ["café", "CAFÉ", '{"text":"CAF\\u00c9"}'],
-      ["éloigné", "Éloigné", undefined], ["éloigné", "ÉlOiGnÉ", undefined], ["éloigné", "ÉLOIGNÉ", undefined],
+      ["éloigné", "Éloigné", undefined], ["éloigné", "éLoIgNÉ", undefined], ["éloigné", "ÉLOIGNÉ", undefined],
       ["éloigné", "éloigné", '{"text":"\\u00e9loign\\u00e9"}'],
     ]) {
       const term = searchTerms(query!)[0]
       assert.equal(textJudge([term], query!, [1])(text!).at, 0)
-      const filter = termPrefilterSQL(term)
-      const result = db.prepare(`SELECT ${filter.sql} AS flag FROM (SELECT ? AS data) m`).get(...filter.params, data ?? JSON.stringify({ text }))
-      assert.equal(result?.flag, 1, `${query}: ${text}`)
+      assert.equal(termMask([term])(JSON.parse(data ?? JSON.stringify({ text })).text), 1, `${query}: ${text}`)
     }
   } finally { db.close() }
 })
@@ -48,8 +47,7 @@ test("multiline accented JSON without a term gets no presence flag or candidate"
     const text = 'Un café récent\nUne autre décision\t"citée" \\ un chemin'
     insert(db, "unrelated", text)
     for (const term of ["orbital", "éloigné", "été", "kelvin"]) {
-      const filter = termPrefilterSQL(term)
-      assert.equal(db.prepare(`SELECT ${filter.sql} AS flag FROM session_message m`).get(...filter.params)?.flag, 0, term)
+      assert.equal(termMask([term])(text), 0, term)
       const result = await search(db, term)
       assert.equal(result.scanned, 1)
       assert.equal(result.candidates, 0, term)
@@ -62,10 +60,10 @@ test("precise SQL presence flags give rare terms greater IDF in multiline accent
   const db = fixture()
   try {
     for (let n = 0; n < 100; n++) insert(db, `m-${n}`, `panel\nDécision récente ${n < 3 ? "orbital" : "courante"}`)
-    const filters = ["panel", "orbital"].map(termPrefilterSQL)
-    const rows = db.prepare(`SELECT ${filters.map((filter, i) => `${filter.sql} AS t${i}`).join(",")} FROM session_message m`)
-      .all(...filters.flatMap(filter => filter.params))
-    const flags = rows.map(row => [Boolean(row.t0), Boolean(row.t1)])
+    const mask = termMask(["panel", "orbital"])
+    db.function("test_mask", { deterministic: true }, data => mask(JSON.parse(String(data)).text))
+    const rows = db.prepare("SELECT test_mask(data) AS mask FROM session_message").all()
+    const flags = rows.map(row => [Boolean(Number(row.mask) & 1), Boolean(Number(row.mask) & 2)])
     assert.equal(flags.filter(row => row[0]).length, 100)
     assert.equal(flags.filter(row => row[1]).length, 3)
     const weights = idfWeights(flags, 2)
@@ -88,11 +86,11 @@ test("an old rare match ranks first ahead of over 600 newer multiline accented f
   } finally { db.close() }
 })
 
-test("prefilter uses a fixed number of literal scans with no wildcard matcher", () => {
+test("prefilter masks keep every term precise across overlaps and ordinary escapes", () => {
   for (const term of ["panel", "éloigné", "İstanbul", "a".repeat(199) + "b"]) {
-    const filter = termPrefilterSQL(term)
-    assert.doesNotMatch(filter.sql, /GLOB|LIKE/)
-    assert(filter.params.length >= 1 && filter.params.length <= 4)
+    const mask = termMask([term])
+    assert.equal(mask(`before\n${term}`), 1)
+    assert.equal(mask("nothing\nrelated"), 0)
   }
 })
 
@@ -262,7 +260,7 @@ test("40 ms slice yields within a chunk before its 1,000-row boundary", async t 
     const prepare = db.prepare.bind(db)
     db.prepare = ((sql: string) => {
       const statement = prepare(sql)
-      if (sql.includes("AS supported")) {
+      if (sql.includes("AS mask")) {
         const iterate = statement.iterate.bind(statement)
         statement.iterate = function* (...params) {
           for (const row of Reflect.apply(iterate, statement, params)) { visited++; yield row }

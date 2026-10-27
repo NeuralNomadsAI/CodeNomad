@@ -21,18 +21,35 @@ export function dateBounds(since?: string, until?: string) {
   return { low, high }
 }
 
-export function termPrefilterSQL(term: string): { sql: string; params: string[] } {
-  const lower = term.toLowerCase()
-  const asciiFold = (value: string) => value.replace(/[A-Z]/g, char => char.toLowerCase())
-  // Fixed literal passes keep per-row SQL work linear. Original tokens preserve
-  // dotted-I self-matches. Exotic /iu folds (K/ſ) and arbitrary mixed non-ASCII
-  // casing outside these four forms may be missed; the JS judge stays precise.
-  const variants = [...new Set([term, lower, term.toUpperCase(), lower.charAt(0).toUpperCase() + lower.slice(1)].map(asciiFold))]
-  return { sql: `(${variants.map(() => "instr(lower(m.data), ?) > 0").join(" OR ")} OR instr(m.data, char(92) || 'u') > 0)`, params: variants }
+const escape = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+
+// Match decoded readable strings. JSON decoding belongs to the scalar's shared
+// history projection, so control escapes and literal backslashes keep their meaning.
+export function termMask(terms: string[]): (data: string) => number {
+  if (!terms.length) return () => 0
+  const all = (1 << terms.length) - 1
+  const ordered = terms.map((term, index) => ({ term, index })).sort((a, b) => b.term.length - a.term.length)
+  const matcher = new RegExp(ordered.map(({ term }) => `(${escape(term)})`).join("|"), "giu")
+  // A longer alternative may contain shorter query terms at the same position.
+  const contained = ordered.map(({ term }) => terms.reduce((mask, other, i) =>
+    new RegExp(escape(other), "iu").test(term) ? mask | (1 << i) : mask, 0))
+  return data => {
+    let mask = 0
+    matcher.lastIndex = 0
+    for (let match; (match = matcher.exec(data));) {
+      mask |= contained[match.findIndex((value, i) => i > 0 && value !== undefined) - 1]
+      if (mask === all) break
+      // Monotonic forward scan, including overlapping substring alternatives.
+      // Boundaries belong to the judge; this is a substring superset.
+      matcher.lastIndex = match.index + (data.codePointAt(match.index)! > 0xffff ? 2 : 1)
+    }
+    return mask
+  }
 }
 
-export function idfWeights(flags: readonly (readonly boolean[])[], termCount: number): number[] {
-  return Array.from({ length: termCount }, (_, i) => Math.log(1 + flags.length / Math.max(1, flags.filter(row => row[i]).length)))
+export function idfWeights(flags: readonly (readonly boolean[] | undefined)[], termCount: number): number[] {
+  const known = flags.filter((row): row is readonly boolean[] => row !== undefined)
+  return Array.from({ length: termCount }, (_, i) => Math.log(1 + known.length / Math.max(1, known.filter(row => row[i]).length)))
 }
 
 export function termScore(matched: readonly boolean[], weights: readonly number[]): number {
@@ -46,7 +63,6 @@ export function rankedExcerpt(text: string, at: number): string {
 }
 
 export function textJudge(terms: string[], query: string, weights: number[]) {
-  const escape = (word: string) => word.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
   const boundary = (word: string) => new RegExp(`(?<![\\p{L}\\p{N}_])${escape(word)}(?![\\p{L}\\p{N}_])`, "iu")
   const matchers = terms.map(boundary)
   const phrase = boundary(query.trim())
@@ -60,9 +76,10 @@ export function textJudge(terms: string[], query: string, weights: number[]) {
   }
 }
 
-export interface Rank { sessionID: string; score: number; prose: boolean; createdAt: number; messageID: string }
+export interface Rank { sessionID: string; score: number; prose: boolean; createdAt: number; messageID: string; unknown?: boolean }
 export function compareRank(a: Rank, b: Rank): number {
-  return Number(b.prose) - Number(a.prose) || b.score - a.score || b.createdAt - a.createdAt || a.messageID.localeCompare(b.messageID)
+  return Number(Boolean(a.unknown)) - Number(Boolean(b.unknown)) || Number(b.prose) - Number(a.prose)
+    || b.score - a.score || b.createdAt - a.createdAt || a.messageID.localeCompare(b.messageID)
 }
 
 export function diverseHits<T extends Rank>(ranked: T[], limit: number): T[] {

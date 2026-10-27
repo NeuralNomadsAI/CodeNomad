@@ -17,12 +17,14 @@ export const historyRankedPageSchema = z.object({
   version: z.literal(1), status: z.literal("ranked"),
   scanned: z.number().int().nonnegative(), candidates: z.number().int().nonnegative(),
   judged: z.number().int().nonnegative(), skipped: z.number().int().nonnegative(),
+  prefilterBypassed: z.number().int().nonnegative().default(0),
   matchedSessions: z.number().int().nonnegative(), capped: z.boolean(),
   exclusions: z.array(z.enum(["foreign_directory", "unknown_directory"])).max(2).default([]),
   caps: z.array(z.enum(["scan_time", "candidate_limit", "session_limit", "judge_limit", "total_time"])).max(5),
   hits: z.array(historyHitSchema.extend({ createdAt: z.number().finite() }).strict()).max(20),
   sessions: z.array(historyNativePageSchema.shape.sessions.element.extend({ title: z.string().max(4096),
     candidates: z.number().int().nonnegative(), judged: z.number().int().nonnegative(), matchedMessages: z.number().int().nonnegative(),
+    prefilterBypassed: z.number().int().nonnegative().default(0),
   }).strict()).max(600),
 }).strict()
 export type HistoryRankedPage = z.infer<typeof historyRankedPageSchema>

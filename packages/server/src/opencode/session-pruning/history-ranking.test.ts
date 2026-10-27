@@ -57,7 +57,7 @@ test("versioned ranked contract bounds limits and rejects selectors and regex op
 
 test("formatter reports capped verified counts and how to read a whole session", () => {
   const text = formatRankedHistory({ version: 1, status: "ranked", scanned: 2, candidates: 2, judged: 1, skipped: 0,
-    hits: [], sessions: [], matchedSessions: 0, capped: true, caps: ["total_time"], exclusions: [] })
+    hits: [], sessions: [], matchedSessions: 0, prefilterBypassed: 0, capped: true, caps: ["total_time"], exclusions: [] })
   assert.match(text, /0 session\(s\).*verified match/)
   assert.match(text, /Scan capped.*total_time/)
   assert.match(text, /examined subset/)

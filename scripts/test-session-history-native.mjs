@@ -8,7 +8,7 @@ export async function testSessionHistoryNative({ client, location, locationOptio
   const messages = Array.from({ length: 241 }, (_, index) => ({
     ...structuredClone(template), id: `msg_history_fixture_${String(index).padStart(5, "0")}`,
     content: [...template.content.map(part => part.type === "tool" ? { ...structuredClone(part), id: `history_call_${index}` } : structuredClone(part)),
-      { type: "text", text: `Keep historicalneedle answer ${index}${index === 0 ? " İstanbul" : ""}` }],
+      { type: "text", text: `Keep historicalneedle answer ${index}${index === 0 ? " İstanbul éLoIgNÉ caféÉté KELVIN ſHELL" : ""}${index === 240 ? ` boundprefilter ${"x".repeat(70 * 1024)}` : ""}` }],
   }))
   const session = await client.session.import({ ...exported, messages, location }, locationOptions)
   const rpc = async (method, input) => (await client.rpc.call({ rpcID: "codenomad.session-pruning", method, input, location }, locationOptions)).output
@@ -77,6 +77,7 @@ export async function testSessionHistoryNative({ client, location, locationOptio
       assert.equal(ranked.capped, false)
       assert.equal(ranked.hits.length, 3)
       assert.equal(ranked.matchedSessions, 2)
+      assert.equal(ranked.prefilterBypassed, 1)
       assert.deepEqual(new Set(ranked.hits.slice(0, 2).map(hit => hit.sessionID)), new Set([session.id, peer.id]))
       assert(ranked.hits.every(hit => hit.kind === "text" && hit.excerpt.length <= 320))
       assert([session.id, peer.id].every(id => ranked.sessions.some(owner => owner.sessionID === id)))
@@ -86,6 +87,16 @@ export async function testSessionHistoryNative({ client, location, locationOptio
       assert.equal(dotted.status, "ranked", JSON.stringify(dotted))
       assert.deepEqual(dotted.hits.map(hit => hit.messageID), [messages[0].id])
       console.log("PASS: native ranked dotted-capital-I query matches its exact stored text")
+      for (const query of ["éloigné", "caféété", "kelvin", "shell"]) {
+        const unicode = await rpc("historyRanked", { version: 1, query })
+        assert.equal(unicode.status, "ranked", JSON.stringify(unicode))
+        assert.deepEqual(unicode.hits.map(hit => hit.messageID), [messages[0].id], query)
+      }
+      const large = await rpc("historyRanked", { version: 1, query: "boundprefilter" })
+      assert.equal(large.status, "ranked", JSON.stringify(large))
+      assert.deepEqual(large.hits.map(hit => hit.messageID), [messages[240].id])
+      assert.equal(large.prefilterBypassed, 1)
+      console.log("PASS: native Unicode bitmask scalar covers four case folds and reports large-row bypass")
     } finally { await client.session.remove({ sessionID: peer.id }) }
     const plan = await scan("prune")
     assert.equal(plan.candidates.length, 241)

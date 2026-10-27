@@ -2,12 +2,12 @@ import type { DatabaseSync } from "node:sqlite"
 import { setImmediate as yieldTurn } from "node:timers/promises"
 import type { HistoryScope } from "./history-store"
 import { historyContent, historyScopeSQL, historyTexts, HISTORY_SLICE_MS, MAX_MESSAGE_BYTES, textProjection } from "./history-content"
-import { compareRank, dateBounds, diverseHits, idfWeights, rankedExcerpt, searchTerms, termPrefilterSQL, termScore, textJudge, type Rank } from "./history-ranking"
+import { compareRank, dateBounds, diverseHits, idfWeights, rankedExcerpt, termMask, searchTerms, termScore, textJudge, type Rank } from "./history-ranking"
 import type { HistoryRankedInput, HistoryRankedPage } from "./history-ranked-contract"
 import { rankedDirectoryOwnership, type CheckRankedDirectory } from "./history-ranked-ownership"
 
-export const RANKED_LIMITS = { chunk: 1000, candidates: 30_000, sessions: 600, judged: 600, scanMs: 1500, totalMs: 2000 } as const
-interface Candidate { position: number; messageID: string; sessionID: string; createdAt: number; flags: boolean[]; score: number }
+export const RANKED_LIMITS = { chunk: 1000, candidates: 30_000, sessions: 600, judged: 600, prefilterBytes: 64 * 1024, scanMs: 1500, totalMs: 2000 } as const
+interface Candidate { position: number; messageID: string; sessionID: string; createdAt: number; flags?: boolean[]; score: number }
 type Judged = Rank & { hit: HistoryRankedPage["hits"][number] }
 
 export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, input: HistoryRankedInput, signal: AbortSignal,
@@ -17,7 +17,7 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
   let sliceStarted = started
   const terms = searchTerms(input.query)
   const result: HistoryRankedPage = { version: 1, status: "ranked", scanned: 0, candidates: 0, judged: 0, skipped: 0,
-    matchedSessions: 0, capped: false, caps: [], exclusions: [], hits: [], sessions: [] }
+    matchedSessions: 0, prefilterBypassed: 0, capped: false, caps: [], exclusions: [], hits: [], sessions: [] }
   if (!terms.length) return result
   const authorize = checkDirectory ?? await rankedDirectoryOwnership(scope.directory, signal)
   const exclude = (reason: "foreign_directory" | "unknown_directory") => {
@@ -33,22 +33,47 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
   const scoped = [...params, ...(low === undefined ? [] : [low]), ...(high === undefined ? [] : [high])]
   const through = Number(db.prepare(`SELECT coalesce(max(m.rowid),0) AS maximum FROM session_message m
     JOIN session_v2 s ON s.id=m.session_id WHERE ${where}${dates}`).get(...scoped)?.maximum ?? 0)
-  const filters = terms.map(termPrefilterSQL)
-  const flagsSQL = filters.map((filter, i) => `CASE WHEN length(CAST(m.data AS BLOB)) <= ${MAX_MESSAGE_BYTES} THEN ${filter.sql} ELSE 0 END AS t${i}`).join(",")
-  const rows = db.prepare(`SELECT m.rowid AS position,m.id,m.session_id,m.time_created,s.directory,s.workspace_id,s.title,${flagsSQL},
-    CASE WHEN length(CAST(m.data AS BLOB)) <= ${MAX_MESSAGE_BYTES} AND json_valid(m.data) THEN
-      CASE WHEN json_type(m.data)='object' AND (m.type!='assistant' OR json_type(m.data,'$.content')='array') THEN 1 ELSE 0 END
-    ELSE 0 END AS supported
+  const mask = termMask(terms)
+  // -1 is unknown projected text; -2 is unsupported/oversized stored content.
+  // Decode JSON once using the same readable sources as the body judge. Only
+  // genuine projected text, rather than tool metadata/attachments, spends the bound.
+  db.function("codenomad_ranked_mask", { deterministic: true }, (data, role) => {
+    try {
+      if (typeof data !== "string") return -2
+      let bytes = 0, present = 0
+      for (const source of historyTexts(historyContent(JSON.parse(data), role), input.includeTechnical)) {
+        bytes += Buffer.byteLength(source.text)
+        if (bytes > RANKED_LIMITS.prefilterBytes) return -1
+        present |= mask(source.text)
+      }
+      return present
+    } catch { return -2 }
+  })
+  const rows = db.prepare(`SELECT m.rowid AS position,m.id,m.session_id,m.time_created,s.directory,s.workspace_id,s.title,
+    CASE WHEN length(CAST(m.data AS BLOB)) <= ${MAX_MESSAGE_BYTES}
+      THEN codenomad_ranked_mask(${input.includeTechnical ? "m.data" : textProjection},m.type) ELSE -2 END AS mask
     FROM session_message m JOIN session_v2 s ON s.id=m.session_id
     WHERE ${where}${dates} AND m.rowid > ? AND m.rowid <= ? ORDER BY m.rowid LIMIT ${RANKED_LIMITS.chunk}`)
-  const candidates: Candidate[] = []
+  let candidates: Candidate[] = []
   const owners = new Map<string, HistoryRankedPage["sessions"][number]>()
+  // Ownership has its own bounded work, independent of the body-judging deadline.
+  // Run before judging, and again afterwards to fence changes during body IO.
+  const validateDirectories = async () => {
+    const allowed = new Set<string>()
+    for (const directory of new Set(result.sessions.map(owner => owner.directory))) {
+      await yieldTurn(undefined, { signal })
+      const ownership = await authorize(directory, true)
+      if (ownership === "owned") allowed.add(directory)
+      else exclude(ownership === "limit" ? "unknown_directory" : ownership)
+    }
+    result.sessions = result.sessions.filter(owner => allowed.has(owner.directory))
+  }
   let after = 0
   scan: while (after < through) {
     signal.throwIfAborted()
     if (performance.now() - started >= RANKED_LIMITS.scanMs) { cap("scan_time"); break }
     let visited = false
-    for (const row of rows.iterate(...filters.flatMap(filter => filter.params), ...scoped, after, through)) {
+    for (const row of rows.iterate(...scoped, after, through)) {
       signal.throwIfAborted()
       visited = true
       after = Number(row.position)
@@ -62,16 +87,18 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
           if (owners.size === RANKED_LIMITS.sessions) { cap("session_limit"); break scan }
           owner = { sessionID, directory: String(row.directory), title: String(row.title ?? "").slice(0, 4096),
             ...(typeof row.workspace_id === "string" ? { workspaceID: row.workspace_id } : {}), scanned: 0, tools: 0, reasoning: 0, skipped: 0,
-            candidates: 0, judged: 0, matchedMessages: 0 }
+            candidates: 0, judged: 0, matchedMessages: 0, prefilterBypassed: 0 }
           owners.set(sessionID, owner)
           result.sessions.push(owner)
         }
         result.scanned++
         owner.scanned++
-        if (!row.supported) { result.skipped++; owner.skipped++ }
+        if (Number(row.mask) === -2) { result.skipped++; owner.skipped++ }
         else {
-          const flags = terms.map((_, i) => Boolean(row[`t${i}`]))
-          if (flags.some(Boolean)) {
+          const unknown = Number(row.mask) === -1
+          if (unknown) owner.prefilterBypassed++
+          const flags = unknown ? undefined : terms.map((_, i) => Boolean(Number(row.mask) & (1 << i)))
+          if (!flags || flags.some(Boolean)) {
             candidates.push({ position: after, messageID: String(row.id), sessionID: String(row.session_id), createdAt: Number(row.time_created), flags, score: 0 })
             owner.candidates++
           }
@@ -86,10 +113,13 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
     await yieldTurn(undefined, { signal }); sliceStarted = performance.now()
     if (!visited) break
   }
+  await validateDirectories()
+  const beforeJudge = new Set(result.sessions.map(owner => owner.sessionID))
+  candidates = candidates.filter(candidate => beforeJudge.has(candidate.sessionID))
   result.candidates = candidates.length
   const weights = idfWeights(candidates.map(candidate => candidate.flags), terms.length)
-  for (const candidate of candidates) candidate.score = termScore(candidate.flags, weights)
-  candidates.sort((a, b) => b.score - a.score || b.createdAt - a.createdAt || a.position - b.position)
+  for (const candidate of candidates) candidate.score = candidate.flags ? termScore(candidate.flags, weights) : 0
+  candidates.sort((a, b) => Number(!a.flags) - Number(!b.flags) || b.score - a.score || b.createdAt - a.createdAt || a.position - b.position)
   const judge = textJudge(terms, input.query, weights)
   const body = db.prepare(`SELECT m.type,m.time_created,s.directory,s.workspace_id,s.title,
     CASE WHEN length(CAST(m.data AS BLOB)) <= ${MAX_MESSAGE_BYTES} THEN ${input.includeTechnical ? "m.data" : textProjection} END AS data
@@ -117,7 +147,7 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
         const found = judge(source.text)
         if (found.at < 0) continue
         const entry = { sessionID: candidate.sessionID, messageID: candidate.messageID, createdAt: Number(row.time_created),
-          score: found.score, prose: source.kind === "text", rarity: found.rarity,
+          score: found.score, prose: source.kind === "text", rarity: found.rarity, unknown: !candidate.flags,
           hit: { sessionID: candidate.sessionID, messageID: candidate.messageID, role: String(row.type),
             createdAt: Number(row.time_created), partIndex: source.partIndex, kind: source.kind, excerpt: rankedExcerpt(source.text, found.at) } }
         if (best?.prose && !entry.prose) continue
@@ -137,17 +167,15 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
     }
   }
   signal.throwIfAborted()
-  const allowed = new Set<string>()
-  for (const directory of new Set(result.sessions.map(owner => owner.directory))) {
-    await yieldTurn(undefined, { signal })
-    let ownership
-    if (performance.now() - started >= RANKED_LIMITS.totalMs) { cap("total_time"); ownership = "unknown_directory" as const }
-    else ownership = await authorize(directory, true)
-    if (ownership === "owned") allowed.add(directory)
-    else exclude(ownership === "limit" ? "unknown_directory" : ownership)
+  await validateDirectories()
+  // Uncached root + common-directory physical fence after the last asynchronous
+  // directory check. A replacement invalidates every earlier successful check.
+  if (await authorize(scope.directory, "root") !== "owned") {
+    exclude("unknown_directory")
+    result.sessions = []
   }
-  result.sessions = result.sessions.filter(owner => allowed.has(owner.directory))
-  for (const key of ["scanned", "candidates", "judged", "skipped"] as const) result[key] = result.sessions.reduce((sum, owner) => sum + owner[key], 0)
+  signal.throwIfAborted()
+  for (const key of ["scanned", "candidates", "judged", "skipped", "prefilterBypassed"] as const) result[key] = result.sessions.reduce((sum, owner) => sum + owner[key], 0)
   result.matchedSessions = result.sessions.filter(owner => owner.matchedMessages > 0).length
   const ownedIDs = new Set(result.sessions.map(owner => owner.sessionID))
   result.hits = diverseHits(judged.filter(entry => ownedIDs.has(entry.sessionID)), input.limit).map(entry => entry.hit)
