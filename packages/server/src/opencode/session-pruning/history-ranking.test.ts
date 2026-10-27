@@ -41,6 +41,13 @@ test("rank prefers prose, then weighted score, then recency; diversity never dup
   assert(compareRank(row("new", "s", 1, 2), row("old", "s", 1, 1)) < 0)
 })
 
+test("session diversity precedes known-before-unknown ordering", () => {
+  const row = (messageID: string, sessionID: string, score: number, unknown = false): Rank => ({ messageID, sessionID, score, createdAt: 1, prose: true, unknown })
+  const rows = [row("known-high", "s", 9), row("known-low", "s", 8), row("unknown", "other", 0, true)]
+  assert.deepEqual(diverseHits(rows, 3).map(row => row.messageID), ["known-high", "unknown", "known-low"])
+  assert.deepEqual(diverseHits(rows, 2).map(row => row.messageID), ["known-high", "unknown"])
+})
+
 test("real UTC dates are inclusive, including leap days and early years", () => {
   assert.deepEqual(dateBounds("2024-02-29", "2024-02-29"), { low: Date.parse("2024-02-29Z"), high: Date.parse("2024-03-01Z") })
   assert.equal(dateBounds("0001-01-01").low, Date.parse("0001-01-01T00:00:00Z"))

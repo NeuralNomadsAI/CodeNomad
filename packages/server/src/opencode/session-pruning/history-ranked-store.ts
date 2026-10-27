@@ -113,7 +113,10 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
     await yieldTurn(undefined, { signal }); sliceStarted = performance.now()
     if (!visited) break
   }
+  // Ownership reads have their own bound: the judge keeps the allowance left after scanning.
+  const validationStarted = performance.now()
   await validateDirectories()
+  const judgeStarted = started + performance.now() - validationStarted
   const beforeJudge = new Set(result.sessions.map(owner => owner.sessionID))
   candidates = candidates.filter(candidate => beforeJudge.has(candidate.sessionID))
   result.candidates = candidates.length
@@ -129,7 +132,7 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
   if (candidates.length > RANKED_LIMITS.judged) cap("judge_limit")
   for (const candidate of candidates.slice(0, RANKED_LIMITS.judged)) {
     signal.throwIfAborted()
-    if (performance.now() - started >= RANKED_LIMITS.totalMs) { cap("total_time"); break }
+    if (performance.now() - judgeStarted >= RANKED_LIMITS.totalMs) { cap("total_time"); break }
     // Only one bounded message body is materialized; ownership is checked again
     // because other native requests may move/delete sessions between yields.
     const owner = owners.get(candidate.sessionID)!

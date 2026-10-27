@@ -32,6 +32,24 @@ const owned: CheckRankedDirectory = async () => "owned"
 const search = (db: DatabaseSync, query: string, check = owned, directory = "/repo") => queryRankedHistory(db,
   { directory, projectID: "p" }, historyRankedInputSchema.parse({ version: 1, query }), new AbortController().signal, check)
 
+test("pass3: slow pre-judge ownership checks leave the judge its remaining allowance", async t => {
+  const db = database(["needle"])
+  let now = 0
+  t.mock.method(performance, "now", () => now)
+  try {
+    let validations = 0
+    const slow: CheckRankedDirectory = async (_directory, fresh) => {
+      // The first fresh pass runs before judging and takes longer than the whole budget.
+      if (fresh && validations++ === 0) now += 5_000
+      return "owned"
+    }
+    const result = await search(db, "needle", slow)
+    assert.deepEqual(result.caps, [])
+    assert.equal(result.judged, 1)
+    assert.deepEqual(result.hits.map(hit => hit.messageID), ["m-0"])
+  } finally { db.close() }
+})
+
 test("pass2 P1: replacing a checkout after a fresh check loses request authority", async () => {
   const parent = await temporary(), root = path.join(parent, "root")
   try {

@@ -136,8 +136,10 @@ complete-word boundaries belong to the body judge.
 The substring mask covers at most 64 KiB of projected readable text per message.
 Larger projections have unknown term presence. Unknown rows contribute to neither
 the IDF corpus size nor document frequencies and receive no candidate score.
-They are queued after known candidates within the existing judge/time budgets;
-returned unknown-source hits also follow known-source hits. `prefilterBypassed`
+They are queued after known candidates within the existing judge/time budgets.
+Returned hits take each session's best hit first, known-source before
+unknown-source, then fill by the same order; an unknown-source hit from another
+session can therefore precede a second known-source hit of one session. `prefilterBypassed`
 reports unknown rows globally and per session, and the tool prints their count.
 Each weight is `log(1 + N / max(df, 1))` over known collected candidates and
 their term-presence bits. Known candidate rank uses the sum of present-term weights
