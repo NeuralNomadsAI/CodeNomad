@@ -158,10 +158,12 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
 
   // Mid-rotation the window already has its new shape while the orientation has not
   // changed yet; the rotation then decides each panel, so nothing docks on the way.
+  // The shape is read from the media query behind the orientation signal: rounded
+  // innerWidth/innerHeight can disagree with it on zoomed, near-square windows.
   const rotating = () => {
     const orientation = options.orientation?.()
-    if (!orientation || typeof window === "undefined") return false
-    return (window.innerHeight >= window.innerWidth ? "portrait" : "landscape") !== orientation
+    if (!orientation || typeof window === "undefined" || typeof window.matchMedia !== "function") return false
+    return (window.matchMedia("(orientation: portrait)").matches ? "portrait" : "landscape") !== orientation
   }
 
   // A floating panel that gains its room docks.
