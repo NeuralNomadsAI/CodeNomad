@@ -81,10 +81,24 @@ test("every createSession call sends its own request, whatever its intent", asyn
     const second = createSession(instanceId, "build")
     await until(() => requests.length === 2)
     assert.equal(isCreatingSession(instanceId), true)
+    // …and the instance stays busy until the last overlapping creation settles.
     gates[0](false)
+    const a = await first
+    assert.equal(isCreatingSession(instanceId), true, "the other creation is still pending")
     gates[1](false)
-    const [a, b] = await Promise.all([first, second])
+    const b = await second
     assert.notEqual(a.id, b.id, "each call creates its own session")
+    assert.equal(isCreatingSession(instanceId), false)
+
+    // A rejection settles only its own creation too.
+    const third = createSession(instanceId, "build")
+    const fourth = createSession(instanceId, "build")
+    await until(() => requests.length === 4)
+    gates[2](true)
+    await assert.rejects(third, /network stalled/)
+    assert.equal(isCreatingSession(instanceId), true, "a rejection leaves the other creation pending")
+    gates[3](false)
+    await fourth
     assert.equal(isCreatingSession(instanceId), false)
   } finally {
     teardown(instanceId)

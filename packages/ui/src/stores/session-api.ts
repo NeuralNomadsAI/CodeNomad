@@ -1087,6 +1087,21 @@ function isCreatingSession(instanceId: string): boolean {
   return loading().creatingSession.get(instanceId) === true
 }
 
+// Creations can overlap (the sidebar's and the draft composer's first send):
+// the instance stays busy until the last one settles.
+const creationsInFlight = new Map<string, number>()
+
+function trackCreation(instanceId: string, delta: 1 | -1): void {
+  const count = (creationsInFlight.get(instanceId) ?? 0) + delta
+  if (count > 0) creationsInFlight.set(instanceId, count)
+  else creationsInFlight.delete(instanceId)
+  setLoading((prev) => {
+    const next = { ...prev }
+    next.creatingSession.set(instanceId, count > 0)
+    return next
+  })
+}
+
 async function createSession(instanceId: string, agent?: string): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -1111,11 +1126,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   // visibly in progress until the request settles one way or the other, each
   // call sends its own request, and repeated UI triggers are deduplicated by
   // the startNewSession action instead.
-  setLoading((prev) => {
-    const next = { ...prev }
-    next.creatingSession.set(instanceId, true)
-    return next
-  })
+  trackCreation(instanceId, 1)
 
   try {
     const defaultModel = await getDefaultModel(instanceId, selectedAgent)
@@ -1193,11 +1204,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     log.error("Failed to create session:", error)
     throw error
   } finally {
-    setLoading((prev) => {
-      const next = { ...prev }
-      next.creatingSession.set(instanceId, false)
-      return next
-    })
+    trackCreation(instanceId, -1)
   }
 }
 
