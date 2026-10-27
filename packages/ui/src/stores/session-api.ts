@@ -1083,21 +1083,7 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
   }
 }
 
-// In-flight creations keyed by intent (instance, directory, agent). Concurrent
-// entries with the same intent — sidebar button, new-session hotkey, command
-// palette — share one creation instead of stacking duplicate requests behind a
-// slow network, while distinct intents (another directory or agent) still send
-// their own requests. There is deliberately no client-side timeout:
-// session.create is not idempotent, an aborted request may still commit
-// server-side and arrive later through the session.created event, so a slow
-// creation stays visibly in progress until the request settles one way or the
-// other and only real rejections surface as failures.
-const createSessionIntents = new Map<string, Promise<Session>>()
-const createSessionInFlight = new Map<string, Set<Promise<Session>>>()
-
 function isCreatingSession(instanceId: string): boolean {
-  // Reads the reactive loading signal: controls tracking (Solid) re-render on
-  // the transitions driven by the in-flight set below.
   return loading().creatingSession.get(instanceId) === true
 }
 
@@ -1110,52 +1096,26 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const activeLocation = activeId && activeId !== "info"
     ? sessions().get(instanceId)?.get(activeId)?.location
     : undefined
+  const client = getRootClient(instanceId)
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
+
   const instanceAgents = agents().get(instanceId) || []
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
   const selectedAgent = agent || primaryAgents[0]?.id || ""
-  const intent = `${instanceId}\u0000${activeLocation?.directory ?? instance.folder}\u0000${selectedAgent}`
 
-  const inFlight = createSessionIntents.get(intent)
-  if (inFlight) return inFlight
-
-  const creation = createSessionInternal(instanceId, instance, activeLocation, selectedAgent).finally(() => {
-    if (createSessionIntents.get(intent) === creation) createSessionIntents.delete(intent)
-    const live = createSessionInFlight.get(instanceId)
-    if (!live?.delete(creation)) return
-    if (live.size === 0) {
-      createSessionInFlight.delete(instanceId)
-      setLoading((prev) => {
-        const next = { ...prev }
-        next.creatingSession.set(instanceId, false)
-        return next
-      })
-    }
+  // Pending spans the whole flow — catalog/config reads included — so a slow
+  // network shows feedback from the first click instead of silence. There is
+  // deliberately no client-side timeout and no coalescing here: session.create
+  // is not idempotent, an aborted request may still commit server-side and
+  // arrive later through the session.created event, so a slow creation stays
+  // visibly in progress until the request settles one way or the other, each
+  // call sends its own request, and repeated UI triggers are deduplicated by
+  // the startNewSession action instead.
+  setLoading((prev) => {
+    const next = { ...prev }
+    next.creatingSession.set(instanceId, true)
+    return next
   })
-  createSessionIntents.set(intent, creation)
-  const live = createSessionInFlight.get(instanceId) ?? new Set<Promise<Session>>()
-  const first = live.size === 0
-  live.add(creation)
-  createSessionInFlight.set(instanceId, live)
-  if (first) {
-    // Pending spans the whole flow — catalog/config reads included — so a slow
-    // network shows feedback from the first click instead of silence.
-    setLoading((prev) => {
-      const next = { ...prev }
-      next.creatingSession.set(instanceId, true)
-      return next
-    })
-  }
-  return creation
-}
-
-async function createSessionInternal(
-  instanceId: string,
-  instance: Instance,
-  activeLocation: Session["location"] | undefined,
-  selectedAgent: string,
-): Promise<Session> {
-  const client = getRootClient(instanceId)
-  const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
   try {
     const defaultModel = await getDefaultModel(instanceId, selectedAgent)
@@ -1232,6 +1192,12 @@ async function createSessionInternal(
   } catch (error) {
     log.error("Failed to create session:", error)
     throw error
+  } finally {
+    setLoading((prev) => {
+      const next = { ...prev }
+      next.creatingSession.set(instanceId, false)
+      return next
+    })
   }
 }
 
