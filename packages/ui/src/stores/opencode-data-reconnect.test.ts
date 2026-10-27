@@ -164,7 +164,7 @@ async function converge(ctx: TestContext, done: () => boolean) {
   }
 }
 
-test("a message.list read cannot complete while stream events keep arriving", async ctx => {
+test("a message.list read never publishes an obsolete page while stream events keep arriving", async ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("reconnect-race")
   try {
@@ -185,18 +185,33 @@ test("a message.list read cannot complete while stream events keep arriving", as
     f.data().session.message.sync(sessionId).then(() => { syncSettled = true }).catch(() => undefined)
     await converge(ctx, () => control.calls === 1 && control.pending())
 
-    // Ten arrivals, each landing before the in-flight read returns: every one
-    // restarts the read; it can never publish an obsolete page mid-stream.
-    for (let round = 0; round < 10; round++) {
+    // Ten arrivals, each landing before the in-flight read returns: the
+    // authoritative page predates every delta, so it must never publish.
+    // Bounded trailing-read attempts still complete the read by serving the
+    // live projection, instead of restarting forever mid-stream.
+    let expected = "seed probe "
+    let completed = false
+    for (let round = 0; round < 10 && !completed; round += 1) {
+      expected += `x${round} `
       f.delta(`x${round} `)
       control.settle()
-      await converge(ctx, () => control.calls === round + 2 && control.pending())
-      assert.ok(control.pending(), "the read restarted and is always in flight")
+      await microtasks()
+      ctx.mock.timers.tick(0)
+      await microtasks()
+      completed = syncSettled
+      assert.equal(f.sdkText(), expected, "the in-flight page never replaced streamed text")
     }
+    assert.ok(completed, "the trailing read completed while arrivals kept landing")
+    assert.ok(!control.pending(), "no read is left spinning mid-stream")
 
-    // Arrivals stop: the current read can finally return.
+    // Arrivals stopped: one more authoritative read publishes the quiet page.
+    const quietCalls = control.calls
+    let quietSettled = false
+    f.data().session.message.invalidate(sessionId)
+    f.data().session.message.sync(sessionId).then(() => { quietSettled = true }).catch(() => undefined)
+    await converge(ctx, () => control.calls === quietCalls + 1 && control.pending())
     control.settle()
-    await converge(ctx, () => syncSettled)
+    await converge(ctx, () => quietSettled)
     assert.equal(f.sdkText(), f.authoritativeText())
   } finally { f.cleanup() }
 })

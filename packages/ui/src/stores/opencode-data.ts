@@ -81,6 +81,9 @@ const MAX_TRANSCRIPT_REPLAY_CHUNK = 64
 const TRANSCRIPT_RESYNC_QUIET_MS = 25
 const TRANSCRIPT_RETRY_DELAY_MS = 25
 const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
+// A message.list read that keeps losing to same-session events falls back to
+// the live projection instead of refetching forever.
+const TRAILING_READ_ATTEMPTS = 3
 const entries = new Map<string, DataEntry>()
 const transcriptEntries = new Map<string, TranscriptEntry>()
 const mutationRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
@@ -171,6 +174,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                 // awaiting this response, without fencing intervening events.
                 // Keep the live projection until one trailing read is current;
                 // never merge an obsolete page into newer streaming messages.
+                let attempts = 0
                 for (;;) {
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
@@ -187,7 +191,17 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
                   compactionDeltas.flush(instanceId, input.sessionID)
-                  if ((eventRevisions.get(input.sessionID) ?? 0) !== revision) continue
+                  if ((eventRevisions.get(input.sessionID) ?? 0) !== revision) {
+                    attempts += 1
+                    if (attempts < TRAILING_READ_ATTEMPTS) continue
+                    // Sustained streaming never leaves a quiet fetch window.
+                    // Keep the live projection: serve it instead of merging the
+                    // obsolete fetched page. A session whose projection is
+                    // still empty takes the fetched page as its seed.
+                    const live = data.session.message.list(input.sessionID)
+                    if (live.length) return { data: [...live].reverse(), cursor: {} }
+                    return response
+                  }
                   return response
                 }
               }
