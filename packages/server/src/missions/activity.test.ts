@@ -154,6 +154,8 @@ test("an idle coordinator of a running mission owes its final report unless a re
     evidence: [], next: [], createdAt: 2 }
   assert.equal(await project({ reports: [{ ...report, notificationStatus: "pending" }] }), "unknown")
   assert.equal(await project({ reports: [{ ...report, notificationStatus: "admitted" }] }), "idle-without-report")
+  assert.equal(await project({ reports: [{ ...report, delivery: "native-return", notificationStatus: "pending" }] }), "idle-without-report",
+    "a native return never wakes the coordinator through a notification")
   for (const patch of [{ runState: "paused" }, { runState: "prepared" }, { status: "completed" }, { status: "failed" }] as const) {
     assert.equal(await project(patch), "unknown", JSON.stringify(patch))
   }

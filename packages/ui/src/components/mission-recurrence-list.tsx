@@ -9,7 +9,10 @@ import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } 
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { showSessionChatFor } from "../stores/session-previews"
 import { activeSessionId } from "../stores/sessions"
-import { instances } from "../stores/instances"
+import { getPermissionQueue, instances } from "../stores/instances"
+import { getFormQueue } from "../stores/forms"
+import { sessions } from "../stores/session-state"
+import { getSessionAncestorIdsFromMap } from "../stores/session-tree"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { missionScheduleText } from "./mission-schedule-text"
 import { createRecurrenceControlIntent, completedRecurrenceControl, completedRecurrenceManual, partialRecurrenceControl,
@@ -250,10 +253,22 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
           <bdi>{text.run(schedule, item)}</bdi>
         </button></li>}</For></ol>
     </section></Show>
+  // Open Forms/permissions of a live passage: its conversation or a loaded descendant.
+  const passageRequests = (schedule: RecurrenceSchedule) => {
+    const root = schedule.pending?.conversationID
+    if (!root) return 0
+    const family = sessions().get(props.instanceId) ?? new Map()
+    const owned = (sessionID?: string) => Boolean(sessionID)
+      && (sessionID === root || getSessionAncestorIdsFromMap(family, sessionID!).includes(root))
+    return getFormQueue(props.instanceId).filter(form => owned(form.sessionID)).length
+      + getPermissionQueue(props.instanceId).filter(permission => owned(permission.sessionID)).length
+  }
   const entries = createMemo((): MissionPickerEntry[] => (snapshot()?.schedules ?? []).map(schedule => {
     const state = t(`missions.recurrence.state.${schedule.state}`), next = text.next(schedule)
-    return { key: `schedule:${schedule.id}`, title: schedule.title, mark: scheduleMark(schedule),
-      status: [t("missionsPanel.dailyBadge"), state, next, text.every(schedule)].filter(Boolean).join(" · ") }
+    const mark = scheduleMark(schedule, passageRequests(schedule))
+    return { key: `schedule:${schedule.id}`, title: schedule.title, mark,
+      status: [t("missionsPanel.dailyBadge"), state, mark === "permission" ? t("missionsPanel.task.input") : "", next, text.every(schedule)]
+        .filter(Boolean).join(" · ") }
   }))
   const selectedId = () => snapshot()?.schedules.some(schedule => schedule.id === props.selectedSchedule) ? props.selectedSchedule : undefined
   const view = () => <>

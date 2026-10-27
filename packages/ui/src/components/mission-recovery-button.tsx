@@ -32,9 +32,10 @@ function markAttempt(key: string, state?: "pending" | "admitted") {
   })
 }
 
-function classify(error: unknown): "busy" | "unknown" | "conflict" | "failed" {
+function classify(error: unknown): "busy" | "unknown" | "conflict" | "member" | "failed" {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined
   if (code === "recovery-busy") return "busy"
+  if (code === "already-member") return "member"
   if (code === "recovery-unknown") return "unknown"
   if (["recovery-conflict", "revision-conflict", "mission-not-running", "control-pending", "mission-not-found", "foreign-session"].includes(String(code))) return "conflict"
   return "failed"

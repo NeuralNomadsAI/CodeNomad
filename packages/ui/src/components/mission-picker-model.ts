@@ -60,12 +60,18 @@ export function missionMark(mission: { status: string; runState?: string }, inpu
   return input.coordinatorState === "idle-without-report" ? "interrupted" : "idle"
 }
 
-/** Recurring schedule: a live passage works; an interrupted schedule or a failed
- * latest run (retryable) stays orange until the next run. */
-export function scheduleMark(schedule: { state: string; pending: { status: string } | null; latestResult: { outcome: string } | null }): MissionMark {
-  if (schedule.pending && schedule.pending.status !== "uncertain") return "working"
-  if (schedule.state === "interrupted" || !schedule.pending && schedule.latestResult?.outcome === "failed") return "interrupted"
-  return schedule.state === "paused" ? "paused" : "idle"
+/** Recurring schedule: an open request of its live passage asks for an answer; a
+ * stopped schedule rests and a paused one stays paused; an interrupted schedule,
+ * or a running one whose latest run failed (Run now retries), is orange; a live
+ * passage works. */
+export function scheduleMark(schedule: { state: string; pending: { status: string } | null; latestResult: { outcome: string } | null },
+  openRequests = 0): MissionMark {
+  if (openRequests > 0) return "permission"
+  if (schedule.state === "paused") return "paused"
+  if (schedule.state === "interrupted") return "interrupted"
+  if (schedule.state !== "running") return "idle"
+  if (schedule.pending) return schedule.pending.status === "uncertain" ? "idle" : "working"
+  return schedule.latestResult?.outcome === "failed" ? "interrupted" : "idle"
 }
 
 export function filterMissionPickerEntries(entries: readonly MissionPickerEntry[], query: string): MissionPickerEntry[] {

@@ -341,6 +341,12 @@ export class MissionControl {
         if (!missionIsRunning({ ...mission, status: "active" }) || mission.control?.pending.length) {
           throw new MissionControlError("Mission is not running", "mission-not-running")
         }
+        // Its sessions may have joined another mission since it failed (as at creation).
+        const own = new Set(mission.actors.map(actor => actor.sessionId))
+        if (snapshot.missions.some(other => other.id !== mission.id && other.actors.some(actor => own.has(actor.sessionId))
+          && (other.status === "active" || other.control?.pending.some(id => own.has(id))))) {
+          throw new MissionControlError("A session of this mission already belongs to an active mission", "already-member")
+        }
         await this.journal.append({ version: MISSION_SCHEMA_VERSION, id: this.eventID(mission.id, `reopened-${mission.revision}`),
           type: "mission.reopened", missionID: mission.id, projectID: mission.projectID, expectedRevision: mission.revision,
           createdAt: this.timestamp(snapshot) })

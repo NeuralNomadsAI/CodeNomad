@@ -95,6 +95,20 @@ test("coordinator recovery resumes a failed mission once and nudges its coordina
   assert.equal((await f.finish("completed")).mission.summary, "Ended completed")
 })
 
+test("a failed mission whose coordinator joined another active mission is not resumed", async () => {
+  const f = fixture()
+  await f.start()
+  const failed = (await f.finish("failed")).mission
+  const other = (await f.control.create({ requestID: "other", objective: "Next release", template: "custom", coordinatorSessionID: coordinator })).mission
+  await assert.rejects(f.control.recover({ missionID: failed.id, expectedRevision: failed.revision, target: "coordinator" }),
+    code("already-member"))
+  const missions = (await f.control.snapshot()).missions
+  assert.equal(missions.find(mission => mission.id === failed.id)?.status, "failed")
+  assert.equal(missions.find(mission => mission.id === other.id)?.status, "active")
+  assert.equal(f.synthetics.length, 0)
+  assert.equal((await f.events()).filter(event => event.type === "mission.reopened").length, 0)
+})
+
 test("a reopen event resumes only a failure at its exact revision, and a later Stop ends the resumed mission", async () => {
   const f = fixture()
   await f.start()

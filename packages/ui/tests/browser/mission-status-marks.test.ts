@@ -5,6 +5,8 @@ import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionActor, MissionActorActivity, MissionMap } from "../../../server/src/api-types"
+import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
+import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
@@ -36,7 +38,8 @@ function mission(id: string, patch: Partial<MissionMap> = {}): MissionMap {
       blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1 }], ...patch }
 }
 
-async function open(missions: () => MissionMap[], activity: () => Array<{ missionId: string; actors: MissionActorActivity[] }>) {
+async function open(missions: () => MissionMap[], activity: () => Array<{ missionId: string; actors: MissionActorActivity[] }>,
+  schedules: RecurrenceSchedule[] = []) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
   const errors: string[] = [], recoveries: unknown[] = []
   page.on("pageerror", error => errors.push(error.message))
@@ -46,8 +49,10 @@ async function open(missions: () => MissionMap[], activity: () => Array<{ missio
     saveClientState: async (_token, snapshot) => { localStorage.setItem("fixture-native", JSON.stringify(snapshot)); return true },
   } })`)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-  await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: missions(),
+  await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, projectID: "project", missions: missions(),
     generatedAt: Date.now(), discardedEvents: 0, activity: { generatedAt: Date.now(), missions: activity() } } }))
+  await page.route(url => url.pathname === "/api/workspaces/fixture/missions/recurrence", route => route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1,
+    projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules }) }))
   await page.route("**/api/workspaces/fixture/missions/*/recover", route => {
     recoveries.push(route.request().postDataJSON())
     return route.fulfill({ json: { mission: missions()[0], admitted: true } })
@@ -111,7 +116,9 @@ test("marks follow the session palette and a completion stays green until this w
 })
 
 test("a stopped coordinator offers recovery in Pause's place only while nothing else runs; done tasks stay neutral", async () => {
-  const value = mission("run", { actors: [actor("ses_run"), actor("ses_worker", "specialist")] })
+  const base = mission("run")
+  const value = mission("run", { actors: [actor("ses_run"), actor("ses_worker", "specialist")], tasks: [...base.tasks,
+    { ...base.tasks[0]!, id: "task-blocked", key: "task-blocked", title: "Publish release", status: "needs-input" }] })
   let activity = [{ missionId: "run", actors: [{ sessionId: "ses_run", state: "idle-without-report" as const },
     { sessionId: "ses_worker", state: "running" as const }] }]
   const { page, errors, recoveries } = await open(() => [value], () => activity)
@@ -126,12 +133,42 @@ test("a stopped coordinator offers recovery in Pause's place only while nothing 
     for (let attempt = 0; !recoveries.length && attempt < 100; attempt++) await page.waitForTimeout(20)
     assert.deepEqual(recoveries, [{ expectedRevision: 1, target: "coordinator" }])
 
-    const [done, muted] = await page.evaluate(() => {
+    const [done, blocked, muted] = await page.evaluate(() => {
       const probe = document.createElement("span"); probe.style.color = "var(--text-muted)"; document.body.append(probe)
       const color = getComputedStyle(probe).color; probe.remove()
-      return [getComputedStyle(document.querySelector('.mission-tree li[data-state="done"] .mission-tree-mark')!).color, color]
+      return [...["done", "blocked"].map(state =>
+        getComputedStyle(document.querySelector(`.mission-tree li[data-state="${state}"] .mission-tree-mark`)!).color), color]
     })
     assert.equal(done, muted, "a finished task is history, not a green status")
+    assert.equal(blocked, muted, "a reported blockage is an outcome, shown by its icon")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a recurring passage waiting for an answer is red; stopped and paused schedules keep a past failure quiet", async () => {
+  const schedule = (id: string, title: string, patch: Partial<RecurrenceSchedule>): RecurrenceSchedule => ({ id, title, revision: 2,
+    state: "running", clock: { time: "08:15", zone: "UTC" }, nextDueAt: Date.UTC(2026, 9, 28, 8, 15), pending: null, latestResult: null, history: [], controls: [],
+    actions: ["pause", "stop", "run-now"], ...patch })
+  const failedRun = { passageID: "pas_old", dueAt: 1, settledAt: 2, outcome: "failed" as const, reason: "not-started" as const, trigger: "daily" as const }
+  const { page, errors } = await open(() => [], () => [], [
+    schedule("rec_wait", "Waiting review", { pending: { passageID: "pas_wait", status: "running", trigger: "daily", conversationID: "ses_passage" },
+      actions: ["pause", "stop"] }),
+    schedule("rec_stopped", "Stopped review", { state: "stopped", nextDueAt: null, latestResult: failedRun, history: [failedRun], actions: [] }),
+    schedule("rec_paused", "Paused review", { state: "paused", nextDueAt: null, latestResult: failedRun, history: [failedRun],
+      actions: ["play", "stop", "run-now"] }),
+  ])
+  try {
+    // Schedules are read only through a connected instance.
+    await fixtureCall(page, "connectCatalog")
+    await page.waitForFunction(() => !document.querySelector(".mission-picker-expander")?.hasAttribute("disabled"))
+    await (await inlineMissionEntry(page, "Waiting review")).waitFor()
+    assert.deepEqual(await Promise.all(["Waiting review", "Stopped review", "Paused review"].map(title => mark(page, title))),
+      ["working", "idle", "paused"])
+    await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_passage"))
+    await page.waitForFunction(() => [...document.querySelectorAll(".mission-picker-inline .mission-picker-mark")]
+      .some(element => element.getAttribute("data-mark") === "permission"))
+    assert.equal(await mark(page, "Waiting review"), "permission")
+    assert.match(await (await inlineMissionEntry(page, "Waiting review")).locator(".sr-only").textContent() ?? "", /Awaiting your input/)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

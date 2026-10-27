@@ -11,7 +11,7 @@ import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { serverEvents } from "../../../src/lib/server-events"
 import { sdkManager } from "../../../src/lib/sdk-manager"
 import { sseManager } from "../../../src/lib/sse-manager"
-import { addInstance, setActiveInstanceId, updateInstance } from "../../../src/stores/instances"
+import { addInstance, addPermissionToQueue, setActiveInstanceId, updateInstance } from "../../../src/stores/instances"
 import { SettingsScreen } from "../../../src/components/settings-screen"
 import { settingsOpen } from "../../../src/stores/settings-screen"
 import { activeSessionId, setSessions } from "../../../src/stores/session-state"
@@ -58,6 +58,9 @@ function Fixture() {
         location: { directory: "fixture" }, time: { created: 1, updated: 1 },
       } as any]])))
     },
+    queuePermission: (sessionID: string, id = "fixture-permission") => addPermissionToQueue("fixture", {
+      id, sessionID, action: "bash", resources: ["git status"], metadata: {},
+    } as any),
     event: (event: any) => (sseManager as any).handleEvent("fixture", { id: `ev_${Date.now()}`, created: Date.now(), location: { directory: "fixture" }, ...event }),
   }
   return <div style={{ display: "grid", "grid-template-columns": `minmax(0, 1fr) ${panelWidth()}`, height: "100vh" }}>

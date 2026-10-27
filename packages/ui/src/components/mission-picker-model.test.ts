@@ -37,14 +37,18 @@ test("a mission's mark: an answer first, then resumable stops, observed work, an
   assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["unknown"], coordinatorState: "unknown" }), "idle")
 })
 
-test("schedule mark follows the live passage, then an interruption or a failed latest run", () => {
+test("schedule mark: an answer first, then the schedule's state, the live passage and a retryable failure", () => {
   const schedule = (state: string, pending: { status: string } | null, outcome?: string) =>
     ({ state, pending, latestResult: outcome ? { outcome } : null })
+  assert.equal(scheduleMark(schedule("running", { status: "running" }), 1), "permission")
   assert.equal(scheduleMark(schedule("running", { status: "running" }, "failed")), "working")
   assert.equal(scheduleMark(schedule("running", { status: "uncertain" })), "idle")
-  assert.equal(scheduleMark(schedule("running", null, "failed")), "interrupted")
+  assert.equal(scheduleMark(schedule("running", null, "failed")), "interrupted", "Run now retries a failed run")
   assert.equal(scheduleMark(schedule("interrupted", null, "completed")), "interrupted")
   assert.equal(scheduleMark(schedule("paused", null, "completed")), "paused")
+  assert.equal(scheduleMark(schedule("paused", null, "failed")), "paused", "a pause is the user's own choice")
+  assert.equal(scheduleMark(schedule("stopped", null, "failed")), "idle", "a stopped schedule offers nothing to continue")
+  assert.equal(scheduleMark(schedule("unavailable", null, "failed")), "idle")
   assert.equal(scheduleMark(schedule("running", null, "completed")), "idle")
 })
 
