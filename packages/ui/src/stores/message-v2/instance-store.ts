@@ -366,7 +366,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // while the UI is disconnected is recovered by re-observing the same part in
   // a later snapshot. Snapshots re-upsert unchanged parts, so remember the last
   // reported state per (messageId, partId) and emit only real transitions.
-  const lastReportedRunningQuestions = new Map<string, boolean>()
+  // Keyed by message so a message leaving the store can retire its parts.
+  const lastReportedRunningQuestions = new Map<string, Map<string, boolean>>()
 
   function reportRunningQuestionTransitions(record: MessageRecord | undefined) {
     if (!record || !hooks?.onRunningQuestionPart) return
@@ -380,9 +381,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
           ? false
           : undefined
       if (running === undefined) continue
-      const key = `${record.id}:${partId}`
-      if (lastReportedRunningQuestions.get(key) === running) continue
-      lastReportedRunningQuestions.set(key, running)
+      let reportedParts = lastReportedRunningQuestions.get(record.id)
+      if (!reportedParts) {
+        reportedParts = new Map()
+        lastReportedRunningQuestions.set(record.id, reportedParts)
+      }
+      if (reportedParts.get(partId) === running) continue
+      reportedParts.set(partId, running)
       hooks.onRunningQuestionPart(instanceId, record.sessionId, record.id, partId, running)
     }
   }
@@ -391,10 +396,27 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // reported running has no transition to retract.
   function reportRunningQuestionEnded(sessionId: string, messageId: string, partId: string) {
     if (!hooks?.onRunningQuestionPart) return
-    const key = `${messageId}:${partId}`
-    if (lastReportedRunningQuestions.get(key) !== true) return
-    lastReportedRunningQuestions.set(key, false)
+    const reportedParts = lastReportedRunningQuestions.get(messageId)
+    if (reportedParts?.get(partId) !== true) return
+    reportedParts.set(partId, false)
     hooks.onRunningQuestionPart(instanceId, sessionId, messageId, partId, false)
+  }
+
+  // A message leaving the store ends every question it carried. Parts reported
+  // running emit running false so consumers that disarm only on the hook stay
+  // correct; every entry for the message is then dropped so a later
+  // re-delivery of the same still-running part re-fires instead of being
+  // suppressed as a repeat. Keys already idle are pruned silently.
+  function retireRunningQuestionsForMessage(messageId: string, sessionId: string) {
+    if (!hooks?.onRunningQuestionPart) return
+    const reportedParts = lastReportedRunningQuestions.get(messageId)
+    if (!reportedParts) return
+    lastReportedRunningQuestions.delete(messageId)
+    for (const [partId, running] of reportedParts) {
+      if (running) {
+        hooks.onRunningQuestionPart(instanceId, sessionId, messageId, partId, false)
+      }
+    }
   }
 
   function recordLatestTodoSnapshot(sessionId: string, snapshot: LatestTodoSnapshot) {
@@ -836,6 +858,13 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
       bumpSessionRevision(sessionId)
     })
+
+    // Omitted messages left the store above; their running questions end here
+    // so re-delivery of the same part re-fires instead of deduping against a
+    // stale entry.
+    if (!options?.preserveOmitted && omittedIds.length > 0) {
+      omittedIds.forEach((id) => retireRunningQuestionsForMessage(id, sessionId))
+    }
   }
 
   function reconcileAuthoritativeMessageIds(
@@ -992,6 +1021,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       recomputeLastAssistantMessageId(sessionId, keptPendingIds)
       bumpSessionRevision(sessionId)
     })
+
+    droppedIds.forEach((id) => retireRunningQuestionsForMessage(id, sessionId))
   }
 
   function insertMessageIntoSession(sessionId: string, messageId: string) {
@@ -1135,6 +1166,10 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
         bumpSessionRevision(sessionId)
       })
     })
+
+    if (record) {
+      retireRunningQuestionsForMessage(messageId, record.sessionId)
+    }
   }
 
   function removeMessagePart(messageId: string, partId: string, fallbackSessionId?: string) {
@@ -1494,7 +1529,12 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
     })
 
     clearLatestTodoSnapshot(sessionId)
- 
+
+    // Every message of the session left the store: retract its running
+    // questions and drop the dedupe keys so a later re-admission (window
+    // eviction, clear-then-rehydrate) re-fires from scratch.
+    messageIds.forEach((id) => retireRunningQuestionsForMessage(id, sessionId))
+
     if (options?.notify !== false) hooks?.onSessionCleared?.(instanceId, sessionId)
   }
 
@@ -1509,6 +1549,16 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
      clearInstanceMessageRenderCaches(instanceId)
      messageInfoCache.clear()
      pendingSendIds.clear()
+     // The instance is torn down wholesale and no session-clear hooks fire
+     // here, so retract any still-armed question directly and drop the dedupe
+     // keys: a part re-observed after the reset must fire from scratch.
+     for (const [messageId, reportedParts] of lastReportedRunningQuestions) {
+       const sessionId = state.messages[messageId]?.sessionId ?? ""
+       for (const [partId, running] of reportedParts) {
+         if (running) hooks?.onRunningQuestionPart?.(instanceId, sessionId, messageId, partId, false)
+       }
+     }
+     lastReportedRunningQuestions.clear()
       setState(reconcile(createInitialState(instanceId)))
     }
 

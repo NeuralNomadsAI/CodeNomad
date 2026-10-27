@@ -768,4 +768,109 @@ describe("running question tool-part hook", () => {
       { messageId: "msg-1", partId: "part-question", running: false },
     ], "removing the part retracts the running question")
   })
+
+  it("ends a running question when its whole message is removed, and re-observation re-fires", () => {
+    const events: Array<{ messageId: string; partId: string; running: boolean }> = []
+    const store = createInstanceMessageStore("question-hook-message-removal", {
+      onRunningQuestionPart: (_instanceId, _sessionId, messageId, partId, running) => {
+        events.push({ messageId, partId, running })
+      },
+    })
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const,
+      parts: [questionPart("running")],
+    })
+    assert.deepEqual(events.map((event) => event.running), [true])
+
+    store.removeMessage("msg-1")
+    assert.deepEqual(events, [
+      { messageId: "msg-1", partId: "part-question", running: true },
+      { messageId: "msg-1", partId: "part-question", running: false },
+    ], "whole-message removal retracts the running question")
+
+    // The prune must let a later re-delivery of the same still-running part
+    // fire again instead of being suppressed as a repeat.
+    store.upsertMessage({
+      id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const,
+      parts: [questionPart("running")],
+    })
+    assert.deepEqual(events.map((event) => event.running), [true, false, true])
+  })
+
+  it("prunes idle question keys silently on message removal", () => {
+    const events: Array<{ messageId: string; partId: string; running: boolean }> = []
+    const store = createInstanceMessageStore("question-hook-idle-prune", {
+      onRunningQuestionPart: (_instanceId, _sessionId, messageId, partId, running) => {
+        events.push({ messageId, partId, running })
+      },
+    })
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const,
+      parts: [questionPart("running")],
+    })
+    store.upsertMessage({
+      id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "complete" as const,
+      parts: [questionPart("completed")],
+    })
+    assert.deepEqual(events.map((event) => event.running), [true, false])
+
+    store.removeMessage("msg-1")
+    assert.deepEqual(events.map((event) => event.running), [true, false], "an already-idle key is pruned without another event")
+  })
+
+  it("ends running questions on clearSession and re-fires on re-delivery of the same part", () => {
+    const events: Array<{ messageId: string; partId: string; running: boolean }> = []
+    const store = createInstanceMessageStore("question-hook-clear", {
+      onRunningQuestionPart: (_instanceId, _sessionId, messageId, partId, running) => {
+        events.push({ messageId, partId, running })
+      },
+    })
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.hydrateMessages("session-1", [
+      { id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const, parts: [questionPart("running")] },
+    ])
+    assert.deepEqual(events.map((event) => event.running), [true])
+
+    store.clearSession("session-1")
+    assert.deepEqual(events, [
+      { messageId: "msg-1", partId: "part-question", running: true },
+      { messageId: "msg-1", partId: "part-question", running: false },
+    ], "clearing the session retracts its running questions")
+
+    // Clear then rehydrate with the same still-running part is the recovery
+    // scenario: a stale dedupe entry must not suppress the new running true.
+    store.hydrateMessages("session-1", [
+      { id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const, parts: [questionPart("running")] },
+    ])
+    assert.deepEqual(events.map((event) => event.running), [true, false, true])
+  })
+
+  it("ends a running question omitted from an authoritative snapshot", () => {
+    const events: Array<{ messageId: string; partId: string; running: boolean }> = []
+    const store = createInstanceMessageStore("question-hook-omission", {
+      onRunningQuestionPart: (_instanceId, _sessionId, messageId, partId, running) => {
+        events.push({ messageId, partId, running })
+      },
+    })
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const,
+      parts: [questionPart("running")],
+    })
+    // The next authoritative snapshot no longer contains msg-1, so it is
+    // dropped as an omission.
+    store.hydrateMessages("session-1", [
+      { id: "msg-2", sessionId: "session-1", role: "user" as const, status: "complete" as const, parts: [{ type: "text", text: "next" } as any] },
+    ])
+    assert.deepEqual(events, [
+      { messageId: "msg-1", partId: "part-question", running: true },
+      { messageId: "msg-1", partId: "part-question", running: false },
+    ], "an omitted message must retract its running question")
+  })
 })
