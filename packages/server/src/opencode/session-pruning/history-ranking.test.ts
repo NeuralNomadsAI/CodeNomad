@@ -5,7 +5,7 @@ import { historyRankedInputSchema } from "./history-ranked-contract"
 import { formatRankedHistory } from "./history-ranked-service"
 
 test("terms are distinct Unicode words, longest first, at most six; syntax stays literal", () => {
-  assert.deepEqual(searchTerms("ÉTÉ été été Français x _ ab cd ef gh ij kl"), ["français", "été", "ab", "cd", "ef", "gh"])
+  assert.deepEqual(searchTerms("ÉTÉ été été Français x _ ab cd ef gh ij kl"), ["Français", "ÉTÉ", "ab", "cd", "ef", "gh"])
   assert.deepEqual(searchTerms("(réflexion|RÉFLEXION).* [a-z]"), ["réflexion"])
   assert.deepEqual(searchTerms("a ! _"), [])
 })
@@ -57,7 +57,7 @@ test("versioned ranked contract bounds limits and rejects selectors and regex op
 
 test("formatter reports capped verified counts and how to read a whole session", () => {
   const text = formatRankedHistory({ version: 1, status: "ranked", scanned: 2, candidates: 2, judged: 1, skipped: 0,
-    hits: [], sessions: [], matchedSessions: 0, capped: true, caps: ["total_time"] })
+    hits: [], sessions: [], matchedSessions: 0, capped: true, caps: ["total_time"], exclusions: [] })
   assert.match(text, /0 session\(s\).*verified match/)
   assert.match(text, /Scan capped.*total_time/)
   assert.match(text, /examined subset/)

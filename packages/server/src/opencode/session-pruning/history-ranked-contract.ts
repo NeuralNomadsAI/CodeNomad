@@ -18,6 +18,7 @@ export const historyRankedPageSchema = z.object({
   scanned: z.number().int().nonnegative(), candidates: z.number().int().nonnegative(),
   judged: z.number().int().nonnegative(), skipped: z.number().int().nonnegative(),
   matchedSessions: z.number().int().nonnegative(), capped: z.boolean(),
+  exclusions: z.array(z.enum(["foreign_directory", "unknown_directory"])).max(2).default([]),
   caps: z.array(z.enum(["scan_time", "candidate_limit", "session_limit", "judge_limit", "total_time"])).max(5),
   hits: z.array(historyHitSchema.extend({ createdAt: z.number().finite() }).strict()).max(20),
   sessions: z.array(historyNativePageSchema.shape.sessions.element.extend({ title: z.string().max(4096),

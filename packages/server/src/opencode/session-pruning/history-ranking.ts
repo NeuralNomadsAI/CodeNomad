@@ -1,6 +1,10 @@
 export function searchTerms(query: string): string[] {
-  return [...new Set((query.match(/[\p{L}\p{N}_]{2,}/gu) ?? []).map(word => word.toLowerCase()))]
-    .sort((a, b) => b.length - a.length).slice(0, 6)
+  const terms: string[] = []
+  for (const word of (query.match(/[\p{L}\p{N}_]{2,}/gu) ?? []).sort((a, b) => b.length - a.length)) {
+    if (!terms.some(term => new RegExp(`^${term}$`, "iu").test(word))) terms.push(word)
+    if (terms.length === 6) break
+  }
+  return terms
 }
 
 export function dateBounds(since?: string, until?: string) {
@@ -17,29 +21,14 @@ export function dateBounds(since?: string, until?: string) {
   return { low, high }
 }
 
-// Unicode casing has one-way mappings (K -> k), titlecase forms and uppercase
-// expansions (ß -> SS). These closures supplement ordinary native casing; /iu
-// below retains only single-character equivalents accepted by the JS judge.
-// Keep the closures and superset regressions aligned when JS Unicode data changes.
-const caseClosures = [
-  "KkK", "Ssſ", "µΜμ", "ÅåÅ", "ßẞ", "Ǆǅǆ", "Ǉǈǉ", "Ǌǋǌ", "Ǳǲǳ", "ͅΙιι", "ΐΐ",
-  "Ββϐ", "Εεϵ", "Θθϑϴ", "Κκϰ", "Ππϖ", "Ρρϱ", "Σςσ", "Φφϕ", "ΩωΩ", "ΰΰ",
-  "Ввᲀ", "Ддᲁ", "Ооᲂ", "Ссᲃ", "Ттᲄᲅ", "Ъъᲆ", "Ѣѣᲇ", "ᲈꙊꙋ", "Ṡṡẛ",
-  "ᾀᾈ", "ᾁᾉ", "ᾂᾊ", "ᾃᾋ", "ᾄᾌ", "ᾅᾍ", "ᾆᾎ", "ᾇᾏ", "ᾐᾘ", "ᾑᾙ", "ᾒᾚ", "ᾓᾛ", "ᾔᾜ", "ᾕᾝ", "ᾖᾞ", "ᾗᾟ",
-  "ᾠᾨ", "ᾡᾩ", "ᾢᾪ", "ᾣᾫ", "ᾤᾬ", "ᾥᾭ", "ᾦᾮ", "ᾧᾯ", "ᾳᾼ", "ῃῌ", "ῳῼ", "ﬅﬆ",
-]
-
 export function termPrefilterSQL(term: string): { sql: string; params: string[] } {
-  const pattern = [...term].map(char => {
-    const equivalent = new RegExp(`^${char}$`, "iu")
-    const variants = [char, char.toLowerCase(), char.toUpperCase(), ...(caseClosures.find(group => group.includes(char)) ?? "")]
-    const folded = [...new Set(variants.filter(value => [...value].length === 1 && equivalent.test(value))
-      .map(value => value.replace(/[A-Z]/g, letter => letter.toLowerCase())))]
-    return folded.length === 1 ? folded[0] : `[${folded.join("")}]`
-  }).join("")
-  // Terms contain only word characters: ordinary JSON escapes cannot hide them.
-  // Unicode escapes can, so only rows containing a literal \u need that fallback.
-  return { sql: "(lower(m.data) GLOB ? OR instr(m.data, char(92) || 'u') > 0)", params: [`*${pattern}*`] }
+  const lower = term.toLowerCase()
+  const asciiFold = (value: string) => value.replace(/[A-Z]/g, char => char.toLowerCase())
+  // Fixed literal passes keep per-row SQL work linear. Original tokens preserve
+  // dotted-I self-matches. Exotic /iu folds (K/ſ) and arbitrary mixed non-ASCII
+  // casing outside these four forms may be missed; the JS judge stays precise.
+  const variants = [...new Set([term, lower, term.toUpperCase(), lower.charAt(0).toUpperCase() + lower.slice(1)].map(asciiFold))]
+  return { sql: `(${variants.map(() => "instr(lower(m.data), ?) > 0").join(" OR ")} OR instr(m.data, char(92) || 'u') > 0)`, params: variants }
 }
 
 export function idfWeights(flags: readonly (readonly boolean[])[], termCount: number): number[] {

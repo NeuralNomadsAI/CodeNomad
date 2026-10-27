@@ -94,9 +94,25 @@ searches the calling session's Location directory tree, native workspace identit
 and current project plus `global` history. The calling session's exact Location
 and project are checked before and after the read. Scope comes from the plugin's
 native Location. The read-only connection uses the fresh storage binding above.
+Before collecting candidates, the plugin checks each contributing directory's
+physical Git common directory against that Location. The shared filesystem-only
+`checkout-identity.ts` reader follows administrative files, linked worktrees and
+plain subfolders. Independent nested clones are excluded, including `global`
+history. Missing, unreadable, ambiguous and environment-overridden identities fail
+closed. A verified non-Git Location owns its physical root and plain descendants
+whose bounded discovery reaches that root without finding a checkout or bare/separate
+Git directory. This includes temporary and directory-only projects. Physical path,
+device/inode and discovery identity bind the root across final revalidation;
+unrelated folders and nested repositories stay excluded.
+Request-local directory checks are bounded to 600 directories and 128
+ancestor levels, with yielding and cancellation. A final fresh identity pass
+filters returned titles, hits, provenance and counts. `exclusions` reports
+`foreign_directory`/`unknown_directory` reasons without rejected directory details.
 
 Queries contain literal Unicode letter/number/underscore words of at least two
 characters. The six longest distinct case-insensitive terms drive the search.
+Tokens retain their original spelling and deduplicate by `/iu` equivalence, keeping
+dotted-capital-I exact self-matches intact.
 JavaScript judges complete Unicode words, including accented French text. Optional
 `since`/`until` are real `YYYY-MM-DD` UTC dates with inclusive day bounds. `limit`
 defaults to 10 and accepts 1–20. Readable text is the default;
@@ -105,9 +121,12 @@ defaults to 10 and accepts 1–20. Readable text is the default;
 The rowid-horizon scan covers the scope in chunks of at most 1,000 rows. It yields
 between chunks and after roughly 40 ms within processing, observing cancellation.
 Each term gets an approximate presence column from a loose SQLite substring
-prefilter. Term-specific SQLite GLOB character classes support mixed Unicode
-casing, including accents and special folds such as Kelvin/long-s. ASCII letters
-use SQLite's `lower()` folding. Only JSON `\uXXXX` escapes need a fallback flag;
+prefilter. Fixed literal `instr` scans keep each row's work linear: SQLite folds
+ASCII letters, and at most four original/lower/upper/capitalized forms cover common
+Unicode casing. Exotic case folds such as Kelvin/long-s and arbitrary mixed
+non-ASCII case combinations outside those forms may be missed by the prefilter;
+the JavaScript judge applies precise `/iu` matching to candidates.
+Only JSON `\uXXXX` escapes need a fallback flag;
 ordinary escaped newlines, quotes and backslashes preserve literal word runs.
 Each weight is `log(1 + N / max(df, 1))` over collected candidates and
 those presence columns. Candidate rank uses the sum of present-term weights and
@@ -178,7 +197,10 @@ fixture: 241 imported synthetic messages, counts, search, cleanup and exact batc
 replays against a real daemon; a second session verifies all 242 text-only
 workspace matches and ranked search with three diverse hits and exact two-session
 provenance. Pure ranking tests cover Unicode terms, frequency weights, phrase
-bonuses, diversity, dates and cap formatting. Synthetic SQLite tests cover scope,
+bonuses, diversity, dates and cap formatting. Synthetic SQLite/filesystem tests cover
+physical clone/worktree ownership, unknown identities and adversarial large-row
+first-yield responsiveness. The native fixture also checks dotted-capital-I search.
+Synthetic SQLite tests cover scope,
 prefilter supersets and selectivity, multiline rarity ranking, bounded materialization, cancellation, yielding and time/candidate
 caps; registration tests exercise the tool, RPC, storage challenge and caller fences.
 The parent fixture also checks active-generation refusal and
@@ -191,5 +213,5 @@ HEAD by default.
 
 ## Agent conventions
 
-- Ranked search belongs in `history-ranked-store.ts`, with pure ranking in `history-ranking.ts`; share scope SQL, readable extraction, text projection and message bounds through `history-content.ts`. Preserve the literal `history` RPC contract. Keep Unicode/JSON-escape prefilter-superset and selectivity checks, multiline rarity ranking and verified-match provenance tests whenever ranking changes. Keep special-case closures aligned with the host's Unicode case data through the exhaustive closure regression. Never add caller scope selectors, regular-expression execution, transcript indexes or generic RPC routes. Tool registration and disposal follow the pruning bundle's backend presence.
+- Ranked search belongs in `history-ranked-store.ts`, with pure ranking in `history-ranking.ts`; share scope SQL, readable extraction, text projection and message bounds through `history-content.ts`. Preserve the literal `history` RPC contract. Keep supported Unicode/JSON-escape selectivity checks, dotted-I self-matches, large-row responsiveness, multiline rarity ranking and verified-match provenance tests whenever ranking changes. `history-ranked-ownership.ts` owns request-local physical ownership; the shared filesystem reader stays inside the packable plugin and is imported by workspace discovery. Never add Git process spawns to ranked ownership, caller scope selectors, caller-supplied regular-expression execution, transcript indexes or generic RPC routes. Tool registration and disposal follow the pruning bundle's backend presence.
 - Full-history search/counts use the bundled pruning plugin's bounded queries, outside the transcript store. Current-session results and the global timeline navigate through bounded anchor windows; other-session previews fetch one native message only. Search/results/progress styles live in `styles/components/history-search.css`. Workspace results group by session with its title and current worktree badge via `components/history-search-results.tsx`; unloaded labels and "Open in session" live in `stores/history-search-sessions.ts` (bounded display reads, targeted hydration, transcript anchor). Never show raw native IDs in results.

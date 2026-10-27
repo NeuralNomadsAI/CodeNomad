@@ -8,7 +8,7 @@ export async function testSessionHistoryNative({ client, location, locationOptio
   const messages = Array.from({ length: 241 }, (_, index) => ({
     ...structuredClone(template), id: `msg_history_fixture_${String(index).padStart(5, "0")}`,
     content: [...template.content.map(part => part.type === "tool" ? { ...structuredClone(part), id: `history_call_${index}` } : structuredClone(part)),
-      { type: "text", text: `Keep historicalneedle answer ${index}` }],
+      { type: "text", text: `Keep historicalneedle answer ${index}${index === 0 ? " İstanbul" : ""}` }],
   }))
   const session = await client.session.import({ ...exported, messages, location }, locationOptions)
   const rpc = async (method, input) => (await client.rpc.call({ rpcID: "codenomad.session-pruning", method, input, location }, locationOptions)).output
@@ -82,6 +82,10 @@ export async function testSessionHistoryNative({ client, location, locationOptio
       assert([session.id, peer.id].every(id => ranked.sessions.some(owner => owner.sessionID === id)))
       assert.equal(ranked.sessions.reduce((sum, owner) => sum + owner.scanned, 0), ranked.scanned)
       console.log("PASS: native ranked search returns 3 diverse hits with exact provenance across 2 sessions")
+      const dotted = await rpc("historyRanked", { version: 1, query: "İSTANBUL" })
+      assert.equal(dotted.status, "ranked", JSON.stringify(dotted))
+      assert.deepEqual(dotted.hits.map(hit => hit.messageID), [messages[0].id])
+      console.log("PASS: native ranked dotted-capital-I query matches its exact stored text")
     } finally { await client.session.remove({ sessionID: peer.id }) }
     const plan = await scan("prune")
     assert.equal(plan.candidates.length, 241)

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DatabaseSync } from "node:sqlite"
-import { mkdir, mkdtemp, rm } from "node:fs/promises"
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import plugin from "./plugin"
@@ -17,6 +17,9 @@ test("plugin registers Code Mode search and versioned RPC, binds fresh read-only
   const db = new DatabaseSync(filename)
   let cleanup: (() => void | Promise<void>) | void = undefined
   try {
+    await mkdir(path.join(root, ".git", "objects"), { recursive: true })
+    await mkdir(path.join(root, ".git", "refs"))
+    await writeFile(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n")
     db.exec(`CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);
       CREATE TABLE session_v2(id TEXT PRIMARY KEY,directory TEXT,workspace_id TEXT,project_id TEXT,title TEXT);
       CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,time_created INTEGER,data TEXT);`)

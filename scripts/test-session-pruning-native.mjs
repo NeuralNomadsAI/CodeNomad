@@ -285,7 +285,11 @@ try {
   assert.deepEqual(first.find(reasoningEnded).data.native, reasoning.native, "native SSE and HTTP retain identical provider replay metadata")
   console.log("PASS: native reasoning replay metadata agrees between SSE and HTTP")
   const { testSessionHistoryNative } = await import("./test-session-history-native.mjs")
-  await testSessionHistoryNative({ client, location, locationOptions, template: target })
+  const historyDirectory = path.join(root, "history-project")
+  await mkdir(historyDirectory)
+  execFileSync("git", ["init", historyDirectory], { stdio: "pipe" })
+  const historyLocation = { directory: historyDirectory }
+  await testSessionHistoryNative({ client, location: historyLocation, locationOptions: locationRequestOptions(historyLocation), template: target })
   const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
   await testSessionNavigationNative({ client, location, locationOptions, template: target })
   if (ui) {

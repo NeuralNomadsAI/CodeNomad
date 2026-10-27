@@ -15,6 +15,7 @@ test("native plugin builds never embed a second Effect runtime or OpenCode adapt
     if (entry === "session-pruning/desktop-plugin") {
       assert(result.outputFiles[0].text.includes('name: "session_search"'))
       assert(result.outputFiles[0].text.includes("codemode: true"))
+      assert.equal(inputs.some(value => value.endsWith("workspaces/git-process.ts")), false, "Ranked ownership stays filesystem-only")
     }
   }
 })

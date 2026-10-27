@@ -4,19 +4,25 @@ import type { HistoryScope } from "./history-store"
 import { historyContent, historyScopeSQL, historyTexts, HISTORY_SLICE_MS, MAX_MESSAGE_BYTES, textProjection } from "./history-content"
 import { compareRank, dateBounds, diverseHits, idfWeights, rankedExcerpt, searchTerms, termPrefilterSQL, termScore, textJudge, type Rank } from "./history-ranking"
 import type { HistoryRankedInput, HistoryRankedPage } from "./history-ranked-contract"
+import { rankedDirectoryOwnership, type CheckRankedDirectory } from "./history-ranked-ownership"
 
 export const RANKED_LIMITS = { chunk: 1000, candidates: 30_000, sessions: 600, judged: 600, scanMs: 1500, totalMs: 2000 } as const
 interface Candidate { position: number; messageID: string; sessionID: string; createdAt: number; flags: boolean[]; score: number }
 type Judged = Rank & { hit: HistoryRankedPage["hits"][number] }
 
-export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, input: HistoryRankedInput, signal: AbortSignal): Promise<HistoryRankedPage> {
+export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, input: HistoryRankedInput, signal: AbortSignal,
+  checkDirectory?: CheckRankedDirectory): Promise<HistoryRankedPage> {
   signal.throwIfAborted()
   const started = performance.now()
   let sliceStarted = started
   const terms = searchTerms(input.query)
   const result: HistoryRankedPage = { version: 1, status: "ranked", scanned: 0, candidates: 0, judged: 0, skipped: 0,
-    matchedSessions: 0, capped: false, caps: [], hits: [], sessions: [] }
+    matchedSessions: 0, capped: false, caps: [], exclusions: [], hits: [], sessions: [] }
   if (!terms.length) return result
+  const authorize = checkDirectory ?? await rankedDirectoryOwnership(scope.directory, signal)
+  const exclude = (reason: "foreign_directory" | "unknown_directory") => {
+    if (!result.exclusions.includes(reason)) result.exclusions.push(reason)
+  }
   const cap = (reason: HistoryRankedPage["caps"][number]) => {
     result.capped = true
     if (!result.caps.includes(reason)) result.caps.push(reason)
@@ -44,26 +50,31 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
     let visited = false
     for (const row of rows.iterate(...filters.flatMap(filter => filter.params), ...scoped, after, through)) {
       signal.throwIfAborted()
-      const sessionID = String(row.session_id)
-      let owner = owners.get(sessionID)
-      if (!owner) {
-        if (owners.size === RANKED_LIMITS.sessions) { cap("session_limit"); break scan }
-        owner = { sessionID, directory: String(row.directory), title: String(row.title ?? "").slice(0, 4096),
-          ...(typeof row.workspace_id === "string" ? { workspaceID: row.workspace_id } : {}), scanned: 0, tools: 0, reasoning: 0, skipped: 0,
-          candidates: 0, judged: 0, matchedMessages: 0 }
-        owners.set(sessionID, owner)
-        result.sessions.push(owner)
-      }
       visited = true
       after = Number(row.position)
-      result.scanned++
-      owner.scanned++
-      if (!row.supported) { result.skipped++; owner.skipped++ }
+      const ownership = await authorize(String(row.directory))
+      if (ownership === "limit") { cap("session_limit"); break scan }
+      if (ownership !== "owned") exclude(ownership)
       else {
-        const flags = terms.map((_, i) => Boolean(row[`t${i}`]))
-        if (flags.some(Boolean)) {
-          candidates.push({ position: after, messageID: String(row.id), sessionID: String(row.session_id), createdAt: Number(row.time_created), flags, score: 0 })
-          owner.candidates++
+        const sessionID = String(row.session_id)
+        let owner = owners.get(sessionID)
+        if (!owner) {
+          if (owners.size === RANKED_LIMITS.sessions) { cap("session_limit"); break scan }
+          owner = { sessionID, directory: String(row.directory), title: String(row.title ?? "").slice(0, 4096),
+            ...(typeof row.workspace_id === "string" ? { workspaceID: row.workspace_id } : {}), scanned: 0, tools: 0, reasoning: 0, skipped: 0,
+            candidates: 0, judged: 0, matchedMessages: 0 }
+          owners.set(sessionID, owner)
+          result.sessions.push(owner)
+        }
+        result.scanned++
+        owner.scanned++
+        if (!row.supported) { result.skipped++; owner.skipped++ }
+        else {
+          const flags = terms.map((_, i) => Boolean(row[`t${i}`]))
+          if (flags.some(Boolean)) {
+            candidates.push({ position: after, messageID: String(row.id), sessionID: String(row.session_id), createdAt: Number(row.time_created), flags, score: 0 })
+            owner.candidates++
+          }
         }
       }
       if (candidates.length === RANKED_LIMITS.candidates && after < through) { cap("candidate_limit"); break scan }
@@ -126,7 +137,19 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
     }
   }
   signal.throwIfAborted()
+  const allowed = new Set<string>()
+  for (const directory of new Set(result.sessions.map(owner => owner.directory))) {
+    await yieldTurn(undefined, { signal })
+    let ownership
+    if (performance.now() - started >= RANKED_LIMITS.totalMs) { cap("total_time"); ownership = "unknown_directory" as const }
+    else ownership = await authorize(directory, true)
+    if (ownership === "owned") allowed.add(directory)
+    else exclude(ownership === "limit" ? "unknown_directory" : ownership)
+  }
+  result.sessions = result.sessions.filter(owner => allowed.has(owner.directory))
+  for (const key of ["scanned", "candidates", "judged", "skipped"] as const) result[key] = result.sessions.reduce((sum, owner) => sum + owner[key], 0)
   result.matchedSessions = result.sessions.filter(owner => owner.matchedMessages > 0).length
-  result.hits = diverseHits(judged, input.limit).map(entry => entry.hit)
+  const ownedIDs = new Set(result.sessions.map(owner => owner.sessionID))
+  result.hits = diverseHits(judged.filter(entry => ownedIDs.has(entry.sessionID)), input.limit).map(entry => entry.hit)
   return result
 }
