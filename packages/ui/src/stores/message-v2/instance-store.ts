@@ -39,6 +39,7 @@ interface MessageStoreHooks {
   onSessionChanged?: (instanceId: string, sessionId: string) => void
   onMessagesRemoved?: (instanceId: string, sessionId: string, messageIds: readonly string[]) => void
   onScrollSnapshotChanged?: (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
+  onRunningQuestionPart?: (instanceId: string, sessionId: string, messageId: string, partId: string, running: boolean) => void
 }
 
 function createInitialState(instanceId: string): InstanceMessageState {
@@ -351,6 +352,49 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       return false
     }
     return (toolState as { status?: string }).status === "completed"
+  }
+
+  function isQuestionToolPart(part: ClientPart | undefined): boolean {
+    if (!part || (part as { type?: string }).type !== "tool") {
+      return false
+    }
+    const tool = (part as { tool?: unknown }).tool
+    return typeof tool === "string" && tool.toLowerCase() === "question"
+  }
+
+  // Question tool parts gate the interruption dock, and a question that starts
+  // while the UI is disconnected is recovered by re-observing the same part in
+  // a later snapshot. Snapshots re-upsert unchanged parts, so remember the last
+  // reported state per (messageId, partId) and emit only real transitions.
+  const lastReportedRunningQuestions = new Map<string, boolean>()
+
+  function reportRunningQuestionTransitions(record: MessageRecord | undefined) {
+    if (!record || !hooks?.onRunningQuestionPart) return
+    for (const partId of record.partIds) {
+      const part = record.parts[partId]?.data
+      if (!isQuestionToolPart(part)) continue
+      const status = (part as { state?: { status?: string } }).state?.status
+      const running = status === "running" || status === "pending"
+        ? true
+        : status === "completed" || status === "error"
+          ? false
+          : undefined
+      if (running === undefined) continue
+      const key = `${record.id}:${partId}`
+      if (lastReportedRunningQuestions.get(key) === running) continue
+      lastReportedRunningQuestions.set(key, running)
+      hooks.onRunningQuestionPart(instanceId, record.sessionId, record.id, partId, running)
+    }
+  }
+
+  // Removing a part ends a question that was reported running; a part never
+  // reported running has no transition to retract.
+  function reportRunningQuestionEnded(sessionId: string, messageId: string, partId: string) {
+    if (!hooks?.onRunningQuestionPart) return
+    const key = `${messageId}:${partId}`
+    if (lastReportedRunningQuestions.get(key) !== true) return
+    lastReportedRunningQuestions.set(key, false)
+    hooks.onRunningQuestionPart(instanceId, sessionId, messageId, partId, false)
   }
 
   function recordLatestTodoSnapshot(sessionId: string, snapshot: LatestTodoSnapshot) {
@@ -787,6 +831,7 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
       clearLatestTodoSnapshot(sessionId)
       incomingIds.forEach((messageId) => {
         maybeUpdateLatestTodoFromRecord(nextMessages[messageId])
+        reportRunningQuestionTransitions(nextMessages[messageId])
       })
 
       bumpSessionRevision(sessionId)
@@ -1016,6 +1061,11 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
     if (nextRecord) {
       maybeUpdateLatestTodoFromRecord(nextRecord)
+      // Parts omitted means a metadata-only update; the carried-over parts
+      // already reported their transitions when they were delivered.
+      if (normalizedParts) {
+        reportRunningQuestionTransitions(nextRecord)
+      }
     }
 
     // A record that is no longer an in-flight optimistic "sending" bubble
@@ -1119,6 +1169,8 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
 
       bumpSessionRevision(message.sessionId)
     })
+
+    reportRunningQuestionEnded(message.sessionId, messageId, partId)
   }
 
   function replaceMessageId(options: ReplaceMessageIdOptions) {

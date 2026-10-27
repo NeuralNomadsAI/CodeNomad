@@ -16,6 +16,7 @@ import {
 } from "./record-display-cache.ts"
 import { getSessionMessageRenderCache, purgeMessageRenderCache, REASONING_RENDER_CHARACTER_LIMIT } from "../../lib/message-render-cache.ts"
 import type { MessageInfo, ClientPart } from "../../types/message"
+import type { ToolState } from "../../types/tool-state"
 import { emptyLatestWindow, toWindowSnapshot, windowFromSnapshot } from "./message-window"
 
 it("keeps the beginning and final response when bounding message parts", () => {
@@ -674,5 +675,97 @@ describe("identical re-hydration stability", () => {
     ])
     assert.notEqual(store.getMessage("msg_1"), completed, "an explicit updatedAt change must replace the record")
     assert.equal(store.getMessage("msg_1")!.updatedAt, 2000)
+  })
+})
+
+describe("running question tool-part hook", () => {
+  const questionPart = (status: "pending" | "running" | "completed" | "error") => {
+    const state: ToolState = status === "pending"
+      ? { status }
+      : status === "running"
+        ? { status, input: { question: "Continue?" } }
+        : status === "error"
+          ? { status, input: { question: "Continue?" }, error: "cancelled" }
+          : { status, input: { question: "Continue?" }, output: { options: [] } }
+    return {
+      id: "part-question",
+      type: "tool" as const,
+      tool: "question",
+      state,
+    }
+  }
+
+  it("fires once per question part running transition, deduped across unchanged re-upserts", () => {
+    const events: Array<{ sessionId: string; messageId: string; partId: string; running: boolean }> = []
+    const store = createInstanceMessageStore("question-hook", {
+      onRunningQuestionPart: (_instanceId, sessionId, messageId, partId, running) => {
+        events.push({ sessionId, messageId, partId, running })
+      },
+    })
+    store.addOrUpdateSession({ id: "session-1" })
+
+    const base = { id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const }
+
+    store.upsertMessage({ ...base, parts: [questionPart("pending")] })
+    store.upsertMessage({ ...base, parts: [questionPart("running")] })
+    store.upsertMessage({ ...base, parts: [questionPart("running")] })
+    assert.deepEqual(events, [
+      { sessionId: "session-1", messageId: "msg-1", partId: "part-question", running: true },
+    ], "pending and running both report running once; unchanged re-upserts fire nothing")
+
+    store.upsertMessage({ ...base, status: "complete" as const, parts: [questionPart("completed")] })
+    store.upsertMessage({ ...base, status: "complete" as const, parts: [questionPart("completed")] })
+    assert.deepEqual(events, [
+      { sessionId: "session-1", messageId: "msg-1", partId: "part-question", running: true },
+      { sessionId: "session-1", messageId: "msg-1", partId: "part-question", running: false },
+    ], "completion reports running false once")
+  })
+
+  it("ignores non-question tool parts", () => {
+    const events: Array<{ messageId: string; partId: string; running: boolean }> = []
+    const store = createInstanceMessageStore("question-hook-other-tools", {
+      onRunningQuestionPart: (_instanceId, _sessionId, messageId, partId, running) => {
+        events.push({ messageId, partId, running })
+      },
+    })
+    store.addOrUpdateSession({ id: "session-1" })
+
+    store.upsertMessage({
+      id: "msg-2", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const,
+      parts: [{ id: "part-bash", type: "tool", tool: "bash", state: { status: "running", input: {} } }],
+    })
+    store.upsertMessage({
+      id: "msg-2", sessionId: "session-1", role: "assistant" as const, status: "complete" as const,
+      parts: [{ id: "part-bash", type: "tool", tool: "bash", state: { status: "completed", input: {}, output: null } }],
+    })
+    assert.deepEqual(events, [], "non-question tools must not fire the hook")
+  })
+
+  it("recovers a running question from a hydration snapshot and retracts it when the part is removed", () => {
+    const events: Array<{ messageId: string; partId: string; running: boolean }> = []
+    const store = createInstanceMessageStore("question-hook-hydrate", {
+      onRunningQuestionPart: (_instanceId, _sessionId, messageId, partId, running) => {
+        events.push({ messageId, partId, running })
+      },
+    })
+    store.addOrUpdateSession({ id: "session-1" })
+
+    // A snapshot delivered after a reconnect is the recovery path for a
+    // question the UI never saw start while disconnected.
+    store.hydrateMessages("session-1", [
+      { id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const, parts: [questionPart("running")] },
+    ])
+    store.hydrateMessages("session-1", [
+      { id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const, parts: [questionPart("running")] },
+    ])
+    assert.deepEqual(events, [
+      { messageId: "msg-1", partId: "part-question", running: true },
+    ], "hydration reports the running question once; identical snapshots fire nothing")
+
+    store.removeMessagePart("msg-1", "part-question")
+    assert.deepEqual(events, [
+      { messageId: "msg-1", partId: "part-question", running: true },
+      { messageId: "msg-1", partId: "part-question", running: false },
+    ], "removing the part retracts the running question")
   })
 })
