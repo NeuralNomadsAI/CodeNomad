@@ -80,7 +80,7 @@ coordinator लाई प्रारम्भिक योजनापछि, t
 | Agent / Model / Thinking | सिर्जनासँग अभिलेख गरिएका requested coordinator/role चयन; पछिको काम मिलाउन busy actor चुपचाप switch हुँदैन। daily run ले frozen requested profile पुनःप्रयोग गर्छन्। |
 | Native subagent | task session ले coordinator अन्तर्गत native subagent/all agent प्रयोग गर्छन्। |
 | Independent session | घोषित task session ले primary/all agent र स्वतन्त्र कुराकानी प्रयोग गर्छन्; internal native helper अक्षम हुँदैनन्। |
-| उप-सत्र नेस्टिङ गहिराइ | त्यहाँका **सबै** OpenCode कुराकानीको project कन्फिगरेसन, Missions मात्र होइन। खालीले inherit गर्छ। सुरक्षित गर्दा OpenCode reload वा चलिरहेका कुराकानी बदलिँदैनन्। |
+| उप-सत्र नेस्टिङ गहिराइ | त्यहाँका **सबै** OpenCode कुराकानीको project कन्फिगरेसन, Missions मात्र होइन। खालीले inherit गर्छ: **उत्तराधिकार** ले project override र त्यसले खाली छोड्ने `experimental` block हटाउँछ। OpenCode ले project को `experimental` block लाई समग्र रूपमा पढ्छ, त्यसैले त्यहाँ राखिएका अन्य experimental सेटिङहरूले global गहिराइलाई अझै लुकाउँछन्। सुरक्षित गर्दा OpenCode reload वा चलिरहेका कुराकानी बदलिँदैनन्। |
 
 **नेटिभ पूर्वनिर्धारित** र **विश्वव्यापी** फरक हुन्: पहिलोले OpenCode का आफ्नै default माग्छ, दोस्रोले global चयन inherit गर्छ; playbook दायरामा native default रोज्नु स्पष्ट exception नै रहन्छ। catalogue उपलब्धता जाँचिन्छ; requested profile कुराकानीले अहिले प्रयोग गरिरहेको profile को प्रमाण होइन। दुवै task mode का internal helper मा native permission र configured depth लागू रहन्छन्।
 

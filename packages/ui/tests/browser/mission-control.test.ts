@@ -386,6 +386,32 @@ test("a depth write acknowledged after leaving Settings is accepted and reread o
   } finally { release(); await page.close() }
 })
 
+test("Inherit repairs an existing empty project experimental block that hides the inherited depth", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let empty = true, expectation = "empty-block"
+  const writes: unknown[] = []
+  try {
+    await setup(page, "remote")
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/subagent-depth*", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 },
+        effectiveDepth: empty ? null : 5, project: { path: "fixture/opencode.jsonc", depth: null, expectation, ...(empty ? { emptyExperimental: true } : {}) } } })
+      writes.push(route.request().postDataJSON()); empty = false; expectation = "repaired"
+      return route.fulfill({ status: 204, body: "" })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await openMissionSettings(page)
+    const controls = page.locator(".mission-depth")
+    await controls.getByText("OpenCode effective depth unknown", { exact: true }).waitFor()
+    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+    assert.equal(await controls.locator("input").inputValue(), "", "no override is set")
+    await controls.getByRole("button", { name: "Inherit", exact: true }).click()
+    await controls.getByText("OpenCode effective depth: 5", { exact: true }).waitFor()
+    assert.deepEqual(writes, [{ location: { directory: "fixture" }, depth: null, expectation: "empty-block" }])
+    assert.equal(await controls.getByRole("button", { name: "Inherit", exact: true }).isDisabled(), true, "nothing left to inherit")
+  } finally { await page.close() }
+})
+
 test("visible clean depth revalidates after config and connection changes while hidden, dirty and uncertain states stay fenced", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let reads = 0, depth = 1, expectation = "original", writes = 0

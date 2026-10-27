@@ -3,7 +3,7 @@ import type { PluginControlLocation, SubagentDepthCapability, SubagentDepthSnaps
 import type { WorkspaceManager } from "../workspaces/manager"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
 import type { PluginControlDocument } from "./plugin-control-document"
-import { editNativeSetting, readNativeSetting } from "./native-setting-document"
+import { editNativeSetting, readNativeSetting, removeEmptyNativeObject } from "./native-setting-document"
 import { readRuntimeContract } from "./compatibility/negotiate"
 
 const keys = ["experimental", "subagent_depth"]
@@ -56,7 +56,8 @@ export class SubagentDepthSettings {
     const project = context.documents.find(item => item.scope === "project")
     return { location: context.location, capability: context.capability, effectiveDepth,
       project: project ? { path: project.path, depth: depth(readNativeSetting(project.document, keys)),
-        expectation: expectation(project.document) } : null }
+        expectation: expectation(project.document),
+        ...(removeEmptyNativeObject(project.document, ["experimental"]) === undefined ? {} : { emptyExperimental: true }) } : null }
   }
 
   async update(workspaceId: string, location: PluginControlLocation, value: number | null, expected: string): Promise<void> {
@@ -75,9 +76,7 @@ export class SubagentDepthSettings {
       // An emptied project `experimental` object would still hide every inherited experimental setting.
       const removed = editNativeSetting(document, keys, undefined)
       const remaining = { ...document, text: document.byteOrderMark ? removed.slice(1) : removed }
-      const parent = readNativeSetting(remaining, ["experimental"])
-      return parent && typeof parent === "object" && !Array.isArray(parent) && !Object.keys(parent).length
-        ? editNativeSetting(remaining, ["experimental"], undefined) : removed
+      return removeEmptyNativeObject(remaining, ["experimental"]) ?? removed
     })
     context.connection.assertCurrent()
   }
