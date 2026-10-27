@@ -42,8 +42,14 @@ catch (error) { console.error(`shard ${shard}/${shards}: ${error}; borrowers wil
 const child = spawn(process.execPath, [
   "--import", "tsx", "--test", `--test-concurrency=${process.env.SHARD_CONCURRENCY ?? "1"}`, ...slice,
 ], { stdio: "inherit", cwd: uiRoot, env: daemon ? { ...process.env, ...daemon.env } : process.env })
-child.on("error", async error => { console.error(error); await daemon?.stop(); process.exit(1) })
-child.on("close", async code => {
-  if (daemon) await daemon.stop()
-  process.exit(code ?? 1)
-})
+// A spawn error can be followed by "close": finish once, and let a failed
+// daemon teardown fail the shard.
+let finished = false
+async function finish(code) {
+  if (finished) return
+  finished = true
+  if (daemon) await daemon.stop().catch(error => { console.error(String(error)); code ||= 1 })
+  process.exit(code)
+}
+child.on("error", error => { console.error(error); void finish(1) })
+child.on("close", code => void finish(code ?? 1))

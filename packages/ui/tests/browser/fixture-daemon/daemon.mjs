@@ -26,10 +26,12 @@ process.stdout?.on?.("error", error => { if (error?.code !== "EPIPE") throw erro
 // Everything the daemon says — including crash traces — lands in daemon.log
 // when the owner gave it a directory (runners do, so CI can upload it).
 let flushLog = async () => {}
+let logOnly = () => {}
 if (logDirectory) {
   await mkdir(logDirectory, { recursive: true })
   const logStream = createWriteStream(path.join(logDirectory, "daemon.log"), { flags: "a" })
   const emit = (...args) => logStream.write(`${args.join(" ")}\n`)
+  logOnly = emit
   const originalLog = console.log.bind(console), originalError = console.error.bind(console)
   console.log = (...args) => { emit(...args); originalLog(...args) }
   console.error = (...args) => { emit(...args); originalError(...args) }
@@ -38,8 +40,10 @@ if (logDirectory) {
 }
 
 // Declared before any handler can fire: an early crash must not hit the
-// temporal dead zone of interval bindings shutdown clears.
+// temporal dead zone of the bindings shutdown uses.
 let parentWatch = null
+let shutdownPromise = null
+let shutdownFailed = false
 
 // A daemon is tied to the process that started it: when the owner goes —
 // even by SIGKILL, where no exit hook can run — this daemon follows rather
@@ -99,9 +103,10 @@ daemon.installControl(async (request, response) => {
 })
 
 // The endpoint handshake: one JSON line on stdout — url, secret, pid. The
-// spawning process reads it and passes it to the borrowers; nothing is
-// written to the filesystem.
-console.log(JSON.stringify({ kind: "fixture-daemon-endpoint", url: daemon.baseUrl, secret: daemon.secret, pid: process.pid }))
+// spawning process reads it and passes it to the borrowers. It bypasses the
+// console so the secret never reaches daemon.log, which CI uploads.
+process.stdout.write(`${JSON.stringify({ kind: "fixture-daemon-endpoint", url: daemon.baseUrl, secret: daemon.secret, pid: process.pid })}\n`)
+logOnly(JSON.stringify({ kind: "fixture-daemon-listening", url: daemon.baseUrl, pid: process.pid }))
 
 if (warmupEnabled) {
   // A failed warmup (bad browser path, missing Chromium) degrades the first
@@ -110,19 +115,27 @@ if (warmupEnabled) {
     .catch(error => console.error(JSON.stringify({ kind: "fixture-daemon-warmup-failed", error: String(error) })))
 }
 
-async function shutdown(code) {
-  // Re-entry guard: an error thrown during teardown (an EPIPE from the
-  // dead owner's pipe, a close failure) must reach process.exit instead of
-  // looping through the handler that called shutdown again.
-  if (shutdown.started) { process.exit(code); return }
-  shutdown.started = true
-  if (parentWatch) clearInterval(parentWatch)
-  if (daemon) {
-    console.log(JSON.stringify({ kind: "fixture-daemon-shutdown", rssMB: Math.round(process.memoryUsage().rss / 1048576), transforms: daemon.stats.transforms, registeredRoutes: daemon.registeredCount }))
-    try { await daemon.close() } catch { /* the exit code is the verdict */ }
-  }
-  await flushLog()
-  process.exit(code)
+// One teardown per process: a second shutdown request, the parent watch or an
+// error raised during cleanup joins the running teardown instead of exiting
+// under it. A failed or hung cleanup exits nonzero, which the runner reports.
+function shutdown(code) {
+  if (code !== 0) shutdownFailed = true
+  shutdownPromise ??= (async () => {
+    if (parentWatch) clearInterval(parentWatch)
+    setTimeout(() => process.exit(1), 10_000).unref()
+    if (daemon) {
+      console.log(JSON.stringify({ kind: "fixture-daemon-shutdown", rssMB: Math.round(process.memoryUsage().rss / 1048576), transforms: daemon.stats.transforms, registeredRoutes: daemon.registeredCount }))
+      try {
+        await daemon.close()
+      } catch (error) {
+        shutdownFailed = true
+        console.error(JSON.stringify({ kind: "fixture-daemon-close-failed", error: error?.stack ?? String(error) }))
+      }
+    }
+    await flushLog()
+    process.exit(shutdownFailed ? 1 : 0)
+  })()
+  return shutdownPromise
 }
 process.on("SIGTERM", () => void shutdown(0))
 process.on("SIGINT", () => void shutdown(0))

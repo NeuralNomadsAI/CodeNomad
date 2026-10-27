@@ -18,8 +18,8 @@ for every Chromium launch).
   `CODENOMAD_TIERED_LIGHT_WIDTH`/`CODENOMAD_TIERED_HEAVY_WIDTH` raise the
   widths for braver machines.
 - One file: `xvfb-run -a node --import tsx --test tests/browser/<file>.test.ts`
-  from `packages/ui`. Without a runner the borrower process gets its own
-  daemon child, which dies with it.
+  from `packages/ui` (without `xvfb-run -a` on Windows and macOS). Without a
+  runner the borrower process gets its own daemon child, which follows it.
 - CI: each matrix shard runs `node tests/browser/shard.mjs <index 1-based> 4`
   — one interleaved serial slice per runner, wall clock divided by four.
 
@@ -28,14 +28,16 @@ for every Chromium launch).
 One canonical Vite server serves every borrowed fixture of a run, namespaced
 under the fixture's name. `tests/browser/fixture-daemon/run.ts` spawns it as
 a child of the runner (run.mjs, shard.mjs): the endpoint and its secret are
-announced on stdout and handed to the test processes through the
-environment; nothing is written to the filesystem, there is no discovery
-directory and no adoption across runs. The runner stops the daemon with an
-authenticated HTTP request when its slice ends — portable, the daemon runs
-its own cleanup — and the daemon watches its owner's pid, so a runner killed
-without cleanup never leaks one. A test file invoked outside a runner gets
-the same treatment from `borrowFixture`: one daemon child for the process,
-no warmup, gone when the process is.
+announced as one stdout line and handed to the test processes through the
+environment; `daemon.log` records the endpoint without its secret, and there
+is no discovery directory and no adoption across runs. The runner stops the
+daemon with an authenticated HTTP request when its slice ends — portable, the
+daemon runs its own cleanup — and fails the run when that cleanup fails or
+has to be forced. The daemon also watches its owner's pid and cleans up after
+an owner that ended without stopping it (on Windows it is spawned detached,
+so the owner's exit does not end it first). A test file invoked outside a
+runner gets the same treatment from `borrowFixture`: one daemon child for the
+process, no warmup, stopping shortly after the process ends.
 
 Edits made while a daemon is serving are an accepted blind spot: every run
 binds a fresh daemon, so only a mid-run edit can be missed, and mid-run
@@ -51,9 +53,8 @@ edits are the developer's own signal to restart the run.
   protected shutdown. Never clear the checkout's shared cache to repair a
   fixture.
 - The control plane is plain HTTP over loopback with endpoint secrets that
-  travel from spawner to borrower through the environment — no signals by
-  pid, no files to trust, so the same code runs on every platform the suite
-  runs on.
+  travel from spawner to borrower through the environment, so the same code
+  runs on every platform the suite runs on.
 
 ## Agent conventions
 

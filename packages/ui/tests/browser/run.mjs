@@ -53,6 +53,7 @@ for (const [label, slice, concurrency] of [
     child.on("close", resolve)
   })
   failures ||= code === 0 ? 0 : 1 // a signal-terminated child (code === null) is a failure
-  if (daemon) await daemon.stop()
+  // A failed teardown fails the run without skipping the other tier.
+  if (daemon) await daemon.stop().catch(error => { console.error(String(error)); failures = 1 })
 }
 process.exit(failures)

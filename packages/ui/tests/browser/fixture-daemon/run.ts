@@ -2,6 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process"
 import { mkdtemp } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import path from "node:path"
+import { createInterface } from "node:readline"
 import { fileURLToPath } from "node:url"
 
 /** The endpoint handshake a daemon announces on stdout: no discovery
@@ -21,6 +22,17 @@ export interface SpawnedDaemon extends DaemonEndpoint {
 
 const daemonScript = path.join(path.dirname(fileURLToPath(import.meta.url)), "daemon.mjs")
 
+/** The handshake record, or null for any other stdout line. */
+function parseEndpoint(line: string): DaemonEndpoint | null {
+  try {
+    const record = JSON.parse(line)
+    return record?.kind === "fixture-daemon-endpoint" && typeof record.url === "string" && typeof record.secret === "string"
+      && Number.isInteger(record.pid) ? { url: record.url, secret: record.secret, pid: record.pid } : null
+  } catch {
+    return null
+  }
+}
+
 export interface SpawnDaemonOptions {
   uiRoot: string
   /** Run the startup warmup page load; defaults to true for real runs. */
@@ -28,20 +40,26 @@ export interface SpawnDaemonOptions {
   /** Prefix for the daemon.log directory (run- vs standalone-named). */
   logPrefix?: string
   timeoutMs?: number
+  /** Test seam: the entry script to spawn instead of daemon.mjs. */
+  script?: string
 }
 
 /** Spawns a fixture daemon child and resolves its announced endpoint. The
  * child watches its parent (CODENOMAD_FIXTURE_PARENT_PID), so a runner
  * killed without cleanup — even SIGKILLed — never leaks its daemon. */
 export async function spawnDaemon(options: SpawnDaemonOptions): Promise<SpawnedDaemon> {
-  const { uiRoot, warmup = true, logPrefix = "codenomad-fixture-run-", timeoutMs = 90_000 } = options
+  const { uiRoot, warmup = true, logPrefix = "codenomad-fixture-run-", timeoutMs = 90_000, script = daemonScript } = options
   const logDirectory = await mkdtemp(path.join(tmpdir(), logPrefix))
-  const child = spawn(process.execPath, ["--import", "tsx", daemonScript], {
+  const child = spawn(process.execPath, ["--import", "tsx", script], {
     cwd: uiRoot,
     // stdin is unused, stderr stays visible; only the handshake stdout is a
     // pipe, and spawnDaemon releases it the moment the endpoint arrives so
     // the spawner's event loop can drain while the daemon child lives on.
     stdio: ["ignore", "pipe", "inherit"],
+    // Windows ends an attached child with its owner, before the daemon's parent
+    // watch can run its cleanup; detached, it outlives the owner long enough to.
+    detached: process.platform === "win32",
+    windowsHide: true,
     env: {
       ...process.env,
       CODENOMAD_FIXTURE_LOG_DIR: logDirectory,
@@ -49,30 +67,43 @@ export async function spawnDaemon(options: SpawnDaemonOptions): Promise<SpawnedD
       ...(warmup ? {} : { CODENOMAD_FIXTURE_WARMUP: "0" }),
     },
   })
-  const endpoint = await new Promise<DaemonEndpoint>((resolve, reject) => {
-    let buffer = ""
-    const timer = setTimeout(() => reject(new Error(`fixture daemon did not announce its endpoint within ${timeoutMs}ms (log: ${path.join(logDirectory, "daemon.log")})`)), timeoutMs)
-    const settle = (outcome: () => void) => { clearTimeout(timer); outcome() }
-    child.stdout!.setEncoding("utf8")
-    child.stdout!.on("data", (chunk: string) => {
-      buffer += chunk
-      const line = buffer.split("\n").find(candidate => candidate.includes("\"fixture-daemon-endpoint\""))
-      if (line) settle(() => {
-        try { resolve(JSON.parse(line)) } catch (error) { reject(error) }
+  const log = path.join(logDirectory, "daemon.log")
+  const lines = createInterface({ input: child.stdout! })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let onError: (error: Error) => void = () => {}
+  let onClose: (code: number | null) => void = () => {}
+  try {
+    const endpoint = await new Promise<DaemonEndpoint>((resolve, reject) => {
+      timer = setTimeout(() => reject(new Error(`fixture daemon did not announce its endpoint within ${timeoutMs}ms (log: ${log})`)), timeoutMs)
+      // Whole lines only: a record split across chunks, or other output that
+      // mentions the marker, is never parsed as the handshake.
+      lines.on("line", line => {
+        const record = parseEndpoint(line)
+        if (record) resolve(record)
       })
+      onError = reject
+      onClose = code => reject(new Error(`fixture daemon exited before announcing its endpoint (code ${code}; log: ${log})`))
+      child.once("error", onError)
+      child.once("close", onClose)
     })
-    child.on("error", error => settle(() => reject(error)))
-    child.on("close", code => settle(() => reject(new Error(`fixture daemon exited before announcing its endpoint (code ${code}; log: ${path.join(logDirectory, "daemon.log")})`))))
-  })
-  // The handshake is the only thing the pipe is for: hold on to it and the
-  // spawner's event loop can never drain (its own tests done, the daemon's
-  // stdout pipe still open). Release it; the daemon swallows the EPIPE on
-  // any later write. The child handle itself is unref'd for the same
-  // reason — the daemon is meant to outlive its spawner's loop, and the
-  // parent watch (not the spawner's goodwill) reaps it.
-  child.stdout?.destroy()
-  child.unref()
-  return { ...endpoint, child, logDirectory }
+    return { ...endpoint, child, logDirectory }
+  } catch (error) {
+    // A daemon that never announced cannot be asked to stop: end it here so a
+    // failed start leaves nothing behind for the caller's fallback.
+    child.kill()
+    throw error
+  } finally {
+    // The handshake is the only thing the pipe is for: holding it, the timer or
+    // the child handle would keep the spawner's event loop from draining. The
+    // daemon swallows the EPIPE on any later write, and its parent watch, not
+    // the spawner's loop, reaps it.
+    clearTimeout(timer)
+    child.off("error", onError)
+    child.off("close", onClose)
+    lines.close()
+    child.stdout?.destroy()
+    child.unref()
+  }
 }
 
 export interface RunDaemon {
@@ -85,7 +116,8 @@ export interface RunDaemon {
   readonly env: Record<string, string>
   /** Portable teardown: the daemon is asked over HTTP (a Windows kill never
    * runs signal handlers), runs its own cleanup, and exits; a force-kill
-   * follows only if it never answers. */
+   * follows only if it never exits. Rejects when the cleanup failed (nonzero
+   * exit) or had to be forced; repeated calls share one teardown. */
   stop(): Promise<void>
 }
 
@@ -93,10 +125,12 @@ export interface RunDaemon {
  * environment, and stopped when the runner's slice ends. */
 export async function startRunDaemon(options: SpawnDaemonOptions): Promise<RunDaemon> {
   const daemon = await spawnDaemon(options)
-  const exited = new Promise<void>(resolve => {
-    daemon.child.on("close", () => resolve())
-    daemon.child.on("error", () => resolve())
+  const exited = new Promise<number | null>(resolve => {
+    if (daemon.child.exitCode !== null || daemon.child.signalCode !== null) return resolve(daemon.child.exitCode)
+    daemon.child.on("close", code => resolve(code))
+    daemon.child.on("error", () => resolve(null))
   })
+  let stopping: Promise<void> | null = null
   return {
     url: daemon.url,
     secret: daemon.secret,
@@ -106,17 +140,27 @@ export async function startRunDaemon(options: SpawnDaemonOptions): Promise<RunDa
       CODENOMAD_FIXTURE_URL: daemon.url,
       CODENOMAD_FIXTURE_SECRET: daemon.secret,
     },
-    async stop() {
-      try {
-        await fetch(`${daemon.url}/__daemon/shutdown`, {
-          method: "POST",
-          headers: { "x-fixture-secret": daemon.secret },
-          signal: AbortSignal.timeout(15_000),
-        })
-      } catch { /* already gone, or wedged: the force-kill below decides */ }
-      const grace = setTimeout(() => { try { daemon.child.kill("SIGKILL") } catch { /* already gone */ } }, 15_000)
-      await exited
-      clearTimeout(grace)
+    stop() {
+      stopping ??= (async () => {
+        try {
+          await fetch(`${daemon.url}/__daemon/shutdown`, {
+            method: "POST",
+            headers: { "x-fixture-secret": daemon.secret },
+            signal: AbortSignal.timeout(15_000),
+          })
+        } catch { /* already gone, or wedged: the force-kill below decides */ }
+        let forced = false
+        const grace = setTimeout(() => {
+          forced = true
+          try { daemon.child.kill("SIGKILL") } catch { /* already gone */ }
+        }, 15_000)
+        const code = await exited
+        clearTimeout(grace)
+        if (forced || code !== 0) {
+          throw new Error(`fixture daemon teardown failed (${forced ? "killed after 15 s" : `exit code ${code}`}; log: ${path.join(daemon.logDirectory, "daemon.log")})`)
+        }
+      })()
+      return stopping
     },
   }
 }
