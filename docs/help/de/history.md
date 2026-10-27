@@ -7,11 +7,11 @@ Gespeicherter Verlauf, aktuell angezeigter Gesprächsverlauf und komprimierter M
 1. Öffnen Sie **Chat-Verlauf durchsuchen** im Unterhaltungskopf oder verwenden Sie das zugewiesene Tastenkürzel (standardmäßig **Ctrl/Cmd+F**).
 2. Wählen Sie **Gesamte Sitzung** oder **Gesamter Arbeitsbereich** und geben Sie einen Suchbegriff ein.
 3. Aktivieren Sie **Werkzeuge und Denkblöcke einbeziehen**, wenn Sie neben lesbarem Text auch technische Inhalte benötigen.
-4. Wählen Sie einen Auszug oder verwenden Sie **Weitere Ergebnisse**, um nach der aktuellen Seite fortzufahren.
+4. Wählen Sie einen Auszug. Unter **Gesamte Sitzung** blättern Sie mit **Weitere Ergebnisse** durch chronologische Seiten.
 
-Die Suche ist wörtlich und unabhängig von Groß-/Kleinschreibung; sie durchsucht den gespeicherten Verlauf, nicht nur eingeblendete Zeilen. Der Arbeitsbereichsumfang folgt dem autorisierten Verzeichnisbaum und den Worktrees des geöffneten Projekts, nicht jedem Projekt des OpenCode-Dienstes; seine Ergebnisse sind nach Unterhaltung gruppiert, jeweils benannt nach ihrem Titel und dem Worktree, der sie derzeit enthält. Datei-/Bildanhangsbytes und undurchsichtiger Anbieterzustand sind kein durchsuchbarer Text.
+**Gesamte Sitzung** sucht eine wörtliche Phrase ohne Beachtung der Groß-/Kleinschreibung im gespeicherten Verlauf. **Gesamter Arbeitsbereich** durchsucht den autorisierten Verzeichnisbaum und die Worktrees des geöffneten Projekts mit bis zu sechs Suchbegriffen und zeigt höchstens 20 beste Treffer in einer Liste. Der beste Treffer jeder Unterhaltung kommt zuerst; Titel und aktuelle Worktree-Namen bleiben in Rangfolge. Begriffe werden in Auszügen und nach **In Sitzung öffnen** im Zieltranskript hervorgehoben. Durchsucht werden lesbarer Text und optional Werkzeuge und Denkblöcke.
 
-Die Fortschrittszeile **Diese Seite: … Ergebnisse · … Nachrichten durchsucht** beschreibt diese Ergebnisseite, keine Arbeitsbereichssummen. Ergebnisse kommen stapelweise. Übersprungene übergroße oder nicht unterstützte Nachrichten werden gemeldet; fehlende Treffer beweisen nicht, dass diese Nachrichten keinen Treffer enthalten. Neue Nachrichten während eines Suchlaufs benötigen eine neue Suche, um konsistent berücksichtigt zu werden.
+Unterhaltungsseiten zeigen beim Eintreffen der Stapel **Diese Seite: … Ergebnisse · … Nachrichten durchsucht**. Die Projektsuche zeigt **Beste Ergebnisse: …** sowie kompakte Hinweise auf Teilsuchen oder ausgeschlossene Verzeichnisse. Ist die sortierte Suche in der Laufzeit nicht verfügbar, verwenden Sie **Gesamte Sitzung**. Übersprungene Nachrichten werden gemeldet; starten Sie für neue Nachrichten eine neue Suche.
 
 Das Öffnen einer leeren Suche durchsucht keinen Verlauf. Änderungen an Begriff/Umfang, Schließen des Fensters oder Verlassen der Sitzung brechen veraltete Sucharbeit ab. Verwenden Sie bei einem Lesefehler **Erneut versuchen**; dies sendet keinen Prompt und ändert keinen Verlauf.
 

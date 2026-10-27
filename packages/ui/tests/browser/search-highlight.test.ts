@@ -68,6 +68,23 @@ test("range and fallback painters preserve baseline occurrences in real messages
   assert.equal(counts[0], counts[1]); assert.equal(counts[1], counts[2])
 })
 
+test("ranked Unicode terms paint and clean up identically in CSS and fallback modes", async () => {
+  for (const mode of ["css", "fallback"]) {
+    const page = await open(mode)
+    try {
+      await page.evaluate(() => (window as any).highlightFixture.rows(1))
+      await page.locator(".message-text").first().evaluate(element => { element.textContent = "ÉTÉ café İstanbul cafés" })
+      await page.evaluate(() => (window as any).highlightFixture.ranked(["ÉTÉ", "café", "İstanbul"]))
+      assert.deepEqual((await snapshot(page)).texts, ["ÉTÉ", "café", "İstanbul"])
+      await change(page, "")
+      const cleared = await snapshot(page)
+      assert.equal(cleared.matches, 0)
+      assert.deepEqual(cleared.registries, [])
+      assert.match(cleared.text, /ÉTÉ café İstanbul cafés/)
+    } finally { await close(page) }
+  }
+})
+
 test("CSS painting preserves a selection that baseline node replacement destroys", async () => {
   for (const mode of ["baseline", "css"]) {
     const page = await open(mode)

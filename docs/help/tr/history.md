@@ -7,11 +7,11 @@ Saklanan geçmiş, konuşma dökümünün şu anda görüntüledikleri ve modeli
 1. Konuşma başlığında **Sohbet geçmişinde ara** öğesini açın veya yapılandırılmış kısayolunu (varsayılan **Ctrl/Cmd+F**) kullanın.
 2. **Tüm oturum** veya **Tüm çalışma alanı** öğesini seçin ve bir arama terimi girin.
 3. Okunabilir metnin yanı sıra teknik içeriğe de ihtiyacınız varsa **Araçları ve düşünceleri dahil et** öğesini etkinleştirin.
-4. Bir alıntı seçin veya mevcut sayfanın ötesine geçmek için **Sonraki sonuçlar** öğesini kullanın.
+4. Bir alıntı seçin. **Tüm oturum** kapsamında kronolojik sayfalarda ilerlemek için **Sonraki sonuçlar** öğesini kullanın.
 
-Arama, yalnızca ekranda oluşturulmuş konuşma satırlarında değil, saklanan geçmişte düz metin olarak ve büyük/küçük harfe duyarsız yapılır. Çalışma alanı kapsamı, OpenCode hizmetindeki her projeyi değil, açılan projenin yetkili dizin ağacını ve çalışma ağaçlarını izler; sonuçları konuşmaya göre gruplanır ve her grup, konuşmanın başlığıyla ve onu şu anda barındıran çalışma ağacıyla adlandırılır. Dosya/görüntü eki baytları ile sağlayıcının opak durumu aranabilir metin değildir.
+**Tüm oturum**, saklanan geçmişte büyük/küçük harfe duyarsız tam ifade arar. **Tüm çalışma alanı**, açık projenin yetkili dizin ve çalışma ağaçlarında en fazla altı terimle arama yapıp en iyi 20 sonucu tek listede sıralar. Her konuşmanın en iyi eşleşmesi önce gelir; başlıklar ve güncel çalışma ağacı etiketleri sıralamayı korur. Terimler alıntılarda ve **Oturumda aç** sonrasında hedef konuşmada vurgulanır. Okunabilir metin ve isteğe bağlı araçlar ile düşünceler aranır.
 
-**Bu sayfa: … sonuç · … mesaj tarandı** ilerleme satırı, çalışma alanı toplamlarını değil, bu sonuç sayfasını açıklar. Sonuçlar gruplar halinde gelir. Atlanan büyük boyutlu veya desteklenmeyen mesajlar raporlanır; bir isabetin olmaması bu mesajların eşleşme içermediğini kanıtlamaz. Tarama sırasında gelen yeni iletilerin tutarlı bir şekilde dahil edilebilmesi için yeni bir aramaya ihtiyaç vardır.
+Konuşma sayfaları gruplar geldikçe **Bu sayfa: … sonuç · … mesaj tarandı** bilgisini gösterir. Proje araması **En iyi sonuçlar: …** ile kısmi tarama veya hariç tutulan dizinlere ilişkin kısa bildirimler gösterir. Sıralanmış arama çalışma ortamında yoksa **Tüm oturum** kullanın. Atlanan mesajlar bildirilir; yeni mesajlar için yeniden arayın.
 
 Boş arama açmak geçmişi taramaz. Sorguyu/kapsamı değiştirmek, pencereyi kapatmak veya oturumdan ayrılmak geçerliliğini yitiren aramayı iptal eder. Okuma başarısızsa **Yeniden dene** eylemini kullanın; bu istem göndermez veya geçmişi değiştirmez.
 

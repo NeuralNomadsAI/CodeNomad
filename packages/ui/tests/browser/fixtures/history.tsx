@@ -1,5 +1,5 @@
 import { render } from "solid-js/web"
-import { createSignal } from "solid-js"
+import { createSignal, Show } from "solid-js"
 import { ConfigProvider, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -53,13 +53,17 @@ addInstance({ id: instanceId, folder: "/repo", port: 0, pid: 0, proxyPath: `/wor
 await ensureWorktreesLoaded(instanceId)
 const store = messageStoreBus.getOrCreate(instanceId)
 store.upsertMessage({ id: "resident", sessionId, role: "user", status: "complete", createdAt: 1, parts: [{ id: "text", type: "text", text: "Resident message" }] })
+store.upsertMessage({ id: "unloaded-2", sessionId: "other-session-2", role: "user", status: "complete", createdAt: 1,
+  parts: [{ id: "destination-text", type: "text", text: "Full café ÉTÉ destination" }] })
 const [active, setActive] = createSignal(true)
 let loads = 0
 const load = async () => { loads++; throw new Error("Search must not load transcript pages") }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <div style={{ width: "1100px", height: "700px", display: "flex" }}>
-    <MessageSection instanceId={instanceId} sessionId={sessionId} isActive={active()} hasMoreMessages={false}
-      onLoadOldestMessages={load} onLoadNewerMessages={load} onLoadMoreMessages={load} />
+    <Show when={activeSessionId().get(instanceId) ?? sessionId} keyed>{shown =>
+      <MessageSection instanceId={instanceId} sessionId={shown} isActive={active()} hasMoreMessages={false}
+        onLoadOldestMessages={load} onLoadNewerMessages={load} onLoadMoreMessages={load} />
+    }</Show>
   </div>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {

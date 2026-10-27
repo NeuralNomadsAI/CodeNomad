@@ -4,7 +4,7 @@ import { Portal } from "solid-js/web"
 import { matchesHotkey, withHotkey } from "../lib/hotkeys"
 import DismissibleWindow from "./dismissible-window"
 import WindowCloseButton from "./window-close-button"
-import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen } from "../stores/session-search"
+import { isSessionSearchOpen, sessionSearchWindowId, setSessionSearchOpen, sessionSearchDestination, clearSessionSearchDestination } from "../stores/session-search"
 import BrandedEmptyState from "./branded-empty-state"
 import LoadErrorState from "./load-error-state"
 import MessageBlock from "./message-block"
@@ -25,7 +25,9 @@ import { partHasRenderableText } from "../types/message"
 import { buildRecordDisplayData, getRecordDisplayPartIds, getRevealedRecordParts, isRecordPartDisplayed, MESSAGE_PART_REVEAL_STEP, revealHiddenRecordParts } from "../stores/message-v2/record-display-cache"
 import { isDuplicateRunFailure } from "../stores/message-v2/run-failure"
 import { getMessageSelectionActionPosition } from "../lib/message-selection-position"
-import { findHistoryMatches } from "../stores/session-history"
+import { findHistoryMatches, findRankedHistoryMatches, rankedHistoryNoticeKeys } from "../stores/session-history"
+import { rankedSearchTerms, type SearchHighlightQuery } from "../lib/ranked-search"
+import type { RankedHistoryResult } from "../../../server/src/server/routes/session-history-ranked-contract"
 import HistoryMessagePreview from "./history-message-preview"
 import HistorySearchResults from "./history-search-results"
 import { createSessionOutline } from "../stores/session-outline"
@@ -308,6 +310,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchRetryGeneration, setSearchRetryGeneration] = createSignal(0)
   const [searchMatches, setSearchMatches] = createSignal<Array<SessionSearchMatch & { sessionId: string }>>([])
   const [searchWorkspace, setSearchWorkspace] = createSignal(false)
+  const [rankedSearchResult, setRankedSearchResult] = createSignal<RankedHistoryResult>()
   const [includeTechnical, setIncludeTechnical] = createSignal(false)
   const [scannedSearchMessages, setScannedSearchMessages] = createSignal(0)
   const [searchPageCursor, setSearchPageCursor] = createSignal<string>()
@@ -324,16 +327,28 @@ export default function MessageSection(props: MessageSectionProps) {
   let searchInputRef: HTMLInputElement | undefined
 
   const currentSearchMatches = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? searchMatches() : [])
-  const authoritativeSearchQuery = createMemo(() => hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? debouncedSearchQuery() : "")
+  const destinationSearch = () => sessionSearchDestination(props.instanceId, props.sessionId)
+  const rankedHighlightTerms = createMemo(() => rankedSearchTerms(debouncedSearchQuery()))
+  const authoritativeSearchQuery = createMemo<SearchHighlightQuery>(() => hasMessageSearchAuthority(searchQuery(), searchedQuery())
+    ? searchWorkspace() ? rankedHighlightTerms() : debouncedSearchQuery()
+    : destinationSearch() ? rankedSearchTerms(destinationSearch()!.query) : "")
+  const rankedUnsupported = () => searchWorkspace() && rankedSearchResult()?.status === "unsupported"
 
   const activeSearchMatch = createMemo(() => {
     const matches = currentSearchMatches()
-    if (matches.length === 0) return null
+    if (matches.length === 0) {
+      const destination = destinationSearch()
+      return destination ? { ...destination.match, sessionId: props.sessionId } : null
+    }
     const index = Math.min(Math.max(activeSearchIndex(), 0), matches.length - 1)
     return matches[index] ?? null
   })
 
-  const searchResultMessageIds = createMemo(() => new Set(currentSearchMatches().map((match) => match.messageId)))
+  const searchResultMessageIds = createMemo(() => new Set([...currentSearchMatches().map((match) => match.messageId),
+    ...(destinationSearch() ? [destinationSearch()!.match.messageId] : [])]))
+  createEffect(() => {
+    if (!isActive() || isSearchOpen()) clearSessionSearchDestination(props.instanceId, props.sessionId)
+  })
 
   const trimmedSearchQuery = createMemo(() => searchQuery().trim())
   const isSearchSettled = createMemo(() => {
@@ -799,6 +814,8 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function closeSearch() {
+    clearSessionSearchDestination(props.instanceId, props.sessionId)
+    setRankedSearchResult(undefined)
     invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
     searchLocatorAuthority.reset()
     searchGeneration += 1
@@ -824,10 +841,12 @@ export default function MessageSection(props: MessageSectionProps) {
     searchLocatorAuthority.reset()
     searchGeneration += 1
     setSearchPageCursor(undefined)
+    setRankedSearchResult(undefined)
     setSearchQuery(query)
   }
 
   onCleanup(() => {
+    clearSessionSearchDestination(props.instanceId, props.sessionId)
     searchLocatorAuthority.reset()
     invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
   })
@@ -1196,11 +1215,14 @@ export default function MessageSection(props: MessageSectionProps) {
       setIsSearchPending(false)
       return
     }
+    // A ranked request is obsolete as soon as input changes, before debounce.
+    if (workspace && query !== searchQuery()) return
 
     setIsSearchPending(true)
     setSearchedQuery("")
     setFailedSearchQuery("")
     setSearchMatches([])
+    setRankedSearchResult(undefined)
     setNextSearchCursor(null)
     setActiveSearchIndex(0)
     setPreviewSearchMatch(undefined)
@@ -1219,7 +1241,8 @@ export default function MessageSection(props: MessageSectionProps) {
       && getOpenCodeInstanceGeneration(instanceId) === instanceGeneration
       && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
       && debouncedSearchQuery() === query
-    const publish = (page: Awaited<ReturnType<typeof findHistoryMatches>>, settled: boolean) => {
+      && searchWorkspace() === workspace
+    const publish = (page: Pick<Awaited<ReturnType<typeof findHistoryMatches>>, "hits" | "cursor" | "scanned" | "skipped">, settled: boolean) => {
       if (!isCurrentSearch()) return
       if (frame !== undefined) cancelAnimationFrame(frame)
       frame = requestAnimationFrame(() => {
@@ -1241,9 +1264,18 @@ export default function MessageSection(props: MessageSectionProps) {
         })
       })
     }
-    void findHistoryMatches(instanceId, {
-      sessionID: workspace ? undefined : sessionId, query, purpose: "search", includeTechnical: technical, cursor,
-    }, controller.signal, page => publish(page, false)).then(page => publish(page, true)).catch((error) => {
+    const request = workspace
+      ? findRankedHistoryMatches(instanceId, query, technical, controller.signal).then(result => {
+        if (!isCurrentSearch()) return
+        setRankedSearchResult(result)
+        if (result.status === "unsupported") {
+          setSearchedQuery(query); setIsSearchPending(false)
+        } else publish({ ...result, cursor: null }, true)
+      })
+      : findHistoryMatches(instanceId, {
+        sessionID: sessionId, query, purpose: "search", includeTechnical: technical, cursor,
+      }, controller.signal, page => publish(page, false)).then(page => publish(page, true))
+    void request.catch((error) => {
       if (!isCurrentSearch()) return
       if (frame !== undefined) cancelAnimationFrame(frame)
       setIsSearchPending(false)
@@ -1669,6 +1701,8 @@ export default function MessageSection(props: MessageSectionProps) {
                             ? t("messageSection.search.count.searching")
                           : searchFailed()
                             ? t("messageSection.search.failed")
+                          : rankedUnsupported()
+                            ? t("history.rankedUnavailable")
                           : currentSearchMatches().length === 0
                             ? t("messageSection.search.count.none")
                             : t("messageSection.search.count.matches", {
@@ -1701,11 +1735,14 @@ export default function MessageSection(props: MessageSectionProps) {
                   <Show when={trimmedSearchQuery().length >= SEARCH_MIN_CHARS && isSearchPending()}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.searching")}</div>
                   </Show>
-                  <Show when={hasMessageSearchAuthority(searchQuery(), searchedQuery())}>
+                  <Show when={hasMessageSearchAuthority(searchQuery(), searchedQuery()) && !rankedUnsupported()}>
                     <div class="history-statistics" role="status">
-                      {t("history.searchProgress", { matches: currentSearchMatches().length, messages: scannedSearchMessages() })}
+                      {t(searchWorkspace() ? "history.rankedProgress" : "history.searchProgress", { matches: currentSearchMatches().length, messages: scannedSearchMessages() })}
                     </div>
                   </Show>
+                  <For each={searchWorkspace() && hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? rankedHistoryNoticeKeys(rankedSearchResult()) : []}>
+                    {key => <div class="history-statistics history-ranked-note" role="status">{t(key)}</div>}
+                  </For>
                   <Show when={searchFailed()}>
                     <div class="modal-empty-state message-search-empty">
                       <span>{t("messageSection.search.failed")}</span>
@@ -1719,17 +1756,18 @@ export default function MessageSection(props: MessageSectionProps) {
                     </div>
                   </Show>
                   <HistorySearchResults instanceId={props.instanceId} matches={currentSearchMatches()} activeIndex={activeSearchIndex()}
-                    showSessions={searchWorkspace()} onSelect={selectSearchMatch} />
+                    showSessions={searchWorkspace()} terms={searchWorkspace() ? rankedHighlightTerms() : undefined} onSelect={selectSearchMatch} />
                   <Show when={skippedSearchMessages()}><div class="history-statistics" role="status">
                     {t("history.skipped", { count: skippedSearchMessages() })}
                   </div></Show>
                   <Show when={previewSearchMatch()}>{match => <HistoryMessagePreview instanceId={props.instanceId}
-                    sessionId={match().sessionId} messageId={match().messageId} />}</Show>
-                  <Show when={nextSearchCursor()}>
+                    sessionId={match().sessionId} messageId={match().messageId}
+                    highlight={searchWorkspace() && activeSearchMatch() ? { query: debouncedSearchQuery(), match: activeSearchMatch()! } : undefined} />}</Show>
+                  <Show when={!searchWorkspace() && nextSearchCursor()}>
                     <button type="button" class="button-tertiary" disabled={isSearchPending()}
                       onClick={() => setSearchPageCursor(nextSearchCursor() ?? undefined)}>{t("history.more")}</button>
                   </Show>
-                  <Show when={isSearchSettled() && currentSearchMatches().length === 0}>
+                  <Show when={isSearchSettled() && !rankedUnsupported() && currentSearchMatches().length === 0}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>
                   </Show>
                 </div>

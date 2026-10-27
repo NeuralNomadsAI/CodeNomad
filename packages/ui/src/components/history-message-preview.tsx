@@ -5,10 +5,12 @@ import { openHistoryMatchSession } from "../stores/history-search-sessions"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
 import { HistoryWorktreeBadge } from "./history-search-results"
+import type { SessionSearchMatch } from "../lib/session-search"
 
 // An explicit result click reads only that native message. Keep it outside the
 // transcript store so opening historical results cannot displace its window.
-export default function HistoryMessagePreview(props: { instanceId: string; sessionId: string; messageId: string }) {
+export default function HistoryMessagePreview(props: { instanceId: string; sessionId: string; messageId: string;
+  highlight?: { query: string; match: SessionSearchMatch } }) {
   const { t, locale } = useI18n()
   const [title, setTitle] = createSignal("")
   const [directory, setDirectory] = createSignal<string>()
@@ -58,7 +60,7 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
     const current = () => opened === target
     setOpening(true)
     setOpenFailed(false)
-    const result = await openHistoryMatchSession(props.instanceId, props.sessionId, props.messageId, current).catch(() => false)
+    const result = await openHistoryMatchSession(props.instanceId, props.sessionId, props.messageId, current, props.highlight).catch(() => false)
     if (!current()) return
     setOpening(false)
     setOpenFailed(!result)

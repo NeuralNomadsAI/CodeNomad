@@ -7,11 +7,11 @@ Stored history, what the transcript currently displays and the model's compacted
 1. Open **Search chat history** in the conversation header, or use its configured shortcut (default **Ctrl/Cmd+F**).
 2. Select **Entire session** or **Entire workspace** and enter a search term.
 3. Enable **Include tools and thinking** if you need technical content as well as readable text.
-4. Select an excerpt, or use **Next results** to continue beyond the current page.
+4. Select an excerpt. In **Entire session**, use **Next results** to continue through chronological pages.
 
-Search is literal and case-insensitive, over stored history rather than only mounted transcript rows. Workspace scope follows the opened project's authorized directory tree and worktrees, not every project on the OpenCode service; its results are grouped by conversation, each named by its title and the worktree that currently holds it. File/image attachment bytes and opaque provider state are not searchable text.
+**Entire session** matches a literal phrase case-insensitively across stored history. **Entire workspace** ranks the opened project's authorized directory tree and worktrees using up to six query terms, showing at most 20 best results in one list. Each conversation's best hit comes first, with titles and current worktree labels kept in rank order. Query terms are highlighted in excerpts and in the destination transcript after **Open in session**. Searchable content is readable text plus the optional tools and thinking content.
 
-The progress line **This page: … results · … messages scanned** describes this result page, not workspace totals. Results arrive in batches. Skipped oversized or unsupported messages are reported; absence of a hit does not prove those messages contain no match. New messages arriving during a scan need a fresh search to be included consistently.
+Conversation pages show **This page: … results · … messages scanned** as batches arrive. Workspace search shows **Best results: …** and compact notices for partial scans or excluded directories. When ranked search is unavailable in the runtime, use **Entire session**. Skipped messages are reported; run a fresh search to include new messages.
 
 Opening an empty search does not scan history. Changing query/scope, closing the window or leaving the session cancels obsolete search work. If a read fails, use **Retry**; it does not submit a prompt or mutate history.
 
