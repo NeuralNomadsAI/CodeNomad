@@ -2416,6 +2416,7 @@ export {
   reconcilePendingRequestLiveness,
   syncPendingRequests,
   invalidatePendingRequestSync,
+  schedulePendingRequestReconciliation,
   refreshVolatileInstanceState,
   syncLoadedSessionInboxes,
   handleInstanceInvalidation,
