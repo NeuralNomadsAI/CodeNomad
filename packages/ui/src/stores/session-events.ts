@@ -24,6 +24,7 @@ import {
 import type { PermissionRequest } from "../types/permission"
 import { showToastNotification, type ToastHandle, ToastVariant } from "../lib/notifications"
 import { preferences } from "./preferences"
+import { questionReconciliation } from "./question-reconciliation"
 import {
   instances,
   markPermissionReplied,
@@ -337,6 +338,16 @@ function notifySessionAttention(category: "needsInput" | "sessionDone", instance
 
 queueMicrotask(() => {
   setPendingFormAddedHandler((instanceId, form) => notifySessionAttention("needsInput", instanceId, form.sessionID))
+})
+
+// A running question tool part whose Form never reached the dock (for example
+// the form event was lost while disconnected) is recovered by the bounded
+// targeted reconciliation. The subscription lives here because the
+// reconciliation coordinator already depends on the message-store bus.
+queueMicrotask(() => {
+  messageStoreBus.onRunningQuestionPart((instanceId, sessionId, messageId, partId, running) => {
+    questionReconciliation.onQuestionPart(instanceId, sessionId, messageId, partId, running)
+  })
 })
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])

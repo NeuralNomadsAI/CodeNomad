@@ -544,6 +544,42 @@ test("a live native question becomes a durable transcript receipt after dock sub
   } finally { await page.close() }
 })
 
+test("a running question whose form event was lost is re-docked by one targeted reconciliation", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => (window as any).fixture.lostAsk())
+    // The running question part streams into the transcript, but no form event
+    // arrives and nothing has asked the server for its pending form yet.
+    assert.equal(await page.locator(".interruption-dock").count(), 0)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.formListCalls), [])
+    // Inside the grace + sync window the dock renders the question editor.
+    await answer(page).waitFor()
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.formListCalls), [
+      { targeted: true, directory: "/fixture" },
+    ])
+    await answer(page).fill("Recovered answer")
+    await assertHeader(page, ".lucide-message-circle-question")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a delivered form event disarms the reconciliation without extra form-list requests", async () => {
+  const { page, errors } = await fixture()
+  try {
+    await page.evaluate(() => (window as any).fixture.liveAsk())
+    await answer(page).waitFor()
+    const before = await page.evaluate(() => (window as any).fixture.formListCalls.length)
+    // Outlive the 2 s grace window plus slack: the already-docked form disarms
+    // the armed running part, so no targeted list request is ever issued.
+    await page.waitForTimeout(2600)
+    assert.deepEqual(await page.evaluate((before: number) => (window as any).fixture.formListCalls.slice(before), before), [])
+    assert.equal(await answer(page).inputValue(), "")
+    await answer(page).fill("Delivered normally")
+    assert.equal(await answer(page).inputValue(), "Delivered normally")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("partial answers survive refresh and conversation navigation; failed sends stay retryable", async () => {
   const { page, errors } = await fixture()
   try {

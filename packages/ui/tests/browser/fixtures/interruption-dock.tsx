@@ -30,6 +30,11 @@ let messageId = "msg_0000"
 const model = { providerID: "fixture", id: "fixture" }
 let time = 1000, fail = false, hold = false, release: (() => void) | undefined
 const replies: any[] = [], replyOptions: any[] = [], windows: any[] = []
+// Targeted form-list calls the pending-request reconciliation issues; `lostForms`
+// stands in for a server that still holds a pending question Form whose native
+// form.created event never reached the client.
+const formListCalls: Array<{ targeted: boolean; directory: string | undefined }> = []
+let lostForms: (() => any[]) | undefined
 let completed: string[][] | undefined
 const longQuestions = [
   { header: "Deployment", question: "How should we deploy the updated interruption dock to existing workspaces?", options: [
@@ -79,7 +84,10 @@ const client: any = {
     }, cancel: async (input: any) => { replies.push(input); emit("form.cancelled", { sessionID: input.sessionID, id: input.formID }) } },
   },
   permission: { reply: async (input: any) => { replies.push(input) }, list: async () => ({ data: getPermissionQueue(instanceId) }) },
-  form: { list: async () => ({ data: getFormQueue(instanceId) }) },
+  form: { list: async (input: any, options: any) => {
+    formListCalls.push({ targeted: options?.headers?.["x-codenomad-pending-reconciliation"] === "1", directory: input?.location?.directory })
+    return { location: { directory: "/fixture" }, data: lostForms?.() ?? getFormQueue(instanceId) }
+  } },
   model: { default: async () => ({ data: model }) },
   message: { list: async ({ sessionID, cursor, limit = 200 }: any) => {
     if (sessionID !== sessionId) return { data: [], cursor: {} }
@@ -139,7 +147,7 @@ const store = messageStoreBus.getOrCreate(instanceId)
 ;(window as any).fixture = {
   activationFrames, active: setActive, conversationFocus: setConversationFocus, phone: setPhone,
   focusHandled: () => focusHandled,
-  replies, replyOptions, windows,
+  replies, replyOptions, windows, formListCalls,
   notifications: getToastHistory,
   prepareRemovedWorktreeHistory: async (directory: string) => {
     await reloadWorktrees(instanceId)
@@ -163,6 +171,13 @@ const store = messageStoreBus.getOrCreate(instanceId)
     emit("session.tool.input.started", { assistantMessageID: messageId, id: toolId, name: "question" })
     emit("session.tool.called", { assistantMessageID: messageId, id: toolId, input: question().content[0].state.input })
     emit("form.created", { form: form() })
+  },
+  lostAsk: () => {
+    messageId = "msg_lost"
+    lostForms = () => [form()]
+    emit("session.step.started", { assistantMessageID: messageId, agent: "build", model })
+    emit("session.tool.input.started", { assistantMessageID: messageId, id: toolId, name: "question" })
+    emit("session.tool.called", { assistantMessageID: messageId, id: toolId, input: question().content[0].state.input })
   },
   complete: (answers: unknown, output: unknown = { answers }) => {
     completed = answers as string[][]
