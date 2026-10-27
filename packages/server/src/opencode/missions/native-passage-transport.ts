@@ -61,7 +61,7 @@ export function nativePassageTransport(input: PassageInput, identity: { missionI
     if (!raw.targetSessionID) return
     const actor = await native.get({ sessionID: raw.targetSessionID })
     const state = await observation.session(actor.id)
-    if (!matchesExecution(selection, actor) || state.active || state.inbox || state.pending || state.runningTools || state.suspended
+    if (!matchesExecution(selection, actor) || state.active || state.inbox || state.runningTools || state.suspended
       || marker(actor.metadata).missionID !== identity.missionID) throw new Error("Passage reused root unavailable")
     const ordinary = await new MissionJournal(input.storage, doc.projectID, doc.projectCanonical).snapshot()
     if (ordinary.discardedEvents || ordinary.controlUnavailable || ordinary.missions.some(mission =>
