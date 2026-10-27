@@ -4,30 +4,23 @@ import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
 
-let server: ViteDevServer, browser: Browser, baseUrl: string
+let browser: Browser, baseUrl: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [shutdown.plugin, solid(), { name: "history-fixture", configureServer(server) {
-      server.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await server.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/history.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  shutdown.own(server)
-  await server.listen()
-  baseUrl = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}`
+  const fixture = await borrowFixture({
+      name: "history",
+      routes: [
+        { path: "/fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/history.tsx\"></script></body></html>" },
+      ],
+    })
+  baseUrl = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); })
 
 test("search derives page progress from search responses without a separate count scan", async () => {
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } })
@@ -53,7 +46,7 @@ test("search derives page progress from search responses without a separate coun
     await route.fulfill({ contentType: "application/json", body: JSON.stringify(result) })
   })
   try {
-    await page.goto(`${baseUrl}/fixture`)
+    await page.goto(baseUrl)
     await page.waitForFunction(() => Boolean((window as any).fixture))
     await page.evaluate(() => (window as any).fixture.open())
     await page.getByRole("searchbox").waitFor()

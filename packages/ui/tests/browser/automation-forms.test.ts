@@ -60,7 +60,7 @@ before(async () => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml("/automation-editor", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-lifetime.tsx"></script></body></html>'))
       })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } }).catch(async error => { await cache.dispose(); throw error })
   shutdown.own(server)
   await server.listen()
   base = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}`

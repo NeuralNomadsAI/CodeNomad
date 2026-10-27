@@ -25,7 +25,7 @@ before(async () => {
       if (closeDocumentForCustodyCheck) { res.destroy(); return }
       res.setHeader("Content-Type", "text/html")
       res.end(await s.transformIndexHtml("/mission-navigation", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-navigation.tsx"></script></body></html>'))
-    }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+    }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } }).catch(async error => { await cache.dispose(); throw error })
   server.httpServer!.on("listening", () => { ownedHTTP.listeningAt = Date.now() })
   server.httpServer!.on("close", () => { ownedHTTP.closedAt = Date.now() })
   server.httpServer!.on("connection", socket => {
