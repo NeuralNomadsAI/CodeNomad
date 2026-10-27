@@ -45,7 +45,7 @@ export async function observeNativePassageSettlement(input: {
       || session.parentID !== next.parentID) throw new Error("Passage family moved")
     // A claim from an earlier service process with no live execution is a turn cut by a
     // restart that nothing resumed; Resume never sends a continuation for it.
-    if (session.active || session.inbox || session.pending || session.suspended && !session.orphaned || session.runningTools) return undefined
+    if (session.active || session.inbox || session.suspended && !session.orphaned || session.runningTools) return undefined
     // The admission is recorded: a later-absent start message (pruned history) is
     // observed history, never a reason to wait for or resend it.
     family.push(session)

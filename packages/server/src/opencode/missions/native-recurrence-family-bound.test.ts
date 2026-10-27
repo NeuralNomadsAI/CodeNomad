@@ -56,7 +56,7 @@ test("one active, inbox-holding or tool-running descendant deep in a large famil
   try {
     await f.start(); await f.finish()
     const deepest = addFamily(f, 120, 3).at(-1)!
-    for (const field of ["active", "inbox", "pending", "runningTools"] as const) {
+    for (const field of ["active", "inbox", "runningTools"] as const) {
       const state = f.states.get(deepest)! as unknown as Record<string, unknown>
       const before = state[field]
       state[field] = field === "active" ? true : 1
@@ -110,8 +110,7 @@ test("real native SQL observation walks a 41-session family and bounds one paren
     await f.start(); await f.finish()
     db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
       CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT);
-      CREATE TABLE session_inbox(id TEXT,session_id TEXT);
-      CREATE TABLE session_pending(session_id TEXT);`)
+      CREATE TABLE session_inbox(id TEXT,session_id TEXT);`)
     const coordinator = f.passage.coordinatorSessionID, insert = db.prepare("INSERT INTO session_v2 VALUES(?,?,'project',?,NULL,NULL)")
     insert.run(coordinator, null, f.root)
     db.prepare("INSERT INTO session_message VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, coordinator)

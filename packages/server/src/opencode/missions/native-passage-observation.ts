@@ -27,7 +27,7 @@ const failedTurnsSQL = `SELECT count(*) AS count FROM session_message
   WHERE session_id=? AND type='idle' AND json_extract(data,'$.outcome')='failed'`
 export type PassageSessionObservation = {
   id: string; parentID?: string; projectID: string; directory: string; workspaceID?: string
-  active: boolean; inbox: number; pending: number; suspended: boolean; runningTools: number
+  active: boolean; inbox: number; suspended: boolean; runningTools: number
   failed: boolean; messagePresent: boolean
   /** Execution claim written before this service process started and not live here:
    * a restart cut the turn. An owned unmanaged `serve` never sweeps such claims. */
@@ -100,8 +100,8 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
         if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error("Native passage coverage unavailable")
         return Number(value)
       }
+      // Queued input, admitted or not, lives in the native session inbox.
       const inbox = await count("SELECT count(*) AS count FROM session_inbox WHERE session_id=?", [id])
-      const pending = await count("SELECT count(*) AS count FROM session_pending WHERE session_id=?", [id])
       const runningTools = await count(runningToolsSQL, [id])
       const active = activeSet(await run(running)).has(id)
       const failedTurns = await count(failedTurnsSQL, [id])
@@ -114,7 +114,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       return { id, projectID: session.project_id, directory: path.normalize(session.directory),
         ...(session.parent_id == null ? {} : { parentID: String(session.parent_id) }),
         ...(session.workspace_id == null ? {} : { workspaceID: String(session.workspace_id) }),
-        active, inbox, pending, suspended: claimedAt != null, runningTools,
+        active, inbox, suspended: claimedAt != null, runningTools,
         failed: failedTurns > 0, messagePresent,
         orphaned: claimedAt != null && !active && Number(claimedAt) < startedAt }
     },

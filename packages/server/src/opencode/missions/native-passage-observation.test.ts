@@ -15,7 +15,6 @@ test("a claim cut by a service restart settles ended-without-report/interrupted;
     db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
       CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT);
       CREATE TABLE session_inbox(id TEXT,session_id TEXT);
-      CREATE TABLE session_pending(session_id TEXT);
       CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);`)
     // Observed natively (f60TKB): time_suspended kept, no execution terminal event.
     db.prepare("INSERT INTO session_v2 VALUES(?,NULL,'project',?,NULL,1000)").run(f.passage.coordinatorSessionID, f.root)
@@ -55,7 +54,6 @@ async function idleFamily(finish?: "completed") {
   db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
     CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT);
     CREATE TABLE session_inbox(id TEXT,session_id TEXT);
-    CREATE TABLE session_pending(session_id TEXT);
     CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);`)
   const coordinator = f.passage.coordinatorSessionID, child = "ses_failed_child"
   db.prepare("INSERT INTO session_v2 VALUES(?,NULL,'project',?,NULL,NULL)").run(coordinator, f.root)
@@ -109,7 +107,6 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
       CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT);
       CREATE TABLE session_inbox(id TEXT,session_id TEXT);
-      CREATE TABLE session_pending(session_id TEXT);
       CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);
       CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
     // Real Windows native SQL uses `/` while Location/schedule paths use `\`.
