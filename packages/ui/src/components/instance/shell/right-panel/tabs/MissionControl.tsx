@@ -271,12 +271,14 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const selectedKey = () => selectedSchedule() ? `schedule:${selectedSchedule()}` : mission() ? `mission:${mission()!.id}` : undefined
   const selectedOneTime = () => selectedSchedule() ? undefined : mission()
   const selectedOneTimeId = () => selectedOneTime()?.id
-  // Like an idle session, a completed Mission stays green until this window shows it.
+  const creating = () => editor()?.kind === "create"
+  // Like an idle session, a completed Mission stays green until this window shows it;
+  // the creation form hides the selected detail.
   const documentAttention = createDocumentAttention()
   createEffect(() => {
     if (state().status !== "ready") return
     const completed = missions().filter(value => value.status === "completed").map(value => value.id)
-    const shown = (props.isActive?.() ?? true) && documentAttention() && selectedOneTime()?.status === "completed"
+    const shown = (props.isActive?.() ?? true) && documentAttention() && !creating() && selectedOneTime()?.status === "completed"
       ? [selectedOneTime()!.id] : []
     const viewScope = scope()
     untrack(() => markMissionsFinishedSeen(viewScope, shown, completed))
@@ -299,7 +301,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     } finally { setRefreshing(false) }
   }
   return (
-    <section class="mission-control" aria-label={props.t("missions.control.title")}>
+    // While creating, the form replaces the list and the selected detail, which stay mounted
+    // (hidden by mission-control.css) so their pending controls and retries survive.
+    <section class="mission-control" data-creating={creating() ? "" : undefined} aria-label={props.t("missions.control.title")}>
       <header class="mission-control-header">
         <MissionPicker entries={pickerEntries()} selectedKey={selectedKey()}
           expanded={listExpanded()} onExpandedChange={value => updateMissionProjectView(scope(), { listExpanded: value || undefined })}
@@ -309,6 +313,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             else selectMission(id)
           }}
           createDisabled={state().status === "unavailable" || Boolean(editor())}
+          creating={creating()}
           onCreate={() => openEditor({ kind: "create" })}
           trailing={<>
           <button type="button" class="mission-control-icon-button" aria-label={props.t("missions.preferences.title")}

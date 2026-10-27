@@ -18,6 +18,7 @@ import { retainSubmittedMissionModel, submittedMissionModel, type UserMissionMod
 import { MissionBriefPicker, MissionBriefSave } from "./mission-model-library"
 import { MissionProfileSummary } from "./mission-profile-summary"
 import { MissionTaskModeControls } from "./mission-task-mode-controls"
+import { MissionSubagentDepth } from "./mission-subagent-depth"
 import { holdRecurrence, uncertainRecurrence } from "../stores/mission-recurrence"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "../../../server/src/missions/lifecycle-input"
@@ -395,6 +396,8 @@ export function MissionEditor(props: {
       </label>
       <MissionTaskModeControls value={taskMode() ?? "native"} disabled={locked()}
         onChange={value => { setTaskMode(value); setCustomTaskMode(true) }} />
+      {/* Native nesting depth is project configuration, shared with every conversation there. */}
+      <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory ?? props.viewDirectory} active={() => optionsOpen() && isActive()} />
       <section class="mission-create-option" aria-label={t("missions.create.agents")} aria-describedby={errorFor("profiles") ? ids.profilesError : undefined}>
         <MissionProfileSummary template={template()} profiles={profiles()} />
         {/* Catalog-backed selectors mount (and read the native catalog) only on demand. */}
@@ -466,7 +469,7 @@ export function MissionEditor(props: {
     <footer class="window-footer">
       <Show when={kind === "create"}>
         {/* An unsent draft beside another request's hold may still be kept as a brief. */}
-        <MissionBriefSave disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
+        <MissionBriefSave buttonClass="button-secondary" disabled={(otherUncertain() ? !creationReady() || defaultsRefreshing() : locked()) || !isActive()} active={isActive}
           draft={() => ({ objective: objective(), notes: notes(), template: template(), ...(customProfiles() ? { profiles: copyMissionProfiles(profiles()) ?? {} } : {}), ...(customTaskMode() ? { taskMode: taskMode() } : {}) })} />
       </Show>
       <button type="button" class="button-secondary" onClick={props.onCancel}>{t("missions.control.cancel")}</button>

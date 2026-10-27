@@ -68,8 +68,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "פעולות המשימה",
   "missionsPanel.attention.permission.one": "{count} ממתינה",
   "missionsPanel.attention.permission.other": "{count} ממתינות",
-  "missionsPanel.attention.interrupted.one": "{count} נקטעה",
-  "missionsPanel.attention.interrupted.other": "{count} נקטעו",
   "missionsPanel.attention.done.one": "{count} הסתיימה",
   "missionsPanel.attention.done.other": "{count} הסתיימו",
   "missionsPanel.attention.working.one": "{count} פעילה",

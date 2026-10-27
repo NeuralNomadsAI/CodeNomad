@@ -55,7 +55,7 @@ export const MissionAttention: Component<{
                 <MessageCircleQuestion class="h-3.5 w-3.5 mission-needs-icon" aria-hidden="true" />
                 <span class="mission-needs-title" title={`${item().title} · ${detail()}`}>{item().title}</span>
                 <span class="sr-only">{detail()}</span>
-                <button type="button" class="window-text-button mission-needs-answer"
+                <button type="button" class="window-action mission-needs-answer"
                   aria-description={t("missions.control.attention.openActor", { actor: actorTitle(item().sessionId!) })}
                   onClick={() => {
                     const current = rows().get(key)

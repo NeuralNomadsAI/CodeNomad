@@ -68,8 +68,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "मिसन कार्यहरू",
   "missionsPanel.attention.permission.one": "{count} पर्खिरहेको",
   "missionsPanel.attention.permission.other": "{count} पर्खिरहेका",
-  "missionsPanel.attention.interrupted.one": "{count} अवरुद्ध",
-  "missionsPanel.attention.interrupted.other": "{count} अवरुद्ध",
   "missionsPanel.attention.done.one": "{count} सम्पन्न",
   "missionsPanel.attention.done.other": "{count} सम्पन्न",
   "missionsPanel.attention.working.one": "{count} चलिरहेको",

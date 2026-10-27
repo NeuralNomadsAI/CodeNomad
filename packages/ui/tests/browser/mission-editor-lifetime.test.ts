@@ -40,6 +40,9 @@ async function setup() {
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  // Creation Options read the project's nesting depth; a valid snapshot keeps its own alerts out.
+  await page.route("**/subagent-depth*", route => route.fulfill({ json: { location: { directory: "/fixture" }, capability: { minimum: 0 },
+    effectiveDepth: 1, project: { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } } }))
   return { page, errors }
 }
 type Transition = "selection" | "selection-aba" | "unmount" | "inactive" | "inactive-aba" | "instance" | "instance-aba" | "directory" | "directory-aba" | "project" | "project-aba" | "new-editor"
@@ -60,6 +63,8 @@ async function transition(page: Page, change: Transition) {
     await page.evaluate(() => window.missionEditorLifetime.project("other-project"))
     if (change.endsWith("aba")) await page.evaluate(() => window.missionEditorLifetime.project("project"))
   }
+  // The creation form replaces the list: leaving it is the newer view intent before browsing.
+  if (await page.locator(".mission-control[data-creating]").count()) await page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
   await selectMission(page, "Objective two")
   if (change === "selection-aba") {
     await selectMission(page, "Objective one")
@@ -110,12 +115,14 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
         // when a disposed editor no longer owns an onSaved callback.
         if (change === "inactive") await page.evaluate(() => window.missionEditorLifetime.activate(true))
         await page.evaluate(() => window.missionEditorLifetime.invalidate())
-        await (await inlineMissionEntry(page, "Saved result")).waitFor()
-        assert.match(await selectedMissionTitle(page).innerText(), /^Objective two$/)
         if (change === "new-editor") {
           assert.equal(await page.locator("form.mission-editor textarea").first().inputValue(), "Newer editor draft")
           assert.equal(await page.getByRole("alert").count(), 0)
+          assert.equal(await page.locator(".mission-picker-control").isVisible(), false, "the newer creation form replaces the list")
+          await page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
         }
+        await (await inlineMissionEntry(page, "Saved result")).waitFor()
+        assert.match(await selectedMissionTitle(page).innerText(), /^Objective two$/)
         assert.equal(requests.length, 1); assert.equal(requests[0].method, method)
         assert.equal(requests[0].input.directory, undefined, "view fencing must not change the native default creation location")
         if (method === "PATCH") assert.equal(requests[0].input.expectedRevision, 1)
@@ -143,8 +150,11 @@ for (const method of ["POST", "PATCH"] as const) test(`current legitimate ${meth
     else await clickMissionAction(page, EDIT, "Objective one")
     await page.locator("form.mission-editor textarea").first().fill("Current")
     // Browsing before Save is not a late gesture: Save captures its own origin.
-    await selectMission(page, "Objective one")
-    await selectMission(page, "Objective two")
+    // The creation form replaces the list, so only an edit can browse meanwhile.
+    if (method === "PATCH") {
+      await selectMission(page, "Objective one")
+      await selectMission(page, "Objective two")
+    } else assert.equal(await page.locator(".mission-picker-control").isVisible(), false, "the creation form replaces the list")
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), false)
     const before = (await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).length
     await page.locator("form.mission-editor button[type=submit]").first().click()
@@ -232,8 +242,9 @@ test("creation-uncertain retains original request/draft across close, remount an
     await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
     await page.getByLabel("Notes", { exact: true }).fill("Original notes")
     await page.locator("form.mission-editor button[type=submit]").first().click()
-    await page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" }).waitFor()
-    assert.ok(!(await page.getByRole("alert").innerText()).includes("This mission changed"))
+    const uncertain = page.getByRole("alert").filter({ hasText: "native creation result is unconfirmed" })
+    await uncertain.waitFor()
+    assert.ok(!(await uncertain.innerText()).includes("This mission changed"))
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), true)
     const original = await page.evaluate(() => window.missionEditorLifetime.held())
     assert.equal(original!.requestId, attempts[0].requestId)
@@ -248,14 +259,16 @@ test("creation-uncertain retains original request/draft across close, remount an
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), true)
     // Even a map observed later is not a terminal receipt for the held creation.
     list = [...list, { ...mission("late"), objective: "Late durable map" }]
+    // The list stays hidden behind the creation form; the applied map is the observation.
     await page.locator("form.mission-editor").getByRole("button", { name: "Refresh mission map", exact: true }).click()
-    await (await inlineMissionEntry(page, "Late durable map")).waitFor()
+    await page.waitForFunction(() => (window.missionEditorLifetime.state("fixture") as { missions?: Array<{ id: string }> }).missions?.some(value => value.id === "late"))
+    assert.equal(await page.locator(".mission-picker-control").isVisible(), false)
     await page.locator("form.mission-editor").evaluate(form => form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true })))
     assert.equal(attempts.length, 1)
     assert.deepEqual(await page.evaluate(() => window.missionEditorLifetime.held()), original)
     assert.equal(await page.locator("form.mission-editor button[type=submit]").first().isDisabled(), true)
-    assert.match(await page.getByRole("alert").innerText(), /Refresh only reads state/)
-    assert.match(await page.getByRole("alert").innerText(), /restart recovery are not yet qualified/)
+    assert.match(await uncertain.innerText(), /Refresh only reads state/)
+    assert.match(await uncertain.innerText(), /restart recovery are not yet qualified/)
     await page.getByRole("button", { name: "Cancel", exact: true }).click()
     assert.equal(await page.locator("form.mission-editor").count(), 0)
     assert.deepEqual(errors, [])

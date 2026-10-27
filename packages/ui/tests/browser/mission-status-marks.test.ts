@@ -77,17 +77,26 @@ test("marks follow the session palette and a completion stays green until this w
     mission("history", { updatedAt: 4, status: "completed" }),
     mission("failed", { updatedAt: 3, status: "failed" }),
     mission("paused", { updatedAt: 2, runState: "paused" }),
+    mission("prepared", { updatedAt: 1, runState: "prepared" }),
   ]
   let activity = [{ missionId: "stuck", actors: [{ sessionId: "ses_stuck", state: "idle-without-report" as const }] },
     { missionId: "working", actors: [{ sessionId: "ses_working", state: "running" as const }] }]
   const { page, errors } = await open(() => list, () => activity)
   try {
-    // Collapsed, the chevron counts the other missions' attention, like a session parent.
+    // Collapsed, the chevron counts the other missions' attention, like a session parent:
+    // interrupted, paused and prepared missions colour only their own rows.
     const expander = missionPickerExpander(page)
-    await page.waitForFunction(() => document.querySelector(".mission-picker-expander")?.getAttribute("data-attention") === "interrupted")
-    assert.equal(await expander.getAttribute("aria-label"), "Show all missions (2 interrupted, 1 running)")
-    assert.deepEqual(await Promise.all(["Objective stuck", "Objective working", "Objective history", "Objective failed", "Objective paused"]
-      .map(title => mark(page, title))), ["interrupted", "working", "idle", "interrupted", "paused"])
+    await page.waitForFunction(() => document.querySelector(".mission-picker-expander")?.getAttribute("data-attention") === "working")
+    assert.equal(await expander.getAttribute("aria-label"), "Show all missions (1 running)")
+    await (await inlineMissionEntry(page, "Objective stuck")).waitFor() // expand once, not from each parallel read
+    assert.deepEqual(await Promise.all(["Objective stuck", "Objective working", "Objective history", "Objective failed", "Objective paused", "Objective prepared"]
+      .map(title => mark(page, title))), ["interrupted", "working", "idle", "interrupted", "paused", "prepared"])
+    assert.equal(await page.evaluate(() => {
+      const element = [...document.querySelectorAll<HTMLElement>(".mission-picker-inline .mission-picker-mark")].find(item => item.dataset.mark === "prepared")!
+      const probe = document.createElement("span"); probe.style.color = "var(--accent-primary)"; document.body.append(probe)
+      const blue = getComputedStyle(probe).color; probe.remove()
+      return getComputedStyle(element).backgroundColor === blue
+    }), true, "a prepared mission is accent blue, like a composed prompt")
     assert.equal(await expander.getAttribute("data-attention"), null, "the open list shows each mark itself")
     assert.equal(await expander.getAttribute("aria-label"), "Hide the mission list")
 
@@ -99,7 +108,7 @@ test("marks follow the session palette and a completion stays green until this w
     assert.equal(await mark(page, "Objective working"), "done")
     assert.equal(await mark(page, "Objective history"), "idle", "missions already completed on the first read count as seen")
     await collapse(page)
-    assert.equal(await expander.getAttribute("aria-label"), "Show all missions (2 interrupted, 1 finished)")
+    assert.equal(await expander.getAttribute("aria-label"), "Show all missions (1 finished)")
 
     await selectMission(page, "Objective working")
     await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "idle")
@@ -108,6 +117,29 @@ test("marks follow the session palette and a completion stays green until this w
     await page.reload()
     await missionPickerField(page).locator(".mission-picker-title").waitFor()
     assert.equal(await mark(page, "Objective working"), "idle", "seen completions stay seen in this window")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a selected mission completing behind the creation form stays green until its detail shows again", async () => {
+  let list = [mission("selected"), mission("other", { updatedAt: 2 })]
+  const { page, errors } = await open(() => list, () => [])
+  try {
+    await selectMission(page, "Objective selected")
+    await page.locator("section.mission-detail").waitFor()
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await page.locator("form.mission-editor").waitFor()
+    assert.equal(await page.locator("section.mission-detail").isVisible(), false)
+    list = list.map(value => value.id === "selected" ? { ...value, status: "completed", updatedAt: 3, revision: 2 } : value)
+    await refresh(page)
+    // The hidden (still mounted) current-mission line keeps the unseen completion green.
+    const fieldMark = () => page.evaluate(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark"))
+    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "done")
+    await page.waitForTimeout(200)
+    assert.equal(await fieldMark(), "done", "a completion behind the form is not seen")
+    await page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "idle")
+    assert.equal(await page.locator("section.mission-detail").isVisible(), true, "seen once its detail shows again")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

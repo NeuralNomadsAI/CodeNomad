@@ -7,6 +7,10 @@
   background: var(--surface-secondary);
 }
 
+/* While creating, the form replaces the schedules, the selected detail, state messages and cleanup;
+   they stay mounted. The header, the form and alerts remain. */
+.mission-control[data-creating] > :not(.mission-control-header, .mission-editor, [role="alert"], .mission-control-stale) { display: none; }
+
 .mission-control-header {
   display: flex;
   align-items: center;
