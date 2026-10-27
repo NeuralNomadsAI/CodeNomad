@@ -331,6 +331,34 @@ test("phone list selection reveals the conversation; history buttons keep the se
   } finally { await context.close() }
 })
 
+test("narrowing never grows or brings back a panel, and widening retraces the same layouts", async () => {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } })
+  const { page, errors } = await open(context)
+  const layout = () => page.evaluate(() => ({
+    left: Math.round(document.querySelector(".session-sidebar-container")?.getBoundingClientRect().width ?? 0),
+    right: Math.round(document.querySelector(".session-right-panel")?.getBoundingClientRect().width ?? 0),
+  }))
+  const resize = async (width: number) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    return layout()
+  }
+  try {
+    await waitDrawers(page, "pinned", "pinned")
+    const widths = Array.from({ length: 51 }, (_, index) => 1400 - index * 20)
+    const narrowing = new Map<number, { left: number; right: number }>()
+    let previous = await layout()
+    for (const width of widths) {
+      const current = await resize(width)
+      assert.ok(current.left <= previous.left && current.right <= previous.right, `${width}px: ${JSON.stringify(previous)} -> ${JSON.stringify(current)}`)
+      narrowing.set(width, current)
+      previous = current
+    }
+    for (const width of [...widths].reverse()) assert.deepEqual(await resize(width), narrowing.get(width), `${width}px`)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
 for (const side of ["left", "right"] as const) test(`the ${side} panel closed for room hands keyboard focus to its toggle`, async () => {
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } })
   const { page, errors } = await open(context)

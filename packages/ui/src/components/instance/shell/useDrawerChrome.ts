@@ -6,7 +6,6 @@ import {
   onCleanup,
   onMount,
   type Accessor,
-  type Setter,
 } from "solid-js"
 
 import type { TranslateParams } from "../../../lib/i18n"
@@ -36,13 +35,15 @@ export interface UseDrawerChromeOptions {
 
 export interface DrawerChromeApi {
   leftPinned: Accessor<boolean>
+  /** Shown, docked or floating over the conversation. */
   leftOpen: Accessor<boolean>
   rightPinned: Accessor<boolean>
   rightOpen: Accessor<boolean>
   leftPanelWidth: Accessor<number>
   rightPanelWidth: Accessor<number>
-  setLeftOpen: Setter<boolean>
-  setRightOpen: Setter<boolean>
+  /** Opens the panel (docked when it has room, else floating) or closes it. */
+  setLeftOpen: (open: boolean) => void
+  setRightOpen: (open: boolean) => void
   leftDrawerState: Accessor<DrawerViewState>
   rightDrawerState: Accessor<DrawerViewState>
   closeLeft: () => void
@@ -61,17 +62,31 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     leftWidth: options.leftWidth(),
     rightWidth: options.rightWidth(),
   })
-  const initialLayout = resolveEmbeddedDrawers({ ...layoutInputs(), leftOpen: true, rightOpen: true })
+  const layoutFor = (left: boolean, right: boolean) => resolveEmbeddedDrawers({ ...layoutInputs(), leftOpen: left, rightOpen: right })
+  // A panel the user wants docks while the window has its room, in a fixed order: the
+  // session panel first, the other only beside it. Without room a wanted panel hides
+  // until the room returns, so the layout follows the window width alone (narrowing,
+  // widening, restoring a minimized window that briefly reports a tiny viewport). A
+  // panel the user opens without room floats over the conversation instead.
   const startsInPortrait = options.orientation?.() === "portrait"
-  const [leftOpen, setLeftOpen] = createSignal(startsInPortrait ? false : initialLayout.left)
-  const [rightOpen, setRightOpen] = createSignal(startsInPortrait ? false : initialLayout.right)
-  const embeddedDrawers = createMemo(() =>
-    resolveEmbeddedDrawers({ ...layoutInputs(), leftOpen: leftOpen(), rightOpen: rightOpen() }),
-  )
+  const [leftWanted, setLeftWanted] = createSignal(!startsInPortrait)
+  const [rightWanted, setRightWanted] = createSignal(!startsInPortrait)
+  const [leftFloating, setLeftFloating] = createSignal(false)
+  const [rightFloating, setRightFloating] = createSignal(false)
+  const embeddedDrawers = createMemo(() => layoutFor(leftWanted(), rightWanted()))
   const leftPinned = createMemo(() => embeddedDrawers().left)
   const rightPinned = createMemo(() => embeddedDrawers().right)
   const leftPanelWidth = createMemo(() => embeddedDrawers().leftWidth)
   const rightPanelWidth = createMemo(() => embeddedDrawers().rightWidth)
+  const leftOpen = createMemo(() => leftPinned() || leftFloating())
+  const rightOpen = createMemo(() => rightPinned() || rightFloating())
+  const panels = {
+    left: { wanted: leftWanted, setWanted: setLeftWanted, floating: leftFloating, setFloating: setLeftFloating, pinned: leftPinned, open: leftOpen, content: options.leftDrawerContentEl, toggle: options.leftToggleButtonEl },
+    right: { wanted: rightWanted, setWanted: setRightWanted, floating: rightFloating, setFloating: setRightFloating, pinned: rightPinned, open: rightOpen, content: options.rightDrawerContentEl, toggle: options.rightToggleButtonEl },
+  }
+  const otherSide = (side: DrawerSide): DrawerSide => side === "left" ? "right" : "left"
+  /** Whether the panel would dock if the user wanted it. */
+  const hasRoom = (side: DrawerSide) => side === "left" ? layoutFor(true, rightWanted()).left : layoutFor(leftWanted(), true).right
 
   const measureDrawerHost = () => options.measureDrawerHost?.()
 
@@ -92,120 +107,91 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
 
   const leftDrawerState = createMemo<DrawerViewState>(() => {
     if (leftPinned()) return "pinned"
-    return leftOpen() ? "floating-open" : "floating-closed"
+    return leftFloating() ? "floating-open" : "floating-closed"
   })
 
   const rightDrawerState = createMemo<DrawerViewState>(() => {
     if (rightPinned()) return "pinned"
-    return rightOpen() ? "floating-open" : "floating-closed"
+    return rightFloating() ? "floating-open" : "floating-closed"
   })
 
-  const closeLeft = () => {
-    blurIfInside(options.leftDrawerContentEl())
-    setLeftOpen(false)
-    focusTarget(options.leftToggleButtonEl())
-  }
-
-  const closeRight = () => {
-    blurIfInside(options.rightDrawerContentEl())
-    setRightOpen(false)
-    focusTarget(options.rightToggleButtonEl())
-  }
-
   // Floating drawers cover the whole shell, so opening one replaces the other.
-  const toggleLeft = () => {
-    if (leftOpen()) return closeLeft()
-    if (!rightPinned() && rightOpen()) setRightOpen(false)
-    setLeftOpen(true)
+  const open = (side: DrawerSide) => {
+    const panel = panels[side]
+    if (panel.open()) return
+    panels[otherSide(side)].setFloating(false)
+    if (hasRoom(side)) panel.setWanted(true)
+    else panel.setFloating(true)
     measureDrawerHost()
   }
 
-  const toggleRight = () => {
-    if (rightOpen()) return closeRight()
-    if (!leftPinned() && leftOpen()) setLeftOpen(false)
-    setRightOpen(true)
-    measureDrawerHost()
+  // Closing a docked panel stops wanting it; dismissing a floating one keeps the docked
+  // choice for when the room returns.
+  const close = (side: DrawerSide) => {
+    const panel = panels[side]
+    if (!panel.open()) return
+    blurIfInside(panel.content())
+    if (panel.pinned()) panel.setWanted(false)
+    panel.setFloating(false)
+    focusTarget(panel.toggle())
   }
 
   const closeFloatingDrawersIfAny = () => {
     let handled = false
-    if (!leftPinned() && leftOpen()) {
-      setLeftOpen(false)
-      blurIfInside(options.leftDrawerContentEl())
-      focusTarget(options.leftToggleButtonEl())
-      handled = true
-    }
-    if (!rightPinned() && rightOpen()) {
-      setRightOpen(false)
-      blurIfInside(options.rightDrawerContentEl())
-      focusTarget(options.rightToggleButtonEl())
+    for (const side of ["left", "right"] as const) {
+      const panel = panels[side]
+      if (panel.pinned() || !panel.floating()) continue
+      panel.setFloating(false)
+      blurIfInside(panel.content())
+      focusTarget(panel.toggle())
       handled = true
     }
     return handled
   }
 
-  // The drawer whose content last took focus, kept while that focus is lost only with
-  // the drawer's own DOM: a drawer that loses its docked room is re-rendered, focused
-  // control included, before its closing runs.
+  // A floating panel that gains its room docks.
+  for (const side of ["left", "right"] as const) {
+    const panel = panels[side]
+    createEffect(() => {
+      if (!panel.floating() || !hasRoom(side)) return
+      panel.setWanted(true)
+      panel.setFloating(false)
+    })
+  }
+
+  // The panel whose content last took focus, kept while that focus is lost only with the
+  // panel's own DOM: a panel the layout hides is removed, focused control included,
+  // before an effect can see it.
   let focusedDrawer: DrawerSide | null = null
-  const contentOf = (side: DrawerSide) => side === "left" ? options.leftDrawerContentEl() : options.rightDrawerContentEl()
 
-  // A drawer closed by the layout (rotation, lost room) hands focus to its toggle only if it held focus.
-  const closeForLayout = (side: DrawerSide, setOpen: Setter<boolean>, toggle: Accessor<HTMLElement | null>) => {
-    const content = contentOf(side)
-    const focused = typeof document !== "undefined" ? document.activeElement : null
-    const held = focused && focused !== document.body
-      ? !focused.isConnected || Boolean(content?.contains(focused))
-      : focusedDrawer === side
-    blurIfInside(content)
-    setOpen(false)
-    // Effect writes are batched, so resolve it on the next frame.
-    if (held) requestAnimationFrame(() => toggle()?.focus())
-  }
-
-  // A docked drawer that loses its room (the window narrows, or the other drawer
-  // opens) closes instead of floating over the conversation, and returns with the
-  // room unless it is opened meanwhile: restoring a minimized window, which briefly
-  // reports a tiny viewport, brings both back. A drawer opened without room still
-  // floats. Not deferred: a deferred `on` would not record the initial docked state.
-  const [leftAwaitsRoom, setLeftAwaitsRoom] = createSignal(false)
-  const [rightAwaitsRoom, setRightAwaitsRoom] = createSignal(false)
-  const closeWhenUndocked = (side: DrawerSide, pinned: Accessor<boolean>, isOpen: Accessor<boolean>, setOpen: Setter<boolean>, setAwaitsRoom: Setter<boolean>, toggle: Accessor<HTMLElement | null>) => {
-    createEffect(on(pinned, (docked, wasDocked) => {
-      if (!wasDocked || docked || !isOpen()) return
-      setAwaitsRoom(true)
-      closeForLayout(side, setOpen, toggle)
+  // A panel hidden by the layout (lost room, rotation) hands focus to its toggle only if
+  // it held focus. Not deferred: a deferred `on` would not record the initial state.
+  for (const side of ["left", "right"] as const) {
+    const panel = panels[side]
+    createEffect(on(panel.open, (shown, wasShown) => {
+      if (!wasShown || shown || typeof document === "undefined") return
+      const focused = document.activeElement
+      const held = focused && focused !== document.body
+        ? !focused.isConnected || Boolean(panel.content()?.contains(focused))
+        : focusedDrawer === side
+      // Effect writes are batched, so resolve it on the next frame.
+      if (held) requestAnimationFrame(() => panel.toggle()?.focus())
     }))
-    createEffect(() => { if (isOpen()) setAwaitsRoom(false) })
   }
-  closeWhenUndocked("left", leftPinned, leftOpen, setLeftOpen, setLeftAwaitsRoom, options.leftToggleButtonEl)
-  closeWhenUndocked("right", rightPinned, rightOpen, setRightOpen, setRightAwaitsRoom, options.rightToggleButtonEl)
-  // The session panel returns first; the other only if both then fit docked.
-  createEffect(() => {
-    const left = leftOpen() || (leftAwaitsRoom() && resolveEmbeddedDrawers({ ...layoutInputs(), leftOpen: true, rightOpen: rightOpen() }).left)
-    const right = rightOpen() || (rightAwaitsRoom() && resolveEmbeddedDrawers({ ...layoutInputs(), leftOpen: left, rightOpen: true }).right)
-    if (left && !leftOpen()) setLeftOpen(true)
-    if (right && !rightOpen()) setRightOpen(true)
-  })
 
   if (options.orientation) {
-    // Started in portrait: landscape keeps drawers closed until the user opens
-    // them, so a rotated phone never gains overlays it did not ask for.
-    const rotate = createOrientationDrawerMemory(startsInPortrait ? { left: false, right: false } : initialLayout)
-    const applyRotation = (side: DrawerSide, open: boolean, isOpen: boolean, setOpen: Setter<boolean>, toggle: Accessor<HTMLElement | null>) => {
-      if (open || !isOpen) return void setOpen(open)
-      closeForLayout(side, setOpen, toggle)
-    }
+    // Each orientation keeps the panels the user wants in it. Started in portrait:
+    // landscape keeps them closed until the user opens them, so a rotated phone never
+    // gains panels it did not ask for.
+    const rotate = createOrientationDrawerMemory({ left: !startsInPortrait, right: !startsInPortrait })
     // Not deferred: a deferred `on` would not record the initial orientation.
     createEffect(on(options.orientation, (next, previous) => {
       if (!next || !previous || next === previous) return
-      // The orientation's memory decides: a drawer closed for room was open in the
-      // outgoing orientation and no longer awaits room in the incoming one.
-      const target = rotate(previous, next, { left: leftOpen() || leftAwaitsRoom(), right: rightOpen() || rightAwaitsRoom() })
-      setLeftAwaitsRoom(false)
-      setRightAwaitsRoom(false)
-      applyRotation("left", target.left, leftOpen(), setLeftOpen, options.leftToggleButtonEl)
-      applyRotation("right", target.right, rightOpen(), setRightOpen, options.rightToggleButtonEl)
+      const target = rotate(previous, next, { left: leftWanted(), right: rightWanted() })
+      setLeftWanted(target.left)
+      setRightWanted(target.right)
+      setLeftFloating(false)
+      setRightFloating(false)
       measureDrawerHost()
     }))
   }
@@ -223,7 +209,7 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
 
     const trackFocus = (event: FocusEvent) => {
       const target = event.target as Node
-      focusedDrawer = contentOf("left")?.contains(target) ? "left" : contentOf("right")?.contains(target) ? "right" : null
+      focusedDrawer = panels.left.content()?.contains(target) ? "left" : panels.right.content()?.contains(target) ? "right" : null
     }
     // Focus the user moves to the page itself (a click on empty space) leaves the drawer;
     // focus lost with a removed control, or with the window, does not.
@@ -247,14 +233,14 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     rightOpen,
     leftPanelWidth,
     rightPanelWidth,
-    setLeftOpen,
-    setRightOpen,
+    setLeftOpen: (next) => next ? open("left") : close("left"),
+    setRightOpen: (next) => next ? open("right") : close("right"),
     leftDrawerState,
     rightDrawerState,
-    closeLeft,
-    closeRight,
+    closeLeft: () => close("left"),
+    closeRight: () => close("right"),
     closeFloatingDrawersIfAny,
-    toggleLeft,
-    toggleRight,
+    toggleLeft: () => leftOpen() ? close("left") : open("left"),
+    toggleRight: () => rightOpen() ? close("right") : open("right"),
   }
 }
