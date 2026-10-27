@@ -10,10 +10,13 @@ interface StreamStalenessWatchdogOptions {
 /**
  * Detects a silently dead stream: while connected, a periodic check fires
  * `onStale` once per episode once no `activity()` arrived for `thresholdMs`.
- * `probe()` is the same silence decision evaluated directly, for callers that
- * must act between interval ticks (resume/online fast paths); it never opens
- * an episode. `now`/`setTimer`/`clearTimer` are injectable so tests drive time
- * manually; by default the watchdog runs on real timers against the wall clock.
+ * Each connection attempt resets the silence baseline, so a replacement
+ * stream gets its own full threshold instead of inheriting the dead stream's
+ * deadline. `probe()` is the same silence decision evaluated directly, for
+ * callers that must act between interval ticks (resume/online fast paths); it
+ * never opens an episode. `now`/`setTimer`/`clearTimer` are injectable so
+ * tests drive time manually; by default the watchdog runs on real timers
+ * against the wall clock.
  */
 export function createStreamStalenessWatchdog(options: StreamStalenessWatchdogOptions = {}) {
   const thresholdMs = options.thresholdMs ?? 45_000
@@ -41,7 +44,9 @@ export function createStreamStalenessWatchdog(options: StreamStalenessWatchdogOp
       lastActivityAt = now()
       staleEpisode = false
     },
-    /** Gates evaluation on the connection; the interval exists only once ever connected. */
+    /** Gates evaluation on the connection; the interval exists only once ever
+     * connected, and each connection attempt resets the silence baseline so a
+     * replacement stream gets its own full threshold. */
     setConnected(value: boolean) {
       if (disposed) return
       if (!value) {
@@ -50,6 +55,7 @@ export function createStreamStalenessWatchdog(options: StreamStalenessWatchdogOp
         return
       }
       connected = true
+      lastActivityAt = now()
       if (timer === undefined) {
         timer = setTimer(check, checkIntervalMs)
         // Node embedders and test processes must exit naturally: the watchdog

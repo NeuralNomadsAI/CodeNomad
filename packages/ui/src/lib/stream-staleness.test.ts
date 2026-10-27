@@ -76,19 +76,44 @@ test("activity clears the episode and a later silence fires again", () => {
   assert.deepEqual(reasons, ["stream stale", "stream stale"])
 })
 
-test("disconnect stops decisions; reconnect resumes from the last activity", () => {
+test("disconnect stops decisions; reconnect starts a fresh silence deadline", () => {
   const { watchdog, reasons, advance } = harness(FAST)
   watchdog.setConnected(true)
   watchdog.activity()
   advance(FAST.thresholdMs)
-  assert.equal(watchdog.stale(), true)
+  assert.deepEqual(reasons, ["stream stale"])
   watchdog.setConnected(false)
   assert.equal(watchdog.stale(), false)
   advance(FAST.thresholdMs)
   assert.deepEqual(reasons, ["stream stale"], "no decision while disconnected")
   watchdog.setConnected(true)
   advance(FAST.checkIntervalMs)
-  assert.deepEqual(reasons, ["stream stale", "stream stale"], "resumes from the last activity, long since silent")
+  assert.deepEqual(reasons, ["stream stale"], "the reconnection resets the silence baseline")
+  advance(FAST.thresholdMs - FAST.checkIntervalMs)
+  assert.deepEqual(reasons, ["stream stale", "stream stale"], "a full threshold of silence measured from the reconnection fires again")
+  assert.equal(watchdog.stale(), true)
+})
+
+test("a replacement connection gets its own deadline, not the dead stream's", () => {
+  const { watchdog, reasons, advance, elapse, tick } = harness()
+  watchdog.setConnected(true)
+  watchdog.activity()
+  // The dying stream goes silent; the watchdog disconnects it and a
+  // replacement attempt begins at t30 without ever opening (no activity).
+  elapse(30_000)
+  watchdog.setConnected(false)
+  watchdog.setConnected(true)
+  // The replacement is still connecting 20 s later: it must not inherit the
+  // dead stream's already-elapsed silence, or an online/visible probe would
+  // close it before it can ever open.
+  elapse(20_000)
+  assert.equal(watchdog.probe(), false, "a replacement connecting for 20 s is not stale")
+  assert.deepEqual(reasons, [])
+  tick()
+  assert.equal(watchdog.stale(), false)
+  // Silence measured from the reconnection crosses the threshold at t75.
+  advance(26_000)
+  assert.deepEqual(reasons, ["stream stale"], "a full threshold of silence after the reconnection fires")
   assert.equal(watchdog.stale(), true)
 })
 
