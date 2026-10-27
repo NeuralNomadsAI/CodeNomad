@@ -24,9 +24,6 @@ class MessageStoreBus {
   private scrollSnapshotHandlers = new Set<
     (instanceId: string, sessionId: string, scope: string, snapshot: ScrollSnapshot) => void
   >()
-  private runningQuestionPartHandlers = new Set<
-    (instanceId: string, sessionId: string, messageId: string, partId: string, running: boolean) => void
-  >()
   private scrollSnapshotFlushHandlers = new Set<() => void>()
   private scrollSnapshotSeeds = new Map<string, MessageScrollSnapshotSeed[]>()
 
@@ -43,8 +40,6 @@ class MessageStoreBus {
         onMessagesRemoved: (id, sessionId, messageIds) => this.notifyMessagesRemoved(id, sessionId, messageIds),
         onScrollSnapshotChanged: (id, sessionId, scope, snapshot) =>
           this.notifyScrollSnapshotChanged(id, sessionId, scope, snapshot),
-        onRunningQuestionPart: (id, sessionId, messageId, partId, running) =>
-          this.notifyRunningQuestionPart(id, sessionId, messageId, partId, running),
       })
     this.stores.set(instanceId, resolved)
     const seeds = this.scrollSnapshotSeeds.get(instanceId)
@@ -112,32 +107,6 @@ class MessageStoreBus {
     this.scrollSnapshotHandlers.add(handler)
     return () => {
       this.scrollSnapshotHandlers.delete(handler)
-    }
-  }
-
-  /** Running `question` tool-part transitions observed by any instance store. */
-  onRunningQuestionPart(
-    handler: (instanceId: string, sessionId: string, messageId: string, partId: string, running: boolean) => void,
-  ): () => void {
-    this.runningQuestionPartHandlers.add(handler)
-    return () => {
-      this.runningQuestionPartHandlers.delete(handler)
-    }
-  }
-
-  private notifyRunningQuestionPart(
-    instanceId: string,
-    sessionId: string,
-    messageId: string,
-    partId: string,
-    running: boolean,
-  ) {
-    for (const handler of this.runningQuestionPartHandlers) {
-      try {
-        handler(instanceId, sessionId, messageId, partId, running)
-      } catch (error) {
-        log.error("Failed to run running-question part handler", error)
-      }
     }
   }
 
