@@ -15,7 +15,7 @@ import {
   type MissionRevisedEvent,
   type MissionSnapshot,
 } from "./model"
-import { buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
+import { COMPLETED_FINAL_ONLY, buildActorContext, buildAssignmentPrompt, getMissionRecipe, missionRecipeCatalog } from "./recipes"
 import { assignmentInput, reportInput } from "./inputs"
 import { reportNotificationID } from "./receipt-identity"
 import { isMissionTaskSession, missionCoordinatorSessionID, missionTaskSessionID } from "./session-identity"
@@ -91,6 +91,8 @@ export class MissionControl {
     isActive?: () => boolean
     authorizeNativeReport?: MissionNativeReportAuthorization
     humanGate?: NativeHumanAnswerGate
+    /** One-time missions: the coordinator finishes only as completed; a person decides any other end. */
+    completedFinalOnly?: boolean
   }) {
     this.journal = new MissionJournal(options.storage, options.project.id, options.project.canonical, options.now)
   }
@@ -330,7 +332,23 @@ export class MissionControl {
 
   recover(input: MissionRecoveryInput): Promise<{ mission: MissionMap; admitted: true }> {
     return this.mutate(async () => {
-      const mission = this.requireMission(await this.snapshot(), input.missionID)
+      let snapshot = await this.snapshot()
+      let mission = this.requireMission(snapshot, input.missionID)
+      // Resuming a failed mission reopens it first; the ordinary coordinator
+      // recovery then applies to the active mission's new revision.
+      if (input.target === "coordinator" && mission.status === "failed") {
+        if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before recovery", "revision-conflict")
+        if (!missionIsRunning({ ...mission, status: "active" }) || mission.control?.pending.length) {
+          throw new MissionControlError("Mission is not running", "mission-not-running")
+        }
+        await this.journal.append({ version: MISSION_SCHEMA_VERSION, id: this.eventID(mission.id, `reopened-${mission.revision}`),
+          type: "mission.reopened", missionID: mission.id, projectID: mission.projectID, expectedRevision: mission.revision,
+          createdAt: this.timestamp(snapshot) })
+        snapshot = await this.snapshot()
+        mission = this.requireMission(snapshot, mission.id)
+        await this.emitChanged(mission.id, snapshot)
+        input = { ...input, expectedRevision: mission.revision }
+      }
       const notification = missionRecoveryInput(mission, input)
       for (const sessionID of new Set([mission.coordinatorSessionId, notification.sessionID])) {
         const session = await this.ownedRootSession(sessionID)
@@ -983,6 +1001,7 @@ export class MissionControl {
       if (mission.status !== "active") return { disposition: "existing", mission }
       if (!missionIsRunning(mission)) throw new MissionControlError("Mission is not running", "mission-not-running")
       if (mission.control?.pending.length) throw new MissionControlError("Native mission control is pending", "control-pending")
+      if (this.options.completedFinalOnly && input.outcome !== "completed") throw new MissionControlError(COMPLETED_FINAL_ONLY, "invalid-final-outcome")
       if (input.outcome === "blocked") throw new MissionControlError("A final mission outcome must be completed or failed", "invalid-final-outcome")
       if (input.outcome === "completed" && mission.template === "wayfinder"
         && mission.tasks.some(task => task.role === "decision" && task.executionMode?.kind === "native" && task.status === "completed")) {
@@ -1008,9 +1027,11 @@ export class MissionControl {
       } catch (error) {
         throw new MissionControlError(error instanceof Error ? error.message : "Mission completion policy failed", "invalid-role-policy")
       }
+      // A resumed failure finishes again under a new, revision-bound identity.
+      const firstFinish = this.eventID(mission.id, "finished")
       await this.journal.append({
         version: MISSION_SCHEMA_VERSION,
-        id: this.eventID(mission.id, "finished"),
+        id: await this.journal.event(mission.id, firstFinish) ? this.eventID(mission.id, `finished-${mission.revision}`) : firstFinish,
         type: "mission.finished",
         missionID: mission.id,
         projectID: mission.projectID,
@@ -1165,7 +1186,8 @@ export class MissionControl {
     const mission = this.membership(snapshot, sessionID)
     if (!mission || mission.status !== "active") return undefined
     if (!missionIsRunning(mission)) return `Mission ${mission.id} is ${mission.runState}. Do not continue mission work or create a replacement mission. Wait for the user's Play action. Saved reports may still be recorded without waking the coordinator.`
-    return buildActorContext(mission, sessionID, { backendActions: this.backendActions }) || undefined
+    return buildActorContext(mission, sessionID, { backendActions: this.backendActions,
+      completedFinalOnly: this.options.completedFinalOnly }) || undefined
   }
 
   /** Whether coordinator actions can reach the backend (one-time missions with presence, not passages). */

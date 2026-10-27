@@ -3,7 +3,7 @@ import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
-import { scheduleEntryAttention, type MissionPickerEntry } from "./mission-picker-model"
+import { scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import type { MissionControlRetry, MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
@@ -251,9 +251,8 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
         </button></li>}</For></ol>
     </section></Show>
   const entries = createMemo((): MissionPickerEntry[] => (snapshot()?.schedules ?? []).map(schedule => {
-    const attention = scheduleEntryAttention(schedule)
     const state = t(`missions.recurrence.state.${schedule.state}`), next = text.next(schedule)
-    return { key: `schedule:${schedule.id}`, title: schedule.title, attention, mark: attention ?? schedule.state,
+    return { key: `schedule:${schedule.id}`, title: schedule.title, mark: scheduleMark(schedule),
       status: [t("missionsPanel.dailyBadge"), state, next, text.every(schedule)].filter(Boolean).join(" · ") }
   }))
   const selectedId = () => snapshot()?.schedules.some(schedule => schedule.id === props.selectedSchedule) ? props.selectedSchedule : undefined

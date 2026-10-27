@@ -44,6 +44,11 @@ export interface AuthorityOperationResult {
   grant: AuthorityGrant | null
 }
 export type AuthorityEffectIntent = Exclude<AuthorityIntent, { method: "adopt" | "revoke" }>
+
+/** Coordinator recovery also resumes a failed mission, which it reopens first. */
+function recoverableStatus(body: AuthorityIntent, status: AuthorityMissionObservation["status"]): boolean {
+  return status === "active" || body.method === "recover" && body.payload.target === "coordinator" && status === "failed"
+}
 export interface AuthorityEffectAdapter {
   /** Restrictive originating-request lease. Never supplies signature/grant trust;
    * canonical HUMAN RPCs pin it before their first await. */
@@ -239,7 +244,7 @@ export class NativeMissionAuthority {
     if (body.method !== "create") {
       if (!observed) rejectAuthority("authorization-blocked")
       this.assertObservation(body, observed)
-      if (body.method === "recover" && (observed.status !== "active" || observed.runState !== "running" || observed.controlPending)) rejectAuthority("authorization-blocked")
+      if (body.method === "recover" && (!recoverableStatus(body, observed.status) || observed.runState !== "running" || observed.controlPending)) rejectAuthority("authorization-blocked")
       if (body.method === "lifecycle" && body.payload.action === "start" && observed.status !== "active") rejectAuthority("authorization-blocked")
     }
     const signers = await this.readSigners()
@@ -355,7 +360,7 @@ export class NativeMissionAuthority {
       if (grant) this.assertSameGrant(body, grant, false)
       if (body.method === "recover" || body.method === "lifecycle" && body.payload.action === "start") {
         this.assertCurrentGrant(body, doc, body.method === "recover")
-        if (terminal || mission.status !== "active" || mission.controlPending) rejectAuthority("authorization-blocked")
+        if (terminal || !recoverableStatus(body, mission.status) || mission.controlPending) rejectAuthority("authorization-blocked")
       }
     }
     const pending = doc.receipts.some(item => item.intent.missionID === body.missionID && !item.completion)

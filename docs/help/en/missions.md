@@ -45,6 +45,21 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 The graph includes completed and retired work. Retiring a task does not itself stop its conversation. In a one-time mission, the coordinator can separately stop the conversations of a retired task it launched as a native subagent, without touching other tasks. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
 
+### Colours and interrupted missions {#status-colours}
+
+Mission marks, task icons and the list's chevron use the session list's colours: colour shows only what needs you now.
+
+| Colour | Meaning |
+| --- | --- |
+| Red | An answer is expected from you; it is listed under **Needs you**. |
+| Yellow, pulsing | Work is running. |
+| Orange | The mission is paused, or interrupted, with an action to continue it. |
+| Green | A completed mission you have not opened yet in this window; it turns neutral once you select it. |
+
+Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons. While the list is collapsed, its chevron takes the most urgent colour among the other missions.
+
+A mission is **Interrupted** when its coordinator stopped without concluding while nothing else runs. A mission shown as **Failed** can also be resumed. In both cases the first toolbar button becomes **Recover interrupted mission**: it asks the coordinator to reassess from the saved plan and results, and first reopens a failed mission. A coordinator does not end a one-time mission as failed: when it cannot continue on its own, it asks you a question under **Needs you**. Only you stop a mission.
+
 ### Briefings and update requests {#briefings}
 
 The coordinator is instructed to publish a project briefing after its initial plan, after task settlements, when waiting for a human and before the final report. This is an authored assessment, not a live activity counter or guaranteed periodic heartbeat. A notice identifies when the map has changed since the briefing.

@@ -10,13 +10,15 @@ import { instances, getPermissionQueue } from "../../../../../stores/instances"
 import { getFormQueue } from "../../../../../stores/forms"
 import { focusInterruption } from "../../../../../stores/interruption-navigation"
 import { getSessionPreview, showSessionChatFor } from "../../../../../stores/session-previews"
-import { forgetMissionView, missionProjectView, updateMissionProjectView, type MissionReaderTarget } from "../../../../../stores/mission-view-state"
+import { forgetMissionView, markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, updateMissionProjectView,
+  type MissionReaderTarget } from "../../../../../stores/mission-view-state"
 import { MissionEditor, type MissionEditorAction } from "../../../../mission-editor"
 import { missionEditor, openMissionEditor, settleMissionEditor } from "../../../../../stores/mission-editor-state"
 import { MissionTracking } from "../../../../mission-tracking"
 import { missionIncludesSession, selectMissionAttention } from "../../../../mission-attention-model"
 import { MissionPicker } from "../../../../mission-picker"
-import { missionEntryAttention, type MissionPickerEntry } from "../../../../mission-picker-model"
+import { missionMark, type MissionPickerEntry } from "../../../../mission-picker-model"
+import { createDocumentAttention } from "../../../../session/session-idle-attention"
 import { MissionSelectedActions } from "../../../../mission-selected-actions"
 import type { MissionControlRetry } from "../../../../mission-lifecycle-controls"
 import { MISSION_ROW_TITLE_MAX, missionDisplayTitle, missionRelativeTime } from "../../../../../lib/mission-display"
@@ -249,18 +251,30 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const requests = selectMissionAttention({ actors: value.actors, forms: getFormQueue(props.instanceId),
       permissions: getPermissionQueue(props.instanceId), tasks: value.tasks, family: observed?.family })
       .filter(item => item.open && item.sessionId && item.kind !== "blocked").length
-    const attention = missionEntryAttention(value, requests, observed?.actors.map(actor => actor.state))
-    const resting = value.status !== "active" ? value.status : value.runState === "prepared" || value.runState === "paused" ? "paused" : "running"
+    const mark = missionMark(value, { openRequests: requests, actorStates: observed?.actors.map(actor => actor.state),
+      coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
+      seen: missionFinishedSeen(scope(), value.id) })
     const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
-      ? `missions.control.run.${value.runState}` : value.status === "active" ? "missionsPanel.state.inProgress" : statusKey(value.status))
-    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), attention, mark: attention ?? resting,
-      status: [stateText, attention === "permission" ? props.t("missionsPanel.task.input") : "",
+      ? `missions.control.run.${value.runState}` : value.status === "active" && mark === "interrupted" ? "missionsPanel.state.interrupted"
+        : value.status === "active" ? "missionsPanel.state.inProgress" : statusKey(value.status))
+    return { key: `mission:${value.id}`, title: missionDisplayTitle(value, MISSION_ROW_TITLE_MAX), mark,
+      status: [stateText, mark === "permission" ? props.t("missionsPanel.task.input") : "",
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
   const pickerEntries = () => [...missionEntries(), ...recurrence.entries()]
   const selectedKey = () => selectedSchedule() ? `schedule:${selectedSchedule()}` : mission() ? `mission:${mission()!.id}` : undefined
   const selectedOneTime = () => selectedSchedule() ? undefined : mission()
   const selectedOneTimeId = () => selectedOneTime()?.id
+  // Like an idle session, a completed Mission stays green until this window shows it.
+  const documentAttention = createDocumentAttention()
+  createEffect(() => {
+    if (state().status !== "ready") return
+    const completed = missions().filter(value => value.status === "completed").map(value => value.id)
+    const shown = (props.isActive?.() ?? true) && documentAttention() && selectedOneTime()?.status === "completed"
+      ? [selectedOneTime()!.id] : []
+    const viewScope = scope()
+    untrack(() => markMissionsFinishedSeen(viewScope, shown, completed))
+  })
   const listExpanded = () => missionProjectView(scope()).listExpanded === true
   const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
   /** Read-only reconciliation first; only a control still unconfirmed by that
@@ -348,6 +362,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             coordinatorActivity={state().activity?.missions.find(item => item.missionId === id)?.actors
               .find(actor => actor.sessionId === selected().coordinatorSessionId)?.state}
             onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
+            interrupted={missionEntries().find(entry => entry.key === `mission:${id}`)?.mark === "interrupted"}
             onAdmitted={refreshVisible} registerRetry={registerRetry}
             editDisabled={Boolean(editor()) || selected().status !== "active"} deleteDisabled={Boolean(editor())}
             onEdit={() => openEditor({ kind: "edit", mission: selected() })}

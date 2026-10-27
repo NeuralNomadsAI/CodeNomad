@@ -45,6 +45,21 @@ El guion orienta la coordinación; no elude los permisos nativos ni garantiza el
 
 El gráfico incluye trabajo completado y retirado. Retirar una tarea no detiene por sí solo su conversación. En una misión puntual, el coordinador puede detener por separado las conversaciones de una tarea retirada que lanzó como subagente nativo, sin tocar las demás tareas. **En curso** es el estado del ciclo de vida de la misión, no demuestra que su coordinador esté ejecutándose. El texto completo pertenece al lector central, no a la lista de tareas del panel; **Detalles técnicos** pliega los identificadores y la información de ejecución solicitada.
 
+### Colores y misiones interrumpidas {#status-colours}
+
+Las marcas de las misiones, los iconos de las tareas y el chevrón de la lista usan los colores de la lista de sesiones: el color solo muestra lo que te necesita ahora.
+
+| Color | Significado |
+| --- | --- |
+| Rojo | Se espera una respuesta tuya; aparece en **Te necesita**. |
+| Amarillo, pulsante | Hay trabajo en curso. |
+| Naranja | La misión está en pausa o interrumpida, con una acción para continuarla. |
+| Verde | Una misión terminada que aún no has abierto en esta ventana; vuelve a ser neutral en cuanto la seleccionas. |
+
+Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos. Con la lista contraída, su chevrón toma el color más urgente entre las demás misiones.
+
+Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir y no hay nada más en marcha. Una misión mostrada como **Fallida** también puede reanudarse. En ambos casos, el primer botón de la barra de herramientas pasa a ser **Recuperar la misión interrumpida**: pide al coordinador que reevalúe a partir del plan y los resultados guardados y, antes, reabre una misión fallida. Un coordinador no termina una misión puntual como fallida: cuando no puede seguir solo, te hace una pregunta en **Te necesita**. Solo tú detienes una misión.
+
 ### Informes de situación y solicitudes de actualización {#briefings}
 
 El coordinador recibe instrucciones de publicar un informe de situación del proyecto tras su plan inicial, tras resolver tareas, al esperar a una persona y antes del informe final. Es una evaluación redactada, no un contador de actividad en vivo ni una señal periódica garantizada. Un aviso identifica cuándo el mapa ha cambiado desde ese informe.

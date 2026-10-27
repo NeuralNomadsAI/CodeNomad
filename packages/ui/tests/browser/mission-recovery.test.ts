@@ -133,10 +133,13 @@ test("lifecycle, native waits and unadmitted or resolved tasks suppress recovery
       assert.equal(await page.getByRole("button").count(), 0)
     }
     await call(page, "patch", { runState: "running" })
-    for (const status of ["completed", "failed", "stopped"]) {
+    for (const status of ["completed", "stopped"]) {
       await call(page, "patch", { status })
       assert.equal(await page.getByRole("button").count(), 0)
     }
+    await call(page, "patch", { status: "failed" })
+    assert.equal(await page.locator('[data-target="coordinator"] button').count(), 1, "a failed mission resumes through coordinator recovery")
+    assert.equal(await page.locator('[data-target="report"] button').count(), 0)
     await call(page, "patch", { status: "active", control: { pending: ["ses_coordinator"] } })
     assert.equal(await page.getByRole("button").count(), 0)
     await call(page, "patch", { control: null })

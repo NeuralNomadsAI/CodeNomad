@@ -83,6 +83,45 @@ export function setMissionDisclosureOpen(missionId: string, id: string, open: bo
   setVersion(v => v + 1)
 }
 
+// Completed Missions this window has shown, per project (compact keys), under their
+// own key and signal: recording one must not wake readers of the project view.
+// Absent until the first list read, which counts the missions already completed as seen.
+const [seenVersion, setSeenVersion] = createSignal(0)
+const finishedSeen = new Map<string, readonly string[] | undefined>()
+function seenKey(scope: string) { return `mission-seen-${key(scope)}` }
+function readFinishedSeen(scope: string): readonly string[] | undefined {
+  seenVersion()
+  const storageKey = seenKey(scope)
+  if (!finishedSeen.has(storageKey)) {
+    let value: string[] | undefined
+    try {
+      const stored = JSON.parse(readClientLayoutValue(storageKey) ?? "null")
+      if (Array.isArray(stored) && stored.every(id => typeof id === "string" && /^[a-zA-Z0-9_-]{11}$/.test(id))) value = stored
+    } catch { /* Ignore malformed saved layout. */ }
+    finishedSeen.set(storageKey, value)
+  }
+  return finishedSeen.get(storageKey)
+}
+
+/** Whether this window has shown the completed Mission; true before the first list read. */
+export function missionFinishedSeen(scope: string, missionId: string): boolean {
+  const seen = readFinishedSeen(scope)
+  return !seen || seen.includes(key(missionId))
+}
+
+/** Records completed Missions as seen, keeping only those still listed. The first
+ * call (no record yet) also takes every listed completed Mission as seen. */
+export function markMissionsFinishedSeen(scope: string, seenIds: readonly string[], completedIds: readonly string[]): void {
+  const previous = readFinishedSeen(scope)
+  const listed = new Set(completedIds.map(key))
+  const next = new Set((previous ?? [...listed]).filter(id => listed.has(id)))
+  for (const id of seenIds) if (listed.has(key(id))) next.add(key(id))
+  if (previous && previous.length === next.size && previous.every(id => next.has(id))) return
+  finishedSeen.set(seenKey(scope), [...next])
+  writeClientLayoutValue(seenKey(scope), JSON.stringify([...next]))
+  setSeenVersion(value => value + 1)
+}
+
 export function forgetMissionView(scope: string, missionId: string): void {
   disclosures.delete(missionKey(missionId))
   removeClientLayoutValue(missionKey(missionId))

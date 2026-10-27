@@ -127,7 +127,8 @@ test("existing mobile project keeps a prose-free detail and exact current result
     for (const text of ["Le démarrage Android attend la quantité de mémoire requise.", "Ancien obstacle : Xcode absent."])
       assert.equal(await page.locator(".mission-control").getByText(text, { exact: true }).filter({ visible: true }).count(), 0)
     assert.equal(await page.locator(".mission-needs").count(), 0)
-    assert.match(await missionEntryStatus(page, TITLE), /^En cours · /)
+    // Its coordinator is observed idle without its report while nothing else runs.
+    assert.match(await missionEntryStatus(page, TITLE), /^Interrompue · /)
     assert.equal(await page.locator(".mission-picker").getByText("Active", { exact: true }).count(), 0)
     assert.deepEqual(writes, [])
     assert.deepEqual(errors, [])

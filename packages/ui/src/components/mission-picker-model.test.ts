@@ -1,38 +1,51 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { filterMissionPickerEntries, missionEntryAttention, missionPickerAttention, missionPickerAttentionLabel,
-  scheduleEntryAttention, type MissionPickerEntry } from "./mission-picker-model"
+import { filterMissionPickerEntries, missionMark, missionPickerAttention, missionPickerAttentionLabel,
+  scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 
-const entry = (key: string, attention?: MissionPickerEntry["attention"], title = key): MissionPickerEntry =>
-  ({ key, title, status: "", mark: attention ?? "running", attention })
+const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = key): MissionPickerEntry => ({ key, title, status: "", mark })
 
-test("chevron attention ignores the selected entry and keeps the most urgent state", () => {
-  const entries = [entry("mission:a", "permission"), entry("mission:b", "working"), entry("schedule:c", "failed"), entry("mission:d", "working")]
-  assert.deepEqual(missionPickerAttention(entries, "mission:a"), { kind: "failed", counts: { permission: 0, failed: 1, working: 2 } })
+test("chevron attention ignores the selected entry, paused and idle entries, and keeps the most urgent state", () => {
+  const entries = [entry("mission:a", "permission"), entry("mission:b", "working"), entry("schedule:c", "interrupted"),
+    entry("mission:d", "working"), entry("mission:e", "done"), entry("mission:f", "paused")]
+  assert.deepEqual(missionPickerAttention(entries, "mission:a"),
+    { kind: "interrupted", counts: { permission: 0, interrupted: 1, working: 2, done: 1 } })
   assert.equal(missionPickerAttention(entries).kind, "permission")
-  assert.equal(missionPickerAttention([entry("mission:a")]).kind, undefined)
+  assert.equal(missionPickerAttention([entry("mission:a"), entry("mission:b", "paused")]).kind, undefined)
 })
 
 test("attention label counts each state in urgency order", () => {
   const t = (key: string, params?: Record<string, string>) => `${key}:${params?.count}`
-  assert.equal(missionPickerAttentionLabel(t, { permission: 1, failed: 0, working: 2 }),
-    "missionsPanel.attention.permission.one:1, missionsPanel.attention.working.other:2")
+  assert.equal(missionPickerAttentionLabel(t, { permission: 1, interrupted: 0, working: 2, done: 1 }),
+    "missionsPanel.attention.permission.one:1, missionsPanel.attention.working.other:2, missionsPanel.attention.done.one:1")
 })
 
-test("mission attention: requests, then failure, then observed work of a running mission", () => {
-  assert.equal(missionEntryAttention({ status: "active" }, 1), "permission")
-  assert.equal(missionEntryAttention({ status: "active" }, 0, ["form"]), "permission")
-  assert.equal(missionEntryAttention({ status: "failed" }, 0), "failed")
-  assert.equal(missionEntryAttention({ status: "active", runState: "running" }, 0, ["idle-without-report", "queued"]), "working")
-  assert.equal(missionEntryAttention({ status: "active", runState: "paused" }, 0, ["running"]), undefined)
-  assert.equal(missionEntryAttention({ status: "active" }, 0, ["unknown"]), undefined)
+test("a mission's mark: an answer first, then resumable stops, observed work, and unseen completion", () => {
+  const unseen = { openRequests: 0, seen: false }, seen = { openRequests: 0, seen: true }
+  assert.equal(missionMark({ status: "active" }, { ...seen, openRequests: 1 }), "permission")
+  assert.equal(missionMark({ status: "failed" }, { ...seen, actorStates: ["form"] }), "permission")
+  assert.equal(missionMark({ status: "failed" }, seen), "interrupted", "a failed mission can be resumed")
+  assert.equal(missionMark({ status: "failed", runState: "stopped" }, seen), "idle", "unless the user stopped it since")
+  assert.equal(missionMark({ status: "completed" }, unseen), "done")
+  assert.equal(missionMark({ status: "completed" }, seen), "idle")
+  assert.equal(missionMark({ status: "stopped" }, unseen), "idle")
+  assert.equal(missionMark({ status: "active", runState: "paused" }, { ...seen, actorStates: ["running"] }), "paused")
+  assert.equal(missionMark({ status: "active", runState: "prepared" }, seen), "idle")
+  assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["idle-without-report", "queued"],
+    coordinatorState: "idle-without-report" }), "working", "running work outranks the idle coordinator")
+  assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["idle-without-report"], coordinatorState: "idle-without-report" }), "interrupted")
+  assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["unknown"], coordinatorState: "unknown" }), "idle")
 })
 
-test("schedule attention follows the live passage, otherwise a failed latest result", () => {
-  assert.equal(scheduleEntryAttention({ pending: { status: "running" }, latestResult: { outcome: "failed" } }), "working")
-  assert.equal(scheduleEntryAttention({ pending: { status: "uncertain" }, latestResult: null }), undefined)
-  assert.equal(scheduleEntryAttention({ pending: null, latestResult: { outcome: "failed" } }), "failed")
-  assert.equal(scheduleEntryAttention({ pending: null, latestResult: { outcome: "completed" } }), undefined)
+test("schedule mark follows the live passage, then an interruption or a failed latest run", () => {
+  const schedule = (state: string, pending: { status: string } | null, outcome?: string) =>
+    ({ state, pending, latestResult: outcome ? { outcome } : null })
+  assert.equal(scheduleMark(schedule("running", { status: "running" }, "failed")), "working")
+  assert.equal(scheduleMark(schedule("running", { status: "uncertain" })), "idle")
+  assert.equal(scheduleMark(schedule("running", null, "failed")), "interrupted")
+  assert.equal(scheduleMark(schedule("interrupted", null, "completed")), "interrupted")
+  assert.equal(scheduleMark(schedule("paused", null, "completed")), "paused")
+  assert.equal(scheduleMark(schedule("running", null, "completed")), "idle")
 })
 
 test("filter matches titles case-insensitively", () => {

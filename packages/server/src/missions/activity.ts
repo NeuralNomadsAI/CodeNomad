@@ -6,6 +6,7 @@ import { MAX_MISSION_DESCENDANTS, observeActiveDescendant, readNativeMissionFami
 import { projectMissionFamily } from "./mission-family-projection"
 import { runningMissionShellRelation } from "./native-shell-correlation"
 import { missionTaskExecutionEvidence } from "./execution-evidence"
+import { missionIsRunning } from "./lifecycle-model"
 
 const MAX_PROJECTED_ACTORS = MISSION_MAX_ACTORS * MISSION_MAX_MISSIONS
 const MAX_FAMILY_READS = 2 * (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
@@ -73,6 +74,10 @@ export async function projectMissionActivity(input: {
   const unsettledCalls = new Set<string>()
   for (const { mission, actor } of occurrences) {
     const key = `${mission.id}\0${actor.sessionId}`
+    // A running mission's coordinator still owes its final report, unless a saved
+    // report's notification is still being delivered to wake it.
+    if (actor.sessionId === mission.coordinatorSessionId && missionIsRunning(mission)
+      && !mission.reports.some(report => report.notificationStatus === "pending")) missingReports.add(key)
     for (const task of mission.tasks.filter(task => task.actorSessionId === actor.sessionId)) {
       const evidence = missionTaskExecutionEvidence(task)
       if (evidence.missingReport) missingReports.add(key)
