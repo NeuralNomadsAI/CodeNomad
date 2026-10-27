@@ -47,6 +47,8 @@ export const sessionMessages = {
   "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "סשן חדש",
   "sessionList.actions.newSession.title": "סשן חדש",
+  "sessionList.actions.newSession.failedTitle": "לא ניתן ליצור סשן",
+  "sessionList.actions.newSession.failedMessage": "יצירת הסשן נכשלה. בדקו את החיבור ונסו שוב.",
   "sessionList.actions.copyId.ariaLabel": "העתק מזהה סשן",
   "sessionList.actions.copyId.title": "העתק מזהה סשן",
   "sessionList.actions.reload.ariaLabel": "טען מחדש סשן",

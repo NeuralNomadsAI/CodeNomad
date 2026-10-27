@@ -6,15 +6,18 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { locationRequestOptions, readLocationRef } from "../../opencode/compatibility/location"
 import { PRUNING_RPC_ID } from "../../opencode/session-pruning/contract"
 import { historyQuerySchema, historyNativeResultSchema, pruneBatchSchema, pruneBatchResultSchema } from "../../opencode/session-pruning/history-contract"
+import { historyDirectories, ownedHistorySessions } from "./session-history-scope"
+import { registerRankedHistoryRoute } from "./session-history-ranked"
 
 export interface HistoryRouteDeps {
   workspaceManager: Pick<WorkspaceManager, "getSharedServiceClient" | "ownsLocation" | "getWorktreeIdentityForPath" | "getServiceLocation" | "getWorktrees" | "desktopPluginsReady">
+    & Partial<Pick<WorkspaceManager, "getSharedServiceConnection">>
   worktreeDeletionFence: WorktreeDeletionFence
 }
 const cursorSchema = z.object({ directory: z.string().max(4096), page: z.string().max(4096).optional(), binding: z.string().length(64) }).strict()
-const normalized = (directory: string) => (/^[A-Za-z]:[\\/]|^\\\\/.test(directory) ? directory.replaceAll("\\", "/") : directory).replace(/\/$/, "")
 
 export function registerSessionHistoryRoutes(app: FastifyInstance, deps: HistoryRouteDeps) {
+  registerRankedHistoryRoute(app, deps)
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/session-history/query", { bodyLimit: 16_384 }, async (request, reply) => {
     const parsed = historyQuerySchema.safeParse(request.body)
     if (!parsed.success) return reply.code(400).send({ error: "Invalid history query" })
@@ -29,9 +32,7 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
     if (session && !await manager.ownsLocation(request.params.id, session.location, client)) return reply.code(403).send({ error: "Session does not belong to workspace" })
     // Only native/validated local worktrees supply query locations. A cursor
     // selects from this freshly authorized inventory; it never grants authority.
-    const directories = session ? [session.location.directory] : Array.from(new Set([
-      root.directory, ...(await manager.getWorktrees(request.params.id, "validated")).worktrees.map(w => w.serviceDirectory).filter((d): d is string => Boolean(d)),
-    ])).sort().filter((directory, _i, all) => !all.some(other => other !== directory && normalized(directory).startsWith(`${normalized(other)}/`)))
+    const directories = session ? [session.location.directory] : await historyDirectories(manager, request.params.id, root.directory)
     const binding = createHash("sha256").update(JSON.stringify([request.params.id, input.sessionID, input.query, input.includeTechnical, input.purpose, directories])).digest("hex")
     let cursor: z.infer<typeof cursorSchema> | undefined
     try {
@@ -55,17 +56,9 @@ export function registerSessionHistoryRoutes(app: FastifyInstance, deps: History
       // Validate every contributing directory against local Git ownership, not
       // just its lexical ancestor or native project ID. Never expose provenance
       // or counts/excerpts from an independent nested clone to the browser.
-      const owned = [] as typeof output.sessions
       // Ownership is location-scoped. Reuse it only within this request, never
       // across inventory changes or independent clones sharing a project ID.
-      const locationKey = (value: { directory: string; workspaceID?: string }) => JSON.stringify([value.directory, value.workspaceID])
-      const ownership = new Map<string, boolean>()
-      for (const candidate of output.sessions) {
-        if (input.sessionID && candidate.sessionID !== input.sessionID) throw new Error("Invalid history owner")
-        const key = locationKey(candidate)
-        if (!ownership.has(key)) ownership.set(key, await manager.ownsLocation(request.params.id, readLocationRef(candidate), client))
-        if (ownership.get(key)) owned.push(candidate)
-      }
+      const owned = await ownedHistorySessions(manager, request.params.id, client, output.sessions, input.sessionID)
       const ownedIDs = new Set(owned.map(candidate => candidate.sessionID))
       const next = output.cursor ? { directory, page: output.cursor, binding }
         : directories[index + 1] ? { directory: directories[index + 1], binding } : undefined

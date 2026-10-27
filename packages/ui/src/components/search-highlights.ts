@@ -1,6 +1,7 @@
 import type { SessionSearchMatch } from "../lib/session-search"
 import { collectSearchRanges, revealSearchRange, type AlignInTranscript, type SearchRange } from "./search-highlight-ranges"
 import { paintSearchMarks } from "./search-highlight-marks"
+import type { SearchHighlightQuery } from "../lib/ranked-search"
 
 /** One navigation's reveal of its active occurrence; the first row to reveal it claims it. */
 export interface SearchRevealRequest { matchId: string; claimed: boolean }
@@ -112,9 +113,9 @@ export function clearSearchHighlights(root: HTMLElement): void {
  * `reveal` scrolls the active occurrence into view once, through `align` for
  * the transcript itself.
  */
-export function applySearchHighlights(root: HTMLElement, query: string, active?: SessionSearchMatch | null, reveal?: SearchRevealRequest, align?: AlignInTranscript): void {
+export function applySearchHighlights(root: HTMLElement, query: SearchHighlightQuery, active?: SessionSearchMatch | null, reveal?: SearchRevealRequest, align?: AlignInTranscript): void {
   clearSearchHighlights(root)
-  if (!query.trim()) return
+  if (typeof query === "string" ? !query.trim() : !query.length) return
   const view = root.ownerDocument.defaultView!
   const owner: Owner = { ranges: [], marks: [], documentHighlights: registry(root.ownerDocument) }
   owners.set(root, owner)

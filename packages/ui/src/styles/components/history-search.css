@@ -102,6 +102,11 @@
   font-size: 0.75rem;
 }
 
+.history-ranked-note {
+  padding-block: var(--space-xs);
+  color: var(--text-secondary);
+}
+
 .history-message-preview {
   max-height: 16rem;
   overflow: auto;

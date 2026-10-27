@@ -47,6 +47,8 @@ export const sessionMessages = {
   "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "Nouvelle session",
   "sessionList.actions.newSession.title": "Nouvelle session",
+  "sessionList.actions.newSession.failedTitle": "Impossible de créer la session",
+  "sessionList.actions.newSession.failedMessage": "La création de la session a échoué. Vérifiez votre connexion puis réessayez.",
   "sessionList.actions.copyId.ariaLabel": "Copier l'ID de session",
   "sessionList.actions.copyId.title": "Copier l'ID de session",
   "sessionList.actions.reload.ariaLabel": "Recharger la session",

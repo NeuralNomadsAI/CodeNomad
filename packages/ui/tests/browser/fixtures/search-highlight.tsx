@@ -53,7 +53,7 @@ for (const [index, id] of ids.entries()) {
   store.upsertMessage({ id, sessionId, role: workload === "mixed" ? "assistant" : "user", status: "complete", createdAt: index + 1, parts })
 }
 await applyUiSettings({ locale: "en", toolCallExpansionDefaults: { preset: "everything" } })
-const [query, setQuery] = createSignal("")
+const [query, setQuery] = createSignal<string | readonly string[]>("")
 const [active, setActive] = createSignal<SessionSearchMatch | null>(null)
 // Like MessageSection, each newly selected match requests one reveal.
 const [reveal, setReveal] = createSignal<SearchRevealRequest | null>(null)
@@ -104,6 +104,7 @@ async function change(value: string, occurrence: number | null = null, id = ids[
 }
 ;(window as any).highlightFixture = {
   mode, workload, ids, change, snapshot, settle,
+  ranked: async (terms: string[]) => { setActive(null); setReveal(null); setQuery(terms); await settle() },
   theme: async (mode: "light" | "dark") => { await setThemePreference(mode); await settle() },
   visibility: async (value: boolean) => { setVisible(value); await settle() },
   rows: async (count: number) => { setVisibleIds(ids.slice(0, count)); await settle() },

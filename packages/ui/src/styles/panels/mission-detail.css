@@ -7,7 +7,7 @@
 .mission-needs-item { display: flex; align-items: center; gap: var(--space-xs); min-width: 0; min-height: var(--touch-target-size-compact); }
 .mission-needs-icon { flex: 0 0 auto; color: var(--status-warning); }
 .mission-needs-title { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.mission-needs-answer { flex: 0 0 auto; font-size: var(--font-size-xs); border: 1px solid var(--border-base); }
+.mission-needs-answer { flex: 0 0 auto; }
 
 .mission-reader-open { gap: var(--space-xs); margin-inline-start: auto; }
 

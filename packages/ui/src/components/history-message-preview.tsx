@@ -1,19 +1,23 @@
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { formatRelativeTime } from "../lib/recent-folder-display"
 import { openHistoryMatchSession } from "../stores/history-search-sessions"
 import { getRootClient } from "../stores/opencode-client"
 import { getOpenCodeInstanceGeneration, getOpenCodeMutationRevision } from "../stores/opencode-data"
-import { HistoryWorktreeBadge } from "./history-search-results"
+import { HistorySearchExcerpt, HistoryWorktreeBadge } from "./history-search-results"
+import type { SessionSearchMatch } from "../lib/session-search"
+import { rankedSearchTerms } from "../lib/ranked-search"
 
 // An explicit result click reads only that native message. Keep it outside the
 // transcript store so opening historical results cannot displace its window.
-export default function HistoryMessagePreview(props: { instanceId: string; sessionId: string; messageId: string }) {
+export default function HistoryMessagePreview(props: { instanceId: string; sessionId: string; messageId: string;
+  highlight?: { query: string; match: SessionSearchMatch } }) {
   const { t, locale } = useI18n()
   const [title, setTitle] = createSignal("")
   const [directory, setDirectory] = createSignal<string>()
   const [created, setCreated] = createSignal<number>()
   const [blocks, setBlocks] = createSignal<string[]>([])
+  const terms = createMemo(() => props.highlight ? rankedSearchTerms(props.highlight.query) : [])
   const [pending, setPending] = createSignal(false)
   const [failed, setFailed] = createSignal(false)
   const [opening, setOpening] = createSignal(false)
@@ -58,7 +62,7 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
     const current = () => opened === target
     setOpening(true)
     setOpenFailed(false)
-    const result = await openHistoryMatchSession(props.instanceId, props.sessionId, props.messageId, current).catch(() => false)
+    const result = await openHistoryMatchSession(props.instanceId, props.sessionId, props.messageId, current, props.highlight).catch(() => false)
     if (!current()) return
     setOpening(false)
     setOpenFailed(!result)
@@ -76,6 +80,6 @@ export default function HistoryMessagePreview(props: { instanceId: string; sessi
     <Show when={pending()}><span>{t("messageSection.search.searching")}</span></Show>
     <Show when={failed()}><span role="alert">{t("messageSection.search.failed")}</span></Show>
     <Show when={openFailed()}><span role="alert">{t("history.openFailed")}</span></Show>
-    <For each={blocks()}>{text => <pre>{text}</pre>}</For>
+    <For each={blocks()}>{text => <pre><HistorySearchExcerpt text={text} terms={terms()} /></pre>}</For>
   </section>
 }

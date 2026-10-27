@@ -1,11 +1,13 @@
 /** One visual state per Mission or schedule, on the session palette: colour shows
  * only what needs attention now. Red asks for an answer, yellow works, orange is
  * stopped (interrupted, or paused) with an action to continue, green finished
- * since last seen; anything else is idle. Outcomes themselves are status text. */
-export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "idle"
+ * since last seen, blue is prepared and ready to start like a composed prompt;
+ * anything else is idle. Outcomes themselves are status text. */
+export type MissionMark = "permission" | "interrupted" | "working" | "paused" | "done" | "prepared" | "idle"
 
-/** Most urgent first; like a collapsed session parent's chevron (`session-child-activity.ts`). */
-export const MISSION_PICKER_ATTENTION = ["permission", "interrupted", "working", "done"] as const
+/** Most urgent first; like a collapsed session parent's chevron (`session-child-activity.ts`),
+ * which leaves interrupted children on their own rows. */
+export const MISSION_PICKER_ATTENTION = ["permission", "working", "done"] as const
 export type MissionPickerAttention = (typeof MISSION_PICKER_ATTENTION)[number]
 
 export interface MissionPickerEntry {
@@ -27,7 +29,7 @@ const attentionOf = (mark: MissionMark): MissionPickerAttention | undefined =>
 export function missionPickerAttention(entries: readonly MissionPickerEntry[], selectedKey?: string): {
   kind?: MissionPickerAttention; counts: MissionPickerAttentionCounts
 } {
-  const counts: MissionPickerAttentionCounts = { permission: 0, interrupted: 0, working: 0, done: 0 }
+  const counts: MissionPickerAttentionCounts = { permission: 0, working: 0, done: 0 }
   for (const entry of entries) {
     const attention = attentionOf(entry.mark)
     if (entry.key !== selectedKey && attention) counts[attention]++
@@ -55,6 +57,7 @@ export function missionMark(mission: { status: string; runState?: string }, inpu
   if (mission.status === "completed") return input.seen ? "idle" : "done"
   if (mission.status !== "active") return "idle"
   if (run === "paused") return "paused"
+  if (run === "prepared") return "prepared"
   if (run !== "running") return "idle"
   if (states.some(state => state === "running" || state === "queued" || state === "background")) return "working"
   return input.coordinatorState === "idle-without-report" ? "interrupted" : "idle"

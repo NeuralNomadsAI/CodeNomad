@@ -68,8 +68,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "Acciones de la misión",
   "missionsPanel.attention.permission.one": "{count} en espera",
   "missionsPanel.attention.permission.other": "{count} en espera",
-  "missionsPanel.attention.interrupted.one": "{count} interrumpida",
-  "missionsPanel.attention.interrupted.other": "{count} interrumpidas",
   "missionsPanel.attention.done.one": "{count} terminada",
   "missionsPanel.attention.done.other": "{count} terminadas",
   "missionsPanel.attention.working.one": "{count} en curso",

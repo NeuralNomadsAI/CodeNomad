@@ -19,19 +19,32 @@ const coordinatorFor = (passes: ReturnType<typeof deferred>[], errors: unknown[]
 it("runs a trailing resync when reconnect occurs during an active pass", async () => {
   const passes = [deferred(), deferred()]
   const { coordinator, calls } = coordinatorFor(passes)
-  const settled = coordinator.request("workspace-1")
-  coordinator.request("workspace-1"); await Promise.resolve()
+  const settled = coordinator.request("workspace-1"); await Promise.resolve()
+  coordinator.request("workspace-1")
   assert.equal(calls(), 1)
   passes[0]!.resolve(); await turn()
   assert.equal(calls(), 2)
   passes[1]!.resolve(); await settled
 })
+it("coalesces requests into one pending pass per key", async () => {
+  const passes = [deferred(), deferred(), deferred()]
+  const { coordinator, calls } = coordinatorFor(passes)
+  const first = coordinator.request("workspace-1")
+  const sameTick = coordinator.request("workspace-1")
+  const other = coordinator.request("workspace-2"); await Promise.resolve()
+  assert.equal(calls(), 2, "a request before the pass starts shares it; another key runs independently")
+  const trailing = Array.from({ length: 8 }, () => coordinator.request("workspace-1"))
+  passes[0]!.resolve(); await turn()
+  assert.equal(calls(), 3, "requests during a pass share one trailing pass")
+  passes[1]!.resolve(); passes[2]!.resolve(); await Promise.all([first, sameTick, ...trailing, other])
+  assert.equal(calls(), 3)
+})
 it("retries a queued resync after the active pass fails", async () => {
   const passes = [deferred(), deferred()]
   const errors: unknown[] = []
   const { coordinator, calls } = coordinatorFor(passes, errors)
-  const settled = coordinator.request("workspace-1")
-  coordinator.request("workspace-1"); await Promise.resolve()
+  const settled = coordinator.request("workspace-1"); await Promise.resolve()
+  coordinator.request("workspace-1")
   passes[0]!.reject(new Error("transport reset")); await turn()
   assert.equal(calls(), 2)
   passes[1]!.resolve(); await settled

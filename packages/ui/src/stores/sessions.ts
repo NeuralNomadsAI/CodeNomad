@@ -1,6 +1,7 @@
 import type { SessionInfo } from "./session-state"
 
 import { sseManager } from "../lib/sse-manager"
+import { isPreferencesWindow } from "../lib/runtime-env"
 
 import {
   activeParentSessionId,
@@ -105,6 +106,7 @@ import {
   renameSession,
   runShellCommand,
   sendMessage,
+  startNewSession,
   updateSessionAgent,
   updateSessionModel,
 } from "./session-actions"
@@ -119,18 +121,22 @@ import {
   handleTuiToast,
 } from "./session-events"
 
-sseManager.onNativeSessionEvent = handleNativeSessionEvent
-sseManager.onSessionUpdate = handleSessionUpdate
-sseManager.onSessionCompacted = handleSessionCompacted
-sseManager.onSessionDeleted = handleSessionDeleted
-sseManager.onSessionError = handleSessionError
-sseManager.onTuiToast = handleTuiToast
-sseManager.onPermissionUpdated = handlePermissionUpdated
-sseManager.onPermissionReplied = handlePermissionReplied
-sseManager.onWorktreeReady = handleWorktreeReady
-sseManager.onWorktreeUpdated = async (instanceId) => {
-  await reloadWorktrees(instanceId)
-  await fetchSessions(instanceId, { reset: true })
+// The Preferences window shows no session: it never reacts to session events,
+// so their alerts, toasts and notices appear only in the windows showing sessions.
+if (!isPreferencesWindow()) {
+  sseManager.onNativeSessionEvent = handleNativeSessionEvent
+  sseManager.onSessionUpdate = handleSessionUpdate
+  sseManager.onSessionCompacted = handleSessionCompacted
+  sseManager.onSessionDeleted = handleSessionDeleted
+  sseManager.onSessionError = handleSessionError
+  sseManager.onTuiToast = handleTuiToast
+  sseManager.onPermissionUpdated = handlePermissionUpdated
+  sseManager.onPermissionReplied = handlePermissionReplied
+  sseManager.onWorktreeReady = handleWorktreeReady
+  sseManager.onWorktreeUpdated = async (instanceId) => {
+    await reloadWorktrees(instanceId)
+    await fetchSessions(instanceId, { reset: true })
+  }
 }
 
 export {
@@ -218,6 +224,7 @@ export {
   setActiveParentSession,
   setActiveSession,
   setActiveSessionFromList,
+  startNewSession,
   setSessionDraftPrompt,
   setSessionExpanded,
   setSessionStatus,

@@ -3,6 +3,7 @@
    line (chevron, selected title field). */
 .mission-control-header > .mission-picker { display: grid; flex: 1 1 auto; gap: var(--space-xs); min-width: 0; }
 .mission-picker-control { position: relative; display: flex; align-items: center; gap: 2px; min-width: 0; }
+.mission-picker-control[hidden] { display: none; }
 .mission-picker-expander {
   display: inline-flex;
   flex: 0 0 auto;
@@ -51,6 +52,7 @@
 .mission-picker-mark[data-mark="permission"] { background: var(--session-status-permission-fg); }
 .mission-picker-mark[data-mark="done"] { background: var(--session-status-idle-fg); }
 .mission-picker-mark:is([data-mark="paused"], [data-mark="interrupted"]) { background: var(--status-warning); }
+.mission-picker-mark[data-mark="prepared"] { background: var(--accent-primary); }
 
 /* Rows: bounded native scrolling and the session list's row states. */
 .mission-picker-list { display: grid; gap: var(--space-xs); min-width: 0; }
@@ -105,7 +107,6 @@ button.mission-picker-option:focus-visible { outline: 1px solid var(--focus-ring
 /* Collapsed chevron attention among the other missions, aliasing session-child-activity.css. */
 .mission-picker-expander[data-attention] { opacity: 1; color: var(--mission-attention-color); }
 .mission-picker-expander[data-attention="permission"] { --mission-attention-color: var(--session-status-permission-fg); }
-.mission-picker-expander[data-attention="interrupted"] { --mission-attention-color: var(--status-warning); }
 .mission-picker-expander[data-attention="working"] { --mission-attention-color: var(--session-status-working-fg); }
 .mission-picker-expander[data-attention="done"] { --mission-attention-color: var(--session-status-idle-fg); }
 .mission-picker-expander[data-attention="working"] .disclosure-chevron { animation: pulse 1.5s ease-in-out infinite; }

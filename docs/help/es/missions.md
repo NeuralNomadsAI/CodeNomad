@@ -4,10 +4,10 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 ## Crear y después iniciar explícitamente {#create}
 
-1. Abre **Misiones** en el panel derecho y elige **Crear misión**.
+1. Abre **Misiones** en el panel derecho y elige **Crear misión**. El formulario sustituye la lista de misiones y las tareas de la misión seleccionada hasta que crees o canceles.
 2. Completa **¿Qué debe hacer la misión?** y comprueba el **Título**, rellenado a partir de la primera frase (hasta 60 caracteres).
 3. En **Cuándo**, selecciona **Una vez** o **Cada día a las**. Para trabajo diario, verifica la zona horaria mostrada; **Cambiar** permite indicar una zona IANA.
-4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
+4. Expande **Opciones** para acceder a **Guion**, **Notas**, **Agentes y modelos**, **Sesiones de tareas**, la **Profundidad de anidamiento de subsesiones** del proyecto, descripciones guardadas y conversaciones seguidas opcionales. Con **Comparar dos modelos**, los selectores **Modelo A** y **Modelo B** aparecen en el formulario principal.
 5. Elige **Crear**. Selecciona la entrada nueva y usa su acción ▶ independiente cuando esté lista: **Iniciar misión** para trabajo puntual o **Iniciar programación {id}** para una programación diaria.
 
 **Crear nunca inicia el trabajo.** Una misión puntual queda preparada; una programación diaria queda pausada. Ni la creación ni guardar una descripción activan un temporizador. La creación tiene el ámbito del proyecto/Location seleccionado y fija los perfiles solicitados y la política de sesiones de tareas. La validación aparece junto al campo afectado; un rechazo que indique que no se envió nada deja el borrador disponible para corregirlo. El coordinador de una misión puntual también puede preparar una misión independiente para ti, como un seguimiento: aparece en la lista como **Preparada** y, como cualquier misión, solo se inicia desde su acción ▶.
@@ -55,8 +55,9 @@ Las marcas de las misiones, los iconos de las tareas y el chevrón de la lista u
 | Amarillo, pulsante | Hay trabajo en curso. |
 | Naranja | La misión está en pausa o interrumpida, con una acción para continuarla. |
 | Verde | Una misión terminada que aún no has abierto en esta ventana; vuelve a ser neutral en cuanto la seleccionas. |
+| Azul | Una misión preparada, lista para iniciarse como un prompt redactado. |
 
-Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos. Con la lista contraída, su chevrón toma el color más urgente entre las demás misiones.
+Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos. Con la lista contraída, su chevrón toma el más urgente de rojo, amarillo y verde entre las demás misiones; como en las sesiones contraídas, el naranja y el azul solo se muestran en sus propias filas.
 
 Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir y no hay nada más en marcha. Una misión mostrada como **Fallida** también puede reanudarse. En ambos casos, el primer botón de la barra de herramientas pasa a ser **Recuperar la misión interrumpida**: pide al coordinador que reevalúe a partir del plan y los resultados guardados y, antes, reabre una misión fallida. Un coordinador no termina una misión puntual como fallida: cuando no puede seguir solo, te hace una pregunta en **Te necesita**. Solo tú detienes una misión.
 
@@ -72,7 +73,7 @@ Usa **Pedir una actualización** debajo de la barra de herramientas para solicit
 2. En **Aplicar a**, elige **Todas las misiones** o un guion; después establece **Sesiones de tareas** y, en **Agentes y modelos**, una fila por rol (el coordinador y luego los roles del guion). Cada elección se guarda de inmediato; no hay botón Guardar.
 3. En el ámbito de un guion, las filas muestran los valores globales marcados como **Global**. Cambiar un campo personaliza ese rol a partir de ellos; su icono de revertir vuelve a usar los valores globales. **Restablecer** (tras confirmar) borra solo los agentes y modelos del ámbito mostrado.
 4. Durante la creación, usa **Opciones → Agentes y modelos** para solicitar perfiles específicos; **Usar valores predeterminados guardados** restaura los guardados.
-5. Para límites de recursión nativa, edita **Profundidad de anidamiento de subsesiones → Profundidad impuesta para el proyecto**. Pulsar Enter o salir del campo guarda un valor válido modificado; **Heredar** guarda de inmediato; Escape descarta un valor sin guardar.
+5. Para límites de recursión nativa, edita **Profundidad de anidamiento de subsesiones → Profundidad impuesta para el proyecto**, aquí o en **Opciones** al crear. Pulsar Enter o salir del campo guarda un valor válido modificado; **Heredar** guarda de inmediato; Escape descarta un valor sin guardar.
 
 | Ajuste | Ámbito y efecto |
 | --- | --- |
@@ -80,7 +81,7 @@ Usa **Pedir una actualización** debajo de la barra de herramientas para solicit
 | Agente / Modelo / Razonamiento | Selecciones solicitadas para coordinador/roles registradas al crear; un actor ocupado no se cambia silenciosamente para atender trabajo posterior. Las ejecuciones diarias reutilizan los perfiles solicitados fijados. |
 | Subagentes nativos | Las sesiones de tareas usan agentes nativos subagent/all bajo el coordinador. |
 | Sesiones independientes | Las sesiones de tareas declaradas usan agentes primary/all y conversaciones independientes; esto no desactiva los ayudantes nativos internos. |
-| Profundidad de anidamiento de subsesiones | Configuración del proyecto para **todas** las conversaciones de OpenCode de allí, no solo Misiones. Vacío hereda. Guardar no recarga OpenCode ni cambia las conversaciones en ejecución. |
+| Profundidad de anidamiento de subsesiones | Configuración del proyecto para **todas** las conversaciones de OpenCode de allí, no solo Misiones. Vacío hereda: **Heredar** elimina la anulación del proyecto y el bloque `experimental` que deje vacío. OpenCode lee el bloque `experimental` del proyecto como un todo, así que otros ajustes experimentales que se conserven allí siguen ocultando la profundidad global. Guardar no recarga OpenCode ni cambia las conversaciones en ejecución. |
 
 **Valor nativo predeterminado** y **Global** son distintos: el primero solicita los valores predeterminados propios de OpenCode; el segundo hereda la elección global; elegir los valores nativos en el ámbito de un guion sigue siendo una excepción explícita. Se comprueba la disponibilidad del catálogo; un perfil solicitado no demuestra qué perfil usa actualmente una conversación. Los permisos nativos y la profundidad configurada siguen rigiendo las llamadas a ayudantes internos en ambos modos de tareas.
 

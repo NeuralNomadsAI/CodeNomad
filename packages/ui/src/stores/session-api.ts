@@ -119,7 +119,6 @@ interface MessagePageRequest {
 
 const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
-const createSessionAuthorities = new Map<string, object>()
 const deleteSessionAuthorities = new Map<string, object>()
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
@@ -1084,6 +1083,25 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
   }
 }
 
+function isCreatingSession(instanceId: string): boolean {
+  return loading().creatingSession.get(instanceId) === true
+}
+
+// Creations can overlap (the sidebar's and the draft composer's first send):
+// the instance stays busy until the last one settles.
+const creationsInFlight = new Map<string, number>()
+
+function trackCreation(instanceId: string, delta: 1 | -1): void {
+  const count = (creationsInFlight.get(instanceId) ?? 0) + delta
+  if (count > 0) creationsInFlight.set(instanceId, count)
+  else creationsInFlight.delete(instanceId)
+  setLoading((prev) => {
+    const next = { ...prev }
+    next.creatingSession.set(instanceId, count > 0)
+    return next
+  })
+}
+
 async function createSession(instanceId: string, agent?: string): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -1100,23 +1118,25 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
   const selectedAgent = agent || primaryAgents[0]?.id || ""
 
-  const defaultModel = await getDefaultModel(instanceId, selectedAgent)
-  if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
-
-  if (selectedAgent && isModelValid(instanceId, defaultModel)) {
-    await setAgentModelPreference(instanceId, selectedAgent, defaultModel)
-    if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
-  }
-
-  setLoading((prev) => {
-    const next = { ...prev }
-    next.creatingSession.set(instanceId, true)
-    return next
-  })
-  const loadingAuthority = {}
-  createSessionAuthorities.set(instanceId, loadingAuthority)
+  // Pending spans the whole flow — catalog/config reads included — so a slow
+  // network shows feedback from the first click instead of silence. There is
+  // deliberately no client-side timeout and no coalescing here: session.create
+  // is not idempotent, an aborted request may still commit server-side and
+  // arrive later through the session.created event, so a slow creation stays
+  // visibly in progress until the request settles one way or the other, each
+  // call sends its own request, and repeated UI triggers are deduplicated by
+  // the startNewSession action instead.
+  trackCreation(instanceId, 1)
 
   try {
+    const defaultModel = await getDefaultModel(instanceId, selectedAgent)
+    if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
+
+    if (selectedAgent && isModelValid(instanceId, defaultModel)) {
+      await setAgentModelPreference(instanceId, selectedAgent, defaultModel)
+      if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
+    }
+
     log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
     const info = await client.session.create({
       agent: selectedAgent || null,
@@ -1184,14 +1204,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     log.error("Failed to create session:", error)
     throw error
   } finally {
-    if (createSessionAuthorities.get(instanceId) === loadingAuthority) {
-      createSessionAuthorities.delete(instanceId)
-      setLoading((prev) => {
-        const next = { ...prev }
-        next.creatingSession.set(instanceId, false)
-        return next
-      })
-    }
+    trackCreation(instanceId, -1)
   }
 }
 
@@ -2019,6 +2032,7 @@ function isLatestMessageWindow(instanceId: string, sessionId: string): boolean {
 
 export {
   createSession,
+  isCreatingSession,
   deleteSession,
   removeSessionRuntimeState,
   fetchAgents,

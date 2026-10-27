@@ -91,6 +91,8 @@ export function MissionPicker(props: {
   entries: MissionPickerEntry[]; selectedKey?: string; onSelect: (entry: MissionPickerEntry) => void
   expanded: boolean; onExpandedChange: (expanded: boolean) => void
   onCreate: () => void; createDisabled: boolean
+  /** The creation form replaces the current-mission line and list. */
+  creating?: boolean
   trailing?: JSX.Element
 }) {
   const { t } = useI18n()
@@ -115,7 +117,7 @@ export function MissionPicker(props: {
     document.addEventListener("pointerdown", outside, true)
     onCleanup(() => document.removeEventListener("pointerdown", outside, true))
   })
-  createEffect(() => { if (props.entries.length === 0 && open()) close(false) })
+  createEffect(() => { if ((props.entries.length === 0 || props.creating) && open()) close(false) })
   const onFieldKey = (event: KeyboardEvent) => {
     if (composing(event)) return
     if (!open()) {
@@ -138,7 +140,7 @@ export function MissionPicker(props: {
         disabled={props.createDisabled} onClick={() => props.onCreate()}><Plus class="h-4 w-4" aria-hidden="true" /></button>
       {props.trailing}
     </div>
-    <div class="mission-picker-control">
+    <div class="mission-picker-control" hidden={props.creating}>
       <button type="button" class="mission-picker-expander" aria-expanded={props.expanded}
         aria-controls={props.expanded ? inlineId : undefined} aria-label={expanderLabel()} title={expanderLabel()}
         data-attention={attention()?.kind} disabled={props.entries.length === 0 && !props.expanded}
@@ -162,7 +164,7 @@ export function MissionPicker(props: {
         </div>
       </Show>
     </div>
-    <Show when={props.expanded && props.entries.length > 0}>
+    <Show when={props.expanded && props.entries.length > 0 && !props.creating}>
       <div class="mission-picker-inline">
         <MissionPickerList id={inlineId} label={t("missions.control.mapLabel")} entries={props.entries}
           selectedKey={props.selectedKey} onSelect={entry => choose(entry, false)} />

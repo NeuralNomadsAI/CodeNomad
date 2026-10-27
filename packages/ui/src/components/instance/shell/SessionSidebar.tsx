@@ -2,13 +2,14 @@ import { Show, type Accessor, type Component } from "solid-js"
 import type { SessionThread } from "../../../stores/session-state"
 import type { DrawerViewState } from "./types"
 
-import { ArrowLeft, ArrowRight, Info, PlusSquare, Search } from "lucide-solid"
+import { ArrowLeft, ArrowRight, Info, Loader2, PlusSquare, Search } from "lucide-solid"
 import IconButton from "@suid/material/IconButton"
 
 import SessionList from "../../session-list"
 import { getLogger } from "../../../lib/logger"
 import { withHotkey } from "../../../lib/hotkeys"
 import { shouldMountSessionList } from "../../session-list-visibility"
+import { isCreatingSession } from "../../../stores/session-api"
 
 const log = getLogger("session")
 
@@ -36,7 +37,11 @@ interface SessionSidebarProps {
   setContentEl: (el: HTMLElement | null) => void
 }
 
-const SessionSidebar: Component<SessionSidebarProps> = (props) => (
+const SessionSidebar: Component<SessionSidebarProps> = (props) => {
+  // A slow network keeps the create request in flight for a while: the trigger
+  // must show that instead of leaving the click without any response.
+  const creatingSession = () => isCreatingSession(props.instanceId)
+  return (
     <div id={props.panelId} class="flex flex-col h-full min-h-0" ref={props.setContentEl}>
       <div class="panel-header session-sidebar-header border-b border-base">
         <div class="session-sidebar-header-row flex items-center justify-between gap-2">
@@ -47,6 +52,7 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
             <IconButton
               size="small"
               color="inherit"
+              disabled={creatingSession()}
               aria-label={props.t("sessionList.actions.newSession.ariaLabel")}
               title={withHotkey(props.t("sessionList.actions.newSession.title"), "session-new")}
               onClick={() => {
@@ -56,7 +62,9 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
                 }
               }}
             >
-              <PlusSquare class="w-4 h-4" />
+              <Show when={!creatingSession()} fallback={<Loader2 class="w-4 h-4 animate-spin" aria-hidden="true" />}>
+                <PlusSquare class="w-4 h-4" />
+              </Show>
             </IconButton>
             <IconButton
               class="icon-toggle"
@@ -129,5 +137,6 @@ const SessionSidebar: Component<SessionSidebarProps> = (props) => (
 
     </div>
   )
+}
 
 export default SessionSidebar

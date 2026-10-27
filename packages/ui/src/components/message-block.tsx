@@ -24,6 +24,7 @@ import { formatElapsedDuration, getPartEndedAt, getPartStartedAt, inferReasoning
 import { PartDuration } from "./part-duration"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { applySearchHighlights, clearSearchHighlights, type SearchRevealRequest } from "./search-highlights"
+import type { SearchHighlightQuery } from "../lib/ranked-search"
 import type { AlignInTranscript } from "./search-highlight-ranges"
 import { focusRevealedElement } from "./reveal-focus"
 import { TranscriptAlignmentContext } from "./transcript-alignment"
@@ -528,7 +529,7 @@ interface MessageBlockProps {
   onPendingPromptEdit?: (item: SessionInboxUser) => void
   onPendingPromptRemove?: (item: SessionInboxUser) => void
   onContentRendered?: () => void
-  searchQuery?: Accessor<string>
+  searchQuery?: Accessor<SearchHighlightQuery>
   searchResultMessageIds?: Accessor<Set<string>>
   activeSearchMatch?: Accessor<SessionSearchMatch | null>
   /** The navigation's one-shot reveal of the active occurrence; mounting alone never reveals. */

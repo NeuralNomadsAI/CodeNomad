@@ -5,18 +5,18 @@ import { filterMissionPickerEntries, missionMark, missionPickerAttention, missio
 
 const entry = (key: string, mark: MissionPickerEntry["mark"] = "idle", title = key): MissionPickerEntry => ({ key, title, status: "", mark })
 
-test("chevron attention ignores the selected entry, paused and idle entries, and keeps the most urgent state", () => {
+test("chevron attention ignores the selected entry, interrupted, paused, prepared and idle entries, and keeps the most urgent state", () => {
   const entries = [entry("mission:a", "permission"), entry("mission:b", "working"), entry("schedule:c", "interrupted"),
-    entry("mission:d", "working"), entry("mission:e", "done"), entry("mission:f", "paused")]
-  assert.deepEqual(missionPickerAttention(entries, "mission:a"),
-    { kind: "interrupted", counts: { permission: 0, interrupted: 1, working: 2, done: 1 } })
+    entry("mission:d", "working"), entry("mission:e", "done"), entry("mission:f", "paused"), entry("mission:g", "prepared")]
+  assert.deepEqual(missionPickerAttention(entries, "mission:a"), { kind: "working", counts: { permission: 0, working: 2, done: 1 } })
   assert.equal(missionPickerAttention(entries).kind, "permission")
-  assert.equal(missionPickerAttention([entry("mission:a"), entry("mission:b", "paused")]).kind, undefined)
+  assert.equal(missionPickerAttention([entry("mission:a", "interrupted"), entry("mission:b", "paused"), entry("mission:c", "prepared")]).kind, undefined,
+    "like a collapsed session parent, interrupted entries stay on their own rows")
 })
 
 test("attention label counts each state in urgency order", () => {
   const t = (key: string, params?: Record<string, string>) => `${key}:${params?.count}`
-  assert.equal(missionPickerAttentionLabel(t, { permission: 1, interrupted: 0, working: 2, done: 1 }),
+  assert.equal(missionPickerAttentionLabel(t, { permission: 1, working: 2, done: 1 }),
     "missionsPanel.attention.permission.one:1, missionsPanel.attention.working.other:2, missionsPanel.attention.done.one:1")
 })
 
@@ -30,7 +30,7 @@ test("a mission's mark: an answer first, then resumable stops, observed work, an
   assert.equal(missionMark({ status: "completed" }, seen), "idle")
   assert.equal(missionMark({ status: "stopped" }, unseen), "idle")
   assert.equal(missionMark({ status: "active", runState: "paused" }, { ...seen, actorStates: ["running"] }), "paused")
-  assert.equal(missionMark({ status: "active", runState: "prepared" }, seen), "idle")
+  assert.equal(missionMark({ status: "active", runState: "prepared" }, seen), "prepared", "ready to start, like a composed prompt")
   assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["idle-without-report", "queued"],
     coordinatorState: "idle-without-report" }), "working", "running work outranks the idle coordinator")
   assert.equal(missionMark({ status: "active" }, { ...seen, actorStates: ["idle-without-report"], coordinatorState: "idle-without-report" }), "interrupted")

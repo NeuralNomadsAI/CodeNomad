@@ -68,12 +68,11 @@ import {
   getSessions,
   getSessionRoot,
   activeSessionId,
-  setActiveParentSession,
   clearActiveParentSession,
-  createSession,
   fetchSessions,
   loadMessages,
   setActiveSessionFromList,
+  startNewSession,
   updateSessionAgent,
   updateSessionModel,
 } from "./stores/sessions"
@@ -595,12 +594,7 @@ const App: Component = () => {
   }
 
   async function handleNewSession(instanceId: string) {
-    try {
-      const session = await createSession(instanceId)
-      setActiveParentSession(instanceId, session.id)
-    } catch (error) {
-      log.error("Failed to create session", error)
-    }
+    await startNewSession(instanceId)
   }
 
   async function handleCloseSession(instanceId: string, sessionId: string) {

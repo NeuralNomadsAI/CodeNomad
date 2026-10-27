@@ -4,10 +4,10 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 ## Create, then explicitly start {#create}
 
-1. Open **Missions** in the right panel and choose **Create mission**.
+1. Open **Missions** in the right panel and choose **Create mission**. The form replaces the mission list and the selected mission's tasks until you create or cancel.
 2. Fill **What should the mission do?** and check **Title**, prefilled from the first sentence (up to 60 characters).
 3. Under **When**, select **Once** or **Every day at**. For daily work, verify the displayed time zone; **Change** allows an IANA zone.
-4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
+4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subsession nesting depth**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
 5. Choose **Create**. Select the new entry, then use its separate ▶ action when ready: **Start mission** for one-time work, or **Play schedule {id}** for a daily schedule.
 
 **Create never starts work.** A one-time mission is prepared; a daily schedule is paused. Neither creation nor saving a brief arms a timer. Creation is scoped to the selected project/Location and freezes the requested profiles and task-session policy. Validation is beside the affected field; a refusal that says nothing was sent leaves the draft available for correction. The coordinator of a one-time mission can also prepare a separate mission for you, such as a follow-up: it appears in the list as **Prepared** and, like any mission, starts only from its ▶ action.
@@ -55,8 +55,9 @@ Mission marks, task icons and the list's chevron use the session list's colours:
 | Yellow, pulsing | Work is running. |
 | Orange | The mission is paused, or interrupted, with an action to continue it. |
 | Green | A completed mission you have not opened yet in this window; it turns neutral once you select it. |
+| Blue | A prepared mission, ready to start like a composed prompt. |
 
-Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons. While the list is collapsed, its chevron takes the most urgent colour among the other missions.
+Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons. While the list is collapsed, its chevron takes the most urgent of red, yellow and green among the other missions; like collapsed sessions, orange and blue show only on their own rows.
 
 A mission is **Interrupted** when its coordinator stopped without concluding while nothing else runs. A mission shown as **Failed** can also be resumed. In both cases the first toolbar button becomes **Recover interrupted mission**: it asks the coordinator to reassess from the saved plan and results, and first reopens a failed mission. A coordinator does not end a one-time mission as failed: when it cannot continue on its own, it asks you a question under **Needs you**. Only you stop a mission.
 
@@ -72,7 +73,7 @@ Use **Request an update** below the toolbar for a fresh coordinator assessment, 
 2. Under **Apply to**, choose **All missions** or one playbook, then set **Task sessions** and, under **Agents and models**, one row per role (coordinator, then the playbook's roles). Each choice is saved immediately; there is no Save button.
 3. In a playbook scope, rows show the global values marked **Global**. Changing a field customizes that role starting from them; its revert icon uses the global values again. **Reset** (after confirmation) clears only the agents and models of the shown scope.
 4. In creation, use **Options → Agents and models** for specific requested profiles; **Use saved defaults** restores the saved ones.
-5. For native recursion limits, edit **Subsession nesting depth → Depth override for the project**. Pressing Enter or leaving the field saves a changed valid value; **Inherit** saves at once; Escape discards an unsaved value.
+5. For native recursion limits, edit **Subsession nesting depth → Depth override for the project**, here or under creation **Options**. Pressing Enter or leaving the field saves a changed valid value; **Inherit** saves at once; Escape discards an unsaved value.
 
 | Setting | Scope and effect |
 | --- | --- |
@@ -80,7 +81,7 @@ Use **Request an update** below the toolbar for a fresh coordinator assessment, 
 | Agent / Model / Thinking | Requested coordinator/role selections recorded with creation; a busy actor is not silently switched to satisfy later work. Daily runs reuse their frozen requested profiles. |
 | Native subagents | Task sessions use native subagent/all agents under the coordinator. |
 | Independent sessions | Declared task sessions use primary/all agents and independent conversations; this does not disable internal native helpers. |
-| Subsession nesting depth | Project configuration for **all** OpenCode conversations there, not just Missions. Empty inherits. Saving does not reload OpenCode or change running conversations. |
+| Subsession nesting depth | Project configuration for **all** OpenCode conversations there, not just Missions. Empty inherits: **Inherit** removes the project override and an `experimental` block it leaves empty. OpenCode reads the project's `experimental` block as a whole, so other experimental settings kept there still hide the global depth. Saving does not reload OpenCode or change running conversations. |
 
 **Native default** and **Global** are different: the former requests OpenCode's own defaults, the latter inherits the global choice; choosing native defaults in a playbook scope remains an explicit exception. Catalog availability is checked; a requested profile is not proof of the profile a conversation currently uses. Native permissions and configured depth still govern internal helper calls in either task mode.
 

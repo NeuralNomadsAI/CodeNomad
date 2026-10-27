@@ -127,8 +127,7 @@ export class RecurringDayFixture {
       CREATE TABLE event_sequence(aggregate_id TEXT PRIMARY KEY,seq INTEGER,owner_id TEXT);
       CREATE TABLE event(id TEXT PRIMARY KEY,aggregate_id TEXT,seq INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,data TEXT,seq INTEGER);
-      CREATE TABLE session_inbox(session_id TEXT,id TEXT,payload TEXT);
-      CREATE TABLE session_pending(session_id TEXT);`)
+      CREATE TABLE session_inbox(session_id TEXT,id TEXT,payload TEXT);`)
     const configYamlPath = path.join(this.root, "profile.yaml")
     await writeFile(configYamlPath, "server:\n  environmentVariables: {}\n")
     this.profileScope = { channel: "day-test", configIdentity: configYamlPath,
@@ -236,7 +235,7 @@ export class RecurringDayFixture {
         this.jobs.delete(id)
         return record
       }), pendingBackground: Effect.sync(() => this.background) }
-    // Native shape (as of the 2.1.0 minimum): a borrowed Location graph holds Location services only; Database,
+    // Native shape (as of the minimum supported OpenCode): a borrowed Location graph holds Location services only; Database,
     // Session, Job and Bus are process-global and appear only in plugin/RPC contexts.
     const locationGraph = Context.make(tag("@opencode/Location"), location).pipe(
       Context.add(tag("@opencode/Form"), { list: () => Effect.sync(() => [...this.forms.values()]),
@@ -433,7 +432,7 @@ export class RecurringDayFixture {
   }
   idle(id: string, failed = false) {
     this.db.prepare("UPDATE fixture_session SET active=0 WHERE id=?").run(id)
-    // Native shape (as of the 2.1.0 minimum): no persisted terminal event, only the durable idle projection.
+    // Native shape (as of the minimum supported OpenCode): no persisted terminal event, only the durable idle projection.
     const info = Schema.decodeUnknownSync(SessionMessage.Info)({ id: `msg_idle_${++this.serial}`, type: "idle",
       outcome: failed ? "failed" : "succeeded", time: { created: this.now } })
     this.db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(info.id, id, "idle",
