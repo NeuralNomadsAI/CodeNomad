@@ -271,18 +271,19 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const selectedKey = () => selectedSchedule() ? `schedule:${selectedSchedule()}` : mission() ? `mission:${mission()!.id}` : undefined
   const selectedOneTime = () => selectedSchedule() ? undefined : mission()
   const selectedOneTimeId = () => selectedOneTime()?.id
-  // Like an idle session, a completed Mission stays green until this window shows it.
+  const creating = () => editor()?.kind === "create"
+  // Like an idle session, a completed Mission stays green until this window shows it;
+  // the creation form hides the selected detail.
   const documentAttention = createDocumentAttention()
   createEffect(() => {
     if (state().status !== "ready") return
     const completed = missions().filter(value => value.status === "completed").map(value => value.id)
-    const shown = (props.isActive?.() ?? true) && documentAttention() && selectedOneTime()?.status === "completed"
+    const shown = (props.isActive?.() ?? true) && documentAttention() && !creating() && selectedOneTime()?.status === "completed"
       ? [selectedOneTime()!.id] : []
     const viewScope = scope()
     untrack(() => markMissionsFinishedSeen(viewScope, shown, completed))
   })
   const listExpanded = () => missionProjectView(scope()).listExpanded === true
-  const creating = () => editor()?.kind === "create"
   const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
   /** Read-only reconciliation first; only a control still unconfirmed by that
    * read is resent, with its original identity, from this explicit click. */

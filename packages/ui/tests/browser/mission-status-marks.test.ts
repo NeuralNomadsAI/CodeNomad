@@ -121,6 +121,29 @@ test("marks follow the session palette and a completion stays green until this w
   } finally { await page.close() }
 })
 
+test("a selected mission completing behind the creation form stays green until its detail shows again", async () => {
+  let list = [mission("selected"), mission("other", { updatedAt: 2 })]
+  const { page, errors } = await open(() => list, () => [])
+  try {
+    await selectMission(page, "Objective selected")
+    await page.locator("section.mission-detail").waitFor()
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await page.locator("form.mission-editor").waitFor()
+    assert.equal(await page.locator("section.mission-detail").isVisible(), false)
+    list = list.map(value => value.id === "selected" ? { ...value, status: "completed", updatedAt: 3, revision: 2 } : value)
+    await refresh(page)
+    // The hidden (still mounted) current-mission line keeps the unseen completion green.
+    const fieldMark = () => page.evaluate(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark"))
+    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "done")
+    await page.waitForTimeout(200)
+    assert.equal(await fieldMark(), "done", "a completion behind the form is not seen")
+    await page.locator("form.mission-editor").getByRole("button", { name: "Cancel", exact: true }).click()
+    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "idle")
+    assert.equal(await page.locator("section.mission-detail").isVisible(), true, "seen once its detail shows again")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("a stopped coordinator offers recovery in Pause's place only while nothing else runs; done tasks stay neutral", async () => {
   const base = mission("run")
   const value = mission("run", { actors: [actor("ses_run"), actor("ses_worker", "specialist")], tasks: [...base.tasks,

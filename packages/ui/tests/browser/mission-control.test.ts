@@ -412,6 +412,41 @@ test("Inherit repairs an existing empty project experimental block that hides th
   } finally { await page.close() }
 })
 
+test("Enter in the creation form's depth field saves the depth without creating the mission", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  let depth = 2, expectation = "e1"
+  const writes: Array<{ path: string; body: unknown }> = []
+  try {
+    await setup(page, "remote")
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions**", route => {
+      if (route.request().method() === "GET") return route.fallback()
+      writes.push({ path: new URL(route.request().url()).pathname, body: route.request().postDataJSON() })
+      return route.fulfill({ status: 503, json: { code: "creation-unavailable" } })
+    })
+    await page.route("**/api/workspaces/fixture/subagent-depth*", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 },
+        effectiveDepth: depth, project: { path: "fixture/opencode.jsonc", depth, expectation } } })
+      writes.push({ path: "depth", body: route.request().postDataJSON() }); depth = 3; expectation = "e2"
+      return route.fulfill({ status: 204, body: "" })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await missionGeneralAction(page, "Create mission").click()
+    const form = page.locator("form.mission-editor")
+    await form.getByLabel("What should the mission do?", { exact: true }).fill("Do not create until I press Create")
+    await form.locator("summary").filter({ hasText: /^Options$/ }).click()
+    const input = form.locator(".mission-depth input")
+    await page.waitForFunction(() => document.querySelector<HTMLInputElement>(".mission-depth input")?.value === "2"
+      && !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+    await input.fill("3")
+    await input.press("Enter")
+    await form.locator(".mission-depth").getByText("OpenCode effective depth: 3", { exact: true }).waitFor()
+    await input.press("Enter")
+    assert.deepEqual(writes, [{ path: "depth", body: { location: { directory: "fixture" }, depth: 3, expectation: "e1" } }], "no mission write")
+    assert.equal(await form.getByLabel("What should the mission do?", { exact: true }).inputValue(), "Do not create until I press Create")
+  } finally { await page.close() }
+})
+
 test("visible clean depth revalidates after config and connection changes while hidden, dirty and uncertain states stay fenced", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let reads = 0, depth = 1, expectation = "original", writes = 0
