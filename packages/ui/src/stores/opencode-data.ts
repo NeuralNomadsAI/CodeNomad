@@ -197,14 +197,16 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   const marks: ReadMarks = { touches: new Map(), creations: new Map() }
                   const readKey = messageRevisionKey(instanceId, input.sessionID)
                   let flights = inFlightReads.get(readKey)
-                  if (!flights) inFlightReads.set(readKey, flights = new Set())
+                  if (!flights || !flights.size) inFlightReads.set(readKey, flights = new Set())
                   flights.add(marks)
                   let response: unknown
                   try {
                     response = await (client.message.list as any)(input, options)
                   } finally {
                     flights.delete(marks)
-                    if (!flights.size) inFlightReads.delete(readKey)
+                    // A generation reset may have registered a newer collector
+                    // set under the same key; never remove that one.
+                    if (inFlightReads.get(readKey) === flights && !flights.size) inFlightReads.delete(readKey)
                   }
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
@@ -215,7 +217,12 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                     attempts += 1
                     if (attempts < TRAILING_READ_ATTEMPTS) continue
                     // Running out of attempts must never make an invalidated
-                    // page authoritative: answer with the live rows alone.
+                    // page authoritative: answer with the live rows alone and
+                    // keep one coalesced, revision-fenced reconciliation owed,
+                    // so history and terminal states are re-read once the
+                    // destruction stops.
+                    const transcript = transcriptEntries.get(readKey)
+                    if (transcript) scheduleAuthoritativeResync(instanceId, input.sessionID, transcript)
                     return { data: [...live].reverse(), cursor: (response as any).cursor }
                   }
                   return { data: mergeReadPage(live, (response as any).data as SessionMessageInfo[], marks), cursor: (response as any).cursor }
@@ -245,7 +252,12 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         if (invalidatesFetchedPage(details.type)) {
           authorityRevisions.set(sessionId, (authorityRevisions.get(sessionId) ?? 0) + 1)
         }
-        recordReadMark(messageRevisionKey(instanceId, sessionId), details)
+        recordReadMark(messageRevisionKey(instanceId, sessionId), details, shellId => {
+          for (const message of data.session.message.list(sessionId)) {
+            if ((message as { shellID?: string }).shellID === shellId) return message.id
+          }
+          return undefined
+        })
       }
       for (const listener of listeners) listener({ name: details.type, details })
     }
@@ -379,11 +391,33 @@ function invalidatesFetchedPage(type: OpenCodeEvent["type"]): boolean {
     || type === "session.compaction.failed"
 }
 
-/** The transcript row an event affects, whatever shape carries its id. */
-function eventMessageId(event: OpenCodeEvent): string | undefined {
+/** The native row id an event creates when the SDK derives it from the event
+ * id itself (selection, move, synthetic, instruction and shell-start rows). */
+const eventDerivedRowId = (eventId: string): string => eventId.replace(/^evt_/, "msg_")
+
+/** The transcript row an event affects: the explicit message, inbox or
+ * compaction id; the row a shell event targets, resolved through its resident
+ * shellID; or the row the event itself creates from its event id. */
+function eventRowId(event: OpenCodeEvent, resolveShellRow: (shellId: string) => string | undefined): string | undefined {
   const data = (event as { data?: Record<string, unknown> }).data
-  const id = data?.assistantMessageID ?? data?.inboxID ?? data?.inputID
-  return typeof id === "string" ? id : undefined
+  const explicit = data?.assistantMessageID ?? data?.inboxID ?? data?.inputID
+  if (typeof explicit === "string") return explicit
+  if (event.type.startsWith("session.shell.")) {
+    const shell = (data as { shell?: { id?: unknown } } | undefined)?.shell
+    const shellId = shell && typeof shell.id === "string" ? shell.id : (data as { shellID?: unknown })?.shellID
+    if (typeof shellId === "string") return resolveShellRow(shellId)
+    return undefined
+  }
+  switch (event.type) {
+    case "session.agent.selected":
+    case "session.model.selected":
+    case "session.moved":
+    case "session.synthetic":
+    case "session.instructions.updated":
+      return eventDerivedRowId(String(event.id ?? ""))
+    default:
+      return undefined
+  }
 }
 
 type ReadMarks = { touches: Map<string, number>; creations: Map<string, number> }
@@ -431,8 +465,12 @@ export function captureOpenCodeReadMarks(instanceId: string, sessionId: string):
   }
 }
 
-function recordReadMark(key: string, event: OpenCodeEvent): void {
-  const messageId = eventMessageId(event)
+function recordReadMark(
+  key: string,
+  event: OpenCodeEvent,
+  resolveShellRow: (shellId: string) => string | undefined,
+): void {
+  const messageId = eventRowId(event, resolveShellRow)
   if (!messageId) return
   const created = eventMayAppendMessage(event)
   let session = sessionReadMarks.get(key)
@@ -957,10 +995,12 @@ export function projectOpenCodeMessages(
   if (source.length) {
     // A navigated window owns its membership: projection updates resident
     // rows and appends the live tail beyond the newest resident row, never
-    // reinserting rows the window scrolled past.
+    // reinserting rows the window scrolled past. An around-navigation can
+    // land on the live end with a latest window that still carries a resume
+    // cursor; that window is navigated too.
     const window = store.getMessageWindow(sessionId)
     let rows = source
-    if (window && window.kind !== "latest") {
+    if (window && (window.kind !== "latest" || window.resumeCursor)) {
       const residentIds = store.getSessionMessageIds(sessionId)
       const resident = new Set(residentIds)
       const newestResident = residentIds[residentIds.length - 1]
