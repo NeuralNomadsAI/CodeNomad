@@ -7,7 +7,7 @@ import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { loadMessages } from "./session-api.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data.ts"
 import { getSessionMessagesLoadError, messagesLoaded, setSessions } from "./session-state.ts"
 
 function session(instanceId: string, id: string): Session {
@@ -22,7 +22,7 @@ function session(instanceId: string, id: string): Session {
 function apiMessage(id: string) {
   return {
     id, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
-    time: { created: 1 }, content: [],
+    time: { created: 1 }, content: [{ type: "text", text: "base" }],
   }
 }
 
@@ -59,6 +59,18 @@ describe("session-api running-session open", () => {
       assert.ok(messagesLoaded().get(instanceId)?.has(sessionId))
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["msg_1"])
       assert.ok(reads <= 5, `message.list was issued ${reads} times for the initial open`)
+
+      // The reducer projection holds the same base, so streaming keeps
+      // updating the loaded message instead of freezing at its snapshot.
+      const data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "tail", type: "session.text.delta", created: 5000,
+        data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "tail" },
+      } as any)
+      assert.ok(data.session.message.get(sessionId, "msg_1"), "the projection never held the loaded page")
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      const record = messageStoreBus.getOrCreate(instanceId).getMessage("msg_1")
+      const texts = Object.values(record?.parts ?? {}).map((part: any) => String(part.data?.text ?? ""))
+      assert.ok(texts.some((text) => text.includes("basetail")), `streaming froze after the initial seed: ${JSON.stringify(texts)}`)
     } finally {
       serverApi.fetchWorktrees = originalFetchWorktrees
       destroyOpenCodeData(instanceId)

@@ -185,35 +185,28 @@ test("a message.list read never publishes an obsolete page while stream events k
     f.data().session.message.sync(sessionId).then(() => { syncSettled = true }).catch(() => undefined)
     await converge(ctx, () => control.calls === 1 && control.pending())
 
-    // Ten arrivals, each landing before the in-flight read returns: the
-    // authoritative page predates every delta, so it must never publish.
-    // Bounded trailing-read attempts still complete the read by serving the
-    // live projection, instead of restarting forever mid-stream.
-    let expected = "seed probe "
-    let completed = false
-    for (let round = 0; round < 10 && !completed; round += 1) {
-      expected += `x${round} `
-      f.delta(`x${round} `)
-      control.settle()
-      await microtasks()
-      ctx.mock.timers.tick(0)
-      await microtasks()
-      completed = syncSettled
-      assert.equal(f.sdkText(), expected, "the in-flight page never replaced streamed text")
-    }
-    assert.ok(completed, "the trailing read completed while arrivals kept landing")
-    assert.ok(!control.pending(), "no read is left spinning mid-stream")
-
-    // Arrivals stopped: the fallback's scheduled quiet re-read — not an
-    // explicit invalidation — publishes the authoritative page, and the
-    // transcript keeps streaming live on top of it.
-    const quietCalls = control.calls
-    ctx.mock.timers.tick(30)
-    await converge(ctx, () => control.calls === quietCalls + 1 && control.pending())
+    // An arrival lands before the in-flight read returns: streamed events do
+    // not restart the read — the answer keeps every projected message's live
+    // version, so the authoritative page cannot rewind streamed text, and the
+    // read finishes in one round trip however long the stream lasts.
+    f.delta("x0 ")
     control.settle()
     await microtasks()
-    f.delta("tail ")
-    await converge(ctx, () => f.sdkText() === f.authoritativeText() + "tail ")
+    ctx.mock.timers.tick(0)
+    await microtasks()
+    assert.ok(!control.pending(), "the read completed mid-stream")
+    assert.equal(control.calls, 1)
+    await converge(ctx, () => f.sdkText() === "seed probe x0 ")
+    assert.equal(f.sdkText(), "seed probe x0 ", "streamed text survived the read")
+
+    // Deltas keep reducing afterwards; a read that finished quickly can leave
+    // the replay queue still draining, so the fast path resumes once it has.
+    f.delta("x1 ")
+    await converge(ctx, () => f.sdkText() === "seed probe x0 x1 ")
+
+    // Authoritative reconciliation after a disconnect runs through a fresh
+    // projection (the reconnect resync), where the page has no live rows to
+    // merge over; the mid-stream reconnect tests cover that publication.
   } finally { f.cleanup() }
 })
 

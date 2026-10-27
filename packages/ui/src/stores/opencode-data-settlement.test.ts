@@ -60,6 +60,7 @@ function fixture(instanceId: string) {
   const next = { sessionID: sessionId, assistantMessageID: "m2" }
   return {
     reads, emit, next,
+    store: () => messageStoreBus.getOrCreate(instanceId),
     start() {
       const base = { sessionID: sessionId, assistantMessageID: "m1" }
       emit("session.step.started", { ...base, agent: "build", model, started: 1 })
@@ -94,30 +95,32 @@ async function flush() {
   await new Promise<void>(resolve => setImmediate(resolve))
 }
 
-test("native terminal history cannot replace a newer streaming assistant; trailing reads coalesce", async () => {
+test("native terminal history reconciles over a newer streaming assistant in one read", async () => {
   const f = fixture("native-settlement-race")
   try {
     f.start()
     f.reads[0].resolve({ data: [completed], cursor: {} })
     await flush()
-    assert.equal(f.reads.length, 2, "discard the stale page and read current history once")
+    // The settled page answers in one read: m1's terminal state comes from
+    // the page (its events predate the fetch), while m2 — streamed inside the
+    // fetch window — rides along with its live text instead of being culled
+    // or restarting the read.
+    assert.equal(f.reads.length, 1, "streaming arrivals must not restart the settled read")
+    assert.equal(f.text(), "hello", "the streamed assistant rode along with the page")
+
     f.emit("session.text.delta", { ...f.next, delta: " world" })
     f.emit("session.text.delta", { ...f.next, delta: "!" })
-    assert.equal(f.text(), "hello world!", "streaming must continue while reconciliation is pending")
-    assert.equal(f.reads.length, 2, "event bursts must not start overlapping reads")
+    assert.equal(f.text(), "hello world!", "streaming must continue over the accepted page")
+    assert.equal(f.reads.length, 1, "event bursts must not start overlapping reads")
 
-    f.reads[1].resolve({ data: [completed], cursor: {} })
-    await flush()
-    assert.equal(f.reads.length, 3)
-    const current = {
-      id: "m2", type: "assistant", agent: "build", model, time: { created: 6 },
-      content: [{ type: "text", text: "hello world!" }],
-    }
-    f.reads[2].resolve({ data: [current, completed], cursor: {} })
-    await flush()
+    // The same projection carries the page's terminal state to the display.
+    const m1 = f.store().getMessage("m1")
+    const tool = Object.values(m1?.parts ?? {}).map((part: any) => part.data).find((part: any) => part.type === "tool")
+    assert.equal((tool as any)?.state?.status, "completed", "the page's terminal state was dropped")
+
     f.emit("session.text.delta", { ...f.next, delta: " More." })
     assert.equal(f.text(), "hello world! More.", "do not lose or double-apply deltas around the accepted page")
-    assert.equal(f.reads.length, 3)
+    assert.equal(f.reads.length, 1)
   } finally { f.cleanup() }
 })
 

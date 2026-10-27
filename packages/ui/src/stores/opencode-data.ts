@@ -81,8 +81,7 @@ const MAX_TRANSCRIPT_REPLAY_CHUNK = 64
 const TRANSCRIPT_RESYNC_QUIET_MS = 25
 const TRANSCRIPT_RETRY_DELAY_MS = 25
 const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
-// A message.list read that keeps losing to same-session events falls back to
-// the live projection instead of refetching forever.
+// Bounded restarts when destructive events keep invalidating fetched pages.
 const TRAILING_READ_ATTEMPTS = 3
 const entries = new Map<string, DataEntry>()
 const transcriptEntries = new Map<string, TranscriptEntry>()
@@ -146,7 +145,13 @@ export function getOpenCodeInstanceGeneration(instanceId: string): number {
 function createDataEntry(instanceId: string, directory: string): DataEntry {
   const listeners = new Set<(event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void>()
   const messageSnapshots = new Map<string, SessionMessageInfo[]>()
-  const eventRevisions = new Map<string, number>()
+  // Bumped only by events that invalidate a fetched page outright; streamed
+  // events never restart a read, they only make projected rows newer.
+  const authorityRevisions = new Map<string, number>()
+  // Message ids that received streamed events, per session. A read substitutes
+  // the live version only for ids touched inside its own fetch window; ids
+  // settled before the fetch keep the fetched (terminal) version.
+  const streamTouches = new Map<string, Set<string>>()
   const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
   let disposed = false
   return createRoot((dispose) => {
@@ -172,8 +177,12 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
               return async (input: { sessionID: string }, options?: unknown) => {
                 // Native terminal-tool reconciliation replaces its cache after
                 // awaiting this response, without fencing intervening events.
-                // Keep the live projection until one trailing read is current;
-                // never merge an obsolete page into newer streaming messages.
+                // Streamed events only extend messages the projection already
+                // holds, so a fetched page stays a valid base: the read answers
+                // with the page where every projected message keeps its live
+                // version and projected rows newer than the page ride along.
+                // Only destructive events invalidate the page itself, and the
+                // restarts they cause stay bounded.
                 let attempts = 0
                 for (;;) {
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
@@ -185,29 +194,34 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   compactionDeltas.flush(instanceId, input.sessionID)
                   const snapshot = messageSnapshots.get(input.sessionID)
                   if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
-                  const revision = eventRevisions.get(input.sessionID) ?? 0
+                  const revision = authorityRevisions.get(input.sessionID) ?? 0
+                  // Own the touch set for this fetch: whatever arrived earlier
+                  // was consumed by an earlier answer; only additions during
+                  // the fetch window decide which rows keep their live version.
+                  const earlierTouches = streamTouches.get(input.sessionID)
+                  if (earlierTouches) streamTouches.set(input.sessionID, new Set())
                   const response = await (client.message.list as any)(input, options)
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
                   compactionDeltas.flush(instanceId, input.sessionID)
-                  if ((eventRevisions.get(input.sessionID) ?? 0) !== revision) {
+                  if ((authorityRevisions.get(input.sessionID) ?? 0) !== revision) {
                     attempts += 1
                     if (attempts < TRAILING_READ_ATTEMPTS) continue
-                    // Sustained streaming never leaves a quiet fetch window, so
-                    // the read answers provisionally. Serve the live projection
-                    // — never a page a newer event may have invalidated, an
-                    // empty one included — keep the fetched cursor so paging
-                    // survives, and mark the transcript dirty: one coalesced,
-                    // revision-fenced resync re-reads authority and reconciles
-                    // history, removals and terminal states once the stream
-                    // quiets.
-                    const transcript = transcriptEntries.get(messageRevisionKey(instanceId, input.sessionID))
-                    if (transcript) scheduleAuthoritativeResync(instanceId, input.sessionID, transcript)
-                    const live = data.session.message.list(input.sessionID)
-                    return { data: [...live].reverse(), cursor: response.cursor }
                   }
-                  return response
+                  const live = data.session.message.list(input.sessionID)
+                  const touchedNow = streamTouches.get(input.sessionID)
+                  const projected = new Map(live.map((message) => [message.id, message]))
+                  const page = response.data as any[]
+                  const merged = page.map((message) => {
+                    return touchedNow?.has(message.id) ? projected.get(message.id) ?? message : message
+                  })
+                  const newest = page[0]?.id
+                  const newestPosition = newest === undefined ? -1 : live.findIndex((message) => message.id === newest)
+                  const appended = newestPosition >= 0
+                    ? live.slice(newestPosition + 1).filter((message) => touchedNow?.has(message.id) === true).reverse()
+                    : []
+                  return { data: [...appended, ...merged], cursor: response.cursor }
                 }
               }
             },
@@ -226,9 +240,21 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
     })
     const emit = (details: OpenCodeEvent) => {
       // Isolated fresh-entry resyncs already fence their entire transaction.
-      // Only events applied to this reducer invalidate its own pending reads.
+      // Only events that invalidate a fetched page restart this reducer's
+      // pending reads; streamed events mark their message for the read's
+      // window merge instead.
       const sessionId = eventSessionId(details)
-      if (sessionId) eventRevisions.set(sessionId, (eventRevisions.get(sessionId) ?? 0) + 1)
+      if (sessionId) {
+        if (invalidatesFetchedPage(details.type)) {
+          authorityRevisions.set(sessionId, (authorityRevisions.get(sessionId) ?? 0) + 1)
+        }
+        const messageId = (details as { data?: { assistantMessageID?: unknown } }).data?.assistantMessageID
+        if (typeof messageId === "string") {
+          let touched = streamTouches.get(sessionId)
+          if (!touched) streamTouches.set(sessionId, touched = new Set())
+          touched.add(messageId)
+        }
+      }
       for (const listener of listeners) listener({ name: details.type, details })
     }
     return {
@@ -237,7 +263,7 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
         emit(details)
       },
       fencePendingReads(sessionId: string) {
-        eventRevisions.set(sessionId, (eventRevisions.get(sessionId) ?? 0) + 1)
+        authorityRevisions.set(sessionId, (authorityRevisions.get(sessionId) ?? 0) + 1)
       },
       async syncMessages(sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) {
         messageSnapshots.set(sessionId, messages)
@@ -347,6 +373,17 @@ function clearTranscriptRetry(transcript: TranscriptEntry): void {
 
 function retryDelay(transcript: TranscriptEntry): number {
   return Math.min(TRANSCRIPT_RETRY_DELAY_MS * 2 ** transcript.retryCount, MAX_TRANSCRIPT_RETRY_DELAY_MS)
+}
+
+/** Events that invalidate a fetched page outright: they remove or replace
+ * message content instead of extending it. Streamed text, reasoning and tool
+ * progress keep a fetched page valid as a base. */
+function invalidatesFetchedPage(type: OpenCodeEvent["type"]): boolean {
+  return type === "session.deleted"
+    || type === "session.revert.committed"
+    || type === "session.compaction.started"
+    || type === "session.compaction.ended"
+    || type === "session.compaction.failed"
 }
 
 function scheduleAuthoritativeResync(
@@ -802,6 +839,14 @@ export function getOpenCodeSessionInbox(instanceId: string, sessionId: string, d
 
 export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string): Promise<void> {
   await ensureTranscript(instanceId, sessionId, directory).entry.data.session.pending.sync(sessionId)
+}
+
+/** Seeds the native projection with a page the caller already holds (a REST
+ * load), without a network read and without dropping live events: the
+ * snapshot-served sync writes the rows so later streaming reduces on top. */
+export function seedOpenCodeProjectionPage(instanceId: string, sessionId: string, directory: string, messages: SessionMessageInfo[]): void {
+  const transcript = ensureTranscript(instanceId, sessionId, directory)
+  void transcript.entry.syncMessages(sessionId, boundedTranscript(messages), () => true)
 }
 
 // The reduce store mutates message rows in place (Solid `produce`), so list and

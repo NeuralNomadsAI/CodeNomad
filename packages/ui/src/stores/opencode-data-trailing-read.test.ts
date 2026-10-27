@@ -21,6 +21,7 @@ function stubAuthoritativeSession(client: any, sessionId: string, messages: () =
   client.message.list = messages
 }
 
+/** Arms one live assistant row whose projected text already holds its base. */
 function armSession(instanceId: string, sessionId: string) {
   const base = { sessionID: sessionId, assistantMessageID: "live" }
   let data = applyOpenCodeDataEvent(instanceId, "/work", {
@@ -28,10 +29,17 @@ function armSession(instanceId: string, sessionId: string) {
     data: { ...base, agent: "build", model },
   } as any)
   data = applyOpenCodeDataEvent(instanceId, "/work", {
-    id: "tool", type: "session.tool.input.started", created: 2,
-    data: { ...base, id: "tool", name: "bash" },
+    id: "text", type: "session.text.started", created: 2, data: { ...base },
+  } as any)
+  data = applyOpenCodeDataEvent(instanceId, "/work", {
+    id: "base", type: "session.text.delta", created: 3, data: { ...base, ordinal: 0, delta: "base" },
   } as any)
   return { data, base }
+}
+
+const projectedText = (data: ReturnType<typeof applyOpenCodeDataEvent>, sessionId: string, messageId: string) => {
+  const row: any = data.session.message.get(sessionId, messageId)
+  return String(row?.content?.find((part: any) => part.type === "text")?.text ?? "")
 }
 
 async function settleSync(sync: Promise<unknown>, reads: () => number): Promise<void> {
@@ -50,43 +58,41 @@ function cleanup(instanceId: string) {
 }
 
 describe("OpenCode data trailing read", () => {
-  it("settles a live message sync while same-session events keep arriving", async () => {
+  it("answers a live read in one round trip with projected rows on top", async () => {
     const instanceId = "opencode-data-trailing-read"
     const sessionId = "session"
     const client = getRootClient(instanceId)
-    const fetched = {
-      id: "fetched", type: "assistant", agent: "build", model,
-      content: [], time: { created: 900 },
-    }
+    const page = [{
+      id: "live", type: "assistant", agent: "build", model,
+      content: [{ type: "text", text: "base" }], time: { created: 500 },
+    }]
     let reads = 0
     sseManager.seedStatus(instanceId, "connected")
     stubAuthoritativeSession(client, sessionId, async () => {
       reads += 1
-      // One network round-trip per read; a streaming event for the same
-      // session lands inside every fetch window.
+      // One network round-trip; a streaming delta for the same message lands
+      // inside the fetch window, however long the stream lasts.
       await new Promise<void>((resolve) => setImmediate(resolve))
       applyOpenCodeDataEvent(instanceId, "/work", {
         id: `delta-${reads}`, type: "session.text.delta", created: 1000 + reads,
-        data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "." },
+        data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "X" },
       } as any)
-      return { data: [fetched], cursor: {} }
+      return { data: page, cursor: {} }
     })
     try {
       const { data } = armSession(instanceId, sessionId)
       data.session.message.invalidate(sessionId)
       await settleSync(data.session.message.sync(sessionId), () => reads)
 
-      assert.ok(reads <= 25, `message.list was issued ${reads} times under streaming`)
-      assert.ok(
-        data.session.message.list(sessionId).some((message) => message.id === "live"),
-        "live projection row was dropped by the sync",
-      )
+      assert.equal(reads, 1, "streaming deltas must not restart the read")
+      assert.ok(data.session.message.list(sessionId).some((message) => message.id === "live"))
+      assert.equal(projectedText(data, sessionId, "live"), "baseX")
     } finally {
       cleanup(instanceId)
     }
   })
 
-  it("never publishes a page that a newer event invalidated", async () => {
+  it("never publishes a page that a destructive event invalidated", async () => {
     const instanceId = "opencode-data-trailing-revert"
     const sessionId = "session"
     const client = getRootClient(instanceId)
@@ -99,31 +105,23 @@ describe("OpenCode data trailing read", () => {
     stubAuthoritativeSession(client, sessionId, async () => {
       reads += 1
       await new Promise<void>((resolve) => setImmediate(resolve))
-      if (reads <= 2) {
-        applyOpenCodeDataEvent(instanceId, "/work", {
-          id: `delta-${reads}`, type: "session.text.delta", created: 1000 + reads,
-          data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "." },
-        } as any)
-      } else if (reads === 3) {
-        // A revert lands inside the last fetch window: the fetched page
-        // predates it and still contains the reverted message.
+      if (reads === 1) {
+        // A revert lands inside the fetch window: the fetched page predates
+        // it and still contains the reverted message, so the read restarts.
         applyOpenCodeDataEvent(instanceId, "/work", {
           id: "revert", type: "session.revert.committed", created: 2000,
           data: { sessionID: sessionId, to: "reverted" },
         } as any)
+        return { data: [reverted], cursor: {} }
       }
-      return { data: reads <= 3 ? [reverted] : [], cursor: {} }
+      return { data: [], cursor: {} }
     })
     try {
-      // Execution activity only: the live projection stays empty, so the
-      // contended read cannot lean on resident rows.
-      const data = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "exec", type: "session.execution.started", created: 1,
-        data: { sessionID: sessionId },
-      } as any)
+      const { data } = armSession(instanceId, sessionId)
       data.session.message.invalidate(sessionId)
       await settleSync(data.session.message.sync(sessionId), () => reads)
 
+      assert.ok(reads >= 2, "the destructive event restarted the read")
       assert.ok(
         data.session.message.list(sessionId).every((message) => message.id !== "reverted"),
         "the invalidated page republished the reverted message",
@@ -133,52 +131,78 @@ describe("OpenCode data trailing read", () => {
     }
   })
 
-  it("re-reads authority once the stream quiets after a provisional read", async () => {
-    const instanceId = "opencode-data-trailing-recovery"
+  it("keeps the fetched page's window and cursor and rides newer rows along", async () => {
+    const instanceId = "opencode-data-trailing-window"
     const sessionId = "session"
     const client = getRootClient(instanceId)
     const history = {
       id: "old", type: "assistant", agent: "build", model,
       content: [], time: { created: 100, completed: 100 },
     }
-    const live = {
-      id: "live", type: "assistant", agent: "build", model,
-      content: [], time: { created: 500 },
-    }
     let reads = 0
     sseManager.seedStatus(instanceId, "connected")
     stubAuthoritativeSession(client, sessionId, async () => {
       reads += 1
       await new Promise<void>((resolve) => setImmediate(resolve))
-      if (reads <= 3) {
-        applyOpenCodeDataEvent(instanceId, "/work", {
-          id: `delta-${reads}`, type: "session.text.delta", created: 1000 + reads,
-          data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "." },
-        } as any)
-        return { data: [live], cursor: { next: "cursor-streaming" } }
-      }
-      return { data: [history, live], cursor: { next: "cursor-authoritative" } }
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: `delta-${reads}`, type: "session.text.delta", created: 1000 + reads,
+        data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "X" },
+      } as any)
+      // A message the stream created during the fetch window: the page never
+      // saw it, the projection holds it.
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: `fresh-${reads}`, type: "session.step.started", created: 2000 + reads,
+        data: { sessionID: sessionId, assistantMessageID: "fresh", agent: "build", model },
+      } as any)
+      return { data: [{ id: "live", type: "assistant", agent: "build", model,
+        content: [{ type: "text", text: "base" }], time: { created: 500 } }, history], cursor: { next: "cursor-page" } }
     })
     try {
       const { data } = armSession(instanceId, sessionId)
       data.session.message.invalidate(sessionId)
       await settleSync(data.session.message.sync(sessionId), () => reads)
-      const provisionalReads = reads
 
-      // The quiet re-read reconciles history and restores the cursor.
-      const deadline = Date.now() + 1000
-      while (Date.now() < deadline && reads === provisionalReads) {
-        await new Promise<void>((resolve) => setTimeout(resolve, 10))
+      assert.equal(reads, 1)
+      const ids = data.session.message.list(sessionId).map((message) => message.id)
+      assert.deepEqual(ids, ["old", "live", "fresh"], `unexpected merged window ${JSON.stringify(ids)}`)
+      assert.equal(projectedText(data, sessionId, "live"), "baseX")
+      assert.equal(data.session.message.more(sessionId), true, "the fetched page's cursor was lost")
+    } finally {
+      cleanup(instanceId)
+    }
+  })
+
+  it("keeps reducing streaming events while the read is in flight", async () => {
+    const instanceId = "opencode-data-trailing-live"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    let reads = 0
+    const release = new Promise<void>(() => {})
+    sseManager.seedStatus(instanceId, "connected")
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      await release
+      return { data: [], cursor: {} }
+    })
+    try {
+      const { data } = armSession(instanceId, sessionId)
+      data.session.message.invalidate(sessionId)
+      const pending = data.session.message.sync(sessionId).catch(() => undefined)
+      await new Promise<void>((resolve) => setImmediate(resolve))
+
+      // Deltas keep reducing on the fast path while the read never returns.
+      for (let index = 0; index < 5; index += 1) {
+        const updated = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: `delta-${index}`, type: "session.text.delta", created: 100 + index,
+          data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: `${index}` },
+        } as any)
+        projectOpenCodeMessages(instanceId, sessionId, updated)
       }
-      const current = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "quiet-delta", type: "session.text.delta", created: 5000,
-        data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "." },
-      } as any)
-      const ids = current.session.message.list(sessionId).map((message) => message.id)
-      assert.ok(ids.includes("old"), `history was not reconciled after quiet (${JSON.stringify(ids)})`)
-      assert.ok(ids.includes("live"), "live row was lost by the recovery read")
-      assert.equal(current.session.message.more(sessionId), true, "pagination cursor was not restored")
-      assert.ok(reads <= 25, `message.list was issued ${reads} times in total`)
+      const store = messageStoreBus.getOrCreate(instanceId)
+      const record = store.getMessage("live")
+      const texts = Object.values(record?.parts ?? {}).map((part: any) => String(part.data?.text ?? ""))
+      assert.ok(texts.some((text) => text.includes("01234")), `streaming froze behind the read: ${JSON.stringify(texts)}`)
+      void pending
     } finally {
       cleanup(instanceId)
     }

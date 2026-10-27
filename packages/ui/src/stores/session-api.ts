@@ -97,7 +97,7 @@ import {
 } from "./message-v2/message-window"
 import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
-import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
+import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision, seedOpenCodeProjectionPage } from "./opencode-data"
 
 const log = getLogger("api")
 const sessionLog = getLogger("session")
@@ -1771,9 +1771,10 @@ async function loadMessages(
     // An initial open has no resident rows a mid-stream page could rewind:
     // streaming continues on top of the seeded page instead of spending the
     // whole revision-retry budget on a session that never goes quiet. A
-    // stored window or resident rows mark a reload, which keeps its retry
-    // semantics.
-    const initialSeed = store.getSessionMessageIds(sessionId).length === 0 && store.getMessageWindow(sessionId) === undefined
+    // stored window, a saved history-window snapshot or resident rows mark a
+    // reload, which keeps its retry semantics.
+    const initialSeed = store.getSessionMessageIds(sessionId).length === 0
+      && storedWindow === undefined && currentWindow.kind === "latest"
 
     const forwardPage = intent === "oldest" || planned.forward
     const nextWindow = directWindow ?? (forwardPage
@@ -1872,6 +1873,12 @@ async function loadMessages(
       } else if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
+        if (initialSeed) {
+          // The reducer projection needs the same base, or later streaming
+          // deltas reduce against rows it never held and the loaded messages
+          // freeze at their snapshot text.
+          seedOpenCodeProjectionPage(instanceId, sessionId, session.location.directory, apiMessages)
+        }
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
         commitCurrentWindow(nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
