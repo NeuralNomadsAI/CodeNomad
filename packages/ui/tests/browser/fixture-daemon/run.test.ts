@@ -66,6 +66,36 @@ test("concurrent shutdown requests share one teardown", { timeout: 180_000 }, as
   assert.ok(log.includes("\"kind\":\"fixture-shutdown\""), "the protected shutdown completed")
 })
 
+test("a runner sees a forced stop through, even with nothing else keeping it alive", { timeout: 90_000 }, async () => {
+  const dir = await mkdtemp(path.join(tmpdir(), "run-forced-"))
+  scratch.push(dir)
+  // A daemon whose event loop blocks during shutdown: only the runner's
+  // force-kill can end it.
+  const wedged = path.join(dir, "wedged.mjs")
+  await writeFile(wedged, [
+    `import http from "node:http"`,
+    `const server = http.createServer((request, response) => {`,
+    `  response.end("ok")`,
+    `  if (request.url === "/__daemon/shutdown") setImmediate(() => { for (;;) {} })`,
+    `})`,
+    `server.listen(0, "127.0.0.1", () => process.stdout.write(JSON.stringify({ kind: "fixture-daemon-endpoint", url: "http://127.0.0.1:" + server.address().port, secret: "s", pid: process.pid }) + "\\n"))`,
+  ].join("\n"))
+  // A runner with no other handles, like run.mjs and shard.mjs at the end of a slice.
+  const runner = path.join(dir, "runner.mjs")
+  await writeFile(runner, [
+    `import { startRunDaemon } from ${JSON.stringify(pathToFileURL(path.join(import.meta.dirname, "run.ts")).href)}`,
+    `const daemon = await startRunDaemon({ uiRoot: ${JSON.stringify(uiRoot)}, script: ${JSON.stringify(wedged)}, timeoutMs: 20000 })`,
+    `await daemon.stop().then(() => console.log("stop resolved"), error => console.log("stop rejected: " + error.message))`,
+  ].join("\n"))
+  const child = spawn(process.execPath, ["--import", "tsx", runner], { stdio: ["ignore", "pipe", "inherit"] })
+  let output = ""
+  child.stdout.setEncoding("utf8")
+  child.stdout.on("data", (chunk: string) => { output += chunk })
+  const code = await new Promise<number | null>(resolve => child.on("close", resolve))
+  assert.match(output, /stop rejected: .*killed after 15 s/, `the runner reported the forced teardown (exit ${code}, output ${JSON.stringify(output)})`)
+  assert.equal(code, 0)
+})
+
 test("the handshake reads whole lines and a failed start leaves no child behind", { timeout: 60_000 }, async () => {
   const dir = await mkdtemp(path.join(tmpdir(), "run-handshake-"))
   scratch.push(dir)

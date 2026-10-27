@@ -142,22 +142,29 @@ export async function startRunDaemon(options: SpawnDaemonOptions): Promise<RunDa
     },
     stop() {
       stopping ??= (async () => {
+        // The handle was unref'd after the handshake: hold it until the exit is
+        // observed, or after a forced kill nothing keeps the runner alive to see it.
+        daemon.child.ref()
         try {
-          await fetch(`${daemon.url}/__daemon/shutdown`, {
-            method: "POST",
-            headers: { "x-fixture-secret": daemon.secret },
-            signal: AbortSignal.timeout(15_000),
-          })
-        } catch { /* already gone, or wedged: the force-kill below decides */ }
-        let forced = false
-        const grace = setTimeout(() => {
-          forced = true
-          try { daemon.child.kill("SIGKILL") } catch { /* already gone */ }
-        }, 15_000)
-        const code = await exited
-        clearTimeout(grace)
-        if (forced || code !== 0) {
-          throw new Error(`fixture daemon teardown failed (${forced ? "killed after 15 s" : `exit code ${code}`}; log: ${path.join(daemon.logDirectory, "daemon.log")})`)
+          try {
+            await fetch(`${daemon.url}/__daemon/shutdown`, {
+              method: "POST",
+              headers: { "x-fixture-secret": daemon.secret },
+              signal: AbortSignal.timeout(15_000),
+            })
+          } catch { /* already gone, or wedged: the force-kill below decides */ }
+          let forced = false
+          const grace = setTimeout(() => {
+            forced = true
+            try { daemon.child.kill("SIGKILL") } catch { /* already gone */ }
+          }, 15_000)
+          const code = await exited
+          clearTimeout(grace)
+          if (forced || code !== 0) {
+            throw new Error(`fixture daemon teardown failed (${forced ? "killed after 15 s" : `exit code ${code}`}; log: ${path.join(daemon.logDirectory, "daemon.log")})`)
+          }
+        } finally {
+          daemon.child.unref()
         }
       })()
       return stopping
