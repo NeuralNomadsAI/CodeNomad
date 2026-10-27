@@ -54,9 +54,10 @@ test("creating a session on a stalled network shows busy feedback, one request a
       return state.disabled && state.spinning
     }, "busy new-session button")
 
-    // Concurrent entries (the new-session hotkey) share the hanging request.
-    await page.evaluate(() => (window as any).fixture.newSession())
-    await page.evaluate(() => (window as any).fixture.newSession())
+    // Concurrent entries share the hanging request: the real new-session
+    // shortcut, pressed twice through the registered hotkey wiring.
+    await page.keyboard.press("Control+Shift+N")
+    await page.keyboard.press("Control+Shift+N")
     assert.equal(await page.evaluate(() => (window as any).fixture.createCalls()), 1, "one create request while busy")
 
     // The failed creation surfaces a dialog instead of dying silently.

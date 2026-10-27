@@ -119,7 +119,6 @@ interface MessagePageRequest {
 
 const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
-const createSessionAuthorities = new Map<string, object>()
 const deleteSessionAuthorities = new Map<string, object>()
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
@@ -1084,27 +1083,25 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
   }
 }
 
-/** Bounds a single session.create POST so a stalled network cannot hang creation forever. */
-const SESSION_CREATE_TIMEOUT_MS = 20_000
-const createSessionInFlight = new Map<string, Promise<Session>>()
-
-async function createSession(instanceId: string, agent?: string): Promise<Session> {
-  // Concurrent entries (sidebar button, new-session hotkey, command palette) share
-  // one creation instead of stacking duplicate requests behind a slow network.
-  const inFlight = createSessionInFlight.get(instanceId)
-  if (inFlight) return inFlight
-  const creation = createSessionInternal(instanceId, agent).finally(() => {
-    if (createSessionInFlight.get(instanceId) === creation) createSessionInFlight.delete(instanceId)
-  })
-  createSessionInFlight.set(instanceId, creation)
-  return creation
-}
+// In-flight creations keyed by intent (instance, directory, agent). Concurrent
+// entries with the same intent — sidebar button, new-session hotkey, command
+// palette — share one creation instead of stacking duplicate requests behind a
+// slow network, while distinct intents (another directory or agent) still send
+// their own requests. There is deliberately no client-side timeout:
+// session.create is not idempotent, an aborted request may still commit
+// server-side and arrive later through the session.created event, so a slow
+// creation stays visibly in progress until the request settles one way or the
+// other and only real rejections surface as failures.
+const createSessionIntents = new Map<string, Promise<Session>>()
+const createSessionInFlight = new Map<string, Set<Promise<Session>>>()
 
 function isCreatingSession(instanceId: string): boolean {
+  // Reads the reactive loading signal: controls tracking (Solid) re-render on
+  // the transitions driven by the in-flight set below.
   return loading().creatingSession.get(instanceId) === true
 }
 
-async function createSessionInternal(instanceId: string, agent?: string): Promise<Session> {
+async function createSession(instanceId: string, agent?: string): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1113,22 +1110,52 @@ async function createSessionInternal(instanceId: string, agent?: string): Promis
   const activeLocation = activeId && activeId !== "info"
     ? sessions().get(instanceId)?.get(activeId)?.location
     : undefined
-  const client = getRootClient(instanceId)
-  const generationCurrent = captureInstanceRequestAuthority(instanceId)
-
   const instanceAgents = agents().get(instanceId) || []
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
   const selectedAgent = agent || primaryAgents[0]?.id || ""
+  const intent = `${instanceId}\u0000${activeLocation?.directory ?? instance.folder}\u0000${selectedAgent}`
 
-  // Pending spans the whole flow — catalog/config reads included — so a slow
-  // network shows feedback from the first click instead of silence.
-  setLoading((prev) => {
-    const next = { ...prev }
-    next.creatingSession.set(instanceId, true)
-    return next
+  const inFlight = createSessionIntents.get(intent)
+  if (inFlight) return inFlight
+
+  const creation = createSessionInternal(instanceId, instance, activeLocation, selectedAgent).finally(() => {
+    if (createSessionIntents.get(intent) === creation) createSessionIntents.delete(intent)
+    const live = createSessionInFlight.get(instanceId)
+    if (!live?.delete(creation)) return
+    if (live.size === 0) {
+      createSessionInFlight.delete(instanceId)
+      setLoading((prev) => {
+        const next = { ...prev }
+        next.creatingSession.set(instanceId, false)
+        return next
+      })
+    }
   })
-  const loadingAuthority = {}
-  createSessionAuthorities.set(instanceId, loadingAuthority)
+  createSessionIntents.set(intent, creation)
+  const live = createSessionInFlight.get(instanceId) ?? new Set<Promise<Session>>()
+  const first = live.size === 0
+  live.add(creation)
+  createSessionInFlight.set(instanceId, live)
+  if (first) {
+    // Pending spans the whole flow — catalog/config reads included — so a slow
+    // network shows feedback from the first click instead of silence.
+    setLoading((prev) => {
+      const next = { ...prev }
+      next.creatingSession.set(instanceId, true)
+      return next
+    })
+  }
+  return creation
+}
+
+async function createSessionInternal(
+  instanceId: string,
+  instance: Instance,
+  activeLocation: Session["location"] | undefined,
+  selectedAgent: string,
+): Promise<Session> {
+  const client = getRootClient(instanceId)
+  const generationCurrent = captureInstanceRequestAuthority(instanceId)
 
   try {
     const defaultModel = await getDefaultModel(instanceId, selectedAgent)
@@ -1146,11 +1173,7 @@ async function createSessionInternal(instanceId: string, agent?: string): Promis
         ? { providerID: defaultModel.providerId, id: defaultModel.modelId }
         : null,
       location: { directory: activeLocation?.directory ?? instance.folder },
-    }, {
-      ...requestLocationOptions(activeLocation),
-      // A stalled connection must end in a surfaced failure, not a forever-hanging creation.
-      signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS),
-    })
+    }, requestLocationOptions(activeLocation))
     if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
     const session = toClientSessionV2(instanceId, info)
     session.agent = selectedAgent
@@ -1209,15 +1232,6 @@ async function createSessionInternal(instanceId: string, agent?: string): Promis
   } catch (error) {
     log.error("Failed to create session:", error)
     throw error
-  } finally {
-    if (createSessionAuthorities.get(instanceId) === loadingAuthority) {
-      createSessionAuthorities.delete(instanceId)
-      setLoading((prev) => {
-        const next = { ...prev }
-        next.creatingSession.set(instanceId, false)
-        return next
-      })
-    }
   }
 }
 

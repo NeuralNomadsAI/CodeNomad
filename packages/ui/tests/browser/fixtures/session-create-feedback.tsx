@@ -3,8 +3,10 @@ import AlertDialog from "../../../src/components/alert-dialog"
 import SessionSidebar from "../../../src/components/instance/shell/SessionSidebar"
 import { useI18n, I18nProvider } from "../../../src/lib/i18n"
 import { sdkManager } from "../../../src/lib/sdk-manager"
+import { keyboardRegistry } from "../../../src/lib/keyboard-registry"
+import { setupTabKeyboardShortcuts } from "../../../src/lib/keyboard"
 import { ThemeProvider } from "../../../src/lib/theme"
-import { addInstance } from "../../../src/stores/instances"
+import { addInstance, setActiveInstanceId } from "../../../src/stores/instances"
 import { startNewSession } from "../../../src/stores/session-actions"
 import { activeParentSessionId, setProviders, setSessions, type SessionThread } from "../../../src/stores/session-state"
 import { ConfigProvider } from "../../../src/stores/preferences"
@@ -39,6 +41,18 @@ setProviders(previous => new Map(previous).set(instanceId, [{ id: "fixture", nam
   models: [{ id: "fixture", providerId: "fixture", name: "Fixture" }] }]))
 setSessions(previous => new Map(previous).set(instanceId, new Map()))
 
+// The real hotkey wiring, as the app lifecycle installs it: the shortcut routes
+// through the registry and the store action, so tests can press Ctrl+Shift+N.
+setActiveInstanceId(instanceId)
+setupTabKeyboardShortcuts(() => {}, async () => {}, (id) => { void startNewSession(id) }, () => {}, () => {}, () => true)
+window.addEventListener("keydown", event => {
+  const shortcut = keyboardRegistry.findMatch(event)
+  if (shortcut) {
+    event.preventDefault()
+    shortcut.handler()
+  }
+})
+
 const Shell = () => {
   const { t } = useI18n()
   return <SessionSidebar
@@ -60,9 +74,6 @@ const Shell = () => {
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Shell /><AlertDialog /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
   createCalls: () => createCalls,
-  // Fire-and-forget like the hotkey: the evaluate must not await a creation
-  // that is intentionally still hanging.
-  newSession: () => { void startNewSession(instanceId) },
   settle: (mode: "ok" | "fail") => settle?.(mode),
   activeParentId: () => activeParentSessionId().get(instanceId),
 }
