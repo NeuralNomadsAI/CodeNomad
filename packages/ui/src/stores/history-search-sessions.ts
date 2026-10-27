@@ -6,6 +6,8 @@ import { instances } from "./instances"
 import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
 import { showSessionChatFor } from "./session-previews"
 import { getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "./sessions"
+import { setSessionSearchDestination } from "./session-search"
+import type { SessionSearchMatch } from "../lib/session-search"
 
 export interface HistorySessionLabel {
   title: string
@@ -105,7 +107,8 @@ export function createHistorySessionLabels(instanceId: () => string) {
  * parents, then let the destination transcript restore the anchor through its
  * normal bounded window load. `current` fences the caller's view.
  */
-export async function openHistoryMatchSession(instanceId: string, sessionId: string, messageId: string, current: () => boolean): Promise<boolean> {
+export async function openHistoryMatchSession(instanceId: string, sessionId: string, messageId: string, current: () => boolean,
+  highlight?: { query: string; match: SessionSearchMatch }): Promise<boolean> {
   const client = instances().get(instanceId)?.client
   const generation = getOpenCodeInstanceGeneration(instanceId)
   const admitted = () => current() && instances().get(instanceId)?.client === client
@@ -118,6 +121,7 @@ export async function openHistoryMatchSession(instanceId: string, sessionId: str
     { scrollTop: 0, atBottom: false, anchorKey: messageId, anchorOffset: 0, followModeType: "escaped" })
   // A destination left on its browser preview would hide the transcript.
   batch(() => {
+    if (highlight) setSessionSearchDestination(instanceId, sessionId, highlight.query, highlight.match)
     setActiveSessionFromList(instanceId, sessionId)
     showSessionChatFor(sessionId, instances().get(instanceId)?.folder ?? "")
   })

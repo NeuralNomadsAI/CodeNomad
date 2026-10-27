@@ -7,11 +7,11 @@ L’historique enregistré, ce que la transcription affiche actuellement et le c
 1. Ouvrez **Rechercher dans l'historique du chat** dans l’en-tête de conversation, ou utilisez son raccourci configuré (**Ctrl/Cmd+F** par défaut).
 2. Sélectionnez **Session entière** ou **Workspace entier** et saisissez un terme.
 3. Activez **Inclure les outils et réflexions** si vous avez besoin du contenu technique en plus du texte lisible.
-4. Sélectionnez un extrait ou utilisez **Résultats suivants** pour dépasser la page actuelle.
+4. Sélectionnez un extrait. Dans **Session entière**, utilisez **Résultats suivants** pour parcourir les pages chronologiques.
 
-La recherche est littérale et insensible à la casse, sur l’historique enregistré plutôt que les seules lignes de transcription montées. La portée de l’espace de travail suit l’arborescence autorisée et les worktrees du projet ouvert, pas tous les projets du service OpenCode ; ses résultats sont regroupés par conversation, chacune nommée par son titre et le worktree qui la contient actuellement. Les octets des pièces jointes fichier/image et l’état opaque du fournisseur ne sont pas du texte recherchable.
+**Session entière** recherche une expression littérale sans tenir compte de la casse dans l’historique enregistré. **Workspace entier** classe les résultats de l’arborescence et des worktrees autorisés du projet ouvert à partir de six termes au maximum et affiche les 20 meilleurs dans une liste. Le meilleur résultat de chaque conversation apparaît d’abord, avec son titre et son worktree actuel dans l’ordre du classement. Les termes sont surlignés dans les extraits et dans la conversation après **Ouvrir dans la session**. Le contenu recherché comprend le texte lisible et, en option, les outils et réflexions.
 
-La ligne de progression **Cette page : … résultats · … messages parcourus** décrit cette page de résultats, pas les totaux de l’espace de travail. Les résultats arrivent par lots. Les messages trop volumineux ou non pris en charge ignorés sont signalés ; l’absence de résultat ne prouve pas qu’ils ne contiennent aucune correspondance. Les nouveaux messages arrivant pendant un parcours nécessitent une nouvelle recherche pour être inclus de façon cohérente.
+Les pages de conversation affichent **Cette page : … résultats · … messages parcourus** à mesure que les lots arrivent. Le projet affiche **Meilleurs résultats : …** et des avis compacts pour les analyses partielles ou les dossiers exclus. Si le classement est indisponible dans cet environnement, utilisez **Session entière**. Les messages ignorés sont signalés ; relancez la recherche pour inclure les nouveaux messages.
 
 Ouvrir une recherche vide ne parcourt pas l’historique. Changer la requête/la portée, fermer la fenêtre ou quitter la session annule le travail de recherche obsolète. Si une lecture échoue, utilisez **Réessayer** ; cela n’envoie pas de prompt et ne modifie pas l’historique.
 

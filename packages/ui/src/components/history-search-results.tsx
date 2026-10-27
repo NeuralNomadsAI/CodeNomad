@@ -4,6 +4,7 @@ import { useI18n } from "../lib/i18n"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { createHistorySessionLabels, type HistorySessionLabel } from "../stores/history-search-sessions"
 import { getGitRepoStatus, getWorktreeForDirectory } from "../stores/worktrees"
+import { rankedExcerptParts } from "../lib/ranked-search"
 
 type HistorySearchMatch = SessionSearchMatch & { sessionId: string }
 
@@ -16,6 +17,7 @@ export default function HistorySearchResults(props: {
   matches: HistorySearchMatch[]
   activeIndex: number
   showSessions: boolean
+  terms?: readonly string[]
   onSelect: (index: number) => void
 }) {
   const { t } = useI18n()
@@ -37,10 +39,15 @@ export default function HistorySearchResults(props: {
       <button type="button" class="history-search-result" classList={{ "history-search-result-active": props.activeIndex === index() }}
         aria-describedby={props.showSessions ? `${id}-${groupStarts()[index()]}` : undefined} onClick={() => props.onSelect(index())}>
         <span class="text-xs text-muted">{t(`history.${match.partType}`)}</span>
-        <span>{match.preview}</span>
+        <span><HistorySearchExcerpt text={match.preview} terms={props.terms} /></span>
       </button>
     </>}</For>
   </div>
+}
+
+export function HistorySearchExcerpt(props: { text: string; terms?: readonly string[] }) {
+  const parts = createMemo(() => rankedExcerptParts(props.text, props.terms ?? []))
+  return <For each={parts()}>{part => part.match ? <mark class="session-search-match">{part.text}</mark> : part.text}</For>
 }
 
 export function HistoryWorktreeBadge(props: { instanceId: string; directory?: string }) {

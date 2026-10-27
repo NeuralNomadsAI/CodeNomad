@@ -1,4 +1,6 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { HistoryRankedInput } from "../../../server/src/opencode/session-pruning/history-ranked-contract"
+import type { RankedHistoryResult } from "../../../server/src/server/routes/session-history-ranked-contract"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionRecurrenceSnapshot } from "../../../server/src/api-types"
 import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -237,6 +239,11 @@ export const serverApi = {
   },
   querySessionHistory(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/query`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
+  queryRankedHistory(instanceId: string, input: HistoryRankedInput, signal?: AbortSignal): Promise<RankedHistoryResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/ranked`, {
       method: "POST", body: JSON.stringify(input), signal,
     })
   },

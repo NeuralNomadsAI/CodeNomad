@@ -7,11 +7,11 @@ El historial almacenado, lo que muestra actualmente la transcripción y el conte
 1. Abre **Buscar en el historial del chat** en la cabecera de la conversación o usa su atajo configurado (por defecto **Ctrl/Cmd+F**).
 2. Selecciona **Toda la sesión** o **Todo el espacio de trabajo** e introduce un término de búsqueda.
 3. Activa **Incluir herramientas y razonamiento** si necesitas contenido técnico además del texto legible.
-4. Selecciona un fragmento o usa **Siguientes resultados** para continuar más allá de la página actual.
+4. Selecciona un fragmento. En **Toda la sesión**, usa **Siguientes resultados** para recorrer las páginas cronológicas.
 
-La búsqueda es literal y no distingue mayúsculas de minúsculas; recorre el historial almacenado, no solo las filas montadas de la transcripción. El ámbito del espacio de trabajo sigue el árbol de directorios y los worktrees autorizados del proyecto abierto, no todos los proyectos del servicio OpenCode; sus resultados se agrupan por conversación, cada una identificada por su título y el worktree que la contiene actualmente. Los bytes de archivos/imágenes adjuntos y el estado opaco del proveedor no son texto buscable.
+**Toda la sesión** busca una frase literal sin distinguir mayúsculas en el historial guardado. **Todo el espacio de trabajo** clasifica los resultados del árbol y los worktrees autorizados del proyecto abierto con hasta seis términos y muestra los 20 mejores en una lista. Primero aparece el mejor resultado de cada conversación, con títulos y etiquetas del worktree actual en orden de relevancia. Los términos se resaltan en los fragmentos y en la transcripción de destino tras **Abrir en la sesión**. Se busca texto legible y, opcionalmente, herramientas y razonamiento.
 
-La línea de progreso **Esta página: … resultados · … mensajes examinados** describe esta página de resultados, no los totales del espacio de trabajo. Los resultados llegan por lotes. Se informa de los mensajes demasiado grandes o no compatibles omitidos; la ausencia de un resultado no demuestra que esos mensajes no contengan coincidencias. Los mensajes nuevos que llegan durante un análisis necesitan una búsqueda nueva para incluirse de forma coherente.
+Las páginas de conversación muestran **Esta página: … resultados · … mensajes examinados** al llegar los lotes. El proyecto muestra **Mejores resultados: …** y avisos compactos de búsqueda parcial o directorios excluidos. Si la búsqueda clasificada no está disponible en el entorno, usa **Toda la sesión**. Se indican los mensajes omitidos; inicia otra búsqueda para incluir mensajes nuevos.
 
 Abrir una búsqueda vacía no analiza el historial. Cambiar la consulta/el ámbito, cerrar la ventana o salir de la sesión cancela el trabajo de búsqueda obsoleto. Si falla una lectura, usa **Reintentar**; no envía un mensaje ni modifica el historial.
 

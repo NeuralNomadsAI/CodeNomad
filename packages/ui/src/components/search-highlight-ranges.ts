@@ -1,6 +1,7 @@
 import { scrollAxes } from "../lib/scroll-gesture-routing"
 import type { SessionSearchMatch } from "../lib/session-search"
 import { isScrollTraceEnabled, traceScroll } from "./virtual-scroll-trace"
+import { rankedTermMatcher, type SearchHighlightQuery } from "../lib/ranked-search"
 
 export interface SearchRange { range: Range; active: boolean }
 
@@ -21,9 +22,10 @@ function originalOffset(text: string, folded: string, offset: number, end: boole
   return low
 }
 
-export function collectSearchRanges(root: HTMLElement, query: string, active?: SessionSearchMatch | null): SearchRange[] {
-  const needle = query.trim().toLocaleLowerCase()
-  if (!needle) return []
+export function collectSearchRanges(root: HTMLElement, query: SearchHighlightQuery, active?: SessionSearchMatch | null): SearchRange[] {
+  const needle = typeof query === "string" ? query.trim().toLocaleLowerCase() : ""
+  const ranked = typeof query === "string" ? undefined : rankedTermMatcher(query)
+  if (!needle && !ranked) return []
   const document = root.ownerDocument
   const seen = new Set<Node>()
   const result: SearchRange[] = []
@@ -38,6 +40,16 @@ export function collectSearchRanges(root: HTMLElement, query: string, active?: S
       seen.add(node)
       if (!node.parentElement || node.parentElement.closest("button, input, textarea, select")) continue
       const text = node.nodeValue ?? "", folded = text.toLocaleLowerCase()
+      if (ranked) {
+        ranked.lastIndex = 0
+        for (const match of text.matchAll(ranked)) {
+          const range = document.createRange()
+          range.setStart(node, match.index); range.setEnd(node, match.index + match[0].length)
+          result.push({ range, active: Boolean(inActivePart && active && occurrence === active.occurrence) })
+          if (inActivePart) occurrence++
+        }
+        continue
+      }
       for (let at = folded.indexOf(needle); at !== -1; at = folded.indexOf(needle, at + needle.length)) {
         const range = document.createRange()
         range.setStart(node, originalOffset(text, folded, at, false))

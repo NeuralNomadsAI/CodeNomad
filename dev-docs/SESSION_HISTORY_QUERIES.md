@@ -3,15 +3,19 @@
 ## Entry points
 
 The non-modal transcript search window (Ctrl/Cmd+F or the header toggle) can
-query the entire session or workspace. It displays paginated excerpts and
-page-local progress from that search alone. The command palette's
+query the entire session or workspace. Conversation scope uses a literal phrase
+and chronological result pages. Workspace scope sends one debounced ranked request
+and displays up to 20 results in returned order, with all query terms highlighted.
+Opening a ranked result in its conversation carries those term highlights to the
+destination transcript. The command palette's
 remove-tools-and-reasoning command plans against the same stored history. Navigation:
 [SESSION_HISTORY_NAVIGATION.md](SESSION_HISTORY_NAVIGATION.md).
 
 Both paths use the bundled `codenomad-session-pruning` plugin's authenticated RPC,
-with two fixed CodeNomad routes:
+with fixed CodeNomad routes:
 
 - `POST /api/workspaces/:id/session-history/query` → `history`
+- `POST /api/workspaces/:id/session-history/ranked` → version-1 `historyRanked`
 - `POST /api/workspaces/:id/session-history/prune` → `pruneBatch`
 
 Never expose generic RPC, caller-supplied SQL, a database filename, replacement
@@ -58,13 +62,13 @@ without decoding JSON. A traversal spans many reads: concurrent
 edits/deletes/moves can affect later pages, and different locations start at
 different times.
 
-Search is literal and case-insensitive, with one matching excerpt per message
+Conversation search is literal and case-insensitive, with one matching excerpt per message
 (up to 320 characters), in stored row order. It searches text, reasoning, tool
 names/arguments/text output/errors and readable native user/system/synthetic/
 skill/shell/compaction text, skipping attachments and opaque continuation state.
 With the technical-content switch off, SQLite reads/parses the stored JSON
 but projects only readable text into JavaScript, retaining original part positions.
-The UI combines scan batches until it has at least 32 results or reaches the end,
+For conversation scope the UI combines scan batches until it has at least 32 results or reaches the end,
 displaying partial results as they arrive. It retains one bounded result page
 (at most 63 hits, to retain the final transport batch without losing its cursor).
 The next-results action advances by result page, independently of scanned rows.
@@ -72,7 +76,8 @@ Ownership checks are shared by identical locations only within each broker reque
 and revalidated on subsequent requests. Closing the window,
 changing query/scope or leaving the session cancels obsolete UI work. Resident matches scroll to their existing row without a network read.
 
-Workspace results group consecutive hits by session. Each group names its
+Ranked workspace results retain rank order, with only consecutive hits sharing a
+session header. Each header names its
 conversation and the worktree (label, normally its branch) that currently holds
 the session's native location; never label hits with a commit (messages have
 none). Titles and locations come from the session store, or from one
@@ -86,6 +91,37 @@ preview's "Open in session" hydrates only that session and its parents, stores
 the hit as its transcript anchor, selects it and returns its central surface to
 chat, so the destination restores the bounded window around the message
 through its normal anchor path.
+
+### Workspace ranked broker and UI
+
+The ranked route uses the authenticated shared connection and its current-client
+fence. It enumerates validated execution-host worktree directories, deduplicates
+nested roots and checks every contributing native location through the same
+request-local ownership helper as literal history. Deletion snapshots include
+service paths and resolved worktree identities, including WSL identities; root,
+connection, deletion and request-cancellation checks fence asynchronous reads.
+Before publication every contributing location is revalidated and all displayed
+counts are reconstructed from owned provenance. Native titles, locations, session
+provenance and technical cap sources stay inside the broker.
+
+Each disjoint authorized root supplies up to 20 native ranked hits. The broker
+interleaves local rank ordinals in stable directory order, takes each session's
+first hit, then fills repeats by that order. A request covers at most 32 disjoint
+roots under one 15-second deadline; omitted roots set the capped notice. The UI
+shows one bounded list with best-result progress and compact cap/exclusion notes.
+Pagination belongs to conversation scope. Ranked preview blocks use the shared
+excerpt renderer and native query terms, preserving their original text while
+highlighting the same Unicode terms as excerpts and the destination transcript.
+Preview and Open in session retain their bounded reads and navigation fences;
+ranked destination highlights are
+ephemeral and exact-instance/session-owned, cleared on close or leaving that view.
+
+The first actual RPC response negotiates ranked capability for its authenticated
+connection. A declared `rpc.method_not_found` yields `status: "unsupported"`,
+retained for that connection; a replacement connection negotiates afresh. The
+window explicitly explains this state and leaves conversation scope available.
+Other failures use the shared blocked/error handling. Never fall back from ranked
+workspace search to literal traversal or expose a generic RPC proxy.
 
 ## Ranked agent search
 
@@ -175,8 +211,8 @@ session, including rows that produce no match. Per-session candidate, judged and
 matched-message counts let an ownership-validating broker reconstruct totals.
 Its discriminant is `status: "ranked"`; blocked reads use the
 shared pruning blocked result. This RPC is available to native callers. The
-CodeNomad HTTP broker and UI continue using their existing history contract;
-generic RPC proxy access stays closed.
+CodeNomad HTTP broker uses the ranked method for workspace search and the literal
+history contract for conversation search; generic RPC proxy access stays closed.
 
 ## Cleanup semantics
 
@@ -231,4 +267,4 @@ HEAD by default.
 ## Agent conventions
 
 - Ranked search belongs in `history-ranked-store.ts`, with pure ranking in `history-ranking.ts`; share scope SQL, readable extraction, text projection and message bounds through `history-content.ts`. Compute masks only from decoded shared readable sources; unknown projections stay outside IDF and behind known candidates. Preserve the literal `history` RPC contract. Keep Unicode/control-escape selectivity, dotted-I self-matches, tool-heavy rarity/unknown ordering, large-projection responsiveness/reporting, partial results at the judge deadline and verified-match provenance tests whenever ranking changes. `history-ranked-ownership.ts` owns request-local physical ownership and the uncached publication fence; bind both root and common-directory device/inode identities. The shared filesystem reader stays inside the packable plugin and is imported by workspace discovery; keep depth limits explicit at plugin calls. Never add Git process spawns to ranked ownership, caller scope selectors, caller-supplied regular-expression execution, transcript indexes or generic RPC routes. Tool registration and disposal follow the pruning bundle's backend presence.
-- Full-history search/counts use the bundled pruning plugin's bounded queries, outside the transcript store. Current-session results and the global timeline navigate through bounded anchor windows; other-session previews fetch one native message only. Search/results/progress styles live in `styles/components/history-search.css`. Workspace results group by session with its title and current worktree badge via `components/history-search-results.tsx`; unloaded labels and "Open in session" live in `stores/history-search-sessions.ts` (bounded display reads, targeted hydration, transcript anchor). Never show raw native IDs in results.
+- Full-history search/counts use the bundled pruning plugin's bounded queries, outside the transcript store. Current-session results and the global timeline navigate through bounded anchor windows; other-session previews fetch one native message only. Search/results/progress styles live in `styles/components/history-search.css`. Workspace results preserve rank with consecutive-session headers via `components/history-search-results.tsx`; unloaded labels and Open in session live in `stores/history-search-sessions.ts`. Reuse native `searchTerms` through `lib/ranked-search.ts` for excerpts and destination highlighting; conversation highlights retain literal semantics. Keep ranked capability connection-scoped and unsupported explicit. Never show raw native IDs in results, regroup away ranking or add workspace result pagination.
