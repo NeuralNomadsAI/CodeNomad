@@ -25,7 +25,6 @@ function harness() {
   const getFormsCalls: number[] = []
   let forms: FormWithLocation[] = []
   let decide: (call: MatcherCall) => boolean = () => false
-  const sessionLocations = new Map<string, SyncLocation>()
 
   const reconciliation = createQuestionReconciliation({
     schedule: (instanceId, location) => {
@@ -40,7 +39,6 @@ function harness() {
       matcherCalls.push(call)
       return decide(call)
     },
-    getSessionLocation: (instanceId, sessionId) => sessionLocations.get(`${instanceId}\0${sessionId}`),
     now: () => now,
     setTimer: ((callback: () => void, ms?: number) => {
       const id = ++timerSeq
@@ -81,22 +79,18 @@ function harness() {
     setMatch: (next: (call: MatcherCall) => boolean) => {
       decide = next
     },
-    setSessionLocation: (instanceId: string, sessionId: string, location: SyncLocation) => {
-      sessionLocations.set(`${instanceId}\0${sessionId}`, location)
-    },
     pendingTimers: () => timers.size,
   }
 }
 
-test("a running question part with no dock form schedules one targeted sync after the grace", () => {
+test("a running question part with no dock form triggers one recovery sync after the grace", () => {
   const h = harness()
-  h.setSessionLocation("instance-1", "session-1", { directory: "/repo/a", workspaceID: "ws-1" })
   h.reconciliation.onQuestionPart("instance-1", "session-1", "msg-1", "part-1", true)
   h.advance(1_999)
   assert.deepEqual(h.scheduleCalls, [], "nothing syncs before the grace elapses")
   h.advance(1)
   assert.deepEqual(h.scheduleCalls, [
-    { instanceId: "instance-1", location: { directory: "/repo/a", workspaceID: "ws-1" } },
+    { instanceId: "instance-1", location: undefined },
   ])
   h.advance(1_000)
   assert.equal(h.scheduleCalls.length, 1, "the grace fires exactly one sync")
