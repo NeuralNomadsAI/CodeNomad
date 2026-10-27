@@ -29,7 +29,11 @@ function harness(options: { thresholdMs?: number; checkIntervalMs?: number } = {
   })
   const tick = () => fire?.()
   const advance = (ms: number) => { now += ms; tick() }
-  return { watchdog, reasons, tick, advance, created: () => created, cleared: () => cleared }
+  // Moves the clock without firing the interval: simulates the gap between
+  // silence crossing the threshold and the next interval tick (or a suspended
+  // tab where no tick ran at all).
+  const elapse = (ms: number) => { now += ms }
+  return { watchdog, reasons, tick, advance, elapse, created: () => created, cleared: () => cleared }
 }
 
 test("stale() is false right after activity()", () => {
@@ -111,4 +115,30 @@ test("activity() before any connection does not create a timer", () => {
   watchdog.activity()
   advance(FAST.thresholdMs)
   assert.equal(created(), 0)
+})
+
+test("probe acts between threshold-crossing and the next interval tick", () => {
+  const { watchdog, reasons, elapse, tick } = harness()
+  watchdog.setConnected(true)
+  watchdog.activity()
+  assert.equal(watchdog.probe(), false, "a fresh stream never probes stale")
+  elapse(45_000)
+  assert.equal(watchdog.stale(), false, "no interval tick ran, so no episode is open yet")
+  assert.equal(watchdog.probe(), true, "the elapsed-time probe fires without the interval")
+  assert.deepEqual(reasons, [], "the probe never opens the episode itself")
+  tick()
+  assert.equal(watchdog.stale(), true, "the interval backstop still opens its episode")
+})
+
+test("activity resets the probe; disconnect gates it off", () => {
+  const { watchdog, elapse } = harness(FAST)
+  watchdog.setConnected(true)
+  watchdog.activity()
+  elapse(FAST.thresholdMs)
+  assert.equal(watchdog.probe(), true)
+  watchdog.activity()
+  assert.equal(watchdog.probe(), false, "activity clears the probe together with the episode")
+  elapse(FAST.thresholdMs)
+  watchdog.setConnected(false)
+  assert.equal(watchdog.probe(), false, "no probe decision while disconnected")
 })

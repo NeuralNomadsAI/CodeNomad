@@ -221,7 +221,10 @@ class ServerEvents {
   }
 
   probeStale(reason: string): void {
-    if (!this.connection || !this.watchdog.stale()) {
+    // Elapsed-time probe, not the interval's episode flag: the resume/online
+    // probe is the fast path and must reconnect as soon as the same threshold
+    // has elapsed, without waiting for the interval backstop to tick first.
+    if (!this.connection || !this.watchdog.probe()) {
       return
     }
 

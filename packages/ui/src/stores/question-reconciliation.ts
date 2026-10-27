@@ -1,4 +1,5 @@
 import { resolveFormToolTarget } from "../components/form-request-tool-target"
+import { getLogger } from "../lib/logger"
 import { getFormQueue, type FormWithLocation } from "./forms"
 import { schedulePendingRequestReconciliation } from "./instances"
 import { messageStoreBus } from "./message-v2/bus"
@@ -43,6 +44,8 @@ export interface QuestionReconciliationDeps {
 const GRACE_MS = 2_000
 const RETRY_MS = 6_000
 const MAX_SYNCS_PER_EPISODE = 2
+
+const log = getLogger("session")
 
 /**
  * Recovers a lost dock entry: while a `question` tool part is visibly running in
@@ -93,7 +96,15 @@ export function createQuestionReconciliation(deps: QuestionReconciliationDeps) {
       if (episodes.get(key) !== episode) return
       episode.timer = undefined
       episode.armed = false
-      evaluate(key, episode)
+      try {
+        evaluate(key, episode)
+      } catch (error) {
+        // The bus isolates hook-path failures the same way; a throwing dep on
+        // the timer path must not surface as an unhandled timer error or leave
+        // an unarmed episode behind. Drop it so a later running:true re-arms.
+        log.error("Failed to evaluate question reconciliation episode", error)
+        episodes.delete(key)
+      }
     }, delayMs)
   }
 

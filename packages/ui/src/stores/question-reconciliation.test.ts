@@ -195,3 +195,23 @@ test("evaluation consults getForms and matchesForm at fire time, not at arm time
   assert.deepEqual(h.scheduleCalls, [], "the form that appeared cancels the sync")
   assert.ok(h.getFormsCalls.every((at) => at >= 2_000), "getForms only ran during evaluation")
 })
+
+test("a throwing dep during timer evaluation is contained and leaves no leaked episode", () => {
+  const h = harness()
+  h.setForms([form("form-1")])
+  h.setMatch(() => {
+    throw new Error("dock read failed")
+  })
+  h.reconciliation.onQuestionPart("instance-1", "session-1", "msg-1", "part-1", true)
+  h.advance(2_000)
+  assert.deepEqual(h.scheduleCalls, [], "the failed evaluation scheduled nothing")
+  assert.equal(h.pendingTimers(), 0, "the failed episode left no timer")
+  h.advance(60_000)
+  assert.deepEqual(h.scheduleCalls, [], "the failed episode never retries on its own")
+  h.setForms([])
+  h.setMatch(() => false)
+  h.reconciliation.onQuestionPart("instance-1", "session-1", "msg-1", "part-1", true)
+  h.advance(2_000)
+  assert.deepEqual(h.scheduleCalls, [{ instanceId: "instance-1", location: undefined }],
+    "a later running:true re-arms a fresh bounded episode")
+})

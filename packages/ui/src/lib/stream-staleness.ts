@@ -10,8 +10,10 @@ interface StreamStalenessWatchdogOptions {
 /**
  * Detects a silently dead stream: while connected, a periodic check fires
  * `onStale` once per episode once no `activity()` arrived for `thresholdMs`.
- * `now`/`setTimer`/`clearTimer` are injectable so tests drive time manually;
- * by default the watchdog runs on real timers against the wall clock.
+ * `probe()` is the same silence decision evaluated directly, for callers that
+ * must act between interval ticks (resume/online fast paths); it never opens
+ * an episode. `now`/`setTimer`/`clearTimer` are injectable so tests drive time
+ * manually; by default the watchdog runs on real timers against the wall clock.
  */
 export function createStreamStalenessWatchdog(options: StreamStalenessWatchdogOptions = {}) {
   const thresholdMs = options.thresholdMs ?? 45_000
@@ -52,6 +54,13 @@ export function createStreamStalenessWatchdog(options: StreamStalenessWatchdogOp
     },
     stale() {
       return staleEpisode
+    },
+    /** Elapsed-time view of the same decision `check` makes: true when a
+     * connected stream has been silent for `thresholdMs`, whether or not the
+     * interval has ticked since the silence crossed the threshold. */
+    probe() {
+      if (disposed || !connected) return false
+      return now() - lastActivityAt >= thresholdMs
     },
     dispose() {
       disposed = true
