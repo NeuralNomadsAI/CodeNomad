@@ -140,8 +140,25 @@ test("unattributed Shells do not erase positive execution, wait or queued-input 
   assert.deepEqual(await states({ ...base, inbox: { specialist: [{ id: "pending" }] } }, actors, tasks), { specialist: "queued" })
 })
 
-test("does not treat admitted report notification as coordinator consumption", async () => {
-  assert.deepEqual(await states({ sessions: { coordinator: {} } }, [actor("coordinator", "coordinator")]), { coordinator: "unknown" })
+test("an idle coordinator of a running mission owes its final report unless a report is still being delivered", async () => {
+  const coordinator = [actor("coordinator", "coordinator")]
+  assert.deepEqual(await states({ sessions: { coordinator: {} } }, coordinator), { coordinator: "idle-without-report" })
+  assert.deepEqual(await states({ sessions: { coordinator: {} }, inbox: { coordinator: [{ id: "pending" }] } }, coordinator), { coordinator: "queued" })
+  const project = async (patch: Partial<MissionMap>) => {
+    const value = snapshot(coordinator)
+    const result = await projectMissionActivity({ client: native({ sessions: { coordinator: {} } }), workspaceID: "workspace-1",
+      snapshot: { ...value, missions: [{ ...value.missions[0]!, ...patch }] }, ownsLocation: async () => true })
+    return result.missions[0]!.actors[0]!.state
+  }
+  const report = { id: "report", taskKey: "task", sessionId: "specialist", outcome: "completed" as const, summary: "Done",
+    evidence: [], next: [], createdAt: 2 }
+  assert.equal(await project({ reports: [{ ...report, notificationStatus: "pending" }] }), "unknown")
+  assert.equal(await project({ reports: [{ ...report, notificationStatus: "admitted" }] }), "idle-without-report")
+  assert.equal(await project({ reports: [{ ...report, delivery: "native-return", notificationStatus: "pending" }] }), "idle-without-report",
+    "a native return never wakes the coordinator through a notification")
+  for (const patch of [{ runState: "paused" }, { runState: "prepared" }, { status: "completed" }, { status: "failed" }] as const) {
+    assert.equal(await project(patch), "unknown", JSON.stringify(patch))
+  }
 })
 
 test("projects pending Forms and permissions without changing plan state", async () => {

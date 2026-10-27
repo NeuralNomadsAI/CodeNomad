@@ -40,7 +40,7 @@ export function missionRecoveryInput(mission: MissionMap, request: MissionRecove
     sessionID, id: `msg_${stableToken(`recovery\0${correlation}`, 28)}`,
     text: request.target === "report"
       ? `Recover the missing report for task ${request.taskKey} in existing mission ${mission.id}. Inspect the saved mission map and your transcript/tool results first. Record the existing result through mission.report, or report a concrete blocker if the evidence is incomplete. This is not a new assignment: do not rerun completed work, restart validation, or create a replacement task or mission.`
-      : `Recover coordination of existing mission ${mission.id}. Inspect its saved map and reports, and use existing results to decide the next step or produce the terminal conclusion when justified. This is not permission to replay assignments, restart validation, or create a replacement mission. Respect unresolved gates, paused/stopped work, permissions and human decisions.`,
+      : `Recover coordination of existing mission ${mission.id}; if you had concluded it, the user has resumed it. Inspect its saved map and reports, and use existing results to decide the next step, ask the human through the native question tool when it cannot continue without a person, or finish it as completed when justified. This is not permission to replay assignments, restart validation, or create a replacement mission. Respect unresolved gates, paused/stopped work, permissions and human decisions.`,
     description: "CodeNomad targeted mission recovery",
     metadata: { "codenomad.mission": { version: 1, missionID: mission.id, kind: "recovery", target: request.target,
       revision: mission.revision, ...(request.taskKey === undefined ? {} : { taskKey: request.taskKey }) } },

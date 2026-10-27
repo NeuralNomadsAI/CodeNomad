@@ -410,6 +410,12 @@ export interface MissionFinishedEvent extends MissionEventBase {
   nativeFailure?: { operationID: string; sessionID: string; messageID: string; evidenceID: string; inputDigest: string }
 }
 
+/** The user resumed a failed mission through coordinator recovery: it is active again. */
+export interface MissionReopenedEvent extends MissionEventBase {
+  type: "mission.reopened"
+  expectedRevision: number
+}
+
 export interface MissionBriefedEvent extends MissionEventBase {
   type: "mission.briefed"
   actorSessionID: string
@@ -435,6 +441,7 @@ export type MissionEvent =
   | MissionTaskReportedEvent
   | MissionReportNotifiedEvent
   | MissionFinishedEvent
+  | MissionReopenedEvent
   | MissionBriefedEvent
 
 export function reduceMissionEvents(events: readonly MissionEvent[], now = Date.now()): MissionSnapshot {
@@ -497,6 +504,8 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   })
 
   let stoppedForReports = false
+  // Index of the finish in effect: a resumed failure no longer finishes the mission.
+  let finishedAt = -1
   for (const event of events) {
     updatedAt = Math.max(updatedAt, event.createdAt)
     if (event.projectID !== created.projectID || event.missionID !== created.missionID) {
@@ -778,7 +787,17 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       if (report && !isCoordinatorNotificationReport(report)) discarded.count += 1
       continue
     }
-    if (event.type === "mission.finished") status = event.outcome
+    if (event.type === "mission.finished") {
+      status = event.outcome
+      finishedAt = events.indexOf(event)
+      continue
+    }
+    if (event.type === "mission.reopened") {
+      // Only a failure can be resumed, at the exact revision the user saw.
+      if (status !== "failed" || event.expectedRevision !== events.indexOf(event)) { discarded.count += 1; continue }
+      status = "active"
+      finishedAt = -1
+    }
   }
 
   for (const task of tasks.values()) {
@@ -794,10 +813,9 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
 
   const lifecycle = projectLifecycle(events)
   const firstStop = events.findIndex(event => event.type === "mission.control-requested" && event.action === "stop")
-  const firstFinished = events.findIndex(event => event.type === "mission.finished")
   // Denial receipts in the normal final-report/native-settlement interval do
   // not rewrite the already recorded terminal result. A prior Stop remains terminal.
-  const finishedBeforeStop = firstFinished >= 0 && firstFinished < firstStop
+  const finishedBeforeStop = finishedAt >= 0 && finishedAt < firstStop
   if (lifecycle.runState === "stopped" && !finishedBeforeStop) {
     status = "stopped"
     for (const task of tasks.values()) {
@@ -838,7 +856,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     status,
     ...lifecycle,
     ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),
-    summary: [...events].reverse().find((event): event is MissionFinishedEvent => event.type === "mission.finished")?.summary,
+    summary: finishedAt >= 0 ? (events[finishedAt] as MissionFinishedEvent).summary : undefined,
     coordinatorSessionId: created.coordinator.sessionID,
     actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),
     tasks: taskList,

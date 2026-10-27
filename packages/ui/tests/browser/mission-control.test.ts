@@ -1239,8 +1239,10 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     const heights = await Promise.all(rows.map(row => row.evaluate(el => el.getBoundingClientRect().height)))
     const titleHeight = await rows[0].locator(".mission-picker-title").evaluate(el => el.getBoundingClientRect().height)
     assert.ok(heights.every(height => height < titleHeight * 2), "single-line rows")
+    const marks = await Promise.all(rows.map(row => row.locator(".mission-picker-mark").getAttribute("data-mark")))
+    assert.deepEqual(marks, ["idle", "idle", "interrupted"], "only the resumable failure needs attention; history already present reads as seen")
     const colors = await missionPicker(page).locator(".mission-picker-inline .mission-picker-mark").evaluateAll(items => items.map(el => getComputedStyle(el).backgroundColor))
-    assert.equal(new Set(colors).size, 3, "running, completed and failed carry distinct semantic marks")
+    assert.equal(new Set(colors).size, 2, "idle rows share the neutral mark")
     await rows[1].click()
     await selectedCard(page).waitFor()
     // The detail follows the whole picker as its own section, never inside the selected row.

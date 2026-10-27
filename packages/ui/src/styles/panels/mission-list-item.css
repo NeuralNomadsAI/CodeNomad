@@ -60,7 +60,6 @@
 .mission-list-item-compact .mission-list-footer { max-width: none; }
 .mission-list-item-compact .mission-list-status { flex: 0 1 auto; }
 .mission-list-item-compact .mission-list-feedback { grid-column: 1 / -1; }
-.mission-list-item:is([data-status="active"], [data-status="running"], [data-status="ready"]) .mission-list-status { color: var(--accent-primary); }
-.mission-list-item:is([data-status="completed"], [data-status="succeeded"]) .mission-list-status { color: var(--status-success); }
-.mission-list-item:is([data-status="blocked"], [data-status="needs-input"], [data-status="paused"], [data-status="form"], [data-status="permission"]) .mission-list-status { color: var(--status-warning); }
-.mission-list-item:is([data-status="failed"], [data-status="error"]) .mission-list-status { color: var(--status-error); }
+/* Session status palette, as in the picker: only work that needs attention is coloured. */
+.mission-list-item[data-status="running"] .mission-list-status { color: var(--session-status-working-fg); }
+.mission-list-item[data-status="needs-input"] .mission-list-status { color: var(--status-warning); }
