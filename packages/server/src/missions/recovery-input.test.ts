@@ -46,6 +46,13 @@ test("recovery cannot bypass lifecycle, stale plans, or a settled report", () =>
   assert.throws(() => missionRecoveryInput(map, request), /outstanding report/)
 })
 
+test("coordinator recovery opens with the sentence the native contract matches", () => {
+  const text = missionRecoveryInput(mission(), { missionID: "msn_test", expectedRevision: 7, target: "coordinator" }).text
+  // scripts/test-missions-native.mjs recognizes the nudge by this exact first sentence.
+  assert.ok(text.startsWith("Recover coordination of existing mission msn_test. "), text)
+  assert.match(text, /the user has resumed it/)
+})
+
 test("coordinator recovery rejects an unrelated task parameter", () => {
   assert.throws(() => missionRecoveryInput(mission(), { missionID: "msn_test", expectedRevision: 7, target: "coordinator", taskKey: "validation" }), /Invalid recovery target/)
 })
