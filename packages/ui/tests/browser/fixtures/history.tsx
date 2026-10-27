@@ -45,7 +45,7 @@ const client: any = { session: {
   },
   message: { get: async ({ messageID }: { messageID: string }) => {
     previewReads.push(messageID)
-    return { type: "user", text: "Full selected historical message", time: { created: Date.now() - 3 * 3600_000 } }
+    return { type: "user", text: "Full selected historical message\nCaFé éTé", time: { created: Date.now() - 3 * 3600_000 } }
   } },
 } }
 ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)

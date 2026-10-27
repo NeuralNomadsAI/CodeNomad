@@ -109,8 +109,11 @@ interleaves local rank ordinals in stable directory order, takes each session's
 first hit, then fills repeats by that order. A request covers at most 32 disjoint
 roots under one 15-second deadline; omitted roots set the capped notice. The UI
 shows one bounded list with best-result progress and compact cap/exclusion notes.
-Pagination belongs to conversation scope. Preview and Open in session retain
-their bounded reads and navigation fences; ranked destination highlights are
+Pagination belongs to conversation scope. Ranked preview blocks use the shared
+excerpt renderer and native query terms, preserving their original text while
+highlighting the same Unicode terms as excerpts and the destination transcript.
+Preview and Open in session retain their bounded reads and navigation fences;
+ranked destination highlights are
 ephemeral and exact-instance/session-owned, cleared on close or leaving that view.
 
 The first actual RPC response negotiates ranked capability for its authenticated
