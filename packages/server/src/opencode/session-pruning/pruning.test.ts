@@ -175,6 +175,7 @@ test("loading the plugin registers RPC without reading or writing a database", a
   let disposed = false
   const cleanup = await plugin.setup({
     location: { directory: "/work" }, options: {},
+    tool: { transform: async () => ({ dispose: async () => {} }) },
     rpc: { register: async (definition: any, implementation: any) => {
       assert.equal(definition.id, "codenomad.session-pruning")
       handlers = implementation
