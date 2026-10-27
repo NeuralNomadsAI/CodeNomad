@@ -295,9 +295,12 @@ and recorded invocation profiles are distinct facts.
 The depth editor uses the authenticated connected runtime's declared
 `experimental.subagent_depth` integer contract. It reads
 effective native documents and edits only the selected owned Location's local
-JSONC layer. Saving compares the original full file/target expectation and
-preserves comments, sibling fields and WSL atomic-write protections. Removing the
-override restores inheritance.
+JSONC layer. The effective depth follows OpenCode's own read: the whole
+`experimental` object of the highest-priority document that has one, unmerged, so
+a project `experimental` block without the depth hides the global depth. Saving
+compares the original full file/target expectation and preserves comments, sibling
+fields and WSL atomic-write protections. Removing the override restores
+inheritance and also removes a project `experimental` object it leaves empty.
 `node --import tsx scripts/test-subagent-depth-settings-native.mjs <absolute-isolated-opencode-cli>`
 (also in the latest-runtime CI job) qualifies this against a private runtime: depth
 capability, JSONC save/reset preserving comments and siblings, stale-expectation

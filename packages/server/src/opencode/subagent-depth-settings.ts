@@ -48,11 +48,11 @@ export class SubagentDepthSettings {
 
   async read(workspaceId: string, location: PluginControlLocation): Promise<SubagentDepthSnapshot> {
     const context = await this.context(workspaceId, location)
-    let effectiveDepth: number | null = context.capability?.default ?? null
-    for (const entry of context.entries) {
-      if (entry.type === "document" && entry.info.experimental?.subagent_depth !== undefined)
-        effectiveDepth = depth(entry.info.experimental.subagent_depth)
-    }
+    // OpenCode reads the whole `experimental` object of the highest-priority document that has one
+    // (`Config.latest`), without merging, so a project block without the depth hides the global depth.
+    const experimental = [...context.entries].reverse().find(entry => entry.type === "document" && entry.info.experimental !== undefined)
+    const configured = experimental?.type === "document" ? experimental.info.experimental?.subagent_depth : undefined
+    const effectiveDepth = configured === undefined ? context.capability?.default ?? null : depth(configured)
     const project = context.documents.find(item => item.scope === "project")
     return { location: context.location, capability: context.capability, effectiveDepth,
       project: project ? { path: project.path, depth: depth(readNativeSetting(project.document, keys)),
@@ -71,7 +71,13 @@ export class SubagentDepthSettings {
     await this.documents.editConfigDocument(workspaceId, location, "project", document => {
       context.connection.assertCurrent()
       if (expectation(document) !== expected) throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
-      return editNativeSetting(document, keys, value === null ? undefined : value)
+      if (value !== null) return editNativeSetting(document, keys, value)
+      // An emptied project `experimental` object would still hide every inherited experimental setting.
+      const removed = editNativeSetting(document, keys, undefined)
+      const remaining = { ...document, text: document.byteOrderMark ? removed.slice(1) : removed }
+      const parent = readNativeSetting(remaining, ["experimental"])
+      return parent && typeof parent === "object" && !Array.isArray(parent) && !Object.keys(parent).length
+        ? editNativeSetting(remaining, ["experimental"], undefined) : removed
     })
     context.connection.assertCurrent()
   }

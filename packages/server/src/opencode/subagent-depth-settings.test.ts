@@ -57,7 +57,7 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     const settings = new SubagentDepthSettings(controls, manager), location = { directory: project }
     registerSubagentDepthSettingsRoutes(app, settings)
     const snapshot = await settings.read("w", location)
-    assert.equal(snapshot.effectiveDepth, 2)
+    assert.equal(snapshot.effectiveDepth, null, "the project's own experimental block hides the global depth, as natively")
     assert.equal(snapshot.project?.depth, null)
     assert.equal(snapshot.project?.path, projectFile)
     await settings.update("w", location, 0, snapshot.project!.expectation)
@@ -72,7 +72,8 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     await assert.rejects(settings.update("w", location, 3, fresh.project!.expectation), /changed/)
     fresh = await settings.read("w", location)
     await settings.update("w", location, null, fresh.project!.expectation)
-    assert.equal((await settings.read("w", location)).effectiveDepth, 2)
+    assert.deepEqual(parse((await readFile(projectFile, "utf8")).slice(1)).experimental, { foreign: true }, "inheriting keeps foreign experimental settings")
+    assert.equal((await settings.read("w", location)).effectiveDepth, null)
     for (const value of [-1, 0.5, 6, NaN]) await assert.rejects(settings.update("w", location, value, fresh.project!.expectation))
     fresh = await settings.read("w", location)
     blocked = true
@@ -95,6 +96,14 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     }
     await writeFile(projectFile, '{"experimental":{"subagent_depth":1,"subagent_depth":2}}')
     await assert.rejects(settings.read("w", location), /duplicate/)
+    // An empty project block hides the global depth; inheriting after an override removes the block.
+    await writeFile(projectFile, '{\n  "experimental": {\n  }\n}\n')
+    assert.equal((await settings.read("w", location)).effectiveDepth, null)
+    await settings.update("w", location, 3, (await settings.read("w", location)).project!.expectation)
+    assert.equal((await settings.read("w", location)).effectiveDepth, 3)
+    await settings.update("w", location, null, (await settings.read("w", location)).project!.expectation)
+    assert.equal(parse(await readFile(projectFile, "utf8")).experimental, undefined)
+    assert.equal((await settings.read("w", location)).effectiveDepth, 2)
     await writeFile(globalFile, "{}")
     await writeFile(projectFile, "{}")
     assert.equal((await settings.read("w", location)).effectiveDepth, null, "missing default stays unknown")
