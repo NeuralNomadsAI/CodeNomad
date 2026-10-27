@@ -438,7 +438,9 @@ export interface SubagentDepthSnapshot {
   location: PluginControlLocation
   capability: SubagentDepthCapability | null
   effectiveDepth: number | null
-  project: { path: string; depth: number | null; expectation: string } | null
+  /** `emptyExperimental`: the project holds an `experimental` object without properties, which
+   * hides every inherited experimental setting; Inherit removes it. */
+  project: { path: string; depth: number | null; expectation: string; emptyExperimental?: boolean } | null
 }
 
 export type PluginRuntimeSource =

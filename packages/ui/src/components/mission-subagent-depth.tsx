@@ -142,7 +142,9 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     <div class="window-actions">
       {/* Pressing the button keeps focus in the field, so leaving it cannot first save the typed value.
           While a read or write runs it stays focusable and inert rather than disabled. */}
-      <button type="button" class="window-action" disabled={disabled() || state().draft === "" && !state().dirty} aria-disabled={locked() ? "true" : undefined}
+      {/* Also available when an empty project experimental block hides the inherited depth. */}
+      <button type="button" class="window-action" disabled={disabled() || state().draft === "" && !state().dirty && !state().snapshot?.project?.emptyExperimental}
+        aria-disabled={locked() ? "true" : undefined}
         onPointerDown={event => event.preventDefault()} onClick={inherit}>{t("missions.depth.inherit")}</button>
       {/* Clean values revalidate by themselves; refreshing is only a recovery step. */}
       <Show when={state().error || ["uncertain", "confirming"].includes(state().phase)}>
