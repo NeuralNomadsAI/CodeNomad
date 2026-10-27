@@ -1211,4 +1211,50 @@ describe("OpenCode data projection", () => {
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
     }
   })
+
+  it("settles a live message sync while same-session events keep arriving", async () => {
+    const instanceId = "opencode-data-streaming-sync"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    const fetched = {
+      id: "fetched", type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
+      content: [], time: { created: 900 },
+    }
+    let reads = 0
+    sseManager.seedStatus(instanceId, "connected")
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      // One network round-trip per read; a streaming event for the same
+      // session lands inside every fetch window.
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: `delta-${reads}`, type: "session.text.delta", created: 1000 + reads,
+        data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "." },
+      } as any)
+      return { data: [fetched], cursor: {} }
+    })
+    try {
+      const base = { sessionID: sessionId, assistantMessageID: "live" }
+      let data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "step", type: "session.step.started", created: 1,
+        data: { ...base, agent: "build", model: { providerID: "provider", id: "model" } },
+      } as any)
+      data = applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "tool", type: "session.tool.input.started", created: 2,
+        data: { ...base, id: "tool", name: "bash" },
+      } as any)
+      applyOpenCodeDataEvent(instanceId, "/work", {
+        id: "done", type: "session.execution.succeeded", created: 3,
+        data: { sessionID: sessionId },
+      } as any)
+
+      await waitForReplay(() =>
+        data.session.message.list(sessionId).some((message) => message.id === "fetched"))
+      assert.ok(reads <= 25, `message.list was issued ${reads} times under streaming`)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
 })
