@@ -149,8 +149,8 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
   const exactCtx = { storage: ctx.storage, location: ctx.location }
   const nativeClock = yield* Clock.Clock
   const job = yield* jobTag, locations = yield* mapTag, session = yield* sessionTag
-  // Process-global native services are absent from a borrowed Location graph (as of the 2.1.0
-  // minimum, native builds Locations over a shared global layer). Retain exactly these; Location services stay fresh.
+  // Process-global native services are absent from a borrowed Location graph (as of the minimum
+  // supported OpenCode, native builds Locations over a shared global layer). Retain exactly these; Location services stay fresh.
   const database = yield* databaseTag, bus = yield* Effect.serviceOption(busTag)
   const borrow = (graph: Context.Context<never>) => {
     const withGlobals = graph.pipe(Context.add(databaseTag, database), Context.add(sessionTag, session), Context.add(jobTag, job))
