@@ -69,8 +69,9 @@ class ServerEvents {
     try {
       const connection = await connectWorkspaceEvents({
         onBatch: (events) => {
+          if (generation !== this.connectGeneration) return
           this.watchdog.activity()
-          if (generation === this.connectGeneration) this.dispatchBatch(events)
+          this.dispatchBatch(events)
         },
         onError: () => {
           if (generation !== this.connectGeneration) {
@@ -85,19 +86,19 @@ class ServerEvents {
           this.emitTransportStatus(status)
         },
         onOpen: () => {
-          this.watchdog.activity()
           if (generation !== this.connectGeneration) {
             return
           }
+          this.watchdog.activity()
           logSse("Events stream connected")
           this.retryDelay = RETRY_BASE_DELAY
           this.notify(this.openHandlers, undefined, "open")
         },
         onPing: (payload) => {
-          this.watchdog.activity()
           if (generation !== this.connectGeneration) {
             return
           }
+          this.watchdog.activity()
           const identity = getClientIdentity()
           const pongPayload = { ...identity, pingTs: payload.ts }
 
