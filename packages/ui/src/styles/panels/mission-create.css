@@ -24,6 +24,13 @@
 .mission-create-options[open] { border-top: 1px solid var(--border-base); padding-top: var(--space-xs); }
 .mission-create-option { margin-block: var(--space-sm); }
 .mission-create-option-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
+/* The project's native nesting depth, shared with Preferences (mission-subagent-depth.tsx). */
+.mission-create-options .mission-depth { margin-block: var(--space-sm); }
+.mission-create-options .mission-depth > header { display: flex; align-items: center; gap: var(--space-xs); }
+.mission-create-options .mission-depth > header h4 { margin: 0; font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.mission-create-options :is(.mission-depth-effective, .mission-depth-path) { margin: 0; color: var(--text-muted); font-size: var(--font-size-xs); }
+.mission-create-options .mission-depth-path { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mission-create-options .mission-depth .window-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-block-start: var(--space-xs); }
 
 .mission-create .window-footer { flex-wrap: wrap; }
 

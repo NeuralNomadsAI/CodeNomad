@@ -99,7 +99,8 @@
 }
 
 .window-icon-button:focus-visible,
-.window-action:focus-visible {
+.window-action:focus-visible,
+.window-text-button:focus-visible {
   outline: 1px solid var(--focus-ring-color);
   outline-offset: -1px;
 }
@@ -128,6 +129,35 @@
 .window-action:hover {
   background: var(--surface-interactive-hover);
   color: var(--text-primary);
+}
+
+/* Borderless inline text command (open a reader, request an update, name a brief). */
+.window-text-button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: var(--window-control-height);
+  padding-inline: var(--space-xs);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--accent-primary);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  text-align: start;
+}
+
+.window-text-button > svg {
+  flex-shrink: 0;
+}
+
+.window-text-button:hover:not(:disabled) {
+  background: var(--surface-interactive-hover);
+}
+
+.window-text-button:disabled {
+  color: var(--text-muted);
+  cursor: default;
 }
 
 .modal-surface.p-6 {

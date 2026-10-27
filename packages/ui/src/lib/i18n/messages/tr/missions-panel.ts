@@ -68,8 +68,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "Görev eylemleri",
   "missionsPanel.attention.permission.one": "{count} bekliyor",
   "missionsPanel.attention.permission.other": "{count} bekliyor",
-  "missionsPanel.attention.interrupted.one": "{count} kesintiye uğradı",
-  "missionsPanel.attention.interrupted.other": "{count} kesintiye uğradı",
   "missionsPanel.attention.done.one": "{count} bitti",
   "missionsPanel.attention.done.other": "{count} bitti",
   "missionsPanel.attention.working.one": "{count} çalışıyor",

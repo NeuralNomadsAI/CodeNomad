@@ -282,6 +282,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     untrack(() => markMissionsFinishedSeen(viewScope, shown, completed))
   })
   const listExpanded = () => missionProjectView(scope()).listExpanded === true
+  const creating = () => editor()?.kind === "create"
   const refreshLabel = () => props.t(controlRetry()?.pending() ? "missions.control.refreshResend" : "missions.control.refresh")
   /** Read-only reconciliation first; only a control still unconfirmed by that
    * read is resent, with its original identity, from this explicit click. */
@@ -299,7 +300,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     } finally { setRefreshing(false) }
   }
   return (
-    <section class="mission-control" aria-label={props.t("missions.control.title")}>
+    // While creating, the form replaces the list and the selected detail, which stay mounted
+    // (hidden by mission-control.css) so their pending controls and retries survive.
+    <section class="mission-control" data-creating={creating() ? "" : undefined} aria-label={props.t("missions.control.title")}>
       <header class="mission-control-header">
         <MissionPicker entries={pickerEntries()} selectedKey={selectedKey()}
           expanded={listExpanded()} onExpandedChange={value => updateMissionProjectView(scope(), { listExpanded: value || undefined })}
@@ -309,6 +312,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             else selectMission(id)
           }}
           createDisabled={state().status === "unavailable" || Boolean(editor())}
+          creating={creating()}
           onCreate={() => openEditor({ kind: "create" })}
           trailing={<>
           <button type="button" class="mission-control-icon-button" aria-label={props.t("missions.preferences.title")}

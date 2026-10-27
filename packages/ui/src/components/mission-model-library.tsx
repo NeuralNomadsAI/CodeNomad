@@ -144,10 +144,12 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
   </Show>
 }
 
-/** A small "Save as brief" text button that asks for a name inline: the creation
- * footer's draft, or a selected Mission's recorded brief inputs (`initialName` prefills). */
-export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string }) {
+/** A "Save as brief" button that asks for a name inline: the creation footer's
+ * draft, or a selected Mission's recorded brief inputs (`initialName` prefills).
+ * A window footer passes its own button template; elsewhere these are text commands. */
+export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; buttonClass?: string }) {
   const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
+  const buttonClass = () => props.buttonClass ?? "window-text-button"
   const [open, setOpen] = createSignal(false), [name, setName] = createSignal("")
   let input: HTMLInputElement | undefined
   const full = () => config.preferences().missionModels.length >= MAX_MISSION_MODELS
@@ -156,7 +158,7 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
     if (await actions.save(name(), props.draft())) { setName(""); setOpen(false) }
   }
   return <div class="mission-brief-save">
-    <Show when={open()} fallback={<button type="button" class="window-text-button" disabled={actions.disabled() || full()}
+    <Show when={open()} fallback={<button type="button" class={buttonClass()} disabled={actions.disabled() || full()}
       onClick={() => { setName(props.initialName?.().slice(0, 80) ?? ""); setOpen(true); queueMicrotask(() => input?.select()) }}>{t("missions.create.brief.saveAs")}</button>}>
       <input ref={input} aria-label={t("missions.models.name")} placeholder={t("missions.models.name")} value={name()} maxLength={80}
         disabled={actions.disabled()} onInput={event => setName(event.currentTarget.value)} onKeyDown={event => {
@@ -164,9 +166,9 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
           if (event.key === "Enter") { event.preventDefault(); void save() }
           else if (event.key === "Escape") { event.preventDefault(); setOpen(false) }
         }} />
-      <button type="button" class="window-text-button" disabled={actions.disabled() || !name().trim() || !props.draft().objective.trim() || full()}
+      <button type="button" class={buttonClass()} disabled={actions.disabled() || !name().trim() || !props.draft().objective.trim() || full()}
         onClick={() => void save()}>{t("missions.models.save")}</button>
-      <button type="button" class="window-text-button" aria-label={t("missions.create.brief.cancel")} onClick={() => setOpen(false)}>{t("missions.control.cancel")}</button>
+      <button type="button" class={buttonClass()} aria-label={t("missions.create.brief.cancel")} onClick={() => setOpen(false)}>{t("missions.control.cancel")}</button>
     </Show>
     {actions.status()}
   </div>

@@ -68,8 +68,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "任务操作",
   "missionsPanel.attention.permission.one": "{count} 个等待中",
   "missionsPanel.attention.permission.other": "{count} 个等待中",
-  "missionsPanel.attention.interrupted.one": "{count} 个已中断",
-  "missionsPanel.attention.interrupted.other": "{count} 个已中断",
   "missionsPanel.attention.done.one": "{count} 个已完成",
   "missionsPanel.attention.done.other": "{count} 个已完成",
   "missionsPanel.attention.working.one": "{count} 个运行中",

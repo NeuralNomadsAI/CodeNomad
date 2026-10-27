@@ -68,8 +68,6 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "ミッションの操作",
   "missionsPanel.attention.permission.one": "{count} 件が応答待ち",
   "missionsPanel.attention.permission.other": "{count} 件が応答待ち",
-  "missionsPanel.attention.interrupted.one": "{count} 件が中断",
-  "missionsPanel.attention.interrupted.other": "{count} 件が中断",
   "missionsPanel.attention.done.one": "{count} 件が完了",
   "missionsPanel.attention.done.other": "{count} 件が完了",
   "missionsPanel.attention.working.one": "{count} 件が実行中",
