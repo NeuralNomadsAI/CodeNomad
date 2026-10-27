@@ -105,6 +105,7 @@ import {
   renameSession,
   runShellCommand,
   sendMessage,
+  startNewSession,
   updateSessionAgent,
   updateSessionModel,
 } from "./session-actions"
@@ -218,6 +219,7 @@ export {
   setActiveParentSession,
   setActiveSession,
   setActiveSessionFromList,
+  startNewSession,
   setSessionDraftPrompt,
   setSessionExpanded,
   setSessionStatus,

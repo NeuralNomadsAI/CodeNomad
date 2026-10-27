@@ -13,7 +13,10 @@ import { canonicalContent } from "../../../server/src/opencode/session-pruning/r
 import type { ClientPart } from "../types/message"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { beginSessionGenerationAdmission, providers, sessions, withSession } from "./session-state"
+import { beginSessionGenerationAdmission, providers, sessions, setActiveParentSession, withSession } from "./session-state"
+import { createSession } from "./session-api"
+import { showAlertDialog } from "./alerts"
+import type { Session } from "../types/session"
 import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -47,6 +50,27 @@ function admitSessionAction<T>(
       throw error
     }
   })
+}
+
+/**
+ * Creates and activates a new session for a user-triggered entry point (sidebar
+ * button, new-session hotkey, command palette). Failures — including the bounded
+ * create timeout on a stalled network — surface as an alert instead of silence.
+ * Returns the activated session, or null when creation failed.
+ */
+async function startNewSession(instanceId: string, agent?: string): Promise<Session | null> {
+  try {
+    const session = await createSession(instanceId, agent)
+    setActiveParentSession(instanceId, session.id)
+    return session
+  } catch (error) {
+    log.error("Failed to create session:", error)
+    showAlertDialog(tGlobal("sessionList.actions.newSession.failedMessage"), {
+      title: tGlobal("sessionList.actions.newSession.failedTitle"),
+      variant: "error",
+    })
+    return null
+  }
 }
 
 export function stageSessionRevert(instanceId: string, sessionId: string, messageId: string): Promise<void> {
@@ -694,6 +718,7 @@ export {
   renameSession,
   runShellCommand,
   sendMessage,
+  startNewSession,
   updateSessionAgent,
   updateSessionModel,
 }

@@ -1084,7 +1084,27 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
   }
 }
 
+/** Bounds a single session.create POST so a stalled network cannot hang creation forever. */
+const SESSION_CREATE_TIMEOUT_MS = 20_000
+const createSessionInFlight = new Map<string, Promise<Session>>()
+
 async function createSession(instanceId: string, agent?: string): Promise<Session> {
+  // Concurrent entries (sidebar button, new-session hotkey, command palette) share
+  // one creation instead of stacking duplicate requests behind a slow network.
+  const inFlight = createSessionInFlight.get(instanceId)
+  if (inFlight) return inFlight
+  const creation = createSessionInternal(instanceId, agent).finally(() => {
+    if (createSessionInFlight.get(instanceId) === creation) createSessionInFlight.delete(instanceId)
+  })
+  createSessionInFlight.set(instanceId, creation)
+  return creation
+}
+
+function isCreatingSession(instanceId: string): boolean {
+  return loading().creatingSession.get(instanceId) === true
+}
+
+async function createSessionInternal(instanceId: string, agent?: string): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
     throw new Error("Instance not ready")
@@ -1100,14 +1120,8 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
   const selectedAgent = agent || primaryAgents[0]?.id || ""
 
-  const defaultModel = await getDefaultModel(instanceId, selectedAgent)
-  if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
-
-  if (selectedAgent && isModelValid(instanceId, defaultModel)) {
-    await setAgentModelPreference(instanceId, selectedAgent, defaultModel)
-    if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
-  }
-
+  // Pending spans the whole flow — catalog/config reads included — so a slow
+  // network shows feedback from the first click instead of silence.
   setLoading((prev) => {
     const next = { ...prev }
     next.creatingSession.set(instanceId, true)
@@ -1117,6 +1131,14 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   createSessionAuthorities.set(instanceId, loadingAuthority)
 
   try {
+    const defaultModel = await getDefaultModel(instanceId, selectedAgent)
+    if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
+
+    if (selectedAgent && isModelValid(instanceId, defaultModel)) {
+      await setAgentModelPreference(instanceId, selectedAgent, defaultModel)
+      if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
+    }
+
     log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
     const info = await client.session.create({
       agent: selectedAgent || null,
@@ -1124,7 +1146,11 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
         ? { providerID: defaultModel.providerId, id: defaultModel.modelId }
         : null,
       location: { directory: activeLocation?.directory ?? instance.folder },
-    }, requestLocationOptions(activeLocation))
+    }, {
+      ...requestLocationOptions(activeLocation),
+      // A stalled connection must end in a surfaced failure, not a forever-hanging creation.
+      signal: AbortSignal.timeout(SESSION_CREATE_TIMEOUT_MS),
+    })
     if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
     const session = toClientSessionV2(instanceId, info)
     session.agent = selectedAgent
@@ -2019,6 +2045,7 @@ function isLatestMessageWindow(instanceId: string, sessionId: string): boolean {
 
 export {
   createSession,
+  isCreatingSession,
   deleteSession,
   removeSessionRuntimeState,
   fetchAgents,

@@ -44,6 +44,8 @@ export const sessionMessages = {
   "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "Yeni session",
   "sessionList.actions.newSession.title": "Yeni session",
+  "sessionList.actions.newSession.failedTitle": "Session oluşturulamadı",
+  "sessionList.actions.newSession.failedMessage": "Session oluşturulamadı. Bağlantınızı kontrol edip tekrar deneyin.",
   "sessionList.actions.copyId.ariaLabel": "Session ID'yi kopyala",
   "sessionList.actions.copyId.title": "Session ID'yi kopyala",
   "sessionList.actions.reload.ariaLabel": "Session'ı yeniden yükle",

@@ -47,6 +47,8 @@ export const sessionMessages = {
   "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "नयाँ सत्र",
   "sessionList.actions.newSession.title": "नयाँ सत्र",
+  "sessionList.actions.newSession.failedTitle": "सत्र सिर्जना गर्न सकिएन",
+  "sessionList.actions.newSession.failedMessage": "सत्र सिर्जना गर्दा समस्या आयो। जडान जाँच गर्नुहोस् र फेरि प्रयास गर्नुहोस्।",
   "sessionList.actions.copyId.ariaLabel": "सत्र ID प्रतिलिपि गर्नुहोस्",
   "sessionList.actions.copyId.title": "सत्र ID प्रतिलिपि गर्नुहोस्",
   "sessionList.actions.reload.ariaLabel": "सत्र पुन: लोड गर्नुहोस्",
