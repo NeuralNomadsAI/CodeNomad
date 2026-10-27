@@ -1768,6 +1768,12 @@ async function loadMessages(
       throw new Error("Repeated message cursor")
     }
     if (!isCurrent()) return false
+    // An initial open has no resident rows a mid-stream page could rewind:
+    // streaming continues on top of the seeded page instead of spending the
+    // whole revision-retry budget on a session that never goes quiet. A
+    // stored window or resident rows mark a reload, which keeps its retry
+    // semantics.
+    const initialSeed = store.getSessionMessageIds(sessionId).length === 0 && store.getMessageWindow(sessionId) === undefined
 
     const forwardPage = intent === "oldest" || planned.forward
     const nextWindow = directWindow ?? (forwardPage
@@ -1785,9 +1791,9 @@ async function loadMessages(
         // Keep their window identity (including live/latest authority) and
         // scroll anchor; only retire the cursor that reached the boundary.
         commitCurrentWindow(withOlderCursor(currentWindow, undefined), "open")
-      } else if (hasLatestRevisionConflict() || (intent === "open" && planned.cursor)) {
+      } else if (!initialSeed && (hasLatestRevisionConflict() || (intent === "open" && planned.cursor))) {
         retryAfterRevisionConflict = true
-      } else if (store.getSessionRevision(sessionId) !== messageRevision) {
+      } else if (!initialSeed && store.getSessionRevision(sessionId) !== messageRevision) {
         retryAfterRevisionConflict = true
       } else {
         store.reconcileEmptyAuthoritativeSnapshot(sessionId)
@@ -1860,8 +1866,10 @@ async function loadMessages(
         id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
       if (!isCurrent()) return false
-      const expectedRevision = nextWindow.kind === "latest" ? messageRevision : undefined
-      if (hasLatestRevisionConflict() || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
+      const expectedRevision = nextWindow.kind === "latest" && !initialSeed ? messageRevision : undefined
+      if (!initialSeed && hasLatestRevisionConflict()) {
+        retryAfterRevisionConflict = true
+      } else if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)

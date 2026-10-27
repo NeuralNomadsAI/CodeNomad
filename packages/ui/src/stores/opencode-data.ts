@@ -194,13 +194,18 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   if ((eventRevisions.get(input.sessionID) ?? 0) !== revision) {
                     attempts += 1
                     if (attempts < TRAILING_READ_ATTEMPTS) continue
-                    // Sustained streaming never leaves a quiet fetch window.
-                    // Keep the live projection: serve it instead of merging the
-                    // obsolete fetched page. A session whose projection is
-                    // still empty takes the fetched page as its seed.
+                    // Sustained streaming never leaves a quiet fetch window, so
+                    // the read answers provisionally. Serve the live projection
+                    // — never a page a newer event may have invalidated, an
+                    // empty one included — keep the fetched cursor so paging
+                    // survives, and mark the transcript dirty: one coalesced,
+                    // revision-fenced resync re-reads authority and reconciles
+                    // history, removals and terminal states once the stream
+                    // quiets.
+                    const transcript = transcriptEntries.get(messageRevisionKey(instanceId, input.sessionID))
+                    if (transcript) scheduleAuthoritativeResync(instanceId, input.sessionID, transcript)
                     const live = data.session.message.list(input.sessionID)
-                    if (live.length) return { data: [...live].reverse(), cursor: {} }
-                    return response
+                    return { data: [...live].reverse(), cursor: response.cursor }
                   }
                   return response
                 }

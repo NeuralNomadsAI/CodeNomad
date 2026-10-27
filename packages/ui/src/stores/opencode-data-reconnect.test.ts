@@ -204,15 +204,16 @@ test("a message.list read never publishes an obsolete page while stream events k
     assert.ok(completed, "the trailing read completed while arrivals kept landing")
     assert.ok(!control.pending(), "no read is left spinning mid-stream")
 
-    // Arrivals stopped: one more authoritative read publishes the quiet page.
+    // Arrivals stopped: the fallback's scheduled quiet re-read — not an
+    // explicit invalidation — publishes the authoritative page, and the
+    // transcript keeps streaming live on top of it.
     const quietCalls = control.calls
-    let quietSettled = false
-    f.data().session.message.invalidate(sessionId)
-    f.data().session.message.sync(sessionId).then(() => { quietSettled = true }).catch(() => undefined)
+    ctx.mock.timers.tick(30)
     await converge(ctx, () => control.calls === quietCalls + 1 && control.pending())
     control.settle()
-    await converge(ctx, () => quietSettled)
-    assert.equal(f.sdkText(), f.authoritativeText())
+    await microtasks()
+    f.delta("tail ")
+    await converge(ctx, () => f.sdkText() === f.authoritativeText() + "tail ")
   } finally { f.cleanup() }
 })
 
