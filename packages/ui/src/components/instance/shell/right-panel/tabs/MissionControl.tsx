@@ -1,7 +1,7 @@
 import { Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack, type Component, type JSX } from "solid-js"
 import { AlertTriangle, Flag, Loader2, RefreshCw, Settings } from "lucide-solid"
 
-import type { MissionMap } from "../../../../../../../server/src/api-types"
+import type { MissionActivityProjection, MissionMap } from "../../../../../../../server/src/api-types"
 import type { MissionUnavailableReason } from "../../../../../../../server/src/missions/model"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
 import { activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
@@ -119,6 +119,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const mission = createMemo(() => selectedSchedule() ? currentPassage.snapshot()?.mission
     : missions().find((candidate) => candidate.id === selectedMissionId()))
   const observedActivity = () => selectedSchedule() ? currentPassage.snapshot()?.activity : state().activity
+  // Answers requested by a mission's declared actors and observed family, as listed under Needs you.
+  const openRequests = (value: MissionMap, activity?: MissionActivityProjection) => selectMissionAttention({ actors: value.actors,
+    forms: getFormQueue(props.instanceId), permissions: getPermissionQueue(props.instanceId), tasks: value.tasks,
+    family: activity?.missions.find(item => item.missionId === value.id)?.family })
+    .filter(item => item.open && item.sessionId && item.kind !== "blocked").length
   const readerTarget = (target: MissionReaderTarget): MissionReaderTarget => {
     const current = currentPassage.snapshot()
     return selectedSchedule() && current?.mission && current.passageID ? { ...target, recurrence: {
@@ -239,6 +244,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     get projectID() { return projectID() }, active: () => props.isActive?.() ?? true, get refresh() { return recurrenceRefresh() },
     get onRead() { return props.onRevealConversation }, get selectedSchedule() { return selectedSchedule() },
     get tracking() { return tracking() }, detailId, registerRetry,
+    get selectedRequests() {
+      const passage = selectedSchedule() ? mission() : undefined
+      return passage ? openRequests(passage, observedActivity()) : 0
+    },
     get passage() {
       const passage = mission()
       if (!passage) return undefined
@@ -248,10 +257,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     } })
   const missionEntries = createMemo((): MissionPickerEntry[] => missions().map(value => {
     const observed = state().activity?.missions.find(item => item.missionId === value.id)
-    const requests = selectMissionAttention({ actors: value.actors, forms: getFormQueue(props.instanceId),
-      permissions: getPermissionQueue(props.instanceId), tasks: value.tasks, family: observed?.family })
-      .filter(item => item.open && item.sessionId && item.kind !== "blocked").length
-    const mark = missionMark(value, { openRequests: requests, actorStates: observed?.actors.map(actor => actor.state),
+    const mark = missionMark(value, { openRequests: openRequests(value, state().activity), actorStates: observed?.actors.map(actor => actor.state),
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
       seen: missionFinishedSeen(scope(), value.id) })
     const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")

@@ -212,7 +212,9 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   tracking?: JSX.Element
   /** The admitted passage, when one is tracked: its overview reader and coordinator conversation. */
   passage?: { reading: boolean; onToggle: () => void; onOpenConversation: () => void }
-  registerRetry?: (retry: MissionControlRetry) => () => void }) {
+  registerRetry?: (retry: MissionControlRetry) => () => void
+  /** Open requests of the selected schedule's passage from its declared actors and observed family. */
+  selectedRequests?: number }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
@@ -253,8 +255,11 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
           <bdi>{text.run(schedule, item)}</bdi>
         </button></li>}</For></ol>
     </section></Show>
-  // Open Forms/permissions of a live passage: its conversation or a loaded descendant.
+  // Open Forms/permissions of a passage. The selected schedule reads its passage's
+  // actors and observed family (as under Needs you); other rows, without a passage
+  // read, rely on the live passage's conversation and its loaded descendants.
   const passageRequests = (schedule: RecurrenceSchedule) => {
+    if (schedule.id === props.selectedSchedule && props.selectedRequests) return props.selectedRequests
     const root = schedule.pending?.conversationID
     if (!root) return 0
     const family = sessions().get(props.instanceId) ?? new Map()

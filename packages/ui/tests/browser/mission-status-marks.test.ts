@@ -51,6 +51,13 @@ async function open(missions: () => MissionMap[], activity: () => Array<{ missio
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, projectID: "project", missions: missions(),
     generatedAt: Date.now(), discardedEvents: 0, activity: { generatedAt: Date.now(), missions: activity() } } }))
+  // A pending passage's current mission map: its coordinator and one independent actor.
+  await page.route(url => url.pathname.endsWith("/current"), route => {
+    const id = new URL(route.request().url()).pathname.split("/").at(-2)!, schedule = schedules.find(item => item.id === id)
+    const passageID = schedule?.pending?.passageID ?? null
+    return route.fulfill({ json: { version: 1, projectID: "project", scheduleID: id, passageID, ...(passageID ? { mission: mission(passageID, {
+      coordinatorSessionId: schedule!.pending!.conversationID, actors: [actor(schedule!.pending!.conversationID!), actor("ses_independent", "specialist")] }) } : {}) } })
+  })
   await page.route(url => url.pathname === "/api/workspaces/fixture/missions/recurrence", route => route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1,
     projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules }) }))
   await page.route("**/api/workspaces/fixture/missions/*/recover", route => {
@@ -164,6 +171,12 @@ test("a recurring passage waiting for an answer is red; stopped and paused sched
     await (await inlineMissionEntry(page, "Waiting review")).waitFor()
     assert.deepEqual(await Promise.all(["Waiting review", "Stopped review", "Paused review"].map(title => mark(page, title))),
       ["working", "idle", "paused"])
+    // Selected, the passage's declared actors count, as under Needs you.
+    await selectMission(page, "Waiting review")
+    await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_independent", "independent-permission"))
+    await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "permission")
+    // Other rows read the live passage's own conversation.
+    await selectMission(page, "Stopped review")
     await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_passage"))
     await page.waitForFunction(() => [...document.querySelectorAll(".mission-picker-inline .mission-picker-mark")]
       .some(element => element.getAttribute("data-mark") === "permission"))
