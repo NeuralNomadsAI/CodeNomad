@@ -171,8 +171,14 @@ test("a recurring passage waiting for an answer is red; stopped and paused sched
     await (await inlineMissionEntry(page, "Waiting review")).waitFor()
     assert.deepEqual(await Promise.all(["Waiting review", "Stopped review", "Paused review"].map(title => mark(page, title))),
       ["working", "idle", "paused"])
-    // Selected, the passage's declared actors count, as under Needs you.
+    // Selected, its read passage counts exactly what Needs you lists: a loaded
+    // subsession outside the observed family does not, its declared actors do.
+    await page.evaluate(() => (window as any).missionFixture.seedCoordinators(["ses_passage", "ses_child"], { ses_child: "ses_passage" }))
     await selectMission(page, "Waiting review")
+    await page.locator('.mission-tree [data-task-key="task-one"]').waitFor()
+    await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_child", "child-permission"))
+    await page.evaluate(() => new Promise(requestAnimationFrame))
+    assert.equal(await missionPicker(page).locator(".mission-picker-field .mission-picker-mark").getAttribute("data-mark"), "working")
     await page.evaluate(() => (window as any).missionFixture.queuePermission("ses_independent", "independent-permission"))
     await page.waitForFunction(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark") === "permission")
     // Other rows read the live passage's own conversation.

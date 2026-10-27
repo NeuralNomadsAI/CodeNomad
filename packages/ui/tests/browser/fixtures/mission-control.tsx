@@ -44,8 +44,8 @@ function Fixture() {
     selectedSession: () => activeSessionId().get("fixture"),
     settingsOpen,
     snapshot: () => missionStore.state("fixture"),
-    seedCoordinators: (ids: string[]) => setSessions(previous => new Map(previous).set("fixture", new Map(ids.map(id => [id, {
-      id, instanceId: "fixture", parentId: null, title: id, status: "idle", runtimeStatusKnown: true,
+    seedCoordinators: (ids: string[], parents: Record<string, string> = {}) => setSessions(previous => new Map(previous).set("fixture", new Map(ids.map(id => [id, {
+      id, instanceId: "fixture", parentId: parents[id] ?? null, title: id, status: "idle", runtimeStatusKnown: true,
       location: { directory: "fixture" }, time: { created: 1, updated: 1 },
     } as any])))),
     seedActor: () => {

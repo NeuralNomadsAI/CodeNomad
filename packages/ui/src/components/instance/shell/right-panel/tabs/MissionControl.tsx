@@ -245,8 +245,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     get onRead() { return props.onRevealConversation }, get selectedSchedule() { return selectedSchedule() },
     get tracking() { return tracking() }, detailId, registerRetry,
     get selectedRequests() {
-      const passage = selectedSchedule() ? mission() : undefined
-      return passage ? openRequests(passage, observedActivity()) : 0
+      const passage = selectedSchedule() ? mission() : undefined, passageID = currentPassage.snapshot()?.passageID
+      return passage && passageID ? { passageID, count: openRequests(passage, observedActivity()) } : undefined
     },
     get passage() {
       const passage = mission()
