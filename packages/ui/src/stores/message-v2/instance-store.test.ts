@@ -873,4 +873,50 @@ describe("running question tool-part hook", () => {
       { messageId: "msg-1", partId: "part-question", running: false },
     ], "an omitted message must retract its running question")
   })
+
+  it("ends a running question replaced out of a message's parts, and re-delivery re-fires", () => {
+    const events: Array<{ messageId: string; partId: string; running: boolean }> = []
+    const store = createInstanceMessageStore("question-hook-parts-replaced", {
+      onRunningQuestionPart: (_instanceId, _sessionId, messageId, partId, running) => {
+        events.push({ messageId, partId, running })
+      },
+    })
+    store.addOrUpdateSession({ id: "session-1" })
+
+    const base = { id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const }
+    store.upsertMessage({ ...base, parts: [questionPart("running"), { type: "text", text: "context" } as any] })
+    assert.deepEqual(events.map((event) => event.running), [true])
+
+    // A snapshot replaces the message's parts without the running question
+    // part; the missing false would leave recovery armed forever.
+    store.upsertMessage({ ...base, parts: [{ type: "text", text: "replacement" } as any] })
+    assert.deepEqual(events.map((event) => event.running), [true, false],
+      "replacement parts without the question part retract the running question")
+
+    // The still-running question returns in a later snapshot; a stale dedupe
+    // entry must not suppress the new running true.
+    store.upsertMessage({ ...base, parts: [questionPart("running")] })
+    assert.deepEqual(events.map((event) => event.running), [true, false, true])
+  })
+
+  it("ends a running question dropped by a hydration snapshot's replacement parts", () => {
+    const events: Array<{ messageId: string; partId: string; running: boolean }> = []
+    const store = createInstanceMessageStore("question-hook-hydrate-replaced", {
+      onRunningQuestionPart: (_instanceId, _sessionId, messageId, partId, running) => {
+        events.push({ messageId, partId, running })
+      },
+    })
+    store.addOrUpdateSession({ id: "session-1" })
+
+    const base = { id: "msg-1", sessionId: "session-1", role: "assistant" as const, status: "streaming" as const }
+    store.hydrateMessages("session-1", [{ ...base, parts: [questionPart("running")] }])
+    assert.deepEqual(events.map((event) => event.running), [true])
+
+    store.hydrateMessages("session-1", [{ ...base, parts: [{ type: "text", text: "replacement" } as any] }])
+    assert.deepEqual(events.map((event) => event.running), [true, false],
+      "a hydration snapshot replacing the parts retracts the missing question")
+
+    store.hydrateMessages("session-1", [{ ...base, parts: [questionPart("running")] }])
+    assert.deepEqual(events.map((event) => event.running), [true, false, true])
+  })
 })

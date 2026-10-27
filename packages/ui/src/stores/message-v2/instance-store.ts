@@ -365,12 +365,28 @@ export function createInstanceMessageStore(instanceId: string, hooks?: MessageSt
   // Question tool parts gate the interruption dock, and a question that starts
   // while the UI is disconnected is recovered by re-observing the same part in
   // a later snapshot. Snapshots re-upsert unchanged parts, so remember the last
-  // reported state per (messageId, partId) and emit only real transitions.
+  // reported state per (messageId, partId) and emit only real transitions; a
+  // parts replacement that drops a reported part retires it like a removal.
   // Keyed by message so a message leaving the store can retire its parts.
   const lastReportedRunningQuestions = new Map<string, Map<string, boolean>>()
 
   function reportRunningQuestionTransitions(record: MessageRecord | undefined) {
     if (!record || !hooks?.onRunningQuestionPart) return
+    // A snapshot that replaces the message's parts ends every question part it
+    // no longer carries; pruning the key lets a later re-delivery of the same
+    // still-running part re-fire running true instead of suppressing it as a
+    // repeat.
+    const reportedParts = lastReportedRunningQuestions.get(record.id)
+    if (reportedParts) {
+      for (const partId of [...reportedParts.keys()]) {
+        if (record.partIds.includes(partId)) continue
+        if (reportedParts.get(partId) === true) {
+          hooks.onRunningQuestionPart(instanceId, record.sessionId, record.id, partId, false)
+        }
+        reportedParts.delete(partId)
+      }
+      if (reportedParts.size === 0) lastReportedRunningQuestions.delete(record.id)
+    }
     for (const partId of record.partIds) {
       const part = record.parts[partId]?.data
       if (!isQuestionToolPart(part)) continue
