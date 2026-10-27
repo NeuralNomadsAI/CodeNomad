@@ -97,7 +97,7 @@ import {
 } from "./message-v2/message-window"
 import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
-import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision, seedOpenCodeProjectionPage } from "./opencode-data"
+import { captureOpenCodeReadMarks, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision, mergeOpenCodeLoadedPage, seedOpenCodeProjectionPage } from "./opencode-data"
 
 const log = getLogger("api")
 const sessionLog = getLogger("session")
@@ -1630,6 +1630,7 @@ async function loadMessages(
   const historyAuthority = messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId))
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const mutationRevision = getOpenCodeMutationRevision(instanceId, sessionId)
+  const readMarkSnapshot = captureOpenCodeReadMarks(instanceId, sessionId)
   const ownsLoadState = () => instances().get(instanceId)?.client === instanceClient
     && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
     && sessions().get(instanceId)?.has(sessionId) === true
@@ -1784,7 +1785,12 @@ async function loadMessages(
       : withOlderCursor(resolvedNext, olderCursor))
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
-    const apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
+    let apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
+    if (initialSeed) {
+      // Streamed text that arrived inside the initial fetch keeps its live
+      // version in both seeds instead of rewinding to the page's snapshot.
+      apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, [...apiMessages].reverse(), readMarkSnapshot).reverse()
+    }
     if (apiMessages.length === 0) {
       if (intent === "older") {
         // V2 boundary cursors do not guarantee another page. An exhausted

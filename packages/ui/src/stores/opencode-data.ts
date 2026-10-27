@@ -146,12 +146,8 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
   const listeners = new Set<(event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void>()
   const messageSnapshots = new Map<string, SessionMessageInfo[]>()
   // Bumped only by events that invalidate a fetched page outright; streamed
-  // events never restart a read, they only make projected rows newer.
+  // events never restart a read, they mark rows for the read's window merge.
   const authorityRevisions = new Map<string, number>()
-  // Message ids that received streamed events, per session. A read substitutes
-  // the live version only for ids touched inside its own fetch window; ids
-  // settled before the fetch keep the fetched (terminal) version.
-  const streamTouches = new Map<string, Set<string>>()
   const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
   let disposed = false
   return createRoot((dispose) => {
@@ -195,33 +191,34 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                   const snapshot = messageSnapshots.get(input.sessionID)
                   if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
                   const revision = authorityRevisions.get(input.sessionID) ?? 0
-                  // Own the touch set for this fetch: whatever arrived earlier
-                  // was consumed by an earlier answer; only additions during
-                  // the fetch window decide which rows keep their live version.
-                  const earlierTouches = streamTouches.get(input.sessionID)
-                  if (earlierTouches) streamTouches.set(input.sessionID, new Set())
-                  const response = await (client.message.list as any)(input, options)
+                  // This fetch owns its window marks; overlapping reads keep
+                  // theirs. Whatever arrived earlier belongs to earlier
+                  // answers or to the pending session marks a seed consumes.
+                  const marks: ReadMarks = { touches: new Map(), creations: new Map() }
+                  const readKey = messageRevisionKey(instanceId, input.sessionID)
+                  let flights = inFlightReads.get(readKey)
+                  if (!flights) inFlightReads.set(readKey, flights = new Set())
+                  flights.add(marks)
+                  let response: unknown
+                  try {
+                    response = await (client.message.list as any)(input, options)
+                  } finally {
+                    flights.delete(marks)
+                    if (!flights.size) inFlightReads.delete(readKey)
+                  }
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
                   compactionDeltas.flush(instanceId, input.sessionID)
+                  const live = data.session.message.list(input.sessionID)
                   if ((authorityRevisions.get(input.sessionID) ?? 0) !== revision) {
                     attempts += 1
                     if (attempts < TRAILING_READ_ATTEMPTS) continue
+                    // Running out of attempts must never make an invalidated
+                    // page authoritative: answer with the live rows alone.
+                    return { data: [...live].reverse(), cursor: (response as any).cursor }
                   }
-                  const live = data.session.message.list(input.sessionID)
-                  const touchedNow = streamTouches.get(input.sessionID)
-                  const projected = new Map(live.map((message) => [message.id, message]))
-                  const page = response.data as any[]
-                  const merged = page.map((message) => {
-                    return touchedNow?.has(message.id) ? projected.get(message.id) ?? message : message
-                  })
-                  const newest = page[0]?.id
-                  const newestPosition = newest === undefined ? -1 : live.findIndex((message) => message.id === newest)
-                  const appended = newestPosition >= 0
-                    ? live.slice(newestPosition + 1).filter((message) => touchedNow?.has(message.id) === true).reverse()
-                    : []
-                  return { data: [...appended, ...merged], cursor: response.cursor }
+                  return { data: mergeReadPage(live, (response as any).data as SessionMessageInfo[], marks), cursor: (response as any).cursor }
                 }
               }
             },
@@ -241,19 +238,14 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
     const emit = (details: OpenCodeEvent) => {
       // Isolated fresh-entry resyncs already fence their entire transaction.
       // Only events that invalidate a fetched page restart this reducer's
-      // pending reads; streamed events mark their message for the read's
-      // window merge instead.
+      // pending reads; streamed events mark their rows for the read's window
+      // merge instead.
       const sessionId = eventSessionId(details)
       if (sessionId) {
         if (invalidatesFetchedPage(details.type)) {
           authorityRevisions.set(sessionId, (authorityRevisions.get(sessionId) ?? 0) + 1)
         }
-        const messageId = (details as { data?: { assistantMessageID?: unknown } }).data?.assistantMessageID
-        if (typeof messageId === "string") {
-          let touched = streamTouches.get(sessionId)
-          if (!touched) streamTouches.set(sessionId, touched = new Set())
-          touched.add(messageId)
-        }
+        recordReadMark(messageRevisionKey(instanceId, sessionId), details)
       }
       for (const listener of listeners) listener({ name: details.type, details })
     }
@@ -381,9 +373,72 @@ function retryDelay(transcript: TranscriptEntry): number {
 function invalidatesFetchedPage(type: OpenCodeEvent["type"]): boolean {
   return type === "session.deleted"
     || type === "session.revert.committed"
+    || type === "session.inbox.cancelled"
     || type === "session.compaction.started"
     || type === "session.compaction.ended"
     || type === "session.compaction.failed"
+}
+
+/** The transcript row an event affects, whatever shape carries its id. */
+function eventMessageId(event: OpenCodeEvent): string | undefined {
+  const data = (event as { data?: Record<string, unknown> }).data
+  const id = data?.assistantMessageID ?? data?.inboxID ?? data?.inputID
+  return typeof id === "string" ? id : undefined
+}
+
+type ReadMarks = { touches: Map<string, number>; creations: Map<string, number> }
+
+const bumpMark = (marks: ReadMarks, id: string, created: boolean): void => {
+  marks.touches.set(id, (marks.touches.get(id) ?? 0) + 1)
+  if (created) marks.creations.set(id, (marks.creations.get(id) ?? 0) + 1)
+}
+
+/** Desc-ordered merge: the fetched page is the base; rows touched inside the
+ * fetch window keep their live version, and rows the stream created inside it
+ * ride along newest-first. */
+function mergeReadPage(
+  live: SessionMessageInfo[],
+  page: SessionMessageInfo[],
+  marks: Pick<ReadMarks, "touches" | "creations"> & Partial<ReadMarks>,
+): SessionMessageInfo[] {
+  // A touched row keeps its live version when the projection holds one; a
+  // touched row the projection never received keeps the page's version (its
+  // events had nothing to update). Removals never get here: they invalidate
+  // the page and either restart the read or answer with live rows alone.
+  const projected = new Map(live.map((message) => [message.id, message]))
+  const merged = page.map((message) => marks.touches.has(message.id) ? projected.get(message.id) ?? message : message)
+  const pageIds = new Set(page.map((message) => message.id))
+  const appended = live.filter((message) => marks.creations.has(message.id) && !pageIds.has(message.id)).reverse()
+  return [...appended, ...merged]
+}
+
+/** Streamed touches and created rows per session, counted per id: accumulated
+ * for the next consuming answer (a REST seed) and owned per in-flight fetch
+ * (its window). Counts let a snapshot distinguish new arrivals for an id that
+ * was already marked. */
+const sessionReadMarks = new Map<string, ReadMarks>()
+const inFlightReads = new Map<string, Set<ReadMarks>>()
+
+export type OpenCodeReadMarkSnapshot = { touches: Map<string, number>; creations: Map<string, number> }
+
+/** Captures the marks accumulated so far, so a caller that fetches outside the
+ * proxy (a REST load) can merge exactly what arrived inside its own fetch. */
+export function captureOpenCodeReadMarks(instanceId: string, sessionId: string): OpenCodeReadMarkSnapshot {
+  const marks = sessionReadMarks.get(messageRevisionKey(instanceId, sessionId))
+  return {
+    touches: new Map(marks?.touches ?? []),
+    creations: new Map(marks?.creations ?? []),
+  }
+}
+
+function recordReadMark(key: string, event: OpenCodeEvent): void {
+  const messageId = eventMessageId(event)
+  if (!messageId) return
+  const created = eventMayAppendMessage(event)
+  let session = sessionReadMarks.get(key)
+  if (!session) sessionReadMarks.set(key, session = { touches: new Map(), creations: new Map() })
+  bumpMark(session, messageId, created)
+  for (const flight of inFlightReads.get(key) ?? []) bumpMark(flight, messageId, created)
 }
 
 function scheduleAuthoritativeResync(
@@ -841,12 +896,41 @@ export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: st
   await ensureTranscript(instanceId, sessionId, directory).entry.data.session.pending.sync(sessionId)
 }
 
+/** Merges a REST-loaded page (desc order) with the marks that arrived after
+ * the given snapshot — touched rows keep their live version, rows created in
+ * the window ride along — and consumes the accumulated marks. */
+export function mergeOpenCodeLoadedPage(
+  instanceId: string,
+  sessionId: string,
+  page: SessionMessageInfo[],
+  since?: OpenCodeReadMarkSnapshot,
+): SessionMessageInfo[] {
+  const key = messageRevisionKey(instanceId, sessionId)
+  const transcript = transcriptEntries.get(key)
+  const marks = sessionReadMarks.get(key)
+  if (!transcript || !marks) return page
+  const grew = (current: Map<string, number>, before: Map<string, number> | undefined, id: string) =>
+    (current.get(id) ?? 0) > (before?.get(id) ?? 0)
+  const window: ReadMarks = since
+    ? {
+      touches: new Map([...marks.touches.keys()].filter((id) => grew(marks.touches, since.touches, id)).map((id) => [id, 1])),
+      creations: new Map([...marks.creations.keys()].filter((id) => grew(marks.creations, since.creations, id)).map((id) => [id, 1])),
+    }
+    : marks
+  const merged = mergeReadPage(transcript.entry.data.session.message.list(sessionId), page, window)
+  marks.touches.clear()
+  marks.creations.clear()
+  return merged
+}
+
 /** Seeds the native projection with a page the caller already holds (a REST
- * load), without a network read and without dropping live events: the
- * snapshot-served sync writes the rows so later streaming reduces on top. */
+ * load), without a network read and without dropping live events: the page is
+ * merged with the load window's marks, then the snapshot-served sync writes
+ * the rows so later streaming reduces on top. */
 export function seedOpenCodeProjectionPage(instanceId: string, sessionId: string, directory: string, messages: SessionMessageInfo[]): void {
   const transcript = ensureTranscript(instanceId, sessionId, directory)
-  void transcript.entry.syncMessages(sessionId, boundedTranscript(messages), () => true)
+  const merged = mergeOpenCodeLoadedPage(instanceId, sessionId, [...messages].reverse()).reverse()
+  void transcript.entry.syncMessages(sessionId, boundedTranscript(merged), () => true)
 }
 
 // The reduce store mutates message rows in place (Solid `produce`), so list and
@@ -871,16 +955,30 @@ export function projectOpenCodeMessages(
   // discard omitted history while retaining the larger page's cursor.
   if (transcript?.preserveNativePageOnResync && store.getMessageWindow(sessionId)) preserveOmitted = true
   if (source.length) {
-    const normalized = source.map((item) => normalizeSessionMessage(sessionId, item))
-    seedSessionMessagesV2(
-      instanceId,
-      { id: sessionId },
-      normalized.map((item) => item.message),
-      new Map(normalized.map((item) => [item.info.id, item.info])),
-      undefined,
-      preserveOmitted,
-      confirmPending,
-    )
+    // A navigated window owns its membership: projection updates resident
+    // rows and appends the live tail beyond the newest resident row, never
+    // reinserting rows the window scrolled past.
+    const window = store.getMessageWindow(sessionId)
+    let rows = source
+    if (window && window.kind !== "latest") {
+      const residentIds = store.getSessionMessageIds(sessionId)
+      const resident = new Set(residentIds)
+      const newestResident = residentIds[residentIds.length - 1]
+      const cutoff = newestResident === undefined ? -1 : source.findIndex((message) => message.id === newestResident)
+      rows = source.filter((message, index) => resident.has(message.id) || (cutoff !== -1 && index > cutoff))
+    }
+    if (rows.length) {
+      const normalized = rows.map((item) => normalizeSessionMessage(sessionId, item))
+      seedSessionMessagesV2(
+        instanceId,
+        { id: sessionId },
+        normalized.map((item) => item.message),
+        new Map(normalized.map((item) => [item.info.id, item.info])),
+        undefined,
+        preserveOmitted,
+        confirmPending,
+      )
+    }
   } else if (!preserveOmitted) {
     store.reconcileEmptyAuthoritativeSnapshot(sessionId)
   }
@@ -933,6 +1031,8 @@ export function destroyOpenCodeData(instanceId: string, sessionId?: string): voi
       transcript.entry.dispose()
       transcriptEntries.delete(key)
     }
+    sessionReadMarks.delete(key)
+    inFlightReads.delete(key)
     // Payload lifetime is shorter than request authority: a pending native page
     // must never see a pre-mutation revision again after idle/eviction. These
     // scalar fences are released on deletion or a fenced instance-generation reset.
@@ -943,6 +1043,12 @@ export function destroyOpenCodeData(instanceId: string, sessionId?: string): voi
   compactionDeltas.clear(instanceId)
   for (const key of unobservedCompactions) {
     if (key.startsWith(`${instanceId}\0`)) unobservedCompactions.delete(key)
+  }
+  for (const key of sessionReadMarks.keys()) {
+    if (key.startsWith(`${instanceId}\0`)) sessionReadMarks.delete(key)
+  }
+  for (const key of inFlightReads.keys()) {
+    if (key.startsWith(`${instanceId}\0`)) inFlightReads.delete(key)
   }
   // Every destroy outside the reconnect handler (instance removal, client
   // replacement) forgets the observed daemon source.

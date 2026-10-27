@@ -22,7 +22,7 @@ function session(instanceId: string, id: string): Session {
 function apiMessage(id: string) {
   return {
     id, type: "assistant", agent: "build", model: { providerID: "provider", id: "model" },
-    time: { created: 1 }, content: [{ type: "text", text: "base" }],
+    time: { created: 1 }, content: [{ type: "text", text: "BASE" }],
   }
 }
 
@@ -47,11 +47,23 @@ describe("session-api running-session open", () => {
         // mid-generation and its start event was never admitted (UI restart).
         applyOpenCodeDataEvent(instanceId, "/work", {
           id: `delta-${reads}`, type: "session.text.delta", created: 1000 + reads,
-          data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "." },
+          data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "X" },
         } as any)
         return { data: [apiMessage("msg_1")], cursor: {} }
       },
     }
+    // The reducer already holds the running message's base text.
+    applyOpenCodeDataEvent(instanceId, "/work", {
+      id: "arm-step", type: "session.step.started", created: 1,
+      data: { sessionID: sessionId, assistantMessageID: "msg_1", agent: "build", model: { providerID: "provider", id: "model" } },
+    } as any)
+    applyOpenCodeDataEvent(instanceId, "/work", {
+      id: "arm-text", type: "session.text.started", created: 2, data: { sessionID: sessionId, assistantMessageID: "msg_1" },
+    } as any)
+    applyOpenCodeDataEvent(instanceId, "/work", {
+      id: "arm-base", type: "session.text.delta", created: 3,
+      data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "BASE" },
+    } as any)
     try {
       await loadMessages(instanceId, sessionId)
 
@@ -60,17 +72,18 @@ describe("session-api running-session open", () => {
       assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["msg_1"])
       assert.ok(reads <= 5, `message.list was issued ${reads} times for the initial open`)
 
-      // The reducer projection holds the same base, so streaming keeps
-      // updating the loaded message instead of freezing at its snapshot.
+      // The reducer projection holds the same merged base (its in-window
+      // "X" kept its live version), so streaming keeps updating the loaded
+      // message: a later "Y" lands on "BASEX", not on the page's "BASE".
       const data = applyOpenCodeDataEvent(instanceId, "/work", {
         id: "tail", type: "session.text.delta", created: 5000,
-        data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "tail" },
+        data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "Y" },
       } as any)
       assert.ok(data.session.message.get(sessionId, "msg_1"), "the projection never held the loaded page")
       projectOpenCodeMessages(instanceId, sessionId, data)
       const record = messageStoreBus.getOrCreate(instanceId).getMessage("msg_1")
       const texts = Object.values(record?.parts ?? {}).map((part: any) => String(part.data?.text ?? ""))
-      assert.ok(texts.some((text) => text.includes("basetail")), `streaming froze after the initial seed: ${JSON.stringify(texts)}`)
+      assert.ok(texts.some((text) => text.includes("BASEXY")), `streaming froze or rewound after the initial seed: ${JSON.stringify(texts)}`)
     } finally {
       serverApi.fetchWorktrees = originalFetchWorktrees
       destroyOpenCodeData(instanceId)

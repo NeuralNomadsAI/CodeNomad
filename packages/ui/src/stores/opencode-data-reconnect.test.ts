@@ -196,6 +196,8 @@ test("a message.list read never publishes an obsolete page while stream events k
     await microtasks()
     assert.ok(!control.pending(), "the read completed mid-stream")
     assert.equal(control.calls, 1)
+    await converge(ctx, () => syncSettled === true)
+    assert.ok(syncSettled, "the sync promise settled")
     await converge(ctx, () => f.sdkText() === "seed probe x0 ")
     assert.equal(f.sdkText(), "seed probe x0 ", "streamed text survived the read")
 
@@ -203,6 +205,7 @@ test("a message.list read never publishes an obsolete page while stream events k
     // the replay queue still draining, so the fast path resumes once it has.
     f.delta("x1 ")
     await converge(ctx, () => f.sdkText() === "seed probe x0 x1 ")
+    assert.equal(f.sdkText(), "seed probe x0 x1 ")
 
     // Authoritative reconciliation after a disconnect runs through a fresh
     // projection (the reconnect resync), where the page has no live rows to
