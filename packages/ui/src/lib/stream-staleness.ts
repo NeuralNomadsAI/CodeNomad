@@ -50,7 +50,13 @@ export function createStreamStalenessWatchdog(options: StreamStalenessWatchdogOp
         return
       }
       connected = true
-      if (timer === undefined) timer = setTimer(check, checkIntervalMs)
+      if (timer === undefined) {
+        timer = setTimer(check, checkIntervalMs)
+        // Node embedders and test processes must exit naturally: the watchdog
+        // is a background probe, never a reason to keep the event loop alive.
+        // Browsers have no unref and the page-lifetime interval is unchanged.
+        ;(timer as { unref?: () => void }).unref?.()
+      }
     },
     stale() {
       return staleEpisode

@@ -39,12 +39,16 @@ class ServerEvents {
   constructor() {
     authRecovery.onRestored(() => this.restart("authentication restored"))
     if (typeof window !== "undefined") {
-      window.addEventListener("online", () => this.probeStale("network online"))
-      document.addEventListener("visibilitychange", () => {
-        if (document.visibilityState === "visible") {
-          this.probeStale("visibility restored")
-        }
-      })
+      // Minimal renderer globals (tests, embedded previews) may define window
+      // without event APIs; the probes are enhancements, never requirements.
+      window.addEventListener?.("online", () => this.probeStale("network online"))
+      if (typeof document !== "undefined") {
+        document.addEventListener?.("visibilitychange", () => {
+          if (document.visibilityState === "visible") {
+            this.probeStale("visibility restored")
+          }
+        })
+      }
       void this.connect()
     }
   }
