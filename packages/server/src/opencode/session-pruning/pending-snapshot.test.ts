@@ -188,6 +188,7 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   t.mock.method(performance, "now", () => monotonic)
   t.mock.timers.enable({ apis: ["setInterval", "Date"], now: Date.now() })
   const entries: Array<{ id: string; methods: string[]; closed: boolean }> = []
+  const tools: Array<{ closed: boolean }> = []
   let rejectNew = false
   const register = (definition: { id: string; methods: object }) => Effect.gen(function* () {
     if (rejectNew && definition.id === "codenomad.pending-requests") return yield* Effect.fail(new Error("Fixture registration failure"))
@@ -197,10 +198,21 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
     yield* Effect.addFinalizer(() => dispose)
     return { dispose, events: { emit: () => Effect.void } }
   })
-  // All other native domains are inert: a hook/tool/API invocation fails this test immediately.
+  const tool = { transform: (transform: (editor: any) => void) => Effect.gen(function* () {
+    const entry = { closed: false }
+    transform({ add: (definition: any) => {
+      assert.equal(definition.name, "session_search")
+      assert.deepEqual(definition.options, { namespace: "codenomad", codemode: true })
+    } })
+    tools.push(entry)
+    const dispose = Effect.sync(() => { entry.closed = true })
+    yield* Effect.addFinalizer(() => dispose)
+    return { dispose }
+  }) }
+  // Unrelated native domains reject calls; presence owns RPCs and the search tool.
   const unused: any = new Proxy(() => { throw new Error("Unexpected native API or hook") }, { get: () => unused })
   const rpc = Object.assign(() => {}, { register })
-  const ctx = new Proxy({ app: { version: "2.0.22" }, rpc, location: origin, options: {} }, {
+  const ctx = new Proxy({ app: { version: "2.0.22" }, rpc, tool, location: origin, options: {} }, {
     get: (target, property) => Reflect.get(target, property) ?? unused,
   }) as unknown as Plugin.Context
   const scope = await Effect.runPromise(Scope.make())
@@ -217,24 +229,29 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   await fs.writeFile(a, "")
   await tick(() => entries.length === 2)
   assert.deepEqual(entries.map(entry => entry.id), ["codenomad.session-pruning", "codenomad.pending-requests"])
-  assert.deepEqual(entries[0].methods, ["assetRead", "assets", "history", "outline", "outlineLayout", "outlinePreview", "preview", "prune", "pruneBatch", "window"])
+  assert.deepEqual(entries[0].methods, ["assetRead", "assets", "history", "historyRanked", "outline", "outlineLayout", "outlinePreview", "preview", "prune", "pruneBatch", "window"])
   assert.deepEqual(entries[1].methods, ["snapshot"])
+  assert.equal(tools.length, 1)
   await fs.writeFile(b, "")
   await fs.unlink(a)
   await tick(() => true)
   await delay(20)
   assert.equal(entries.length, 2)
   assert(entries.every(entry => !entry.closed), "Another backend lease retains both registrations")
+  assert(tools.every(entry => !entry.closed))
   const expired = new Date(Date.now() - PRESENCE_EXPIRY_MS - 1000)
   await fs.utimes(b, expired, expired)
   await tick(() => entries.every(entry => entry.closed))
+  assert(tools.every(entry => entry.closed))
   await fs.writeFile(a, "returned")
   await tick(() => entries.length === 4)
   await tick(() => true)
   await delay(20)
   assert.equal(entries.length, 4, "Stable presence must not double-register")
+  assert.equal(tools.length, 2)
   await close()
   assert(entries.every(entry => entry.closed))
+  assert(tools.every(entry => entry.closed))
   await tick(() => true)
   await delay(20)
   assert.equal(entries.length, 4, "Unloaded entry must not resurrect")
@@ -249,4 +266,5 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   rejectNew = true
   await assert.rejects(Effect.runPromise(Effect.scoped(desktopPlugin(directory).effect(ctx))), /Fixture registration failure/)
   assert(entries.every(entry => entry.closed), "Failed partial setup must close the original Promise RPC scope")
+  assert(tools.every(entry => entry.closed), "Failed partial setup must close the search tool scope")
 })

@@ -14,10 +14,13 @@ import { readNavigationWindow, readSessionOutline } from "./navigation-store"
 import { withHistoryDatabase } from "./history-database"
 import { assetsInputSchema, assetsResultSchema, assetReadInputSchema, assetReadResultSchema } from "./assets-contract"
 import { listSessionAssets, readSessionAsset } from "./assets-store"
+import { historyRankedInputSchema, historyRankedResultSchema } from "./history-ranked-contract"
+import { queryBoundRankedHistory, registerSessionSearch } from "./history-ranked-service"
 
 export const SessionPruningRpc = Rpc.define({ ...pruningRpcDefinition, methods: {
   ...pruningRpcDefinition.methods,
   history: { input: historyQuerySchema, output: historyNativeResultSchema },
+  historyRanked: { input: historyRankedInputSchema, output: historyRankedResultSchema },
   pruneBatch: { input: pruneBatchSchema, output: pruneBatchResultSchema },
   window: { input: navigationWindowInputSchema, output: navigationWindowResultSchema },
   outline: { input: outlineInputSchema, output: outlineResultSchema },
@@ -46,6 +49,7 @@ export default Plugin.define({
       outlinePreview: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readOutlinePreviews(db, scope, input.messageIDs, call.signal)),
       history: (input, call) => queryBoundHistory(ctx, input, call.signal),
+      historyRanked: (input, call) => queryBoundRankedHistory(ctx, input, call.signal),
       pruneBatch: (input, call) => pruneBoundBatch(ctx, input, call.signal, async (sessionID, result) => {
         await registration.events.emit("pruned", { sessionID, messageID: result.messageID, revision: result.revision })
       }),
@@ -79,6 +83,12 @@ export default Plugin.define({
         return result
       },
     })
-    return () => registration.dispose()
+    try {
+      const tools = await registerSessionSearch(ctx)
+      return async () => { await Promise.all([tools.dispose(), registration.dispose()]) }
+    } catch (error) {
+      await registration.dispose()
+      throw error
+    }
   },
 })

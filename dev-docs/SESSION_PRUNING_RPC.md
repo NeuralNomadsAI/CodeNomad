@@ -27,6 +27,7 @@ methods, the integration OpenCode's maintainers recommend for plugins
 - `service.ts`: database connection and a fresh `ctx.storage` challenge.
 - `isolated-store.ts`: in-memory-only test adapter; never a live write bypass.
 - `plugin.ts`: native RPC registration and post-commit notifications.
+- `history-ranked-service.ts`: the presence-owned Code Mode `codenomad.session_search` tool and versioned ranked-history RPC; ranking, scope and bounds are specified in [full-history queries](SESSION_HISTORY_QUERIES.md).
 - `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry.
 - `tui.ts` / `tui-reload.ts`: companion cache invalidation via the public TUI API.
 
