@@ -118,16 +118,12 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
   // Panels the user hid themselves (toggle, Escape, outside click, list choice): the
   // layout's focus hand-off below leaves their focus to the user's own action.
   const hiddenByUser = { left: false, right: false }
-  // Floating panels docked because the window gained room, not by the user's choice:
-  // rotation keeps them out of the orientation they leave.
-  const dockedByRoom = { left: false, right: false }
 
   // Floating drawers cover the whole shell, so opening one replaces the other.
   const open = (side: DrawerSide) => {
     const panel = panels[side]
     if (panel.open()) return
     panels[otherSide(side)].setFloating(false)
-    dockedByRoom[side] = false
     if (hasRoom(side)) panel.setWanted(true)
     else panel.setFloating(true)
     measureDrawerHost()
@@ -139,7 +135,6 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     const panel = panels[side]
     if (!panel.open()) return false
     hiddenByUser[side] = true
-    dockedByRoom[side] = false
     blurIfInside(panel.content())
     if (panel.pinned()) panel.setWanted(false)
     panel.setFloating(false)
@@ -161,12 +156,19 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     return handled
   }
 
+  // Mid-rotation the window already has its new shape while the orientation has not
+  // changed yet; the rotation then decides each panel, so nothing docks on the way.
+  const rotating = () => {
+    const orientation = options.orientation?.()
+    if (!orientation || typeof window === "undefined") return false
+    return (window.innerHeight >= window.innerWidth ? "portrait" : "landscape") !== orientation
+  }
+
   // A floating panel that gains its room docks.
   for (const side of ["left", "right"] as const) {
     const panel = panels[side]
     createEffect(() => {
-      if (!panel.floating() || !hasRoom(side)) return
-      dockedByRoom[side] = true
+      if (!panel.floating() || !hasRoom(side) || rotating()) return
       panel.setWanted(true)
       panel.setFloating(false)
     })
@@ -203,11 +205,7 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     // Not deferred: a deferred `on` would not record the initial orientation.
     createEffect(on(options.orientation, (next, previous) => {
       if (!next || !previous || next === previous) return
-      // A panel docked only because the new window shape gave a floating one room was not
-      // wanted in the orientation left.
-      const target = rotate(previous, next, { left: leftWanted() && !dockedByRoom.left, right: rightWanted() && !dockedByRoom.right })
-      dockedByRoom.left = false
-      dockedByRoom.right = false
+      const target = rotate(previous, next, { left: leftWanted(), right: rightWanted() })
       setLeftWanted(target.left)
       setRightWanted(target.right)
       setLeftFloating(false)
