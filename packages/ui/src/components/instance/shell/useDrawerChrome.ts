@@ -115,25 +115,39 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     return rightFloating() ? "floating-open" : "floating-closed"
   })
 
+  // Panels the user hid themselves (toggle, Escape, outside click, list choice): the
+  // layout's focus hand-off below leaves their focus to the user's own action.
+  const hiddenByUser = { left: false, right: false }
+  // Floating panels docked because the window gained room, not by the user's choice:
+  // rotation keeps them out of the orientation they leave.
+  const dockedByRoom = { left: false, right: false }
+
   // Floating drawers cover the whole shell, so opening one replaces the other.
   const open = (side: DrawerSide) => {
     const panel = panels[side]
     if (panel.open()) return
     panels[otherSide(side)].setFloating(false)
+    dockedByRoom[side] = false
     if (hasRoom(side)) panel.setWanted(true)
     else panel.setFloating(true)
     measureDrawerHost()
   }
 
   // Closing a docked panel stops wanting it; dismissing a floating one keeps the docked
-  // choice for when the room returns.
-  const close = (side: DrawerSide) => {
+  // choice for when the room returns. Hiding alone leaves focus where the user put it.
+  const hide = (side: DrawerSide) => {
     const panel = panels[side]
-    if (!panel.open()) return
+    if (!panel.open()) return false
+    hiddenByUser[side] = true
+    dockedByRoom[side] = false
     blurIfInside(panel.content())
     if (panel.pinned()) panel.setWanted(false)
     panel.setFloating(false)
-    focusTarget(panel.toggle())
+    return true
+  }
+
+  const close = (side: DrawerSide) => {
+    if (hide(side)) focusTarget(panels[side].toggle())
   }
 
   const closeFloatingDrawersIfAny = () => {
@@ -141,9 +155,7 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     for (const side of ["left", "right"] as const) {
       const panel = panels[side]
       if (panel.pinned() || !panel.floating()) continue
-      panel.setFloating(false)
-      blurIfInside(panel.content())
-      focusTarget(panel.toggle())
+      close(side)
       handled = true
     }
     return handled
@@ -154,6 +166,7 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     const panel = panels[side]
     createEffect(() => {
       if (!panel.floating() || !hasRoom(side)) return
+      dockedByRoom[side] = true
       panel.setWanted(true)
       panel.setFloating(false)
     })
@@ -169,13 +182,16 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
   for (const side of ["left", "right"] as const) {
     const panel = panels[side]
     createEffect(on(panel.open, (shown, wasShown) => {
-      if (!wasShown || shown || typeof document === "undefined") return
+      const byUser = hiddenByUser[side]
+      hiddenByUser[side] = false
+      if (!wasShown || shown || byUser || typeof document === "undefined") return
+      const content = panel.content()
+      const lost = (element: Element | null) =>
+        !element || element === document.body || !element.isConnected || Boolean(content?.contains(element))
       const focused = document.activeElement
-      const held = focused && focused !== document.body
-        ? !focused.isConnected || Boolean(panel.content()?.contains(focused))
-        : focusedDrawer === side
-      // Effect writes are batched, so resolve it on the next frame.
-      if (held) requestAnimationFrame(() => panel.toggle()?.focus())
+      const held = focused && focused !== document.body ? lost(focused) : focusedDrawer === side
+      // Effect writes are batched, so resolve it on the next frame, unless focus moved on meanwhile.
+      if (held) requestAnimationFrame(() => { if (lost(document.activeElement)) panel.toggle()?.focus() })
     }))
   }
 
@@ -187,7 +203,11 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     // Not deferred: a deferred `on` would not record the initial orientation.
     createEffect(on(options.orientation, (next, previous) => {
       if (!next || !previous || next === previous) return
-      const target = rotate(previous, next, { left: leftWanted(), right: rightWanted() })
+      // A panel docked only because the new window shape gave a floating one room was not
+      // wanted in the orientation left.
+      const target = rotate(previous, next, { left: leftWanted() && !dockedByRoom.left, right: rightWanted() && !dockedByRoom.right })
+      dockedByRoom.left = false
+      dockedByRoom.right = false
       setLeftWanted(target.left)
       setRightWanted(target.right)
       setLeftFloating(false)
@@ -233,8 +253,8 @@ export function useDrawerChrome(options: UseDrawerChromeOptions): DrawerChromeAp
     rightOpen,
     leftPanelWidth,
     rightPanelWidth,
-    setLeftOpen: (next) => next ? open("left") : close("left"),
-    setRightOpen: (next) => next ? open("right") : close("right"),
+    setLeftOpen: (next) => next ? open("left") : void hide("left"),
+    setRightOpen: (next) => next ? open("right") : void hide("right"),
     leftDrawerState,
     rightDrawerState,
     closeLeft: () => close("left"),

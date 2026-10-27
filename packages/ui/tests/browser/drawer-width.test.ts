@@ -137,6 +137,32 @@ test("a tablet without room for both panels in portrait keeps each orientation's
   } finally { await context.close() }
 })
 
+test("a floating panel docked by a rotation's room stays out of the orientation it came from", async () => {
+  const context = await browser.newContext({ viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await waitForPinned(page, false, false)
+    // Portrait: the session panel docks, the right one only floats beside it.
+    await page.locator(".shell-panel-toggle--left button").click()
+    await waitForPinned(page, true, false)
+    await page.locator(".shell-panel-toggle--right button").click()
+    await page.waitForFunction(() => document.querySelectorAll(".session-floating-drawer .MuiDrawer-paper").length === 1)
+    await page.setViewportSize({ width: 1024, height: 768 })
+    await page.setViewportSize({ width: 768, height: 1024 })
+    await waitForPinned(page, true, false)
+    // A wider portrait window has room, but the right panel was never docked in portrait.
+    await page.setViewportSize({ width: 1000, height: 1366 })
+    await page.waitForTimeout(300)
+    assert.deepEqual(await pinned(page), { left: true, right: false, floating: 0 })
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
 test("a drawer closed by rotation hands keyboard focus to its toggle", async () => {
   // Tablet sizes on both sides of the 1280 px desktop breakpoint.
   for (const [width, height] of [[1180, 820], [1366, 1024]]) {

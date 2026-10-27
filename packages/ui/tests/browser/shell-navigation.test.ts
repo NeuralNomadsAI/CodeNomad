@@ -359,6 +359,23 @@ test("narrowing never grows or brings back a panel, and widening retraces the sa
   } finally { await context.close() }
 })
 
+test("dismissing a floating panel by clicking outside leaves focus on the clicked control", async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 760 } })
+  const { page, errors } = await open(context)
+  try {
+    // The fixture's "Outside target" button stands for any focusable control outside the shell.
+    await page.evaluate(() => { document.getElementById("outside")!.style.cssText += ";position:fixed;bottom:8px;right:8px;z-index:100000" })
+    await toggle(page, "left").click()
+    await waitDrawers(page, "floating", "closed")
+    await page.locator(".session-floating-drawer .session-sidebar-header button").first().focus()
+    await page.locator("#outside").click()
+    await waitDrawers(page, "closed", "closed")
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "outside")
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
 for (const side of ["left", "right"] as const) test(`the ${side} panel closed for room hands keyboard focus to its toggle`, async () => {
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } })
   const { page, errors } = await open(context)
