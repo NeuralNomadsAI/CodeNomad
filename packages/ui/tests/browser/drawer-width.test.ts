@@ -126,6 +126,88 @@ test("a tablet without room for both panels in portrait keeps each orientation's
   } finally { await context.close() }
 })
 
+test("a floating panel docked by a rotation's room stays out of the orientation it came from", async () => {
+  const context = await browser.newContext({ viewport: { width: 768, height: 1024 }, hasTouch: true, isMobile: true })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await waitForPinned(page, false, false)
+    // Portrait: the session panel docks, the right one only floats beside it.
+    await page.locator(".shell-panel-toggle--left button").click()
+    await waitForPinned(page, true, false)
+    await page.locator(".shell-panel-toggle--right button").click()
+    await page.waitForFunction(() => document.querySelectorAll(".session-floating-drawer .MuiDrawer-paper").length === 1)
+    // Landscape opens with the panels it remembers (none, having started in portrait).
+    await page.setViewportSize({ width: 1024, height: 768 })
+    await page.waitForFunction(() => !document.querySelector(".session-sidebar-container") && !document.querySelector(".session-right-panel")
+      && !document.querySelector(".session-floating-drawer .MuiDrawer-paper"))
+    await page.setViewportSize({ width: 768, height: 1024 })
+    await waitForPinned(page, true, false)
+    // A wider portrait window has room, but the right panel was never docked in portrait.
+    await page.setViewportSize({ width: 1000, height: 1366 })
+    await page.waitForTimeout(300)
+    assert.deepEqual(await pinned(page), { left: true, right: false, floating: 0 })
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("a wanted panel floated without room and docked by restored room keeps its place across rotations", async () => {
+  const context = await browser.newContext({ viewport: { width: 1366, height: 1024 }, hasTouch: true, isMobile: true })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await waitForPinned(page, true, true)
+    // Still landscape, too narrow for the right panel: it hides, opens floating, and docks once room returns.
+    await page.setViewportSize({ width: 900, height: 600 })
+    await waitForPinned(page, true, false)
+    await page.locator(".shell-panel-toggle--right button").click()
+    await page.waitForFunction(() => document.querySelectorAll(".session-floating-drawer .MuiDrawer-paper").length === 1)
+    await page.setViewportSize({ width: 1366, height: 1024 })
+    await waitForPinned(page, true, true)
+    await page.setViewportSize({ width: 1024, height: 1366 })
+    await waitForPinned(page, false, false)
+    await page.setViewportSize({ width: 1366, height: 1024 })
+    await waitForPinned(page, true, true)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("rounded near-square viewport dimensions never hold a floating panel back from docking", async () => {
+  const context = await browser.newContext({ viewport: { width: 1366, height: 1024 }, hasTouch: true, isMobile: true })
+  const page = await context.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await waitForPinned(page, true, true)
+    // Closed while docked, neither panel is wanted: only the floating one can dock later.
+    await page.locator(".shell-panel-toggle--left button").click()
+    await page.locator(".shell-panel-toggle--right button").click()
+    await waitForPinned(page, false, false)
+    await page.setViewportSize({ width: 500, height: 400 })
+    await page.locator(".shell-panel-toggle--left button").click()
+    await page.waitForFunction(() => document.querySelectorAll(".session-floating-drawer .MuiDrawer-paper").length === 1)
+    // A zoomed landscape window can round innerWidth and innerHeight to the same value
+    // while its orientation stays landscape; that is no rotation in progress.
+    await page.evaluate(() => {
+      for (const key of ["innerWidth", "innerHeight"]) Object.defineProperty(window, key, { configurable: true, value: 669 })
+    })
+    await page.setViewportSize({ width: 1366, height: 1024 })
+    await waitForPinned(page, true, false)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
 test("a drawer closed by rotation hands keyboard focus to its toggle", async () => {
   // Tablet sizes on both sides of the 1280 px desktop breakpoint.
   for (const [width, height] of [[1180, 820], [1366, 1024]]) {
