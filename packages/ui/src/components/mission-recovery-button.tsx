@@ -32,9 +32,10 @@ function markAttempt(key: string, state?: "pending" | "admitted") {
   })
 }
 
-function classify(error: unknown): "busy" | "unknown" | "conflict" | "failed" {
+function classify(error: unknown): "busy" | "unknown" | "conflict" | "member" | "failed" {
   const code = error && typeof error === "object" && "code" in error ? error.code : undefined
   if (code === "recovery-busy") return "busy"
+  if (code === "already-member") return "member"
   if (code === "recovery-unknown") return "unknown"
   if (["recovery-conflict", "revision-conflict", "mission-not-running", "control-pending", "mission-not-found", "foreign-session"].includes(String(code))) return "conflict"
   return "failed"
@@ -52,7 +53,9 @@ export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
   const currentError = () => error()?.key === key() ? error() : undefined
   const eligible = () => {
     const mission = props.mission
-    if (mission.status !== "active" || (mission.runState ?? "running") !== "running" || mission.control?.pending.length) return false
+    // Coordinator recovery also resumes a failed mission: the backend reopens it first.
+    const resuming = props.target === "coordinator" && mission.status === "failed"
+    if (mission.status !== "active" && !resuming || (mission.runState ?? "running") !== "running" || mission.control?.pending.length) return false
     const task = props.target === "report" ? mission.tasks.find(task => task.key === props.taskKey) : undefined
     if (props.target === "report" && !canRecoverMissionReport(task, props.activity)) return false
     const sessionId = props.target === "report" ? task?.actorSessionId : mission.coordinatorSessionId
@@ -61,7 +64,7 @@ export function createMissionRecoveryAction(props: MissionRecoveryButtonProps) {
     // Unknown projection is not idle. A report recovery may still ask the backend
     // to verify; coordinator recovery is offered only on observed idle-without-report
     // (which already excludes active descendants), never on unknown.
-    if (props.target === "coordinator" && props.activity !== "idle-without-report") return false
+    if (props.target === "coordinator" && !resuming && props.activity !== "idle-without-report") return false
     if (props.activity && !["unknown", "idle-without-report"].includes(props.activity)) return false
     // Legacy/local actor status can be stale after detachment. The native
     // sidecar wins; unknown still requires authoritative verification on click.

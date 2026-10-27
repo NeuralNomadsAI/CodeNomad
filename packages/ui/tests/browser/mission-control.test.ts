@@ -5,40 +5,26 @@ import path from "node:path"
 import os from "node:os"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
-import { createFixtureCache } from "./fixture-cache"
 import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPicker, missionPickerExpander, missionPickerField, missionPopupOption,
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
-import { createFixtureShutdown } from "./fixture-shutdown"
 
-let server: ViteDevServer, browser: Browser, url: string
-let cache: Awaited<ReturnType<typeof createFixtureCache>>
+import { borrowFixture } from "./fixture-borrow"
+
+let browser: Browser, url: string
 before(async () => {
-  cache = await createFixtureCache()
-  const shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    cacheDir: cache.cacheDir,
-    plugins: [solid(), shutdown.plugin, { name: "mission-fixture", configureServer(s) {
-      s.middlewares.use("/mission-session-fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/mission-session-fixture", '<html><body><div id="root" style="display:flex;height:100vh"></div><script type="module" src="/tests/browser/fixtures/mission-session.tsx"></script></body></html>'))
-      })
-      s.middlewares.use("/mission-fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/mission-fixture", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-control.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+  const fixture = await borrowFixture({
+    name: "mission-control",
+    routes: [
+      { path: "/mission-fixture", html: '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-control.tsx"></script></body></html>' },
+      { path: "/mission-session-fixture", html: '<html><body><div id="root" style="display:flex;height:100vh"></div><script type="module" src="/tests/browser/fixtures/mission-session.tsx"></script></body></html>' },
+    ],
   })
-  shutdown.own(server)
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-fixture`
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close() })
 
 function mission(id: string): MissionMap {
   return { version: 1, id, projectID: "project", projectCanonical: "/fixture", objective: `Objective ${id}`, template: "custom", notes: "Notes",
@@ -1253,8 +1239,10 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     const heights = await Promise.all(rows.map(row => row.evaluate(el => el.getBoundingClientRect().height)))
     const titleHeight = await rows[0].locator(".mission-picker-title").evaluate(el => el.getBoundingClientRect().height)
     assert.ok(heights.every(height => height < titleHeight * 2), "single-line rows")
+    const marks = await Promise.all(rows.map(row => row.locator(".mission-picker-mark").getAttribute("data-mark")))
+    assert.deepEqual(marks, ["idle", "idle", "interrupted"], "only the resumable failure needs attention; history already present reads as seen")
     const colors = await missionPicker(page).locator(".mission-picker-inline .mission-picker-mark").evaluateAll(items => items.map(el => getComputedStyle(el).backgroundColor))
-    assert.equal(new Set(colors).size, 3, "running, completed and failed carry distinct semantic marks")
+    assert.equal(new Set(colors).size, 2, "idle rows share the neutral mark")
     await rows[1].click()
     await selectedCard(page).waitFor()
     // The detail follows the whole picker as its own section, never inside the selected row.

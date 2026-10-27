@@ -3,13 +3,16 @@ import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { showConfirmDialog } from "../stores/alerts"
 import { MissionActionBar } from "./mission-action-bar"
-import { scheduleEntryAttention, type MissionPickerEntry } from "./mission-picker-model"
+import { scheduleMark, type MissionPickerEntry } from "./mission-picker-model"
 import type { MissionControlRetry, MissionPrimaryAction } from "./mission-lifecycle-controls"
 import { useMissionRecurrence, type RecurrenceSchedule, type RecurrenceAction } from "../stores/mission-recurrence"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { showSessionChatFor } from "../stores/session-previews"
 import { activeSessionId } from "../stores/sessions"
-import { instances } from "../stores/instances"
+import { getPermissionQueue, instances } from "../stores/instances"
+import { getFormQueue } from "../stores/forms"
+import { sessions } from "../stores/session-state"
+import { getSessionAncestorIdsFromMap } from "../stores/session-tree"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { missionScheduleText } from "./mission-schedule-text"
 import { createRecurrenceControlIntent, completedRecurrenceControl, completedRecurrenceManual, partialRecurrenceControl,
@@ -209,7 +212,9 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   tracking?: JSX.Element
   /** The admitted passage, when one is tracked: its overview reader and coordinator conversation. */
   passage?: { reading: boolean; onToggle: () => void; onOpenConversation: () => void }
-  registerRetry?: (retry: MissionControlRetry) => () => void }) {
+  registerRetry?: (retry: MissionControlRetry) => () => void
+  /** Open requests of the selected schedule's read passage from its declared actors and observed family. */
+  selectedRequests?: { passageID: string; count: number } }) {
   const { t, locale } = useI18n()
   const [revision, setRevision] = createSignal(0)
   const { snapshot, error, loading } = useMissionRecurrence({ instanceId: () => props.instanceId,
@@ -250,11 +255,26 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
           <bdi>{text.run(schedule, item)}</bdi>
         </button></li>}</For></ol>
     </section></Show>
+  // Open Forms/permissions of a passage. The selected schedule's read live passage
+  // counts its actors and observed family (as under Needs you), zero included; other
+  // rows rely on the live passage's conversation and its loaded descendants.
+  const passageRequests = (schedule: RecurrenceSchedule) => {
+    const selected = schedule.id === props.selectedSchedule ? props.selectedRequests : undefined
+    if (selected && selected.passageID === schedule.pending?.passageID) return selected.count
+    const root = schedule.pending?.conversationID
+    if (!root) return 0
+    const family = sessions().get(props.instanceId) ?? new Map()
+    const owned = (sessionID?: string) => Boolean(sessionID)
+      && (sessionID === root || getSessionAncestorIdsFromMap(family, sessionID!).includes(root))
+    return getFormQueue(props.instanceId).filter(form => owned(form.sessionID)).length
+      + getPermissionQueue(props.instanceId).filter(permission => owned(permission.sessionID)).length
+  }
   const entries = createMemo((): MissionPickerEntry[] => (snapshot()?.schedules ?? []).map(schedule => {
-    const attention = scheduleEntryAttention(schedule)
     const state = t(`missions.recurrence.state.${schedule.state}`), next = text.next(schedule)
-    return { key: `schedule:${schedule.id}`, title: schedule.title, attention, mark: attention ?? schedule.state,
-      status: [t("missionsPanel.dailyBadge"), state, next, text.every(schedule)].filter(Boolean).join(" · ") }
+    const mark = scheduleMark(schedule, passageRequests(schedule))
+    return { key: `schedule:${schedule.id}`, title: schedule.title, mark,
+      status: [t("missionsPanel.dailyBadge"), state, mark === "permission" ? t("missionsPanel.task.input") : "", next, text.every(schedule)]
+        .filter(Boolean).join(" · ") }
   }))
   const selectedId = () => snapshot()?.schedules.some(schedule => schedule.id === props.selectedSchedule) ? props.selectedSchedule : undefined
   const view = () => <>

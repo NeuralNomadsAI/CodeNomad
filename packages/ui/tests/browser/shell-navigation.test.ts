@@ -331,6 +331,51 @@ test("phone list selection reveals the conversation; history buttons keep the se
   } finally { await context.close() }
 })
 
+test("narrowing never grows or brings back a panel, and widening retraces the same layouts", async () => {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } })
+  const { page, errors } = await open(context)
+  const layout = () => page.evaluate(() => ({
+    left: Math.round(document.querySelector(".session-sidebar-container")?.getBoundingClientRect().width ?? 0),
+    right: Math.round(document.querySelector(".session-right-panel")?.getBoundingClientRect().width ?? 0),
+  }))
+  const resize = async (width: number) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    return layout()
+  }
+  try {
+    await waitDrawers(page, "pinned", "pinned")
+    const widths = Array.from({ length: 51 }, (_, index) => 1400 - index * 20)
+    const narrowing = new Map<number, { left: number; right: number }>()
+    let previous = await layout()
+    for (const width of widths) {
+      const current = await resize(width)
+      assert.ok(current.left <= previous.left && current.right <= previous.right, `${width}px: ${JSON.stringify(previous)} -> ${JSON.stringify(current)}`)
+      narrowing.set(width, current)
+      previous = current
+    }
+    for (const width of [...widths].reverse()) assert.deepEqual(await resize(width), narrowing.get(width), `${width}px`)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("dismissing a floating panel by clicking outside leaves focus on the clicked control", async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 760 } })
+  const { page, errors } = await open(context)
+  try {
+    // The fixture's "Outside target" button stands for any focusable control outside the shell.
+    await page.evaluate(() => { document.getElementById("outside")!.style.cssText += ";position:fixed;bottom:8px;right:8px;z-index:100000" })
+    await toggle(page, "left").click()
+    await waitDrawers(page, "floating", "closed")
+    await page.locator(".session-floating-drawer .session-sidebar-header button").first().focus()
+    await page.locator("#outside").click()
+    await waitDrawers(page, "closed", "closed")
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "outside")
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
 for (const side of ["left", "right"] as const) test(`the ${side} panel closed for room hands keyboard focus to its toggle`, async () => {
   const context = await browser.newContext({ viewport: { width: 1600, height: 900 } })
   const { page, errors } = await open(context)

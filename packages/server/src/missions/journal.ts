@@ -468,6 +468,11 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         && text(input.reportID, MAX_SHORT_TEXT) && text(input.admissionID, MAX_SHORT_TEXT)
         ? { ...eventBase(input), type: "report.notified", reportID: input.reportID, admissionID: input.admissionID }
         : undefined
+    case "mission.reopened":
+      return onlyFields(input, ["version", "id", "type", "missionID", "projectID", "createdAt", "expectedRevision"])
+        && Number.isSafeInteger(input.expectedRevision) && Number(input.expectedRevision) >= 1
+        ? { ...eventBase(input), type: "mission.reopened", expectedRevision: Number(input.expectedRevision) }
+        : undefined
     case "mission.finished": {
       const failure = input.nativeFailure
       if (failure !== undefined && (input.outcome !== "failed" || !record(failure)

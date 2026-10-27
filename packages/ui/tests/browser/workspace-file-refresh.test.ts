@@ -43,7 +43,7 @@ test("actual file creation, rename and deletion refresh the Workspace tree throu
       })
       s.middlewares.use("/api/", (_req, res) => { res.setHeader("Content-Type", "application/json"); res.end("{}") })
     } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } }).catch(async error => { await cache.dispose(); throw error })
   shutdown.own(server)
   const browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)

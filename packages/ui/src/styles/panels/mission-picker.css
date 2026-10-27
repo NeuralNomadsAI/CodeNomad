@@ -44,13 +44,12 @@
 .mission-control-header > .mission-picker { margin-block-start: var(--space-sm); }
 .mission-picker > .mission-picker-actions { margin-block-end: var(--space-sm); }
 
-/* Small square status mark; the full state is in the tooltip and screen-reader text. */
+/* Small square status mark on the session status palette (mission-picker-model.ts):
+   the full state is in the tooltip and screen-reader text. */
 .mission-picker-mark { flex: 0 0 auto; width: 6px; height: 6px; background: var(--text-muted); }
-.mission-picker-mark[data-mark="running"] { background: var(--accent-primary); }
 .mission-picker-mark[data-mark="working"] { background: var(--session-status-working-fg); animation: pulse 1.5s ease-in-out infinite; }
 .mission-picker-mark[data-mark="permission"] { background: var(--session-status-permission-fg); }
-.mission-picker-mark[data-mark="failed"] { background: var(--status-error); }
-.mission-picker-mark[data-mark="completed"] { background: var(--status-success); }
+.mission-picker-mark[data-mark="done"] { background: var(--session-status-idle-fg); }
 .mission-picker-mark:is([data-mark="paused"], [data-mark="interrupted"]) { background: var(--status-warning); }
 
 /* Rows: bounded native scrolling and the session list's row states. */
@@ -103,11 +102,12 @@ button.mission-picker-option:focus-visible { outline: 1px solid var(--focus-ring
 }
 .mission-picker-popup .mission-picker-search { margin: 2px; width: auto; }
 
-/* Chevron attention among the other missions, aliasing session-child-activity.css. */
+/* Collapsed chevron attention among the other missions, aliasing session-child-activity.css. */
 .mission-picker-expander[data-attention] { opacity: 1; color: var(--mission-attention-color); }
 .mission-picker-expander[data-attention="permission"] { --mission-attention-color: var(--session-status-permission-fg); }
-.mission-picker-expander[data-attention="failed"] { --mission-attention-color: var(--status-error); }
+.mission-picker-expander[data-attention="interrupted"] { --mission-attention-color: var(--status-warning); }
 .mission-picker-expander[data-attention="working"] { --mission-attention-color: var(--session-status-working-fg); }
+.mission-picker-expander[data-attention="done"] { --mission-attention-color: var(--session-status-idle-fg); }
 .mission-picker-expander[data-attention="working"] .disclosure-chevron { animation: pulse 1.5s ease-in-out infinite; }
 .mission-picker-expander[data-attention] .disclosure-chevron { stroke-width: 3; }
 

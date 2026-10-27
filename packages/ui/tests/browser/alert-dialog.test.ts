@@ -1,33 +1,23 @@
 import assert from "node:assert/strict"
 import { before, after, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
 
-let browser: Browser, server: ViteDevServer, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({
-    configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    cacheDir: cache.cacheDir, resolve: { dedupe: ["solid-js"] },
-    plugins: [shutdown.plugin, solid(), { name: "alert-dialog-fixture", configureServer(server) {
-      server.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await server.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/alert-dialog.tsx"></script></body></html>'))
-      })
-    } }], server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  shutdown.own(server)
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  const fixture = await borrowFixture({
+      name: "alert-dialog",
+      routes: [
+        { path: "/fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/alert-dialog.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); })
 
 type Paint = { focused: string, filled: string[], ring: string[] }
 

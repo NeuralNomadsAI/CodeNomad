@@ -1,33 +1,22 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
-import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  try {
-    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-      plugins: [shutdown.plugin, { name: "external-link-clicks", configureServer(s) {
-        s.middlewares.use("/external-link-fixture", async (_req, res) => {
-          res.setHeader("Content-Type", "text/html")
-          res.end(await s.transformIndexHtml("/external-link-fixture", '<html><body><script type="module" src="/tests/browser/fixtures/external-link-clicks.ts"></script></body></html>'))
-        })
-      } }],
-      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+  const fixture = await borrowFixture({
+      name: "external-link-clicks",
+      routes: [
+        { path: "/external-link-fixture", html: "<html><body><script type=\"module\" src=\"/tests/browser/fixtures/external-link-clicks.ts\"></script></body></html>" },
+      ],
     })
-    shutdown.own(server)
-    await server.listen()
-    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/external-link-fixture`
-    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
-  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 })
-after(async () => { try { await browser?.close() } finally { await server?.close() } })
+after(async () => { await browser?.close() })
 
 test("anchors asking for a new window open through the host's opener command", { timeout: 60_000 }, async () => {
   const page = await browser.newPage()

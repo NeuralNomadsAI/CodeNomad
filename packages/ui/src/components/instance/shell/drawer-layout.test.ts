@@ -13,24 +13,33 @@ const widths = {
   rightOpen: true,
 }
 
-test("drawers shrink before progressively overlaying", () => {
+test("each drawer hides at the end of its own compression, the right one first", () => {
   assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 1_200 }), {
     left: true,
     right: true,
     leftWidth: 320,
     rightWidth: 400,
   })
+  // The right panel shrinks to its minimum beside the full left panel...
   assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 910 }), {
     left: true,
     right: true,
     leftWidth: 320,
     rightWidth: 200,
   })
-  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 810 }), {
+  // ...and hides there; the left panel keeps its width and the conversation takes the room.
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 909 }), {
     left: true,
-    right: true,
-    leftWidth: 220,
-    rightWidth: 200,
+    right: false,
+    leftWidth: 320,
+    rightWidth: 400,
+  })
+  // Then the left panel shrinks to its minimum and hides there.
+  assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 660 }), {
+    left: true,
+    right: false,
+    leftWidth: 270,
+    rightWidth: 400,
   })
   assert.deepEqual(resolveEmbeddedDrawers({ ...widths, hostWidth: 610 }), {
     left: true,

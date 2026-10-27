@@ -2,33 +2,27 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import { cleanupBackend } from "./fixtures/mission-cleanup-backend"
 import { clickListItemAction, clickMissionAction, inlineMissionEntry, toggleMissionOverview } from "./mission-actions"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  cache = await createFixtureCache()
-  const shutdown = createFixtureShutdown(cache)
+  const fixture = await borrowFixture({
+      name: "mission-cleanup",
+      routes: [
+        { path: "/cleanup-fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-control.tsx\"></script></body></html>" },
+      ],
+    })
   try {
-    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-      plugins: [shutdown.plugin, solid(), { name: "mission-cleanup-fixture", configureServer(s) { s.middlewares.use("/cleanup-fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/cleanup-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-control.tsx"></script></body></html>'))
-      }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-    shutdown.own(server)
-    await server.listen()
-    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/cleanup-fixture`
+    url = fixture.url
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
     armFixtureNavigationBudget(browser)
-  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
+  } catch (error) { throw error }
 })
-after(async () => { try { await browser?.close() } finally { await server?.close() } })
+after(async () => { await browser?.close() })
 
 async function setup(f: ReturnType<typeof cleanupBackend>, target: string, loseAcknowledgement = false) {
   const page = await browser.newPage({ locale: "en-US" })

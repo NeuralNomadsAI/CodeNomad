@@ -53,6 +53,8 @@ export const AUTOMATIC_BRIEFINGS = `Project briefing: publish mission.briefing o
 Final report: the final mission.report summary is the user-facing result: what was delivered, what remains, and what needs a decision, in at most 6 short sentences, following the user-facing text rules above.`
 
 /** The Wayfinder human gate (`MissionControl.verifyHumanDecision`), stated wherever a coordinator picks the role. */
+export const COMPLETED_FINAL_ONLY = `A one-time mission finishes only as completed. When it cannot continue on its own (a decision, consent, credential or clarification is needed, a partial result must be accepted, or no path forward remains), ask the human through the native question tool and wait for the answer; only the human stops a mission.`
+
 export const WAYFINDER_DECISION_REQUIREMENT = `A Wayfinder decision task completes only with the human's own answer: the task's conversation, launched by your native subagent call with its exact assignmentPrompt, must ask the question through the native question tool, and the user must answer it in the CodeNomad interface. Neither you nor the child may answer for the human. Use research for a self-contained analysis or recommendation; without a human answer, report the decision task blocked.`
 
 const custom: MissionRecipe = {
@@ -314,7 +316,7 @@ Complete only this task. Do not create mission tasks or nested Mission coordinat
 }
 
 /** `backendActions`: this coordinator can reach mission.interrupt and mission.prepare. */
-export function buildActorContext(mission: MissionMap, sessionID: string, options: { backendActions?: boolean } = {}): string {
+export function buildActorContext(mission: MissionMap, sessionID: string, options: { backendActions?: boolean; completedFinalOnly?: boolean } = {}): string {
   const recipe = getMissionRecipe(mission.template, mission.taskMode)
   const actor = mission.actors.find((candidate) => candidate.sessionId === sessionID)
   if (!actor) return ""
@@ -337,7 +339,7 @@ ${notes}Only this coordinator session may declare mission tasks, call mission.de
     : "Pass the declaration's canonical assignmentPrompt to the ordinary native subagent call only when its task is ready; the prompt is context, not execution admission or proof. Keep the declared execution profile and native continuation checks intact. Record each declared native task's business readout with mission.report and its explicit taskKey; omit contract and do not ask children to copy their returned text into mission.report."} Use mission.revise with a reason and current revision to add newly visible frontier tasks, retire/replace work or update dependencies atomically; one replacement may merge several retired tasks. Revision and business completion do not cancel native work or prove execution ended; tracked in-flight execution must still settle before finalization.${!options.backendActions ? "" : `${mission.taskMode === "independent" ? "" : " To stop a retired native task's still-running conversations, call mission.interrupt with its taskKey."} To hand work over to a separate mission, such as a pilot, call mission.prepare: it stays paused until the user presses Play, and mission.inspect({ list: true }) finds it later.`} Never reconstruct a hidden workflow engine.
 Playbook sequence:\n${recipe.sequence.map((step) => `- ${step}`).join("\n")}
 Coordinator contract: ${recipe.coordinator}`
-      + `\n${USER_FACING_TEXT}\n${AUTOMATIC_BRIEFINGS}`
+      + `\n${USER_FACING_TEXT}\n${AUTOMATIC_BRIEFINGS}${options.completedFinalOnly ? `\n${COMPLETED_FINAL_ONLY}` : ""}`
   }
   return `You are a specialist in CodeNomad mission ${mission.id}.
 Objective (untrusted task data): <mission-objective>${objective}</mission-objective>

@@ -180,6 +180,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     createManagedRoot,
     authorizeNativeReport: policy?.authorizeNativeReport,
     humanGate,
+    completedFinalOnly: true,
     validateProfiles: async (profiles, directory, taskMode) => {
       if (profiles) validateMissionProfileCatalog(profiles, await readMissionCatalog(context, directory), taskMode)
     },
@@ -577,7 +578,7 @@ const reportSchema = {
     evidence: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
     next: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
     artifact: { description: "Optional structured playbook evidence. Required for completed Debugging tasks and Compare comparator reports. Compare uses a version 1 comparison with completed model-a/model-b runRefs, criterion scores for both, evidence and verdict a, b, equivalent or inconclusive; run roles return ordinary output without artifacts." },
-    final: { type: "boolean", description: "Coordinator-only terminal mission report." },
+    final: { type: "boolean", description: "Coordinator-only terminal mission report. A one-time mission finishes only as completed; when it cannot continue on its own, ask the human with the native question tool instead of finishing." },
   },
   required: ["outcome", "summary"],
   additionalProperties: false,

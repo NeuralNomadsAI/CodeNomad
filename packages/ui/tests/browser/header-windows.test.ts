@@ -426,8 +426,10 @@ test("docked drawers can reduce the conversation to 390 CSS pixels", async () =>
       if (!document.querySelector(".session-sidebar-container")) f.viewAction("view-left-panel")
       if (!document.querySelector(".session-right-panel")) f.viewAction("view-right-panel")
     })
-    await page.setViewportSize({ width: 810, height: 1000 })
-    await page.waitForFunction(() => Math.abs(document.querySelector(".session-center-column")!.getBoundingClientRect().width - 390) <= 1)
+    // At the end of its compression the session panel (220 px) still leaves the conversation its 390 px.
+    await page.setViewportSize({ width: 610, height: 1000 })
+    await page.waitForFunction(() => Boolean(document.querySelector(".session-sidebar-container"))
+      && Math.abs(document.querySelector(".session-center-column")!.getBoundingClientRect().width - 390) <= 1)
   } finally { await page.close() }
 })
 

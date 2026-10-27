@@ -2,32 +2,26 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 
 // Real MissionControl with the full stylesheet: single-scroller policy on short
 // layouts, measured dependency rail endpoints and native picker key semantics.
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [solid(), shutdown.plugin, { name: "mission-geometry", configureServer(s) {
-      s.middlewares.use("/mission-geometry", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/mission-geometry", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-control.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  shutdown.own(server); await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-geometry`
+  const fixture = await borrowFixture({
+      name: "mission-panel-geometry",
+      routes: [
+        { path: "/mission-geometry", html: "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-control.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
   armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); })
 
 const task = (key: string, blockedBy: string[] = [], status: MissionTask["status"] = "queued"): MissionTask => ({ id: `task-${key}`, key, title: `Task ${key}`,
   brief: `Brief ${key}`, role: "worker", status, blockedBy, outstandingExecution: false, createdAt: 1, updatedAt: 1 })

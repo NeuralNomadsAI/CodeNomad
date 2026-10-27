@@ -18,6 +18,8 @@ export function MissionSelectedActions(props: {
   instanceId: string; mission: MissionMap; active: boolean; disabled: boolean; messagingDisabled: boolean
   reading: boolean; onToggleReader: () => void
   coordinatorActivity?: MissionActorActivityState; onOpenCoordinator: () => void; onAdmitted: () => Promise<void>
+  /** The Mission's mark is interrupted: its coordinator stopped without a report while nothing else runs. */
+  interrupted: boolean
   onEdit: () => void; onDelete: () => void; editDisabled: boolean; deleteDisabled: boolean
   registerRetry?: (retry: MissionControlRetry) => () => void
 }) {
@@ -32,13 +34,14 @@ export function MissionSelectedActions(props: {
   // Its reconciliation reuses the panel's own mission map read and verifies the exact request.
   const unregister = props.registerRetry?.({ pending: lifecycle.retryable, reconcile: lifecycle.reconcile, resend: lifecycle.resend })
   onCleanup(() => unregister?.())
-  // A running Mission whose coordinator is observed idle without a report (no
-  // active descendants) offers recovery in Play's place. Unknown activity, e.g.
-  // a large background subagent tree, keeps Pause: it is not evidence of idle.
-  const stuck = () => props.coordinatorActivity === "idle-without-report"
+  // An interrupted Mission (coordinator observed idle without a report, nothing
+  // else running) offers recovery in Pause's place, and a failed one offers it to
+  // resume. Unknown activity, e.g. a large background subagent tree, keeps Pause:
+  // it is not evidence of idle.
   const primary = (): MissionPrimaryAction | undefined => {
     const current = lifecycle.primary(), recover = recovery.action()
-    if (current?.key !== "pause" || !recover || !stuck()) return current
+    const resumable = props.mission.status === "failed" ? !current : current?.key === "pause" && props.interrupted
+    if (!recover || !resumable) return current
     return { key: "recover", label: t("missionsPanel.action.recover"), ariaLabel: t("missionsPanel.action.recover"),
       disabled: recover.disabled, onSelect: recover.onSelect }
   }

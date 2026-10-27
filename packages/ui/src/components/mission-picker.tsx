@@ -99,10 +99,12 @@ export function MissionPicker(props: {
   const [api, setApi] = createSignal<ListApi>()
   let root!: HTMLDivElement, field!: HTMLButtonElement
   const selected = () => props.entries.find(entry => entry.key === props.selectedKey)
-  const attention = createMemo(() => missionPickerAttention(props.entries, props.selectedKey))
+  // Like a collapsed session parent: the open list shows each mark itself.
+  const attention = createMemo(() => props.expanded ? undefined : missionPickerAttention(props.entries, props.selectedKey))
   const expanderLabel = () => {
     const action = t(props.expanded ? "missionsPanel.picker.collapse" : "missionsPanel.picker.expand")
-    const activity = missionPickerAttentionLabel(t, attention().counts)
+    const counts = attention()?.counts
+    const activity = counts ? missionPickerAttentionLabel(t, counts) : ""
     return activity ? t("missionsPanel.picker.withAttention", { action, attention: activity }) : action
   }
   const close = (focus: boolean) => { setOpen(false); setApi(undefined); if (focus) field.focus({ preventScroll: true }) }
@@ -139,7 +141,7 @@ export function MissionPicker(props: {
     <div class="mission-picker-control">
       <button type="button" class="mission-picker-expander" aria-expanded={props.expanded}
         aria-controls={props.expanded ? inlineId : undefined} aria-label={expanderLabel()} title={expanderLabel()}
-        data-attention={attention().kind} disabled={props.entries.length === 0 && !props.expanded}
+        data-attention={attention()?.kind} disabled={props.entries.length === 0 && !props.expanded}
         onClick={() => props.onExpandedChange(!props.expanded)}>
         <ChevronRight class="disclosure-chevron h-3.5 w-3.5" aria-hidden="true" />
       </button>

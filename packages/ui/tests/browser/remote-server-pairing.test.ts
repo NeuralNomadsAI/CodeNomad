@@ -24,7 +24,7 @@ before(async () => {
     }) } }], resolve: { dedupe: ["solid-js"] },
     // The middleware HTML is invisible to Vite's scanner; prepare the real entry before navigation deadlines.
     optimizeDeps: { entries: ["tests/browser/fixtures/remote-server-pairing.tsx"], exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } }).catch(async error => { await cache.dispose(); throw error })
   shutdown.own(server)
   await server.listen()
   await server.transformRequest("/tests/browser/fixtures/remote-server-pairing.tsx")

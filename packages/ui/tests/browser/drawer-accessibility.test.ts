@@ -2,33 +2,25 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/drawer-accessibility"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  const fixture = await borrowFixture({
+      name: "drawer-accessibility",
+      routes: [
+        { path: "/drawer-accessibility", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/drawer-accessibility.tsx\"></script></body></html>" },
+      ],
+    })
   try {
-    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)),
-      logLevel: "error", cacheDir: cache.cacheDir, plugins: [solid(), shutdown.plugin, {
-        name: "drawer-accessibility-fixture", configureServer(s) {
-          s.middlewares.use("/drawer-accessibility", async (_req, res) => {
-            res.setHeader("Content-Type", "text/html")
-            res.end(await s.transformIndexHtml("/drawer-accessibility", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/drawer-accessibility.tsx"></script></body></html>'))
-          })
-        },
-      }], resolve: { dedupe: ["solid-js"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-    shutdown.own(server); await server.listen()
-    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/drawer-accessibility`
+    url = fixture.url
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
     armFixtureNavigationBudget(browser)
-  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
+  } catch (error) { throw error }
 }, { timeout: 60000 })
-after(async () => { try { await browser?.close() } finally { await server?.close() } })
+after(async () => { await browser?.close() })
 
 async function isolation(page: Page, side: "left" | "right") {
   const action = page.getByRole("button", { name: `${side} action`, exact: true })

@@ -45,6 +45,21 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 
 Der Graph enthält abgeschlossene und zurückgezogene Arbeit. Eine Aufgabe zurückzuziehen stoppt nicht von selbst deren Unterhaltung. In einer einmaligen Mission kann der Koordinator die Unterhaltungen einer zurückgezogenen Aufgabe, die er als nativen Subagenten gestartet hat, separat stoppen, ohne andere Aufgaben zu berühren. **In Arbeit** ist der Lebenszykluszustand der Mission, kein Beweis, dass der Koordinator gerade läuft. Vollständiger Text gehört in die zentrale Leseansicht, nicht die Aufgabenliste des Panels; **Technische Details** klappt Kennungen und angeforderte Ausführungsinformationen ein.
 
+### Farben und unterbrochene Missionen {#status-colours}
+
+Missionsmarkierungen, Aufgabensymbole und das Chevron der Liste verwenden die Farben der Sitzungsliste: Farbe zeigt nur, was Sie jetzt braucht.
+
+| Farbe | Bedeutung |
+| --- | --- |
+| Rot | Eine Antwort von Ihnen wird erwartet; sie steht unter **Braucht Sie**. |
+| Gelb, pulsierend | Es wird gearbeitet. |
+| Orange | Die Mission ist pausiert oder unterbrochen, mit einer Aktion zum Fortsetzen. |
+| Grün | Eine abgeschlossene Mission, die Sie in diesem Fenster noch nicht geöffnet haben; sie wird neutral, sobald Sie sie auswählen. |
+
+Alles andere ist neutral, auch erledigte und fehlgeschlagene Aufgaben: Ergebnisse stehen im Statustext und in den Symbolen. Ist die Liste eingeklappt, übernimmt ihr Chevron die dringendste Farbe der anderen Missionen.
+
+Eine Mission ist **Unterbrochen**, wenn ihr Koordinator ohne Abschluss angehalten hat, während nichts anderes läuft. Eine als **Fehlgeschlagen** angezeigte Mission kann ebenfalls fortgesetzt werden. In beiden Fällen wird die erste Schaltfläche der Werkzeugleiste zu **Unterbrochene Mission wiederherstellen**: Sie bittet den Koordinator, anhand des gespeicherten Plans und der Ergebnisse neu zu bewerten, und öffnet eine fehlgeschlagene Mission zuvor wieder. Ein Koordinator beendet eine einmalige Mission nicht als fehlgeschlagen: Kommt er allein nicht weiter, stellt er Ihnen eine Frage unter **Braucht Sie**. Nur Sie stoppen eine Mission.
+
 ### Lageberichte und Aktualisierungsanfragen {#briefings}
 
 Der Koordinator erhält die Anweisung, nach dem ersten Plan, nach Aufgabenerledigungen, beim Warten auf Menschen und vor dem Abschlussbericht einen Projektlagebericht zu veröffentlichen. Dies ist eine verfasste Einschätzung, kein Live-Aktivitätszähler oder garantierter periodischer Heartbeat. Ein Hinweis kennzeichnet Änderungen der Karte seit dem Lagebericht.
