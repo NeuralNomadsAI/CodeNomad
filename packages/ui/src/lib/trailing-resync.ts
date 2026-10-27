@@ -1,5 +1,7 @@
+/** One pass per key at a time; requests during a pass coalesce into a single
+ * trailing pass. The returned promise settles after a pass that began after the request. */
 export class TrailingResyncCoordinator {
-  private readonly tails = new Map<string, Promise<void>>()
+  private readonly active = new Map<string, { dirty: boolean; settled: Promise<void> }>()
 
   constructor(
     private readonly run: (key: string) => Promise<void>,
@@ -7,19 +9,28 @@ export class TrailingResyncCoordinator {
   ) {}
 
   request(key: string): Promise<void> {
-    const previous = this.tails.get(key) ?? Promise.resolve()
-    const task = previous.then(async () => {
+    const existing = this.active.get(key)
+    if (existing) {
+      existing.dirty = true
+      return existing.settled
+    }
+    const state = { dirty: true, settled: Promise.resolve() }
+    state.settled = Promise.resolve().then(async () => {
       try {
-        await this.run(key)
-      } catch (error) {
-        this.onError(key, error)
+        while (state.dirty) {
+          state.dirty = false
+          try {
+            await this.run(key)
+          } catch (error) {
+            this.onError(key, error)
+          }
+        }
+      } finally {
+        this.active.delete(key)
       }
     })
-    const tracked = task.finally(() => {
-      if (this.tails.get(key) === tracked) this.tails.delete(key)
-    })
-    this.tails.set(key, tracked)
-    return tracked
+    this.active.set(key, state)
+    return state.settled
   }
 }
 
