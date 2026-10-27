@@ -110,6 +110,17 @@ silently drop a delta or restart the shared daemon. Rate-limited slow-routing
 logs separate event age, location resolution, queue wait and ownership time
 (type/recipient metadata only).
 
+### UI event stream liveness
+
+`lib/server-events.ts` restarts the shared UI event stream once a connected
+stream has carried no batch, open or ping for 45 s (`lib/stream-staleness.ts`,
+checked every 15 s, once per silent episode); an `online` event or the page
+becoming visible restarts it as soon as that threshold has elapsed. Each
+connection attempt starts its own threshold. The restart takes the ordinary
+reconnect path, so the reconnect refresh reconciles state. The server pings
+every 15 s (`server/routes/events.ts`): keep the threshold at several ping
+intervals.
+
 ## Initial session hydration
 
 App-tab records retain identity across metadata refreshes, reordering and restoration
