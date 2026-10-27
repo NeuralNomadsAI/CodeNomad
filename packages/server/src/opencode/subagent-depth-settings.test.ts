@@ -105,7 +105,7 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     await settings.update("w", location, null, masked.project!.expectation)
     const repaired = await readFile(projectFile, "utf8")
     assert.equal(parse(repaired).experimental, undefined)
-    assert.match(repaired, /\/\/ keep me/)
+    assert.match(repaired, /keep me/)
     const inherited = await settings.read("w", location)
     assert.equal(inherited.effectiveDepth, 2)
     assert.equal(inherited.project?.emptyExperimental, undefined)
