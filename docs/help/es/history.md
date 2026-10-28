@@ -9,11 +9,15 @@ El historial almacenado, lo que muestra actualmente la transcripción y el conte
 3. Activa **Incluir herramientas y razonamiento** si necesitas contenido técnico además del texto legible.
 4. Selecciona un fragmento. En **Toda la sesión**, usa **Siguientes resultados** para recorrer las páginas cronológicas.
 
-**Toda la sesión** busca una frase literal sin distinguir mayúsculas en el historial guardado. **Todo el espacio de trabajo** clasifica los resultados del árbol y los worktrees autorizados del proyecto abierto con hasta seis términos y muestra los 20 mejores en una lista. Primero aparece el mejor resultado de cada conversación, con títulos y etiquetas del worktree actual en orden de relevancia. Los términos se resaltan en los fragmentos y en la transcripción de destino tras **Abrir en la sesión**. Se busca texto legible y, opcionalmente, herramientas y razonamiento.
+**Toda la sesión** busca una frase literal sin distinguir mayúsculas en el historial guardado. **Todo el espacio de trabajo** clasifica los resultados del árbol y los worktrees autorizados del proyecto abierto con hasta seis términos y muestra los 40 mejores en una lista. Primero aparece el mejor resultado de cada conversación, con títulos y etiquetas del worktree actual en orden de relevancia. Los términos se resaltan en los fragmentos y en la transcripción de destino tras **Abrir en la sesión**. Se busca texto legible y, opcionalmente, herramientas y razonamiento.
 
 Las páginas de conversación muestran **Esta página: … resultados · … mensajes examinados** al llegar los lotes. El proyecto muestra **Mejores resultados: …** y avisos compactos de búsqueda parcial o directorios excluidos. Si la búsqueda clasificada no está disponible en el entorno, usa **Toda la sesión**. Se indican los mensajes omitidos; inicia otra búsqueda para incluir mensajes nuevos.
 
 Abrir una búsqueda vacía no analiza el historial. Cambiar la consulta/el ámbito, cerrar la ventana o salir de la sesión cancela el trabajo de búsqueda obsoleto. Si falla una lectura, usa **Reintentar**; no envía un mensaje ni modifica el historial.
+
+La búsqueda empieza por hasta 16 384 mensajes guardados más recientes por ubicación. **Buscar más atrás** sustituye la lista por los mejores resultados de la siguiente ventana anterior. La nota indica el intervalo examinado, del más nuevo al más antiguo por ubicación del proyecto. La clasificación corresponde solo a esa ventana. Cambiar consulta, ámbito o contenido técnico, cerrar la búsqueda o salir de la sesión reinicia la ventana. Una búsqueda nueva incluye los mensajes nuevos.
+
+Si una ventana de búsqueda caduca o su historial cambia, **Iniciar búsqueda nueva** vuelve a los mensajes más recientes con la misma consulta y opciones. Un aviso explica la recuperación. Ante errores de lectura normales, **Reintentar** vuelve a leer la ventana actual.
 
 ## Abrir resultados y usar la línea de tiempo {#timeline-navigation}
 

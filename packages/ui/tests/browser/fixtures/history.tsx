@@ -69,6 +69,7 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
 ;(window as any).fixture = {
   open: () => { updatePreferences({ locale: "en" }); setSessionSearchOpen(instanceId, sessionId, true) },
   deactivate: () => setActive(false),
+  activate: () => setActive(true),
   snapshot: () => ({ ids: store.getSessionMessageIds(sessionId), loads, previewReads }),
   sessionReads: () => ({ reads: [...sessionReads], peak: peakSessionReads }),
   // The destination was last left on its browser preview.

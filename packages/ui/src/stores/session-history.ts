@@ -4,21 +4,29 @@ import type { HistoryCandidate, HistoryPage, HistoryQuery } from "../../../serve
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { refreshSessionContent } from "./session-pruning-events"
 import type { RankedHistoryResult } from "../../../server/src/server/routes/session-history-ranked-contract"
+import { HttpResponseError } from "../lib/retryable-file-search"
 
-export async function findRankedHistoryMatches(instanceId: string, query: string, includeTechnical: boolean, signal: AbortSignal) {
+export async function findRankedHistoryMatches(instanceId: string, query: string, includeTechnical: boolean, signal: AbortSignal, cursor?: string) {
   signal.throwIfAborted()
   const generation = getOpenCodeInstanceGeneration(instanceId)
-  const result = await serverApi.queryRankedHistory(instanceId, { version: 1, query, includeTechnical, limit: 20 }, signal)
+  const result = await serverApi.queryRankedHistory(instanceId, { version: 1, query, includeTechnical, limit: 40, ...(cursor ? { cursor } : {}) }, signal)
+    .catch(error => {
+      if (cursor && error instanceof HttpResponseError && error.status === 400) return { status: "restart_required" as const }
+      throw error
+    })
   signal.throwIfAborted()
   if (generation !== getOpenCodeInstanceGeneration(instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
+  if (cursor && (result.status === "unsupported" || result.status === "blocked" && result.reason === "unsupported_storage")) return { status: "restart_required" as const }
   if (result.status === "blocked") throw new Error(tGlobal(`session.pruning.${result.reason}`))
   return result
 }
 
 export function rankedHistoryNoticeKeys(result: RankedHistoryResult | undefined): string[] {
+  if (result?.status === "restart_required") return ["history.rankedRestart"]
   if (result?.status === "unsupported") return ["history.rankedUnsupported"]
   if (result?.status !== "ranked") return []
-  return [...(result.capped ? ["history.rankedCapped"] : []), ...(result.exclusions.length ? ["history.rankedExcluded"] : [])]
+  return [result.scanned ? result.examinedBefore ? "history.rankedRange" : "history.rankedRecent" : "history.rankedEmpty",
+    ...(result.capped ? ["history.rankedCapped"] : []), ...(result.exclusions.length ? ["history.rankedExcluded"] : [])]
 }
 
 export async function readHistoryPage(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryPage> {

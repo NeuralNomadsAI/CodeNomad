@@ -202,6 +202,9 @@ test("scan yields to the event loop, excludes appended rows by horizon and honor
 
 test("candidate and judgement caps are explicit and keep output/provenance bounded", async t => {
   const db = fixture()
+  const original = RANKED_LIMITS.candidates
+  // Exercise this independent guard inside the smaller deterministic message window.
+  Object.defineProperty(RANKED_LIMITS, "candidates", { value: 1000 })
   t.mock.method(performance, "now", () => 0)
   try {
     db.exec("BEGIN")
@@ -214,7 +217,7 @@ test("candidate and judgement caps are explicit and keep output/provenance bound
     assert.deepEqual(result.caps, ["candidate_limit", "judge_limit"])
     assert.equal(result.capped, true)
     assert.equal(new Set(result.hits.map(hit => hit.messageID)).size, 20)
-  } finally { db.close() }
+  } finally { Object.defineProperty(RANKED_LIMITS, "candidates", { value: original }); db.close() }
 })
 
 test("total scan and body-judging time budgets report partial coverage", async t => {
@@ -237,7 +240,7 @@ test("provenance covers nonmatches and bounded session fanout, with reconstructi
     for (let n = 0; n <= RANKED_LIMITS.sessions; n++) {
       const id = `owner-${n}`
       db.prepare("INSERT INTO session_v2 VALUES (?, '/repo', NULL, 'p', ?)").run(id, id)
-      insert(db, id, n < 2 ? "needle" : "unrelated", id)
+      insert(db, id, n >= RANKED_LIMITS.sessions - 1 ? "needle" : "unrelated", id)
     }
     const result = await search(db, "needle")
     assert.deepEqual(result.caps, ["session_limit"])
@@ -251,7 +254,7 @@ test("provenance covers nonmatches and bounded session fanout, with reconstructi
   } finally { db.close() }
 })
 
-test("40 ms slice yields within a chunk before its 1,000-row boundary", async t => {
+test("40 ms slice yields within a native rowid range", async t => {
   const db = fixture()
   let now = 0, visited = 0, firstYield = 0
   t.mock.method(performance, "now", () => now++)

@@ -56,6 +56,9 @@ test("plugin registers Code Mode search and versioned RPC, binds fresh read-only
     assert.equal(tool.name, "session_search")
     assert.deepEqual(tool.options, { namespace: "codenomad", codemode: true })
     assert.equal(tool.input.additionalProperties, false)
+    assert.equal(tool.input.properties.limit.maximum, 20)
+    assert.equal(tool.input.properties.limit.default, 10)
+    await assert.rejects(tool.execute({ query: "github", limit: 40 }, { sessionID: "s", signal: new AbortController().signal }))
     assert.equal(tool.input.properties.project, undefined)
     const signal = new AbortController().signal
     const result = await tool.execute({ query: "été GITHUB", limit: 1 }, { sessionID: "s", signal })
@@ -79,6 +82,16 @@ test("plugin registers Code Mode search and versioned RPC, binds fresh read-only
     await assert.rejects(handlers.historyRanked({ version: 2, query: "github" }, { signal }))
     const abort = new AbortController(); abort.abort()
     await assert.rejects(tool.execute({ query: "github" }, { sessionID: "s", signal: abort.signal }), /abort/i)
+    const insert = db.prepare("INSERT INTO session_message VALUES (?, 's', 'user', 1, ?)")
+    db.exec("BEGIN")
+    for (let n = 0; n < 17_000; n++) insert.run(`window-${n}`, '{"text":"github"}')
+    db.exec("COMMIT")
+    const firstWindow = await handlers.historyRanked({ version: 1, query: "github" }, { signal })
+    assert(firstWindow.cursor)
+    db.exec("DELETE FROM session_message WHERE rowid > 500")
+    insert.run("reused-rowid", '{"text":"github"}')
+    assert.deepEqual(await handlers.historyRanked({ version: 1, query: "github", cursor: firstWindow.cursor }, { signal }), { status: "restart_required" })
+    assert.deepEqual(await handlers.historyRanked({ version: 1, query: "github", cursor: "expired-issuer" }, { signal }), { status: "restart_required" })
     await cleanup?.(); cleanup = undefined
     assert(toolDisposed && rpcDisposed)
   } finally { await cleanup?.(); db.close(); await rm(root, { recursive: true, force: true }) }

@@ -9,11 +9,15 @@ Saklanan geçmiş, konuşma dökümünün şu anda görüntüledikleri ve modeli
 3. Okunabilir metnin yanı sıra teknik içeriğe de ihtiyacınız varsa **Araçları ve düşünceleri dahil et** öğesini etkinleştirin.
 4. Bir alıntı seçin. **Tüm oturum** kapsamında kronolojik sayfalarda ilerlemek için **Sonraki sonuçlar** öğesini kullanın.
 
-**Tüm oturum**, saklanan geçmişte büyük/küçük harfe duyarsız tam ifade arar. **Tüm çalışma alanı**, açık projenin yetkili dizin ve çalışma ağaçlarında en fazla altı terimle arama yapıp en iyi 20 sonucu tek listede sıralar. Her konuşmanın en iyi eşleşmesi önce gelir; başlıklar ve güncel çalışma ağacı etiketleri sıralamayı korur. Terimler alıntılarda ve **Oturumda aç** sonrasında hedef konuşmada vurgulanır. Okunabilir metin ve isteğe bağlı araçlar ile düşünceler aranır.
+**Tüm oturum**, saklanan geçmişte büyük/küçük harfe duyarsız tam ifade arar. **Tüm çalışma alanı**, açık projenin yetkili dizin ve çalışma ağaçlarında en fazla altı terimle arama yapıp en iyi 40 sonucu tek listede sıralar. Her konuşmanın en iyi eşleşmesi önce gelir; başlıklar ve güncel çalışma ağacı etiketleri sıralamayı korur. Terimler alıntılarda ve **Oturumda aç** sonrasında hedef konuşmada vurgulanır. Okunabilir metin ve isteğe bağlı araçlar ile düşünceler aranır.
 
 Konuşma sayfaları gruplar geldikçe **Bu sayfa: … sonuç · … mesaj tarandı** bilgisini gösterir. Proje araması **En iyi sonuçlar: …** ile kısmi tarama veya hariç tutulan dizinlere ilişkin kısa bildirimler gösterir. Sıralanmış arama çalışma ortamında yoksa **Tüm oturum** kullanın. Atlanan mesajlar bildirilir; yeni mesajlar için yeniden arayın.
 
 Boş arama açmak geçmişi taramaz. Sorguyu/kapsamı değiştirmek, pencereyi kapatmak veya oturumdan ayrılmak geçerliliğini yitiren aramayı iptal eder. Okuma başarısızsa **Yeniden dene** eylemini kullanın; bu istem göndermez veya geçmişi değiştirmez.
+
+Proje taraması her konumdaki en yeni en fazla 16.384 kayıtlı mesajdan başlar. **Daha eskiyi ara**, listeyi sonraki eski pencerenin en iyi sonuçlarıyla değiştirir. Bildirim, projenin her konumunda yeniden eskiye incelenen aralığı gösterir. Sıralama yalnızca o pencere içinde geçerlidir. Sorgu, kapsam veya teknik içerik değişikliği, aramayı kapatma ya da oturumdan ayrılma pencereyi sıfırlar. Yeni arama yeni mesajları da içerir.
+
+Arama penceresinin süresi dolarsa veya geçmiş değişirse **Yeni arama başlat**, aynı sorgu ve seçeneklerle en yeni mesajlardan başlar. Bildirim bu kurtarmayı açıklar. Olağan okuma hatalarında **Yeniden dene**, geçerli pencereyi tekrar okur.
 
 ## Sonuçları açın ve zaman çizelgesini kullanın {#timeline-navigation}
 
