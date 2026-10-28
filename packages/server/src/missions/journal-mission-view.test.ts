@@ -235,6 +235,69 @@ test("a mission's range view equals that mission in the project snapshot across 
   for (const [name, count] of Object.entries(coverage)) if (typeof count === "number") assert.ok(count > 0, `histories exercised ${name}`)
 })
 
+test("cross-mission edges compose: shared sessions, one range's orphaned receipts, cleanup history and key-order ties", async () => {
+  const f = fixture(3)
+  const location = { directory: "/repo" }
+  const seed = (event: MissionEvent) => f.values.set(`${f.prefix}/${event.missionID}/${event.id}`, structuredClone(event) as unknown as MissionJsonValue)
+  const base = (missionID: string, createdAt: number) => ({ version: 1 as const, projectID: "project-1", missionID, createdAt })
+  const created = (missionID: string, createdAt: number, id = "evt_created"): MissionEvent => ({ ...base(missionID, createdAt), id,
+    type: "mission.created", projectCanonical: "/repo", objective: `Objective ${missionID}`, template: "custom",
+    coordinator: { sessionID: `ses_${missionID}`, title: "Coordinator", location } })
+  // A finished mission's specialist joins a second mission: one session, two maps.
+  const first = (await f.control().delegate((await f.control().create({ requestID: "first", objective: "First", template: "custom" })).mission.coordinatorSessionId,
+    { taskKey: "worker", title: "Worker", brief: "Bounded", role: "specialist", blockedBy: [], delivery: "queue" })).mission
+  const shared = first.actors.find(actor => actor.kind === "specialist")!.sessionId
+  await f.control().report(first.coordinatorSessionId, { missionID: first.id, outcome: "failed", summary: "Done", evidence: [], next: [], final: true })
+  const second = (await f.control().create({ requestID: "second", objective: "Second", template: "custom" })).mission
+  await f.control().delegate(second.coordinatorSessionId, { missionID: second.id, taskKey: "reuse", title: "Reuse", brief: "Bounded",
+    role: "specialist", blockedBy: [], delivery: "queue", targetSessionID: shared })
+  // 22 settled deletion groups plus an older pending one: the project keeps the pending one and the 20 newest settled.
+  for (let index = 0; index < 22; index++) {
+    const missionID = `msn_gone_${String(index).padStart(2, "0")}`
+    seed(created(missionID, 100 + index))
+    seed({ ...base(missionID, 200 + index), id: "evt_deleted", type: "mission.deleted", requestID: "delete", expectedRevision: 1 })
+  }
+  seed(created("msn_pending", 10))
+  seed({ ...base("msn_pending", 11), id: "evt_deleted", type: "mission.deleted", requestID: "delete", expectedRevision: 1,
+    deleteManagedSessions: true, cleanupTargets: [{ sessionID: "ses_kept", location }] })
+  // Equal times and equal event IDs: binary key order (`-` < `/` < `_`, upper before lower case) breaks the tie,
+  // neither mission-ID order nor locale order.
+  const tied = ["msn_TieB-1", "msn_TieB", "msn_tiea"]
+  for (const missionID of tied) seed(created(missionID, 50_000, "evt_same"))
+  // Parseable receipts without their intent, only in the first mission's range.
+  seed({ ...base(first.id, 900), id: "evt_orphan_control", type: "mission.control-applied", operationID: "evt_missing_operation", sessionID: first.coordinatorSessionId })
+  seed({ ...base(first.id, 901), id: "evt_orphan_notified", type: "report.notified", reportID: "rpt_missing", admissionID: "msg_missing" })
+  seed({ ...base(first.id, 902), id: "evt_orphan_cleaned", type: "mission.session-cleaned", deletionID: "evt_missing_deletion", sessionID: shared, outcome: "removed" })
+
+  const snapshot = await assertEquivalent(f, "fixture")
+  const [firstView, secondView] = [await f.journal.missionView(first.id), await f.journal.missionView(second.id)]
+  const listed = (id: string) => snapshot.missions.find(mission => mission.id === id)!
+  // Local damage stays in its range; the project flags stamp every listed map.
+  assert.deepEqual([firstView.controlUnavailable, firstView.notificationUnavailable, firstView.cleanupUnavailable, firstView.discardedEvents], [true, true, true, 0])
+  assert.deepEqual([secondView.controlUnavailable, secondView.notificationUnavailable, secondView.cleanupUnavailable, secondView.discardedEvents], [undefined, undefined, undefined, 0])
+  assert.deepEqual([secondView.mission!.controlUnavailable, secondView.mission!.notificationUnavailable], [undefined, undefined])
+  assert.deepEqual([snapshot.controlUnavailable, snapshot.notificationUnavailable, snapshot.cleanupUnavailable, snapshot.discardedEvents], [true, true, true, 0])
+  for (const mission of snapshot.missions) assert.deepEqual([mission.controlUnavailable, mission.notificationUnavailable], [true, true], mission.id)
+  assert.deepEqual(listed(second.id), { ...secondView.mission!, controlUnavailable: true, notificationUnavailable: true })
+  assert.deepEqual(listed(first.id), firstView.mission)
+  // The shared session is an exact actor of both maps.
+  for (const view of [firstView, secondView]) {
+    const actor = view.mission!.actors.find(item => item.sessionId === shared)
+    assert.equal(actor?.kind, "specialist", view.missionID)
+    assert.deepEqual(actor, listed(view.missionID).actors.find(item => item.sessionId === shared))
+  }
+  assert.equal(firstView.mission!.tasks[0].actorSessionId, shared)
+  assert.equal(secondView.mission!.tasks.find(task => task.key === "reuse")?.actorSessionId, shared)
+  // Every deleted range contributes its own cleanup; only the project truncates.
+  const gone = await Promise.all(Array.from({ length: 22 }, (_, index) => f.journal.missionView(`msn_gone_${String(index).padStart(2, "0")}`)))
+  assert.ok(gone.every(view => view.cleanups?.length === 1 && !view.mission))
+  assert.deepEqual(snapshot.cleanups?.map(item => item.missionID), ["msn_pending",
+    ...Array.from({ length: 20 }, (_, index) => `msn_gone_${String(21 - index).padStart(2, "0")}`)])
+  assert.deepEqual(mergeCleanups([...gone, await f.journal.missionView("msn_pending")].flatMap(view => view.cleanups ?? [])), snapshot.cleanups)
+  // The tie: three maps at the same time, in key order, ahead of the older ones.
+  assert.deepEqual(snapshot.missions.map(mission => mission.id), [...tied, second.id, first.id])
+})
+
 test("a mission range keeps the journal's read bound", async () => {
   const f = fixture(1)
   const { mission } = await f.control().create({ requestID: "large", objective: "Large", template: "custom" })
