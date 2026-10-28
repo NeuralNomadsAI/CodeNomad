@@ -40,8 +40,7 @@ import PromptInput from "../prompt-input"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
 import { hotkeyLabel, withHotkey } from "../../lib/hotkeys"
-import { getPermissionQueueLength } from "../../stores/instances"
-import { getFormQueue } from "../../stores/forms"
+import { getInterruptionQueue } from "../../stores/interruption-scope"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
@@ -431,10 +430,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return t("instanceShell.connection.unknown")
   }
 
-  const hasPendingRequests = createMemo(() => {
-    const permissions = getPermissionQueueLength(props.instance.id)
-    return permissions + getFormQueue(props.instance.id).length > 0
-  })
+  const hasPendingRequests = createMemo(() => getInterruptionQueue(props.instance.id).length > 0)
 
   const activePromptInputApi = createMemo(() => {
     const sessionId = activeSessionIdForInstance()

@@ -89,6 +89,12 @@ when a member belongs to the local scope. Moving within this workspace's worktre
 changes the execution directory and badge, while keeping the conversation in the
 same CodeNomad project tab.
 
+Live events follow the same scope. An opened folder also receives the events of a
+nested checkout of another repository it owns (a parent folder such as the home
+directory), so an unknown session from an event joins the list only when it is in
+the opened folder or a registered worktree, or within a family the list already
+holds (`stores/session-events.ts` `belongsToSessionList`).
+
 During refresh, the first directory page is partial: it must not replace existing
 worktree rows before inventory reconciliation completes. An unavailable inventory
 must likewise preserve those rows. `workspace-session-scope.test.ts` and the

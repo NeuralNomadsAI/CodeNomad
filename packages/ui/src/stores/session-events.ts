@@ -47,7 +47,8 @@ import { tGlobal } from "../lib/i18n"
 
 import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
-import { getWorktrees, reloadWorktrees } from "./worktrees"
+import { getWorktrees, reloadWorktrees, worktreesByInstance } from "./worktrees"
+import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
 import { normalizeSessionDirectory } from "./session-list-options"
 import {
   setSessionRevertV2,
@@ -341,6 +342,17 @@ queueMicrotask(() => {
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
 
+// A workspace also receives the live events of nested checkouts of other
+// repositories it owns (an opened parent folder). An unknown session joins its
+// list only as the session inventory would list it: in the opened folder or a
+// registered worktree, or within a family the list already holds.
+function belongsToSessionList(instanceId: string, session: { parentId?: string | null; location?: { directory?: string } }): boolean {
+  if (session.parentId && sessions().get(instanceId)?.has(session.parentId)) return true
+  const directory = session.location?.directory
+  if (!directory || !worktreesByInstance().has(instanceId)) return true
+  return isWorkspaceSessionDirectory(directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId))
+}
+
 async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
@@ -351,6 +363,7 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   try {
     const info = await client.session.get({ sessionID: sessionId })
     const fetched = createClientSession(info, instanceId)
+    if (!sessions().get(instanceId)?.has(sessionId) && !belongsToSessionList(instanceId, fetched)) return null
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandAncestors = false
@@ -473,6 +486,7 @@ function handleSessionUpdate(
   const existingSession = instanceSessions.get(info.id)
 
   if (!existingSession) {
+    if (!belongsToSessionList(instanceId, { parentId: info.parentID, location: info.location })) return
     const newSession = {
       id: info.id,
       instanceId,
