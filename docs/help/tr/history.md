@@ -56,7 +56,7 @@ Sıkıştırma, OpenCode'un oturuma devam etmek için kullandığı bağlamı de
 2. Planlanan araç/akıl yürütme sayılarını ve atlanan içerik uyarılarını gözden geçirin.
 3. **Kaldır** öğesini onaylayın. Tüm oturum çalışması için konuşma dökümünün üzerindeki ilerlemeyi takip edin ve gerekirse iptal kontrolünü kullanın.
 
-Yalnızca uygun, tamamlanmış araçlar ve akıl yürütme parçaları kaldırılır. Etkin/tamamlanmamış içerik budanmaz; onayladığınız kapsamı sessizce genişletmek yerine değişmiş içerik reddedilir. Son metin ve mesaj/oturum meta verileri korunur, ancak kaldırılan teknik çıktı geri alınamaz. Onaylamadan önce gereken her şeyi koruyun.
+Yalnızca uygun, tamamlanmış araçlar ve akıl yürütme parçaları kaldırılır. Etkin/tamamlanmamış içerik budanmaz; OpenCode'un okuduğu haliyle (ekli dosyalar dahil) boyutu 16 MB üzerinde olan bir mesaj da budanmaz ve atlanan içerik sayılır; onayladığınız kapsamı sessizce genişletmek yerine değişmiş içerik reddedilir. Son metin ve mesaj/oturum meta verileri korunur, ancak kaldırılan teknik çıktı geri alınamaz. Onaylamadan önce gereken her şeyi koruyun.
 
 Oturum temizliği bütün oturum için atomik değildir. Sonraki mesaj çakışır veya başarısız olursa önceki başarılı kaldırmalar kalır. **İptal sonraki toplu işlemleri durdurur; zaten gönderilmiş toplu işlemi geri almaz**; o işlem yine de tamamlanabilir.
 

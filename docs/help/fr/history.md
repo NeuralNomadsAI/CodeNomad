@@ -56,7 +56,7 @@ Le compactage change le contexte utilisé par OpenCode pour poursuivre la sessio
 2. Vérifiez les nombres d’outils/raisonnements prévus et les avertissements de contenu ignoré.
 3. Confirmez **Supprimer**. Pour une session entière, suivez la progression au-dessus de la transcription et utilisez sa commande d’annulation au besoin.
 
-Seuls les outils et raisonnements terminés admissibles sont retirés. Le contenu actif/incomplet n’est pas élagué ; un contenu modifié est refusé plutôt que d’élargir silencieusement votre confirmation. Le texte final et les métadonnées de message/session restent, mais les sorties techniques supprimées ne sont pas récupérables. Préservez ce dont vous avez besoin avant de confirmer.
+Seuls les outils et raisonnements terminés admissibles sont retirés. Le contenu actif/incomplet n’est pas élagué, pas plus qu’un message de plus de 16 Mo tel qu’OpenCode le lit (fichiers joints compris), qui compte comme contenu ignoré ; un contenu modifié est refusé plutôt que d’élargir silencieusement votre confirmation. Le texte final et les métadonnées de message/session restent, mais les sorties techniques supprimées ne sont pas récupérables. Préservez ce dont vous avez besoin avant de confirmer.
 
 Le nettoyage n’est pas atomique sur toute la session. Les suppressions antérieures réussies restent si un message ultérieur entre en conflit ou échoue. **L’annulation arrête les lots futurs ; elle n’annule pas un lot déjà envoyé**, qui peut encore être appliqué.
 

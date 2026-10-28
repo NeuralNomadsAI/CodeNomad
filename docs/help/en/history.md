@@ -56,7 +56,7 @@ Compaction changes the context OpenCode uses to continue the session. It is not 
 2. Review the planned tool/reasoning counts and any skipped-content warning.
 3. Confirm **Remove**. For whole-session work, follow the progress above the transcript and use its cancellation control if needed.
 
-Only eligible completed tools and reasoning are removed. Active/incomplete content is not pruned; changed content is refused rather than silently expanding what you confirmed. Final text and message/session metadata remain, but removed technical output has no undo. Preserve anything you need before confirming.
+Only eligible completed tools and reasoning are removed. Active/incomplete content is not pruned, nor is a message larger than 16 MB as OpenCode reads it (attached files included), which counts as skipped content; changed content is refused rather than silently expanding what you confirmed. Final text and message/session metadata remain, but removed technical output has no undo. Preserve anything you need before confirming.
 
 Session cleanup is not atomic across the whole session. Successful earlier removals remain if a later message conflicts or fails. **Cancellation stops future batches; it does not roll back an already dispatched batch**, which may still commit.
 
