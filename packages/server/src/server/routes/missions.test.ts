@@ -5,6 +5,7 @@ import Fastify from "fastify"
 import { registerMissionRoutes } from "./missions"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { stableToken } from "../../missions/journal"
+import { fixture } from "../../missions/journal-history-fixture"
 
 const snapshot = {
   version: 1 as const,
@@ -204,6 +205,45 @@ test("a plugin without the list RPC answers with its full snapshot, as before", 
     { available: false, reason: "plugin-unavailable", missions: [] })
   assert.equal(failing.calls.some(call => call.method === "snapshot"), false)
   await app.close(); await other.close()
+})
+
+test("the admission read brokers only the full snapshot RPC", async () => {
+  const fake = manager()
+  const app = Fastify({ logger: false })
+  registerMissionRoutes(app, { workspaceManager: fake.value })
+  const map = { id: "msn_a", projectID: "project-1", controlUnavailable: true }
+  Object.assign(snapshot, { missions: [map], controlUnavailable: true })
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions/msn_a/admission" })
+    assert.deepEqual(response.json(), { available: true, version: 1, projectID: "project-1", generatedAt: 1, mission: map, cleanups: [], controlUnavailable: true })
+    assert.deepEqual(fake.calls.filter(call => call.method.endsWith("-rpc") || call.method === "snapshot").map(call => call.method), ["snapshot"])
+  } finally { Object.assign(snapshot, { missions: [] }); delete (snapshot as { controlUnavailable?: boolean }).controlUnavailable; await app.close() }
+  const foreign = manager({ projectID: "project-2" })
+  const other = Fastify({ logger: false })
+  registerMissionRoutes(other, { workspaceManager: foreign.value })
+  assert.equal((await other.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions/msn_a/admission" })).statusCode, 502)
+  await other.close()
+})
+
+test("damage written outside the index generation refuses admission while the display read misses it", async () => {
+  const f = fixture(8), control = f.control()
+  const { mission } = await control.create({ requestID: "admission", objective: "Admission gate", template: "custom" })
+  await control.list()
+  f.tamper(`${f.prefix}/stray`, {})
+  const client = {
+    location: { get: async () => ({ directory: "/repo", project: { id: "project-1" } }) },
+    plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
+    rpc: () => ({ mission: (input: { missionID: string }) => control.mission(input.missionID), snapshot: () => control.snapshot() }),
+  }
+  const app = Fastify({ logger: false })
+  registerMissionRoutes(app, { workspaceManager: { get: () => ({ id: "workspace-1" }), getServiceLocation: () => ({ directory: "/repo" }),
+    getSharedServiceConnection: async () => ({ client, assertCurrent() {} }) } as never })
+  try {
+    const display = (await app.inject({ method: "GET", url: `/api/workspaces/workspace-1/missions/${mission.id}` })).json()
+    const admission = (await app.inject({ method: "GET", url: `/api/workspaces/workspace-1/missions/${mission.id}/admission` })).json()
+    assert.deepEqual([display.controlUnavailable, display.mission.controlUnavailable], [undefined, undefined], "a hint, never proof")
+    assert.deepEqual([admission.controlUnavailable, admission.mission.controlUnavailable], [true, true])
+  } finally { await app.close() }
 })
 
 test("the single-mission read brokers the mission RPC, falling back to the snapshot of an older plugin", async () => {

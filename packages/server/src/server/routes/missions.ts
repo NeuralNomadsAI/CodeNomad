@@ -78,7 +78,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   })
 
   // One mission's range for display reconciliation (lost acknowledgements,
-  // cleanup retries, a coordinator message's fresh read).
+  // cleanup retries). Hints-based project flags: never admission authority.
   app.get<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID", async (request, reply) => {
     const params = MissionReadParamsSchema.safeParse(request.params)
     if (!params.success) return reply.code(400).send({ error: "Invalid mission read request" })
@@ -87,13 +87,21 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       try { read = await rpc.mission({ missionID: params.data.missionID }, call) as MissionRead }
       catch (error) {
         if (!isMissingMethod(error)) throw error
-        const snapshot = await rpc.snapshot({}, call) as MissionSnapshot
-        const mission = snapshot.missions.find(value => value.id === params.data.missionID)
-        read = { version: snapshot.version, projectID: snapshot.projectID, generatedAt: snapshot.generatedAt, ...(mission ? { mission } : {}),
-          cleanups: (snapshot.cleanups ?? []).filter(cleanup => cleanup.missionID === params.data.missionID),
-          ...(snapshot.cleanupUnavailable ? { cleanupUnavailable: true } : {}), ...(snapshot.controlUnavailable ? { controlUnavailable: true } : {}),
-          ...(snapshot.notificationUnavailable ? { notificationUnavailable: true } : {}) }
+        read = missionReadFromSnapshot(await rpc.snapshot({}, call) as MissionSnapshot, params.data.missionID)
       }
+      if (read.projectID !== projectID) return foreign()
+      return { available: true, ...read }
+    })
+  })
+
+  // The same answer from the authoritative full snapshot at the owned Location,
+  // for an application-authored native prompt's admission (the coordinator message):
+  // project damage the index has not seen yet still refuses it.
+  app.get<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID/admission", async (request, reply) => {
+    const params = MissionReadParamsSchema.safeParse(request.params)
+    if (!params.success) return reply.code(400).send({ error: "Invalid mission read request" })
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionReadResponse> => {
+      const read = missionReadFromSnapshot(await rpc.snapshot({}, call) as MissionSnapshot, params.data.missionID)
       if (read.projectID !== projectID) return foreign()
       return { available: true, ...read }
     })
@@ -266,6 +274,16 @@ function mutationError(reply: import("fastify").FastifyReply, error: unknown) {
 
 function unavailable(reason: MissionUnavailableReason): MissionListUnavailableResponse {
   return { available: false, reason, missions: [] }
+}
+
+/** One mission's read projected from a full snapshot: its map (stamped with the
+ * project flags), its cleanups and the project flags. */
+function missionReadFromSnapshot(snapshot: MissionSnapshot, missionID: string): MissionRead {
+  const mission = snapshot.missions.find(value => value.id === missionID)
+  return { version: snapshot.version, projectID: snapshot.projectID, generatedAt: snapshot.generatedAt, ...(mission ? { mission } : {}),
+    cleanups: (snapshot.cleanups ?? []).filter(cleanup => cleanup.missionID === missionID),
+    ...(snapshot.cleanupUnavailable ? { cleanupUnavailable: true } : {}), ...(snapshot.controlUnavailable ? { controlUnavailable: true } : {}),
+    ...(snapshot.notificationUnavailable ? { notificationUnavailable: true } : {}) }
 }
 
 /** An older plugin build, during a reload, registered no such method. */

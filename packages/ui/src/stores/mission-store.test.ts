@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
+import { createEffect, createRoot, onCleanup } from "solid-js"
 import type { MissionListResponse } from "../../../server/src/api-types"
 import { createMissionStore } from "./mission-store"
 
@@ -126,6 +127,64 @@ test("wanting a closed row reads it once; a full-snapshot backend never receives
   assert.equal(store.state("instance-1").summariesVersion, undefined)
   await store.refresh("instance-1")
   assert.deepEqual(requests.at(-1), {})
+})
+
+test("registration inside an effect never subscribes it: a failed include read stays parked", async () => {
+  const open = available("open")
+  if (!open.available) throw new Error("fixture")
+  for (const fail of [true, false]) {
+    let reads = 0
+    const store = createMissionStore(async (_instanceId, request) => {
+      reads++
+      await new Promise(resolve => setTimeout(resolve, 5))
+      if (fail && reads > 1) throw new Error("Temporary network failure")
+      const closed = { ...open.missions[0], id: "mission-closed", status: "completed" as const }
+      return { ...open, missions: request.include?.includes(closed.id) ? [closed] : [], summaries: [row("mission-closed")], summariesVersion: "v1" }
+    })
+    await store.refresh("instance-1")
+    const dispose = createRoot(dispose => {
+      createEffect(() => {
+        store.want("instance-1", "selection", "mission-closed")
+        onCleanup(() => store.want("instance-1", "selection", undefined))
+      })
+      return dispose
+    })
+    await new Promise(resolve => setTimeout(resolve, 150))
+    dispose()
+    assert.equal(reads, 2, fail ? "one failed include read, then parked" : "one include read loads the map")
+    assert.equal(store.state("instance-1").status, fail ? "error" : "ready")
+  }
+})
+
+test("a response for an obsolete include keeps the current wanted map and reads it once more", async () => {
+  const open = available("open")
+  if (!open.available) throw new Error("fixture")
+  const map = (id: string) => ({ ...open.missions[0], id, status: "completed" as const })
+  const pending: Array<{ include: string[]; resolve: () => void }> = []
+  const store = createMissionStore(async (_instanceId, request) => {
+    const include = request.include ?? []
+    if (include.length) await new Promise<void>(resolve => pending.push({ include, resolve }))
+    return { ...open, missions: include.map(map), summaries: [row("A"), row("B")], summariesVersion: "v1",
+      activity: { generatedAt: 1, missions: include.map(missionId => ({ missionId, actors: [] })) } }
+  })
+  await store.refresh("instance-1")
+  store.want("instance-1", "selection", "A")
+  while (!pending.length) await new Promise(resolve => setTimeout(resolve, 0))
+  pending.shift()!.resolve()
+  while (!store.state("instance-1").missions.some(mission => mission.id === "A")) await new Promise(resolve => setTimeout(resolve, 0))
+  store.want("instance-1", "selection", "B")
+  while (!pending.length) await new Promise(resolve => setTimeout(resolve, 0))
+  store.want("instance-1", "selection", "A")
+  pending.shift()!.resolve()
+  while (!pending.length) await new Promise(resolve => setTimeout(resolve, 0))
+  // B's answer is published, A's loaded map and activity stay while its follow-up runs.
+  assert.deepEqual(store.state("instance-1").missions.map(mission => mission.id).sort(), ["A", "B"])
+  assert.deepEqual(store.state("instance-1").activity?.missions.map(item => item.missionId).sort(), ["A", "B"])
+  assert.deepEqual(pending[0].include, ["A"])
+  pending.shift()!.resolve()
+  while (store.state("instance-1").status !== "ready") await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(store.state("instance-1").missions.map(mission => mission.id), ["A"])
+  assert.equal(pending.length, 0)
 })
 
 test("an omitted list this view does not hold fails like any read, keeping the last good display", async () => {

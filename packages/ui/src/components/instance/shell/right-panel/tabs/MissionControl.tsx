@@ -121,10 +121,12 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const mission = createMemo(() => selectedSchedule() ? currentPassage.snapshot()?.mission
     : missions().find((candidate) => candidate.id === selectedMissionId()))
   // The selected one-time Mission's detail needs its full map, even when it is closed.
+  // Only the instance and selection identities drive the registration, never store publications.
   const wantOwner = `selection:${createUniqueId()}`
+  const wantedMission = createMemo(() => selectedSchedule() ? undefined : selectedMissionId())
   createEffect(() => {
-    const instanceId = props.instanceId, id = selectedSchedule() ? undefined : selectedMissionId()
-    missionStore.want(instanceId, wantOwner, id)
+    const instanceId = props.instanceId, id = wantedMission()
+    untrack(() => missionStore.want(instanceId, wantOwner, id))
     onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
   })
   const observedActivity = () => selectedSchedule() ? currentPassage.snapshot()?.activity : state().activity

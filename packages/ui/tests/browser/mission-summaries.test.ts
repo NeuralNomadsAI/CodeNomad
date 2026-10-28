@@ -53,6 +53,87 @@ async function open() {
   await page.goto(url)
   return { page, errors, requests }
 }
+/** A summaries backend whose list reads `answer` may delay or fail; returns the read log. */
+async function panel(maps: MissionMap[], answer: (include: string[], read: number) => Promise<number | void> = async () => {}) {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 1100, height: 850 } })
+  const includes: string[][] = []
+  await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local", electronAPI: {
+    claimClientStateAccess: async () => true, loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: null }), saveClientState: async () => true } })`)
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route(target => target.pathname === "/api/workspaces/fixture/missions", async route => {
+    const include = (new URL(route.request().url()).searchParams.get("include") ?? "").split(",").filter(Boolean)
+    includes.push(include)
+    const status = await answer(include, includes.length)
+    if (status) return route.fulfill({ status, json: { error: "unavailable" } })
+    const listed = maps.filter(value => value.status === "active" || include.includes(value.id))
+    return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: 2, discardedEvents: 0, cleanups: [], missions: listed,
+      summaries: maps.map(missionSummary), summariesVersion: "v1", activity: { generatedAt: 2, missions: [] } } })
+  })
+  await page.goto(url)
+  await page.waitForFunction(() => (window as any).missionFixture?.snapshot().status === "ready")
+  return { page, includes }
+}
+const choose = (page: Page, id: string) => page.evaluate(async id =>
+  (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { selected: id }), id)
+const shownDetail = (page: Page, title: string) => page.locator(`section.mission-detail[aria-label="${title}"]`)
+
+test("a failed selected-map read stays parked until an explicit retry; a successful one costs one follow-up", async () => {
+  const closed = [mission("closed", { status: "completed", updatedAt: 2 })]
+  const failing = await panel(closed, async (_include, read) => {
+    if (read > 1) { await new Promise(resolve => setTimeout(resolve, 25)); return 503 }
+  })
+  try {
+    await choose(failing.page, "closed")
+    await failing.page.waitForTimeout(900)
+    assert.deepEqual(failing.includes, [[], ["closed"]], "one include read, then parked")
+    assert.equal(await failing.page.evaluate(() => (window as any).missionFixture.snapshot().status), "error")
+    await missionRefresh(failing.page).click()
+    await failing.page.waitForTimeout(500)
+    assert.deepEqual(failing.includes, [[], ["closed"], ["closed"]], "an explicit retry reads once more")
+  } finally { await failing.page.close() }
+  const loading = await panel(closed)
+  try {
+    await choose(loading.page, "closed")
+    await shownDetail(loading.page, "Objective closed").waitFor()
+    await loading.page.waitForTimeout(500)
+    assert.deepEqual(loading.includes, [[], ["closed"]], "a loaded map needs no further read")
+  } finally { await loading.page.close() }
+})
+
+test("an obsolete include response never unmounts the current selection's loaded detail (A → B → A)", async () => {
+  const maps = [mission("A", { status: "completed", updatedAt: 2 }), mission("B", { status: "completed", updatedAt: 1 })]
+  let race = false, heldA = false, heldB = false, releaseA!: () => void, releaseB!: () => void
+  const waitA = new Promise<void>(resolve => { releaseA = resolve }), waitB = new Promise<void>(resolve => { releaseB = resolve })
+  const { page, includes } = await panel(maps, async include => {
+    if (race && include.includes("B")) { heldB = true; await waitB }
+    else if (race && include.includes("A")) { heldA = true; await waitA }
+  })
+  try {
+    await choose(page, "A")
+    await shownDetail(page, "Objective A").waitFor()
+    race = true
+    await choose(page, "B")
+    while (!heldB) await page.waitForTimeout(10)
+    await choose(page, "A")
+    assert.equal(await shownDetail(page, "Objective A").count(), 1)
+    // Record any moment A's detail leaves the DOM while B's obsolete answer and A's follow-up land.
+    await page.evaluate(() => {
+      const w = window as any; w.lostA = false
+      w.watchA = new MutationObserver(() => { if (!document.querySelector('section.mission-detail[aria-label="Objective A"]')) w.lostA = true })
+      w.watchA.observe(document.body, { childList: true, subtree: true })
+    })
+    releaseB()
+    while (!heldA) await page.waitForTimeout(10)
+    assert.equal(await shownDetail(page, "Objective A").count(), 1, "the obsolete B answer keeps A mounted")
+    releaseA()
+    await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "ready")
+    await page.waitForTimeout(150)
+    assert.equal(await page.evaluate(() => (window as any).lostA), false, "A stayed mounted throughout")
+    assert.equal(await shownDetail(page, "Objective A").count(), 1)
+    assert.deepEqual(includes.slice(-2), [["B"], ["A"]], "one follow-up for the current include")
+  } finally { releaseA(); releaseB(); await page.close() }
+})
+
 const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-picker-mark").getAttribute("data-mark")
 
 test("closed missions list as rows with their marks and open their full map only when selected", async () => {
