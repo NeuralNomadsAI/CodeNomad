@@ -215,7 +215,8 @@ test("damage introduced during real notification admission prevents receipt publ
   assert.equal(result.failed, 1); assert.equal(f.counts().synthetics, 2)
   assert.equal(JSON.stringify(f.values.get(key)), JSON.stringify(bad))
   assert.equal((await f.control.snapshot()).missions[0].reports[0].notificationStatus, "pending")
-  await assert.rejects(f.control.retryPendingNotifications())
+  // The enumeration's hints never saw bytes written outside the journal; the item's own full read refuses it.
+  assert.deepEqual(await f.control.retryPendingNotifications().then(({ attempted, failed }) => ({ attempted, failed })), { attempted: 1, failed: 1 })
   assert.equal(f.counts().synthetics, 2)
 })
 

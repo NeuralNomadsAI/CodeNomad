@@ -3,7 +3,7 @@ import { isDeepStrictEqual } from "node:util"
 import type { JsonValue, SessionMetadata } from "@opencode/client"
 
 import { MissionJournal, stableToken, type MissionStorage } from "./journal"
-import type { MissionJournalIndex } from "./journal-index"
+import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import {
   MISSION_MAX_ACTORS,
   MISSION_MAX_TASKS,
@@ -101,6 +101,43 @@ export class MissionControl {
 
   snapshot(): Promise<MissionSnapshot> {
     return this.journal.snapshot()
+  }
+
+  /**
+   * Read-mostly views only (tool reads, the per-turn context, outbox enumeration):
+   * the missions `pick` names, each re-read from its own range after the hints
+   * resolve, in snapshot order and stamped with the project damage flags as a
+   * snapshot stamps them. A foreign write can stay unseen until the index's next
+   * rebuild (`MISSION_INDEX_STALE_AFTER_MS`), so nothing read here authorizes a
+   * write or native effect. Isolated passage journals hold one mission: their
+   * snapshot serves instead.
+   */
+  private async hintedMissions(pick: (hints: MissionIndexHints) => string[]): Promise<{
+    missions: MissionMap[]; controlUnavailable: boolean; notificationUnavailable: boolean
+  }> {
+    if (this.options.storage.isolated) {
+      const { missions, controlUnavailable, notificationUnavailable } = await this.snapshot()
+      return { missions, controlUnavailable: Boolean(controlUnavailable), notificationUnavailable: Boolean(notificationUnavailable) }
+    }
+    const { ids, controlUnavailable, notificationUnavailable } = await this.journal.readHints(hints => {
+      const { controlUnavailable, notificationUnavailable } = hints.aggregate()
+      return { ids: pick(hints), controlUnavailable, notificationUnavailable }
+    })
+    const missions: MissionMap[] = []
+    for (const missionID of ids) {
+      const { mission } = await this.journal.missionView(missionID)
+      if (!mission) continue
+      if (controlUnavailable) mission.controlUnavailable = true
+      if (notificationUnavailable) mission.notificationUnavailable = true
+      missions.push(mission)
+    }
+    // Stable: equally updated maps keep the hints' snapshot order.
+    return { missions: missions.sort((left, right) => right.updatedAt - left.updatedAt), controlUnavailable, notificationUnavailable }
+  }
+
+  /** `hintedMissions` for one session's selection: exactly `missionID`'s range, else the missions naming the session. */
+  private async hintedSelection(sessionID: string, missionID?: string): Promise<Pick<MissionSnapshot, "missions">> {
+    return this.hintedMissions(hints => missionID ? [missionID] : hints.refs(sessionID).map(ref => ref.missionID))
   }
 
   private async verifyHumanDecision(mission: MissionMap, task: import("./model").MissionTask,
@@ -329,7 +366,7 @@ export class MissionControl {
     return this.mutate(() => controlMission(input, {
       journal: this.journal, transport: this.options.transport, isActive: this.options.isActive,
       timestamp: snapshot => this.timestamp(snapshot),
-      changed: async (missionID, revision) => this.emitChanged(missionID, await this.snapshot(), revision),
+      changed: (missionID, revision) => this.notifyChanged(missionID, revision),
     }))
   }
 
@@ -403,7 +440,7 @@ export class MissionControl {
     return this.mutate(() => deleteMission(input, {
       journal: this.journal, sessions: this.options.sessions, transport: this.options.transport, isActive: this.options.isActive,
       timestamp: (snapshot) => this.timestamp(snapshot),
-      changed: async (missionID, revision) => this.emitChanged(missionID, await this.snapshot(), revision),
+      changed: (missionID, revision) => this.notifyChanged(missionID, revision),
     }))
   }
 
@@ -656,8 +693,9 @@ export class MissionControl {
   private async inspectCurrent(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
     input = structuredClone(input)
     const caller = await this.ownedRootSession(sessionID)
-    let snapshot = await this.snapshot()
     if (input.start) {
+      // Creation keeps the authoritative full read: replay, membership refusal, timestamp.
+      let snapshot = await this.snapshot()
       input.start.taskMode = parseMissionTaskMode(input.start.taskMode)
       try { input.start.profiles = parseMissionProfiles(input.start.profiles); validateMissionProfiles(input.start.template, input.start.profiles) }
       catch { throw new MissionControlError("Invalid Mission profile selection", "invalid-execution") }
@@ -708,7 +746,8 @@ export class MissionControl {
     }
 
     // Reads also reach hand-offs this session prepared; mutations keep exact membership.
-    const mission = input.missionID ? this.visibleMission(snapshot, sessionID, input.missionID) : this.membership(snapshot, sessionID)
+    const read = await this.hintedSelection(sessionID, input.missionID)
+    const mission = input.missionID ? this.visibleMission(read, sessionID, input.missionID) : this.membership(read, sessionID)
     return mission ? this.inspection(mission, sessionID) : {
       mission: null,
       actor: null,
@@ -719,7 +758,7 @@ export class MissionControl {
   /** The caller's missions and the hand-offs it prepared, newest first, without task or report text. */
   async listMissions(sessionID: string) {
     await this.ownedRootSession(sessionID)
-    return (await this.snapshot()).missions.flatMap(mission => {
+    return (await this.hintedSelection(sessionID)).missions.flatMap(mission => {
       const relation = missionRelation(mission, sessionID)
       return relation ? [missionListEntry(mission, relation)] : []
     }).sort((left, right) => right.createdAt - left.createdAt)
@@ -762,7 +801,7 @@ export class MissionControl {
 
   /** Advisory native evidence of a native task's own conversations; never settlement. */
   async observeTask(sessionID: string, missionID: string | undefined, taskKey: string): Promise<MissionTaskObservation | undefined> {
-    const mission = this.selectMission(await this.snapshot(), sessionID, missionID)
+    const mission = this.selectMission(await this.hintedSelection(sessionID, missionID), sessionID, missionID)
     const task = mission?.tasks.find(task => task.key === taskKey)
     if (!mission || !task || task.executionMode?.kind !== "native" || task.executionMode.parentTaskKey !== null
       || !this.options.transport?.observeTask) return undefined
@@ -791,7 +830,7 @@ export class MissionControl {
 
   /** Answered native questions that qualify a native Wayfinder decision task, each verified by the gate. */
   async decisionCandidates(sessionID: string, missionID: string | undefined, taskKey: string): Promise<HumanDecisionDiscovery | undefined> {
-    const mission = this.selectMission(await this.snapshot(), sessionID, missionID)
+    const mission = this.selectMission(await this.hintedSelection(sessionID, missionID), sessionID, missionID)
     const task = mission?.tasks.find(task => task.key === taskKey)
     if (!mission || !task || mission.template !== "wayfinder" || task.role !== "decision") return undefined
     return this.discoverDecisions(mission, task)
@@ -958,13 +997,16 @@ export class MissionControl {
   retryPendingNotifications(isActive: () => boolean = () => true, after?: string): Promise<MissionNotificationRetryResult> {
     return this.mutate(async () => {
       if (!isActive()) return { attempted: 0, failed: 0 }
-      const snapshot = await this.snapshot()
-      if (snapshot.notificationUnavailable || snapshot.controlUnavailable) throw new Error("Mission notification evidence unavailable; damaged journal")
-      const pending = snapshot.missions
+      // Enumeration only, over the open missions (every running one is open). A
+      // mission the hints miss waits for the next rebuild; each notification
+      // re-reads the whole journal before its admission and its receipt.
+      const open = await this.hintedMissions(hints => hints.openIDs())
+      if (open.notificationUnavailable || open.controlUnavailable) throw new Error("Mission notification evidence unavailable; damaged journal")
+      const pending = open.missions
         .filter(mission => missionIsRunning(mission) && !mission.control?.pending.length)
         .flatMap((mission) => mission.reports
           .filter((report) => isCoordinatorNotificationReport(report) && report.notificationStatus !== "admitted")
-          .map((report) => ({ missionID: mission.id, report, cursor: `${mission.id}\0${report.id}` })))
+          .map((report) => ({ mission, report, cursor: `${mission.id}\0${report.id}` })))
         .sort((left, right) => left.cursor.localeCompare(right.cursor))
       if (pending.length === 0) return { attempted: 0, failed: 0 }
       const first = after ? pending.findIndex((item) => item.cursor > after) : 0
@@ -979,7 +1021,8 @@ export class MissionControl {
         cursor = item.cursor
         attempted += 1
         try {
-          await this.notifyCoordinator(this.requireMission(await this.snapshot(), item.missionID), item.report, isActive)
+          // notifyCoordinator reads only the mission's identity from it, then re-reads everything.
+          await this.notifyCoordinator(item.mission, item.report, isActive)
         } catch {
           // Keep failed durable outbox entries pending; later bounded passes retry them.
           failed += 1
@@ -1189,13 +1232,17 @@ export class MissionControl {
     return { disposition: "reported", mission: this.requireMission(await this.snapshot(), mission.id), taskKey: task.key }
   }
 
-  async contextFor(sessionID: string): Promise<string | undefined> {
-    const snapshot = await this.snapshot()
-    const mission = this.membership(snapshot, sessionID)
+  /** The per-turn context of an active mission's actor, and whether it coordinates
+   * that mission. From hints: a missed foreign write withholds the context until
+   * the next rebuild, never grants anything (every tool re-selects authoritatively). */
+  async contextFor(sessionID: string): Promise<{ instruction: string; coordinator: boolean } | undefined> {
+    const mission = this.membership(await this.hintedSelection(sessionID), sessionID)
     if (!mission || mission.status !== "active") return undefined
-    if (!missionIsRunning(mission)) return `Mission ${mission.id} is ${mission.runState}. Do not continue mission work or create a replacement mission. Wait for the user's Play action. Saved reports may still be recorded without waking the coordinator.`
-    return buildActorContext(mission, sessionID, { backendActions: this.backendActions,
-      completedFinalOnly: this.options.completedFinalOnly }) || undefined
+    const coordinator = mission.coordinatorSessionId === sessionID
+    if (!missionIsRunning(mission)) return { coordinator, instruction: `Mission ${mission.id} is ${mission.runState}. Do not continue mission work or create a replacement mission. Wait for the user's Play action. Saved reports may still be recorded without waking the coordinator.` }
+    const instruction = buildActorContext(mission, sessionID, { backendActions: this.backendActions,
+      completedFinalOnly: this.options.completedFinalOnly })
+    return instruction ? { instruction, coordinator } : undefined
   }
 
   /** Whether coordinator actions can reach the backend (one-time missions with presence, not passages). */
@@ -1353,8 +1400,9 @@ export class MissionControl {
       admissionID,
       createdAt: Math.max(report.createdAt + 1, this.timestamp(snapshot)),
     })
-    const updated = await this.snapshot()
-    await this.emitChanged(mission.id, updated)
+    // Only the change event's revision, which is the mission's own.
+    const { mission: updated } = await this.journal.missionView(mission.id)
+    await this.notifyChanged(mission.id, updated?.revision ?? 0)
   }
 
   private reportTask(mission: MissionMap, sessionID: string, taskKey?: string) {
@@ -1395,7 +1443,7 @@ export class MissionControl {
     }
   }
 
-  private selectMission(snapshot: MissionSnapshot, sessionID: string, missionID?: string): MissionMap | undefined {
+  private selectMission(snapshot: Pick<MissionSnapshot, "missions">, sessionID: string, missionID?: string): MissionMap | undefined {
     if (missionID) {
       const mission = snapshot.missions.find((candidate) => candidate.id === missionID)
       if (!mission || !mission.actors.some((actor) => actor.sessionId === sessionID)) {
@@ -1406,13 +1454,13 @@ export class MissionControl {
     return this.membership(snapshot, sessionID)
   }
 
-  private visibleMission(snapshot: MissionSnapshot, sessionID: string, missionID: string): MissionMap {
+  private visibleMission(snapshot: Pick<MissionSnapshot, "missions">, sessionID: string, missionID: string): MissionMap {
     const mission = snapshot.missions.find(candidate => candidate.id === missionID)
     if (!mission || !missionRelation(mission, sessionID)) throw new MissionControlError("Mission is not visible to this session", "mission-not-found")
     return mission
   }
 
-  private membership(snapshot: MissionSnapshot, sessionID: string): MissionMap | undefined {
+  private membership(snapshot: Pick<MissionSnapshot, "missions">, sessionID: string): MissionMap | undefined {
     return snapshot.missions.find((mission) => mission.status === "active" && mission.actors.some((actor) => actor.sessionId === sessionID))
       ?? snapshot.missions.find((mission) => mission.actors.some((actor) => actor.sessionId === sessionID))
   }
@@ -1462,8 +1510,11 @@ export class MissionControl {
     return { "codenomad.mission": { version: MISSION_SCHEMA_VERSION, missionID, kind, ...extra } }
   }
 
-  private async emitChanged(missionID: string, snapshot: MissionSnapshot, revisionOverride?: number): Promise<void> {
-    const revision = revisionOverride ?? snapshot.missions.find((mission) => mission.id === missionID)?.revision ?? 0
+  private async emitChanged(missionID: string, snapshot: Pick<MissionSnapshot, "missions">): Promise<void> {
+    await this.notifyChanged(missionID, snapshot.missions.find((mission) => mission.id === missionID)?.revision ?? 0)
+  }
+
+  private async notifyChanged(missionID: string, revision: number): Promise<void> {
     await this.options.changed?.(missionID, revision).catch(() => undefined)
   }
 
