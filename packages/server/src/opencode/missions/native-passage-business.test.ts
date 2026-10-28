@@ -5,6 +5,8 @@ import { desktopPlugin } from "./desktop-plugin"
 import { retireNativePassageBusiness, prepareNativePassageSession } from "./native-passage-business"
 import { observeNativePassageSettlement } from "./native-recurrence-settlement"
 import { AUTOMATIC_BRIEFINGS, USER_FACING_TEXT } from "../../missions/recipes"
+import { MISSION_JOURNAL_STORAGE_PREFIX, stableToken, type MissionStorage } from "../../missions/journal"
+import { missionJournalWrites } from "../../missions/journal-index"
 
 test("desktop registers passage mission tools independently of backend presence; descendants read the isolated map", async () => {
   const f = await passageFixture(false)
@@ -57,6 +59,35 @@ test("explicit independent task uses frozen native ENV/IDs and remains part of p
     await f.finish()
     assert.equal((await observe())?.result.outcome, "completed")
     assert.deepEqual(f.counts(), { creates: 2, sends: 3, environments: 3 })
+  } finally { await f.dispose() }
+})
+
+test("recurring passages never write the ordinary journal, so its activation index never misses their writes", async () => {
+  const f = await passageFixture()
+  const token = stableToken(`project\0${f.root}`, 24)
+  const ordinary = [`${MISSION_JOURNAL_STORAGE_PREFIX}/${token}`, `${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${token}/`]
+  const trapped: string[] = []
+  // The Job admission writes through the fixture storage; restored business through the context's copy.
+  for (const storage of [f.storage, f.context.storage] as Array<{ set: MissionStorage["set"]; remove?: (key: string) => Promise<void> }>) {
+    const { set, remove } = storage
+    storage.set = async (key, value, current) => { if (ordinary.some(prefix => key.startsWith(prefix))) trapped.push(key); return set(key, value, current) }
+    if (remove) storage.remove = async key => { if (ordinary.some(prefix => key.startsWith(prefix))) trapped.push(key); return remove(key) }
+  }
+  const writes = missionJournalWrites(token)
+  try {
+    await f.start()
+    const tool = { sessionID: f.passage.coordinatorSessionID, messageID: "msg_delegate", id: "call_delegate", progress: async () => {} }
+    const delegated = JSON.parse((await f.tools.get("delegate")!.execute({ taskKey: "independent", title: "Independent work",
+      brief: "Bounded independent task", role: "specialist", blockedBy: [],
+      executionMode: { kind: "independent", reason: "lifetime", explanation: "Needs its own bounded root lifetime" } }, tool)).content)
+    await f.tools.get("report")!.execute({ taskKey: "independent", outcome: "completed", summary: "Done" }, { ...tool, sessionID: delegated.task.actorSessionId })
+    retireNativePassageBusiness(f.context.location)
+    await f.finish()
+    const events = (await f.passage.journal.events()).events
+    assert.ok(events.some(event => event.type === "task.reported") && events.some(event => event.type === "mission.finished"), "the passage journal was written")
+    assert.deepEqual(trapped, [], "no ordinary journal or deletion-record write")
+    assert.equal(missionJournalWrites(token), writes, "no write any ordinary index would have to see")
+    await assert.rejects(f.passage.journal.readIndex(index => index.openIDs()), /not indexed/)
   } finally { await f.dispose() }
 })
 

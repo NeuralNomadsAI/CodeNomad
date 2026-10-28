@@ -74,10 +74,15 @@ export function projectMissionCleanups(events: readonly MissionEvent[]): Mission
       results.push(projectDeletion(event, group, objective))
     }
   }
+  return orderMissionCleanups(results)
+}
+
+/** Newest first: every pending cleanup, then the `settled` newest settled ones. */
+export function orderMissionCleanups(results: MissionCleanup[], settled = SETTLED_CLEANUP_HISTORY): MissionCleanup[] {
   results.sort((a, b) => b.createdAt - a.createdAt || a.deletionID.localeCompare(b.deletionID))
   // Keep EVERY pending intent within the journal's existing hard bound, even if
   // newer completed deletions would otherwise push it out of the display window.
-  return [...results.filter(item => item.pending > 0), ...results.filter(item => item.pending === 0).slice(0, SETTLED_CLEANUP_HISTORY)]
+  return [...results.filter(item => item.pending > 0), ...results.filter(item => item.pending === 0).slice(0, settled)]
     .slice(0, MISSION_MAX_EVENTS)
 }
 

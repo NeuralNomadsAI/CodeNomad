@@ -1,86 +1,15 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { MissionControl } from "./control"
-import type { MissionDeleteInput, MissionInputTransport, NativeMissionSession } from "./control-types"
-import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, missionDeletionRecordKey, type MissionStorage, type MissionView } from "./journal"
-import { compareEvents, MISSION_MAX_STORED_EVENTS, type MissionCleanup, type MissionEvent, type MissionJsonValue, type MissionMap, type MissionSnapshot } from "./model"
+import type { MissionDeleteInput } from "./control-types"
+import type { MissionView } from "./journal"
+import { compareEvents, MISSION_MAX_STORED_EVENTS, type MissionCleanup, type MissionMap } from "./model"
 import { SETTLED_CLEANUP_HISTORY } from "./cleanup-projection"
-import { controlResumeAdmissionID } from "./receipt-identity"
+import { fixture, seedCrossMission, step, type HistoryFixture } from "./journal-history-fixture"
 
-// Deterministic, so a failing seed replays exactly.
-function mulberry32(seed: number) {
-  return () => {
-    seed = (seed + 0x6d2b79f5) | 0
-    let value = Math.imul(seed ^ (seed >>> 15), seed | 1)
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61)
-    return ((value ^ (value >>> 14)) >>> 0) / 4_294_967_296
-  }
-}
-
-function fixture(seed: number) {
-  const random = mulberry32(seed)
-  const pick = <T>(items: readonly T[]): T | undefined => items[Math.floor(random() * items.length)]
-  const values = new Map<string, MissionJsonValue>()
-  let failRemovalAfter = Infinity, removals = 0
-  let firstPageHook: (() => Promise<void>) | undefined
-  // Native KV semantics: binary key order, exclusive cursor, `next` is the last key of a full page.
-  const storage: MissionStorage = {
-    get: async key => structuredClone(values.get(key)),
-    set: async (key, value) => { values.set(key, structuredClone(value)) },
-    scan: async ({ prefix, after, limit = 100 }) => {
-      const keys = [...values.keys()].filter(key => key.startsWith(prefix) && (!after || key > after)).sort().slice(0, limit)
-      const hook = after ? undefined : firstPageHook
-      if (hook) { firstPageHook = undefined; await hook() }
-      return { entries: keys.map(key => ({ key, value: structuredClone(values.get(key)!) })), next: keys.length === limit ? keys.at(-1) : undefined }
-    },
-    remove: async key => {
-      if (removals >= failRemovalAfter) throw new Error("Process killed")
-      removals++
-      values.delete(key)
-    },
-  }
-  const native = new Map<string, NativeMissionSession>()
-  const failing = new Set<string>()
-  let now = 1_000, failNotifications = false
-  const transport: MissionInputTransport = {
-    prompt: async () => {},
-    synthetic: async () => { if (failNotifications) throw new Error("Coordinator unavailable") },
-    lifecycle: async (_, input) => {
-      const mission = (await control().snapshot()).missions.find(mission => mission.id === input.missionID)!
-      if (failing.has(input.sessionID)) throw new Error("Native unavailable")
-      const identity = { ...input, action: mission.control!.action }
-      return { nativeAcknowledgement: identity.action === "start" ? { ...identity, disposition: "start-admitted", admission: {
-        id: controlResumeAdmissionID(input.operationID, input.sessionID), sessionID: input.sessionID, type: "synthetic", delivery: "queue", time: { created: 100 },
-        payload: { text: "Continue existing work", metadata: { "codenomad.mission": { version: 1, missionID: input.missionID, operationID: input.operationID, kind: "lifecycle" } } },
-      } } : { ...identity, disposition: "interrupt-observed", interrupt: { interrupted: true }, cancellations: [] } }
-    },
-  }
-  const project = { id: "project-1", canonical: "/repo", location: { directory: "/repo" } }
-  // Some steps leave the clock still, so events, missions and deletions tie on time.
-  const control = () => new MissionControl({ project, storage, transport, now: () => (now += Math.floor(random() * 2)), sessions: {
-    get: async ({ sessionID }) => {
-      const session = native.get(sessionID)
-      if (!session) throw Object.assign(new Error("missing"), { _tag: "SessionNotFoundError", sessionID })
-      return structuredClone(session)
-    },
-    create: async input => { const session = { ...input, projectID: project.id }; native.set(input.id, session); return structuredClone(session) },
-    list: async () => ({ data: [] }),
-    remove: async ({ sessionID }) => { if (failing.has(sessionID)) throw new Error("Native removal unavailable"); native.delete(sessionID) },
-    prompt: async () => {}, synthetic: async () => {},
-  } })
-  const journal = new MissionJournal(storage, project.id, project.canonical, () => now)
-  const prefix = `${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}`
-  return { random, pick, values, storage, native, failing, control, journal, prefix,
-    failRemovalsAfter: (count: number) => { failRemovalAfter = removals + count },
-    failNotifications: (fail: boolean) => { failNotifications = fail },
-    pauseFirstPage: (hook: () => Promise<void>) => { firstPageHook = hook } }
-}
-
-type Fixture = ReturnType<typeof fixture>
 const coverage = { types: new Set<string>(), damagedViews: 0, remnants: 0, purged: 0, interrupted: 0, ties: 0 }
 
 /** Every mission range's view, recomposed, is exactly today's project snapshot. */
-async function assertEquivalent(f: Fixture, label: string) {
+async function assertEquivalent(f: HistoryFixture, label: string) {
   const snapshot = await f.journal.snapshot(), observed = await f.journal.events()
   const ranges = new Map<string, number>()
   let stray = 0
@@ -134,90 +63,6 @@ function mergeCleanups(items: MissionCleanup[]) {
   return [...ordered.filter(item => item.pending > 0), ...ordered.filter(item => item.pending === 0).slice(0, SETTLED_CLEANUP_HISTORY)]
 }
 
-async function step(f: Fixture, n: number, snapshot: MissionSnapshot, deletions: MissionDeleteInput[], damage: boolean) {
-  const { random, pick } = f
-  const mission = pick(snapshot.missions)
-  const location = { directory: "/repo" }
-  const base = { version: 1 as const, projectID: "project-1", createdAt: 1_000 + n }
-  const operation = random()
-  f.failNotifications(random() < 0.2)
-  if (operation < 0.1 || !mission) {
-    await f.control().create({ requestID: `create-${n}`, objective: `Objective ${n}`, template: "custom", prepared: random() < 0.3 })
-  } else if (operation < 0.16) {
-    const human = `ses_human_${n}`
-    f.native.set(human, { id: human, projectID: "project-1", title: "Human", location })
-    await f.control().inspect(human, { start: { objective: `Started ${n}`, template: random() < 0.5 ? "wayfinder" : "custom" } }, `start-${n}`)
-  } else if (operation < 0.28) {
-    const shared = random() < 0.25 ? pick(snapshot.missions.flatMap(other => other.actors.filter(actor => actor.kind === "specialist").map(actor => actor.sessionId))) : undefined
-    await f.control().delegate(mission.coordinatorSessionId, { missionID: mission.id, taskKey: `task-${n}`, title: `Task ${n}`, brief: "Bounded",
-      role: "specialist", blockedBy: [], delivery: "queue", ...(shared ? { targetSessionID: shared } : {}) })
-  } else if (operation < 0.34) {
-    await f.control().declare(mission.coordinatorSessionId, { missionID: mission.id, taskKey: `declared-${n}`, title: `Declared ${n}`, brief: "Bounded", role: "research", blockedBy: [] })
-  } else if (operation < 0.44) {
-    const task = pick(mission.tasks.filter(task => task.actorSessionId))
-    if (task) await f.control().report(task.actorSessionId!, { missionID: mission.id, taskKey: task.key, outcome: pick(["completed", "blocked", "failed"] as const)!,
-      summary: `Report ${n}`, evidence: [], next: [], final: false })
-  } else if (operation < 0.48) {
-    await f.control().report(mission.coordinatorSessionId, { missionID: mission.id, outcome: random() < 0.5 ? "completed" : "failed",
-      summary: `Done ${n}`, evidence: [], next: [], final: true })
-  } else if (operation < 0.54) {
-    const retired = pick(mission.tasks.filter(task => task.status === "ready"))
-    await f.control().revise(mission.coordinatorSessionId, { missionID: mission.id, expectedRevision: mission.revision, requestID: `revise-${n}`, reason: "Replan",
-      retireTasks: retired && random() < 0.5 ? [{ taskKey: retired.key }] : [], dependencyUpdates: [],
-      addTasks: [{ taskKey: `revised-${n}`, title: `Revised ${n}`, brief: "Bounded", role: "research", blockedBy: [] }] })
-  } else if (operation < 0.59) {
-    await f.control().briefing(mission.coordinatorSessionId, { missionID: mission.id, requestID: "auto", summary: `Brief ${n}`, achieved: [], ongoing: [], obstacles: [], next: [] })
-  } else if (operation < 0.63) {
-    await f.control().update({ missionID: mission.id, requestID: `update-${n}`, expectedRevision: mission.revision, objective: `Updated ${n}` })
-  } else if (operation < 0.71) {
-    f.failing.clear()
-    if (random() < 0.25) f.failing.add(mission.coordinatorSessionId)
-    await f.control().lifecycle({ missionID: mission.id, requestID: `control-${n}`, expectedRevision: mission.revision, action: pick(["start", "pause", "stop"] as const)! })
-  } else if (operation < 0.79) {
-    f.failing.clear()
-    for (const actor of mission.actors) if (random() < 0.3) f.failing.add(actor.sessionId)
-    const request: MissionDeleteInput = { missionID: mission.id, requestID: `delete-${n}`, expectedRevision: mission.revision,
-      ...(random() < 0.6 ? { deleteManagedSessions: true } : {}) }
-    deletions.push(request)
-    await f.control().delete(request)
-  } else if (operation < 0.83) {
-    f.failing.clear()
-    const request = pick(deletions)
-    if (request) await f.control().delete(request)
-  } else if (operation < 0.86) {
-    await f.control().retryPendingNotifications()
-  } else if (operation < 0.88) {
-    await f.control().recover({ missionID: mission.id, expectedRevision: mission.revision, target: "coordinator" })
-  } else if (operation < 0.95 || !damage) {
-    const interrupted = random() < 0.4
-    if (interrupted) f.failRemovalsAfter(Math.floor(random() * 6))
-    try { coverage.purged += await f.journal.purgeDeleted({ all: random() < 0.6 }) }
-    catch { coverage.interrupted++ }
-    finally { f.failRemovalsAfter(Infinity) }
-  } else {
-    // Damage, remnants and ties as earlier builds, crashes or other writers leave them.
-    const kind = Math.floor(random() * 6)
-    // Extends a live ID, so a range read without its closing slash would overlap that mission.
-    const orphan = `${mission.id}_${n}`
-    if (kind === 0) f.values.set(`${f.prefix}/${mission.id}/evt_garbage_${n}`, { damaged: true })
-    else if (kind === 1) f.values.set(random() < 0.5 ? `${f.prefix}/stray_${n}` : `${f.prefix}/bad!id/evt_${n}`, { damaged: true })
-    else if (kind === 2) await f.journal.append({ ...base, id: `evt_orphan_${n}`, missionID: orphan, type: "task.dispatched", taskKey: "orphan" })
-    else if (kind === 3) {
-      // A remnant whose record is valid leaves the observation; a damaged record keeps it as damage.
-      await f.journal.append({ ...base, id: `evt_remnant_${n}`, missionID: orphan, type: "task.dispatched", taskKey: "remnant" })
-      f.values.set(missionDeletionRecordKey(f.journal.projectToken, orphan), random() < 0.7 ? { version: 1, projectID: "project-1", missionID: orphan,
-        deletionID: "evt_deleted", requestID: "delete", expectedRevision: 1, deleteManagedSessions: false, objective: "Purged", createdAt: 5,
-        removed: 0, retained: 0, reasons: [] } : { version: 1 })
-    } else if (kind === 4) {
-      // Mission A's valid event stored under mission B's key.
-      const [event] = (await f.journal.missionEvents(mission.id)).events
-      if (event) f.values.set(`${f.prefix}/msn_misplaced_${n}/${event.id}`, structuredClone(event) as unknown as MissionJsonValue)
-    } else {
-      for (const suffix of ["a", "b"]) await f.journal.append({ ...base, createdAt: 777, id: `evt_tie_${n}${suffix}`, missionID: `msn_tie_${n}${suffix}`,
-        type: "mission.created", projectCanonical: "/repo", objective: "Tie", template: "custom", coordinator: { sessionID: `ses_tie_${n}${suffix}`, title: "Tie", location } })
-    }
-  }
-}
 
 test("a mission's range view equals that mission in the project snapshot across random MissionControl histories", async () => {
   for (let seed = 1; seed <= 24; seed++) {
@@ -225,7 +70,7 @@ test("a mission's range view equals that mission in the project snapshot across 
     let snapshot = await assertEquivalent(f, `seed ${seed} empty`)
     for (let n = 0; n < 70; n++) {
       // Refusals and injected failures are part of the history: the journal is what is compared.
-      await step(f, n, snapshot, deletions, seed % 3 === 0).catch(() => undefined)
+      await step(f, n, snapshot, deletions, seed % 3 === 0, coverage).catch(() => undefined)
       snapshot = await assertEquivalent(f, `seed ${seed} step ${n}`)
     }
   }
@@ -237,37 +82,7 @@ test("a mission's range view equals that mission in the project snapshot across 
 
 test("cross-mission edges compose: shared sessions, one range's orphaned receipts, cleanup history and key-order ties", async () => {
   const f = fixture(3)
-  const location = { directory: "/repo" }
-  const seed = (event: MissionEvent) => f.values.set(`${f.prefix}/${event.missionID}/${event.id}`, structuredClone(event) as unknown as MissionJsonValue)
-  const base = (missionID: string, createdAt: number) => ({ version: 1 as const, projectID: "project-1", missionID, createdAt })
-  const created = (missionID: string, createdAt: number, id = "evt_created"): MissionEvent => ({ ...base(missionID, createdAt), id,
-    type: "mission.created", projectCanonical: "/repo", objective: `Objective ${missionID}`, template: "custom",
-    coordinator: { sessionID: `ses_${missionID}`, title: "Coordinator", location } })
-  // A finished mission's specialist joins a second mission: one session, two maps.
-  const first = (await f.control().delegate((await f.control().create({ requestID: "first", objective: "First", template: "custom" })).mission.coordinatorSessionId,
-    { taskKey: "worker", title: "Worker", brief: "Bounded", role: "specialist", blockedBy: [], delivery: "queue" })).mission
-  const shared = first.actors.find(actor => actor.kind === "specialist")!.sessionId
-  await f.control().report(first.coordinatorSessionId, { missionID: first.id, outcome: "failed", summary: "Done", evidence: [], next: [], final: true })
-  const second = (await f.control().create({ requestID: "second", objective: "Second", template: "custom" })).mission
-  await f.control().delegate(second.coordinatorSessionId, { missionID: second.id, taskKey: "reuse", title: "Reuse", brief: "Bounded",
-    role: "specialist", blockedBy: [], delivery: "queue", targetSessionID: shared })
-  // 22 settled deletion groups plus an older pending one: the project keeps the pending one and the 20 newest settled.
-  for (let index = 0; index < 22; index++) {
-    const missionID = `msn_gone_${String(index).padStart(2, "0")}`
-    seed(created(missionID, 100 + index))
-    seed({ ...base(missionID, 200 + index), id: "evt_deleted", type: "mission.deleted", requestID: "delete", expectedRevision: 1 })
-  }
-  seed(created("msn_pending", 10))
-  seed({ ...base("msn_pending", 11), id: "evt_deleted", type: "mission.deleted", requestID: "delete", expectedRevision: 1,
-    deleteManagedSessions: true, cleanupTargets: [{ sessionID: "ses_kept", location }] })
-  // Equal times and equal event IDs: binary key order (`-` < `/` < `_`, upper before lower case) breaks the tie,
-  // neither mission-ID order nor locale order.
-  const tied = ["msn_TieB-1", "msn_TieB", "msn_tiea"]
-  for (const missionID of tied) seed(created(missionID, 50_000, "evt_same"))
-  // Parseable receipts without their intent, only in the first mission's range.
-  seed({ ...base(first.id, 900), id: "evt_orphan_control", type: "mission.control-applied", operationID: "evt_missing_operation", sessionID: first.coordinatorSessionId })
-  seed({ ...base(first.id, 901), id: "evt_orphan_notified", type: "report.notified", reportID: "rpt_missing", admissionID: "msg_missing" })
-  seed({ ...base(first.id, 902), id: "evt_orphan_cleaned", type: "mission.session-cleaned", deletionID: "evt_missing_deletion", sessionID: shared, outcome: "removed" })
+  const { first, second, shared, tied, updatedTie } = await seedCrossMission(f)
 
   const snapshot = await assertEquivalent(f, "fixture")
   const [firstView, secondView] = [await f.journal.missionView(first.id), await f.journal.missionView(second.id)]
@@ -294,8 +109,8 @@ test("cross-mission edges compose: shared sessions, one range's orphaned receipt
   assert.deepEqual(snapshot.cleanups?.map(item => item.missionID), ["msn_pending",
     ...Array.from({ length: 20 }, (_, index) => `msn_gone_${String(21 - index).padStart(2, "0")}`)])
   assert.deepEqual(mergeCleanups([...gone, await f.journal.missionView("msn_pending")].flatMap(view => view.cleanups ?? [])), snapshot.cleanups)
-  // The tie: three maps at the same time, in key order, ahead of the older ones.
-  assert.deepEqual(snapshot.missions.map(mission => mission.id), [...tied, second.id, first.id])
+  // Ties: equally updated maps by first event, then three full ties in key order, ahead of the older ones.
+  assert.deepEqual(snapshot.missions.map(mission => mission.id), [...updatedTie, ...tied, second.id, first.id])
 })
 
 test("a mission range keeps the journal's read bound", async () => {
