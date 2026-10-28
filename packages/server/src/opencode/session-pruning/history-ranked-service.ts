@@ -2,14 +2,23 @@ import type { Plugin } from "@opencode/plugin"
 import { withHistoryDatabase } from "./history-database"
 import { historyRankedInputSchema, sessionSearchInputSchema, type HistoryRankedResult } from "./history-ranked-contract"
 import { queryRankedHistory } from "./history-ranked-store"
+import { RankedHistoryRestartError } from "./history-ranked-cursor"
 import { readLocationRef, sameLocation } from "./location"
 
 export async function queryBoundRankedHistory(ctx: Plugin.Context, value: unknown, signal: AbortSignal): Promise<HistoryRankedResult> {
   const input = historyRankedInputSchema.parse(value)
-  return withHistoryDatabase(ctx, undefined, signal, (db, scope) => queryRankedHistory(db, scope, input, signal))
+  return withHistoryDatabase(ctx, undefined, signal, async (db, scope) => {
+    try { return await queryRankedHistory(db, scope, input, signal) }
+    catch (error) {
+      signal.throwIfAborted()
+      if (error instanceof RankedHistoryRestartError) return { status: "restart_required" as const }
+      throw error
+    }
+  })
 }
 
 export function formatRankedHistory(result: HistoryRankedResult): string {
+  if (result.status === "restart_required") return "Session search history changed. Run a fresh search."
   if (result.status === "blocked") return `Session search unavailable: ${result.reason}.`
   const line = (text: string) => text.replace(/[\r\n\t]+/g, " ")
   const header = `${result.hits.length} hit(s); ${result.matchedSessions} session(s) contain a verified match in ${result.judged} judged candidate(s).`

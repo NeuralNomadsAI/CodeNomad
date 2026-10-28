@@ -118,6 +118,12 @@ message ordinals on later windows. Across locations these ordinals count the sum
 of owned messages examined so far, with newest-first traversal within each location.
 Query, scope and technical-toggle changes, close and session deactivation reset
 continuations and cancel obsolete reads. Conversation scope retains its literal pages.
+An expired continuation or changed horizon produces `status: "restart_required"`.
+The UI discards that cursor, explains the expired window and offers **Start fresh
+search**, an explicit return to the newest window with the same query/options.
+Backend cursor rejection, native issuer-key expiration, plugin re-registration and
+unavailable ranked capability during continuation share this recovery. Ordinary
+transport/read failures retain **Retry** and the current cursor.
 Ranked preview blocks use the shared
 excerpt renderer and native query terms, preserving their original text while
 highlighting the same Unicode terms as excerpts and the destination transcript.
@@ -177,7 +183,11 @@ same newest window. Recency remains the score tie-break.
 Ranked continuations authenticate the original horizon, next descending rowid and
 examined count, bound to directory/project/workspace/session, query, dates,
 technical option and result limit. HMAC-authenticated tokens use process-local
-secrets; restarting their issuer requires a fresh search. A metadata-only bounded
+secrets; restarting their issuer requires a fresh search. The horizon also carries
+the SHA-256 identity of its message ID. Point reads verify that identity at the
+start of each continuation and immediately before publication; a deleted/replaced
+horizon row requires a fresh search so SQLite rowid reuse cannot admit new messages
+into an older window. A metadata-only bounded
 lookahead checks for older owned rows. A lookahead deadline retains a conservative
 continuation, allowing the next bounded read to resolve a sparse foreign tail.
 Ownership revalidation and the final physical root fence guard cursor publication.
@@ -200,8 +210,12 @@ it against the exact mask/judge across Unicode case forms, escapes and surrogate
 pairs, including the host's complete ASCII Unicode case crossings.
 
 Only possible matches pay for JSON decoding and the judge's shared readable-part
-extraction. Candidate scans classify raw bytes in the scalar; body reads use the
-bounded SQL text projection. Raw-negative metadata keeps its lightweight
+extraction. With technical content off, raw rows above 64 KiB enter the readable
+SQL projection before the candidate scalar. This bounds JavaScript decoding by
+readable prose even when ignored tool metadata fills a large stored row. Smaller
+rows retain raw byte classification. Technical searches decode the bounded raw
+row, retaining the complete shared readable technical extraction. Body reads use
+the bounded SQL text projection for prose-only queries. Raw-negative metadata keeps its lightweight
 classification; obvious unsupported shapes and attempted decode failures are
 reported as skipped. Native JSON decoding preserves Unicode
 escapes, surrogate pairs, control characters and literal backslashes exactly.

@@ -17,6 +17,8 @@ Opening an empty search does not scan history. Changing query/scope, closing the
 
 Project scans start with up to 16,384 newest stored messages per location. **Search further back** replaces the list with the next older window's best results. The note names the examined range, from the most recent messages to later message ordinals, newest first within each project location. Results are ranked only within that window. Changing query, scope or **Include tools and thinking**, closing search or leaving the session resets the window. New messages are included by starting a fresh search.
 
+If a search window expires or its history changes, **Start fresh search** restarts from the newest messages with the same query and options. A notice explains this recovery. Ordinary read failures keep **Retry**, which retries the current window.
+
 ## Open results and use the timeline {#timeline-navigation}
 
 1. Choose a current-session search result to jump to its surrounding passage.

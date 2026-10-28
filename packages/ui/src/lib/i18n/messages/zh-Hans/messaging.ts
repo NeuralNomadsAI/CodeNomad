@@ -69,6 +69,8 @@ export const messagingMessages = {
   "history.rankedRange": "已检查第 {start} 至 {end} 条消息，各项目位置均从新到旧扫描。结果仅涵盖此窗口。",
   "history.rankedEmpty": "此窗口中未检查任何消息。",
   "history.furtherBack": "搜索更早记录",
+  "history.rankedRestart": "此搜索窗口已过期或历史记录已更改。请从最新消息开始重新搜索。",
+  "history.searchFresh": "开始新搜索",
   "history.rankedExcluded": "项目归属检查排除了部分目录。",
   "history.rankedUnsupported": "此运行环境不支持项目排序搜索。请使用对话内搜索。",
   "history.rankedUnavailable": "不可用",

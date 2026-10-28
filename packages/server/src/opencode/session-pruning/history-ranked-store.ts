@@ -1,7 +1,8 @@
 import type { DatabaseSync } from "node:sqlite"
 import { setImmediate as yieldTurn } from "node:timers/promises"
 import { z } from "zod"
-import { decodeRankedCursor, encodeRankedCursor } from "./history-ranked-cursor"
+import { createHash } from "node:crypto"
+import { decodeRankedCursor, encodeRankedCursor, RankedHistoryRestartError } from "./history-ranked-cursor"
 import type { HistoryScope } from "./history-store"
 import { historyContent, historyScopeSQL, historyTexts, HISTORY_SLICE_MS, MAX_MESSAGE_BYTES, textProjection } from "./history-content"
 import { compareRank, dateBounds, diverseHits, idfWeights, rankedExcerpt, termMask, searchTerms, termScore, textJudge, type Rank } from "./history-ranking"
@@ -13,7 +14,8 @@ export const RANKED_LIMITS = { chunk: 128, messages: 16_384, candidates: 30_000,
 interface Candidate { position: number; messageID: string; sessionID: string; createdAt: number; flags?: boolean[]; score: number }
 type Judged = Rank & { hit: HistoryRankedPage["hits"][number] }
 const continuationSchema = z.object({ through: z.number().int().nonnegative().safe(), before: z.number().int().nonnegative().safe(),
-  examined: z.number().int().nonnegative().safe() }).strict()
+  examined: z.number().int().nonnegative().safe(), sentinel: z.string().length(64) }).strict()
+const messageIdentity = (id: unknown) => createHash("sha256").update(String(id)).digest("hex")
 
 export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, input: HistoryRankedInput, signal: AbortSignal,
   checkDirectory?: CheckRankedDirectory): Promise<HistoryRankedPage> {
@@ -25,8 +27,13 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
     matchedSessions: 0, prefilterBypassed: 0, capped: false, caps: [], exclusions: [], hits: [], sessions: [], examinedBefore: 0, cursor: null }
   const binding = ["ranked-native-1", scope.directory, scope.projectID, scope.workspaceID, scope.sessionID,
     input.query, input.includeTechnical, input.since, input.until, input.limit]
-  const continuation = input.cursor ? continuationSchema.parse(decodeRankedCursor(binding, input.cursor)) : undefined
-  if (continuation && continuation.before > continuation.through) throw new Error("Invalid ranked history horizon")
+  let continuation: z.infer<typeof continuationSchema> | undefined
+  if (input.cursor) {
+    try {
+      continuation = continuationSchema.parse(decodeRankedCursor(binding, input.cursor))
+      if (continuation.before > continuation.through) throw new RankedHistoryRestartError()
+    } catch { throw new RankedHistoryRestartError() }
+  }
   result.examinedBefore = continuation?.examined ?? 0
   if (!terms.length) return result
   const authorize = checkDirectory ?? await rankedDirectoryOwnership(scope.directory, signal)
@@ -41,8 +48,16 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
   const { low, high } = dateBounds(input.since, input.until)
   const dates = `${low === undefined ? "" : " AND m.time_created >= ?"}${high === undefined ? "" : " AND m.time_created < ?"}`
   const scoped = [...params, ...(low === undefined ? [] : [low]), ...(high === undefined ? [] : [high])]
-  // An O(1) global horizon excludes appends without an unyielding scoped join.
-  const through = continuation?.through ?? Number(db.prepare("SELECT coalesce(max(rowid),0) AS maximum FROM session_message").get()?.maximum ?? 0)
+  // Pin the newest row's identity as well as its position: deletion can let
+  // SQLite reuse older rowids. A changed sentinel requires an explicit restart.
+  const horizon = continuation ? undefined : db.prepare("SELECT rowid AS position,id FROM session_message ORDER BY rowid DESC LIMIT 1").get()
+  const through = continuation?.through ?? Number(horizon?.position ?? 0)
+  const sentinel = continuation?.sentinel ?? messageIdentity(horizon?.id)
+  const horizonRow = db.prepare("SELECT id FROM session_message WHERE rowid=?")
+  const validateHorizon = () => {
+    if (through && messageIdentity(horizonRow.get(through)?.id) !== sentinel) throw new RankedHistoryRestartError()
+  }
+  validateHorizon()
   const previous = db.prepare("SELECT coalesce(max(rowid),0) AS position FROM session_message WHERE rowid <= ?")
   const mask = termMask(terms)
   const possible = mayContainHistoryTerms(terms, input.includeTechnical, RANKED_LIMITS.prefilterBytes)
@@ -72,7 +87,8 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
   })
   const rows = db.prepare(`SELECT m.rowid AS position,m.id,m.session_id,m.time_created,s.directory,s.workspace_id,s.title,
     CASE WHEN length(CAST(m.data AS BLOB)) <= ${MAX_MESSAGE_BYTES}
-      THEN codenomad_ranked_mask(CAST(m.data AS BLOB),m.type) ELSE -2 END AS mask
+      THEN codenomad_ranked_mask(CAST(${input.includeTechnical ? "m.data" : `CASE WHEN length(CAST(m.data AS BLOB)) > ${RANKED_LIMITS.prefilterBytes}
+        THEN ${textProjection} ELSE m.data END`} AS BLOB),m.type) ELSE -2 END AS mask
     FROM session_message m CROSS JOIN session_v2 s ON s.id=m.session_id
     WHERE ${where}${dates} AND m.rowid > ? AND m.rowid <= ? ORDER BY m.rowid DESC LIMIT ${RANKED_LIMITS.chunk}`)
   let candidates: Candidate[] = []
@@ -226,10 +242,11 @@ export async function queryRankedHistory(db: DatabaseSync, scope: HistoryScope, 
     result.sessions = []
   }
   signal.throwIfAborted()
+  validateHorizon()
   for (const key of ["scanned", "candidates", "judged", "skipped", "prefilterBypassed"] as const) result[key] = result.sessions.reduce((sum, owner) => sum + owner[key], 0)
   result.matchedSessions = result.sessions.filter(owner => owner.matchedMessages > 0).length
   const ownedIDs = new Set(result.sessions.map(owner => owner.sessionID))
   result.hits = diverseHits(judged.filter(entry => ownedIDs.has(entry.sessionID)), input.limit).map(entry => entry.hit)
-  if (hasOlder && rootOwned) result.cursor = encodeRankedCursor(binding, { through, before, examined: result.examinedBefore + result.scanned })
+  if (hasOlder && rootOwned) result.cursor = encodeRankedCursor(binding, { through, before, sentinel, examined: result.examinedBefore + result.scanned })
   return result
 }

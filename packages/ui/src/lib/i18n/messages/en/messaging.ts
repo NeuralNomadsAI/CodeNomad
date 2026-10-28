@@ -69,6 +69,8 @@ export const messagingMessages = {
   "history.rankedRange": "Messages {start} to {end} examined, newest first per project location. Results cover this window only.",
   "history.rankedEmpty": "No messages examined in this window.",
   "history.furtherBack": "Search further back",
+  "history.rankedRestart": "This search window expired or history changed. Start a fresh search from the newest messages.",
+  "history.searchFresh": "Start fresh search",
   "history.rankedExcluded": "Some directories were excluded by project ownership checks.",
   "history.rankedUnsupported": "Ranked project search is unavailable in this runtime. Use conversation search.",
   "history.rankedUnavailable": "Unavailable",

@@ -17,6 +17,8 @@ Das Öffnen einer leeren Suche durchsucht keinen Verlauf. Änderungen an Begriff
 
 Projektsuchen beginnen bei höchstens 16.384 neuesten gespeicherten Nachrichten je Ort. **Weiter zurück suchen** ersetzt die Liste durch die besten Treffer des nächsten älteren Fensters. Der Hinweis nennt den geprüften Bereich, je Projektort von neu nach alt. Die Rangfolge gilt nur innerhalb dieses Fensters. Änderungen an Suchtext, Bereich oder technischen Inhalten, Schließen der Suche oder Verlassen der Sitzung setzen das Fenster zurück. Eine neue Suche berücksichtigt neue Nachrichten.
 
+Läuft ein Suchfenster ab oder ändert sich sein Verlauf, beginnt **Neue Suche starten** mit denselben Suchbegriffen und Optionen bei den neuesten Nachrichten. Ein Hinweis erklärt die Wiederherstellung. Bei gewöhnlichen Lesefehlern wiederholt **Erneut versuchen** das aktuelle Fenster.
+
 ## Ergebnisse öffnen und Timeline nutzen {#timeline-navigation}
 
 1. Wählen Sie ein Suchergebnis der aktuellen Sitzung, um zur umgebenden Passage zu springen.

@@ -78,7 +78,10 @@ export function registerRankedHistoryRoute(app: FastifyInstance, deps: HistoryRo
             { ...locationRequestOptions(location), signal })
         } catch (error) {
           current()
-          if (missingMethod(error)) { unsupported.add(connection); return { status: "unsupported" } }
+          if (missingMethod(error)) {
+            if (parsed.data.cursor) return { status: "restart_required" }
+            unsupported.add(connection); return { status: "unsupported" }
+          }
           throw error
         }
         current()

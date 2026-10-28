@@ -17,6 +17,8 @@ Abrir una búsqueda vacía no analiza el historial. Cambiar la consulta/el ámbi
 
 La búsqueda empieza por hasta 16 384 mensajes guardados más recientes por ubicación. **Buscar más atrás** sustituye la lista por los mejores resultados de la siguiente ventana anterior. La nota indica el intervalo examinado, del más nuevo al más antiguo por ubicación del proyecto. La clasificación corresponde solo a esa ventana. Cambiar consulta, ámbito o contenido técnico, cerrar la búsqueda o salir de la sesión reinicia la ventana. Una búsqueda nueva incluye los mensajes nuevos.
 
+Si una ventana de búsqueda caduca o su historial cambia, **Iniciar búsqueda nueva** vuelve a los mensajes más recientes con la misma consulta y opciones. Un aviso explica la recuperación. Ante errores de lectura normales, **Reintentar** vuelve a leer la ventana actual.
+
 ## Abrir resultados y usar la línea de tiempo {#timeline-navigation}
 
 1. Elige un resultado de búsqueda de la sesión actual para saltar al pasaje que lo rodea.

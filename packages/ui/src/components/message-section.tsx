@@ -311,6 +311,7 @@ export default function MessageSection(props: MessageSectionProps) {
   const [searchMatches, setSearchMatches] = createSignal<Array<SessionSearchMatch & { sessionId: string }>>([])
   const [searchWorkspace, setSearchWorkspace] = createSignal(false)
   const [rankedSearchResult, setRankedSearchResult] = createSignal<RankedHistoryResult>()
+  const [searchRestartRequired, setSearchRestartRequired] = createSignal(false)
   const [includeTechnical, setIncludeTechnical] = createSignal(false)
   const [scannedSearchMessages, setScannedSearchMessages] = createSignal(0)
   const [searchPageCursor, setSearchPageCursor] = createSignal<string>()
@@ -815,6 +816,7 @@ export default function MessageSection(props: MessageSectionProps) {
   }
 
   function closeSearch() {
+    setSearchRestartRequired(false)
     clearSessionSearchDestination(props.instanceId, props.sessionId)
     setRankedSearchResult(undefined)
     invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
@@ -841,6 +843,7 @@ export default function MessageSection(props: MessageSectionProps) {
     invalidateMessageHistoryTraversal(props.instanceId, props.sessionId)
     searchLocatorAuthority.reset()
     searchGeneration += 1
+    setSearchRestartRequired(false)
     setSearchPageCursor(undefined)
     setRankedSearchResult(undefined)
     setSearchQuery(query)
@@ -1213,6 +1216,7 @@ export default function MessageSection(props: MessageSectionProps) {
     const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
     searchRetryGeneration()
     if (!isActive() || !isSearchOpen() || query.trim().length < SEARCH_MIN_CHARS) {
+      setSearchRestartRequired(false)
       setSearchPageCursor(undefined)
       setNextSearchCursor(null)
       setRankedSearchResult(undefined)
@@ -1221,6 +1225,7 @@ export default function MessageSection(props: MessageSectionProps) {
     }
     // A ranked request is obsolete as soon as input changes, before debounce.
     if (workspace && query !== searchQuery()) return
+    if (untrack(searchRestartRequired)) { setIsSearchPending(false); return }
 
     setIsSearchPending(true)
     setSearchedQuery("")
@@ -1273,7 +1278,14 @@ export default function MessageSection(props: MessageSectionProps) {
       ? findRankedHistoryMatches(instanceId, query, technical, controller.signal, cursor).then(result => {
         if (!isCurrentSearch()) return
         setRankedSearchResult(result)
-        if (result.status === "unsupported") {
+        if (result.status === "restart_required") {
+          batch(() => {
+            setSearchRestartRequired(true)
+            setSearchPageCursor(undefined)
+            setSearchedQuery(query)
+            setIsSearchPending(false)
+          })
+        } else if (result.status === "unsupported") {
           setSearchedQuery(query); setIsSearchPending(false)
         } else publish(result, true)
       })
@@ -1661,12 +1673,12 @@ export default function MessageSection(props: MessageSectionProps) {
                   <div class="window-toolbar history-search-toolbar" data-window-drag-handle>
                     <div class="history-search-options">
                     <select class="selector-input history-search-scope" aria-label={t("history.scope")} value={searchWorkspace() ? "workspace" : "session"}
-                      onChange={event => batch(() => { setSearchPageCursor(undefined); setSearchWorkspace(event.currentTarget.value === "workspace") })}>
+                      onChange={event => batch(() => { setSearchRestartRequired(false); setSearchPageCursor(undefined); setSearchWorkspace(event.currentTarget.value === "workspace") })}>
                       <option value="session">{t("history.session")}</option>
                       <option value="workspace">{t("history.workspace")}</option>
                     </select>
                     <label><input type="checkbox" checked={includeTechnical()} onChange={event => batch(() => {
-                      setSearchPageCursor(undefined); setIncludeTechnical(event.currentTarget.checked)
+                      setSearchRestartRequired(false); setSearchPageCursor(undefined); setIncludeTechnical(event.currentTarget.checked)
                     })} /> {t("history.technical")}</label>
                     </div>
                     <WindowCloseButton onClose={closeSearch} label={t("messageSection.search.closeAriaLabel")} />
@@ -1740,7 +1752,7 @@ export default function MessageSection(props: MessageSectionProps) {
                   <Show when={trimmedSearchQuery().length >= SEARCH_MIN_CHARS && isSearchPending()}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.searching")}</div>
                   </Show>
-                  <Show when={hasMessageSearchAuthority(searchQuery(), searchedQuery()) && !rankedUnsupported()}>
+                  <Show when={hasMessageSearchAuthority(searchQuery(), searchedQuery()) && !rankedUnsupported() && !searchRestartRequired()}>
                     <div class="history-statistics" role="status">
                       {t(searchWorkspace() ? "history.rankedProgress" : "history.searchProgress", { matches: currentSearchMatches().length, messages: scannedSearchMessages() })}
                     </div>
@@ -1762,6 +1774,11 @@ export default function MessageSection(props: MessageSectionProps) {
                       </button>
                     </div>
                   </Show>
+                  <Show when={searchRestartRequired() && hasMessageSearchAuthority(searchQuery(), searchedQuery())}>
+                    <button type="button" class="button-tertiary" onClick={() => batch(() => {
+                      setSearchRestartRequired(false); setSearchPageCursor(undefined); setSearchRetryGeneration(generation => generation + 1)
+                    })}>{t("history.searchFresh")}</button>
+                  </Show>
                   <HistorySearchResults instanceId={props.instanceId} matches={currentSearchMatches()} activeIndex={activeSearchIndex()}
                     showSessions={searchWorkspace()} terms={searchWorkspace() ? rankedHighlightTerms() : undefined} onSelect={selectSearchMatch} />
                   <Show when={skippedSearchMessages()}><div class="history-statistics" role="status">
@@ -1774,7 +1791,7 @@ export default function MessageSection(props: MessageSectionProps) {
                     <button type="button" class="button-tertiary" disabled={isSearchPending()}
                       onClick={() => setSearchPageCursor(nextSearchCursor() ?? undefined)}>{t(searchWorkspace() ? "history.furtherBack" : "history.more")}</button>
                   </Show>
-                  <Show when={isSearchSettled() && !rankedUnsupported() && currentSearchMatches().length === 0}>
+                  <Show when={isSearchSettled() && !rankedUnsupported() && !searchRestartRequired() && currentSearchMatches().length === 0}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>
                   </Show>
                 </div>

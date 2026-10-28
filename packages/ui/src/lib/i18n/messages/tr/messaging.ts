@@ -69,6 +69,8 @@ export const messagingMessages = {
   "history.rankedRange": "Projenin her konumunda yeniden eskiye {start}–{end} arası mesajlar incelendi. Sonuçlar yalnızca bu pencereyi kapsar.",
   "history.rankedEmpty": "Bu pencerede mesaj incelenmedi.",
   "history.furtherBack": "Daha eskiyi ara",
+  "history.rankedRestart": "Bu arama penceresinin süresi doldu veya geçmiş değişti. En yeni mesajlardan yeni bir arama başlatın.",
+  "history.searchFresh": "Yeni arama başlat",
   "history.rankedExcluded": "Proje sahipliği denetimleri bazı dizinleri hariç tuttu.",
   "history.rankedUnsupported": "Bu çalışma ortamında sıralanmış proje araması kullanılamıyor. Konuşma aramasını kullanın.",
   "history.rankedUnavailable": "Kullanılamıyor",

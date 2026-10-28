@@ -69,6 +69,8 @@ export const messagingMessages = {
   "history.rankedRange": "Mensajes {start} a {end} examinados, del más nuevo al más antiguo por ubicación del proyecto. Los resultados solo abarcan esta ventana.",
   "history.rankedEmpty": "No se examinaron mensajes en esta ventana.",
   "history.furtherBack": "Buscar más atrás",
+  "history.rankedRestart": "Esta ventana de búsqueda caducó o el historial cambió. Inicia una búsqueda nueva desde los mensajes más recientes.",
+  "history.searchFresh": "Iniciar búsqueda nueva",
   "history.rankedExcluded": "Se excluyeron algunos directorios al comprobar su pertenencia al proyecto.",
   "history.rankedUnsupported": "La búsqueda clasificada del proyecto no está disponible en este entorno. Use la búsqueda de la conversación.",
   "history.rankedUnavailable": "No disponible",

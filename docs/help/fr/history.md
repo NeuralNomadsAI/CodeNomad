@@ -17,6 +17,8 @@ Ouvrir une recherche vide ne parcourt pas l’historique. Changer la requête/la
 
 L’analyse commence par les 16 384 messages enregistrés les plus récents au maximum par emplacement. **Chercher plus loin dans le passé** remplace la liste par les meilleurs résultats de la fenêtre précédente. La note indique la plage examinée, du plus récent au plus ancien dans chaque emplacement du projet. Le classement porte uniquement sur cette fenêtre. Modifier la requête, la portée ou l’option de contenu technique, fermer la recherche ou quitter la session réinitialise la fenêtre. Une nouvelle recherche inclut les nouveaux messages.
 
+Si une fenêtre de recherche expire ou si son historique change, **Relancer la recherche** repart des messages les plus récents avec la même requête et les mêmes options. Une note explique cette reprise. Pour un échec de lecture ordinaire, **Réessayer** relance la fenêtre actuelle.
+
 ## Ouvrir les résultats et utiliser la chronologie {#timeline-navigation}
 
 1. Choisissez un résultat de la session actuelle pour atteindre le passage qui l’entoure.

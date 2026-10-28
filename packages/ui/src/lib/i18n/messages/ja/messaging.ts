@@ -69,6 +69,8 @@ export const messagingMessages = {
   "history.rankedRange": "メッセージ {start}～{end} 件目を、プロジェクトの各場所で新しい順に確認しました。結果はこの範囲のみが対象です。",
   "history.rankedEmpty": "この範囲ではメッセージを確認していません。",
   "history.furtherBack": "さらに過去を検索",
+  "history.rankedRestart": "検索範囲の有効期限が切れたか、履歴が変更されました。最新のメッセージから新しく検索してください。",
+  "history.searchFresh": "新しく検索を開始",
   "history.rankedExcluded": "プロジェクトの所有権確認により、一部のディレクトリが除外されました。",
   "history.rankedUnsupported": "この実行環境ではプロジェクトのランキング検索を利用できません。会話内検索を使用してください。",
   "history.rankedUnavailable": "利用不可",

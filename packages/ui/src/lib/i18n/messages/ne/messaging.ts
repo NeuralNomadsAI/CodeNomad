@@ -69,6 +69,8 @@ export const messagingMessages = {
   "history.rankedRange": "परियोजनाका प्रत्येक स्थानमा नयाँबाट पुरानोतिर {start} देखि {end} सम्मका सन्देश जाँचिए। नतिजाले यो खण्ड मात्र समेट्छ।",
   "history.rankedEmpty": "यो खण्डमा कुनै सन्देश जाँचिएन।",
   "history.furtherBack": "अझ पुरानो इतिहास खोज्नुहोस्",
+  "history.rankedRestart": "यो खोज खण्डको म्याद सकियो वा इतिहास परिवर्तन भयो। सबैभन्दा नयाँ सन्देशबाट नयाँ खोज सुरु गर्नुहोस्।",
+  "history.searchFresh": "नयाँ खोज सुरु गर्नुहोस्",
   "history.rankedExcluded": "परियोजनाको स्वामित्व जाँच्दा केही फोल्डरहरू हटाइए।",
   "history.rankedUnsupported": "यस रनटाइममा परियोजनाको क्रमबद्ध खोज उपलब्ध छैन। कुराकानीभित्र खोज्नुहोस्।",
   "history.rankedUnavailable": "अनुपलब्ध",

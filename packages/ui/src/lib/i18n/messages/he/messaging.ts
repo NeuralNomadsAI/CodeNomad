@@ -69,6 +69,8 @@ export const messagingMessages = {
   "history.rankedRange": "נבדקו הודעות {start} עד {end}, מהחדשות לישנות בכל מיקום בפרויקט. התוצאות מכסות רק חלון זה.",
   "history.rankedEmpty": "לא נבדקו הודעות בחלון זה.",
   "history.furtherBack": "חיפוש אחורה בזמן",
+  "history.rankedRestart": "חלון החיפוש פג או שההיסטוריה השתנתה. התחילו חיפוש חדש מההודעות החדשות ביותר.",
+  "history.searchFresh": "התחלת חיפוש חדש",
   "history.rankedExcluded": "חלק מהתיקיות הוחרגו בבדיקות השיוך לפרויקט.",
   "history.rankedUnsupported": "חיפוש מדורג בפרויקט אינו זמין בסביבת הריצה הזו. השתמשו בחיפוש בשיחה.",
   "history.rankedUnavailable": "לא זמין",

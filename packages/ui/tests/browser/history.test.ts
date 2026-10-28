@@ -218,3 +218,60 @@ test("ranked requests cancel on query/scope change, dismissal and inactive views
     assert.deepEqual(failures.filter(query => query.startsWith("held-")), ["held-query", "held-scope", "held-close", "held-inactive"])
   } finally { held.forEach(release => release()); await page.close() }
 })
+
+for (const failure of ["http400", "unsupported_storage", "unsupported", "restart_required"]) test(`expired older search restarts explicitly from newest (${failure})`, async () => {
+  const page = await browser.newPage(), reads: any[] = []
+  let expired = false
+  await page.route("**/api/**", async route => {
+    if (!route.request().url().endsWith("/session-history/ranked")) return route.fulfill({ contentType: "application/json", body: "{}" })
+    const input = route.request().postDataJSON(); reads.push(input)
+    if (input.cursor) {
+      expired = true
+      return route.fulfill({ status: failure === "http400" ? 400 : 200, contentType: "application/json", body: JSON.stringify(
+        failure === "http400" ? { error: "Invalid ranked history cursor" }
+          : failure === "unsupported_storage" ? { status: "blocked", reason: "unsupported_storage" } : { status: failure }) })
+    }
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(ranked(expired ? "recovered" : input.query)) })
+  })
+  try {
+    await page.goto(baseUrl); await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByRole("combobox", { name: "Search scope" }).selectOption("workspace")
+    await page.getByRole("searchbox").fill("needle")
+    await page.getByText("Workspace needle answer 40", { exact: true }).waitFor()
+    await page.getByRole("button", { name: "Search further back", exact: true }).click()
+    const fresh = page.getByRole("button", { name: "Start fresh search", exact: true })
+    await fresh.waitFor({ timeout: 2000 })
+    await page.getByText("This search window expired or history changed. Start a fresh search from the newest messages.", { exact: true }).waitFor()
+    assert.equal(reads.length, 2, "expiration never starts an automatic search")
+    assert.equal(await page.locator(".message-search-popover").getByRole("button", { name: "Retry", exact: true }).count(), 0)
+    await fresh.click()
+    await page.getByText("Workspace recovered answer 40", { exact: true }).waitFor()
+    assert.equal(reads.at(-1).cursor, undefined); assert.equal(reads.at(-1).query, "needle")
+    await page.getByText("Most recent 16384 messages examined, newest first per project location.", { exact: true }).waitFor()
+    assert.equal(await fresh.count(), 0)
+  } finally { await page.close() }
+})
+
+test("ordinary older-search failures retry the same continuation", async () => {
+  const page = await browser.newPage(), reads: any[] = []
+  let failed = false
+  await page.route("**/api/**", async route => {
+    if (!route.request().url().endsWith("/session-history/ranked")) return route.fulfill({ contentType: "application/json", body: "{}" })
+    const input = route.request().postDataJSON(); reads.push(input)
+    if (input.cursor && !failed) { failed = true; return route.fulfill({ status: 503, contentType: "application/json", body: '{"error":"Busy"}' }) }
+    return route.fulfill({ contentType: "application/json", body: JSON.stringify(ranked(input.query, Boolean(input.cursor))) })
+  })
+  try {
+    await page.goto(baseUrl); await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.evaluate(() => (window as any).fixture.open())
+    await page.getByRole("combobox", { name: "Search scope" }).selectOption("workspace")
+    await page.getByRole("searchbox").fill("needle")
+    await page.getByText("Workspace needle answer 40", { exact: true }).waitFor()
+    await page.getByRole("button", { name: "Search further back", exact: true }).click()
+    await page.locator(".message-search-popover").getByRole("button", { name: "Retry", exact: true }).click()
+    await page.getByText("Older workspace needle answer 40", { exact: true }).waitFor()
+    assert.equal(reads.length, 3); assert.equal(reads[2].cursor, reads[1].cursor)
+    assert.equal(await page.getByRole("button", { name: "Start fresh search", exact: true }).count(), 0)
+  } finally { await page.close() }
+})

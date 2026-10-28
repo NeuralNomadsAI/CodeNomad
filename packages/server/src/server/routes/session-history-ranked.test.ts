@@ -161,6 +161,34 @@ test("route and real ranked reader return 40 hits per window, exclude appends an
   } finally { db.close(); await f.app.close() }
 })
 
+test("native continuation expiration is a distinct fresh-search result without partial publication", async () => {
+  const f = fixture({ directories: ["/linked", "/repo"] })
+  f.handle(async request => ({ output: request.input.cursor && request.location.directory === "/repo"
+    ? { status: "restart_required" } : { ...page(request.location.directory, request.location.directory), cursor: "native-cursor" } }))
+  try {
+    const first = (await f.app.inject({ method: "POST", url, payload })).json()
+    assert(first.cursor)
+    const second = (await f.app.inject({ method: "POST", url, payload: { ...payload, cursor: first.cursor } })).json()
+    assert.deepEqual(second, { status: "restart_required" })
+  } finally { await f.app.close() }
+})
+
+test("presence re-registration expires a continuation without poisoning fresh-search capability", async () => {
+  const f = fixture()
+  f.handle(async request => {
+    if (request.input.cursor) throw { _tag: "RpcError", type: "rpc.method_not_found" }
+    return { output: { ...page(), cursor: "native-cursor" } }
+  })
+  try {
+    const first = (await f.app.inject({ method: "POST", url, payload })).json()
+    assert(first.cursor)
+    const expired = (await f.app.inject({ method: "POST", url, payload: { ...payload, cursor: first.cursor } })).json()
+    assert.deepEqual(expired, { status: "restart_required" })
+    assert.equal((await f.app.inject({ method: "POST", url, payload })).json().status, "ranked")
+    assert.equal(f.calls.length, 3)
+  } finally { await f.app.close() }
+})
+
 test("unexpected RPC errors and malformed/forged provenance fail closed", async () => {
   const f = fixture()
   try {

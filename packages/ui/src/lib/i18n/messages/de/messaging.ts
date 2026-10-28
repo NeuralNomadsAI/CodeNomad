@@ -69,6 +69,8 @@ export const messagingMessages = {
   "history.rankedRange": "Nachrichten {start} bis {end} geprüft, je Projektort von neu nach alt. Ergebnisse gelten nur für dieses Fenster.",
   "history.rankedEmpty": "Keine Nachrichten in diesem Fenster geprüft.",
   "history.furtherBack": "Weiter zurück suchen",
+  "history.rankedRestart": "Dieses Suchfenster ist abgelaufen oder der Verlauf hat sich geändert. Starten Sie eine neue Suche ab den neuesten Nachrichten.",
+  "history.searchFresh": "Neue Suche starten",
   "history.rankedExcluded": "Einige Verzeichnisse wurden bei der Prüfung der Projektzugehörigkeit ausgeschlossen.",
   "history.rankedUnsupported": "Die sortierte Projektsuche ist in dieser Laufzeit nicht verfügbar. Verwenden Sie die Gesprächssuche.",
   "history.rankedUnavailable": "Nicht verfügbar",

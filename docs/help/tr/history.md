@@ -17,6 +17,8 @@ Boş arama açmak geçmişi taramaz. Sorguyu/kapsamı değiştirmek, pencereyi k
 
 Proje taraması her konumdaki en yeni en fazla 16.384 kayıtlı mesajdan başlar. **Daha eskiyi ara**, listeyi sonraki eski pencerenin en iyi sonuçlarıyla değiştirir. Bildirim, projenin her konumunda yeniden eskiye incelenen aralığı gösterir. Sıralama yalnızca o pencere içinde geçerlidir. Sorgu, kapsam veya teknik içerik değişikliği, aramayı kapatma ya da oturumdan ayrılma pencereyi sıfırlar. Yeni arama yeni mesajları da içerir.
 
+Arama penceresinin süresi dolarsa veya geçmiş değişirse **Yeni arama başlat**, aynı sorgu ve seçeneklerle en yeni mesajlardan başlar. Bildirim bu kurtarmayı açıklar. Olağan okuma hatalarında **Yeniden dene**, geçerli pencereyi tekrar okur.
+
 ## Sonuçları açın ve zaman çizelgesini kullanın {#timeline-navigation}
 
 1. Çevresindeki pasaja atlamak için geçerli oturum arama sonucunu seçin.

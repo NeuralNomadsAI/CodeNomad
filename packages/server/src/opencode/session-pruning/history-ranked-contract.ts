@@ -33,5 +33,6 @@ export const historyRankedPageSchema = z.object({
   }).strict()).max(600),
 }).strict()
 export type HistoryRankedPage = z.infer<typeof historyRankedPageSchema>
-export const historyRankedResultSchema = z.union([historyRankedPageSchema, pruningBlockedSchema])
+export const historyRankedRestartSchema = z.object({ status: z.literal("restart_required") }).strict()
+export const historyRankedResultSchema = z.union([historyRankedPageSchema, pruningBlockedSchema, historyRankedRestartSchema])
 export type HistoryRankedResult = z.infer<typeof historyRankedResultSchema>

@@ -69,6 +69,8 @@ export const messagingMessages = {
   "history.rankedRange": "Messages {start} à {end} examinés, du plus récent au plus ancien par emplacement du projet. Les résultats couvrent uniquement cette fenêtre.",
   "history.rankedEmpty": "Aucun message examiné dans cette fenêtre.",
   "history.furtherBack": "Chercher plus loin dans le passé",
+  "history.rankedRestart": "Cette fenêtre de recherche a expiré ou l’historique a changé. Relancez la recherche à partir des messages les plus récents.",
+  "history.searchFresh": "Relancer la recherche",
   "history.rankedExcluded": "Certains dossiers ont été exclus par les vérifications d’appartenance au projet.",
   "history.rankedUnsupported": "La recherche classée du projet est indisponible avec cet environnement. Utilisez la recherche dans la conversation.",
   "history.rankedUnavailable": "Indisponible",
