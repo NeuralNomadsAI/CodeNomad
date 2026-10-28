@@ -83,13 +83,31 @@ describe("OpenCode data read merge scenarios", () => {
       assert.deepEqual(ids, ["live"], "the invalidated page became authoritative")
       assert.equal(textOf(data, "live"), "BASEXXX", "live text rewound by the exhausted page")
 
-      // The owed trailing read publishes its reconciliation: await the
-      // published page itself, not the next read starting.
+      // The owed trailing read publishes its reconciliation while streaming
+      // keeps reducing — every delta lands on the reducer the moment it
+      // arrives, unlike the dropping mode. Await the published page itself,
+      // then probe; the publication must have happened before the probe.
       const published = Date.now() + 2000
+      let owedDeltas = 0
       while (Date.now() < published
         && !data.session.message.list(sessionId).some((message) => message.id === "history")) {
+        owedDeltas += 1
+        deltaDuring(instanceId, 500 + owedDeltas, "D")
+        assert.ok(textOf(data, "live").endsWith("D".repeat(owedDeltas)),
+          `streaming was dropped while the reconciliation was owed (${owedDeltas} deltas): ${textOf(data, "live")}`)
         await new Promise<void>((resolve) => setTimeout(resolve, 10))
       }
+      assert.ok(owedDeltas > 0, "the reconciliation owed no streaming period")
+      assert.ok(
+        data.session.message.list(sessionId).some((message) => message.id === "history"),
+        "the owed reconciliation never published",
+      )
+      // The publication reached the display through the window-aware
+      // projection: the reconciled terminal state is visible there.
+      const record = messageStoreBus.getOrCreate(instanceId).getMessage("live")
+      const toolPart = Object.values(record?.parts ?? {}).map((part: any) => part.data).find((part: any) => part.type === "tool")
+      assert.equal((toolPart as any)?.state?.status, "completed", "the reconciliation never reached the display")
+
       data = applyOpenCodeDataEvent(instanceId, "/work", {
         id: "quiet-delta", type: "session.text.delta", created: 5000,
         data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "." },

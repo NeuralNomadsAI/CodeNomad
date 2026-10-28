@@ -1630,7 +1630,7 @@ async function loadMessages(
   const historyAuthority = messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId))
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const mutationRevision = getOpenCodeMutationRevision(instanceId, sessionId)
-  const readMarkSnapshot = captureOpenCodeRowSnapshot(instanceId, sessionId)
+  const rowSnapshot = captureOpenCodeRowSnapshot(instanceId, sessionId)
   const ownsLoadState = () => instances().get(instanceId)?.client === instanceClient
     && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
     && sessions().get(instanceId)?.has(sessionId) === true
@@ -1789,7 +1789,7 @@ async function loadMessages(
     if (initialSeed) {
       // Streamed text that arrived inside the initial fetch keeps its live
       // version in both seeds instead of rewinding to the page's snapshot.
-      apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, [...apiMessages].reverse(), readMarkSnapshot).reverse()
+      apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, [...apiMessages].reverse(), rowSnapshot).reverse()
     }
     if (apiMessages.length === 0) {
       if (intent === "older") {
@@ -1883,7 +1883,7 @@ async function loadMessages(
           // The reducer projection needs the same base, or later streaming
           // deltas reduce against rows it never held and the loaded messages
           // freeze at their snapshot text.
-          seedOpenCodeProjectionPage(instanceId, sessionId, session.location.directory, apiMessages, readMarkSnapshot)
+          seedOpenCodeProjectionPage(instanceId, sessionId, session.location.directory, apiMessages)
         }
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
         commitCurrentWindow(nextWindow, intent)

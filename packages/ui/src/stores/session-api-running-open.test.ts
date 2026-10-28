@@ -75,6 +75,14 @@ describe("session-api running-session open", () => {
         assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["msg_1"])
         assert.ok(reads <= 5, `message.list was issued ${reads} times for the initial open`)
 
+        // The display was seeded from the merged page immediately: the
+        // in-window "X" survived the load in the warm case, and the cold
+        // reopen shows the page's base.
+        const loaded = messageStoreBus.getOrCreate(instanceId).getMessage("msg_1")
+        const loadedTexts = Object.values(loaded?.parts ?? {}).map((part: any) => String(part.data?.text ?? ""))
+        assert.ok(loadedTexts.some((text) => text.includes(preArmed ? "BASEX" : "BASE")),
+          `the initial display seed missed the window merge: ${JSON.stringify(loadedTexts)}`)
+
         // The reducer projection holds the same merged base (its in-window
         // "X" kept its live version when the base predated the fetch), so
         // streaming keeps updating the loaded message instead of freezing or

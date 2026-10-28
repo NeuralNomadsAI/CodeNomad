@@ -399,9 +399,10 @@ function mergePageWithSnapshot(
   since: OpenCodeRowSnapshot,
 ): SessionMessageInfo[] {
   const changed = (message: SessionMessageInfo) => since.get(message.id) !== serializeRowForDiff(message)
+  const liveById = new Map(live.map((message) => [message.id, message]))
   const pageIds = new Set(page.map((message) => message.id))
   const merged = page.map((message) => {
-    const row = live.find((candidate) => candidate.id === message.id)
+    const row = liveById.get(message.id)
     return row !== undefined && changed(row) ? row : message
   })
   const appended = live.filter((message) => !pageIds.has(message.id) && !since.has(message.id)).reverse()
@@ -416,14 +417,16 @@ function mergePageWithSnapshot(
 const trailingReadTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const trailingReadRetries = new Map<string, number>()
 
+function cancelTrailingRead(key: string): void {
+  const timer = trailingReadTimers.get(key)
+  if (timer) clearTimeout(timer)
+  trailingReadTimers.delete(key)
+  trailingReadRetries.delete(key)
+}
+
 function clearTrailingReads(prefix: string): void {
-  for (const [key, timer] of trailingReadTimers) {
-    if (!key.startsWith(prefix)) continue
-    clearTimeout(timer)
-    trailingReadTimers.delete(key)
-  }
-  for (const key of trailingReadRetries.keys()) {
-    if (key.startsWith(prefix)) trailingReadRetries.delete(key)
+  for (const key of [...trailingReadTimers.keys()]) {
+    if (key.startsWith(prefix)) cancelTrailingRead(key)
   }
 }
 
@@ -438,14 +441,24 @@ function scheduleTrailingRead(instanceId: string, sessionId: string): void {
     const transcript = transcriptEntries.get(key)
     if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
     transcript.entry.data.session.message.invalidate(sessionId)
-    void transcript.entry.data.session.message.sync(sessionId).catch(() => undefined)
+    void transcript.entry.data.session.message.sync(sessionId)
+      .then(() => {
+        // Publish the reconciled page through the window-aware projection,
+        // which keeps a navigated window's resident membership instead of
+        // replacing it with the SDK page.
+        if (isTranscriptCurrent(instanceId, sessionId, transcript)) {
+          projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data)
+        }
+      })
+      .catch(() => undefined)
   }, delay)
   trailingReadTimers.set(key, timer)
 }
 
+/** A clean read retires the debt: the retry counter and any still-pending
+ * trailing timer for this exact session go away. */
 function retireTrailingReadDebt(instanceId: string, sessionId: string): void {
-  const key = messageRevisionKey(instanceId, sessionId)
-  trailingReadRetries.delete(key)
+  cancelTrailingRead(messageRevisionKey(instanceId, sessionId))
 }
 
 function scheduleAuthoritativeResync(
@@ -926,19 +939,17 @@ export function mergeOpenCodeLoadedPage(
 }
 
 /** Seeds the native projection with a page the caller already holds (a REST
- * load), without a network read and without dropping live events: the page is
- * merged against the load's row snapshot, then the snapshot-served sync
- * writes the rows so later streaming reduces on top. */
+ * load merged against its fetch-start row snapshot), without a network read
+ * and without dropping live events: the snapshot-served sync writes the rows
+ * so later streaming reduces on top. */
 export function seedOpenCodeProjectionPage(
   instanceId: string,
   sessionId: string,
   directory: string,
   messages: SessionMessageInfo[],
-  since?: OpenCodeRowSnapshot,
 ): void {
   const transcript = ensureTranscript(instanceId, sessionId, directory)
-  const merged = mergeOpenCodeLoadedPage(instanceId, sessionId, [...messages].reverse(), since).reverse()
-  void transcript.entry.syncMessages(sessionId, boundedTranscript(merged), () => true)
+  void transcript.entry.syncMessages(sessionId, boundedTranscript(messages), () => true)
 }
 
 // The reduce store mutates message rows in place (Solid `produce`), so list and
@@ -1041,7 +1052,9 @@ export function destroyOpenCodeData(instanceId: string, sessionId?: string): voi
       transcript.entry.dispose()
       transcriptEntries.delete(key)
     }
-    clearTrailingReads(`${instanceId}\0`)
+    // Only this session's owed reconciliation is cancelled; other sessions of
+    // the instance keep theirs.
+    cancelTrailingRead(key)
     // Payload lifetime is shorter than request authority: a pending native page
     // must never see a pre-mutation revision again after idle/eviction. These
     // scalar fences are released on deletion or a fenced instance-generation reset.
