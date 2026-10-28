@@ -56,13 +56,15 @@ function passageJournal(storage: MissionStorage, doc: RecurrenceDocument, passag
       await storage.set(target, value, fence)
     },
     scan: async ({ prefix, after, limit = 100 }) => {
-      if (prefix !== virtual || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Recurrence journal scan conflict")
+      // The whole virtual project, or the passage mission's own range.
+      const range = prefix === virtual ? "/" : prefix === `${virtual}/${missionID}/` ? `/${missionID}/` : undefined
+      if (!range || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Recurrence journal scan conflict")
       const nativeAfter = after === undefined ? undefined : `${physical}${suffix(after)}`
-      const page = await storage.scan({ prefix: `${physical}/`, after: nativeAfter, limit })
+      const page = await storage.scan({ prefix: `${physical}${range}`, after: nativeAfter, limit })
       if (!Array.isArray(page.entries) || page.entries.length > limit) throw new Error("Invalid recurrence journal page")
-      let previous = nativeAfter ?? `${physical}/`
+      let previous = nativeAfter ?? `${physical}${range}`
       const entries = page.entries.map(entry => {
-        if (!entry.key.startsWith(`${physical}/`) || entry.key <= previous) throw new Error("Invalid recurrence journal placement")
+        if (!entry.key.startsWith(`${physical}${range}`) || entry.key <= previous) throw new Error("Invalid recurrence journal placement")
         const key = `${virtual}${entry.key.slice(physical.length)}`
         suffix(key)
         previous = entry.key
