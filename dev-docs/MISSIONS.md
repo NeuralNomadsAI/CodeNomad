@@ -376,7 +376,7 @@ This transport reuses only the automation bridge discovery; automation keeps its
 - One-time creation refusals that provably happen before the native create is
   attempted carry no-effect codes (`creation-unavailable` 503,
   `creation-worktree-deleting` 409, plus the existing capacity/scope codes and a
-  receipt-backed native `mission-limit`): the UI keeps the draft and re-enables
+  receipt-backed native `request-conflict`): the UI keeps the draft and re-enables
   Create. Every later failure stays an exact `creation-uncertain`/codeless hold.
   Recurring creation uses the same classification (`creation-unavailable`,
   `creation-worktree-deleting`, the hold codes, `recurrence-capacity`, 400 and

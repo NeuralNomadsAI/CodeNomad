@@ -9,8 +9,9 @@ import { missionTaskExecutionEvidence } from "./execution-evidence"
 import { missionIsRunning } from "./lifecycle-model"
 import { isCoordinatorNotificationReport } from "./native-report-provenance"
 
-// Native reads per refresh stay bounded however many missions a project keeps: active
-// missions' actors are observed first, then the most recently updated; the rest read as unknown.
+// Native reads per refresh stay bounded however many missions a project keeps: running,
+// then other active missions' actors are observed first, then the most recently updated;
+// the rest read as unknown.
 const MAX_PROJECTED_ACTORS = 160
 const MAX_FAMILY_READS = 2 * (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
 const MAX_FAMILY_SESSIONS = (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
@@ -71,8 +72,10 @@ export async function projectMissionActivity(input: {
     assertCurrent()
     try { return await read() } finally { assertCurrent() }
   }
-  // The snapshot is ordered by most recent update; a stable sort puts active missions first.
-  const missions = [...input.snapshot.missions].sort((left, right) => Number(right.status === "active") - Number(left.status === "active"))
+  // The snapshot is ordered by most recent update; a stable sort puts running missions
+  // first, then the other active ones (prepared, paused).
+  const rank = (mission: MissionSnapshot["missions"][number]) => missionIsRunning(mission) ? 2 : mission.status === "active" ? 1 : 0
+  const missions = [...input.snapshot.missions].sort((left, right) => rank(right) - rank(left))
   const occurrences = missions.flatMap(mission => mission.actors.map(actor => ({ mission, actor })))
   const sessionIDs = [...new Set(occurrences.map(({ actor }) => actor.sessionId))].slice(0, MAX_PROJECTED_ACTORS)
   const missingReports = new Set<string>()

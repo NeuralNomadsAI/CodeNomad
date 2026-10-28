@@ -236,21 +236,29 @@ test("deduplicates bounded native actor and location reads across missions", asy
   assert.equal(locationReads, 1)
 })
 
-test("many missions keep native reads bounded and observe active missions first", async () => {
+test("many missions keep native reads bounded and observe running, then other active missions first", async () => {
   let gets = 0
-  const client = native() as OpenCodeClient & Record<string, unknown>
+  // Both edge actors are natively running: observed ones read as running, unobserved as unknown.
+  const client = native({ active: { prepared_19_6: { type: "running" }, prepared_19_7: { type: "running" } } }) as OpenCodeClient & Record<string, unknown>
   const get = client.session.get
   client.session.get = async (...args: Parameters<typeof get>) => { gets += 1; return get(...args) }
   const base = snapshot([actor("unused")]).missions[0]!
-  // Newest first: 30 completed missions of 8 actors each, then the oldest one still active.
-  const missions: MissionMap[] = Array.from({ length: 30 }, (_, index) => ({ ...base, id: `msn_done_${index}`, status: "completed" as const,
-    actors: Array.from({ length: 8 }, (_, slot) => actor(`done_${index}_${slot}`)), tasks: [] }))
-  missions.push({ ...base, id: "msn_active", actors: [actor("active_worker")], tasks: [task("active_worker")] })
+  // Newest first: 20 prepared and 30 completed missions of 8 actors each, then the oldest one running.
+  const missions: MissionMap[] = [
+    ...Array.from({ length: 20 }, (_, index) => ({ ...base, id: `msn_prepared_${index}`, runState: "prepared" as const,
+      actors: Array.from({ length: 8 }, (_, slot) => actor(`prepared_${index}_${slot}`)), tasks: [] })),
+    ...Array.from({ length: 30 }, (_, index) => ({ ...base, id: `msn_done_${index}`, status: "completed" as const,
+      actors: Array.from({ length: 8 }, (_, slot) => actor(`done_${index}_${slot}`)), tasks: [] })),
+    { ...base, id: "msn_running", actors: [actor("running_worker")], tasks: [task("running_worker")] },
+  ]
   const result = await projectMissionActivity({ client, snapshot: { ...snapshot([]), missions }, workspaceID: "workspace-1", ownsLocation: async () => true })
-  assert.equal(result.missions.length, 31)
+  const state = (id: string, slot = 0) => result.missions.find(item => item.missionId === id)!.actors[slot]!.state
+  assert.equal(result.missions.length, 51)
   assert.equal(gets, 160, "one bounded read budget, however many missions")
-  assert.notEqual(result.missions.find(item => item.missionId === "msn_active")!.actors[0]!.state, "unknown")
-  assert.equal(result.missions.find(item => item.missionId === "msn_done_29")!.actors[0]!.state, "unknown")
+  assert.equal(state("msn_running"), "idle-without-report", "the oldest running mission is observed first")
+  assert.equal(state("msn_prepared_19", 6), "running", "then the other active missions")
+  assert.equal(state("msn_prepared_19", 7), "unknown", "the 161st actor is beyond the budget")
+  assert.equal(state("msn_done_0"), "unknown")
 })
 
 const binding = { generation: 1, parentSessionID: "coordinator", toolCallID: "call-one", parentMessageID: "message-one" }
