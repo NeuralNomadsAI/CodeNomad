@@ -1718,7 +1718,7 @@ export default function MessageSection(props: MessageSectionProps) {
                             ? t("messageSection.search.count.searching")
                           : searchFailed()
                             ? t("messageSection.search.failed")
-                          : rankedUnsupported()
+                          : rankedUnsupported() || searchRestartRequired()
                             ? t("history.rankedUnavailable")
                           : currentSearchMatches().length === 0
                             ? t("messageSection.search.count.none")
