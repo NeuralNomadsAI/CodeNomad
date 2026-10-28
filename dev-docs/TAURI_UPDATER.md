@@ -139,7 +139,12 @@ so slow connections can still fetch large installers. Fully unsigned builds
 produce no update manifest. The release matrix has no Linux arm64 target.
 
 The Linux build requests only `appimage`, with verbose linuxdeploy diagnostics;
-the Linux deb is the Electron build. The Windows NSIS installer is published
+the Linux deb is the Electron build. The AppImage carries only Tauri's generated
+`CodeNomad.desktop`: Tauri runs linuxdeploy without a desktop-file argument, so
+linuxdeploy deploys whichever entry it finds first in `usr/share/applications`.
+Keep the hidden reverse-DNS alias entry (`NoDisplay=true`, deb/rpm only) out of
+`bundle.linux.appimage.files`; packaging rejects an image with more than one root
+desktop entry. The Windows NSIS installer is published
 directly as the download and updater payload, without a ZIP wrapper.
 The CLI minimum is 2.11.5, the first release that records the app version in
 updater signatures' trusted comments; `requireSignedVersion` and publication's
