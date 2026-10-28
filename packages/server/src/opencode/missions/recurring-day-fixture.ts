@@ -61,6 +61,8 @@ export class RecurringDayFixture {
   jobStartFailure: "absent" | "registered" | undefined
   /** Transiently fails a native read of the daily schedule Job when this returns true. */
   failScheduleJobRead: (() => boolean) | undefined
+  /** Throws from a native SQL read matching this (an observation contract failure). */
+  failQuery: ((query: string) => boolean) | undefined
   /** Fresh native first admissions (a re-admitted ID after pruning counts again). */
   admissions = 0
   /** Controlled native I/O boundary; tests may hold admission after coordinator creation. */
@@ -73,6 +75,8 @@ export class RecurringDayFixture {
   readonly shells: unknown[] = []
   readonly background: unknown[] = []
   readonly errors: unknown[] = []
+  /** Native Bus publications (volatile UI invalidations) in order. */
+  readonly publications: Array<{ type: string; data: unknown; location: unknown }> = []
   private handlers = new Map<string, Record<string, Handler>>()
   private hooks: Array<(event: unknown) => Effect.Effect<unknown, unknown>> = []
   private sleepers = new Set<Sleeper>()
@@ -176,6 +180,7 @@ export class RecurringDayFixture {
             && typeof params[0] === "string" && JSON.parse(params[0]).pending) committedPending = true
           return []
         }
+        if (this.failQuery?.(query)) throw new Error("Injected native query failure")
         return statement.all(...params as [])
       }) }) })
     const database = { db: { $client: sql, transaction: <A>(callback: () => Effect.Effect<A, unknown>) => Effect.promise(async () => {
@@ -248,7 +253,8 @@ export class RecurringDayFixture {
       Context.add(tag("@opencode/Shell"), { list: () => Effect.sync(() => this.shells) }))
     this.graph = Context.merge(locationGraph, Context.make(tag("@opencode/storage/Database"), database).pipe(
       Context.add(tag("@opencode/Session"), native), Context.add(tag("@opencode/Job"), job),
-      Context.add(tag("@opencode/Bus"), { publish: () => Effect.void, listen: (listener: (event: unknown) => Effect.Effect<void>) =>
+      Context.add(tag("@opencode/Bus"), { publish: (definition: { type: string }, data: unknown, options: { location: unknown }) =>
+        Effect.sync(() => { this.publications.push({ type: definition.type, data, location: options.location }) }), listen: (listener: (event: unknown) => Effect.Effect<void>) =>
         Effect.sync(() => { this.busListeners.add(listener); return Effect.sync(() => { this.busListeners.delete(listener) }) }) }), Context.add(Clock.Clock, this.clock)))
     const map = await Effect.runPromise(RcMap.make({ idleTimeToLive: Infinity, lookup: () => Effect.sync(() => locationGraph) })
       .pipe(Effect.provideService(Scope.Scope, this.scope)))

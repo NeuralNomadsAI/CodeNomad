@@ -20,7 +20,7 @@ test("Clock advance waits for the woken Job's admission and error publication, n
         await f.create(); await f.control("play")
         if (fail) { f.crash = "before-message"; await f.advance(DUE); f.crash = "before-message" }
         f.beforeAdmission = async () => { entered = true; await held }
-        advancing = f.advance(fail ? DUE + 3_600_000 : DUE).then(() => { returned = true })
+        advancing = f.advance(fail ? DUE + 30_000 : DUE).then(() => { returned = true })
         await f.until(() => entered, "native admission reached")
         // Drain the old fixed flush budget while the native callback is still held.
         await f.flush(); await f.flush()
@@ -286,32 +286,94 @@ test("L2. After a restart, a stopped schedule's pending passage offers Check, wh
   assert.equal(f.starts.length, 1)
 })
 
-test("M. Transient wake failures warn without ending the Job; starting is not uncertain while observed", async t => {
+test("M. A thrown first admission warns at once and retries its same identities on the error backoff", async t => {
+  // A native admission refusal, an observation contract failure (its inbox read throws),
+  // and a lost native ACK: the start was delivered but its receipt was never recorded.
+  for (const failure of ["admission", "observation", "lost-ack"] as const) {
+    await t.test(failure, async () => {
+      const f = await RecurringDayFixture.open()
+      try {
+        await f.create(); await f.control("play")
+        if (failure === "admission") f.crash = "before-message"
+        else if (failure === "lost-ack") f.crash = "after-message"
+        else f.failQuery = query => query.includes("session_inbox")
+        await f.advance(DUE)
+        f.failQuery = undefined
+        const delivered = failure === "lost-ack" ? 1 : 0
+        assert.equal(f.starts.length, delivered)
+        assert.equal(f.admissions, delivered)
+        const before = (await f.document())!.pending!, passage = before.passage
+        assert.equal(before.admission, null, "no admission receipt was recorded")
+        const warned = await f.snapshot()
+        assert.equal(warned.state, "running", "one transient failure does not interrupt scheduling")
+        assert.equal(warned.interruptionReason, undefined)
+        assert.deepEqual(warned.lastError, { code: "admission-failed", at: DUE }, "the first thrown admission warns immediately")
+        // Unconfirmed, never "not started": a missing receipt is no proof of native absence.
+        assert.equal(warned.pending?.status, "uncertain")
+        assert.equal(warned.pending?.reason, "admission-failing")
+        assert.equal(warned.pending?.trigger, "daily")
+        assert.equal(warned.latestResult, null, "nothing is archived as not-started")
+        assert.equal(dailyJobs(f).length, 1)
+        await f.advance(DUE + 29_999)
+        assert.equal(f.starts.length, delivered, "the retry waits for the 30 s error backoff")
+        assert.equal((await f.document())!.pending!.admission, null)
+        await f.advance(DUE + 30_000)
+        const recovered = await f.snapshot()
+        assert.equal(recovered.lastError, undefined, "the next successful wake clears the warning")
+        assert.equal(recovered.pending?.status, "running")
+        assert.equal((await f.document())!.pending!.passage.id, passage.id)
+        assert.deepEqual(f.coordinators.map(s => s.id), [passage.coordinatorSessionID])
+        assert.deepEqual(f.starts.map(m => m.id), [passage.messageID], "the retry admits or reconciles the original start message once")
+        assert.equal(f.admissions, 1)
+        await f.restart()
+        assert.equal((await f.snapshot()).pending?.status, "running", "admitted work is not uncertain")
+      } finally { await f.close() }
+    })
+  }
+})
+
+test("M3. Wake-warning transitions invalidate open views at the current calendar revision", async t => {
   const f = await RecurringDayFixture.open(); t.after(() => f.close())
+  const changes = () => f.publications.filter(event => event.type === "rpc.codenomad.missions.scheduleChanged")
   await f.create(); await f.control("play")
-  f.crash = "before-message"
-  await f.advance(DUE)
-  assert.equal(f.starts.length, 0)
-  const starting = await f.snapshot()
-  assert.equal(starting.state, "running")
-  assert.equal(starting.pending?.status, "starting", "a live Job is still handling the unadmitted passage")
-  assert.equal(starting.pending?.trigger, "daily")
-  f.crash = "before-message"
-  await f.advance(DUE + 3_600_000)
+  let release!: () => void, entered = false
+  const held = new Promise<void>(resolve => { release = resolve })
+  // Held past the reservation's own invalidation and an open view's refresh, then refused.
+  f.beforeAdmission = async () => { entered = true; await held; f.beforeAdmission = undefined; throw new Error("Held native admission refusal") }
+  const advancing = f.advance(DUE)
+  await f.until(() => entered, "native admission reached")
+  const starting = await f.snapshot(), before = changes().length
+  assert.equal(starting.pending?.status, "starting")
+  assert.equal(starting.lastError, undefined)
+  release(); await advancing
   const warned = await f.snapshot()
-  assert.equal(warned.state, "running", "one transient failure does not interrupt scheduling")
-  assert.equal(warned.interruptionReason, undefined)
   assert.equal(warned.lastError?.code, "admission-failed")
-  assert.equal(warned.pending?.status, "uncertain")
-  assert.equal(warned.pending?.reason, "admission-failing")
-  assert.equal(dailyJobs(f).length, 1)
-  await f.advance(DUE + 3_600_000 + 31_000)
-  const recovered = await f.snapshot()
-  assert.equal(recovered.lastError, undefined, "the next successful wake clears the warning")
-  assert.equal(recovered.pending?.status, "running")
-  assert.equal(f.starts.length, 1)
-  await f.restart()
-  assert.equal((await f.snapshot()).pending?.status, "running", "admitted work is not uncertain")
+  assert.equal(warned.revision, starting.revision, "display status never mutates the calendar")
+  assert.equal(changes().length, before + 1, "the warning appearing invalidates the open view")
+  assert.deepEqual(changes().at(-1)!.data, { scheduleID: warned.id, revision: warned.revision })
+  assert.deepEqual(changes().at(-1)!.location, changes()[0]!.location, "published to the schedule's own Location")
+  // An admitted passage whose settlement observation fails, then recovers, with no calendar write between.
+  await f.advance(DUE + 30_000)
+  const admitted = await f.snapshot()
+  assert.equal(admitted.lastError, undefined)
+  assert.equal(admitted.pending?.status, "running")
+  f.failQuery = query => query.includes("session_inbox")
+  const quiet = changes().length
+  await f.advance(DUE + 30_000 + 3_600_000)
+  f.failQuery = undefined
+  const failing = await f.snapshot()
+  assert.equal(failing.lastError?.code, "settlement-failed")
+  assert.equal(failing.revision, admitted.revision)
+  assert.equal(changes().length, quiet + 1)
+  assert.deepEqual(changes().at(-1)!.data, { scheduleID: failing.id, revision: failing.revision })
+  await f.advance(DUE + 60_000 + 3_600_000)
+  const cleared = await f.snapshot()
+  assert.equal(cleared.lastError, undefined)
+  assert.equal(cleared.revision, failing.revision)
+  assert.equal(changes().length, quiet + 2, "clearing the warning also invalidates")
+  assert.deepEqual(changes().at(-1)!.data, { scheduleID: cleared.id, revision: cleared.revision })
+  await f.advance(DUE + 90_000 + 7_200_000)
+  assert.equal(changes().length, quiet + 2, "an unchanged healthy wake publishes nothing")
 })
 
 test("M2. An unadmitted passage without any live observer is uncertain (not observed)", async t => {

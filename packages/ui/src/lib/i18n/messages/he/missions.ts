@@ -3,7 +3,7 @@ export const missionMessages = {
   "missions.recurrence.interruptedError": "התזמון נקטע. בדקו את המצב לפני החידוש.",
   "missions.recurrence.trigger.manual": "הופעל עכשיו",
   "missions.recurrence.pending.checkNeeded": "המעבר הזה אינו במעקב. בדיקת המעבר מתאמת אותו בלי לשלוח אותו שוב.",
-  "missions.recurrence.pending.retrying": "המעבר הזה עדיין לא התחיל. הוא ינוסה שוב אוטומטית עם אותה זהות.",
+  "missions.recurrence.pending.retrying": "לא ניתן היה לאשר את התחלת המעבר הזה. הוא מתואם אוטומטית עם הזהות המקורית שלו.",
   "missions.recurrence.lastError": "הבדיקה המתוזמנת האחרונה נכשלה ב-{time}. היא תנוסה שוב אוטומטית.",
   "missions.recurrence.followedConversations": "שיחות במעקב (לא חובה)",
   "missions.recurrence.selectedConversation": "שיחה נבחרת",

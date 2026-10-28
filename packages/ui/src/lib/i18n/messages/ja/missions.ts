@@ -3,7 +3,7 @@ export const missionMessages = {
   "missions.recurrence.interruptedError": "スケジュールが中断されました。再開する前に状態を確認してください。",
   "missions.recurrence.trigger.manual": "今すぐ実行",
   "missions.recurrence.pending.checkNeeded": "このパッセージは監視されていません。「パッセージを確認」で再送せずに照合します。",
-  "missions.recurrence.pending.retrying": "このパッセージはまだ開始していません。同じ識別子で自動的に再試行されます。",
+  "missions.recurrence.pending.retrying": "このパッセージの開始を確認できませんでした。元の識別子で自動的に照合されます。",
   "missions.recurrence.lastError": "前回のスケジュール確認は {time} に失敗しました。自動的に再試行されます。",
   "missions.recurrence.followedConversations": "参照する会話（任意）",
   "missions.recurrence.selectedConversation": "選択した会話",

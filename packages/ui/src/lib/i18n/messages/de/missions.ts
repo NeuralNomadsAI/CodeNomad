@@ -3,7 +3,7 @@ export const missionMessages = {
   "missions.recurrence.interruptedError": "Zeitplanung unterbrochen. Prüfen Sie den Status vor dem Fortsetzen.",
   "missions.recurrence.trigger.manual": "Jetzt ausgeführt",
   "missions.recurrence.pending.checkNeeded": "Dieser Durchlauf wird nicht beobachtet. „Durchlauf prüfen“ gleicht ihn ab, ohne ihn erneut zu senden.",
-  "missions.recurrence.pending.retrying": "Dieser Durchlauf hat noch nicht begonnen. Er wird automatisch mit derselben Identität erneut versucht.",
+  "missions.recurrence.pending.retrying": "Der Start dieses Durchlaufs konnte nicht bestätigt werden. Er wird automatisch mit seiner ursprünglichen Identität abgeglichen.",
   "missions.recurrence.lastError": "Die letzte geplante Prüfung ist um {time} fehlgeschlagen. Sie wird automatisch wiederholt.",
   "missions.recurrence.followedConversations": "Verfolgte Gespräche (optional)",
   "missions.recurrence.selectedConversation": "Ausgewähltes Gespräch",

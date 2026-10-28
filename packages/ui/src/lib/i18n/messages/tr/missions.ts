@@ -3,7 +3,7 @@ export const missionMessages = {
   "missions.recurrence.interruptedError": "Zamanlama kesintiye uğradı. Sürdürmeden önce durumu kontrol edin.",
   "missions.recurrence.trigger.manual": "Şimdi çalıştırıldı",
   "missions.recurrence.pending.checkNeeded": "Bu geçiş izlenmiyor. Geçişi denetle, onu yeniden göndermeden uzlaştırır.",
-  "missions.recurrence.pending.retrying": "Bu geçiş henüz başlamadı. Aynı kimlikle otomatik olarak yeniden denenir.",
+  "missions.recurrence.pending.retrying": "Bu geçişin başlatılması doğrulanamadı. Özgün kimliğiyle otomatik olarak uzlaştırılır.",
   "missions.recurrence.lastError": "Son zamanlanmış denetim {time} saatinde başarısız oldu. Otomatik olarak yeniden denenir.",
   "missions.recurrence.followedConversations": "Takip edilen konuşmalar (isteğe bağlı)",
   "missions.recurrence.selectedConversation": "Seçili konuşma",

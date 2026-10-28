@@ -3,7 +3,7 @@ export const missionMessages = {
   "missions.recurrence.interruptedError": "Выполнение по расписанию прервано. Проверьте состояние перед возобновлением.",
   "missions.recurrence.trigger.manual": "Запущен вручную",
   "missions.recurrence.pending.checkNeeded": "Этот проход не отслеживается. «Проверить проход» сверяет его без повторной отправки.",
-  "missions.recurrence.pending.retrying": "Этот проход ещё не начался. Он повторяется автоматически с тем же идентификатором.",
+  "missions.recurrence.pending.retrying": "Не удалось подтвердить запуск этого прохода. Он сверяется автоматически с исходным идентификатором.",
   "missions.recurrence.lastError": "Последняя плановая проверка не удалась в {time}. Она повторится автоматически.",
   "missions.recurrence.followedConversations": "Отслеживаемые разговоры (необязательно)",
   "missions.recurrence.selectedConversation": "Выбранный разговор",
