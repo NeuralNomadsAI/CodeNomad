@@ -1874,6 +1874,15 @@ function getPermissionQueueLength(instanceId: string): number {
   return getPermissionQueue(instanceId).length
 }
 
+/** The directory a queued request runs in: its admitted location, else its own or its session's. */
+function getPendingRequestDirectory(instanceId: string, request: { kind: "permission"; payload: PermissionRequest } | { kind: "form"; payload: FormWithLocation }): string | undefined {
+  const remembered = rememberedRequestLocation(request.kind === "permission" ? permissionRequestLocations : formRequestLocations,
+    instanceId, request.payload.id)
+  const sessionId = request.kind === "permission" ? getPermissionSessionId(request.payload) : request.payload.sessionID
+  return (remembered ?? (request.kind === "form" ? request.payload.location : undefined)
+    ?? sessions().get(instanceId)?.get(sessionId ?? "")?.location)?.directory
+}
+
 function hasPendingPermission(instanceId: string, permissionId: string): boolean {
   return getPermissionQueue(instanceId).some((permission) => permission.id === permissionId)
 }
@@ -2395,6 +2404,7 @@ export {
   activePermissionId,
   getPermissionQueue,
   getPermissionQueueLength,
+  getPendingRequestDirectory,
   getPermissionEnqueuedAtForInstance,
   addPermissionToQueue,
   removePermissionFromQueue,

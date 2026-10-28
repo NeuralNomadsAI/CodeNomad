@@ -1,5 +1,5 @@
 import type { Session, SessionRetryState, SessionStatus } from "../types/session"
-import { getInstanceSessionIndicatorStatusCached, sessions } from "./session-state"
+import { getInstanceSessionIndicatorStatusCached, isSessionInWorkspaceScope, sessions } from "./session-state"
 import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility"
 import { createSignal } from "solid-js"
 
@@ -82,7 +82,7 @@ export function getInstanceIdleFadeClass(instanceId: string, now = Date.now(), k
 
   let hasVisibleIdle = false
   for (const session of instanceSessions.values()) {
-    if (!session.id) continue
+    if (!session.id || !isSessionInWorkspaceScope(instanceId, session.id)) continue
     const isFading = Boolean(getSessionIdleFadeClass(instanceId, session.id))
     if (!isFading && !shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) continue
     hasVisibleIdle = true
@@ -156,6 +156,7 @@ export function getInstanceSessionIndicatorStatus(
   }
 
   for (const session of instanceSessions.values()) {
+    if (!isSessionInWorkspaceScope(instanceId, session.id)) continue
     if (session.id && getSessionIdleFadeClass(instanceId, session.id)) {
       return "idle"
     }

@@ -29,7 +29,8 @@ import {
 } from "./session-tree"
 
 export type { SessionThread } from "./session-tree"
-import { getDirectoryOnlyWorktree } from "./worktrees"
+import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
+import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -96,14 +97,6 @@ const autoExpandedSessions = new Map<string, Set<string>>()
 const dismissedActivityReveals = new Map<string, Set<string>>()
 
 export type InstanceSessionIndicatorStatus = "permission" | SessionStatus
-
-type InstanceIndicatorCounts = {
-  permission: number
-  working: number
-  compacting: number
-}
-
-const [instanceIndicatorCounts, setInstanceIndicatorCounts] = createSignal<Map<string, InstanceIndicatorCounts>>(new Map())
 
 const SESSION_PAGE_SIZE = 200
 
@@ -217,118 +210,54 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
-function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingForm">): InstanceSessionIndicatorStatus | "idle" {
-  if (session.pendingPermission || session.pendingForm) {
-    return "permission"
-  }
-  const status = session.status ?? "idle"
-  return status
+// A workspace also holds sessions of nested checkouts of other repositories it
+// owns (an opened parent folder receives their live events). Its list,
+// indicators and notices show the inventory's scope: complete families with a
+// member in the opened folder or a registered worktree. Without a read
+// inventory, and for Git-unavailable folders (which project their own
+// directory), every held session is in scope. The active session's family is
+// always in scope: a session opened explicitly is shown where it was opened.
+const workspaceScopes = new Map<string, { sessions: unknown; worktrees: unknown; active?: string; scope: ReadonlySet<string> }>()
+
+function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | null {
+  const all = sessions()
+  const worktrees = worktreesByInstance().get(instanceId)
+  if (!worktrees || getGitRepoStatus(instanceId) === null || getDirectoryOnlyWorktree(instanceId)) return null
+  const active = activeSessionId().get(instanceId)
+  const cached = workspaceScopes.get(instanceId)
+  if (cached && cached.sessions === all && cached.worktrees === worktrees && cached.active === active) return cached.scope
+  const scope = selectWorkspaceFamilyIds([...(all.get(instanceId)?.values() ?? [])].map((session) => ({
+    id: session.id, parentId: session.parentId, directory: session.location?.directory })),
+  instances().get(instanceId)?.folder ?? "", worktrees, active ? [active] : [])
+  workspaceScopes.set(instanceId, { sessions: all, worktrees, active, scope })
+  return scope
 }
 
-function adjustIndicatorCounts(
-  instanceId: string,
-  previous: InstanceSessionIndicatorStatus | "idle",
-  next: InstanceSessionIndicatorStatus | "idle",
-): void {
-  if (previous === next) return
-
-  const decKey = previous === "idle" ? null : previous
-  const incKey = next === "idle" ? null : next
-
-  setInstanceIndicatorCounts((prev) => {
-    const current = prev.get(instanceId) ?? { permission: 0, working: 0, compacting: 0 }
-    const updated: InstanceIndicatorCounts = { ...current }
-
-    if (decKey) {
-      updated[decKey] = Math.max(0, updated[decKey] - 1)
-    }
-
-    if (incKey) {
-      updated[incKey] = updated[incKey] + 1
-    }
-
-    const hasAny = updated.permission > 0 || updated.working > 0 || updated.compacting > 0
-    if (!hasAny) {
-      if (!prev.has(instanceId)) return prev
-      const nextMap = new Map(prev)
-      nextMap.delete(instanceId)
-      return nextMap
-    }
-
-    const same =
-      current.permission === updated.permission &&
-      current.working === updated.working &&
-      current.compacting === updated.compacting
-    if (same && prev.has(instanceId)) {
-      return prev
-    }
-
-    const nextMap = new Map(prev)
-    nextMap.set(instanceId, updated)
-    return nextMap
-  })
+function isSessionInWorkspaceScope(instanceId: string, sessionId: string): boolean {
+  return getWorkspaceSessionScope(instanceId)?.has(sessionId) ?? true
 }
 
-function recomputeIndicatorCounts(instanceId: string, instanceSessions: Map<string, Session> | undefined): void {
-  if (!instanceSessions || instanceSessions.size === 0) {
-    setInstanceIndicatorCounts((prev) => {
-      if (!prev.has(instanceId)) return prev
-      const next = new Map(prev)
-      next.delete(instanceId)
-      return next
-    })
-    return
-  }
-
-  let permission = 0
-  let working = 0
-  let compacting = 0
-
-  for (const session of instanceSessions.values()) {
-    if (session.pendingPermission || session.pendingForm) {
-      permission += 1
-      continue
-    }
-    const status = session.status ?? "idle"
-    if (status === "compacting") {
-      compacting += 1
-    } else if (status === "working") {
-      working += 1
-    }
-  }
-
-  if (permission === 0 && working === 0 && compacting === 0) {
-    setInstanceIndicatorCounts((prev) => {
-      if (!prev.has(instanceId)) return prev
-      const next = new Map(prev)
-      next.delete(instanceId)
-      return next
-    })
-    return
-  }
-
-  setInstanceIndicatorCounts((prev) => {
-    const current = prev.get(instanceId)
-    if (current && current.permission === permission && current.working === working && current.compacting === compacting) {
-      return prev
-    }
-    const next = new Map(prev)
-    next.set(instanceId, { permission, working, compacting })
-    return next
-  })
-}
+// The tab's aggregate over the sessions in scope, derived once per sessions
+// snapshot and scope, so every publication and scope change is reflected.
+const indicatorStatuses = new Map<string, { sessions: unknown; scope: ReadonlySet<string> | null; status: InstanceSessionIndicatorStatus }>()
 
 export function getInstanceSessionIndicatorStatusCached(instanceId: string): InstanceSessionIndicatorStatus {
-  const counts = instanceIndicatorCounts().get(instanceId)
-  if (!counts) return "idle"
-  if (counts.permission > 0) return "permission"
-  if (counts.compacting > 0) return "compacting"
-  if (counts.working > 0) return "working"
-  return "idle"
-}
-
-export function syncInstanceSessionIndicator(instanceId: string, instanceSessions?: Map<string, Session>): void {
-  recomputeIndicatorCounts(instanceId, instanceSessions ?? sessions().get(instanceId))
+  const all = sessions()
+  const scope = getWorkspaceSessionScope(instanceId)
+  const cached = indicatorStatuses.get(instanceId)
+  if (cached && cached.sessions === all && cached.scope === scope) return cached.status
+  let status: InstanceSessionIndicatorStatus = "idle"
+  for (const session of all.get(instanceId)?.values() ?? []) {
+    if (scope && !scope.has(session.id)) continue
+    if (session.pendingPermission || session.pendingForm) {
+      status = "permission"
+      break
+    }
+    if (session.status === "compacting") status = "compacting"
+    else if (session.status === "working" && status === "idle") status = "working"
+  }
+  indicatorStatuses.set(instanceId, { sessions: all, scope, status })
+  return status
 }
 
 function clearLoadedFlag(instanceId: string, sessionId: string) {
@@ -592,10 +521,6 @@ function pruneDraftPrompts(instanceId: string, validSessionIds: Set<string>) {
 }
 
 function withSession(instanceId: string, sessionId: string, updater: (session: Session) => void | boolean) {
-  let previousBucket: InstanceSessionIndicatorStatus | "idle" | null = null
-  let nextBucket: InstanceSessionIndicatorStatus | "idle" | null = null
-  let didUpdate = false
-
   setSessions((prev) => {
     const instanceSessions = prev.get(instanceId)
     if (!instanceSessions) return prev
@@ -603,27 +528,18 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
     const current = instanceSessions.get(sessionId)
     if (!current) return prev
 
-    previousBucket = getIndicatorBucket(current)
-
     const updatedSession: Session = { ...current }
     const result = updater(updatedSession)
     if (result === false) {
       return prev
     }
 
-    nextBucket = getIndicatorBucket(updatedSession)
-
     instanceSessions.set(sessionId, updatedSession)
-    didUpdate = true
 
     const next = new Map(prev)
     next.set(instanceId, instanceSessions)
     return next
   })
-
-  if (didUpdate && previousBucket && nextBucket) {
-    adjustIndicatorCounts(instanceId, previousBucket, nextBucket)
-  }
 }
 
 function setSessionPending(
@@ -667,7 +583,6 @@ function reconcileSessionPendingState(
     next.set(instanceId, reconciled)
     return next
   })
-  syncInstanceSessionIndicator(instanceId)
 }
 
 function markSessionIdleSeen(instanceId: string, sessionId: string): void {
@@ -967,7 +882,7 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
 }
 
 function getSessionThreads(instanceId: string): SessionThread[] {
-  return buildSessionThreads(instanceId, getSessionListIds(instanceId))
+  return buildSessionThreads(instanceId, getSessionListIds(instanceId).filter((id) => isSessionInWorkspaceScope(instanceId, id)))
 }
 
 function getSessionSearchSessions(instanceId: string): Session[] {
@@ -1345,6 +1260,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
 export {
   sessions,
   setSessions,
+  isSessionInWorkspaceScope,
   activeSessionId,
   activeParentSessionId,
   agents,
