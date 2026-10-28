@@ -333,6 +333,7 @@ export default function MessageSection(props: MessageSectionProps) {
     ? searchWorkspace() ? rankedHighlightTerms() : debouncedSearchQuery()
     : destinationSearch() ? rankedSearchTerms(destinationSearch()!.query) : "")
   const rankedUnsupported = () => searchWorkspace() && rankedSearchResult()?.status === "unsupported"
+  const rankedExaminedBefore = () => { const result = rankedSearchResult(); return result?.status === "ranked" ? result.examinedBefore : 0 }
 
   const activeSearchMatch = createMemo(() => {
     const matches = currentSearchMatches()
@@ -1212,6 +1213,9 @@ export default function MessageSection(props: MessageSectionProps) {
     const instanceGeneration = getOpenCodeInstanceGeneration(props.instanceId)
     searchRetryGeneration()
     if (!isActive() || !isSearchOpen() || query.trim().length < SEARCH_MIN_CHARS) {
+      setSearchPageCursor(undefined)
+      setNextSearchCursor(null)
+      setRankedSearchResult(undefined)
       setIsSearchPending(false)
       return
     }
@@ -1242,6 +1246,7 @@ export default function MessageSection(props: MessageSectionProps) {
       && getOpenCodeMutationRevision(instanceId, sessionId) === mutationRevision
       && debouncedSearchQuery() === query
       && searchWorkspace() === workspace
+      && includeTechnical() === technical
     const publish = (page: Pick<Awaited<ReturnType<typeof findHistoryMatches>>, "hits" | "cursor" | "scanned" | "skipped">, settled: boolean) => {
       if (!isCurrentSearch()) return
       if (frame !== undefined) cancelAnimationFrame(frame)
@@ -1265,12 +1270,12 @@ export default function MessageSection(props: MessageSectionProps) {
       })
     }
     const request = workspace
-      ? findRankedHistoryMatches(instanceId, query, technical, controller.signal).then(result => {
+      ? findRankedHistoryMatches(instanceId, query, technical, controller.signal, cursor).then(result => {
         if (!isCurrentSearch()) return
         setRankedSearchResult(result)
         if (result.status === "unsupported") {
           setSearchedQuery(query); setIsSearchPending(false)
-        } else publish({ ...result, cursor: null }, true)
+        } else publish(result, true)
       })
       : findHistoryMatches(instanceId, {
         sessionID: sessionId, query, purpose: "search", includeTechnical: technical, cursor,
@@ -1741,7 +1746,9 @@ export default function MessageSection(props: MessageSectionProps) {
                     </div>
                   </Show>
                   <For each={searchWorkspace() && hasMessageSearchAuthority(searchQuery(), searchedQuery()) ? rankedHistoryNoticeKeys(rankedSearchResult()) : []}>
-                    {key => <div class="history-statistics history-ranked-note" role="status">{t(key)}</div>}
+                    {key => <div class="history-statistics history-ranked-note" role="status">{t(key, {
+                      messages: scannedSearchMessages(), start: rankedExaminedBefore() + 1, end: rankedExaminedBefore() + scannedSearchMessages(),
+                    })}</div>}
                   </For>
                   <Show when={searchFailed()}>
                     <div class="modal-empty-state message-search-empty">
@@ -1763,9 +1770,9 @@ export default function MessageSection(props: MessageSectionProps) {
                   <Show when={previewSearchMatch()}>{match => <HistoryMessagePreview instanceId={props.instanceId}
                     sessionId={match().sessionId} messageId={match().messageId}
                     highlight={searchWorkspace() && activeSearchMatch() ? { query: debouncedSearchQuery(), match: activeSearchMatch()! } : undefined} />}</Show>
-                  <Show when={!searchWorkspace() && nextSearchCursor()}>
+                  <Show when={nextSearchCursor() && hasMessageSearchAuthority(searchQuery(), searchedQuery())}>
                     <button type="button" class="button-tertiary" disabled={isSearchPending()}
-                      onClick={() => setSearchPageCursor(nextSearchCursor() ?? undefined)}>{t("history.more")}</button>
+                      onClick={() => setSearchPageCursor(nextSearchCursor() ?? undefined)}>{t(searchWorkspace() ? "history.furtherBack" : "history.more")}</button>
                   </Show>
                   <Show when={isSearchSettled() && !rankedUnsupported() && currentSearchMatches().length === 0}>
                     <div class="modal-empty-state message-search-empty">{t("messageSection.search.noVisibleMatches")}</div>

@@ -5,10 +5,10 @@ import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { refreshSessionContent } from "./session-pruning-events"
 import type { RankedHistoryResult } from "../../../server/src/server/routes/session-history-ranked-contract"
 
-export async function findRankedHistoryMatches(instanceId: string, query: string, includeTechnical: boolean, signal: AbortSignal) {
+export async function findRankedHistoryMatches(instanceId: string, query: string, includeTechnical: boolean, signal: AbortSignal, cursor?: string) {
   signal.throwIfAborted()
   const generation = getOpenCodeInstanceGeneration(instanceId)
-  const result = await serverApi.queryRankedHistory(instanceId, { version: 1, query, includeTechnical, limit: 20 }, signal)
+  const result = await serverApi.queryRankedHistory(instanceId, { version: 1, query, includeTechnical, limit: 40, ...(cursor ? { cursor } : {}) }, signal)
   signal.throwIfAborted()
   if (generation !== getOpenCodeInstanceGeneration(instanceId)) throw new Error(tGlobal("session.pruning.conflict"))
   if (result.status === "blocked") throw new Error(tGlobal(`session.pruning.${result.reason}`))
@@ -18,7 +18,8 @@ export async function findRankedHistoryMatches(instanceId: string, query: string
 export function rankedHistoryNoticeKeys(result: RankedHistoryResult | undefined): string[] {
   if (result?.status === "unsupported") return ["history.rankedUnsupported"]
   if (result?.status !== "ranked") return []
-  return [...(result.capped ? ["history.rankedCapped"] : []), ...(result.exclusions.length ? ["history.rankedExcluded"] : [])]
+  return [result.scanned ? result.examinedBefore ? "history.rankedRange" : "history.rankedRecent" : "history.rankedEmpty",
+    ...(result.capped ? ["history.rankedCapped"] : []), ...(result.exclusions.length ? ["history.rankedExcluded"] : [])]
 }
 
 export async function readHistoryPage(instanceId: string, input: HistoryQuery, signal?: AbortSignal): Promise<HistoryPage> {

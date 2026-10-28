@@ -3,9 +3,12 @@ import { test } from "node:test"
 import Fastify from "fastify"
 import { registerSessionHistoryRoutes } from "./session-history"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { DatabaseSync } from "node:sqlite"
+import { queryRankedHistory, RANKED_LIMITS } from "../../opencode/session-pruning/history-ranked-store"
+import { historyRankedInputSchema } from "../../opencode/session-pruning/history-ranked-contract"
 
 const url = "/api/workspaces/w/session-history/ranked"
-const payload = { version: 1, query: "needle", limit: 20 }
+const payload = { version: 1, query: "needle", limit: 40 }
 function page(directory = "/repo", id = "s") {
   return { version: 1, status: "ranked", scanned: 1, candidates: 1, judged: 1, skipped: 0, prefilterBypassed: 0,
     matchedSessions: 1, capped: false, caps: [], exclusions: [],
@@ -55,7 +58,7 @@ test("ranked route validates all provenance and strips foreign hits, titles, loc
     assert(!JSON.stringify(response).includes("clone")); assert(!JSON.stringify(response).includes("title"))
     assert(f.ownership.includes("/repo/independent-clone"))
     assert.equal(f.calls[0].method, "historyRanked"); assert.equal(f.calls[0].rpcID, "codenomad.session-pruning")
-    assert.equal(f.calls[0].input.limit, 20)
+    assert.equal(f.calls[0].input.limit, 40)
   } finally { await f.app.close() }
 })
 
@@ -73,7 +76,7 @@ test("ranked route merges disjoint authorized roots without regrouping repeated 
     assert.deepEqual(f.calls.map(call => call.location.directory), ["/linked", "/repo"])
     assert.deepEqual(response.hits.map((hit: any) => hit.sessionID), ["/linked", "/repo", "/linked", "/repo"])
     assert.equal(response.matchedSessions, 2)
-    assert.equal(response.cursor, undefined)
+    assert.equal(response.cursor, null)
   } finally { await f.app.close() }
 })
 
@@ -88,6 +91,74 @@ test("method absence is explicit and cached only for its connection, without lit
     assert.equal(f.calls.length, 2)
     assert(f.calls.every(call => call.method === "historyRanked"))
   } finally { await f.app.close() }
+})
+
+test("recent-window caps preserve owned coverage counts while cap internals stay broker-only", async () => {
+  const f = fixture()
+  const output = page()
+  output.scanned = output.sessions[0].scanned = 16_384
+  output.candidates = output.sessions[0].candidates = 1000
+  output.judged = output.sessions[0].judged = output.sessions[0].matchedMessages = 600
+  f.handle(async () => ({ output: { ...output, capped: true, caps: ["message_limit", "judge_limit"] } }))
+  try {
+    const result = (await f.app.inject({ method: "POST", url, payload })).json()
+    assert.equal(result.status, "ranked")
+    assert.equal(result.capped, true)
+    assert.equal(result.scanned, 16_384)
+    assert.equal(result.caps, undefined)
+    assert.equal(result.sessions, undefined)
+  } finally { await f.app.close() }
+})
+
+test("broker cursors bind query, options, workspace, inventory and connection; each opaque location resumes alone", async () => {
+  const directories = ["/repo", "/linked"], f = fixture({ directories })
+  f.handle(async input => ({ output: { ...page(input.location.directory, input.location.directory),
+    cursor: input.location.directory === "/repo" && !input.input.cursor ? "opaque-native-page" : null } }))
+  const request = (extra = {}, path = url) => f.app.inject({ method: "POST", url: path, payload: { ...payload, ...extra } })
+  try {
+    const first = (await request()).json()
+    assert(first.cursor); assert.equal(first.examinedBefore, 0); assert.equal(first.scanned, 2)
+    assert(!first.cursor.includes("/repo"))
+    const before = f.calls.length
+    for (const extra of [{ query: "other" }, { includeTechnical: true }, { since: "2026-01-01" }, { until: "2026-01-02" }, { limit: 20 },
+      { cursor: `x${first.cursor}` }, { cursor: `${first.cursor}.extra` }]) {
+      assert.equal((await request({ cursor: first.cursor, ...extra })).statusCode, 400)
+    }
+    assert.equal((await request({ cursor: first.cursor }, url.replace("/w/", "/foreign/"))).statusCode, 400)
+    assert.equal(f.calls.length, before, "invalid cursors dispatch no RPC")
+    const second = (await request({ cursor: first.cursor })).json()
+    assert.equal(second.examinedBefore, 2); assert.equal(second.scanned, 1); assert.equal(second.cursor, null)
+    assert.equal(f.calls.at(-1).location.directory, "/repo")
+    assert.equal(f.calls.at(-1).input.cursor, "opaque-native-page")
+    assert.equal(f.calls.length, before + 1, "exhausted location stays exhausted")
+    directories.push("/new-worktree")
+    assert.equal((await request({ cursor: first.cursor })).statusCode, 400)
+    directories.pop(); f.replace(true)
+    assert.equal((await request({ cursor: first.cursor })).statusCode, 400)
+  } finally { await f.app.close() }
+})
+
+test("route and real ranked reader return 40 hits per window, exclude appends and preserve the older range", async () => {
+  const db = new DatabaseSync(":memory:"), f = fixture()
+  db.exec(`CREATE TABLE session_v2(id TEXT PRIMARY KEY,directory TEXT,workspace_id TEXT,project_id TEXT,title TEXT);
+    CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,time_created INTEGER,data TEXT);
+    INSERT INTO session_v2 VALUES ('s','/repo',NULL,'p','Synthetic'); BEGIN;`)
+  const insert = db.prepare("INSERT INTO session_message VALUES (?, 's', 'user', ?, ?)")
+  for (let n = 0; n < RANKED_LIMITS.messages + 45; n++) insert.run(`m-${n}`, n, '{"text":"needle"}')
+  db.exec("COMMIT")
+  f.handle(async request => ({ output: await queryRankedHistory(db, { directory: "/repo", projectID: "p" },
+    historyRankedInputSchema.parse(request.input), new AbortController().signal, async () => "owned") }))
+  try {
+    const first = (await f.app.inject({ method: "POST", url, payload })).json()
+    assert.equal(first.hits.length, 40); assert.equal(first.judged, 600); assert(first.cursor)
+    insert.run("appended", 999999, '{"text":"needle"}')
+    const second = (await f.app.inject({ method: "POST", url, payload: { ...payload, cursor: first.cursor } })).json()
+    assert.equal(second.status, "ranked"); assert.equal(second.hits.length, 40)
+    assert.equal(second.scanned, 45); assert.equal(second.examinedBefore, RANKED_LIMITS.messages)
+    assert.equal(second.cursor, null)
+    assert(second.hits.every((hit: any) => Number(hit.messageID.slice(2)) < 45))
+    assert.equal(second.hits[0].messageID, "m-44")
+  } finally { db.close(); await f.app.close() }
 })
 
 test("unexpected RPC errors and malformed/forged provenance fail closed", async () => {
@@ -122,7 +193,7 @@ test("ranked read cannot survive connection/root changes or delete-and-unblock A
 test("ranked reads reject active deletion and invented input scope", async () => {
   const f = fixture()
   try {
-    for (const extra of [{ sessionID: "s" }, { directory: "/other" }, { cursor: "x" }, { sql: "select" }, { limit: 21 }, { version: 2 }]) {
+    for (const extra of [{ sessionID: "s" }, { directory: "/other" }, { cursor: "x" }, { sql: "select" }, { limit: 41 }, { version: 2 }]) {
       assert.equal((await f.app.inject({ method: "POST", url, payload: { ...payload, ...extra } })).statusCode, 400)
     }
     await f.fence.run("/repo", ["/repo"], async () => {

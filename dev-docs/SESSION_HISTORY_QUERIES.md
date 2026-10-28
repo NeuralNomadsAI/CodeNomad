@@ -5,7 +5,7 @@
 The non-modal transcript search window (Ctrl/Cmd+F or the header toggle) can
 query the entire session or workspace. Conversation scope uses a literal phrase
 and chronological result pages. Workspace scope sends one debounced ranked request
-and displays up to 20 results in returned order, with all query terms highlighted.
+and displays up to 40 results in returned order, with all query terms highlighted.
 Opening a ranked result in its conversation carries those term highlights to the
 destination transcript. The command palette's
 remove-tools-and-reasoning command plans against the same stored history. Navigation:
@@ -104,12 +104,21 @@ Before publication every contributing location is revalidated and all displayed
 counts are reconstructed from owned provenance. Native titles, locations, session
 provenance and technical cap sources stay inside the broker.
 
-Each disjoint authorized root supplies up to 20 native ranked hits. The broker
+Each disjoint authorized root supplies up to 40 native ranked hits. The broker
 interleaves local rank ordinals in stable directory order, takes each session's
 first hit, then fills repeats by that order. A request covers at most 32 disjoint
 roots under one 15-second deadline; omitted roots set the capped notice. The UI
 shows one bounded list with best-result progress and compact cap/exclusion notes.
-Pagination belongs to conversation scope. Ranked preview blocks use the shared
+**Search further back** replaces it with the next older window's best 40 results.
+Each location examines at most 16,384 more owned messages, retaining the first
+request's newest rowid horizon. Windows have independent IDF weights and rank;
+the UI displays only the current window rather than comparing scores across windows.
+The note names the most recent examined count on the first window and examined
+message ordinals on later windows. Across locations these ordinals count the sum
+of owned messages examined so far, with newest-first traversal within each location.
+Query, scope and technical-toggle changes, close and session deactivation reset
+continuations and cancel obsolete reads. Conversation scope retains its literal pages.
+Ranked preview blocks use the shared
 excerpt renderer and native query terms, preserving their original text while
 highlighting the same Unicode terms as excerpts and the destination transcript.
 Preview and Open in session retain their bounded reads and navigation fences;
@@ -159,12 +168,42 @@ JavaScript judges complete Unicode words, including accented French text. Option
 defaults to 10 and accepts 1–20. Readable text is the default;
 `includeTechnical: true` also examines the shared history tool/reasoning projection.
 
-The rowid-horizon scan covers the scope in chunks of at most 1,000 rows. It yields
-between chunks and after roughly 40 ms within processing, observing cancellation.
-The deterministic JavaScript scalar on the owned read-only SQLite connection
-uses the judge's readable projection and shared part extraction. Text-only queries
-use the same SQLite projection as body reads; technical queries additionally
-extract readable tool/reasoning sources. Native JSON decoding preserves Unicode
+The scan starts at a captured global rowid horizon and walks stored messages
+newest first. Appends after the horizon are excluded. At most 16,384 owned messages
+form its deterministic recent window; unusually expensive work can still end it
+early under the time budget. Repeated idle searches therefore normally cover the
+same newest window. Recency remains the score tie-break.
+
+Ranked continuations authenticate the original horizon, next descending rowid and
+examined count, bound to directory/project/workspace/session, query, dates,
+technical option and result limit. HMAC-authenticated tokens use process-local
+secrets; restarting their issuer requires a fresh search. A metadata-only bounded
+lookahead checks for older owned rows. A lookahead deadline retains a conservative
+continuation, allowing the next bounded read to resolve a sparse foreign tail.
+Ownership revalidation and the final physical root fence guard cursor publication.
+
+Candidate statements pin the message table as the outer loop with `CROSS JOIN`,
+seek descending integer rowids and cover at most 128 raw rowid positions. A cheap
+predecessor seek skips deletion holes; wholly foreign ranges still yield and
+continue to older owned messages. The plan returns each classified row
+incrementally in integer-rowid order.
+The loop yields between ranges and after roughly 40 ms, observing cancellation.
+
+The scalar receives bounded raw UTF-8 bytes, avoiding JS strings and JSON work for
+negative rows. Each term supplies a necessary ASCII anchor (at most two letters,
+digits or underscores) with its ASCII case forms; Kelvin/long-s crossings and
+escaped letters/surrogates conservatively enter exact decoding. Wholly non-ASCII
+terms and technical numeric/null canonicalization also retain exact decoding.
+Prose control escapes such as ANSI `\u001b` preserve raw word anchors. Exact decoded
+masks exclusively supply presence bits, scores and document frequencies. Property checks compare
+it against the exact mask/judge across Unicode case forms, escapes and surrogate
+pairs, including the host's complete ASCII Unicode case crossings.
+
+Only possible matches pay for JSON decoding and the judge's shared readable-part
+extraction. Candidate scans classify raw bytes in the scalar; body reads use the
+bounded SQL text projection. Raw-negative metadata keeps its lightweight
+classification; obvious unsupported shapes and attempted decode failures are
+reported as skipped. Native JSON decoding preserves Unicode
 escapes, surrogate pairs, control characters and literal backslashes exactly.
 An escaped `/giu` alternation scans decoded strings for overlapping substrings;
 complete-word boundaries belong to the body judge.
@@ -191,26 +230,41 @@ first within each known/unknown group, then score, then message recency. Results
 then fill by rank without duplicating messages. Excerpts, at most 320 characters,
 center on the rarest matched term in the selected readable part.
 
-Collection stops at 30,000 candidates, 600 contributing sessions or approximately
+Collection stops at the 16,384-message recent window, 30,000 candidates,
+600 contributing sessions or approximately
 1.5 seconds; the complete
 collection/body-judging operation has a 2-second processing budget; the bounded
 ownership validation completes independently so verified partial results survive
 judge-budget exhaustion. A running SQLite statement, JSON parse
 or single-message judge finishes first. The response identifies collection,
 judgement and time caps, so match counts and ranking explicitly describe the
-examined subset. Oversized and unsupported rows contribute to `skipped`.
+examined subset. The capped note reports how many recent messages were examined,
+newest first per project location; the agent tool also names the cap reasons.
+`message_limit` identifies the fixed recent-window boundary. Oversized and
+unsupported decoded rows contribute to `skipped`.
 The verified session count covers all matched judged messages, including matches
 beyond the returned hit limit. The compact tool output gives that count and cap
 notice, followed by date, folder name, session ID, title, role and excerpt per hit.
 It treats excerpts as untrusted data and gives the native full-session read command.
 
 The plugin also exposes `historyRanked` with required `version: 1`, the same query
-options, ranked hits carrying the history hit fields plus `createdAt`, and bounded
+options, an optional opaque continuation, a 1–40 result limit (default 10), ranked
+hits carrying the history hit fields plus `createdAt`, and bounded
 per-session directory/workspace/count provenance with titles for every scanned
 session, including rows that produce no match. Per-session candidate, judged and
 matched-message counts let an ownership-validating broker reconstruct totals.
 Its discriminant is `status: "ranked"`; blocked reads use the
 shared pruning blocked result. This RPC is available to native callers. The
+600-body judge budget and 320-character excerpts bound each 40-hit response.
+The agent tool validates its own 1–20 limit (default 10) and query-only inputs.
+The broker requests 40 per location, authenticates its own opaque envelope of
+native per-location cursors against workspace, authorized directory inventory,
+query/options and connection identity, and resumes only locations with remaining
+history. The public `cursor` and `examinedBefore` retain continuation state and
+owned examined ordinals. Per-request provenance reconstruction and all ownership,
+deletion, cancellation and connection fences apply to each window. Tokens contain
+binding digests and opaque native cursors; native paths remain broker-only.
+The
 CodeNomad HTTP broker uses the ranked method for workspace search and the literal
 history contract for conversation search; generic RPC proxy access stays closed.
 
@@ -264,7 +318,13 @@ native Windows, browser rendering and other platforms as separate validation cla
 cost (synthetic in-memory database, excluding broker/RPC) with a Git revision,
 HEAD by default.
 
+`node scripts/benchmark-ranked-history.mjs [baseline-ref]` measures three searches
+per implementation on 40,000 synthetic multiline assistant/tool messages with
+accents, ANSI output and native-style project/session indexes. It reports coverage,
+rows/second, exact-decode count, first-row latency, longest synchronous scan step,
+query plan and first hit. The fixture uses its own in-memory database and isolated synthetic inputs.
+
 ## Agent conventions
 
-- Ranked search belongs in `history-ranked-store.ts`, with pure ranking in `history-ranking.ts`; share scope SQL, readable extraction, text projection and message bounds through `history-content.ts`. Compute masks only from decoded shared readable sources; unknown projections stay outside IDF and behind known candidates. Preserve the literal `history` RPC contract. Keep Unicode/control-escape selectivity, dotted-I self-matches, tool-heavy rarity/unknown ordering, large-projection responsiveness/reporting, partial results at the judge deadline and verified-match provenance tests whenever ranking changes. `history-ranked-ownership.ts` owns request-local physical ownership and the uncached publication fence; bind both root and common-directory device/inode identities. The shared filesystem reader stays inside the packable plugin and is imported by workspace discovery; keep depth limits explicit at plugin calls. Never add Git process spawns to ranked ownership, caller scope selectors, caller-supplied regular-expression execution, transcript indexes or generic RPC routes. Tool registration and disposal follow the pruning bundle's backend presence.
-- Full-history search/counts use the bundled pruning plugin's bounded queries, outside the transcript store. Current-session results and the global timeline navigate through bounded anchor windows; other-session previews fetch one native message only. Search/results/progress styles live in `styles/components/history-search.css`. Workspace results preserve rank with consecutive-session headers via `components/history-search-results.tsx`; unloaded labels and Open in session live in `stores/history-search-sessions.ts`. Reuse native `searchTerms` through `lib/ranked-search.ts` for excerpts and destination highlighting; conversation highlights retain literal semantics. Keep ranked capability connection-scoped and unsupported explicit. Never show raw native IDs in results, regroup away ranking or add workspace result pagination.
+- Ranked search belongs in `history-ranked-store.ts`, with pure ranking in `history-ranking.ts` and the necessary byte predicate in `history-ranked-prefilter.ts`; share scope SQL, readable extraction, text projection and message bounds through `history-content.ts`. Preserve newest-first bounded streaming, deterministic recent-window coverage and the raw-predicate superset property; use native-style indexes in latency regressions. Compute masks only from decoded shared readable sources; unknown projections stay outside IDF and behind known candidates. Preserve the literal `history` RPC contract. Keep Unicode/control-escape selectivity, dotted-I self-matches, tool-heavy rarity/unknown ordering, large-projection responsiveness/reporting, partial results at the judge deadline and verified-match provenance tests whenever ranking changes. `history-ranked-ownership.ts` owns request-local physical ownership and the uncached publication fence; bind both root and common-directory device/inode identities. The shared filesystem reader stays inside the packable plugin and is imported by workspace discovery; keep depth limits explicit at plugin calls. Never add Git process spawns to ranked ownership, caller scope selectors, caller-supplied regular-expression execution, transcript indexes or generic RPC routes. Tool registration and disposal follow the pruning bundle's backend presence.
+- Full-history search/counts use the bundled pruning plugin's bounded queries, outside the transcript store. Current-session results and the global timeline navigate through bounded anchor windows; other-session previews fetch one native message only. Search/results/progress styles live in `styles/components/history-search.css`. Workspace results preserve rank with consecutive-session headers via `components/history-search-results.tsx`; unloaded labels and Open in session live in `stores/history-search-sessions.ts`. Reuse native `searchTerms` through `lib/ranked-search.ts` for excerpts and destination highlighting; conversation highlights retain literal semantics. Keep ranked capability connection-scoped and unsupported explicit. Older ranked windows replace the bounded list and label their examined range; reuse the existing tertiary action. Never show raw native IDs in results, regroup away ranking, compare scores across independently weighted windows or re-scan earlier windows for continuation.

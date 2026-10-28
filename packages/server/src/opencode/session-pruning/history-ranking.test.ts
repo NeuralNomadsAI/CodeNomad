@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { compareRank, dateBounds, diverseHits, idfWeights, rankedExcerpt, searchTerms, textJudge, type Rank } from "./history-ranking"
-import { historyRankedInputSchema } from "./history-ranked-contract"
+import { historyRankedInputSchema, sessionSearchInputSchema } from "./history-ranked-contract"
 import { formatRankedHistory } from "./history-ranked-service"
 
 test("terms are distinct Unicode words, longest first, at most six; syntax stays literal", () => {
@@ -57,16 +57,20 @@ test("real UTC dates are inclusive, including leap days and early years", () => 
 
 test("versioned ranked contract bounds limits and rejects selectors and regex options", () => {
   assert.equal(historyRankedInputSchema.parse({ version: 1, query: "panel" }).limit, 10)
-  for (const extra of [{ version: 2 }, { limit: 21 }, { limit: 0 }, { since: "2026-02-30" }, { project: "other" }, { regex: true }, { sessionID: "foreign" }]) {
+  assert.equal(historyRankedInputSchema.parse({ version: 1, query: "panel", limit: 40 }).limit, 40)
+  assert.equal(sessionSearchInputSchema.parse({ version: 1, query: "panel" }).limit, 10)
+  assert.equal(sessionSearchInputSchema.safeParse({ version: 1, query: "panel", limit: 21 }).success, false)
+  assert.equal(sessionSearchInputSchema.safeParse({ version: 1, query: "panel", cursor: "x" }).success, false)
+  for (const extra of [{ version: 2 }, { limit: 41 }, { limit: 0 }, { since: "2026-02-30" }, { project: "other" }, { regex: true }, { sessionID: "foreign" }]) {
     assert.equal(historyRankedInputSchema.safeParse({ version: 1, query: "panel", ...extra }).success, false)
   }
 })
 
 test("formatter reports capped verified counts and how to read a whole session", () => {
   const text = formatRankedHistory({ version: 1, status: "ranked", scanned: 2, candidates: 2, judged: 1, skipped: 0,
-    hits: [], sessions: [], matchedSessions: 0, prefilterBypassed: 0, capped: true, caps: ["total_time"], exclusions: [] })
+    hits: [], sessions: [], matchedSessions: 0, prefilterBypassed: 0, capped: true, caps: ["total_time"], exclusions: [], examinedBefore: 0, cursor: null })
   assert.match(text, /0 session\(s\).*verified match/)
   assert.match(text, /Scan capped.*total_time/)
-  assert.match(text, /examined subset/)
+  assert.match(text, /most recent 2 messages examined/)
   assert.match(text, /opencode api get \/api\/session\//)
 })

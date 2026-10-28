@@ -56,6 +56,9 @@ test("plugin registers Code Mode search and versioned RPC, binds fresh read-only
     assert.equal(tool.name, "session_search")
     assert.deepEqual(tool.options, { namespace: "codenomad", codemode: true })
     assert.equal(tool.input.additionalProperties, false)
+    assert.equal(tool.input.properties.limit.maximum, 20)
+    assert.equal(tool.input.properties.limit.default, 10)
+    await assert.rejects(tool.execute({ query: "github", limit: 40 }, { sessionID: "s", signal: new AbortController().signal }))
     assert.equal(tool.input.properties.project, undefined)
     const signal = new AbortController().signal
     const result = await tool.execute({ query: "été GITHUB", limit: 1 }, { sessionID: "s", signal })

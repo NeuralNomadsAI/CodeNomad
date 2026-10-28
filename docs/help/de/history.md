@@ -9,11 +9,13 @@ Gespeicherter Verlauf, aktuell angezeigter Gesprächsverlauf und komprimierter M
 3. Aktivieren Sie **Werkzeuge und Denkblöcke einbeziehen**, wenn Sie neben lesbarem Text auch technische Inhalte benötigen.
 4. Wählen Sie einen Auszug. Unter **Gesamte Sitzung** blättern Sie mit **Weitere Ergebnisse** durch chronologische Seiten.
 
-**Gesamte Sitzung** sucht eine wörtliche Phrase ohne Beachtung der Groß-/Kleinschreibung im gespeicherten Verlauf. **Gesamter Arbeitsbereich** durchsucht den autorisierten Verzeichnisbaum und die Worktrees des geöffneten Projekts mit bis zu sechs Suchbegriffen und zeigt höchstens 20 beste Treffer in einer Liste. Der beste Treffer jeder Unterhaltung kommt zuerst; Titel und aktuelle Worktree-Namen bleiben in Rangfolge. Begriffe werden in Auszügen und nach **In Sitzung öffnen** im Zieltranskript hervorgehoben. Durchsucht werden lesbarer Text und optional Werkzeuge und Denkblöcke.
+**Gesamte Sitzung** sucht eine wörtliche Phrase ohne Beachtung der Groß-/Kleinschreibung im gespeicherten Verlauf. **Gesamter Arbeitsbereich** durchsucht den autorisierten Verzeichnisbaum und die Worktrees des geöffneten Projekts mit bis zu sechs Suchbegriffen und zeigt höchstens 40 beste Treffer in einer Liste. Der beste Treffer jeder Unterhaltung kommt zuerst; Titel und aktuelle Worktree-Namen bleiben in Rangfolge. Begriffe werden in Auszügen und nach **In Sitzung öffnen** im Zieltranskript hervorgehoben. Durchsucht werden lesbarer Text und optional Werkzeuge und Denkblöcke.
 
 Unterhaltungsseiten zeigen beim Eintreffen der Stapel **Diese Seite: … Ergebnisse · … Nachrichten durchsucht**. Die Projektsuche zeigt **Beste Ergebnisse: …** sowie kompakte Hinweise auf Teilsuchen oder ausgeschlossene Verzeichnisse. Ist die sortierte Suche in der Laufzeit nicht verfügbar, verwenden Sie **Gesamte Sitzung**. Übersprungene Nachrichten werden gemeldet; starten Sie für neue Nachrichten eine neue Suche.
 
 Das Öffnen einer leeren Suche durchsucht keinen Verlauf. Änderungen an Begriff/Umfang, Schließen des Fensters oder Verlassen der Sitzung brechen veraltete Sucharbeit ab. Verwenden Sie bei einem Lesefehler **Erneut versuchen**; dies sendet keinen Prompt und ändert keinen Verlauf.
+
+Projektsuchen beginnen bei höchstens 16.384 neuesten gespeicherten Nachrichten je Ort. **Weiter zurück suchen** ersetzt die Liste durch die besten Treffer des nächsten älteren Fensters. Der Hinweis nennt den geprüften Bereich, je Projektort von neu nach alt. Die Rangfolge gilt nur innerhalb dieses Fensters. Änderungen an Suchtext, Bereich oder technischen Inhalten, Schließen der Suche oder Verlassen der Sitzung setzen das Fenster zurück. Eine neue Suche berücksichtigt neue Nachrichten.
 
 ## Ergebnisse öffnen und Timeline nutzen {#timeline-navigation}
 

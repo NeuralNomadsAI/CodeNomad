@@ -9,11 +9,13 @@ L’historique enregistré, ce que la transcription affiche actuellement et le c
 3. Activez **Inclure les outils et réflexions** si vous avez besoin du contenu technique en plus du texte lisible.
 4. Sélectionnez un extrait. Dans **Session entière**, utilisez **Résultats suivants** pour parcourir les pages chronologiques.
 
-**Session entière** recherche une expression littérale sans tenir compte de la casse dans l’historique enregistré. **Workspace entier** classe les résultats de l’arborescence et des worktrees autorisés du projet ouvert à partir de six termes au maximum et affiche les 20 meilleurs dans une liste. Le meilleur résultat de chaque conversation apparaît d’abord, avec son titre et son worktree actuel dans l’ordre du classement. Les termes sont surlignés dans les extraits et dans la conversation après **Ouvrir dans la session**. Le contenu recherché comprend le texte lisible et, en option, les outils et réflexions.
+**Session entière** recherche une expression littérale sans tenir compte de la casse dans l’historique enregistré. **Workspace entier** classe les résultats de l’arborescence et des worktrees autorisés du projet ouvert à partir de six termes au maximum et affiche les 40 meilleurs dans une liste. Le meilleur résultat de chaque conversation apparaît d’abord, avec son titre et son worktree actuel dans l’ordre du classement. Les termes sont surlignés dans les extraits et dans la conversation après **Ouvrir dans la session**. Le contenu recherché comprend le texte lisible et, en option, les outils et réflexions.
 
 Les pages de conversation affichent **Cette page : … résultats · … messages parcourus** à mesure que les lots arrivent. Le projet affiche **Meilleurs résultats : …** et des avis compacts pour les analyses partielles ou les dossiers exclus. Si le classement est indisponible dans cet environnement, utilisez **Session entière**. Les messages ignorés sont signalés ; relancez la recherche pour inclure les nouveaux messages.
 
 Ouvrir une recherche vide ne parcourt pas l’historique. Changer la requête/la portée, fermer la fenêtre ou quitter la session annule le travail de recherche obsolète. Si une lecture échoue, utilisez **Réessayer** ; cela n’envoie pas de prompt et ne modifie pas l’historique.
+
+L’analyse commence par les 16 384 messages enregistrés les plus récents au maximum par emplacement. **Chercher plus loin dans le passé** remplace la liste par les meilleurs résultats de la fenêtre précédente. La note indique la plage examinée, du plus récent au plus ancien dans chaque emplacement du projet. Le classement porte uniquement sur cette fenêtre. Modifier la requête, la portée ou l’option de contenu technique, fermer la recherche ou quitter la session réinitialise la fenêtre. Une nouvelle recherche inclut les nouveaux messages.
 
 ## Ouvrir les résultats et utiliser la chronologie {#timeline-navigation}
 
