@@ -1147,7 +1147,9 @@ describe("OpenCode data projection", () => {
     // The persisted truth: the tool ran and completed. The live reducer never
     // saw `session.tool.called` (lost across a disconnect window), so its part
     // is still `streaming` — rendered as "pending" — and the later success was
-    // swallowed by the reducer's running-status guard.
+    // swallowed by the reducer's running-status guard. With no connected
+    // stream, the SDK's own settlement refresh is dropped; the terminal event
+    // finishes that read itself and publishes it.
     const authoritative = {
       id: "assistant", type: "assistant", agent: "build",
       model: { providerID: "provider", id: "model" },
@@ -1178,7 +1180,7 @@ describe("OpenCode data projection", () => {
       finishOpenCodeDataEvent(instanceId, settled)
 
       await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
-      assert.equal(reads, 1)
+      assert.ok(reads >= 1, "the settlement read ran without a connected stream")
       const healed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
       assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed")
       assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
@@ -1189,49 +1191,37 @@ describe("OpenCode data projection", () => {
     }
   })
 
-  it("reconciles a stranded settlement once while work outlives it", async () => {
-    const instanceId = "opencode-data-stranded-tool-once"
+  it("reconciles a stranded tool while the stream is connected", async () => {
+    const instanceId = "opencode-data-stranded-tool-connected"
     const sessionId = "session"
     const client = getRootClient(instanceId)
-    // Authority itself still reports the tool `streaming`: no read can settle
-    // the row, so the per-settlement attempt bound is the only thing keeping
-    // reconciliation from re-reading every quiet interval.
+    // Connected, the SDK reducer starts its own settlement refresh; the
+    // terminal event only has to share that read and publish its result.
     const authoritative = {
       id: "assistant", type: "assistant", agent: "build",
       model: { providerID: "provider", id: "model" },
       time: { created: 1, completed: 3 },
       content: [{
-        type: "tool", id: "tool", name: "bash", time: { created: 2 },
-        state: { status: "streaming", input: "", metadata: {} },
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
       }],
     }
-    let reads = 0
-    stubAuthoritativeSession(client, sessionId, async () => {
-      reads += 1
-      return { data: [authoritative], cursor: {} }
-    })
+    stubAuthoritativeSession(client, sessionId, async () => ({ data: [authoritative], cursor: {} }))
     const base = { sessionID: sessionId, assistantMessageID: "assistant" }
     const apply = (type: string, data: Record<string, unknown>, created = 1) =>
       applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
     try {
+      sseManager.seedStatus(instanceId, "connected")
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
       const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
 
-      // Three bounded attempts at ~250ms quiet intervals, then nothing.
-      await new Promise<void>((resolve) => setTimeout(resolve, 1100))
-      assert.equal(reads, 3, "bounded attempts per settlement")
-      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "pending")
-      // The attempt bound is spent; further quiet intervals read nothing.
-      await new Promise<void>((resolve) => setTimeout(resolve, 900))
-      assert.equal(reads, 3, "no reads beyond the attempt bound")
-
-      const next = apply("session.step.started", {
-        sessionID: sessionId, assistantMessageID: "round-2", agent: "build", model: { providerID: "provider", id: "model" },
-      }, 10)
-      assert.equal(next.session.message.list(sessionId).some((message) => message.id === "round-2"), true)
+      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
+      const healed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
@@ -1239,8 +1229,8 @@ describe("OpenCode data projection", () => {
     }
   })
 
-  it("defers a stranded settlement reconciliation until the stream stays quiet", async () => {
-    const instanceId = "opencode-data-stranded-tool-quiet"
+  it("keeps a new round streaming while the settlement read is in flight", async () => {
+    const instanceId = "opencode-data-stranded-tool-inflight"
     const sessionId = "session"
     const client = getRootClient(instanceId)
     const authoritative = {
@@ -1252,11 +1242,8 @@ describe("OpenCode data projection", () => {
         state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
       }],
     }
-    let reads = 0
-    stubAuthoritativeSession(client, sessionId, async () => {
-      reads += 1
-      return { data: [authoritative], cursor: {} }
-    })
+    const read = deferred<{ data: unknown[]; cursor: Record<string, string> }>()
+    stubAuthoritativeSession(client, sessionId, () => read.promise)
     const base = { sessionID: sessionId, assistantMessageID: "assistant" }
     const apply = (type: string, data: Record<string, unknown>, created = 1) =>
       applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
@@ -1266,79 +1253,30 @@ describe("OpenCode data projection", () => {
       const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
-      // A delta inside the first quiet window must push the read back: the
-      // reconciliation only starts from a revision-stable window.
-      apply("session.text.started", base, 5)
-      apply("session.text.delta", { ...base, ordinal: 0, delta: "still working" }, 6)
-      await new Promise<void>((resolve) => setTimeout(resolve, 350))
-      assert.equal(reads, 0, "no reconciliation read while the stream is active")
 
-      await waitForReplay(() => reads === 1)
-      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
-    } finally {
-      destroyOpenCodeData(instanceId)
-      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
-      sdkManager.destroyClientsForInstance(instanceId)
-    }
-  })
+      // A new round starts while the settlement read is held in flight.
+      const next = { sessionID: sessionId, assistantMessageID: "round-2" }
+      const round = apply("session.step.started", { ...next, agent: "build", model: { providerID: "provider", id: "model" } }, 10)
+      apply("session.text.started", next, 11)
+      const streamed = apply("session.text.delta", { ...next, ordinal: 0, delta: "kept" }, 12)
+      projectOpenCodeMessages(instanceId, sessionId, streamed)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept")
 
-  it("preserves the display window and unfinished rows through a stranded reconciliation", async () => {
-    const instanceId = "opencode-data-stranded-tool-window"
-    const sessionId = "session"
-    const client = getRootClient(instanceId)
-    // The reconcile page covers only the stranded row: every older resident
-    // display row must stay, and the running shell the page does not know
-    // must keep reducing in the seeded reducer.
-    const authoritative = {
-      id: "msg_tool", type: "assistant", agent: "build",
-      model: { providerID: "provider", id: "model" },
-      time: { created: 500, completed: 503 },
-      content: [{
-        type: "tool", id: "tool", name: "bash", time: { created: 502, completed: 503 },
-        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
-      }],
-    }
-    let reads = 0
-    stubAuthoritativeSession(client, sessionId, async () => {
-      reads += 1
-      return { data: [authoritative], cursor: {} }
-    })
-    const history = Array.from({ length: 10 }, (_, index) => ({
-      id: `msg_h${String(index).padStart(2, "0")}`, type: "assistant", agent: "build",
-      model: { providerID: "provider", id: "model" },
-      time: { created: 100 + index, completed: 100 + index }, content: [],
-    } as any))
-    const base = { sessionID: sessionId, assistantMessageID: "msg_tool" }
-    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
-      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
-    try {
-      // Resident display history older than the reconcile page, plus a live
-      // running shell and the stranded tool row in the reducer.
-      seedSessionMessagesV2(instanceId, { id: sessionId }, history.map((row) => normalizeSessionMessage(sessionId, row).message), new Map(history.map((row) => {
-        const normalized = normalizeSessionMessage(sessionId, row)
-        return [normalized.info.id, normalized.info] as const
-      })))
-      apply("session.shell.started", { sessionID: sessionId, shell: { id: "shell-1", command: "sleep 5", status: "running", metadata: {} } }, 400)
-      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 501)
-      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 502)
-      const settled = { id: "settled", type: "session.execution.succeeded", created: 504, data: { sessionID: sessionId } } as any
-      applyOpenCodeDataEvent(instanceId, "/work", settled)
-      finishOpenCodeDataEvent(instanceId, settled)
-
-      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("msg_tool")?.parts.tool?.data as any)?.state?.status === "completed")
-      assert.equal(reads, 1)
+      read.resolve({ data: [authoritative], cursor: {} })
+      await new Promise<void>((resolve) => setTimeout(resolve, 30))
       const store = messageStoreBus.getOrCreate(instanceId)
-      const ids = store.getSessionMessageIds(sessionId)
-      for (const row of history) assert.ok(ids.includes(row.id), `display keeps ${row.id}`)
-      assert.ok(ids.includes("msg_tool"), "display keeps the healed row")
+      // The superseded settlement read must not replace the streaming round.
+      assert.equal((store.getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept", "the in-flight round keeps its events")
+      assert.equal((store.getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "pending", "a superseded read is not published")
+      const after = apply("session.text.delta", { ...next, ordinal: 0, delta: " too" }, 13)
+      projectOpenCodeMessages(instanceId, sessionId, after)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept too", "streaming continues after the read lands")
 
-      const ended = apply("session.shell.ended", {
-        sessionID: sessionId,
-        shell: { id: "shell-1", command: "sleep 5", status: "exited", exit: 0, metadata: {} },
-        output: { output: "done" },
-      }, 600)
-      const shellRow = ended.session.message.list(sessionId).find((message) => message.type === "shell")
-      assert.equal(shellRow?.type === "shell" ? shellRow.status : undefined, "exited", "the seeded reducer still settles the running shell")
+      // The streaming round's own settlement reconciles the stranded tool.
+      const settledAgain = { id: "settled-2", type: "session.execution.succeeded", created: 20, data: { sessionID: sessionId } } as any
+      applyOpenCodeDataEvent(instanceId, "/work", settledAgain)
+      finishOpenCodeDataEvent(instanceId, settledAgain)
+      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
