@@ -97,6 +97,16 @@ test("projection inlines refs exactly as native reads, and leaves rows without r
       { ...file, mime: "text/plain", data: Buffer.from("[media unavailable: shot.png (image/png)]").toString("base64") })
     assert.equal(userGone.bytes, bytes(userGone.data))
   } finally { db.close() }
+  // Stored text shorter than its reserialized form (`1e20` becomes 21 digits) never undercounts.
+  const exponent = fixture()
+  try {
+    const numeric = { ...stored, content: [{ ...stored.content[0], state: { ...(stored.content[0] as any).state,
+      input: Object.fromEntries(Array.from({ length: 50 }, (_, index) => [`n${index}`, 1e20])) } }] }
+    const text = JSON.stringify(numeric).replaceAll("100000000000000000000", "1e20")
+    const projected = projectStoredMedia(exponent, JSON.parse(text), Buffer.byteLength(text), 1 << 20) as any
+    assert.equal(projected.bytes, bytes(projected.data))
+    assert.equal(projectStoredMedia(exponent, JSON.parse(text), Buffer.byteLength(text), projected.bytes - 1).status, "limit")
+  } finally { exponent.close() }
   const legacy = fixture({ blobs: false })
   try {
     assert.deepEqual(projectStoredMedia(legacy, stored, bytes(stored), 1 << 20), { status: "unsupported" })
