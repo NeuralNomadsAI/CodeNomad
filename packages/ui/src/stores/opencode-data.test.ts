@@ -1140,6 +1140,105 @@ describe("OpenCode data projection", () => {
     }
   })
 
+  it("reconciles a tool stranded pending after settlement", async () => {
+    const instanceId = "opencode-data-stranded-tool"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // The persisted truth: the tool ran and completed. The live reducer never
+    // saw `session.tool.called` (lost across a disconnect window), so its part
+    // is still `streaming` — rendered as "pending" — and the later success was
+    // swallowed by the reducer's running-status guard.
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+      }],
+    }
+    let reads = 0
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      return { data: [authoritative], cursor: {} }
+    })
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const data = apply("session.tool.success", { ...base, id: "tool", content: [{ type: "text", text: "ok" }], metadata: {} }, 3)
+      projectOpenCodeMessages(instanceId, sessionId, data)
+      const stranded = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((stranded?.parts.tool?.data as any)?.state?.status, "pending")
+
+      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      applyOpenCodeDataEvent(instanceId, "/work", settled, undefined, (next) => {
+        projectOpenCodeMessages(instanceId, sessionId, next, false, true)
+      })
+      finishOpenCodeDataEvent(instanceId, settled)
+
+      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
+      assert.equal(reads, 1)
+      const healed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
+  it("reconciles a stranded settlement once while work outlives it", async () => {
+    const instanceId = "opencode-data-stranded-tool-once"
+    const sessionId = "session"
+    const client = getRootClient(instanceId)
+    // A tool the daemon reports as legitimately still running must not loop
+    // reconciliation: one authoritative read per settlement, reducer alive.
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2 },
+        state: { status: "running", input: { command: "watch pwd" }, metadata: {} },
+      }],
+    }
+    let reads = 0
+    stubAuthoritativeSession(client, sessionId, async () => {
+      reads += 1
+      return { data: [authoritative], cursor: {} }
+    })
+    const base = { sessionID: sessionId, assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      applyOpenCodeDataEvent(instanceId, "/work", settled, undefined, (next) => {
+        projectOpenCodeMessages(instanceId, sessionId, next, false, true)
+      })
+      finishOpenCodeDataEvent(instanceId, settled)
+
+      await waitForReplay(() => reads === 1)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "running")
+      await new Promise<void>((resolve) => setTimeout(resolve, 400))
+      assert.equal(reads, 1)
+
+      const next = apply("session.step.started", {
+        sessionID: sessionId, assistantMessageID: "round-2", agent: "build", model: { providerID: "provider", id: "model" },
+      }, 10)
+      assert.equal(next.session.message.list(sessionId).some((message) => message.id === "round-2"), true)
+    } finally {
+      destroyOpenCodeData(instanceId)
+      if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
+      sdkManager.destroyClientsForInstance(instanceId)
+    }
+  })
+
   it("keeps another session's live reducer after a terminal event", () => {
     const instanceId = "opencode-data-session-isolation"
     const event = (sessionID: string, type: string, data: Record<string, unknown> = {}) => ({

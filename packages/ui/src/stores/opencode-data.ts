@@ -67,6 +67,12 @@ type TranscriptEntry = {
   retryCount: number
   retryTimer?: ReturnType<typeof setTimeout>
   retireWhenDrained: boolean
+  /** Serial of the settlement (terminal execution event) last observed. */
+  settlementSerial: number
+  /** Settlement serial whose stranded-tool reconciliation already ran. */
+  reconciledSettlementSerial: number
+  /** Quiet-gated reconciliation armed for the current settlement, if any. */
+  settleTimer?: ReturnType<typeof setTimeout>
   queue: QueuedTranscriptEvent[]
   onResynced?: (data: Data) => void
 }
@@ -83,6 +89,9 @@ const TRANSCRIPT_RETRY_DELAY_MS = 25
 const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
 // The page size of the SDK's own `message.sync`.
 const SDK_MESSAGE_PAGE_SIZE = 20
+/** A settlement's stranded-tool reconciliation waits for one quiet, revision-
+ * stable window before it reads authority. */
+const SETTLEMENT_RECONCILE_QUIET_MS = 250
 const entries = new Map<string, DataEntry>()
 const transcriptEntries = new Map<string, TranscriptEntry>()
 const mutationRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
@@ -289,6 +298,8 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     resyncGeneration: 0,
     retryCount: 0,
     retireWhenDrained: false,
+    settlementSerial: 0,
+    reconciledSettlementSerial: 0,
     queue: [],
   }
   transcriptEntries.set(key, transcript)
@@ -362,6 +373,38 @@ function collapseTranscriptQueue(instanceId: string, sessionId: string, transcri
     transcript.rotating = false
   }
   scheduleAuthoritativeResync(instanceId, sessionId, transcript)
+}
+
+/** A settlement drained with tool rows still streaming or running: their
+ * terminal event was swallowed by the reducer's running-status guard (or lost
+ * across a disconnect window) and will never be re-delivered. The reducer's
+ * own settlement refresh can be dropped while the connection is not "connected";
+ * reconcile once per settlement from one quiet, revision-stable authoritative
+ * page instead of stranding the row at "pending" until the session is reloaded. */
+function scheduleSettlementReconcile(
+  instanceId: string,
+  sessionId: string,
+  transcript: TranscriptEntry,
+): void {
+  if (transcript.settleTimer) return
+  const eligible = () => transcript.retireWhenDrained
+    && transcript.reconciledSettlementSerial !== transcript.settlementSerial
+    && !transcript.needsAuthoritativeResync && !transcript.resyncing && !transcript.rotating
+    && transcript.queue.length === 0
+    && isTranscriptCurrent(instanceId, sessionId, transcript)
+  const revision = getOpenCodeFullDataRevision(instanceId, sessionId)
+  transcript.settleTimer = setTimeout(() => {
+    transcript.settleTimer = undefined
+    if (!eligible()) return
+    // Trail behind a live stream rather than racing it: while events keep
+    // arriving, re-arm; dropping-mode admission must start from a quiet window.
+    if (getOpenCodeFullDataRevision(instanceId, sessionId) !== revision) {
+      scheduleSettlementReconcile(instanceId, sessionId, transcript)
+      return
+    }
+    transcript.reconciledSettlementSerial = transcript.settlementSerial
+    scheduleAuthoritativeResync(instanceId, sessionId, transcript)
+  }, SETTLEMENT_RECONCILE_QUIET_MS)
 }
 
 /** Reconnect continuity: capture, reset, reseed and trailing reconciliation
@@ -627,6 +670,10 @@ function startTranscriptRotation(instanceId: string, sessionId: string, transcri
 
 function invalidateTranscript(transcript: TranscriptEntry): void {
   clearTranscriptRetry(transcript)
+  if (transcript.settleTimer) {
+    clearTimeout(transcript.settleTimer)
+    transcript.settleTimer = undefined
+  }
   transcript.resyncGeneration += 1
   transcript.rotationGeneration += 1
   transcript.needsAuthoritativeResync = false
@@ -869,6 +916,14 @@ export function projectOpenCodeMessages(
   }
 }
 
+/** A tool whose input stream started but whose `called` never applied. At
+ * settlement no terminal event can still settle it — `session.tool.success`
+ * is reduced only from the running status — so one authoritative read must. */
+function hasStrandedPendingTool(messages: SessionMessageInfo[]): boolean {
+  return messages.some((message) => message.type === "assistant"
+    && message.content.some((part) => part.type === "tool" && part.state.status === "streaming"))
+}
+
 function retireDrainedTranscript(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
   if (!transcript.retireWhenDrained || !isTranscriptCurrent(instanceId, sessionId, transcript)
     || transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync
@@ -877,7 +932,13 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
   // its inbox (e.g. after an interruption) are listed from it, and unsettled rows
   // settle only in it.
   const data = transcript.entry.data
-  if (data.session.pending.list(sessionId).length || data.session.message.list(sessionId).some(isUnsettledAtSettlement)) return
+  const messages = data.session.message.list(sessionId)
+  if (transcript.reconciledSettlementSerial !== transcript.settlementSerial && !transcript.settleTimer
+    && hasStrandedPendingTool(messages)) {
+    scheduleSettlementReconcile(instanceId, sessionId, transcript)
+    return
+  }
+  if (data.session.pending.list(sessionId).length || messages.some(isUnsettledAtSettlement)) return
   destroyOpenCodeData(instanceId, sessionId)
 }
 
@@ -896,7 +957,10 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
   if (!transcript) return
   // The caller has projected the synchronous page. Queued terminal updates and
   // overflow recovery must publish their final page before releasing its reducer.
-  if (isExecutionTerminalEvent(event)) transcript.retireWhenDrained = true
+  if (isExecutionTerminalEvent(event)) {
+    transcript.retireWhenDrained = true
+    transcript.settlementSerial += 1
+  }
   // A settlement deferred by parked or running work completes once that clears.
   retireDrainedTranscript(instanceId, sessionId, transcript)
 }
