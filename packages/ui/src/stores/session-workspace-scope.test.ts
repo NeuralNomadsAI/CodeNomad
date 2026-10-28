@@ -7,6 +7,7 @@ import { clearToastHistory, getToastHistory } from "../lib/notifications.tsx"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { storage, type OwnerBucket } from "../lib/storage.ts"
 import { addInstance, addPermissionToQueue, removeInstance } from "./instances.ts"
+import { destroyOpenCodeData } from "./opencode-data.ts"
 import { preferences, updatePreferences } from "./preferences.tsx"
 import { handlePermissionUpdated, handleSessionCompacted, handleSessionUpdate } from "./session-events.ts"
 import {
@@ -115,10 +116,13 @@ it("notices of a nested repository's session follow where it is shown", async ()
   serverApi.fetchWorktrees = (async (instanceId: string) => ({ isGitRepo: instanceId === nested,
     worktrees: [{ slug: "root", directory: folders[instanceId] }] })) as any
   let releaseClosing: (value: unknown) => void = () => {}
+  const releaseReplaced: Array<(value: unknown) => void> = [], reads: string[] = []
   // Sessions unknown to the parent read as nested-repository sessions.
   const client = { session: { active: async () => ({}), get: async ({ sessionID }: { sessionID: string }) => {
     if (sessionID === "unreadable") throw new Error("503")
+    reads.push(sessionID)
     if (sessionID === "closing") await new Promise((resolve) => { releaseClosing = resolve })
+    if (sessionID === "replaced") await new Promise((resolve) => { releaseReplaced.push(resolve) })
     return { id: sessionID, title: sessionID, version: "1", projectID: "repo-b", location: { directory: folders[nested] }, time: { created: 1, updated: 1 } }
   } } } as any
   const open = async (id: string) => {
@@ -173,6 +177,15 @@ it("notices of a nested repository's session follow where it is shown", async ()
     assert.equal(notices("sessionEvents.sessionCompactedToast", "unreadable"), 0)
     compacted("own")
     assert.equal(notices("sessionEvents.sessionCompactedToast", "own"), 1)
+
+    // A read begun before the client was replaced is discarded; a new event reads again.
+    compacted("replaced")
+    destroyOpenCodeData(parent)
+    compacted("replaced")
+    assert.equal(reads.filter((id) => id === "replaced").length, 2)
+    for (const release of releaseReplaced) release(undefined)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(sessions().get(parent)?.get("replaced")?.status, "working")
 
     // A project closed while an unknown session is read neither republishes nor announces it.
     compacted("closing")
