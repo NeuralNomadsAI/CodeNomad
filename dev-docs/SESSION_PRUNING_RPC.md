@@ -45,8 +45,9 @@ The plugin compares that revision with the native read form (`media-blob.ts`), w
 surviving parts in their stored form, and in the same transaction releases the
 `blob_ref` rows of refs the removed parts alone named, deleting blobs no ref keeps,
 as native content updates do.
-Selections allow up to 100,001 unique indices (0–100,000), within a 1 MiB broker
-body and 16 MiB stored-message budget. Larger messages fail closed.
+Selections allow up to 100,001 unique indices (0-100,000), within a 1 MiB broker
+body. Each message must fit the 16 MiB stored and serialized native-read budgets,
+with or without media refs; larger messages fail closed.
 
 `POST /api/workspaces/:id/session-pruning/{preview,prune}` validates workspace
 ownership from the native session location and participates in the worktree deletion

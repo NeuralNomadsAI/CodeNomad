@@ -56,7 +56,7 @@ La compactación cambia el contexto que OpenCode usa para continuar la sesión. 
 2. Revisa los recuentos previstos de herramientas/razonamientos y cualquier advertencia de contenido omitido.
 3. Confirma **Eliminar**. Para el trabajo sobre toda la sesión, sigue el progreso sobre la transcripción y usa su control de cancelación si es necesario.
 
-Solo se eliminan herramientas y razonamientos completados aptos. No se depura contenido activo/incompleto; el contenido cambiado se rechaza en lugar de ampliar silenciosamente lo que confirmaste. El texto final y los metadatos de mensajes/sesión permanecen, pero la salida técnica eliminada no se puede recuperar. Conserva lo que necesites antes de confirmar.
+Solo se eliminan herramientas y razonamientos completados aptos. No se depura contenido activo/incompleto, ni un mensaje de más de 16 MB tal como lo lee OpenCode (archivos adjuntos incluidos), que cuenta como contenido omitido; el contenido cambiado se rechaza en lugar de ampliar silenciosamente lo que confirmaste. El texto final y los metadatos de mensajes/sesión permanecen, pero la salida técnica eliminada no se puede recuperar. Conserva lo que necesites antes de confirmar.
 
 La limpieza de una sesión no es atómica para toda ella. Las eliminaciones anteriores correctas permanecen si un mensaje posterior entra en conflicto o falla. **La cancelación detiene los lotes futuros; no revierte un lote ya enviado**, que aún puede confirmarse.
 
