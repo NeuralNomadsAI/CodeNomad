@@ -113,12 +113,13 @@ test("cross-mission edges compose: shared sessions, one range's orphaned receipt
   assert.deepEqual(snapshot.missions.map(mission => mission.id), [...updatedTie, ...tied, second.id, first.id])
 })
 
-test("a mission range keeps the journal's read bound", async () => {
+test("a mission range keeps its read bound in range and project reads", async () => {
   const f = fixture(1)
   const { mission } = await f.control().create({ requestID: "large", objective: "Large", template: "custom" })
   for (let index = 0; index <= MISSION_MAX_STORED_EVENTS; index++) f.values.set(`${f.prefix}/${mission.id}/evt_filler_${index}`, { damaged: true })
   await assert.rejects(f.journal.missionView(mission.id), new RegExp(`${MISSION_MAX_STORED_EVENTS}-event safety limit`))
   await assert.rejects(f.journal.snapshot(), new RegExp(`${MISSION_MAX_STORED_EVENTS}-event safety limit`))
+  await assert.rejects(f.journal.readHints(hints => hints.openIDs()), new RegExp(`${MISSION_MAX_STORED_EVENTS}-event safety limit`))
 })
 
 test("a mission range read never straddles a purge", async () => {

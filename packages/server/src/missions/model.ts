@@ -11,12 +11,12 @@ import { projectLifecycle, type MissionControlRequestedEvent, type MissionContro
 
 export const MISSION_SCHEMA_VERSION = 1 as const
 export const MISSION_MAX_ACTORS = 8
+/** Ordinary entries of one mission's journal range; a project holds any number of missions. */
 export const MISSION_MAX_EVENTS = 2_000
-/** Room above the ordinary limit for deletion tombstones and their cleanup
- * receipts, so a full project can still delete; purging settled deletions then
- * frees the space. Only purge-capable storage spends it. */
+/** Room above a mission's ordinary limit for its deletion tombstone and reserved
+ * receipts, so a full mission can still be deleted. */
 export const MISSION_DELETION_RESERVE = 4 * (1 + MISSION_MAX_ACTORS)
-/** Physical read bound of one project journal. */
+/** Physical read bound of one mission's journal range. */
 export const MISSION_MAX_STORED_EVENTS = MISSION_MAX_EVENTS + MISSION_DELETION_RESERVE
 export const MISSION_MAX_TASKS = 96
 export const MISSION_MAX_HISTORY = 50

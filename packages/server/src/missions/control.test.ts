@@ -794,11 +794,12 @@ test("bounds and validates persisted journal records", async () => {
   assert.equal(snapshot.missions.length, 0)
 })
 
-test("rejects a new event before the durable journal can exceed its safety limit", async () => {
+test("rejects a new event before its mission's durable range can exceed its safety limit", async () => {
   const storage = new MemoryStorage()
   const journal = new MissionJournal(storage, "project-1", "/repo", () => 100)
+  // Unreadable entries still occupy their mission's range.
   for (let index = 0; index < MISSION_MAX_EVENTS; index += 1) {
-    storage.values.set(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/seed/${index.toString().padStart(4, "0")}`, { seed: index })
+    storage.values.set(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/msn_capacity/${index.toString().padStart(4, "0")}`, { seed: index })
   }
 
   await assert.rejects(journal.append({

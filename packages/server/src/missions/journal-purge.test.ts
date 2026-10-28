@@ -78,7 +78,7 @@ function fixture(options: { removable?: boolean } = {}) {
   // Raw durable entries, as an earlier build or a long history left them.
   const seed = (event: MissionEvent) => values.set(`${prefix}/${event.missionID}/${event.id}`, structuredClone(event) as unknown as MissionJsonValue)
   const fill = (missionID: string) => {
-    for (let index = 0; entries().length < MISSION_MAX_EVENTS; index++) seed({ version: 1, id: `evt_filler_${index}`, type: "mission.updated",
+    for (let index = 0; entries(missionID).length < MISSION_MAX_EVENTS; index++) seed({ version: 1, id: `evt_filler_${index}`, type: "mission.updated",
       missionID, projectID: "project-1", requestID: `filler-${index}`, expectedRevision: 1, notesSpecified: false, objective: "Filler", createdAt: 2_000 + index })
   }
   return { values, storage, withoutRemoval, native, nativeRemoved, failing, removed, control, journal, prefix, create, delegate, deletion, entries, records, seed, fill,
@@ -97,11 +97,11 @@ async function assertHealthy(f: ReturnType<typeof fixture>) {
   assert.equal(snapshot.controlUnavailable, undefined)
   assert.equal(snapshot.notificationUnavailable, undefined)
   assert.ok((snapshot.cleanups ?? []).every(item => item.pending === 0), "a purge never reopens settled cleanup")
-  await f.journal.assertCanAppend(0)
+  for (const mission of snapshot.missions) await f.journal.assertCanAppend(mission.id, 0)
   return snapshot
 }
 
-test("create/delete cycles free journal capacity instead of accumulating tombstones", async () => {
+test("create/delete cycles free journal storage instead of accumulating tombstones", async () => {
   const f = fixture()
   for (let index = 0; index < 200; index++) {
     const mission = await f.delegate(await f.create(`cycle-${index}`), "worker")
@@ -112,7 +112,7 @@ test("create/delete cycles free journal capacity instead of accumulating tombsto
   assert.deepEqual(snapshot.missions, [])
   assert.equal(snapshot.cleanups?.length, 20, "the newest settled cleanups stay visible")
   assert.equal(f.records().length, 180)
-  // Capacity pressure purges the retained history too.
+  // An explicit full purge clears the retained history too.
   assert.equal(await f.journal.purgeDeleted({ all: true }) > 0, true)
   assert.deepEqual(f.entries(), [])
   assert.equal(f.records().length, 200)
@@ -217,56 +217,39 @@ test("a late write to a purged mission is absorbed and removed by the next purge
   assert.deepEqual(f.entries(mission.id), [])
 })
 
-test("tombstones written without purge are purged when capacity is needed", async () => {
-  const legacy = fixture({ removable: false })
-  for (let index = 0; index < 30; index++) await legacy.control().delete(legacy.deletion(await legacy.create(`legacy-${index}`)))
-  assert.equal(legacy.entries().length, 60, "no purge without native removal")
-  assert.equal(await legacy.journal.purgeDeleted({ all: true }), 0)
+test("tombstones written without removal support are purged by the next deletion with it", async () => {
+  const kept = fixture({ removable: false })
+  for (let index = 0; index < 30; index++) await kept.control().delete(kept.deletion(await kept.create(`kept-${index}`)))
+  assert.equal(kept.entries().length, 60, "no purge without native removal")
+  assert.equal(await kept.journal.purgeDeleted({ all: true }), 0)
   // The same storage with removal: an ordinary deletion purges beyond the recent history.
   const f = fixture()
-  for (const [key, value] of legacy.values) f.values.set(key, value)
+  for (const [key, value] of kept.values) f.values.set(key, value)
   await f.control().delete(f.deletion(await f.create("next")))
   assert.equal(f.entries().length, 2 * 20)
-  // A journal full of legacy tombstones accepts a new mission by purging them.
-  const g = fixture()
-  for (let index = 0; g.entries().length < MISSION_MAX_EVENTS; index++) {
-    const base = { version: 1 as const, projectID: "project-1", missionID: `msn_legacy_${index}`, createdAt: 10 + index }
-    g.seed({ ...base, id: "evt_created", type: "mission.created", projectCanonical: "/repo", objective: "Legacy",
-      template: "custom", coordinator: { sessionID: `ses_legacy_${index}`, title: "Coordinator", location: { directory: "/repo" } } })
-    g.seed({ ...base, id: "evt_deleted", type: "mission.deleted", requestID: "delete", expectedRevision: 1 })
-  }
-  const stuck = fixture({ removable: false })
-  for (const [key, value] of g.values) stuck.values.set(key, value)
-  await assert.rejects(stuck.create("after-full"), /2000-event safety limit/, "the same journal stays full without native removal")
-  const created = await g.create("after-full")
-  assert.deepEqual(g.entries().filter(key => !key.includes(created.id)), [])
-  assert.equal(g.records().length, MISSION_MAX_EVENTS / 2)
-  await assertHealthy(g)
 })
 
-test("a journal full of live missions can still delete, then recovers capacity", async () => {
-  const f = fixture()
-  const crowded = await f.delegate(await f.create("crowded"), "worker")
-  const other = await f.create("other")
-  f.fill(crowded.id)
-  await assert.rejects(f.create("refused"), /2000-event safety limit/)
-  const current = (await f.control().snapshot()).missions.find(mission => mission.id === crowded.id)!
-  await f.control().delete(f.deletion(current, true))
-  assert.ok(f.entries().length > MISSION_MAX_EVENTS && f.entries().length <= MISSION_MAX_EVENTS + MISSION_DELETION_RESERVE)
-  assert.deepEqual(f.nativeRemoved, [specialist(crowded)])
-  const next = await f.create("after-recovery")
-  assert.deepEqual(f.entries(crowded.id), [])
-  assert.deepEqual((await assertHealthy(f)).missions.map(mission => mission.id).sort(), [other.id, next.id].sort())
-})
-
-test("without native removal a full journal keeps today's limit", async () => {
-  const f = fixture({ removable: false })
-  const crowded = await f.create("crowded")
-  f.fill(crowded.id)
-  const current = (await f.control().snapshot()).missions[0]
-  await assert.rejects(f.control().delete(f.deletion(current)), /2000-event safety limit/)
-  assert.equal(f.entries().length, MISSION_MAX_EVENTS)
-})
+for (const removable of [true, false]) {
+  test(`a full mission still deletes through its own reserve; the rest of the project stays writable (removal ${removable})`, async () => {
+    const f = fixture({ removable })
+    const crowded = await f.delegate(await f.create("crowded"), "worker")
+    const other = await f.create("other")
+    f.fill(crowded.id)
+    const current = (await f.control().snapshot()).missions.find(mission => mission.id === crowded.id)!
+    await assert.rejects(f.control().update({ missionID: crowded.id, requestID: "refused", expectedRevision: current.revision, objective: "Refused" }),
+      /2000-event safety limit of this mission/)
+    // No project cap: new missions and other missions' events still land.
+    const next = await f.create("beside-full")
+    await f.control().update({ missionID: other.id, requestID: "other-update", expectedRevision: other.revision, objective: "Other" })
+    await f.control().delete(f.deletion(current, true))
+    const own = f.entries(crowded.id).length
+    assert.ok(own > MISSION_MAX_EVENTS && own <= MISSION_MAX_EVENTS + MISSION_DELETION_RESERVE, `${own}`)
+    assert.deepEqual(f.nativeRemoved, [specialist(crowded)])
+    // The settled deletion stays as recent cleanup history: purging is retention, never room-making.
+    assert.equal(f.records().length, 0)
+    assert.deepEqual((await assertHealthy(f)).missions.map(mission => mission.id).sort(), [other.id, next.id].sort())
+  })
+}
 
 test("a deleted mission sharing a session another mission can still clean up keeps its membership evidence", async () => {
   for (const membership of ["coordinator", "specialist"] as const) {

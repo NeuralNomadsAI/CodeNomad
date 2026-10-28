@@ -704,8 +704,34 @@ try {
     const finished = await invoke("report", { missionID: created.mission.id, outcome: "completed", summary: `Finished ${index}`, final: true },
       created.mission.coordinatorSessionId, `history-${index}`)
     assert.equal(finished.mission.status, "completed")
-    history.push(created.mission)
+    history.push(finished.mission)
   }
+  // The journal bound is per mission: the finished missions' own ranges, seeded in
+  // the isolated KV table as an earlier activation left them, take the project past
+  // one mission's 2,036-entry bound while each mission stays far below it.
+  const { DatabaseSync } = await import("node:sqlite")
+  const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
+  const journalEntries = (database, range) => database.prepare("SELECT COUNT(*) AS count FROM kv WHERE substr(key, 1, ?) = ?").get(range.length, range).count
+  let journalRange
+  const seeding = new DatabaseSync(process.env.OPENCODE_DB)
+  try {
+    seeding.exec("PRAGMA busy_timeout = 10000")
+    const historyKey = seeding.prepare("SELECT key FROM kv WHERE key LIKE ? LIMIT 1").get(`${namespace}codenomad-missions/v2/%/${history[0].id}/%`)?.key
+    assert.ok(historyKey, "The finished missions' journal ranges are in the isolated native KV table")
+    journalRange = `${historyKey.slice(0, historyKey.indexOf(`/${history[0].id}/`))}/`
+    const insert = seeding.prepare("INSERT INTO kv(key,value,time_created,time_updated) VALUES(?,?,?,?)")
+    // One transaction: thousands of autocommits would idle the client's keep-alive connection past the daemon's timeout.
+    seeding.exec("BEGIN IMMEDIATE")
+    for (const mission of history) {
+      for (let index = 0; index < 22; index++) {
+        const id = `evt_seeded_${String(index).padStart(2, "0")}`
+        insert.run(`${journalRange}${mission.id}/${id}`, JSON.stringify({ version: 1, id, type: "mission.updated", missionID: mission.id, projectID: mission.projectID,
+          createdAt: mission.createdAt + 1 + index, requestID: `seeded-${index}`, expectedRevision: 1, notesSpecified: false, objective: `Seeded ${index}` }), Date.now(), Date.now())
+      }
+    }
+    seeding.exec("COMMIT")
+    assert.ok(journalEntries(seeding, journalRange) > 2_036, "The project holds more than one mission's bound")
+  } finally { seeding.close() }
   await client.location.reload({ signal: AbortSignal.timeout(20_000) })
   await until(async () => { try { return Boolean(await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })) } catch { return false } })
   const live = (await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "native-history-live", objective: "Live beside history", template: "custom" }, { location })).mission
@@ -714,19 +740,26 @@ try {
   assert.equal((await invoke("delegate", liveTask, liveCoordinator, "history-declare")).disposition, "declared")
   assert.equal((await invoke("report", { missionID: live.id, taskKey: liveTask.taskKey, outcome: "completed", summary: "History unaffected" },
     liveCoordinator, "history-readout")).disposition, "reported")
+  const beforeDelete = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+  assert.equal(beforeDelete.missions.find(mission => mission.id === history[0].id).revision, history[0].revision + 22, "Seeded entries read as the mission's own events")
+  // The deletion's retention purge pushes the oldest settled deletion past the history, through native storage.remove.
+  const settled = beforeDelete.cleanups.filter(item => item.pending === 0)
+  assert.equal(settled.length, 20)
   assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete({ missionID: history[0].id, requestID: "native-history-delete",
-    expectedRevision: (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions.find(mission => mission.id === history[0].id).revision }, { location }), { deleted: true })
+    expectedRevision: beforeDelete.missions.find(mission => mission.id === history[0].id).revision }, { location }), { deleted: true })
   const withHistory = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
   assert.equal(withHistory.missions.filter(mission => history.some(item => item.id === mission.id)).length, history.length - 1)
   assert.equal(withHistory.discardedEvents, 0)
+  assert.equal(withHistory.cleanups.length, 20)
+  assert(!withHistory.cleanups.some(item => item.missionID === settled.at(-1).missionID), "The oldest settled deletion was purged")
   // Probe which reads see the whole journal: a damaged entry written beside the
   // bundle (as another process would) is visible to full reads at once and to
   // the activation's index only after its next rebuild, a minute away.
-  const { DatabaseSync } = await import("node:sqlite")
   const database = new DatabaseSync(process.env.OPENCODE_DB)
   try {
     database.exec("PRAGMA busy_timeout = 10000")
-    const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
+    assert.equal(journalEntries(database, `${journalRange}${settled.at(-1).missionID}/`), 0, "Native storage.remove cleared the purged range")
+    assert.ok(journalEntries(database, journalRange) > 2_036, "The project still holds more than one mission's bound")
     const liveKey = database.prepare("SELECT key FROM kv WHERE key LIKE ? LIMIT 1").get(`${namespace}codenomad-missions/v2/%/${live.id}/%`)?.key
     assert.ok(liveKey, "The live mission's journal range is in the isolated native KV table")
     const strayKey = `${liveKey.slice(0, liveKey.indexOf(`/${live.id}/`))}/stray-history-probe`
@@ -749,7 +782,7 @@ try {
   assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).discardedEvents, 0)
   assert.equal((await invoke("delegate", { ...liveTask, taskKey: "history-refused" }, liveCoordinator, "history-accepted")).disposition, "declared",
     "Only the damage refused the declaration: its authoritative gate read the entry the hints had not seen")
-  gate("finished history: creation, declaration, readout and deletion beside it; hinted reads skip it, write gates read it")
+  gate("finished history beyond one mission's bound: creation, declaration, readout, deletion and purge beside it; hinted reads skip it, write gates read it")
   assert.equal(failures.length, 0, "Every baseline expectation must pass; collected errors are never skipped or accepted")
   receipt.status = "passed"; receipt.passCount = gates.length
   receipt.finalSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); receipt.providerRequests = requests.length

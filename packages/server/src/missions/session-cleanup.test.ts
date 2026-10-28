@@ -298,22 +298,25 @@ test("legacy tombstones parse, malformed destructive intent is rejected", () => 
   assert.ok(parseMissionEvent({ ...legacy, deleteManagedSessions: true, cleanupTargets: [] }))
 })
 
-test("pending cleanup reserves its journal receipts against unrelated writes at the event limit", async () => {
+test("pending cleanup reserves its journal receipts against unrelated writes at the mission's event limit", async () => {
   const f = fixture()
   const mission = await f.delegate(await f.create(), "worker")
   const id = specialist(mission)
-  for (let index = f.values.size; index < MISSION_MAX_EVENTS - 2; index++) {
-    const event = { version: 1, id: `evt_fill_${index}`, type: "task.dispatched", missionID: "msn_fill", projectID: "project-1", taskKey: "unused", createdAt: 1 }
-    f.values.set(`${MISSION_JOURNAL_STORAGE_PREFIX}/${f.journal.projectToken}/msn_fill/${event.id}`, event)
+  const range = `${MISSION_JOURNAL_STORAGE_PREFIX}/${f.journal.projectToken}/${mission.id}/`
+  const own = () => [...f.values.keys()].filter(key => key.startsWith(range)).length
+  for (let index = own(); own() < MISSION_MAX_EVENTS - 2; index++) {
+    const event = { version: 1, id: `evt_fill_${index}`, type: "task.dispatched", missionID: mission.id, projectID: "project-1", taskKey: "unused", createdAt: 1 }
+    f.values.set(`${range}${event.id}`, event)
   }
   f.failing.add(id)
-  const request = f.deletion(mission, true)
+  const current = (await f.control().snapshot()).missions[0]
+  const request = f.deletion(current, true)
   await assert.rejects(f.control().delete(request), code("cleanup-pending"))
-  assert.equal(f.values.size, MISSION_MAX_EVENTS - 1)
-  await assert.rejects(f.journal.append({ version: 1, id: "evt_unrelated", type: "task.dispatched", missionID: "msn_fill", projectID: "project-1", taskKey: "unused", createdAt: 1 }), /safety limit/)
+  assert.equal(own(), MISSION_MAX_EVENTS - 1)
+  await assert.rejects(f.journal.append({ version: 1, id: "evt_unrelated", type: "task.dispatched", missionID: mission.id, projectID: "project-1", taskKey: "unused", createdAt: 1 }), /safety limit/)
   f.failing.clear()
   await f.control().delete(request)
-  assert.equal(f.values.size, MISSION_MAX_EVENTS)
+  assert.equal(own(), MISSION_MAX_EVENTS)
   await f.control().delete(request)
   assert.deepEqual(f.removed, [id])
 })

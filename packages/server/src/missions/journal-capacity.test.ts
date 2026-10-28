@@ -23,9 +23,11 @@ function fixture() {
   const base = { version: 1 as const, projectID: "project", missionID: "msn_owned", createdAt: 1 }
   const eventKey = (event: MissionEvent) => `${prefix}/${event.missionID}/${event.id}`
   const seed = (event: MissionEvent) => { assert(parseMissionEvent(event)); values.set(eventKey(event), structuredClone(event) as unknown as MissionJsonValue) }
-  const ordinary = (id = "evt_extra"): MissionEvent => ({ ...base, id, type: "mission.updated", requestID: id,
+  const ordinary = (id = "evt_extra", missionID = base.missionID): MissionEvent => ({ ...base, missionID, id, type: "mission.updated", requestID: id,
     expectedRevision: 1, notesSpecified: false, objective: "unrelated update" })
-  const fillTo = (size: number) => { for (let i = values.size; values.size < size; i++) seed(ordinary(`evt_filler_${i}`)) }
+  // Capacity is per mission: only the entries of that mission's range count.
+  const own = (missionID = base.missionID) => [...values.keys()].filter(key => key.startsWith(`${prefix}/${missionID}/`)).length
+  const fillTo = (size: number, missionID = base.missionID) => { for (let i = own(missionID); own(missionID) < size; i++) seed(ordinary(`evt_filler_${i}`, missionID)) }
   const deletion = (missionID = base.missionID, id = "evt_deleted", targets = ["ses_owned"]): Extract<MissionEvent, { type: "mission.deleted" }> => ({
     ...base, missionID, id, type: "mission.deleted", requestID: "delete-request", expectedRevision: 1, deleteManagedSessions: true,
     cleanupTargets: targets.map(sessionID => ({ sessionID, location: { directory: "/owned/project" } })),
@@ -42,7 +44,7 @@ function fixture() {
     ...base, missionID: intent.missionID, id: `evt_${stableToken(`${intent.id}\0applied\0${sessionID}`, 28)}`,
     type: "mission.control-applied", operationID: intent.id, sessionID,
   })
-  return { journal, values, prefix, base, eventKey, seed, ordinary, fillTo, deletion, receipt, control, applied,
+  return { journal, values, prefix, base, eventKey, seed, ordinary, own, fillTo, deletion, receipt, control, applied,
     counts: () => ({ writes, scans }) }
 }
 
@@ -69,22 +71,27 @@ for (const damage of damageCases) {
     else if (damage === "malformed") event = { ...genuine, id: "evt_bad_receipt", outcome: "unknown" }
     if (["deletion", "session", "wrong-kind"].includes(damage)) key = f.eventKey(event as MissionEvent)
     f.values.set(key, structuredClone(event) as unknown as MissionJsonValue)
+    if (damage === "foreign-orphan") {
+      // Another mission's range costs this mission nothing; fill its place.
+      await f.journal.assertCanAppend(f.base.missionID)
+      f.seed(f.ordinary("evt_filler_extra"))
+    }
     const foreignBytes = JSON.stringify(f.values.get(key)), writes = f.counts().writes
-    assert.equal(f.values.size, 1999)
+    assert.equal(f.own(), 1999)
     const observation = await f.journal.events()
     if (["original-foreign-miskeyed", "project", "mission", "key", "malformed"].includes(damage)) {
       assert.equal(observation.discardedEvents, 1)
       const segments = key.split("/")
       await assert.rejects(f.journal.event(segments.at(-2)!, segments.at(-1)!), /identity mismatch/)
     }
-    await assert.rejects(f.journal.assertCanAppend(), /2000-event safety limit/)
+    await assert.rejects(f.journal.assertCanAppend(f.base.missionID), /2000-event safety limit/)
     await assert.rejects(f.journal.append(f.ordinary()), /2000-event safety limit/)
     assert.equal(f.counts().writes, writes)
-    assert.equal(f.values.size, 1999)
+    assert.equal(f.own(), 1999)
     // Low-level capacity does not authorize actual cleanup through a damaged
     // observation. Existing control/bridge regressions independently deny it.
     await f.journal.append(genuine)
-    assert.equal(f.values.size, 2000); assert.equal(f.counts().writes, writes + 1)
+    assert.equal(f.own(), 2000); assert.equal(f.counts().writes, writes + 1)
     assert.equal(JSON.stringify(f.values.get(key)), foreignBytes)
     await f.journal.append(genuine) // exact durable append remains idempotent
     await assert.rejects(f.journal.append(f.ordinary()), /2000-event safety limit/)
@@ -106,10 +113,12 @@ for (const damage of ["project", "mission", "key", "alternate-event-id", "foreig
     else if (damage === "session") { event = f.applied(intent, "ses_other"); key = f.eventKey(event) }
     else if (damage === "wrong-kind") { event = f.receipt(f.deletion(f.base.missionID, intent.id)); key = f.eventKey(event) }
     f.values.set(key, structuredClone(event) as unknown as MissionJsonValue)
+    // Another mission's range costs this mission nothing; fill its place.
+    if (damage === "foreign-orphan") f.seed(f.ordinary("evt_filler_extra"))
     const badBytes = JSON.stringify(f.values.get(key))
     await assert.rejects(f.journal.append(f.ordinary()), /2000-event safety limit/)
     await f.journal.append(genuine)
-    assert.equal(f.values.size, 2000); assert.equal(JSON.stringify(f.values.get(key)), badBytes)
+    assert.equal(f.own(), 2000); assert.equal(JSON.stringify(f.values.get(key)), badBytes)
   })
 }
 
@@ -119,14 +128,14 @@ test("invalid physical intent cannot establish reservation or supersede the late
     const invalid = kind === "cleanup" ? f.deletion() : f.control()
     f.values.set(`${f.prefix}/msn_foreign/${invalid.id}`, invalid as unknown as MissionJsonValue)
     assert.equal((await f.journal.events()).discardedEvents, 1)
-    await f.journal.append(f.ordinary()); assert.equal(f.values.size, 2000)
+    await f.journal.append(f.ordinary()); await f.journal.append(f.ordinary("evt_last")); assert.equal(f.own(), 2000)
   }
-  const f = fixture(); f.fillTo(1997)
+  const f = fixture(); f.fillTo(1998)
   const valid = f.control(); await f.journal.append(valid)
   const invalid = { ...f.control(f.base.missionID, "evt_corrupt_control", ["ses_other"]), createdAt: 2 }
   f.values.set(`${f.prefix}/msn_wrong/${invalid.id}`, invalid as unknown as MissionJsonValue)
   await assert.rejects(f.journal.append(f.ordinary()), /2000-event safety limit/)
-  await f.journal.append(f.applied(valid)); assert.equal(f.values.size, 2000)
+  await f.journal.append(f.applied(valid)); assert.equal(f.own(), 2000)
 })
 
 test("occupied deterministic receipt key remains a collision, never a repair or permission to use reserved capacity", async () => {
@@ -158,14 +167,18 @@ test("reservations correlate mission/type/original target despite repeated inten
   assert.equal(snapshot.missions.length, 38, "13 undeleted historical missions and 25 newer ones")
   assert.equal(snapshot.discardedEvents, 0)
   assert.equal(snapshot.cleanupUnavailable, undefined)
-  f.fillTo(2000 - intents.length)
-  for (const intent of intents) {
-    await assert.rejects(f.journal.append(f.ordinary()), /safety limit/)
+  // One full mission: every other mission's receipt for the same intent ID discharges only its own slot.
+  const [full, ...others] = intents
+  f.fillTo(2000 - 1, full.missionID)
+  for (const intent of others) {
+    await assert.rejects(f.journal.append(f.ordinary("evt_extra", full.missionID)), /safety limit/)
     await f.journal.append(intent.type === "mission.deleted" ? f.receipt(intent) : f.applied(intent))
   }
-  assert.equal(f.values.size, 2000)
-  assert.equal((await f.journal.events()).events.length, 2000)
-  await assert.rejects(f.journal.append(f.ordinary()), /safety limit/)
+  await assert.rejects(f.journal.append(f.ordinary("evt_extra", full.missionID)), /safety limit/)
+  await f.journal.append(f.applied(full as ReturnType<typeof f.control>))
+  assert.equal(f.own(full.missionID), 2000)
+  assert.equal((await f.journal.events()).events.length, 2000 + 3 * others.length + 25, "a project holds more than one mission's bound")
+  await assert.rejects(f.journal.append(f.ordinary("evt_extra", full.missionID)), /safety limit/)
 })
 
 test("every bounded cleanup target retains its own slot up to the 2000-event physical limit", async () => {
@@ -177,16 +190,17 @@ test("every bounded cleanup target retains its own slot up to the 2000-event phy
     await assert.rejects(f.journal.append(f.ordinary()), /safety limit/)
     await f.journal.append(f.receipt(intent, target))
   }
-  assert.equal(f.values.size, 2000)
-  await f.journal.assertCanAppend(0)
+  assert.equal(f.own(), 2000)
+  await f.journal.assertCanAppend(f.base.missionID, 0)
   await f.journal.append(f.receipt(intent, targets[0]))
-  await assert.rejects(f.journal.assertCanAppend(), /safety limit/)
+  await assert.rejects(f.journal.assertCanAppend(f.base.missionID), /safety limit/)
   // Reads stay bounded by the physical limit, which includes the deletion reserve.
   f.values.set(`${f.prefix}/msn_owned/evt_2001`, f.ordinary("evt_2001") as unknown as MissionJsonValue)
-  await assert.rejects(f.journal.assertCanAppend(), /reached the 2000-event safety limit/)
+  await assert.rejects(f.journal.assertCanAppend(f.base.missionID), /reached the 2000-event safety limit/)
   f.fillTo(MISSION_MAX_STORED_EVENTS + 1)
-  await assert.rejects(f.journal.events(), new RegExp(`exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`))
-  await assert.rejects(f.journal.assertCanAppend(), new RegExp(`exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`))
+  for (const read of [() => f.journal.events(), () => f.journal.missionEvents(f.base.missionID), () => f.journal.assertCanAppend(f.base.missionID)]) {
+    await assert.rejects(read(), new RegExp(`exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`))
+  }
 })
 
 test("legitimate retained cleanup receipts discharge only their exact declared target", async () => {
@@ -197,7 +211,7 @@ test("legitimate retained cleanup receipts discharge only their exact declared t
   await assert.rejects(f.journal.append(f.ordinary()), /safety limit/)
   await f.journal.append({ ...f.receipt(intent, "ses_two"), outcome: "retained", reason: "children" } as MissionEvent)
   assert.equal(f.values.size, 2000)
-  await f.journal.assertCanAppend(0)
+  await f.journal.assertCanAppend(f.base.missionID, 0)
 })
 
 test("prospective Stop preflight and append replace only the superseded control reservation", async () => {
@@ -211,20 +225,20 @@ test("prospective Stop preflight and append replace only the superseded control 
   await assert.rejects(f.journal.append(f.applied(pause)), /safety limit/, "an old receipt cannot consume the new Stop's slot")
   await f.journal.append(f.applied(stop))
   assert.equal(f.values.size, 2000)
-  await f.journal.assertCanAppend(0)
+  await f.journal.assertCanAppend(f.base.missionID, 0)
   const writes = f.counts().writes
   await f.journal.append(stop)
   assert.equal(f.counts().writes, writes, "the original intent replay writes nothing")
 })
 
 test("prospective control credit cannot waive ordering, revision, scope or real receipt capacity", async () => {
-  for (const fault of ["project", "mission", "time", "tie-order", "revision", "nonterminal", "old-stop", "extra-target"] as const) {
+  // A Stop of another mission is that mission's own capacity question (see the per-mission tests).
+  for (const fault of ["project", "time", "tie-order", "revision", "nonterminal", "old-stop", "extra-target"] as const) {
     const f = fixture(); f.fillTo(1997)
     const previous = { ...f.control(), action: fault === "old-stop" ? "stop" as const : "pause" as const }
     await f.journal.append(previous)
     const stop = { ...f.control(f.base.missionID, "evt_stop"), createdAt: 2, expectedRevision: 2 }
     if (fault === "project") stop.projectID = "foreign-project"
-    if (fault === "mission") stop.missionID = "msn_other"
     if (fault === "time") stop.createdAt = 0
     if (fault === "tie-order") { stop.createdAt = previous.createdAt; stop.id = "evt_aaa" }
     if (fault === "revision") stop.expectedRevision = previous.expectedRevision
@@ -238,8 +252,8 @@ test("prospective control credit cannot waive ordering, revision, scope or real 
   }
 })
 
-test("Stop leaves cleanup and other-mission control reservations intact", async () => {
-  const f = fixture(); f.fillTo(1994)
+test("Stop leaves cleanup reservations intact; other missions' reservations stay in their own ranges", async () => {
+  const f = fixture(); f.fillTo(1996)
   const pause = { ...f.control(), action: "pause" as const }
   await f.journal.append(pause)
   await f.journal.append(f.deletion())
@@ -249,6 +263,32 @@ test("Stop leaves cleanup and other-mission control reservations intact", async 
   await assert.rejects(f.journal.assertCanAppend(stop), /safety limit/)
   await assert.rejects(f.journal.append(stop), /safety limit/)
   assert.deepEqual([...f.values], bytes)
+  await f.journal.assertCanAppend({ ...f.control("msn_other", "evt_other_stop"), createdAt: 2, expectedRevision: 2 })
+})
+
+test("a mission at its bound refuses ordinary entries but keeps its deletion reserve; other missions stay writable", async () => {
+  // This storage cannot remove entries: the reserve never depends on a purge.
+  const f = fixture(), targets = Array.from({ length: MISSION_MAX_ACTORS }, (_, i) => `ses_target_${i}`)
+  f.fillTo(MISSION_MAX_EVENTS)
+  await assert.rejects(f.journal.assertCanAppend(f.base.missionID), /reached the 2000-event safety limit of this mission/)
+  await assert.rejects(f.journal.append(f.ordinary()), /safety limit/)
+  await assert.rejects(f.journal.append(f.control()), /safety limit/, "a new Stop needs ordinary room")
+  // Other missions write well past the full mission's bound.
+  f.fillTo(MISSION_MAX_EVENTS - 1, "msn_neighbour")
+  await f.journal.append(f.ordinary("evt_neighbour", "msn_neighbour"))
+  assert.equal(f.own("msn_neighbour"), MISSION_MAX_EVENTS)
+  const intent = f.deletion(f.base.missionID, "evt_full_delete", targets)
+  await f.journal.assertCanAppend(intent)
+  await f.journal.append(intent)
+  for (const target of targets) {
+    await assert.rejects(f.journal.append(f.ordinary()), /safety limit/)
+    await f.journal.append(f.receipt(intent, target))
+  }
+  assert.equal(f.own(), MISSION_MAX_EVENTS + 1 + targets.length)
+  assert.ok(f.own() <= MISSION_MAX_STORED_EVENTS)
+  await assert.rejects(f.journal.append(f.ordinary()), /safety limit/)
+  const { events, discardedEvents } = await f.journal.events()
+  assert.deepEqual([events.length, discardedEvents], [f.values.size, 0])
 })
 
 test("append rechecks prospective Stop capacity after an earlier preflight", async () => {
@@ -284,6 +324,6 @@ for (const [pauseID, stopID, newer] of [["evt_Z", "evt_a", false], ["evt_a", "ev
     await f.journal.append(f.applied(stop))
     assert.deepEqual((await f.journal.snapshot()).missions[0].control?.pending, [])
     assert.equal(f.values.size, 2000)
-    await f.journal.assertCanAppend(0)
+    await f.journal.assertCanAppend(f.base.missionID, 0)
   })
 }

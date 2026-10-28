@@ -3,8 +3,7 @@ import { missionProfilesSchema } from "./playbook-profiles"
 import { missionTaskModeSchema } from "./task-execution-mode"
 import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
-import { missionCleanupSchema } from "./cleanup-projection"
-import { MISSION_MAX_EVENTS } from "./model"
+import { MAX_PROJECTED_CLEANUPS, missionCleanupSchema } from "./cleanup-projection"
 import { MISSION_TITLE_MAX } from "./mission-title"
 import { missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
@@ -281,7 +280,7 @@ export const CODENOMAD_MISSIONS_RPC = {
           generatedAt: { type: "number" },
           missions: { type: "array", items: mission },
           discardedEvents: { type: "number" },
-          cleanups: { type: "array", maxItems: MISSION_MAX_EVENTS, items: missionCleanupSchema },
+          cleanups: { type: "array", maxItems: MAX_PROJECTED_CLEANUPS, items: missionCleanupSchema },
           cleanupUnavailable: { type: "boolean" },
           controlUnavailable: { type: "boolean" },
           notificationUnavailable: { type: "boolean" },

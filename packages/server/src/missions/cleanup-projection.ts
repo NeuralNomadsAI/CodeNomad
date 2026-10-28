@@ -1,8 +1,10 @@
 import { createHash } from "node:crypto"
-import { MISSION_MAX_EVENTS, type MissionCleanup, type MissionCleanupReason, type MissionDeletedEvent, type MissionEvent } from "./model"
+import type { MissionCleanup, MissionCleanupReason, MissionDeletedEvent, MissionEvent } from "./model"
 
 /** Settled cleanups shown after the pending ones. */
 export const SETTLED_CLEANUP_HISTORY = 20
+/** Payload bound of the displayed cleanups. */
+export const MAX_PROJECTED_CLEANUPS = 2_000
 
 /** The session a mission event makes that mission's member for shared-session cleanup checks. */
 export function cleanupReference(event: MissionEvent): string | undefined {
@@ -80,10 +82,9 @@ export function projectMissionCleanups(events: readonly MissionEvent[]): Mission
 /** Newest first: every pending cleanup, then the `settled` newest settled ones. */
 export function orderMissionCleanups(results: MissionCleanup[], settled = SETTLED_CLEANUP_HISTORY): MissionCleanup[] {
   results.sort((a, b) => b.createdAt - a.createdAt || a.deletionID.localeCompare(b.deletionID))
-  // Keep EVERY pending intent within the journal's existing hard bound, even if
-  // newer completed deletions would otherwise push it out of the display window.
+  // Pending intents come first, so newer completed deletions never push one out of the display window.
   return [...results.filter(item => item.pending > 0), ...results.filter(item => item.pending === 0).slice(0, settled)]
-    .slice(0, MISSION_MAX_EVENTS)
+    .slice(0, MAX_PROJECTED_CLEANUPS)
 }
 
 function projectDeletion(deletion: MissionDeletedEvent, group: readonly MissionEvent[], objective: string): MissionCleanup {

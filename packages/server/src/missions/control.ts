@@ -289,9 +289,6 @@ export class MissionControl {
     }
     // Read after the creation event: a purge records the deletion before removing it.
     await this.assertNotPurged(missionID)
-    // The exact creation event is absent in a healthy journal, and neither a
-    // coordinator creation nor publication has been attempted by this invocation.
-    await this.journal.assertCanAppend()
     try { await this.options.validateProfiles?.(input.profiles, input.expectedCoordinatorLocation?.directory ?? this.options.project.location.directory, input.taskMode) }
     catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
 
