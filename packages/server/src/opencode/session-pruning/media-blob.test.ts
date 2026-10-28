@@ -106,6 +106,11 @@ test("projection inlines refs exactly as native reads, and leaves rows without r
     const projected = projectStoredMedia(exponent, JSON.parse(text), Buffer.byteLength(text), 1 << 20) as any
     assert.equal(projected.bytes, bytes(projected.data))
     assert.equal(projectStoredMedia(exponent, JSON.parse(text), Buffer.byteLength(text), projected.bytes - 1).status, "limit")
+    // Rows without refs count the same way, so a mixed navigation window stays within its budget.
+    const plain = JSON.stringify({ content: [{ type: "text", text: "no refs" }], input: Array(50).fill(1e20) }).replaceAll("100000000000000000000", "1e20")
+    const unchanged = projectStoredMedia(exponent, JSON.parse(plain), Buffer.byteLength(plain), 1 << 20) as any
+    assert.equal(unchanged.bytes, bytes(unchanged.data))
+    assert.equal(projectStoredMedia(exponent, JSON.parse(plain), Buffer.byteLength(plain), unchanged.bytes - 1).status, "limit")
   } finally { exponent.close() }
   const legacy = fixture({ blobs: false })
   try {

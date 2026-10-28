@@ -93,19 +93,20 @@ const serialized = (value: unknown) => Buffer.byteLength(JSON.stringify(value))
 /**
  * The stored message as native reads return it: each ref inlined from its blob,
  * or the native unavailable placeholder when the blob is gone. `bytes` is the
- * projected JSON size: the larger of `storedBytes` and the reserialized message,
- * plus each replacement's net serialized change, computed from blob lengths and
- * checked against `limit` (as is `storedBytes` itself) before any blob bytes are loaded.
+ * projected JSON size of every message, with or without refs: the larger of
+ * `storedBytes` and the reserialized message, plus each replacement's net
+ * serialized change, computed from blob lengths and checked against `limit` (as is
+ * `storedBytes` itself) before any blob bytes are loaded.
  */
 export function projectStoredMedia(db: DatabaseSync, data: any, storedBytes: number, limit: number): MediaProjection {
   if (storedBytes > limit) return { status: "limit" }
+  // Every returned message is reserialized: stored text may be shorter (e.g. `1e20`).
+  let bytes = Math.max(storedBytes, serialized(data))
   const hashes = mediaHashes(data)
-  if (!hashes.size) return { status: "ok", data, bytes: storedBytes }
+  if (!hashes.size) return bytes <= limit ? { status: "ok", data, bytes } : { status: "limit" }
   const sizes = mediaBlobSizes(db, hashes)
   if (!sizes) return { status: "unsupported" }
   const files = Array.isArray(data.files) && data.files.some(isFileRef)
-  // The hydrated message is reserialized: stored text may be shorter (e.g. `1e20`).
-  let bytes = Math.max(storedBytes, serialized(data))
   // An empty payload serializes the replacement without its base64, whose length the blob size gives.
   const change = (original: unknown, replace: (base64?: string) => unknown, hash: string) => {
     const size = sizes.get(hash)
