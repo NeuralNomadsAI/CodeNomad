@@ -143,7 +143,9 @@ a bounded cursor or exact asset target. Each server call checks enabled API 2
 consent and fresh session Location ownership before and after the fixed native RPC.
 The existing presence-owned history bundle validates daemon-storage identity and
 session/project/workspace membership again. Reads refuse reverted, removed or
-replaced assets; targets carry the URI digest.
+replaced assets; targets carry the URI digest. Tool files stored as OpenCode media
+refs list and read as the inline data URIs native reads return (digest of the stored
+ref, sizes from the blob without loading it); a ref whose blob is gone is no asset.
 
 Pages return at most 64 metadata entries, examine at most 32 assistant messages and
 32 MiB of stored JSON per request (16 MiB per message), yielding between messages.

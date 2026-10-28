@@ -1,6 +1,7 @@
 import type { DatabaseSync, SQLInputValue } from "node:sqlite"
 import { setImmediate as yieldTurn } from "node:timers/promises"
 import { ownedSession } from "./navigation-scope"
+import { projectStoredMedia } from "./media-blob"
 import type { HistoryScope } from "./history-store"
 import { navigationWindowResultSchema, type NavigationTarget, type NavigationWindowResult } from "./navigation-contract"
 export { readSessionOutline } from "./outline-index"
@@ -38,11 +39,15 @@ export async function readNavigationWindow(db: DatabaseSync, scope: HistoryScope
     }
     const messages = []
     const read = db.prepare("SELECT data FROM session_message WHERE session_id=? AND id=?")
+    let windowBytes = 0
     for (const row of rows) {
       signal.throwIfAborted()
       const stored = read.get(scope.sessionID!, row.id)
       if (typeof stored?.data !== "string") return { status: "blocked", reason: "conflict" }
-      messages.push({ ...JSON.parse(stored.data), id: row.id, type: row.type })
+      // Emit native read forms; the same budgets bound inlined media.
+      const projection = projectStoredMedia(db, JSON.parse(stored.data), Number(row.bytes), MESSAGE_BYTES)
+      if (projection.status !== "ok" || (windowBytes += projection.bytes) > WINDOW_BYTES) return { status: "blocked", reason: "unsupported_storage" }
+      messages.push({ ...projection.data, id: row.id, type: row.type })
       if (messages.length % YIELD_EVERY === 0) await yieldTurn(undefined, { signal })
     }
     const first = rows[0], last = rows.at(-1)

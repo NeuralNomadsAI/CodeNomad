@@ -64,8 +64,9 @@ export default Plugin.define({
         }
         // The pinned plugin SessionDomain does not expose session.message. Read
         // the explicit DB in query-only mode, including pre-compaction history.
-        const data = await readPruningPreview(pruningDatabasePath(ctx.options.databasePath, ctx.app.channel), target, location, session.projectID)
-        const preview = data ? previewContent(data) : { status: "blocked", reason: "unavailable" } as const
+        const stored = await readPruningPreview(pruningDatabasePath(ctx.options.databasePath, ctx.app.channel), target, location, session.projectID)
+        const preview = stored?.status === "ok" ? previewContent(stored.data)
+          : { status: "blocked", reason: stored?.status === "unsupported" ? "unsupported_storage" : "unavailable" } as const
         return preview.status === "preview"
           ? { ...preview, liveMutation: true }
           : preview

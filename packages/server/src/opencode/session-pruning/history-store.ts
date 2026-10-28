@@ -4,6 +4,7 @@ import { setImmediate as yieldTurn } from "node:timers/promises"
 import { z } from "zod"
 import { historyScopeSQL, historyContent, historyTexts, MAX_MESSAGE_BYTES, HISTORY_SLICE_MS, textProjection } from "./history-content"
 import { previewContent } from "./planner"
+import { projectStoredMedia } from "./media-blob"
 import type { HistoryQuery, HistoryNativePage, HistoryHit } from "./history-contract"
 
 export interface HistoryScope { directory: string; workspaceID?: string; sessionID?: string; projectID?: string }
@@ -81,7 +82,9 @@ export async function queryHistoryPage(db: DatabaseSync, scope: HistoryScope, in
       owner.tools += tools
       owner.reasoning += reasoning
       if (input.purpose === "prune" && row.type === "assistant" && tools + reasoning) {
-        const preview = previewContent(data)
+        // Revisions of the native form, as the pruning transaction checks them.
+        const projection = projectStoredMedia(db, data, Buffer.byteLength(row.data), MAX_MESSAGE_BYTES)
+        const preview = projection.status === "ok" ? previewContent(projection.data) : projection
         if (preview.status === "preview") result.candidates.push({ messageID: String(row.id), revision: preview.revision, toolCount: tools, reasoningCount: reasoning })
         else result.skipped++
       }

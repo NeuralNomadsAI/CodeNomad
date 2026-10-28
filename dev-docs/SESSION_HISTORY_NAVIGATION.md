@@ -44,8 +44,10 @@ challenge as history queries. Never expose generic RPC or SQL access through the
   messages starting at the target.
 - Windows are reconstructed from native storage within a read transaction. The
   isolated OpenCode fixture compares their complete payloads with native export
-  and single-message reads. Budgets are 16 MiB per message and 24 MiB per window;
-  oversized windows fail explicitly instead of silently omitting content.
+  and single-message reads, with media refs inlined as native reads return them
+  (`session-pruning/media-blob.ts`). Budgets are 16 MiB per message and 24 MiB per
+  window of that native form; oversized windows fail explicitly instead of silently
+  omitting content.
 - Ownership includes directory, project and legacy workspace identity. Staged
   undo hides the same message-ID tail as the transcript. Missing/deleted targets
   return `anchor_missing` (distinct from ownership/revert conflicts); the broker rechecks location, project, revert and workspace
