@@ -210,11 +210,16 @@ export const startNativeRecurrenceClock = Effect.fn("missions.startNativeRecurre
             }
             return true
           }, controller.signal)
-        yield* invocation.pipe(Effect.provide(graph),
+        const wake = yield* invocation.pipe(Effect.provide(graph),
           Effect.ensuring(Effect.sync(() => controller.abort())))
         document = yield* Effect.promise(() => source.read(input.scheduleID))
         current()
         if (!active(document)) return null
+        // A thrown first admission is a failed wake: warn now and retry the same pending
+        // identities on the error backoff, not after a successful hourly sleep.
+        if (wake === "admission-unknown" && document.pending && !document.pending.admission) {
+          phase = "admission-failed"; throw new Error("Recurrence passage admission unknown")
+        }
         const after = clock.now()
         pendingWakes = document.pending ? pendingWakes + 1 : 0
         // The settle observer shares the event wake and pending backoff, never a daily due.

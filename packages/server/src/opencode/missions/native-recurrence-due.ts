@@ -24,7 +24,9 @@ export type NativePassagePlacement = Readonly<{ projectID: string; projectCanoni
   /** Settlement-only observer: never enters daily admission, even when its own
    * reread finds the pending passage archived by another observer. */
   settleOnly?: boolean }>
-export type NativePassageWake = "idle" | "started" | "pending" | "settled"
+/** `admission-unknown`: this wake reserved a passage whose first admission threw;
+ * it stays pending under its original identities for a later retry. */
+export type NativePassageWake = "idle" | "started" | "pending" | "settled" | "admission-unknown"
 type WakeEffect = Effect.Effect<NativePassageWake, Error | Schema.SchemaError, import("effect").Scope.Scope>
 export interface NativePassageDue {
   (scheduleID: string, graphCurrent: () => true, signal: AbortSignal): WakeEffect
@@ -135,7 +137,8 @@ export function nativeRecurrenceDue(ctx: Pick<Plugin.Context, "storage" | "locat
     }
     if (doc.state !== "running" || placement.settleOnly) return "idle" as NativePassageWake
     const outcome = yield* Effect.tryPromise(() => new MissionRecurrenceRunner(source, admission, now).tick(scheduleID))
-    return (outcome === "accepted" ? "started" : ["pending", "unknown"].includes(outcome) ? "pending" : "idle") as NativePassageWake
+    return (outcome === "accepted" ? "started" : outcome === "unknown" ? "admission-unknown"
+      : outcome === "pending" ? "pending" : "idle") as NativePassageWake
   })
   return wake
 }

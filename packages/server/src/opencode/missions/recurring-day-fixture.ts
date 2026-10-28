@@ -61,6 +61,8 @@ export class RecurringDayFixture {
   jobStartFailure: "absent" | "registered" | undefined
   /** Transiently fails a native read of the daily schedule Job when this returns true. */
   failScheduleJobRead: (() => boolean) | undefined
+  /** Throws from a native SQL read matching this (an observation contract failure). */
+  failQuery: ((query: string) => boolean) | undefined
   /** Fresh native first admissions (a re-admitted ID after pruning counts again). */
   admissions = 0
   /** Controlled native I/O boundary; tests may hold admission after coordinator creation. */
@@ -176,6 +178,7 @@ export class RecurringDayFixture {
             && typeof params[0] === "string" && JSON.parse(params[0]).pending) committedPending = true
           return []
         }
+        if (this.failQuery?.(query)) throw new Error("Injected native query failure")
         return statement.all(...params as [])
       }) }) })
     const database = { db: { $client: sql, transaction: <A>(callback: () => Effect.Effect<A, unknown>) => Effect.promise(async () => {
