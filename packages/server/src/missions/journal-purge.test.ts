@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionControl, MissionControlError } from "./control"
-import type { MissionDeleteInput, MissionSessionAdapter, NativeMissionSession } from "./control-types"
+import type { MissionDeleteInput, MissionInputTransport, MissionSessionAdapter, NativeMissionSession } from "./control-types"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, stableToken, type MissionStorage } from "./journal"
 import { MISSION_DELETION_RESERVE, MISSION_MAX_EVENTS, type MissionEvent, type MissionJsonValue, type MissionMap } from "./model"
 import { cleanupReceiptID } from "./cleanup-projection"
@@ -11,6 +11,7 @@ function fixture(options: { removable?: boolean } = {}) {
   const values = new Map<string, MissionJsonValue>()
   const removed: string[] = []
   let failRemovalAfter = Infinity, failRecord = false, created = 0
+  let firstPageHook: (() => Promise<void>) | undefined
   const storage: MissionStorage = {
     get: async key => structuredClone(values.get(key)),
     set: async (key, value) => {
@@ -19,8 +20,12 @@ function fixture(options: { removable?: boolean } = {}) {
     },
     scan: async ({ prefix, after, limit = 100 }) => {
       const entries = [...values].filter(([key]) => key.startsWith(prefix) && (!after || key > after))
-        .sort(([a], [b]) => a.localeCompare(b)).slice(0, limit).map(([key, value]) => ({ key, value }))
-      return { entries, next: entries.length === limit ? entries.at(-1)?.key : undefined }
+        .sort(([a], [b]) => a.localeCompare(b)).slice(0, limit).map(([key, value]) => ({ key, value: structuredClone(value) }))
+      const page = { entries, next: entries.length === limit ? entries.at(-1)?.key : undefined }
+      // A first page already read, held before its caller continues to the next one.
+      const hook = after ? undefined : firstPageHook
+      if (hook) { firstPageHook = undefined; await hook() }
+      return page
     },
     ...(options.removable === false ? {} : { remove: async (key: string) => {
       if (removed.length >= failRemovalAfter) throw new Error("Process killed")
@@ -54,7 +59,10 @@ function fixture(options: { removable?: boolean } = {}) {
     synthetic: async () => {},
   }
   const project = { id: "project-1", canonical: "/repo", location: { directory: "/repo" } }
-  const control = () => new MissionControl({ project, storage, sessions, now: () => now++ })
+  const control = (extra: { storage?: MissionStorage; transport?: MissionInputTransport } = {}) =>
+    new MissionControl({ project, storage: extra.storage ?? storage, sessions, now: () => now++, ...(extra.transport ? { transport: extra.transport } : {}) })
+  // The same backing store through an adapter that cannot remove entries.
+  const { remove: _remove, ...withoutRemoval } = storage
   const journal = new MissionJournal(storage, project.id, project.canonical)
   const prefix = `${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}`
   const create = async (requestID: string) => (await control().create({ requestID, objective: `Objective ${requestID}`, template: "custom" })).mission
@@ -73,7 +81,8 @@ function fixture(options: { removable?: boolean } = {}) {
     for (let index = 0; entries().length < MISSION_MAX_EVENTS; index++) seed({ version: 1, id: `evt_filler_${index}`, type: "mission.updated",
       missionID, projectID: "project-1", requestID: `filler-${index}`, expectedRevision: 1, notesSpecified: false, objective: "Filler", createdAt: 2_000 + index })
   }
-  return { values, storage, native, nativeRemoved, failing, removed, control, journal, prefix, create, delegate, deletion, entries, records, seed, fill,
+  return { values, storage, withoutRemoval, native, nativeRemoved, failing, removed, control, journal, prefix, create, delegate, deletion, entries, records, seed, fill,
+    pauseFirstPage: (hook: () => Promise<void>) => { firstPageHook = hook },
     createdSessions: () => created, failRemovalsAfter: (count: number) => { failRemovalAfter = count },
     failRecord: (fail: boolean) => { failRecord = fail } }
 }
@@ -293,4 +302,75 @@ test("damaged journals are never purged", async () => {
   await f.journal.append({ version: 1, id: "evt_orphan", type: "task.dispatched", missionID: "msn_orphan", projectID: "project-1", taskKey: "x", createdAt: 9 })
   assert.equal((await f.journal.snapshot()).discardedEvents, 1)
   await assert.rejects(f.control().create({ requestID: "irrelevant", objective: "x", template: "custom" }), code("invalid-journal"))
+})
+
+test("an observation never straddles a purge across a scan page boundary", async () => {
+  const f = fixture()
+  // Real MissionControl identities: the creation event lands on the first scan page, the tombstone past it.
+  let requestID = "", missionID = ""
+  for (let index = 0; ; index++) {
+    requestID = `race-${index}`; missionID = `msn_${stableToken(`project-1\0${requestID}`, 24)}`
+    if (stableToken(`${missionID}\0created`, 28) < "8") break
+  }
+  let mission = (await f.control().create({ requestID, objective: "Deleted mission", template: "custom" })).mission
+  for (let index = 0; index < 100; index++) mission = (await f.control().update({ missionID, requestID: `update-${index}`,
+    expectedRevision: mission.revision, objective: `Deleted mission ${index}` })).mission
+  let deleteRequestID = ""
+  for (let index = 0; ; index++) {
+    deleteRequestID = `delete-${index}`
+    if (stableToken(`${missionID}\0deleted-${deleteRequestID}`, 28).startsWith("fff")) break
+  }
+  await f.control().delete({ missionID, requestID: deleteRequestID, expectedRevision: mission.revision })
+  const firstPage = (await f.storage.scan({ prefix: f.prefix, limit: 100 })).entries.map(entry => (entry.value as { type?: string }).type)
+  assert.ok(firstPage.includes("mission.created") && !firstPage.includes("mission.deleted"))
+  let entered!: () => void, release!: () => void
+  const paused = new Promise<void>(resolve => { entered = resolve }), resume = new Promise<void>(resolve => { release = resolve })
+  f.pauseFirstPage(async () => { entered(); await resume })
+  const reading = f.journal.snapshot()
+  await paused
+  const purge = f.journal.purgeDeleted({ all: true })
+  const finished = await Promise.race([purge.then(() => true), new Promise<boolean>(resolve => setTimeout(resolve, 50, false))])
+  assert.equal(finished, false, "the purge waits for the observation already reading")
+  release()
+  const snapshot = await reading
+  assert.deepEqual(snapshot.missions, [], "the deleted mission never reads as active")
+  assert.equal(snapshot.discardedEvents, 0)
+  assert.equal(await purge, 102)
+  assert.deepEqual((await f.journal.snapshot()).missions, [])
+})
+
+test("deletion records refuse recreation and answer replays through storage without removal", async () => {
+  const f = fixture()
+  const handoffs: string[] = []
+  const transport: MissionInputTransport = { prompt: async () => {}, synthetic: async () => {},
+    prepare: async (coordinatorID, input) => {
+      handoffs.push(input.requestID)
+      return f.control().create({ requestID: input.requestID, objective: input.objective, template: input.template, prepared: true,
+        preparedBy: { missionID: input.missionID, coordinatorSessionID: coordinatorID } })
+    } }
+  const source = await f.create("source")
+  const handoff = { requestID: "handoff", objective: "Hand-off", template: "custom" as const }
+  const prepared = (await f.control({ transport }).prepare(source.coordinatorSessionId, handoff)).mission
+  f.native.set("ses_starter", { id: "ses_starter", projectID: "project-1", title: "Starter", location: { directory: "/repo" } } as NativeMissionSession)
+  const start = { start: { objective: "Started", template: "custom" as const } }
+  const started = (await f.control().inspect("ses_starter", start, "call-start")).mission!
+  const original = await f.create("original")
+  const deletions = [prepared, started, original].map(mission => f.deletion(mission))
+  for (const deletion of deletions) await f.control().delete(deletion)
+  await f.journal.purgeDeleted({ all: true })
+  assert.equal(f.records().length, 3)
+  assert.deepEqual(f.entries().filter(key => !key.includes(source.id)), [])
+  const reduced = (extra: { transport?: MissionInputTransport } = {}) => f.control({ storage: f.withoutRemoval, ...extra })
+  const sessions = f.createdSessions()
+  await assert.rejects(reduced().create({ requestID: "original", objective: "Recreated", template: "custom" }), code("mission-deleted"))
+  await assert.rejects(reduced().inspect("ses_starter", start, "call-start"), code("mission-deleted"))
+  await assert.rejects(reduced({ transport }).prepare(source.coordinatorSessionId, handoff), code("mission-deleted"))
+  assert.deepEqual(handoffs.length, 1, "a refused hand-off never reaches the backend")
+  assert.equal(f.createdSessions(), sessions, "no coordinator is created for a refused recreation")
+  for (const deletion of deletions) {
+    assert.deepEqual(await reduced().delete(deletion), { deleted: true })
+    await assert.rejects(reduced().delete({ ...deletion, requestID: "another" }), code("mission-not-found"))
+    await assert.rejects(reduced().delete({ ...deletion, expectedRevision: deletion.expectedRevision + 1 }), code("request-conflict"))
+  }
+  assert.deepEqual((await reduced().snapshot()).missions.map(mission => mission.id), [source.id])
 })

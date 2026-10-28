@@ -286,9 +286,10 @@ export function MissionEditor(props: {
           const intent = snapshot.cleanups?.find(item => item.missionID === original.id && item.requestID === requestId
             && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
           if (intent && intent.pending === 0) { props.onSaved(); return }
-          if (!intent && !snapshot.missions.some(item => item.id === original.id && item.revision === original.revision)) {
-            throw new MissionDeletionError(404)
-          }
+          const live = snapshot.missions.find(item => item.id === original.id)
+          if (!intent && live && live.revision !== original.revision) throw new MissionDeletionError(404)
+          // Neither the map nor its cleanup: capacity may have purged a committed
+          // deletion's history. Its durable record answers this exact original request.
         }
         setDeleteAttempted(true)
         await serverApi.deleteMission(instanceId, original.id, { expectedRevision: original.revision, requestId, deleteManagedSessions: deleteManagedSessions() })

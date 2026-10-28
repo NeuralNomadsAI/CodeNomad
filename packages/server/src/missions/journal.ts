@@ -63,8 +63,11 @@ export class MissionJournal {
     this.projectToken = stableToken(`${projectID}\0${projectCanonical}`, 24)
   }
 
+  /** A paginated scan must not straddle a purge's removals, so observations take
+   * the append exclusion (FIFO, shared by bundle incarnations). Holders of that
+   * exclusion use `observe`; storage adapters must never read the journal. */
   async events(): Promise<{ events: MissionEvent[]; discardedEvents: number }> {
-    const { events, discardedEvents } = await this.observe()
+    const { events, discardedEvents } = await runMissionExclusive(`append:${this.projectToken}`, () => this.observe())
     return { events, discardedEvents }
   }
 
@@ -98,9 +101,10 @@ export class MissionJournal {
       purged: events.filter(event => purged.has(event.missionID)) }
   }
 
-  /** The record a purged deleted mission leaves; purge-capable storage only. */
+  /** The record a purged deleted mission leaves. Read on every storage: only
+   * purging and the deletion reserve need removal support. */
   async deletionRecord(missionID: string): Promise<MissionDeletionRecord | undefined> {
-    return this.storage.remove && isSafeKey(missionID) ? this.readRecord(missionID) : undefined
+    return isSafeKey(missionID) ? this.readRecord(missionID) : undefined
   }
 
   /** Removes settled deleted missions beyond the recent cleanup history (all of
@@ -281,10 +285,14 @@ export class MissionJournal {
     return `${MISSION_JOURNAL_STORAGE_PREFIX}/${this.projectToken}`
   }
 
-  // Beside, never under, the scanned journal prefix: records cost no journal capacity.
   private recordKey(missionID: string): string {
-    return `${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${this.projectToken}/${safeKey(missionID)}`
+    return missionDeletionRecordKey(this.projectToken, missionID)
   }
+}
+
+// Beside, never under, the scanned journal prefix: records cost no journal capacity.
+export function missionDeletionRecordKey(projectToken: string, missionID: string): string {
+  return `${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${projectToken}/${safeKey(missionID)}`
 }
 
 function safeKey(value: string): string {
