@@ -85,11 +85,10 @@ describe("OpenCode data read merge scenarios", () => {
 
       // The owed trailing read publishes its reconciliation while streaming
       // keeps reducing — every delta lands on the reducer the moment it
-      // arrives, unlike the dropping mode. Await the published page itself,
-      // then probe; the publication must have happened before the probe.
-      const published = Date.now() + 2000
+      // arrives, unlike the dropping mode.
+      const owed = Date.now() + 2000
       let owedDeltas = 0
-      while (Date.now() < published
+      while (Date.now() < owed
         && !data.session.message.list(sessionId).some((message) => message.id === "history")) {
         owedDeltas += 1
         deltaDuring(instanceId, 500 + owedDeltas, "D")
@@ -102,12 +101,20 @@ describe("OpenCode data read merge scenarios", () => {
         data.session.message.list(sessionId).some((message) => message.id === "history"),
         "the owed reconciliation never published",
       )
-      // The publication reached the display through the window-aware
-      // projection: the reconciled terminal state is visible there.
+
+      // Streaming stopped: when the published answer still kept live versions
+      // of resident rows the debt survives, and the follow-up trailing read
+      // converges — the reconciled terminal tool state reaches the display.
+      const converged = Date.now() + 2000
+      for (;;) {
+        const record = messageStoreBus.getOrCreate(instanceId).getMessage("live")
+        const toolPart = Object.values(record?.parts ?? {}).map((part: any) => part.data).find((part: any) => part.type === "tool")
+        if ((toolPart as any)?.state?.status === "completed" || Date.now() >= converged) break
+        await new Promise<void>((resolve) => setTimeout(resolve, 10))
+      }
       const record = messageStoreBus.getOrCreate(instanceId).getMessage("live")
       const toolPart = Object.values(record?.parts ?? {}).map((part: any) => part.data).find((part: any) => part.type === "tool")
       assert.equal((toolPart as any)?.state?.status, "completed", "the reconciliation never reached the display")
-
       data = applyOpenCodeDataEvent(instanceId, "/work", {
         id: "quiet-delta", type: "session.text.delta", created: 5000,
         data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "." },
@@ -116,7 +123,7 @@ describe("OpenCode data read merge scenarios", () => {
       assert.ok(ids.includes("history"), `reconciliation omitted history: ${JSON.stringify(ids)}`)
       const tool = (data.session.message.get(sessionId, "live") as any)?.content?.find((part: any) => part.type === "tool")
       assert.equal(tool?.state?.status, "completed", "the reconciled terminal tool state was dropped")
-      assert.ok(reads <= 6, `${reads} reads including the reconciliation`)
+      assert.ok(reads <= 8, `${reads} reads including the reconciliation`)
     } finally {
       f.cleanup()
     }

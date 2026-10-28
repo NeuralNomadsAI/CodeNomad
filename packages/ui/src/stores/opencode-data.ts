@@ -209,11 +209,16 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
                     // owe one coalesced, non-dropping trailing read, so
                     // history and terminal states are re-read once the
                     // destruction stops.
-                  scheduleTrailingRead(instanceId, input.sessionID)
+                    const readKey = messageRevisionKey(instanceId, input.sessionID)
+                    if (trailingLane.has(readKey)) trailingUnresolved.add(readKey)
+                    scheduleTrailingRead(instanceId, input.sessionID)
                     return { data: [...live].reverse(), cursor: (response as any).cursor }
                   }
                   retireTrailingReadDebt(instanceId, input.sessionID)
-                  return { data: mergePageWithSnapshot(live, (response as any).data as SessionMessageInfo[], since), cursor: (response as any).cursor }
+                  const answer = mergePageWithSnapshot(live, (response as any).data as SessionMessageInfo[], since)
+                  const answerKey = messageRevisionKey(instanceId, input.sessionID)
+                  if (answer.keptLive && trailingLane.has(answerKey)) trailingUnresolved.add(answerKey)
+                  return { data: answer.rows, cursor: (response as any).cursor }
                 }
               }
             },
@@ -392,21 +397,28 @@ function snapshotRows(live: SessionMessageInfo[]): OpenCodeRowSnapshot {
  * the base; a resident row that is new or changed since the snapshot keeps its
  * live version, and rows the stream created during the window ride along
  * newest-first. Removals never get here: they invalidate the page and either
- * restart the read or answer with live rows alone. */
+ * restart the read or answer with live rows alone. `keptLive` reports whether
+ * any live version survived the merge. */
 function mergePageWithSnapshot(
   live: SessionMessageInfo[],
   page: SessionMessageInfo[],
   since: OpenCodeRowSnapshot,
-): SessionMessageInfo[] {
+): { rows: SessionMessageInfo[]; keptLive: boolean } {
   const changed = (message: SessionMessageInfo) => since.get(message.id) !== serializeRowForDiff(message)
   const liveById = new Map(live.map((message) => [message.id, message]))
   const pageIds = new Set(page.map((message) => message.id))
+  let keptLive = false
   const merged = page.map((message) => {
     const row = liveById.get(message.id)
-    return row !== undefined && changed(row) ? row : message
+    if (row !== undefined && changed(row)) {
+      keptLive = true
+      return row
+    }
+    return message
   })
   const appended = live.filter((message) => !pageIds.has(message.id) && !since.has(message.id)).reverse()
-  return [...appended, ...merged]
+  if (appended.length) keptLive = true
+  return { rows: [...appended, ...merged], keptLive }
 }
 
 /** One coalesced, non-dropping trailing read per session: after an exhausted
@@ -416,12 +428,31 @@ function mergePageWithSnapshot(
  * retires the debt. */
 const trailingReadTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const trailingReadRetries = new Map<string, number>()
+/** Sessions whose in-flight read belongs to the trailing lane, and sessions
+ * whose trailing answer still kept live versions of resident rows. */
+const trailingLane = new Set<string>()
+const trailingUnresolved = new Set<string>()
+
+/** Display publications by ordinary loads, per session: the trailing lane
+ * captures this counter before its read and publishes only when no ordinary
+ * load published in between, so an older trailing page can never overwrite a
+ * newer ordinary one. */
+const displayPublications = new Map<string, number>()
+
+/** Every ordinary display publication (a committed message window) notes it
+ * here, fencing in-flight trailing publications for the same session. */
+export function noteOpenCodeDisplayPublication(instanceId: string, sessionId: string): void {
+  const key = messageRevisionKey(instanceId, sessionId)
+  displayPublications.set(key, (displayPublications.get(key) ?? 0) + 1)
+}
 
 function cancelTrailingRead(key: string): void {
   const timer = trailingReadTimers.get(key)
   if (timer) clearTimeout(timer)
   trailingReadTimers.delete(key)
   trailingReadRetries.delete(key)
+  trailingLane.delete(key)
+  trailingUnresolved.delete(key)
 }
 
 function clearTrailingReads(prefix: string): void {
@@ -440,25 +471,44 @@ function scheduleTrailingRead(instanceId: string, sessionId: string): void {
     trailingReadTimers.delete(key)
     const transcript = transcriptEntries.get(key)
     if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
+    trailingLane.add(key)
+    const publication = displayPublications.get(key) ?? 0
     transcript.entry.data.session.message.invalidate(sessionId)
     void transcript.entry.data.session.message.sync(sessionId)
       .then(() => {
+        trailingLane.delete(key)
+        if (!isTranscriptCurrent(instanceId, sessionId, transcript)) return
+        // An ordinary load published newer content in between: the trailing
+        // page is obsolete, the debt is gone with it.
+        if ((displayPublications.get(key) ?? 0) !== publication) {
+          trailingUnresolved.delete(key)
+          return
+        }
         // Publish the reconciled page through the window-aware projection,
         // which keeps a navigated window's resident membership instead of
         // replacing it with the SDK page.
-        if (isTranscriptCurrent(instanceId, sessionId, transcript)) {
-          projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data)
-        }
+        projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data)
+        // The answer still kept live versions of resident rows — the
+        // reconciliation has not converged (for example a terminal tool
+        // state only the next page can deliver). Keep the debt.
+        if (trailingUnresolved.delete(key)) scheduleTrailingRead(instanceId, sessionId)
       })
-      .catch(() => undefined)
+      .catch(() => {
+        trailingLane.delete(key)
+      })
   }, delay)
   trailingReadTimers.set(key, timer)
 }
 
-/** A clean read retires the debt: the retry counter and any still-pending
- * trailing timer for this exact session go away. */
+/** A clean read retires the pending debt: the trailing timer and retry
+ * counter for this exact session go away. The lane flag stays — an in-flight
+ * trailing read owns it until its own publication verdict. */
 function retireTrailingReadDebt(instanceId: string, sessionId: string): void {
-  cancelTrailingRead(messageRevisionKey(instanceId, sessionId))
+  const key = messageRevisionKey(instanceId, sessionId)
+  const timer = trailingReadTimers.get(key)
+  if (timer) clearTimeout(timer)
+  trailingReadTimers.delete(key)
+  trailingReadRetries.delete(key)
 }
 
 function scheduleAuthoritativeResync(
@@ -935,21 +985,24 @@ export function mergeOpenCodeLoadedPage(
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
   if (!transcript) return page
   const baseline = since ?? new Map()
-  return mergePageWithSnapshot(transcript.entry.data.session.message.list(sessionId), page, baseline)
+  return mergePageWithSnapshot(transcript.entry.data.session.message.list(sessionId), page, baseline).rows
 }
 
 /** Seeds the native projection with a page the caller already holds (a REST
- * load merged against its fetch-start row snapshot), without a network read
- * and without dropping live events: the snapshot-served sync writes the rows
- * so later streaming reduces on top. */
+ * load), without a network read and without dropping live events. The page is
+ * merged against the load's fetch-start row snapshot again: events admitted
+ * across the caller's asynchronous gaps (for example a model lookup between
+ * fetch and seed) must not be discarded by the seed. */
 export function seedOpenCodeProjectionPage(
   instanceId: string,
   sessionId: string,
   directory: string,
   messages: SessionMessageInfo[],
+  since?: OpenCodeRowSnapshot,
 ): void {
   const transcript = ensureTranscript(instanceId, sessionId, directory)
-  void transcript.entry.syncMessages(sessionId, boundedTranscript(messages), () => true)
+  const merged = mergeOpenCodeLoadedPage(instanceId, sessionId, [...messages].reverse(), since).reverse()
+  void transcript.entry.syncMessages(sessionId, boundedTranscript(merged), () => true)
 }
 
 // The reduce store mutates message rows in place (Solid `produce`), so list and
@@ -986,7 +1039,14 @@ export function projectOpenCodeMessages(
       const resident = new Set(residentIds)
       const newestResident = residentIds[residentIds.length - 1]
       const cutoff = newestResident === undefined ? -1 : source.findIndex((message) => message.id === newestResident)
-      rows = source.filter((message, index) => resident.has(message.id) || (cutoff !== -1 && index > cutoff))
+      // A historical window keeps strict resident membership: no live-tail
+      // appends, ever. A latest window that arrived by around-navigation
+      // still follows the live end beyond its newest resident row.
+      if (window.kind !== "latest") {
+        rows = source.filter((message) => resident.has(message.id))
+      } else {
+        rows = source.filter((message, index) => resident.has(message.id) || (cutoff !== -1 && index > cutoff))
+      }
     }
     if (rows.length) {
       const normalized = rows.map((item) => normalizeSessionMessage(sessionId, item))

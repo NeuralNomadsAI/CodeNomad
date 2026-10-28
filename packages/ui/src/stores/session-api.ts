@@ -97,7 +97,7 @@ import {
 } from "./message-v2/message-window"
 import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
-import { captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision, mergeOpenCodeLoadedPage, seedOpenCodeProjectionPage } from "./opencode-data"
+import { captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision, mergeOpenCodeLoadedPage, noteOpenCodeDisplayPublication, seedOpenCodeProjectionPage } from "./opencode-data"
 
 const log = getLogger("api")
 const sessionLog = getLogger("session")
@@ -1552,6 +1552,9 @@ function commitMessageWindow(
 ) {
   const store = messageStoreBus.getOrCreate(instanceId)
   store.setMessageWindow(sessionId, window)
+  // Fence in-flight trailing publications: an ordinary load just published
+  // newer content, so an older trailing page must not overwrite it.
+  noteOpenCodeDisplayPublication(instanceId, sessionId)
   const existing = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE)
   const preservePosition = intent === "open"
   const atBottom = intent === "older" || intent === "latest"
@@ -1883,7 +1886,7 @@ async function loadMessages(
           // The reducer projection needs the same base, or later streaming
           // deltas reduce against rows it never held and the loaded messages
           // freeze at their snapshot text.
-          seedOpenCodeProjectionPage(instanceId, sessionId, session.location.directory, apiMessages)
+          seedOpenCodeProjectionPage(instanceId, sessionId, session.location.directory, apiMessages, rowSnapshot)
         }
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
         commitCurrentWindow(nextWindow, intent)
