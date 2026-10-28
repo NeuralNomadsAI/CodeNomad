@@ -71,6 +71,8 @@ type TranscriptEntry = {
   settlementSerial: number
   /** Settlement serial whose stranded-tool reconciliation already ran. */
   reconciledSettlementSerial: number
+  /** Reconcile attempts spent on the current settlement (bounded). */
+  settlementReconcileAttempts: number
   /** Quiet-gated reconciliation armed for the current settlement, if any. */
   settleTimer?: ReturnType<typeof setTimeout>
   queue: QueuedTranscriptEvent[]
@@ -300,6 +302,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     retireWhenDrained: false,
     settlementSerial: 0,
     reconciledSettlementSerial: 0,
+    settlementReconcileAttempts: 0,
     queue: [],
   }
   transcriptEntries.set(key, transcript)
@@ -379,11 +382,34 @@ function collapseTranscriptQueue(instanceId: string, sessionId: string, transcri
  * terminal was swallowed by the reducer's running-status guard (or lost
  * across a disconnect window) and will never be re-delivered — `failed`
  * still settles such a row. The reducer's own settlement refresh can be
- * dropped while the connection is not "connected". Reconcile once per
- * settlement with one quiet, non-dropping trailing read on the live
- * reducer: events keep admitting while the page lands, the merged page
- * keeps their live rows, and the re-projection preserves the display
- * window's membership and cursor. */
+ * dropped while the connection is not "connected". Reconcile with bounded,
+ * quiet-gated reads of the resident window: a scratch fetch of one full
+ * window is seeded back over the reducer with unfinished live rows riding
+ * along, then projected — the reducer never enters dropping mode, and the
+ * display window keeps its membership and cursor. */
+const SETTLEMENT_RECONCILE_ATTEMPTS = 3
+
+/** Rows whose terminal events can still arrive: they must survive a seeded
+ * reconcile page even when the fetch window no longer contains them. */
+function isUnfinishedLiveRow(row: SessionMessageInfo): boolean {
+  if (row.type === "shell") return row.status === "running"
+  if (row.type === "compaction") return row.status === "running"
+  return row.type === "assistant" && !row.time.completed
+}
+
+/** The fetched window is authoritative for what it contains (a stranded
+ * tool's terminal state lives there); unfinished live rows outside it ride
+ * along so their terminal events still reduce in the row that created them. */
+function mergeReconcileWindow(fetchedAsc: SessionMessageInfo[], live: SessionMessageInfo[]): SessionMessageInfo[] {
+  const fetchedIds = new Set(fetchedAsc.map((row) => row.id))
+  const merged = [...fetchedAsc]
+  for (const row of live) {
+    if (fetchedIds.has(row.id) || !isUnfinishedLiveRow(row)) continue
+    merged.push(JSON.parse(JSON.stringify(row)) as SessionMessageInfo)
+  }
+  return merged.sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
+}
+
 function scheduleSettlementReconcile(
   instanceId: string,
   sessionId: string,
@@ -395,28 +421,76 @@ function scheduleSettlementReconcile(
     && !transcript.needsAuthoritativeResync && !transcript.resyncing && !transcript.rotating
     && transcript.queue.length === 0
     && isTranscriptCurrent(instanceId, sessionId, transcript)
-  const revision = getOpenCodeFullDataRevision(instanceId, sessionId)
-  transcript.settleTimer = setTimeout(() => {
-    transcript.settleTimer = undefined
-    if (!eligible()) return
-    // Trail behind a live stream rather than racing it: re-arm while events
-    // keep arriving, so the read never starts mid-burst.
-    if (getOpenCodeFullDataRevision(instanceId, sessionId) !== revision) {
-      scheduleSettlementReconcile(instanceId, sessionId, transcript)
+  const arm = () => {
+    const revision = getOpenCodeFullDataRevision(instanceId, sessionId)
+    transcript.settleTimer = setTimeout(() => {
+      transcript.settleTimer = undefined
+      if (!eligible()) return
+      // Trail behind a live stream rather than racing it: re-arm while events
+      // keep arriving, so the read never starts mid-burst.
+      if (getOpenCodeFullDataRevision(instanceId, sessionId) !== revision) {
+        scheduleSettlementReconcile(instanceId, sessionId, transcript)
+        return
+      }
+      void reconcileSettlementWindow(instanceId, sessionId, transcript, revision)
+    }, SETTLEMENT_RECONCILE_QUIET_MS)
+  }
+  arm()
+}
+
+/** One quiet-window reconcile attempt: read a full resident window from
+ * authority, seed it back with unfinished live rows, and publish. A
+ * superseded read (or a stranded row the page itself cannot settle) owes one
+ * bounded, coalesced retry; exhausted attempts spend the settlement. */
+async function reconcileSettlementWindow(
+  instanceId: string,
+  sessionId: string,
+  transcript: TranscriptEntry,
+  revision: number,
+): Promise<void> {
+  transcript.settlementReconcileAttempts += 1
+  const attemptsLeft = transcript.settlementReconcileAttempts < SETTLEMENT_RECONCILE_ATTEMPTS
+  const retry = () => {
+    if (attemptsLeft) scheduleSettlementReconcile(instanceId, sessionId, transcript)
+    else transcript.reconciledSettlementSerial = transcript.settlementSerial
+  }
+  try {
+    const client = getRootClient(instanceId)
+    const response = await (client.message.list as any)({
+      sessionID: sessionId,
+      limit: MESSAGE_WINDOW_PAGE_SIZE,
+      order: "desc",
+    })
+    // Events admitted while the fetch was in flight supersede its page.
+    if (!isTranscriptCurrent(instanceId, sessionId, transcript)
+      || getOpenCodeFullDataRevision(instanceId, sessionId) !== revision) {
+      retry()
+      return
+    }
+    const fetchedAsc = [...(response.data as SessionMessageInfo[])].reverse()
+    const merged = mergeReconcileWindow(fetchedAsc, transcript.entry.data.session.message.list(sessionId))
+    const seededRevision = getOpenCodeFullDataRevision(instanceId, sessionId)
+    const synced = await transcript.entry.syncMessages(sessionId, merged,
+      () => isTranscriptCurrent(instanceId, sessionId, transcript))
+    // Events admitted while the page was seeded would have been overwritten;
+    // re-read instead of publishing a page their round already left.
+    if (!synced || !isTranscriptCurrent(instanceId, sessionId, transcript)
+      || getOpenCodeFullDataRevision(instanceId, sessionId) !== seededRevision) {
+      retry()
+      return
+    }
+    projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
+    if (hasStrandedPendingTool(transcript.entry.data.session.message.list(sessionId))) {
+      // The page itself could not settle the row (authority still reports it
+      // unfinished): reconciliation is still owed, bounded by the attempts.
+      retry()
       return
     }
     transcript.reconciledSettlementSerial = transcript.settlementSerial
-    // Non-dropping, on the live reducer: streamed events keep admitting while
-    // the page lands, and the read's row merge keeps their live versions.
-    transcript.entry.data.session.message.invalidate(sessionId)
-    void transcript.entry.data.session.message.sync(sessionId)
-      .catch(() => undefined)
-      .then(() => {
-        if (!isTranscriptCurrent(instanceId, sessionId, transcript)) return
-        projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
-        retireDrainedTranscript(instanceId, sessionId, transcript)
-      })
-  }, SETTLEMENT_RECONCILE_QUIET_MS)
+    retireDrainedTranscript(instanceId, sessionId, transcript)
+  } catch {
+    retry()
+  }
 }
 
 /** Reconnect continuity: capture, reset, reseed and trailing reconciliation
@@ -972,6 +1046,7 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
   if (isExecutionTerminalEvent(event)) {
     transcript.retireWhenDrained = true
     transcript.settlementSerial += 1
+    transcript.settlementReconcileAttempts = 0
   }
   // A settlement deferred by parked or running work completes once that clears.
   retireDrainedTranscript(instanceId, sessionId, transcript)
