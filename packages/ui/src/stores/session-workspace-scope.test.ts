@@ -115,8 +115,10 @@ it("notices of a nested repository's session follow where it is shown", async ()
   serverApi.fetchWorktrees = (async (instanceId: string) => ({ isGitRepo: instanceId === nested,
     worktrees: [{ slug: "root", directory: folders[instanceId] }] })) as any
   // Sessions unknown to the parent read as nested-repository sessions.
-  const client = { session: { active: async () => ({}), get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID,
-    title: sessionID, version: "1", projectID: "repo-b", location: { directory: folders[nested] }, time: { created: 1, updated: 1 } }) } } as any
+  const client = { session: { active: async () => ({}), get: async ({ sessionID }: { sessionID: string }) => {
+    if (sessionID === "unreadable") throw new Error("503")
+    return { id: sessionID, title: sessionID, version: "1", projectID: "repo-b", location: { directory: folders[nested] }, time: { created: 1, updated: 1 } }
+  } } } as any
   const open = async (id: string) => {
     ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
     addInstance({ id, folder: folders[id], port: 0, pid: 0, proxyPath: "", status: "ready", client })
@@ -163,6 +165,10 @@ it("notices of a nested repository's session follow where it is shown", async ()
     await new Promise((resolve) => setTimeout(resolve, 20))
     assert.equal(sessions().get(parent)?.has("cold"), true)
     assert.equal(notices("sessionEvents.sessionCompactedToast", "cold"), 0)
+    // An unreadable session proves no scope: it is left to a project that can read it.
+    compacted("unreadable")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(notices("sessionEvents.sessionCompactedToast", "unreadable"), 0)
     compacted("own")
     assert.equal(notices("sessionEvents.sessionCompactedToast", "own"), 1)
   } finally {

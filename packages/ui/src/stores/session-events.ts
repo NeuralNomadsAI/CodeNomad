@@ -571,9 +571,11 @@ function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled):
   const held = sessions().get(instanceId)?.has(sessionId)
   const resolved = ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory, retry)
   if (held) showRetryToast(instanceId, sessionId, retry)
-  // An unknown session's scope is known once its metadata is read; by then
-  // the next attempt may already have replaced this backoff.
-  else void resolved.then(() => { if (isCurrentNativeLifecycle(instanceId, sessionId, generation)) showRetryToast(instanceId, sessionId, retry) })
+  // An unknown session's scope is known once its metadata is read and
+  // published; by then the next attempt may already have replaced this backoff.
+  else void resolved.then(() => {
+    if (sessions().get(instanceId)?.has(sessionId) && isCurrentNativeLifecycle(instanceId, sessionId, generation)) showRetryToast(instanceId, sessionId, retry)
+  })
 }
 
 function showRetryToast(instanceId: string, sessionId: string, retry: SessionRetryState): void {
@@ -611,8 +613,11 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
     setSessionStatus(instanceId, sessionID, "working", { force: true })
     announceCompaction(instanceId, event)
   } else {
-    // An unknown session's scope is known once its metadata is read.
-    void ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory).then(() => announceCompaction(instanceId, event))
+    // An unknown session's scope is known once its metadata is read and
+    // published; a failed read, a deletion or a closed project announces nothing.
+    void ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory).then(() => {
+      if (sessions().get(instanceId)?.has(sessionID)) announceCompaction(instanceId, event)
+    })
   }
 }
 
