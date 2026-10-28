@@ -3,11 +3,10 @@ import { authenticatedFetch } from "./auth-recovery"
 import { HttpResponseError } from "./retryable-file-search"
 
 const codes = ["creation-uncertain", "creation-conflict", "creation-capacity", "creation-unavailable", "creation-worktree-deleting",
-  "mission-limit", "revision-conflict", "request-conflict", "compare-models-required", "compare-models-identical"] as const
+  "revision-conflict", "request-conflict", "compare-models-required", "compare-models-identical"] as const
 type MissionMutationCode = typeof codes[number]
 type Operation = "create" | "edit"
-// The route forwards a native mission-limit only with its exact no-effect receipt.
-const createOnly = (code: MissionMutationCode) => code.startsWith("creation-") || code.startsWith("compare-models-") || code === "mission-limit"
+const createOnly = (code: MissionMutationCode) => code.startsWith("creation-") || code.startsWith("compare-models-")
 
 export function missionMutationCode(body: unknown, operation: Operation): MissionMutationCode | undefined {
   if (!body || typeof body !== "object" || !("code" in body)) return undefined
@@ -79,7 +78,6 @@ export function missionMutationErrorKey(error: unknown): string {
     if (error.status === 503 && error.code === "creation-capacity") return "missions.control.creation.capacity"
     if (error.status === 503 && error.code === "creation-unavailable") return "missions.control.creation.unavailable"
     if (error.status === 409 && error.code === "creation-worktree-deleting") return "missions.control.creation.worktreeDeleting"
-    if (error.status === 409 && error.code === "mission-limit") return "missions.control.creation.limit"
     if (error.status === 409 && error.code === "revision-conflict") return "missions.control.mutation.conflict"
     if (error.status === 409 && error.code === "request-conflict") return "missions.control.mutation.requestConflict"
     if (error.status === 403) return "missions.control.mutation.forbidden"

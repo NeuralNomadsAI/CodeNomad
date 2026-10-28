@@ -1,7 +1,7 @@
 import { isSessionNotFoundError, type LocationRef, type OpenCodeClient, type ShellInfo } from "@opencode/client"
 
 import { locationRequestOptions, sameLocation } from "../opencode/compatibility/location"
-import { MISSION_MAX_ACTORS, MISSION_MAX_MISSIONS, MISSION_MAX_TASKS, type MissionActivityProjection, type MissionSnapshot } from "./model"
+import { MISSION_MAX_ACTORS, MISSION_MAX_TASKS, type MissionActivityProjection, type MissionSnapshot } from "./model"
 import { MAX_MISSION_DESCENDANTS, observeActiveDescendant, readNativeMissionFamilyTree, type NativeMissionFamilyTree } from "./native-session-family"
 import { projectMissionFamily } from "./mission-family-projection"
 import { runningMissionShellRelation } from "./native-shell-correlation"
@@ -9,7 +9,10 @@ import { missionTaskExecutionEvidence } from "./execution-evidence"
 import { missionIsRunning } from "./lifecycle-model"
 import { isCoordinatorNotificationReport } from "./native-report-provenance"
 
-const MAX_PROJECTED_ACTORS = MISSION_MAX_ACTORS * MISSION_MAX_MISSIONS
+// Native reads per refresh stay bounded however many missions a project keeps: running,
+// then other active missions' actors are observed first, then the most recently updated;
+// the rest read as unknown.
+const MAX_PROJECTED_ACTORS = 160
 const MAX_FAMILY_READS = 2 * (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
 const MAX_FAMILY_SESSIONS = (MAX_MISSION_DESCENDANTS + 1) * MAX_PROJECTED_ACTORS
 const READ_CONCURRENCY = 4
@@ -63,13 +66,17 @@ export async function projectMissionActivity(input: {
     catch (error) { stale = true; throw error }
   }
   try { assertCurrent() } catch { return unknownProjection() }
-  if (input.snapshot.missions.length > MISSION_MAX_MISSIONS || input.snapshot.missions.some(mission =>
+  if (input.snapshot.missions.some(mission =>
     mission.actors.length > MISSION_MAX_ACTORS || mission.tasks.length > MISSION_MAX_TASKS)) return unknownProjection()
   const observe = async <T>(read: () => Promise<T>): Promise<T> => {
     assertCurrent()
     try { return await read() } finally { assertCurrent() }
   }
-  const occurrences = input.snapshot.missions.flatMap(mission => mission.actors.map(actor => ({ mission, actor })))
+  // The snapshot is ordered by most recent update; a stable sort puts running missions
+  // first, then the other active ones (prepared, paused).
+  const rank = (mission: MissionSnapshot["missions"][number]) => missionIsRunning(mission) ? 2 : mission.status === "active" ? 1 : 0
+  const missions = [...input.snapshot.missions].sort((left, right) => rank(right) - rank(left))
+  const occurrences = missions.flatMap(mission => mission.actors.map(actor => ({ mission, actor })))
   const sessionIDs = [...new Set(occurrences.map(({ actor }) => actor.sessionId))].slice(0, MAX_PROJECTED_ACTORS)
   const missingReports = new Set<string>()
   const unsettledCalls = new Set<string>()

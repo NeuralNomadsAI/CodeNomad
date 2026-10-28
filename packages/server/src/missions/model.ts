@@ -12,7 +12,6 @@ import { projectLifecycle, type MissionControlRequestedEvent, type MissionContro
 export const MISSION_SCHEMA_VERSION = 1 as const
 export const MISSION_MAX_ACTORS = 8
 export const MISSION_MAX_EVENTS = 2_000
-export const MISSION_MAX_MISSIONS = 20
 export const MISSION_MAX_TASKS = 96
 export const MISSION_MAX_HISTORY = 50
 
@@ -463,8 +462,8 @@ export function reduceMissionEvents(events: readonly MissionEvent[], now = Date.
     version: MISSION_SCHEMA_VERSION,
     projectID: missions[0]?.projectID ?? events[0]?.projectID ?? "",
     generatedAt: now,
-    missions: missions.slice(0, MISSION_MAX_MISSIONS),
-    discardedEvents: discarded.count + Math.max(0, missions.length - MISSION_MAX_MISSIONS),
+    missions,
+    discardedEvents: discarded.count,
     ...(hasInvalidControlHistory(events) ? { controlUnavailable: true } : {}),
     ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),
   }

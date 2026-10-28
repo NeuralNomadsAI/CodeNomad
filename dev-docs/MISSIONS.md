@@ -361,8 +361,11 @@ This transport reuses only the automation bridge discovery; automation keeps its
 - Coordinator and independent actor admission require exact owned roots; native
   descendant observation/reporting uses its separate ancestry/provenance contract.
   Foreign projects are rejected; a graph edge never grants session authority.
-- At most 8 actors, 96 tasks, 20 live maps, and 2,000 stored journal entries per
-  project. Tombstones retain evidence and count against journal storage only.
+- At most 8 actors and 96 tasks per mission, and 2,000 stored journal entries per
+  project; the number of missions is unbounded. Tombstones retain evidence and count
+  against journal storage only. Activity observation reads at most 160 actors per
+  refresh, active missions first, then the most recently updated; the rest read as
+  unknown.
 - Existing root actors may be reused, but an actor cannot join two active missions.
   Once a mission is stopped or finished another active mission may reuse its
   actor; a Stop target found serving another active mission settles with a known
@@ -373,7 +376,7 @@ This transport reuses only the automation bridge discovery; automation keeps its
 - One-time creation refusals that provably happen before the native create is
   attempted carry no-effect codes (`creation-unavailable` 503,
   `creation-worktree-deleting` 409, plus the existing capacity/scope codes and a
-  receipt-backed native `mission-limit`): the UI keeps the draft and re-enables
+  receipt-backed native `request-conflict`): the UI keeps the draft and re-enables
   Create. Every later failure stays an exact `creation-uncertain`/codeless hold.
   Recurring creation uses the same classification (`creation-unavailable`,
   `creation-worktree-deleting`, the hold codes, `recurrence-capacity`, 400 and

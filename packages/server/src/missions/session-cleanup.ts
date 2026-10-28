@@ -87,8 +87,8 @@ async function cleanup(deletion: MissionDeletedEvent, options: {
     let history: MissionEvent[]
     try {
       const observation = await journal.events()
-      // Display snapshots deliberately truncate missions and hide tombstones. Authority
-      // needs the complete bounded journal, including finished and deleted memberships.
+      // Display snapshots hide tombstones. Authority needs the complete bounded journal,
+      // including finished and deleted memberships.
       if (observation.discardedEvents || hasInvalidCleanupHistory(observation.events)) return false
       history = observation.events
       const receipt = await journal.event(deletion.missionID, receiptID)

@@ -89,16 +89,18 @@ export function setMissionDisclosureOpen(missionId: string, id: string, open: bo
 const [seenVersion, setSeenVersion] = createSignal(0)
 const finishedSeen = new Map<string, readonly string[] | undefined>()
 function seenKey(scope: string) { return `mission-seen-${key(scope)}` }
+// 24-bit ids, concatenated: the project journal holds at most 2,000 events and a completed
+// Mission at least two (created, finished), so every seen id fits one 4,096-character
+// layout value. A collision only shows another completion as already seen.
+const SEEN_ID_LENGTH = 4
+const seenId = (missionId: string) => key(missionId).slice(0, SEEN_ID_LENGTH)
 function readFinishedSeen(scope: string): readonly string[] | undefined {
   seenVersion()
   const storageKey = seenKey(scope)
   if (!finishedSeen.has(storageKey)) {
-    let value: string[] | undefined
-    try {
-      const stored = JSON.parse(readClientLayoutValue(storageKey) ?? "null")
-      if (Array.isArray(stored) && stored.every(id => typeof id === "string" && /^[a-zA-Z0-9_-]{11}$/.test(id))) value = stored
-    } catch { /* Ignore malformed saved layout. */ }
-    finishedSeen.set(storageKey, value)
+    const stored = readClientLayoutValue(storageKey)
+    finishedSeen.set(storageKey, stored != null && /^(?:[a-zA-Z0-9_-]{4})*$/.test(stored)
+      ? stored.match(/.{4}/g) ?? [] : undefined)
   }
   return finishedSeen.get(storageKey)
 }
@@ -106,19 +108,19 @@ function readFinishedSeen(scope: string): readonly string[] | undefined {
 /** Whether this window has shown the completed Mission; true before the first list read. */
 export function missionFinishedSeen(scope: string, missionId: string): boolean {
   const seen = readFinishedSeen(scope)
-  return !seen || seen.includes(key(missionId))
+  return !seen || seen.includes(seenId(missionId))
 }
 
 /** Records completed Missions as seen, keeping only those still listed. The first
  * call (no record yet) also takes every listed completed Mission as seen. */
 export function markMissionsFinishedSeen(scope: string, seenIds: readonly string[], completedIds: readonly string[]): void {
   const previous = readFinishedSeen(scope)
-  const listed = new Set(completedIds.map(key))
+  const listed = new Set(completedIds.map(seenId))
   const next = new Set((previous ?? [...listed]).filter(id => listed.has(id)))
-  for (const id of seenIds) if (listed.has(key(id))) next.add(key(id))
+  for (const id of seenIds) if (listed.has(seenId(id))) next.add(seenId(id))
   if (previous && previous.length === next.size && previous.every(id => next.has(id))) return
   finishedSeen.set(seenKey(scope), [...next])
-  writeClientLayoutValue(seenKey(scope), JSON.stringify([...next]))
+  writeClientLayoutValue(seenKey(scope), [...next].join(""))
   setSeenVersion(value => value + 1)
 }
 

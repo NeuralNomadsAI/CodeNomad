@@ -168,7 +168,6 @@ export const missionMessages = {
   "missions.control.creation.scopeConflict": "此次创建不再匹配原始保留范围，未获准执行。重新打开不会修复原始操作。",
   "missions.control.creation.capacity": "任务创建的准入容量已满。此次创建未获准执行；你的输入已保留。",
   "missions.control.creation.worktreeDeleting": "正在删除 worktree，因此此次创建未发送。你的输入已保留；请在删除完成后重试。",
-  "missions.control.creation.limit": "此项目已达到任务数量上限。未创建任何内容；你的输入已保留。请删除不再需要的任务后重试。",
   "missions.control.creation.unavailable": "Missions 插件或其连接尚未就绪，目前无法创建任务。未发送任何内容；你的输入已保留。请稍后重试。",
   "missions.control.mutation.requestConflict": "此请求与其原始操作冲突。你的输入已保留；重新打开并不等于修复。",
   "missions.control.mutation.forbidden": "此更改未获准在该工作区或目录执行。你的输入已保留。",

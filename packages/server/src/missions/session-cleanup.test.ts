@@ -3,7 +3,7 @@ import test from "node:test"
 import { MissionControl, MissionControlError } from "./control"
 import type { MissionDeleteInput, MissionSessionAdapter, NativeMissionSession } from "./control-types"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, type MissionStorage } from "./journal"
-import { MISSION_MAX_EVENTS, MISSION_MAX_MISSIONS, type MissionJsonValue, type MissionMap } from "./model"
+import { MISSION_MAX_EVENTS, type MissionJsonValue, type MissionMap } from "./model"
 import { cleanupReceiptID } from "./cleanup-projection"
 
 function fixture() {
@@ -74,14 +74,14 @@ const specialist = (mission: MissionMap) => mission.actors.find((actor) => actor
 const code = (expected: string) => (error: unknown) => error instanceof MissionControlError && error.code === expected
 
 test("valid tombstones do not exhaust live reconstruction or block subsequent native business work", async () => {
-  const f = fixture()
-  for (let index = 0; index < MISSION_MAX_MISSIONS; index++) {
+  const f = fixture(), historical = 20
+  for (let index = 0; index < historical; index++) {
     const mission = await f.create(`historical-${index}`)
     await f.control().delete(f.deletion(mission))
   }
   let mission = await f.create("next-live-mission")
   const snapshot = await f.control().snapshot()
-  assert.equal(f.values.size, 2 * MISSION_MAX_MISSIONS + 1)
+  assert.equal(f.values.size, 2 * historical + 1)
   assert.equal(snapshot.missions.length, 1)
   assert.equal(snapshot.discardedEvents, 0)
   assert.equal(snapshot.controlUnavailable, undefined)
@@ -95,7 +95,7 @@ test("valid tombstones do not exhaust live reconstruction or block subsequent na
   mission = (await f.control().report(mission.coordinatorSessionId, { missionID: mission.id, outcome: "completed",
     summary: "Delivered", evidence: [], next: [], final: true })).mission
   assert.equal(mission.status, "completed")
-  assert.equal(f.native.size, MISSION_MAX_MISSIONS + 1)
+  assert.equal(f.native.size, historical + 1)
   assert.deepEqual(f.removed, [], "tombstones never remove conversations by default")
 
   const prefix = `${MISSION_JOURNAL_STORAGE_PREFIX}/${f.journal.projectToken}`
@@ -413,22 +413,20 @@ for (const identity of ["mission", "event", "project", "deletion", "session", "t
   })
 }
 
-test("genuine active-map truncation does not fence an older mission's exact cleanup retry", async () => {
+test("many newer missions do not fence an older mission's exact cleanup retry", async () => {
   const f = fixture()
   const mission = await f.delegate(await f.create(), "worker")
   const request = f.deletion(mission, true)
   f.failing.add(specialist(mission))
   await assert.rejects(f.control().delete(request), code("cleanup-pending"))
-  // Persisted journals can exceed the display window; normal create admission
-  // prevents manufacturing this historical inventory through the UI today.
   for (let index = 0; index < 25; index++) await f.journal.append({
     version: 1, id: `evt_newer_${index}`, type: "mission.created", missionID: `msn_newer_${index}`,
     projectID: mission.projectID, projectCanonical: "/repo", objective: "Newer", template: "custom", createdAt: 10_000 + index,
     coordinator: { sessionID: `ses_newer_${index}`, title: "Coordinator", location: { directory: "/repo" } },
   })
   const snapshot = await f.control().snapshot()
-  assert.equal(snapshot.missions.length, 20)
-  assert.ok(snapshot.discardedEvents > 0, "reducer includes display truncation in its counter")
+  assert.equal(snapshot.missions.length, 25)
+  assert.equal(snapshot.discardedEvents, 0)
   assert.equal(snapshot.cleanupUnavailable, undefined)
   assert.equal(snapshot.cleanups![0].pending, 1)
   f.failing.clear()
