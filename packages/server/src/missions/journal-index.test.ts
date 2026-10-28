@@ -226,6 +226,10 @@ test("a write no generation counts (an older build in another Location) shows af
   assert.ok(f.fullScans() > scans, "a staleness rebuild")
   // The interval runs from the last full build.
   assert.ok(await read().then(() => f.fullScans() === scans + 1))
+  // A clock moved back cannot postpone the next rebuild.
+  f.tamper(`${f.prefix}/msn_rewound/evt_created`, structuredClone(created("msn_rewound", 200)) as unknown as MissionJsonValue)
+  f.advanceIndexClock(-1)
+  assert.deepEqual((await read()).open.sort(), ["msn_legacy", "msn_rewound"])
 })
 
 test("hints are read synchronously: an async callback is refused before it can hold the append exclusion", async () => {

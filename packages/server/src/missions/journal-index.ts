@@ -143,7 +143,9 @@ export class MissionJournalIndex {
     let state: State
     try {
       const generation = missionJournalWrites(this.projectToken)
-      if (this.state?.generation !== generation || this.now() - this.state.builtAt >= this.staleAfterMs) await this.build(source, generation)
+      // A clock moved back cannot extend staleness: any non-forward age rebuilds too.
+      const age = this.state ? this.now() - this.state.builtAt : 0
+      if (this.state?.generation !== generation || age >= this.staleAfterMs || age < 0) await this.build(source, generation)
       for (const missionID of [...this.dirty]) {
         const range = await source.range(missionID)
         this.apply(range)
