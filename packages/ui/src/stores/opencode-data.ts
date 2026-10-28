@@ -67,6 +67,9 @@ type TranscriptEntry = {
   retryCount: number
   retryTimer?: ReturnType<typeof setTimeout>
   retireWhenDrained: boolean
+  /** Admitted `session.execution.started` events; a settlement's publication
+   * fence is a newer execution, not same-round activity. */
+  executionEpoch: number
   queue: QueuedTranscriptEvent[]
   onResynced?: (data: Data) => void
 }
@@ -289,6 +292,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     resyncGeneration: 0,
     retryCount: 0,
     retireWhenDrained: false,
+    executionEpoch: 0,
     queue: [],
   }
   transcriptEntries.set(key, transcript)
@@ -686,6 +690,13 @@ export function applyOpenCodeDataEvent(
   if (typeof sessionId === "string" && !coalesced) {
     const key = messageRevisionKey(instanceId, sessionId)
     fullDataRevisions.set(key, (fullDataRevisions.get(key) ?? 0) + 1)
+    if (event.type === "session.execution.started") {
+      // Publication fence for a settlement's reconciliation read: only a newer
+      // execution supersedes it, never same-round activity such as a late
+      // terminal tool event.
+      const transcript = transcriptEntries.get(key)
+      if (transcript) transcript.executionEpoch += 1
+    }
     if (eventAffectsMessages(event)) messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
     if (event.type === "session.inbox.cancelled" || event.type === "session.revert.committed") bumpMutationRevision(key)
     if (skipUnobservedCompaction && event.type.startsWith("session.compaction.") && !transcriptEntries.has(key)) {
@@ -896,9 +907,40 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
   if (!transcript) return
   // The caller has projected the synchronous page. Queued terminal updates and
   // overflow recovery must publish their final page before releasing its reducer.
-  if (isExecutionTerminalEvent(event)) transcript.retireWhenDrained = true
+  if (isExecutionTerminalEvent(event)) {
+    transcript.retireWhenDrained = true
+    // The SDK's own settlement refresh (a terminal event with a still streaming
+    // or running tool invalidates and re-reads messages) is skipped while the
+    // stream is not connected and never publishes its result. Finish it here:
+    // this sync shares the SDK's in-flight read when connected and starts it
+    // when not, then projects the reconciled page without touching the display
+    // window's membership. A newer execution supersedes the publication;
+    // same-round activity does not.
+    if (hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
+      const epoch = transcript.executionEpoch
+      void transcript.entry.data.session.message.sync(sessionId)
+        .catch(() => undefined)
+        .then(() => {
+          // Publish unless a newer execution superseded this settlement:
+          // same-round activity (a late terminal tool event) must not
+          // suppress the repair.
+          if (!isTranscriptCurrent(instanceId, sessionId, transcript)
+            || transcript.executionEpoch !== epoch) return
+          projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
+          retireDrainedTranscript(instanceId, sessionId, transcript)
+        })
+    }
+  }
   // A settlement deferred by parked or running work completes once that clears.
   retireDrainedTranscript(instanceId, sessionId, transcript)
+}
+
+/** The SDK reducer's own settlement-refresh condition: an assistant tool whose
+ * terminal event may still be owed (or was swallowed from `streaming`). */
+function hasUnsettledToolRow(messages: SessionMessageInfo[]): boolean {
+  return messages.some((message) => message.type === "assistant"
+    && message.content.some((part) => part.type === "tool"
+      && (part.state.status === "streaming" || part.state.status === "running")))
 }
 
 export function destroyOpenCodeData(instanceId: string, sessionId?: string): void {
