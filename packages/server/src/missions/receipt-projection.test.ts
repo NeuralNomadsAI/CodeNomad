@@ -100,7 +100,7 @@ for (const damage of ["noncanonical", "physical-key", "event", "mission", "proje
     assert.equal((projected as any).controlUnavailable, true)
     assert.deepEqual(projected.control!.pending, operation.targets.map(target => target.sessionID))
     assert.equal(projected.control!.id, operation.id); assert.equal(projected.control!.requestID, request.requestID)
-    await assert.rejects(f.journal.assertCanAppend(MISSION_MAX_EVENTS - f.values.size), /safety limit/)
+    await assert.rejects(f.journal.assertCanAppend(mission.id, MISSION_MAX_EVENTS - f.values.size), /safety limit/)
     f.allowControl()
     await assert.rejects(f.control.lifecycle(request))
     await assert.rejects(f.control.lifecycle({ ...request, requestID: "new-stop", action: "stop", expectedRevision: projected.revision }))

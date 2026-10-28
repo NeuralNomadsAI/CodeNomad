@@ -156,6 +156,6 @@ Düzenlenebilir tek seferlik görevde **Seçili görevi düzenle** eylemini kull
 2. Onaylamadan önce isteğe bağlı olarak **Bu görev için oluşturulan uzman konuşmalarını da sil** seçeneğini işaretleyin.
 3. Kaldırılan/korunan/bekleyen sayılarını **Konuşma temizliği** bölümünde kontrol edin. Sunuluyorsa yalnızca kaydedilmiş, kalan temizliği yeniden deneyin.
 
-Görevi silmek durdurmakla aynı şey değildir; önce Durdur'u kullanıp kalan işleri inceleyin. Koordinatörler ve yeniden kullanılan konuşmalar korunur. Paylaşılan, taşınan, alt konuşması bulunan veya sahipliği doğrulanamayan uzmanlar da korunabilir. Kısmi temizlik geri alınmaz ve arka planda sessizce tamamlanmaz. Genel bakış okuyucusu tamamlanan en son 20 temizliği tutar. Görevleri silmek projedeki depolama alanlarını boşaltır: daha eski silinmiş görevler otomatik olarak temizlenir, proje yeni görevler için yer gerektirdiğinde yakın tarihli olanlar da temizlenir.
+Görevi silmek durdurmakla aynı şey değildir; önce Durdur'u kullanıp kalan işleri inceleyin. Koordinatörler ve yeniden kullanılan konuşmalar korunur. Paylaşılan, taşınan, alt konuşması bulunan veya sahipliği doğrulanamayan uzmanlar da korunabilir. Kısmi temizlik geri alınmaz ve arka planda sessizce tamamlanmaz. Genel bakış okuyucusu tamamlanan en son 20 temizliği tutar. Görevleri silmek projedeki depolama alanlarını boşaltır: daha eski silinmiş görevler otomatik olarak temizlenir.
 
 OpenCode işleri ve hizmet kontrolleri için [İzinler](permissions.md), [Konuşmalar](conversations.md) ve [OpenCode kurulumu](opencode.md) sayfalarına bakın.

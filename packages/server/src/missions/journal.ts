@@ -40,6 +40,8 @@ const MAX_TEXT = 20_000
 const MAX_SHORT_TEXT = 240
 // A key's mission range, relative to the project prefix; anything else lies outside every range.
 const RANGE = /^\/([A-Za-z0-9_-]{3,100})\//
+const MISSION_FULL = `Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit of this mission`
+const RANGE_OVER_BOUND = `Mission journal exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit of one mission`
 type CapacityIntent = Extract<MissionEvent, { type: "mission.deleted" | "mission.control-requested" }>
 interface CapacitySlot { intent: CapacityIntent; sessionID: string }
 /** `unreadable`: missions whose deletion record could not be read, kept as damage. */
@@ -146,13 +148,12 @@ export class MissionJournal {
   private async observe(prefix = this.prefix()): Promise<Observation> {
     const events: MissionEvent[] = []
     let discardedEvents = 0
+    const bound = this.rangeBound()
     let after: string | undefined
     do {
       const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
       for (const entry of page.entries) {
-        if (events.length + discardedEvents >= MISSION_MAX_STORED_EVENTS) {
-          throw new Error(`Mission journal exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`)
-        }
+        bound(entry.key)
         const event = this.parseEntry(entry.key, entry.value)
         if (!event) discardedEvents += 1
         else events.push(event)
@@ -162,19 +163,32 @@ export class MissionJournal {
     return this.resolve(events, discardedEvents)
   }
 
+  /** No mission range, nor the entries outside every range together, is read
+   * past `MISSION_MAX_STORED_EVENTS`; a whole project has no bound of its own.
+   * Returns the counted key's mission. */
+  private rangeBound(): (key: string) => string | undefined {
+    const prefix = this.prefix(), counts = new Map<string, number>()
+    return key => {
+      const missionID = key.startsWith(prefix) ? RANGE.exec(key.slice(prefix.length))?.[1] : undefined
+      const count = (counts.get(missionID ?? "") ?? 0) + 1
+      if (count > MISSION_MAX_STORED_EVENTS) throw new Error(RANGE_OVER_BOUND)
+      counts.set(missionID ?? "", count)
+      return missionID
+    }
+  }
+
   /** The index build: one key-ordered scan of the project, resolved and reduced
    * one mission range at a time like `observeMission`, under the same read bound.
    * Returns the entries outside every range. */
   private async scanRanges(visit: (range: MissionIndexRange) => void): Promise<number> {
-    const prefix = this.prefix()
-    let stray = 0, count = 0, group: { missionID: string; events: MissionEvent[]; discardedEvents: number } | undefined
+    const prefix = this.prefix(), bound = this.rangeBound()
+    let stray = 0, group: { missionID: string; events: MissionEvent[]; discardedEvents: number } | undefined
     const flush = async () => { if (group) visit(this.range(group.missionID, await this.resolve(group.events, group.discardedEvents))) }
     let after: string | undefined
     do {
       const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
       for (const entry of page.entries) {
-        if (++count > MISSION_MAX_STORED_EVENTS) throw new Error(`Mission journal exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`)
-        const missionID = entry.key.startsWith(prefix) ? RANGE.exec(entry.key.slice(prefix.length))?.[1] : undefined
+        const missionID = bound(entry.key)
         if (!missionID) { stray++; continue }
         if (group?.missionID !== missionID) { await flush(); group = { missionID, events: [], discardedEvents: 0 } }
         const event = this.parseEntry(entry.key, entry.value)
@@ -276,23 +290,23 @@ export class MissionJournal {
     return parsed
   }
 
-  async assertCanAppend(count: number | MissionEvent = 1): Promise<void> {
-    const event = typeof count === "number" ? undefined
-      : this.parseEntry(this.eventKey(count.missionID, count.id), JSON.parse(JSON.stringify(count)))
-    if (typeof count !== "number" && !event) throw new Error("Mission event is not durable owned JSON")
-    const request = event ?? count as number
-    if (await this.fits(request)) return
-    if (this.storage.remove && await this.purgeDeleted({ all: true }) && await this.fits(request)) return
-    throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
+  /** Refuses, before any side effect, an `event` (or `count` more ordinary entries
+   * of mission `request`) that its mission's range cannot hold. */
+  async assertCanAppend(request: MissionEvent | string, count = 1): Promise<void> {
+    const event = typeof request === "string" ? undefined
+      : this.parseEntry(this.eventKey(request.missionID, request.id), JSON.parse(JSON.stringify(request)))
+    if (typeof request !== "string" && !event) throw new Error("Mission event is not durable owned JSON")
+    if (!await this.fits(event?.missionID ?? request as string, event ?? count)) throw new Error(MISSION_FULL)
   }
 
-  private async fits(request: MissionEvent | number): Promise<boolean> {
-    const capacity = await this.storedCapacity()
+  /** Capacity is one mission's own: only its range is read, whatever the project holds. */
+  private async fits(missionID: string, request: MissionEvent | number): Promise<boolean> {
+    const capacity = await this.storedCapacity(missionID)
     const slots = capacity.cleanupSlots
     const required = typeof request === "number" ? request : this.requiredCapacity(request, slots)
-    // Deletion intents and already reserved receipts may spend the deletion reserve.
-    const limit = this.storage.remove && typeof request !== "number"
-      && (request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots)) ? MISSION_MAX_STORED_EVENTS : MISSION_MAX_EVENTS
+    // Deletion intents and already reserved receipts may spend the mission's deletion reserve.
+    const limit = typeof request !== "number" && (request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots))
+      ? MISSION_MAX_STORED_EVENTS : MISSION_MAX_EVENTS
     return capacity.count + slots.size + required <= limit
   }
 
@@ -308,9 +322,7 @@ export class MissionJournal {
       if (JSON.stringify(existing) !== JSON.stringify(stored)) throw new Error("Mission event identity collision")
       return
     }
-    if (!await this.fits(parsed) && !(this.storage.remove && await this.purgeUnlocked(true) && await this.fits(parsed))) {
-      throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
-    }
+    if (!await this.fits(parsed.missionID, parsed)) throw new Error(MISSION_FULL)
     this.written(parsed.missionID)
     current?.()
     await this.storage.set(key, stored, current)
@@ -318,8 +330,8 @@ export class MissionJournal {
 
   private requiredCapacity(event: MissionEvent, slots: Map<string, CapacitySlot>): number {
     if (this.matchesCapacityReceipt(event, slots)) return 0
-    // A newer Stop replaces only this mission's pending start/pause slots.
-    // Physical events, cleanup reservations and other missions remain counted.
+    // A newer Stop replaces only its pending start/pause slots; physical events
+    // and cleanup reservations remain counted.
     const superseded = event.type === "mission.control-requested" && event.action === "stop"
       ? [...slots.values()].filter(({ intent }) => intent.type === "mission.control-requested" && intent.action !== "stop"
         && intent.projectID === event.projectID && intent.missionID === event.missionID
@@ -329,7 +341,8 @@ export class MissionJournal {
       + (event.type === "mission.control-requested" ? event.targets.length : 0) - superseded
   }
 
-  private async storedCapacity(): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot> }> {
+  private async storedCapacity(missionID: string): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot> }> {
+    const prefix = `${this.prefix()}/${safeKey(missionID)}/`
     let count = 0
     // Physical deterministic receipt keys include mission scope. Retain the
     // original intent/target as well: a different event kind cannot spend them.
@@ -343,9 +356,9 @@ export class MissionJournal {
     }
     let after: string | undefined
     do {
-      const page = await this.storage.scan({ prefix: this.prefix(), after, limit: PAGE_SIZE })
+      const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
       count += page.entries.length
-      if (count > MISSION_MAX_STORED_EVENTS) throw new Error(`Mission journal exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`)
+      if (count > MISSION_MAX_STORED_EVENTS) throw new Error(RANGE_OVER_BOUND)
       for (const entry of page.entries) {
         // Invalid entries still consume physical space, but supply no authority
         // to establish, supersede or discharge a reservation.

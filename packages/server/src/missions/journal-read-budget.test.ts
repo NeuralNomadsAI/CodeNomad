@@ -3,20 +3,20 @@ import test from "node:test"
 
 import { fixture, type HistoryFixture } from "./journal-history-fixture"
 import { MISSION_INDEX_STALE_AFTER_MS, MissionJournalIndex } from "./journal-index"
-import type { MissionJsonValue } from "./model"
+import { MISSION_MAX_STORED_EVENTS, type MissionJsonValue } from "./model"
 import { setupMissionsPlugin } from "../opencode/missions-plugin"
 import { hintsShowWork, retainMissionWork } from "../opencode/missions/lifetime"
 
-// Finished history that reads of other missions must not pay for. The project
-// event cap still bounds it (every full read refuses more), so it fills that cap.
-const HISTORY_MISSIONS = 190, EVENTS_PER_MISSION = 10, HISTORY = HISTORY_MISSIONS * EVENTS_PER_MISSION
+// Finished history that reads of other missions must not pay for: several
+// missions' worth of entries, since the event bound is per mission.
+const HISTORY_MISSIONS = 200, EVENTS_PER_MISSION = 50, HISTORY = HISTORY_MISSIONS * EVENTS_PER_MISSION
 const location = { directory: "/repo" }
 
 /** Bytes as an earlier activation left them: valid finished missions, read by this activation's first build. */
 function seedHistory(f: HistoryFixture) {
   for (let m = 0; m < HISTORY_MISSIONS; m++) {
     const missionID = `msn_hist_${String(m).padStart(3, "0")}`
-    const base = (id: string, at: number) => ({ version: 1, id, missionID, projectID: "project-1", createdAt: 10 + m * 20 + at })
+    const base = (id: string, at: number) => ({ version: 1, id, missionID, projectID: "project-1", createdAt: 10 + m * 60 + at })
     const events = [
       { ...base("evt_created", 0), type: "mission.created", projectCanonical: "/repo", objective: `History ${m}`, template: "custom",
         coordinator: { sessionID: `ses_hist_${m}`, title: "Coordinator", location } },
@@ -71,6 +71,32 @@ test("read-mostly paths read one mission's range, never the finished history", a
   assert.deepEqual([outbox.value, outbox.fullScans, outbox.entries <= own], [{ attempted: 0, failed: 0 }, 0, true])
   const retained = await cost(f, () => retainMissionWork(() => f.journal.snapshot(), () => f.journal.readHints(hintsShowWork)))
   assert.deepEqual([retained.value, retained.fullScans, retained.entries], [true, 0, 0])
+})
+
+test("a project far beyond one mission's bound reads, creates, appends, deletes and purges", async () => {
+  const { f, mission } = await liveMission(8)
+  assert.ok(HISTORY > 4 * MISSION_MAX_STORED_EVENTS)
+  await f.control().declare(mission.coordinatorSessionId, { missionID: mission.id, taskKey: "more", title: "More", brief: "Bounded", role: "research", blockedBy: [] })
+  const snapshot = await f.journal.snapshot()
+  assert.deepEqual([snapshot.discardedEvents, snapshot.missions.length], [0, HISTORY_MISSIONS + 1])
+  assert.equal(snapshot.missions.find(candidate => candidate.id === mission.id)?.tasks.length, 2)
+  const finished = snapshot.missions.find(candidate => candidate.id === "msn_hist_000")!
+  await f.control().delete({ missionID: finished.id, requestID: "delete-history", expectedRevision: finished.revision })
+  assert.equal(await f.journal.purgeDeleted({ all: true }), EVENTS_PER_MISSION + 1)
+  const after = await f.journal.snapshot()
+  assert.deepEqual([after.discardedEvents, after.missions.length, after.missions.some(candidate => candidate.id === finished.id)], [0, HISTORY_MISSIONS, false])
+  assert.deepEqual(await f.journal.readHints(hints => hints.openIDs()), [mission.id])
+})
+
+test("capacity checks and appends read only their mission's range", async () => {
+  const { f, mission, own } = await liveMission(9)
+  const checked = await cost(f, () => f.journal.assertCanAppend(mission.id))
+  assert.deepEqual([checked.fullScans, checked.entries], [0, own])
+  const history = await cost(f, () => f.journal.assertCanAppend("msn_hist_007", 0))
+  assert.deepEqual([history.fullScans, history.entries], [0, EVENTS_PER_MISSION])
+  const appended = await cost(f, () => f.journal.append({ version: 1, id: "evt_budget", type: "task.dispatched", missionID: mission.id,
+    projectID: "project-1", taskKey: "work", createdAt: 90_000 }))
+  assert.deepEqual([appended.fullScans, appended.entries], [0, own])
 })
 
 test("membership refusals and damage gates read what the hints have not seen", async () => {

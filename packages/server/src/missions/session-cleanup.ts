@@ -53,12 +53,7 @@ export async function deleteMission(input: MissionDeleteInput, options: {
     const complete = await cleanup(deletion, options)
     // Receipts change cleanup display even though the active map is tombstoned.
     await options.changed(input.missionID, input.expectedRevision + 1)
-    if (!complete) {
-      // A capacity purge may already have settled and removed this tombstone.
-      const settled = await purgedDeletion(journal, input, eventID, deleteManagedSessions)
-      if (settled) return settled
-      throw new MissionControlError("Mission deleted; managed-session cleanup is pending. Retry the same deletion request.", "cleanup-pending")
-    }
+    if (!complete) throw new MissionControlError("Mission deleted; managed-session cleanup is pending. Retry the same deletion request.", "cleanup-pending")
   }
   if (!deleteManagedSessions) {
     await purgeSettled(journal)
@@ -70,10 +65,6 @@ export async function deleteMission(input: MissionDeleteInput, options: {
   }
   const summary = projectMissionCleanups(history.events.filter(event => event.missionID === deletion.missionID))
     .find(item => item.deletionID === deletion.id)
-  if (!summary) {
-    const settled = await purgedDeletion(journal, input, eventID, deleteManagedSessions)
-    if (settled) return settled
-  }
   if (!summary || summary.pending) throw new MissionControlError("Cannot confirm managed-session cleanup", "cleanup-pending")
   await purgeSettled(journal)
   return { deleted: true, cleanup: summary }

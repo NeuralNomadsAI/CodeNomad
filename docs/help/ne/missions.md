@@ -156,6 +156,6 @@ report बिना idle one-time coordinator मा primary ▶ ले verify �
 2. चाहनुहुन्छ भने पुष्टि अघि **यस मिसनका लागि सिर्जना गरिएका विशेषज्ञ कुराकानीहरू पनि मेटाउनुहोस्** चयन गर्नुहोस्।
 3. removed/kept/pending count का लागि **कुराकानी सफाइ** जाँच्नुहोस्। उपलब्ध भए बाँकी recorded cleanup मात्र retry गर्नुहोस्।
 
-मिसन मेट्नु रोक्नुजस्तो होइन; पहिले Stop गरी बाँकी काम जाँच्नुहोस्। coordinator र reused कुराकानी राखिन्छन्। shared, moved, child भएका वा ownership प्रमाणित नसकिने specialist पनि राखिन सक्छन्। partial cleanup rollback हुँदैन र चुपचाप background मा पूरा गरिँदैन। overview reader ले पछिल्ला २० पूरा cleanup राख्छ। मिसन मेट्दा project मा तिनको storage खाली हुन्छ: पुराना मेटिएका मिसन आफैँ हटाइन्छन्, र project लाई नयाँ मिसनका लागि ठाउँ चाहिँदा हालका पनि हटाइन्छन्।
+मिसन मेट्नु रोक्नुजस्तो होइन; पहिले Stop गरी बाँकी काम जाँच्नुहोस्। coordinator र reused कुराकानी राखिन्छन्। shared, moved, child भएका वा ownership प्रमाणित नसकिने specialist पनि राखिन सक्छन्। partial cleanup rollback हुँदैन र चुपचाप background मा पूरा गरिँदैन। overview reader ले पछिल्ला २० पूरा cleanup राख्छ। मिसन मेट्दा project मा तिनको storage खाली हुन्छ: पुराना मेटिएका मिसन आफैँ हटाइन्छन्।
 
 native काम र service नियन्त्रणका लागि [अनुमति](permissions.md), [कुराकानी](conversations.md) र [OpenCode सेटअप](opencode.md) हेर्नुहोस्।
