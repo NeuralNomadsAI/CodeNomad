@@ -29,11 +29,6 @@ const streaming = (id: string, text = "BASE") => ({
 const displayedText = (instanceId: string, messageId: string) => Object.values(messageStoreBus.getOrCreate(instanceId)
   .getMessage(messageId)?.parts ?? {}).map((part: any) => String(part.data?.text ?? "")).join("")
 
-async function until(check: () => boolean, description: string) {
-  for (let attempt = 0; attempt < 200 && !check(); attempt++) await new Promise<void>((resolve) => setImmediate(resolve))
-  assert.ok(check(), description)
-}
-
 const cases = [
   { name: "the reducer already holds the streaming message", arm: true, created: false },
   { name: "the reducer missed the streaming message's start", arm: false, created: false },
@@ -56,7 +51,6 @@ describe("session-api running-session open", () => {
         id: `evt_${++sequence}`, type, created: sequence, data: { sessionID: sessionId, ...payload }, location: { directory: "/work" },
       } as any)
       const reads: number[] = []
-      let answered = 0
       client.message = {
         list: async (input: { limit?: number }) => {
           reads.push(input.limit ?? 0)
@@ -64,7 +58,6 @@ describe("session-api running-session open", () => {
           // The session keeps streaming during every fetch window.
           native("session.text.delta", { assistantMessageID: "msg_1", ordinal: 0, delta: "X" })
           if (created && reads.length === 1) native("session.step.started", { assistantMessageID: "msg_2", agent: "build", model, started: 2 })
-          answered += 1
           return { data: [streaming("msg_1")], cursor: {} }
         },
       }
@@ -85,11 +78,10 @@ describe("session-api running-session open", () => {
         assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), created ? ["msg_1", "msg_2"] : ["msg_1"])
         assert.equal(displayedText(instanceId, "msg_1"), arm ? "BASEX" : "BASE", "the load rewound or lost streamed text")
 
-        // A reducer without rows syncs the SDK's own latest page, so later
-        // deltas for the streaming message reach the display.
-        if (!arm && !created) await until(() => answered === 2, "the empty reducer was never synced")
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        assert.deepEqual(reads, !arm && !created ? [200, 20] : [200])
+        // A reducer without rows is seeded from the loaded page without another
+        // read, so later deltas for the streaming message reach the display.
+        for (let turn = 0; turn < 3; turn += 1) await new Promise<void>((resolve) => setImmediate(resolve))
+        assert.deepEqual(reads, [200], "seeding the reducer must not read the transcript again")
         if (created) return
         native("session.text.delta", { assistantMessageID: "msg_1", ordinal: 0, delta: "Y" })
         assert.equal(displayedText(instanceId, "msg_1"), arm ? "BASEXY" : "BASEY", "streaming froze after the load")
