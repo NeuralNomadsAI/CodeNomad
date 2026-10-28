@@ -176,6 +176,9 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
       claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "all", profiles }] } } }))
+    // Creation Options embed the project's nesting depth: answer its read like a native runtime.
+    await page.route("**/subagent-depth*", route => route.fulfill({ json: { location: { directory: "/fixture" }, capability: { minimum: 0 },
+      effectiveDepth: 1, project: { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } } }))
     let list: MissionMap[] = []
     await page.route("**/api/workspaces/fixture/missions**", route => {
       const request = route.request(), pathname = new URL(request.url()).pathname
@@ -201,6 +204,8 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
     assert.deepEqual(await act({ action: "select", ref: await refFor(/combobox "Playbook"/, "Playbook"), values: ["Exploration"] }), { selected: ["Exploration"] })
     assert.match((await run.cdp.inspect(run.identity, { query: "Playbook" })).snapshot, /combobox "Playbook" \[e\d+\] value="Exploration"/)
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+    // Like an agent, wait for the Options section to finish reading before clicking under it.
+    await act({ action: "wait", text: "OpenCode effective depth: 1" })
     await act({ action: "click", ref: await refFor(/button "Create"(?= \[)/, "Create") })
     await page.waitForFunction(() => document.querySelector("form.mission-editor") === null)
     assert.equal(creates.length, 1)
