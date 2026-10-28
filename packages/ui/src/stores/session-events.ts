@@ -40,8 +40,9 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
+import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
 import { tGlobal } from "../lib/i18n"
 
@@ -301,10 +302,12 @@ function isChildSession(instanceId: string, sessionId: string): boolean | null {
 }
 
 /** Session attention notifications concern root sessions only. */
-function isNotifiableSession(instanceId: string, sessionId: string | undefined | null): boolean {
+function isNotifiableSession(instanceId: string, sessionId: string | undefined | null, category: "needsInput" | "sessionDone"): boolean {
   if (!sessionId) return true
-  // A held session outside the workspace scope belongs to another project's list.
-  if (sessions().get(instanceId)?.has(sessionId) && !isSessionInWorkspaceScope(instanceId, sessionId)) return false
+  // A held session outside the workspace scope belongs to another project's
+  // list; its request still notifies where this project's dock shows it.
+  if (sessions().get(instanceId)?.has(sessionId) && !isSessionInWorkspaceScope(instanceId, sessionId)
+    && (category !== "needsInput" || !showsRequestOfSession(instanceId, sessionId))) return false
 
   const child = isChildSession(instanceId, sessionId)
 
@@ -329,7 +332,7 @@ function getSessionTitle(instanceId: string, sessionId: string | undefined | nul
 
 /** Routed like every notification: screen, history and/or system per Settings → Notifications. */
 function notifySessionAttention(category: "needsInput" | "sessionDone", instanceId: string, sessionId: string | undefined | null): void {
-  if (!isNotifiableSession(instanceId, sessionId)) return
+  if (!isNotifiableSession(instanceId, sessionId, category)) return
   const label = getSessionTitle(instanceId, sessionId)
   const message = label
     ? tGlobal(category === "needsInput" ? "sessionEvents.notify.needsInput" : "sessionEvents.notify.done", { label })
@@ -390,7 +393,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     reconcilePendingSessionIndicators(instanceId)
 
     const published = updatedInstanceSessions?.get(sessionId)
@@ -512,7 +514,6 @@ function handleSessionUpdate(
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
     }
@@ -544,7 +545,6 @@ function handleSessionUpdate(
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
   }
   reconcilePendingSessionIndicators(instanceId)
 }
@@ -565,6 +565,7 @@ function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled):
   advanceNativeLifecycle(instanceId, sessionId)
   const retry = mapNativeSessionRetry(event.data)
   ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory, retry)
+  if (sessions().get(instanceId)?.has(sessionId) && !isSessionInWorkspaceScope(instanceId, sessionId)) return
   const remainingSeconds = getRetrySeconds(retry.next)
   const countdown =
     remainingSeconds > 0
@@ -596,6 +597,8 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
   else ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory)
 
+  // Announced by the project whose list shows the session, not by an owning parent.
+  if (existing && !isSessionInWorkspaceScope(instanceId, sessionID)) return
   if (!claimCompactionNotice(event)) return
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)

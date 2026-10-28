@@ -12,7 +12,6 @@ import {
   setSessionExpanded,
   setSessionStatus,
   setSessions,
-  syncInstanceSessionIndicator,
 } from "./session-state.ts"
 import { collectDescendantActivity } from "./session-tree.ts"
 
@@ -31,7 +30,6 @@ function seed(...instanceIds: string[]) {
   ])])))
   for (const instanceId of instanceIds) {
     clearInstanceSessionExpansionState(instanceId)
-    syncInstanceSessionIndicator(instanceId)
   }
 }
 
@@ -100,7 +98,6 @@ describe("subsession activity", () => {
       next.set("tab-a", sessions)
       return next
     })
-    syncInstanceSessionIndicator("tab-a")
     assert.equal(collectDescendantActivity(undefined).size, 0)
     const counts = collectDescendantActivity(new Map([
       ["root", session("root", null)],

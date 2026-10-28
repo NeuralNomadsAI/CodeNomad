@@ -92,7 +92,10 @@ same CodeNomad project tab.
 Live sessions follow the same scope at display. An opened folder also receives the
 events of a nested checkout of another repository it owns (a parent folder such as
 the home directory); the store holds every session it receives, and the session
-list, tab indicator, idle fade and session notices show only the workspace scope
+list, tab indicator (derived per sessions snapshot and scope), idle fade, and
+completion, compaction and retry notices show only the workspace scope; a
+needs-input notice of an out-of-scope session follows the interruption dock that
+shows its request
 (`stores/session-state.ts` `getWorkspaceSessionScope`, from
 `selectWorkspaceFamilyIds`): complete families with a member in the opened folder
 or a registered worktree, plus the active session's family, so a session opened

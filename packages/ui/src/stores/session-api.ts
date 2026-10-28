@@ -47,7 +47,6 @@ import {
   loading,
   setLoading,
   cleanupBlankSessions,
-  syncInstanceSessionIndicator,
   updateThreadTotalsForParent,
   setSessionPage,
   prependSessionListId,
@@ -1036,7 +1035,6 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
     const currentSearchResults = searchResults.filter((session) => !deletedSessionIds.has(session.id))
 
-    syncInstanceSessionIndicator(instanceId)
     setSessionSearchResults(instanceId, trimmedQuery, currentSearchResults.map((session) => session.id), requestId)
   } catch (error) {
     log.error("Failed to search sessions:", error)
@@ -1158,7 +1156,6 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId)
     prependSessionListId(instanceId, session.id)
 
     const instanceProviders = providers().get(instanceId) || []
@@ -1239,7 +1236,6 @@ async function forkSession(
     return next
   })
 
-  syncInstanceSessionIndicator(instanceId)
 
   if (!forkedSession.parentId) prependSessionListId(instanceId, forkedSession.id)
 
@@ -1337,7 +1333,6 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
     return next
   })
 
-  syncInstanceSessionIndicator(instanceId)
   removeSessionListId(instanceId, sessionId)
 
   // Drop normalized message state and caches for this session.

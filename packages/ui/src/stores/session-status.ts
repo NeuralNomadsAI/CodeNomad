@@ -82,7 +82,7 @@ export function getInstanceIdleFadeClass(instanceId: string, now = Date.now(), k
 
   let hasVisibleIdle = false
   for (const session of instanceSessions.values()) {
-    if (!session.id) continue
+    if (!session.id || !isSessionInWorkspaceScope(instanceId, session.id)) continue
     const isFading = Boolean(getSessionIdleFadeClass(instanceId, session.id))
     if (!isFading && !shouldShowIdleStatus(session, now, keepUnseenSubagentIdleStatus)) continue
     hasVisibleIdle = true

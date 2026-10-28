@@ -20,8 +20,12 @@ function queuedRequests(instanceId: string) {
 // otherwise the owning folder shows it, so no request is left without a dock. A
 // request of a session in this project's scope (its list, or the active
 // session's family) is always shown with that session.
+function requestSessionId(item: ReturnType<typeof queuedRequests>[number]): string | undefined {
+  return item.kind === "permission" ? getPermissionSessionId(item.payload) : item.payload.sessionID
+}
+
 function shownHere(instanceId: string, item: ReturnType<typeof queuedRequests>[number]): boolean {
-  const sessionId = item.kind === "permission" ? getPermissionSessionId(item.payload) : item.payload.sessionID
+  const sessionId = requestSessionId(item)
   if (sessionId && sessions().get(instanceId)?.has(sessionId) && isSessionInWorkspaceScope(instanceId, sessionId)) return true
   const directory = getPendingRequestDirectory(instanceId, item)
   if (!directory) return true
@@ -34,6 +38,11 @@ function shownHere(instanceId: string, item: ReturnType<typeof queuedRequests>[n
 /** The requests this project shows and counts; answering and recovery use the full native queues. */
 export function getInterruptionQueue(instanceId: string) {
   return queuedRequests(instanceId).filter(item => shownHere(instanceId, item))
+}
+
+/** Whether this project's dock shows a request of the session. */
+export function showsRequestOfSession(instanceId: string, sessionId: string): boolean {
+  return getInterruptionQueue(instanceId).some(item => requestSessionId(item) === sessionId)
 }
 
 // Conversation affinity classifies provenance and automatic expansion only;
