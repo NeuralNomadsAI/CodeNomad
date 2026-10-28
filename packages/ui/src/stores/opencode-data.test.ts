@@ -1174,9 +1174,7 @@ describe("OpenCode data projection", () => {
       assert.equal((stranded?.parts.tool?.data as any)?.state?.status, "pending")
 
       const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
-      applyOpenCodeDataEvent(instanceId, "/work", settled, undefined, (next) => {
-        projectOpenCodeMessages(instanceId, sessionId, next, false, true)
-      })
+      applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
 
       await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
@@ -1195,15 +1193,16 @@ describe("OpenCode data projection", () => {
     const instanceId = "opencode-data-stranded-tool-once"
     const sessionId = "session"
     const client = getRootClient(instanceId)
-    // A tool the daemon reports as legitimately still running must not loop
-    // reconciliation: one authoritative read per settlement, reducer alive.
+    // Authority itself still reports the tool `streaming`: the read cannot
+    // settle the row, so the once-per-settlement bound is the only thing
+    // keeping reconciliation from re-reading every quiet interval.
     const authoritative = {
       id: "assistant", type: "assistant", agent: "build",
       model: { providerID: "provider", id: "model" },
       time: { created: 1, completed: 3 },
       content: [{
         type: "tool", id: "tool", name: "bash", time: { created: 2 },
-        state: { status: "running", input: { command: "watch pwd" }, metadata: {} },
+        state: { status: "streaming", input: "", metadata: {} },
       }],
     }
     let reads = 0
@@ -1218,15 +1217,14 @@ describe("OpenCode data projection", () => {
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
       const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
-      applyOpenCodeDataEvent(instanceId, "/work", settled, undefined, (next) => {
-        projectOpenCodeMessages(instanceId, sessionId, next, false, true)
-      })
+      applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
 
       await waitForReplay(() => reads === 1)
-      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "running")
-      await new Promise<void>((resolve) => setTimeout(resolve, 400))
-      assert.equal(reads, 1)
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "pending")
+      // Several reconciliation intervals must not schedule a second read.
+      await new Promise<void>((resolve) => setTimeout(resolve, 900))
+      assert.equal(reads, 1, "one authoritative read per settlement")
 
       const next = apply("session.step.started", {
         sessionID: sessionId, assistantMessageID: "round-2", agent: "build", model: { providerID: "provider", id: "model" },

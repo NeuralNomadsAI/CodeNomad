@@ -375,12 +375,15 @@ function collapseTranscriptQueue(instanceId: string, sessionId: string, transcri
   scheduleAuthoritativeResync(instanceId, sessionId, transcript)
 }
 
-/** A settlement drained with tool rows still streaming or running: their
- * terminal event was swallowed by the reducer's running-status guard (or lost
- * across a disconnect window) and will never be re-delivered. The reducer's
- * own settlement refresh can be dropped while the connection is not "connected";
- * reconcile once per settlement from one quiet, revision-stable authoritative
- * page instead of stranding the row at "pending" until the session is reloaded. */
+/** A settlement drained with tool rows still streaming: their `success`
+ * terminal was swallowed by the reducer's running-status guard (or lost
+ * across a disconnect window) and will never be re-delivered — `failed`
+ * still settles such a row. The reducer's own settlement refresh can be
+ * dropped while the connection is not "connected". Reconcile once per
+ * settlement with one quiet, non-dropping trailing read on the live
+ * reducer: events keep admitting while the page lands, the merged page
+ * keeps their live rows, and the re-projection preserves the display
+ * window's membership and cursor. */
 function scheduleSettlementReconcile(
   instanceId: string,
   sessionId: string,
@@ -396,14 +399,23 @@ function scheduleSettlementReconcile(
   transcript.settleTimer = setTimeout(() => {
     transcript.settleTimer = undefined
     if (!eligible()) return
-    // Trail behind a live stream rather than racing it: while events keep
-    // arriving, re-arm; dropping-mode admission must start from a quiet window.
+    // Trail behind a live stream rather than racing it: re-arm while events
+    // keep arriving, so the read never starts mid-burst.
     if (getOpenCodeFullDataRevision(instanceId, sessionId) !== revision) {
       scheduleSettlementReconcile(instanceId, sessionId, transcript)
       return
     }
     transcript.reconciledSettlementSerial = transcript.settlementSerial
-    scheduleAuthoritativeResync(instanceId, sessionId, transcript)
+    // Non-dropping, on the live reducer: streamed events keep admitting while
+    // the page lands, and the read's row merge keeps their live versions.
+    transcript.entry.data.session.message.invalidate(sessionId)
+    void transcript.entry.data.session.message.sync(sessionId)
+      .catch(() => undefined)
+      .then(() => {
+        if (!isTranscriptCurrent(instanceId, sessionId, transcript)) return
+        projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
+        retireDrainedTranscript(instanceId, sessionId, transcript)
+      })
   }, SETTLEMENT_RECONCILE_QUIET_MS)
 }
 
@@ -917,8 +929,9 @@ export function projectOpenCodeMessages(
 }
 
 /** A tool whose input stream started but whose `called` never applied. At
- * settlement no terminal event can still settle it — `session.tool.success`
- * is reduced only from the running status — so one authoritative read must. */
+ * settlement only `session.tool.failed` can still reach it — `success` is
+ * reduced solely from the running status — so a still-streaming row whose
+ * round already ended needs one authoritative read to settle. */
 function hasStrandedPendingTool(messages: SessionMessageInfo[]): boolean {
   return messages.some((message) => message.type === "assistant"
     && message.content.some((part) => part.type === "tool" && part.state.status === "streaming"))
@@ -933,8 +946,7 @@ function retireDrainedTranscript(instanceId: string, sessionId: string, transcri
   // settle only in it.
   const data = transcript.entry.data
   const messages = data.session.message.list(sessionId)
-  if (transcript.reconciledSettlementSerial !== transcript.settlementSerial && !transcript.settleTimer
-    && hasStrandedPendingTool(messages)) {
+  if (!transcript.settleTimer && hasStrandedPendingTool(messages)) {
     scheduleSettlementReconcile(instanceId, sessionId, transcript)
     return
   }
