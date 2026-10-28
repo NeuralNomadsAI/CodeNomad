@@ -361,8 +361,11 @@ This transport reuses only the automation bridge discovery; automation keeps its
 - Coordinator and independent actor admission require exact owned roots; native
   descendant observation/reporting uses its separate ancestry/provenance contract.
   Foreign projects are rejected; a graph edge never grants session authority.
-- At most 8 actors, 96 tasks, 20 live maps, and 2,000 stored journal entries per
-  project. Tombstones retain evidence and count against journal storage only.
+- At most 8 actors and 96 tasks per mission, and 2,000 stored journal entries per
+  project; the number of missions is unbounded. Tombstones retain evidence and count
+  against journal storage only. Activity observation reads at most 160 actors per
+  refresh, active missions first, then the most recently updated; the rest read as
+  unknown.
 - Existing root actors may be reused, but an actor cannot join two active missions.
   Once a mission is stopped or finished another active mission may reuse its
   actor; a Stop target found serving another active mission settles with a known

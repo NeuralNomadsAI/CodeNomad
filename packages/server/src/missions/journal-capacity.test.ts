@@ -141,7 +141,7 @@ test("occupied deterministic receipt key remains a collision, never a repair or 
   assert.equal(f.counts().writes, writes); assert.equal(JSON.stringify(f.values.get(key)), bytes)
 })
 
-test("reservations correlate mission/type/original target despite repeated intent IDs and display truncation", async () => {
+test("reservations correlate mission/type/original target despite repeated intent IDs across many missions", async () => {
   const f = fixture()
   const intents = []
   for (let index = 0; index < 25; index++) {
@@ -155,8 +155,8 @@ test("reservations correlate mission/type/original target despite repeated inten
     type: "mission.created", projectCanonical: "/owned/project", objective: "Newer", template: "custom", createdAt: 100 + index,
     coordinator: { sessionID: `ses_newer_${index}`, title: "Coordinator", location: { directory: "/owned/project" } } })
   const snapshot = await f.journal.snapshot()
-  assert.equal(snapshot.missions.length, 20)
-  assert(snapshot.discardedEvents > 0, "real display truncation does not truncate the capacity scan")
+  assert.equal(snapshot.missions.length, 38, "13 undeleted historical missions and 25 newer ones")
+  assert.equal(snapshot.discardedEvents, 0)
   assert.equal(snapshot.cleanupUnavailable, undefined)
   f.fillTo(2000 - intents.length)
   for (const intent of intents) {

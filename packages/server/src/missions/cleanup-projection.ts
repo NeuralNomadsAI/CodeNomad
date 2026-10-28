@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto"
-import { MISSION_MAX_EVENTS, MISSION_MAX_MISSIONS, type MissionCleanup, type MissionCleanupReason, type MissionDeletedEvent, type MissionEvent } from "./model"
+import { MISSION_MAX_EVENTS, type MissionCleanup, type MissionCleanupReason, type MissionDeletedEvent, type MissionEvent } from "./model"
+
+/** Settled cleanups shown after the pending ones. */
+const SETTLED_CLEANUP_HISTORY = 20
 
 export function cleanupReceiptID(deletionID: string, sessionID: string): string {
   return `evt_${createHash("sha256").update(`${deletionID}\0cleanup\0${sessionID}`).digest("hex").slice(0, 28)}`
@@ -62,7 +65,7 @@ export function projectMissionCleanups(events: readonly MissionEvent[]): Mission
   results.sort((a, b) => b.createdAt - a.createdAt || a.deletionID.localeCompare(b.deletionID))
   // Keep EVERY pending intent within the journal's existing hard bound, even if
   // newer completed deletions would otherwise push it out of the display window.
-  return [...results.filter(item => item.pending > 0), ...results.filter(item => item.pending === 0).slice(0, MISSION_MAX_MISSIONS)]
+  return [...results.filter(item => item.pending > 0), ...results.filter(item => item.pending === 0).slice(0, SETTLED_CLEANUP_HISTORY)]
     .slice(0, MISSION_MAX_EVENTS)
 }
 

@@ -168,7 +168,6 @@ export const missionMessages = {
   "missions.control.creation.scopeConflict": "この作成は保持されている元の範囲と一致しなくなったため、許可されませんでした。開き直しても元の操作は修復されません。",
   "missions.control.creation.capacity": "ミッション作成の受付容量がいっぱいです。この作成は許可されませんでした。入力は保持されています。",
   "missions.control.creation.worktreeDeleting": "worktree の削除が進行中のため、この作成は送信されませんでした。入力は保持されています。削除が完了してから再試行してください。",
-  "missions.control.creation.limit": "このプロジェクトはミッション数の上限に達しました。何も作成されていません。入力は保持されています。不要になったミッションを削除してから再試行してください。",
   "missions.control.creation.unavailable": "Missions プラグインまたはその接続の準備ができていないため、現在ミッションを作成できません。何も送信されていません。入力は保持されています。少ししてから再試行してください。",
   "missions.control.mutation.requestConflict": "このリクエストは元の操作と競合しています。入力は保持されています。開き直すことは修復ではありません。",
   "missions.control.mutation.forbidden": "このワークスペースまたはディレクトリでの変更は許可されませんでした。入力は保持されています。",

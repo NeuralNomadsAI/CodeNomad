@@ -61,7 +61,7 @@ export async function prepareCoordinatorMission(manager: Manager, fence: Worktre
     }
     // Only a refusal before the native create proves nothing was created.
     const code = readMissionMutationError(error)?.code
-    if (!creation?.dispatched || code === "mission-limit") throw new MissionControlError("The mission could not be prepared; nothing was created", "prepare-refused")
+    if (!creation?.dispatched) throw new MissionControlError("The mission could not be prepared; nothing was created", "prepare-refused")
     if (code === "request-conflict") {
       throw new MissionControlError("This requestID already prepared a different mission", "prepare-conflict")
     }

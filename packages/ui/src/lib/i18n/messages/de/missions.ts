@@ -168,7 +168,6 @@ export const missionMessages = {
   "missions.control.creation.scopeConflict": "Diese Erstellung entspricht nicht mehr dem ursprünglich gehaltenen Bereich und wurde nicht zugelassen. Erneutes Öffnen repariert den ursprünglichen Vorgang nicht.",
   "missions.control.creation.capacity": "Die Zulassungskapazität für Missionserstellungen ist voll. Diese Erstellung wurde nicht zugelassen; deine Eingabe bleibt erhalten.",
   "missions.control.creation.worktreeDeleting": "Ein Worktree wird gerade gelöscht, daher wurde diese Erstellung nicht gesendet. Deine Eingabe bleibt erhalten; versuche es erneut, sobald die Löschung abgeschlossen ist.",
-  "missions.control.creation.limit": "Dieses Projekt hat sein Missionslimit erreicht. Es wurde nichts erstellt; deine Eingabe bleibt erhalten. Lösche eine nicht mehr benötigte Mission und versuche es erneut.",
   "missions.control.creation.unavailable": "Die Missionserstellung ist gerade nicht verfügbar, weil das Missions-Plugin oder seine Verbindung nicht bereit ist. Es wurde nichts gesendet; deine Eingabe bleibt erhalten. Versuche es gleich noch einmal.",
   "missions.control.mutation.requestConflict": "Diese Anfrage steht im Konflikt mit ihrem ursprünglichen Vorgang. Deine Eingabe bleibt erhalten; erneutes Öffnen ist keine Reparatur.",
   "missions.control.mutation.forbidden": "Diese Änderung wurde für diesen Arbeitsbereich oder dieses Verzeichnis nicht zugelassen. Deine Eingabe bleibt erhalten.",

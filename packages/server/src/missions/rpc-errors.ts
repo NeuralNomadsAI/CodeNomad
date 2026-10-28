@@ -16,7 +16,6 @@ const statuses = {
   "request-conflict": 409,
   "already-member": 409,
   "mission-finished": 409,
-  "mission-limit": 409,
   "mission-not-found": 404,
   "mission-deleted": 404,
   "session-not-found": 404,
@@ -57,7 +56,7 @@ export function readMissionMutationError(error: unknown): { code: string; messag
 /** A general mission.rejected (notably post-create invalid-execution) proves nothing. */
 export function isMissionCreateNoEffectError(error: unknown, requestID: string, missionID: string): boolean {
   const code = readMissionMutationError(error)?.code
-  if (code !== "mission-limit" && code !== "request-conflict") return false
+  if (code !== "request-conflict") return false
   const receipt = (error as { data: { noEffect?: unknown } }).data.noEffect
   return Boolean(receipt && typeof receipt === "object" && !Array.isArray(receipt)
     && Object.keys(receipt).length === 2

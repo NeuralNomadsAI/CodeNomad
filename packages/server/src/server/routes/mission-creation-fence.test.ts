@@ -7,7 +7,6 @@ import { registerAutomationPluginRoute } from "./automation-plugin"
 import { AUTOMATION_BRIDGE_PATH } from "../../opencode/automation-plugin"
 import { setupMissionsPlugin } from "../../opencode/missions-plugin"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
-import { MISSION_MAX_MISSIONS } from "../../missions/model"
 import { prepareMissionCreation } from "./mission-creation-pipeline"
 import { missionRecoveryError } from "../../missions/recovery-error"
 
@@ -131,27 +130,6 @@ async function fixture(useBridge = false, drainTimeout = 2_000) {
   }
 }
 const payload = { requestId: "create", objective: "Private test", template: "custom", directory }
-async function fillMissionCapacity(f: Awaited<ReturnType<typeof fixture>>) {
-  for (let n = 0; n < MISSION_MAX_MISSIONS; n++) await f.handlers.create({
-    requestID: `capacity-${n}`, objective: `Mission ${n}`, template: "custom", prepared: true,
-  })
-}
-
-test("authoritative pre-effect mission-limit rejection drains the original human creation permit", async () => {
-  const f = await fixture(false, 50)
-  try {
-    await fillMissionCapacity(f)
-    const before = { creates: f.creates, writes: f.writes }
-    const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })
-    assert.equal(response.statusCode, 409)
-    assert.equal(response.json().code, "mission-limit")
-    assert.deepEqual({ creates: f.creates, writes: f.writes }, before)
-    let evacuated = false
-    await f.fence.run(physical, [physical], async () => { evacuated = true })
-    assert.equal(evacuated, true)
-    assert.equal(f.rpcCreates, 1, "settlement must not replay creation")
-  } finally { await f.close() }
-})
 
 test("healthy existing creation contract conflicts return definitive rejection without new roots or parked permits", async () => {
   const f = await fixture(false, 50)
@@ -185,11 +163,11 @@ test("unproven creation conflicts retain their original permit and reject change
   } finally { await f.close() }
 })
 
-test("unproven or mismatched mission-limit errors retain the original permit and forbid replay", async () => {
+test("unproven or mismatched no-effect conflicts retain the original permit and forbid replay", async () => {
   for (const mode of ["legacy", "request", "mission", "effect", "internal", "invalid-execution"] as const) {
     const f = await fixture(false, 20)
     try {
-      await fillMissionCapacity(f)
+      await f.handlers.create({ requestID: payload.requestId, objective: "Existing native creation", template: payload.template })
       f.transformRejection(error => {
         if (mode === "legacy") delete error.data.noEffect
         else if (mode === "internal") error.type = "rpc.internal"
@@ -230,15 +208,15 @@ test("post-create profile/publication errors and lost ACKs retain the hold witho
   }
 })
 
-test("damaged creation storage cannot produce a no-effect capacity receipt or create another root", async () => {
+test("damaged creation storage cannot produce a no-effect receipt or create another root", async () => {
   const f = await fixture(false, 20)
   try {
-    await fillMissionCapacity(f)
+    await f.handlers.create({ requestID: "existing", objective: "Existing mission", template: "custom", prepared: true })
     const key = f.storage.keys().next().value!
     f.storage.set(`${key.slice(0, key.lastIndexOf("/"))}/damaged`, { invalid: true })
     const response = await f.app.inject({ method: "POST", url: "/api/workspaces/workspace/missions", payload })
     assert.equal(response.json().code, "creation-uncertain")
-    assert.equal(f.creates, MISSION_MAX_MISSIONS); assert.equal(f.writes, MISSION_MAX_MISSIONS)
+    assert.equal(f.creates, 1); assert.equal(f.writes, 1)
     await assert.rejects(f.fence.run(physical, [physical], async () => assert.fail("must not evacuate")), /Timed out/)
   } finally { await f.close() }
 })

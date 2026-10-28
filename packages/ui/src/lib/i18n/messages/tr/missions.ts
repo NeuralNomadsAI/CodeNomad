@@ -168,7 +168,6 @@ export const missionMessages = {
   "missions.control.creation.scopeConflict": "Bu oluşturma artık tutulan ilk kapsamıyla eşleşmiyor ve kabul edilmedi. Yeniden açmak ilk işlemi düzeltmez.",
   "missions.control.creation.capacity": "Görev oluşturma kabul kapasitesi dolu. Bu oluşturma kabul edilmedi; girdiniz korundu.",
   "missions.control.creation.worktreeDeleting": "Bir worktree silme işlemi sürüyor, bu yüzden bu oluşturma gönderilmedi. Girdiniz korundu; silme işlemi bittikten sonra yeniden deneyin.",
-  "missions.control.creation.limit": "Bu proje görev sınırına ulaştı. Hiçbir şey oluşturulmadı; girdiniz korundu. Artık gerekmeyen bir görevi silip yeniden deneyin.",
   "missions.control.creation.unavailable": "Missions eklentisi veya bağlantısı hazır olmadığı için görev oluşturma şu anda kullanılamıyor. Hiçbir şey gönderilmedi; girdiniz korundu. Birazdan yeniden deneyin.",
   "missions.control.mutation.requestConflict": "Bu istek ilk işlemiyle çakışıyor. Girdiniz korundu; yeniden açmak bir onarım değildir.",
   "missions.control.mutation.forbidden": "Bu değişiklik bu çalışma alanı veya dizin için kabul edilmedi. Girdiniz korundu.",

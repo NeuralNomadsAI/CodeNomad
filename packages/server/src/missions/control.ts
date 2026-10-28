@@ -5,7 +5,6 @@ import type { JsonValue, SessionMetadata } from "@opencode/client"
 import { MissionJournal, stableToken, type MissionStorage } from "./journal"
 import {
   MISSION_MAX_ACTORS,
-  MISSION_MAX_MISSIONS,
   MISSION_MAX_TASKS,
   MISSION_SCHEMA_VERSION,
   type MissionActor,
@@ -240,7 +239,7 @@ export class MissionControl {
         || (input.coordinatorSessionID !== undefined && existingEvent.coordinator.sessionID !== input.coordinatorSessionID)) {
         // Healthy original creation evidence rejects the changed request before
         // coordinator lookup/creation, profile writes or journal publication.
-        throw new MissionCreateNoEffectError(input.requestID, missionID, "request-conflict")
+        throw new MissionCreateNoEffectError(input.requestID, missionID)
       }
       if (!existing) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
       if (input.expectedCoordinatorLocation && !sameLocation(existingEvent.coordinator.location, input.expectedCoordinatorLocation)) {
@@ -250,7 +249,6 @@ export class MissionControl {
     }
     // The exact creation event is absent in a healthy journal, and neither a
     // coordinator creation nor publication has been attempted by this invocation.
-    if (snapshot.missions.length >= MISSION_MAX_MISSIONS) throw new MissionCreateNoEffectError(input.requestID, missionID)
     await this.journal.assertCanAppend()
     try { await this.options.validateProfiles?.(input.profiles, input.expectedCoordinatorLocation?.directory ?? this.options.project.location.directory, input.taskMode) }
     catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
@@ -672,9 +670,6 @@ export class MissionControl {
       }
       const active = this.membership(snapshot, sessionID)
       if (active?.status === "active" || active?.control?.pending.includes(sessionID)) throw new MissionControlError("This session already belongs to an active mission", "already-member")
-      if (snapshot.missions.length >= MISSION_MAX_MISSIONS) {
-        throw new MissionControlError("Project mission limit reached", "mission-limit")
-      }
       try { await this.options.validateProfiles?.(input.start.profiles, caller.location.directory, input.start.taskMode) }
       catch { throw new MissionControlError("Mission profiles do not match the owned native catalog", "invalid-execution") }
       const fresh = await this.ownedRootSession(sessionID)
