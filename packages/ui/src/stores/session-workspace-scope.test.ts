@@ -114,8 +114,10 @@ it("notices of a nested repository's session follow where it is shown", async ()
   }
   serverApi.fetchWorktrees = (async (instanceId: string) => ({ isGitRepo: instanceId === nested,
     worktrees: [{ slug: "root", directory: folders[instanceId] }] })) as any
+  // Sessions unknown to the parent read as nested-repository sessions.
+  const client = { session: { active: async () => ({}), get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID,
+    title: sessionID, version: "1", projectID: "repo-b", location: { directory: folders[nested] }, time: { created: 1, updated: 1 } }) } } as any
   const open = async (id: string) => {
-    const client = { session: { active: async () => ({}) } } as any
     ;(sdkManager as any).clients.set(`${id}:/workspaces/${id}/instance`, client)
     addInstance({ id, folder: folders[id], port: 0, pid: 0, proxyPath: "", status: "ready", client })
     await ensureWorktreesLoaded(id)
@@ -156,6 +158,11 @@ it("notices of a nested repository's session follow where it is shown", async ()
     // Compaction is announced for a session the list shows, never under the owning parent.
     compacted("nested")
     assert.equal(notices("sessionEvents.sessionCompactedToast", "nested"), 0)
+    // Nor for a session the parent first learns of, once its metadata shows where it belongs.
+    compacted("cold")
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(sessions().get(parent)?.has("cold"), true)
+    assert.equal(notices("sessionEvents.sessionCompactedToast", "cold"), 0)
     compacted("own")
     assert.equal(notices("sessionEvents.sessionCompactedToast", "own"), 1)
   } finally {

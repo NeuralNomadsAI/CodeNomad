@@ -65,6 +65,8 @@ const COMPACTION_TOAST_MS = 10000
 const pendingSessionFetches = new Map<string, {
   status: SessionStatus
   retry?: SessionRetryState | null
+  /** Settles once the session's metadata read ends. */
+  settled: Promise<void>
 }>()
 const nativeLifecycleGenerations = new Map<string, number>()
 // The live backoff countdown of one session; it ends when that session's next
@@ -413,11 +415,11 @@ function ensureSessionStatus(
   status: SessionStatus,
   directory?: string,
   retry?: SessionRetryState | null,
-) {
+): Promise<void> {
   const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) {
     setSessionStatus(instanceId, sessionId, status, { retry })
-    return
+    return Promise.resolve()
   }
 
   const key = `${instanceId}:${sessionId}`
@@ -425,20 +427,22 @@ function ensureSessionStatus(
   if (existingFetch) {
     existingFetch.status = status
     existingFetch.retry = retry
-    return
+    return existingFetch.settled
   }
 
-  const pendingState = { status, retry }
+  const pendingState: { status: SessionStatus; retry?: SessionRetryState | null; settled: Promise<void> } = { status, retry, settled: Promise.resolve() }
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched) return
     setSessionStatus(instanceId, sessionId, pendingState.status, { retry: pendingState.retry })
   })()
 
+  pendingState.settled = pending
   pendingSessionFetches.set(key, pendingState)
   void pending.finally(() => {
     if (pendingSessionFetches.get(key) === pendingState) pendingSessionFetches.delete(key)
   })
+  return pending
 }
 
 function handleSessionUpdate(
@@ -562,9 +566,18 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
 /** Native provider backoff. The next attempt's step events clear it as ordinary work. */
 function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled): void {
   const sessionId = event.data.sessionID
-  advanceNativeLifecycle(instanceId, sessionId)
+  const generation = advanceNativeLifecycle(instanceId, sessionId)
   const retry = mapNativeSessionRetry(event.data)
-  ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory, retry)
+  const held = sessions().get(instanceId)?.has(sessionId)
+  const resolved = ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory, retry)
+  if (held) showRetryToast(instanceId, sessionId, retry)
+  // An unknown session's scope is known once its metadata is read; by then
+  // the next attempt may already have replaced this backoff.
+  else void resolved.then(() => { if (isCurrentNativeLifecycle(instanceId, sessionId, generation)) showRetryToast(instanceId, sessionId, retry) })
+}
+
+function showRetryToast(instanceId: string, sessionId: string, retry: SessionRetryState): void {
+  // Shown by the project whose list shows the session, not by an owning parent.
   if (sessions().get(instanceId)?.has(sessionId) && !isSessionInWorkspaceScope(instanceId, sessionId)) return
   const remainingSeconds = getRetrySeconds(retry.next)
   const countdown =
@@ -594,11 +607,19 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   advanceNativeLifecycle(instanceId, sessionID)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
-  if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
-  else ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory)
+  if (existing) {
+    setSessionStatus(instanceId, sessionID, "working", { force: true })
+    announceCompaction(instanceId, event)
+  } else {
+    // An unknown session's scope is known once its metadata is read.
+    void ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory).then(() => announceCompaction(instanceId, event))
+  }
+}
 
+function announceCompaction(instanceId: string, event: SessionCompactionEnded): void {
+  const sessionID = event.data.sessionID
   // Announced by the project whose list shows the session, not by an owning parent.
-  if (existing && !isSessionInWorkspaceScope(instanceId, sessionID)) return
+  if (sessions().get(instanceId)?.has(sessionID) && !isSessionInWorkspaceScope(instanceId, sessionID)) return
   if (!claimCompactionNotice(event)) return
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
