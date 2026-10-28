@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util"
 import type { JsonValue, SessionMetadata } from "@opencode/client"
 
 import { MissionJournal, stableToken, type MissionStorage } from "./journal"
+import type { MissionJournalIndex } from "./journal-index"
 import {
   MISSION_MAX_ACTORS,
   MISSION_MAX_TASKS,
@@ -92,8 +93,10 @@ export class MissionControl {
     humanGate?: NativeHumanAnswerGate
     /** One-time missions: the coordinator finishes only as completed; a person decides any other end. */
     completedFinalOnly?: boolean
+    /** The plugin activation's ordinary-journal index. */
+    journalIndex?: MissionJournalIndex
   }) {
-    this.journal = new MissionJournal(options.storage, options.project.id, options.project.canonical, options.now)
+    this.journal = new MissionJournal(options.storage, options.project.id, options.project.canonical, options.now, options.journalIndex)
   }
 
   snapshot(): Promise<MissionSnapshot> {

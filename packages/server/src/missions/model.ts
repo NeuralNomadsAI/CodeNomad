@@ -876,6 +876,6 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   }
 }
 
-export function compareEvents(left: MissionEvent, right: MissionEvent): number {
+export function compareEvents(left: Pick<MissionEvent, "createdAt" | "id">, right: Pick<MissionEvent, "createdAt" | "id">): number {
   return left.createdAt - right.createdAt || left.id.localeCompare(right.id)
 }

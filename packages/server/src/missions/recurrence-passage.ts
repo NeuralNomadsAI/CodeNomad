@@ -47,6 +47,7 @@ function passageJournal(storage: MissionStorage, doc: RecurrenceDocument, passag
   // The isolated passage journal cannot remove entries, so it never purges and has no deletion record.
   const record = missionDeletionRecordKey(projectToken, missionID)
   const scoped: MissionStorage = {
+    isolated: true,
     get: async key => key === record ? undefined : storage.get(`${physical}${suffix(key)}`),
     set: async (key, value, supplied) => {
       const target = `${physical}${suffix(key)}`
