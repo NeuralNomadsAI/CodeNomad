@@ -61,9 +61,10 @@ export function fixture(seed: number) {
     },
   }
   let now = 1_000, failNotifications = false
-  let index!: MissionJournalIndex, journal!: MissionJournal
+  let index!: MissionJournalIndex, journal!: MissionJournal, indexNow = 0
   const activate = () => {
-    index = new MissionJournalIndex()
+    // The index's own clock only moves on request, so staleness rebuilds are explicit.
+    index = new MissionJournalIndex({ now: () => indexNow })
     journal = new MissionJournal(storage, project.id, project.canonical, () => now, index)
   }
   activate()
@@ -101,6 +102,7 @@ export function fixture(seed: number) {
     get index() { return index },
     /** A new plugin activation: a fresh index over the same storage. */
     activate,
+    advanceIndexClock: (ms: number) => { indexNow += ms },
     /** Bytes no journal writes (earlier builds, crashes, other processes). */
     tamper: (key: string, value: MissionJsonValue) => { tampered = true; values.set(key, value) },
     takeTampered: () => { const value = tampered; tampered = false; return value },

@@ -87,7 +87,7 @@ test("recurring passages never write the ordinary journal, so its activation ind
     assert.ok(events.some(event => event.type === "task.reported") && events.some(event => event.type === "mission.finished"), "the passage journal was written")
     assert.deepEqual(trapped, [], "no ordinary journal or deletion-record write")
     assert.equal(missionJournalWrites(token), writes, "no write any ordinary index would have to see")
-    await assert.rejects(f.passage.journal.readIndex(index => index.openIDs()), /not indexed/)
+    await assert.rejects(f.passage.journal.readHints(hints => hints.openIDs()), /not indexed/)
   } finally { await f.dispose() }
 })
 

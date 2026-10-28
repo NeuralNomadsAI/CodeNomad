@@ -31,7 +31,7 @@ import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
 import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
 import { parseDeletionRecord, planDeletionPurge, type MissionDeletionRecord } from "./journal-purge"
-import { MissionJournalIndex, noteMissionJournalWrite, type MissionIndexRange, type MissionIndexReader } from "./journal-index"
+import { MissionJournalIndex, noteMissionJournalWrite, type MissionIndexHints, type MissionIndexRange, type SynchronousHint } from "./journal-index"
 
 // Storage generation, independent of the event wire/schema version. No legacy reads.
 export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
@@ -71,7 +71,7 @@ export interface MissionStorage {
 export class MissionJournal {
   readonly projectToken: string
 
-  /** `index`: the plugin activation's shared index; without one, `readIndex` builds its own. */
+  /** `index`: the plugin activation's shared index; without one, `readHints` builds its own. */
   constructor(
     private readonly storage: MissionStorage,
     private readonly projectID: string,
@@ -84,10 +84,12 @@ export class MissionJournal {
     index?.attach(this.projectToken)
   }
 
-  /** Reads the cross-mission index under the append exclusion, current with every
-   * journal write of this process. It only nominates missions: every decision
-   * re-reads their ranges. `read` must not keep the reader. */
-  readIndex<T>(read: (index: MissionIndexReader) => T): Promise<T> {
+  /** Reads the cross-mission index hints under the append exclusion. They may miss
+   * writes outside this process's write generation until the next rebuild, so they
+   * never authorize a write or native effect (`MissionJournalIndex`). `read` only
+   * extracts values synchronously and must not keep the hints: range reads
+   * (`missionView`) happen after `readHints` resolves. A thenable result rejects. */
+  readHints<T>(read: (hints: MissionIndexHints) => SynchronousHint<T>): Promise<T> {
     if (this.storage.isolated) return Promise.reject(new Error("Isolated mission journals are not indexed"))
     if (!this.index) { this.index = new MissionJournalIndex(); this.index.attach(this.projectToken) }
     const index = this.index
