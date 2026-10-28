@@ -150,6 +150,7 @@
   color: var(--tab-active-text);
   border-top: 1px solid var(--tab-border);
   border-bottom-color: transparent;
+  max-width: 300px;
 }
 
 .tab-bar-instance .tab-active,
