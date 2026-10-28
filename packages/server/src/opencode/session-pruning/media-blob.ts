@@ -78,48 +78,58 @@ export function mediaBlobBase64(db: DatabaseSync, hash: string, limit: number): 
 
 export type MediaProjection = { status: "ok"; data: any; bytes: number } | { status: "limit" } | { status: "unsupported" }
 
+// Native replacements: a user file's `uri` becomes base64 `data`, a tool file's
+// `uri` a data URI; a missing blob gives the unavailable placeholder instead.
+function inlineFile(file: any, base64?: string) {
+  const { uri: _, ...rest } = file
+  return base64 === undefined
+    ? { ...rest, data: Buffer.from(unavailable(file.mime, file.name)).toString("base64"), mime: "text/plain" }
+    : { ...rest, data: base64 }
+}
+const inlineToolItem = (item: any, base64?: string) => base64 === undefined
+  ? { type: "text", text: unavailable(item.mime, item.name) } : { ...item, uri: mediaDataUri(item.mime, base64) }
+const serialized = (value: unknown) => Buffer.byteLength(JSON.stringify(value))
+
 /**
  * The stored message as native reads return it: each ref inlined from its blob,
- * or the native unavailable placeholder when the blob is gone. `bytes` bounds
- * the projected JSON size from `storedBytes`, checked against `limit` before
- * any blob bytes are loaded.
+ * or the native unavailable placeholder when the blob is gone. `bytes` is the
+ * projected JSON size: `storedBytes` plus each replacement's net serialized
+ * change, computed from blob lengths and checked against `limit` (as is
+ * `storedBytes` itself) before any blob bytes are loaded.
  */
 export function projectStoredMedia(db: DatabaseSync, data: any, storedBytes: number, limit: number): MediaProjection {
+  if (storedBytes > limit) return { status: "limit" }
   const hashes = mediaHashes(data)
-  if (!hashes.size) return storedBytes <= limit ? { status: "ok", data, bytes: storedBytes } : { status: "limit" }
+  if (!hashes.size) return { status: "ok", data, bytes: storedBytes }
   const sizes = mediaBlobSizes(db, hashes)
   if (!sizes) return { status: "unsupported" }
+  const files = Array.isArray(data.files) && data.files.some(isFileRef)
   let bytes = storedBytes
-  const grow = (mime: string, name: unknown, hash: string) => {
+  // An empty payload serializes the replacement without its base64, whose length the blob size gives.
+  const change = (original: unknown, replace: (base64?: string) => unknown, hash: string) => {
     const size = sizes.get(hash)
-    bytes += size === undefined ? base64Length(Buffer.byteLength(unavailable(mime, name))) : base64Length(size) + Buffer.byteLength(JSON.stringify(mime)) + 16
+    bytes += (size === undefined ? serialized(replace()) : serialized(replace("")) + base64Length(size)) - serialized(original)
   }
-  if (Array.isArray(data.files) && data.files.some(isFileRef)) {
-    for (const file of data.files) if (isFileRef(file)) grow(file.mime, file.name, refHash(file.uri)!)
+  if (files) {
+    for (const file of data.files) if (isFileRef(file)) change(file, base64 => inlineFile(file, base64), refHash(file.uri)!)
   } else for (const part of data.content) {
-    if (settledTool(part)) for (const item of part.state.content) if (isToolFileRef(item)) grow(item.mime, item.name, refHash(item.uri)!)
+    if (settledTool(part)) for (const item of part.state.content) {
+      if (isToolFileRef(item)) change(item, base64 => inlineToolItem(item, base64), refHash(item.uri)!)
+    }
   }
   if (bytes > limit) return { status: "limit" }
   const blobs = select(db, "data", [...hashes].filter(hash => sizes.has(hash)), row => {
     const value = row.value as Uint8Array
     return Buffer.from(value.buffer, value.byteOffset, value.byteLength).toString("base64")
   })
-  if (Array.isArray(data.files) && data.files.some(isFileRef)) {
-    return { status: "ok", bytes, data: { ...data, files: data.files.map((file: any) => {
-      if (!isFileRef(file)) return file
-      const { uri: _, ...rest } = file, inline = blobs.get(refHash(file.uri)!)
-      return inline === undefined
-        ? { ...rest, data: Buffer.from(unavailable(file.mime, file.name)).toString("base64"), mime: "text/plain" }
-        : { ...rest, data: inline }
-    }) } }
+  if (files) {
+    return { status: "ok", bytes, data: { ...data, files: data.files.map((file: any) =>
+      isFileRef(file) ? inlineFile(file, blobs.get(refHash(file.uri)!)) : file) } }
   }
   return { status: "ok", bytes, data: { ...data, content: data.content.map((part: any) => {
     if (!settledTool(part) || !part.state.content.some(isToolFileRef)) return part
-    return { ...part, state: { ...part.state, content: part.state.content.map((item: any) => {
-      if (!isToolFileRef(item)) return item
-      const inline = blobs.get(refHash(item.uri)!)
-      return inline === undefined ? { type: "text", text: unavailable(item.mime, item.name) } : { ...item, uri: mediaDataUri(item.mime, inline) }
-    }) } }
+    return { ...part, state: { ...part.state, content: part.state.content.map((item: any) =>
+      isToolFileRef(item) ? inlineToolItem(item, blobs.get(refHash(item.uri)!)) : item) } }
   }) } }
 }
 

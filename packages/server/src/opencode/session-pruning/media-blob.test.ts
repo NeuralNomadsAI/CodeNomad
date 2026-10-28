@@ -76,28 +76,78 @@ test("projection inlines refs exactly as native reads, and leaves rows without r
     const projected = projectStoredMedia(db, stored, bytes(stored), 16 * 1024 * 1024)
     assert.equal(projected.status, "ok")
     assert.deepEqual(projected.status === "ok" && projected.data, hydrated)
-    assert(projected.status === "ok" && projected.bytes >= bytes(hydrated))
+    assert.equal(projected.status === "ok" && projected.bytes, bytes(hydrated))
     const { uri: _, ...file } = user.files[0]
-    assert.deepEqual((projectStoredMedia(db, user, bytes(user), 1 << 20) as any).data, { ...user, files: [{ ...file, data: png.toString("base64") }] })
+    const userView = projectStoredMedia(db, user, bytes(user), 1 << 20) as any
+    assert.deepEqual(userView.data, { ...user, files: [{ ...file, data: png.toString("base64") }] })
+    assert.equal(userView.bytes, bytes(userView.data))
     const plain = { content: [{ type: "text", text: "no refs" }] }
     assert.equal((projectStoredMedia(db, plain, bytes(plain), 1 << 20) as any).data, plain)
     // A running tool is never hydrated natively.
     const page = stored.content[0] as ReturnType<typeof tool>
     const running = { content: [{ ...page, state: { status: "running", content: page.state.content } }] }
     assert.deepEqual((projectStoredMedia(db, running, bytes(running), 1 << 20) as any).data, running)
-    assert.deepEqual(projectStoredMedia(db, stored, bytes(stored), bytes(stored) + 8), { status: "limit" })
     db.exec("DELETE FROM blob")
     const gone = projectStoredMedia(db, stored, bytes(stored), 1 << 20) as any
     assert.deepEqual(gone.data.content[0].state.content, [{ type: "text", text: "[media unavailable: page.html (text/html)]" }])
     assert.deepEqual(gone.data.content[1].state.content[0], { type: "text", text: "[media unavailable: image/png]" })
-    assert.deepEqual((projectStoredMedia(db, user, bytes(user), 1 << 20) as any).data.files[0],
+    assert.equal(gone.bytes, bytes(gone.data))
+    const userGone = projectStoredMedia(db, user, bytes(user), 1 << 20) as any
+    assert.deepEqual(userGone.data.files[0],
       { ...file, mime: "text/plain", data: Buffer.from("[media unavailable: shot.png (image/png)]").toString("base64") })
+    assert.equal(userGone.bytes, bytes(userGone.data))
   } finally { db.close() }
   const legacy = fixture({ blobs: false })
   try {
     assert.deepEqual(projectStoredMedia(legacy, stored, bytes(stored), 1 << 20), { status: "unsupported" })
     assert.equal((projectStoredMedia(legacy, hydrated, bytes(hydrated), 1 << 20) as any).data, hydrated)
   } finally { legacy.close() }
+})
+
+// Many refs to one tiny blob: each native data URI is shorter than the ref it replaces.
+const tiny = Buffer.from("x")
+const dense = (count: number, text: number) => ({ time: { created: 1, completed: 2 }, content: [
+  tool("dense", Array.from({ length: count }, () => ({ type: "file", mime: "text/plain", uri: ref(tiny) }))),
+  { type: "text", text: "r".repeat(text) },
+] })
+function addTiny(db: DatabaseSync) {
+  db.prepare("INSERT INTO blob VALUES (?,'text/plain',1,NULL,NULL,?,1)").run(sha(tiny), tiny)
+  // Owned elsewhere too, so pruning one message keeps it for the others.
+  db.prepare("INSERT INTO blob_ref VALUES ('s','other',?,9)").run(sha(tiny))
+}
+
+test("budgets count each replacement's net size, so ref-dense messages and windows that fit natively are read", async () => {
+  const MiB = 1024 * 1024, db = fixture()
+  try {
+    addTiny(db)
+    const message = dense(90_000, 4 * MiB)
+    const projected = projectStoredMedia(db, message, bytes(message), 16 * MiB)
+    assert.equal(projected.status, "ok")
+    if (projected.status !== "ok") return
+    assert(bytes(message) < 16 * MiB && projected.bytes === bytes(projected.data) && projected.bytes < bytes(message))
+    db.prepare("UPDATE session_message SET data=? WHERE id='m'").run(JSON.stringify(message))
+    assert.equal(pruneIsolatedMessage(db, { sessionID: "s", messageID: "m", revision: revision(projected.data.content), indexes: [0] }, "/repo").status, "pruned")
+    // Two such messages fit the 24 MiB window in stored and native form.
+    db.prepare("UPDATE session_message SET data=? WHERE id='m'").run(JSON.stringify(stored))
+    const insert = db.prepare("INSERT INTO session_message(id,session_id,type,seq,data) VALUES (?,'s','assistant',?,?)")
+    const half = dense(60_000, 5 * MiB)
+    insert.run("d1", 3, JSON.stringify(half)); insert.run("d2", 4, JSON.stringify(half))
+    const window = await readNavigationWindow(db, scope, { kind: "latest" }, signal())
+    assert.equal(window.status, "window", JSON.stringify(window))
+    assert(window.status === "window" && bytes(window.messages) < 24 * MiB)
+    // The stored row stays bounded even when its native form is smaller.
+    assert.deepEqual(projectStoredMedia(db, message, bytes(message), bytes(message) - 1), { status: "limit" })
+    // Replacements that grow past the budget are still refused.
+    db.prepare("UPDATE blob SET data=zeroblob(1024) WHERE hash=?").run(sha(tiny))
+    const small = dense(1, 0)
+    assert.deepEqual(projectStoredMedia(db, small, bytes(small), bytes(small) + 1024), { status: "limit" })
+    assert.deepEqual(projectStoredMedia(db, message, bytes(message), 16 * MiB), { status: "limit" })
+    // Two messages that each fit natively, but not together in one window.
+    const grown = dense(9_700, 0)
+    assert.equal(projectStoredMedia(db, grown, bytes(grown), 16 * MiB).status, "ok")
+    db.prepare("UPDATE session_message SET data=? WHERE id IN ('d1','d2')").run(JSON.stringify(grown))
+    assert.deepEqual(await readNavigationWindow(db, scope, { kind: "latest" }, signal()), { status: "blocked", reason: "unsupported_storage" })
+  } finally { db.close() }
 })
 
 test("pruning compares the native revision, keeps surviving refs stored and releases only dropped blobs", async () => {
