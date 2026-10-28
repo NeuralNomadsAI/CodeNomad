@@ -12,6 +12,7 @@ import {
   type MissionEvent,
   type MissionJsonValue,
   type MissionLocation,
+  type MissionMap,
   type MissionReport,
   type MissionRevisedEvent,
   type MissionSnapshot,
@@ -38,6 +39,15 @@ const MAX_TEXT = 20_000
 const MAX_SHORT_TEXT = 240
 type CapacityIntent = Extract<MissionEvent, { type: "mission.deleted" | "mission.control-requested" }>
 interface CapacitySlot { intent: CapacityIntent; sessionID: string }
+interface Observation { events: MissionEvent[]; discardedEvents: number; purged: MissionEvent[] }
+
+/** One mission's range reduced like a snapshot: `mission` is absent when the
+ * range holds no live map (deleted, purged, damaged or unknown). */
+export interface MissionView extends Omit<MissionSnapshot, "missions"> {
+  missionID: string
+  mission?: MissionMap
+  events: MissionEvent[]
+}
 
 export interface MissionStorage {
   get(key: string): Promise<MissionJsonValue | undefined>
@@ -71,15 +81,37 @@ export class MissionJournal {
     return { events, discardedEvents }
   }
 
+  /** One mission's share of `events()`: its key range `<prefix>/<missionID>/`,
+   * read under the same exclusion, parsing, bound and purge resolution. Entries
+   * outside every mission range count only in the project observation. */
+  async missionEvents(missionID: string): Promise<{ events: MissionEvent[]; discardedEvents: number }> {
+    const { events, discardedEvents } = await runMissionExclusive(`append:${this.projectToken}`, () => this.observeMission(missionID))
+    return { events, discardedEvents }
+  }
+
+  /** One mission's share of `snapshot()`, reduced from its range alone. Its
+   * damage flags and discarded count are this range's own; the project values are
+   * their aggregate plus damage outside every mission range. */
+  async missionView(missionID: string): Promise<MissionView> {
+    const { events, discardedEvents } = await this.missionEvents(missionID)
+    const { missions: [mission], ...view } = this.reduce(events, discardedEvents)
+    return { ...view, missionID, ...(mission ? { mission } : {}), events }
+  }
+
+  private async observeMission(missionID: string): Promise<Observation> {
+    // No unsafe ID owns a range: entries there never parse as events.
+    return isSafeKey(missionID) ? this.observe(`${this.prefix()}/${missionID}/`) : { events: [], discardedEvents: 0, purged: [] }
+  }
+
   /** A group without its creation event whose mission left a deletion record is
    * a purge in progress (or a late write after it): it leaves the observation.
    * Every other incomplete group remains damage evidence. */
-  private async observe(): Promise<{ events: MissionEvent[]; discardedEvents: number; purged: MissionEvent[] }> {
+  private async observe(prefix = this.prefix()): Promise<Observation> {
     const events: MissionEvent[] = []
     let discardedEvents = 0
     let after: string | undefined
     do {
-      const page = await this.storage.scan({ prefix: this.prefix(), after, limit: PAGE_SIZE })
+      const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
       for (const entry of page.entries) {
         if (events.length + discardedEvents >= MISSION_MAX_STORED_EVENTS) {
           throw new Error(`Mission journal exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`)
@@ -143,6 +175,10 @@ export class MissionJournal {
 
   async snapshot(): Promise<MissionSnapshot> {
     const { events, discardedEvents } = await this.events()
+    return this.reduce(events, discardedEvents)
+  }
+
+  private reduce(events: readonly MissionEvent[], discardedEvents: number): MissionSnapshot {
     const snapshot = reduceMissionEvents(events, this.now())
     snapshot.projectID = this.projectID
     snapshot.discardedEvents += discardedEvents
