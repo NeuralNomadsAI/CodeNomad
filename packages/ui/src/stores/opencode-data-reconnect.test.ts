@@ -164,7 +164,7 @@ async function converge(ctx: TestContext, done: () => boolean) {
   }
 }
 
-test("a message.list read cannot complete while stream events keep arriving", async ctx => {
+test("a message.list read completes while stream events keep arriving, without rewinding them", async ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("reconnect-race")
   try {
@@ -185,18 +185,29 @@ test("a message.list read cannot complete while stream events keep arriving", as
     f.data().session.message.sync(sessionId).then(() => { syncSettled = true }).catch(() => undefined)
     await converge(ctx, () => control.calls === 1 && control.pending())
 
-    // Ten arrivals, each landing before the in-flight read returns: every one
-    // restarts the read; it can never publish an obsolete page mid-stream.
-    for (let round = 0; round < 10; round++) {
-      f.delta(`x${round} `)
-      control.settle()
-      await converge(ctx, () => control.calls === round + 2 && control.pending())
-      assert.ok(control.pending(), "the read restarted and is always in flight")
-    }
-
-    // Arrivals stop: the current read can finally return.
+    // Ten arrivals land before the in-flight read returns: none restarts it,
+    // and the streamed message keeps its live version over the older page.
+    for (let round = 0; round < 10; round++) f.delta(`x${round} `)
+    const streamed = "seed probe " + Array.from({ length: 10 }, (_, round) => `x${round} `).join("")
     control.settle()
     await converge(ctx, () => syncSettled)
+    assert.ok(syncSettled, "the read completed mid-stream")
+    assert.equal(control.calls, 1, "stream events restarted the read")
+    assert.equal(f.sdkText(), streamed, "the page rewound streamed text")
+
+    // Arrivals continue on the accepted page.
+    f.delta("after ")
+    await converge(ctx, () => f.sdkText() === `${streamed}after `)
+    assert.equal(f.sdkText(), `${streamed}after `)
+
+    // A quiet read publishes the authoritative page.
+    f.data().session.message.invalidate(sessionId)
+    syncSettled = false
+    f.data().session.message.sync(sessionId).then(() => { syncSettled = true }).catch(() => undefined)
+    await converge(ctx, () => control.calls === 2 && control.pending())
+    control.settle()
+    await converge(ctx, () => syncSettled)
+    assert.equal(control.calls, 2)
     assert.equal(f.sdkText(), f.authoritativeText())
   } finally { f.cleanup() }
 })

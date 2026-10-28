@@ -441,6 +441,9 @@ jobs:
           packages/ui/src/stores/opencode-data-idle.test.ts
           packages/ui/src/stores/opencode-data-settlement.test.ts
           packages/ui/src/stores/opencode-data-reconnect.test.ts
+          packages/ui/src/stores/opencode-data-trailing-read.test.ts
+          packages/ui/src/stores/opencode-data-read-merge.test.ts
+          packages/ui/src/stores/session-api-running-open.test.ts
           packages/ui/src/stores/opencode-inbox-rebinding.test.ts
           packages/ui/src/stores/opencode-transcript-replay.test.ts
           packages/ui/src/stores/opencode-compaction.test.ts

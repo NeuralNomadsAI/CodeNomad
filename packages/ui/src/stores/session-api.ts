@@ -97,7 +97,10 @@ import {
 } from "./message-v2/message-window"
 import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
-import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
+import {
+  captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision,
+  mergeOpenCodeLoadedPage, syncOpenCodeSessionMessages,
+} from "./opencode-data"
 
 const log = getLogger("api")
 const sessionLog = getLogger("session")
@@ -1648,6 +1651,12 @@ async function loadMessages(
   })
   const messageRevision = store.getSessionRevision(sessionId)
   const liveMessageRevision = getOpenCodeMessageRevision(instanceId, sessionId)
+  // A first latest-window load has no resident rows a mid-stream page could
+  // rewind: it merges its page with the rows streamed during the fetch instead
+  // of retrying on revision conflicts. Reloads and history windows keep them.
+  const initialSeed = !storedWindow && currentWindow.kind === "latest" && planned.next.kind === "latest"
+    && !planned.cursor && store.getSessionMessageIds(sessionId).length === 0
+  const rowSnapshot = initialSeed ? captureOpenCodeRowSnapshot(instanceId, sessionId) : undefined
   let retryAfterRevisionConflict = false
   let committed = false
   let deferRelease = false
@@ -1777,7 +1786,10 @@ async function loadMessages(
       : withOlderCursor(resolvedNext, olderCursor))
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
-    const apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
+    let apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
+    if (rowSnapshot) {
+      apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, apiMessages.reverse(), rowSnapshot).reverse()
+    }
     if (apiMessages.length === 0) {
       if (intent === "older") {
         // V2 boundary cursors do not guarantee another page. An exhausted
@@ -1785,9 +1797,9 @@ async function loadMessages(
         // Keep their window identity (including live/latest authority) and
         // scroll anchor; only retire the cursor that reached the boundary.
         commitCurrentWindow(withOlderCursor(currentWindow, undefined), "open")
-      } else if (hasLatestRevisionConflict() || (intent === "open" && planned.cursor)) {
+      } else if (!initialSeed && (hasLatestRevisionConflict() || (intent === "open" && planned.cursor))) {
         retryAfterRevisionConflict = true
-      } else if (store.getSessionRevision(sessionId) !== messageRevision) {
+      } else if (!initialSeed && store.getSessionRevision(sessionId) !== messageRevision) {
         retryAfterRevisionConflict = true
       } else {
         store.reconcileEmptyAuthoritativeSnapshot(sessionId)
@@ -1860,8 +1872,9 @@ async function loadMessages(
         id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
       if (!isCurrent()) return false
-      const expectedRevision = nextWindow.kind === "latest" ? messageRevision : undefined
-      if (hasLatestRevisionConflict() || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
+      const expectedRevision = nextWindow.kind === "latest" && !initialSeed ? messageRevision : undefined
+      if ((!initialSeed && hasLatestRevisionConflict())
+        || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
@@ -1869,6 +1882,13 @@ async function loadMessages(
         markSessionMessagesLoaded(instanceId, sessionId)
         reconcilePendingPermissionsV2(instanceId, sessionId)
         committed = true
+        // Streamed events reach the display only through the session reducer,
+        // which ignores them for messages it does not hold. A session known
+        // to be idle has no such message.
+        const current = sessions().get(instanceId)?.get(sessionId)
+        if (initialSeed && (current?.status !== "idle" || current.runtimeStatusKnown !== true)) {
+          void syncOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder)
+        }
       }
     }
     // A revision conflict keeps the flag through its bounded, backed-off retry.
