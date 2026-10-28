@@ -247,6 +247,8 @@ export class MissionControl {
       }
       return { mission: existing }
     }
+    // Read after the creation event: a purge records the deletion before removing it.
+    await this.assertNotPurged(missionID)
     // The exact creation event is absent in a healthy journal, and neither a
     // coordinator creation nor publication has been attempted by this invocation.
     await this.journal.assertCanAppend()
@@ -394,7 +396,7 @@ export class MissionControl {
     return { mission: this.requireMission(snapshot, mission.id) }
   }
 
-  delete(input: MissionDeleteInput): Promise<{ deleted: true }> {
+  delete(input: MissionDeleteInput): Promise<{ deleted: true; cleanup?: import("./model").MissionCleanup }> {
     return this.mutate(() => deleteMission(input, {
       journal: this.journal, sessions: this.options.sessions, transport: this.options.transport, isActive: this.options.isActive,
       timestamp: (snapshot) => this.timestamp(snapshot),
@@ -668,6 +670,7 @@ export class MissionControl {
         }
         return this.inspection(replay, sessionID)
       }
+      await this.assertNotPurged(missionID)
       const active = this.membership(snapshot, sessionID)
       if (active?.status === "active" || active?.control?.pending.includes(sessionID)) throw new MissionControlError("This session already belongs to an active mission", "already-member")
       try { await this.options.validateProfiles?.(input.start.profiles, caller.location.directory, input.start.taskMode) }
@@ -744,6 +747,7 @@ export class MissionControl {
       if (!saved) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
       return { mission: saved }
     }
+    await this.assertNotPurged(missionID)
     const result = await this.options.transport.prepare(sessionID, { ...structuredClone(input), requestID, missionID: source.id })
     const returnedID = (result as { mission?: { id?: unknown } } | undefined)?.mission?.id
     const mission = returnedID === missionID ? (await this.snapshot()).missions.find(mission => mission.id === missionID) : undefined
@@ -1429,6 +1433,11 @@ export class MissionControl {
     if (mission.coordinatorSessionId !== sessionID) {
       throw new MissionControlError("Only the mission coordinator may change topology", "coordinator-only")
     }
+  }
+
+  /** A purged deleted mission's record still refuses its deterministic recreation. */
+  private async assertNotPurged(missionID: string): Promise<void> {
+    if (await this.journal.deletionRecord(missionID)) throw new MissionControlError("Mission was deleted and cannot be recreated", "mission-deleted")
   }
 
   private eventID(missionID: string, purpose: string): string {

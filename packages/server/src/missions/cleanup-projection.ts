@@ -2,7 +2,19 @@ import { createHash } from "node:crypto"
 import { MISSION_MAX_EVENTS, type MissionCleanup, type MissionCleanupReason, type MissionDeletedEvent, type MissionEvent } from "./model"
 
 /** Settled cleanups shown after the pending ones. */
-const SETTLED_CLEANUP_HISTORY = 20
+export const SETTLED_CLEANUP_HISTORY = 20
+
+/** The session a mission event makes that mission's member for shared-session cleanup checks. */
+export function cleanupReference(event: MissionEvent): string | undefined {
+  return event.type === "mission.created" ? event.coordinator.sessionID
+    : event.type === "task.dispatching" ? event.actor.sessionID : undefined
+}
+
+/** Targets of a tombstone still awaiting their exact receipt in these events. */
+export function pendingCleanupTargets(deletion: MissionDeletedEvent, events: readonly MissionEvent[]): string[] {
+  return (deletion.cleanupTargets ?? []).filter(target => !events.some(event => isCleanupReceipt(event, deletion, target.sessionID)))
+    .map(target => target.sessionID)
+}
 
 export function cleanupReceiptID(deletionID: string, sessionID: string): string {
   return `evt_${createHash("sha256").update(`${deletionID}\0cleanup\0${sessionID}`).digest("hex").slice(0, 28)}`

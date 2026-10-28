@@ -155,6 +155,11 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     })
   }
   let rpcRegistration: Awaited<ReturnType<MissionsPluginContext["rpc"]["register"]>> | undefined
+  // Journal purges need native removal; a context without it keeps every entry.
+  const removal = typeof context.storage.remove === "function" ? { remove: (key: string) => writer.run(async () => {
+    assertActive()
+    await writer.write(() => context.storage.remove(key))
+  }) } : {}
   const control = new MissionControl({
     project: {
       id: context.location.project.id,
@@ -168,12 +173,12 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       publicationFence?.()
       current?.()
       await writer.write(() => context.storage.set(key, value))
-    }) } : { get: key => context.storage.get(key), scan: options => context.storage.scan(options),
+    }), ...removal } : { get: key => context.storage.get(key), scan: options => context.storage.scan(options),
       set: (key, value, current) => writer.run(async () => {
         assertActive()
         current?.()
         await writer.write(() => context.storage.set(key, value))
-      }) },
+      }), ...removal },
     sessions: context.session,
     isActive: () => active,
     transport,

@@ -3,6 +3,7 @@ export { stableToken } from "./receipt-identity"
 
 import {
   MISSION_MAX_EVENTS,
+  MISSION_MAX_STORED_EVENTS,
   MISSION_MAX_ACTORS,
   MISSION_MAX_TASKS,
   MISSION_SCHEMA_VERSION,
@@ -27,7 +28,8 @@ import { parseMissionTitle } from "./mission-title"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
-import { cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
+import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
+import { parseDeletionRecord, planDeletionPurge, type MissionDeletionRecord } from "./journal-purge"
 
 // Storage generation, independent of the event wire/schema version. No legacy reads.
 export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
@@ -41,6 +43,8 @@ export interface MissionStorage {
   get(key: string): Promise<MissionJsonValue | undefined>
   /** Async adapters repeat current after preparation; not a native commit proof. */
   set(key: string, value: MissionJsonValue, current?: () => void): Promise<void>
+  /** Purge-capable storage only; without it settled deletions stay in the journal. */
+  remove?(key: string): Promise<void>
   scan(options: { prefix: string; after?: string; limit?: number }): Promise<{
     entries: readonly { key: string; value: MissionJsonValue }[]
     next?: string
@@ -60,14 +64,22 @@ export class MissionJournal {
   }
 
   async events(): Promise<{ events: MissionEvent[]; discardedEvents: number }> {
+    const { events, discardedEvents } = await this.observe()
+    return { events, discardedEvents }
+  }
+
+  /** A group without its creation event whose mission left a deletion record is
+   * a purge in progress (or a late write after it): it leaves the observation.
+   * Every other incomplete group remains damage evidence. */
+  private async observe(): Promise<{ events: MissionEvent[]; discardedEvents: number; purged: MissionEvent[] }> {
     const events: MissionEvent[] = []
     let discardedEvents = 0
     let after: string | undefined
     do {
       const page = await this.storage.scan({ prefix: this.prefix(), after, limit: PAGE_SIZE })
       for (const entry of page.entries) {
-        if (events.length + discardedEvents >= MISSION_MAX_EVENTS) {
-          throw new Error(`Mission journal exceeds the ${MISSION_MAX_EVENTS}-event safety limit`)
+        if (events.length + discardedEvents >= MISSION_MAX_STORED_EVENTS) {
+          throw new Error(`Mission journal exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`)
         }
         const event = this.parseEntry(entry.key, entry.value)
         if (!event) discardedEvents += 1
@@ -76,7 +88,53 @@ export class MissionJournal {
       after = page.next
     } while (after)
 
-    return { events, discardedEvents }
+    const created = new Set(events.flatMap(event => event.type === "mission.created" ? [event.missionID] : []))
+    const purged = new Set<string>()
+    for (const missionID of new Set(events.map(event => event.missionID))) {
+      // Unreadable records keep the group as damage, never as proof of a purge.
+      if (!created.has(missionID) && await this.readRecord(missionID).catch(() => undefined)) purged.add(missionID)
+    }
+    return { events: events.filter(event => !purged.has(event.missionID)), discardedEvents,
+      purged: events.filter(event => purged.has(event.missionID)) }
+  }
+
+  /** The record a purged deleted mission leaves; purge-capable storage only. */
+  async deletionRecord(missionID: string): Promise<MissionDeletionRecord | undefined> {
+    return this.storage.remove && isSafeKey(missionID) ? this.readRecord(missionID) : undefined
+  }
+
+  /** Removes settled deleted missions beyond the recent cleanup history (all of
+   * them when `all`), plus leftovers of interrupted purges. Returns removed entries. */
+  purgeDeleted(options: { all?: boolean } = {}): Promise<number> {
+    return runMissionExclusive(`append:${this.projectToken}`, () => this.purgeUnlocked(options.all ?? false))
+  }
+
+  private async purgeUnlocked(all: boolean): Promise<number> {
+    const storage = this.storage
+    if (!storage.remove) return 0
+    const { events, discardedEvents, purged } = await this.observe()
+    let removed = 0
+    for (const event of purged) { await storage.remove(this.eventKey(event.missionID, event.id)); removed++ }
+    // Damaged storage cannot establish settled cleanup, receipts or membership.
+    if (discardedEvents || hasInvalidCleanupHistory(events) || hasInvalidControlHistory(events)
+      || hasInvalidReportNotificationHistory(events)) return removed
+    for (const purge of planDeletionPurge(events, all ? 0 : SETTLED_CLEANUP_HISTORY)) {
+      // The record is durable before the first removal and never removed.
+      const key = this.recordKey(purge.missionID)
+      const existing = await storage.get(key)
+      if (existing === undefined) await storage.set(key, purge.record as unknown as MissionJsonValue)
+      else if (parseDeletionRecord(existing, this.projectID, purge.missionID)?.deletionID !== purge.record.deletionID) continue
+      for (const event of purge.events) { await storage.remove(this.eventKey(event.missionID, event.id)); removed++ }
+    }
+    return removed
+  }
+
+  private async readRecord(missionID: string): Promise<MissionDeletionRecord | undefined> {
+    const value = await this.storage.get(this.recordKey(missionID))
+    if (value === undefined) return undefined
+    const record = parseDeletionRecord(value, this.projectID, missionID)
+    if (!record) throw new Error("Mission deletion record is damaged")
+    return record
   }
 
   async snapshot(): Promise<MissionSnapshot> {
@@ -115,11 +173,20 @@ export class MissionJournal {
     const event = typeof count === "number" ? undefined
       : this.parseEntry(this.eventKey(count.missionID, count.id), JSON.parse(JSON.stringify(count)))
     if (typeof count !== "number" && !event) throw new Error("Mission event is not durable owned JSON")
+    const request = event ?? count as number
+    if (await this.fits(request)) return
+    if (this.storage.remove && await this.purgeDeleted({ all: true }) && await this.fits(request)) return
+    throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
+  }
+
+  private async fits(request: MissionEvent | number): Promise<boolean> {
     const capacity = await this.storedCapacity()
-    const required = event ? this.requiredCapacity(event, capacity.cleanupSlots) : count as number
-    if (capacity.count + capacity.cleanupSlots.size + required > MISSION_MAX_EVENTS) {
-      throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
-    }
+    const slots = capacity.cleanupSlots
+    const required = typeof request === "number" ? request : this.requiredCapacity(request, slots)
+    // Deletion intents and already reserved receipts may spend the deletion reserve.
+    const limit = this.storage.remove && typeof request !== "number"
+      && (request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots)) ? MISSION_MAX_STORED_EVENTS : MISSION_MAX_EVENTS
+    return capacity.count + slots.size + required <= limit
   }
 
   private async appendUnlocked(event: MissionEvent, current?: () => void): Promise<void> {
@@ -134,9 +201,7 @@ export class MissionJournal {
       if (JSON.stringify(existing) !== JSON.stringify(stored)) throw new Error("Mission event identity collision")
       return
     }
-    const capacity = await this.storedCapacity()
-    const required = this.requiredCapacity(parsed, capacity.cleanupSlots)
-    if (capacity.count + capacity.cleanupSlots.size + required > MISSION_MAX_EVENTS) {
+    if (!await this.fits(parsed) && !(this.storage.remove && await this.purgeUnlocked(true) && await this.fits(parsed))) {
       throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
     }
     current?.()
@@ -172,7 +237,7 @@ export class MissionJournal {
     do {
       const page = await this.storage.scan({ prefix: this.prefix(), after, limit: PAGE_SIZE })
       count += page.entries.length
-      if (count > MISSION_MAX_EVENTS) throw new Error(`Mission journal exceeds the ${MISSION_MAX_EVENTS}-event safety limit`)
+      if (count > MISSION_MAX_STORED_EVENTS) throw new Error(`Mission journal exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`)
       for (const entry of page.entries) {
         // Invalid entries still consume physical space, but supply no authority
         // to establish, supersede or discharge a reservation.
@@ -214,6 +279,11 @@ export class MissionJournal {
 
   private prefix(): string {
     return `${MISSION_JOURNAL_STORAGE_PREFIX}/${this.projectToken}`
+  }
+
+  // Beside, never under, the scanned journal prefix: records cost no journal capacity.
+  private recordKey(missionID: string): string {
+    return `${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${this.projectToken}/${safeKey(missionID)}`
   }
 }
 

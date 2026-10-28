@@ -537,6 +537,33 @@ try {
   await rejectedMutation("DELETE", `/${cleanup.mission.id}`, { ...cleanupRequest, deleteManagedSessions: false }, 409, "request-conflict")
   gate("opt-in managed specialist deletion preserves coordinator and reused session")
 
+  stage = "settled deletion purge"
+  // Twenty newer settled deletions push both earlier ones past the retained cleanup
+  // history: native storage.remove clears their entries, their deletion records stay.
+  for (let index = 0; index < 20; index++) {
+    const extra = await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: `native-purge-${index}`, objective: `Purge fixture ${index}`, template: "custom" }, { location })
+    assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete({
+      missionID: extra.mission.id, requestID: `native-purge-delete-${index}`, expectedRevision: extra.mission.revision,
+    }, { location }), { deleted: true })
+  }
+  const purgedSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+  assert.equal(purgedSnapshot.discardedEvents, 0)
+  assert.equal(purgedSnapshot.cleanupUnavailable, undefined)
+  assert.equal(purgedSnapshot.cleanups.length, 20, "The newest settled deletions stay as cleanup history")
+  assert(!purgedSnapshot.cleanups.some(item => [crudCreated.mission.id, cleanup.mission.id].includes(item.missionID)), "Purged deletions leave the journal")
+  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), { deleted: true }, "A purged deletion replays from its record")
+  const purgedReplay = await bridge.inject({ method: "DELETE", url: `${missionURL}/${cleanup.mission.id}`, payload: cleanupRequest })
+  assert.equal(purgedReplay.statusCode, 200, purgedReplay.body)
+  assert.deepEqual(purgedReplay.json(), cleanupReceipt, "A purged cleanup replays its exact receipt")
+  await rejectedMutation("DELETE", `/${cleanup.mission.id}`, { ...cleanupRequest, deleteManagedSessions: false }, 409, "request-conflict")
+  await assert.rejects(client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location }),
+    error => error.type === "mission.rejected" && error.data?.code === "mission-deleted", "A purged mission cannot be recreated")
+  // A tombstone answers a changed creation with request-conflict; only its record remains after removal.
+  await assert.rejects(client.rpc(CODENOMAD_MISSIONS_RPC).create({ ...crudInput, objective: "Different creation" }, { location }),
+    error => error.type === "mission.rejected" && error.data?.code === "mission-deleted", "Native storage.remove cleared the purged creation event")
+  assert.equal((await client.session.get({ sessionID: crudCoordinator })).id, crudCoordinator, "Purging preserves conversations")
+  gate("settled deletion purge frees journal entries and keeps recreation and replay evidence")
+
   stage = "Play Pause Resume and terminal Stop"
   const preparedResponse = await bridge.inject({ method: "POST", url: missionURL, payload: { requestId: "native-run-create", objective: "Controlled mission", template: "custom" } })
   assert.equal(preparedResponse.statusCode, 200, preparedResponse.body)
@@ -670,7 +697,7 @@ try {
   assert.equal(failures.length, 0, "Every baseline expectation must pass; collected errors are never skipped or accepted")
   receipt.status = "passed"; receipt.passCount = gates.length
   receipt.finalSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); receipt.providerRequests = requests.length
-  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, explicit targeted coordinator/report recovery without replay, native outcome/queued idle boundary, revise/late report, lifecycle create/update/delete idempotence, Play/Pause/Resume/terminal Stop, optional managed specialist cleanup, structured HTTP/RPC mutation errors and transcript preservation, presence restart; ${root}`)
+  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, explicit targeted coordinator/report recovery without replay, native outcome/queued idle boundary, revise/late report, lifecycle create/update/delete idempotence, Play/Pause/Resume/terminal Stop, optional managed specialist cleanup, settled deletion purge, structured HTTP/RPC mutation errors and transcript preservation, presence restart; ${root}`)
 } catch (error) {
   if (!failedGates.includes(stage)) failedGates.push(stage)
   receipt.status = "failed"; receipt.failure = { stage, message: error.message, stack: error.stack }
