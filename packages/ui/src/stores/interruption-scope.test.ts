@@ -5,6 +5,7 @@ import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { addInstance, addPermissionToQueue, removeInstance } from "./instances.ts"
 import { getInterruptionQueue } from "./interruption-scope.ts"
+import { setSessions } from "./session-state.ts"
 import { ensureWorktreesLoaded } from "./worktrees.ts"
 
 it("a nested repository's request is shown by the open project listing it, else by the parent folder that owns it (#1154)", async () => {
@@ -26,14 +27,21 @@ it("a nested repository's request is shown by the open project listing it, else 
     await open(nested)
     addPermissionToQueue(parent, permission("own"), "/home")
     addPermissionToQueue(parent, permission("nested"), "/home/projects/repo-b")
-    addPermissionToQueue(nested, permission("nested"), "/home/projects/repo-b")
     const shown = (id: string) => getInterruptionQueue(id).map(item => item.payload.id).sort()
+    assert.deepEqual(shown(parent), ["nested", "own"], "until the nested project holds the request, the parent keeps it visible")
+    addPermissionToQueue(nested, permission("nested"), "/home/projects/repo-b")
     assert.deepEqual(shown(parent), ["own"], "the open nested project shows its own request")
     assert.deepEqual(shown(nested), ["nested"])
+    // A session the parent holds (opened from history or Missions) keeps its request with it.
+    setSessions(previous => new Map(previous).set(parent, new Map([["ses_nested", { id: "ses_nested", instanceId: parent, parentId: null,
+      title: "Nested", status: "idle", location: { directory: "/home/projects/repo-b" }, time: { created: 1, updated: 1 } } as any]])))
+    assert.deepEqual(shown(parent), ["nested", "own"])
+    setSessions(previous => { const next = new Map(previous); next.delete(parent); return next })
     close(nested)
     assert.deepEqual(shown(parent), ["nested", "own"], "without it, the owning parent folder keeps the request visible")
   } finally {
     serverApi.fetchWorktrees = original
+    setSessions(previous => { const next = new Map(previous); next.delete(parent); return next })
     close(parent)
     close(nested)
   }
