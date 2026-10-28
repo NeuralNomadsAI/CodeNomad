@@ -99,7 +99,7 @@ import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
 import {
   captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision,
-  mergeOpenCodeLoadedPage, syncOpenCodeSessionMessages,
+  mergeOpenCodeLoadedPage, seedOpenCodeSessionMessages,
 } from "./opencode-data"
 
 const log = getLogger("api")
@@ -1887,7 +1887,7 @@ async function loadMessages(
         // to be idle has no such message.
         const current = sessions().get(instanceId)?.get(sessionId)
         if (initialSeed && (current?.status !== "idle" || current.runtimeStatusKnown !== true)) {
-          void syncOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder)
+          void seedOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder, authoritativeApiMessages)
         }
       }
     }

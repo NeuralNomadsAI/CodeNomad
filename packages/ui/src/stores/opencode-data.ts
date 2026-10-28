@@ -81,6 +81,8 @@ const MAX_TRANSCRIPT_REPLAY_CHUNK = 64
 const TRANSCRIPT_RESYNC_QUIET_MS = 25
 const TRANSCRIPT_RETRY_DELAY_MS = 25
 const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
+// The page size of the SDK's own `message.sync`.
+const SDK_MESSAGE_PAGE_SIZE = 20
 const entries = new Map<string, DataEntry>()
 const transcriptEntries = new Map<string, TranscriptEntry>()
 const mutationRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
@@ -806,19 +808,23 @@ export function mergeOpenCodeLoadedPage(
   return transcript ? mergePageWithSnapshot(transcript.entry.data.session.message.list(sessionId), page, since) : page
 }
 
-/** Fills a session reducer that holds no rows with the SDK's own latest page:
- * it ignores streamed events for messages it does not hold, so a message that
- * was already streaming when the session opened would stay frozen. */
-export async function syncOpenCodeSessionMessages(instanceId: string, sessionId: string, directory: string): Promise<void> {
+/** Fills a session reducer that holds no rows with the newest rows of a loaded
+ * page: it ignores streamed events for messages it does not hold, so a message
+ * that was already streaming when the session opened would stay frozen. */
+export async function seedOpenCodeSessionMessages(
+  instanceId: string,
+  sessionId: string,
+  directory: string,
+  page: SessionMessageInfo[],
+): Promise<void> {
   const transcript = ensureTranscript(instanceId, sessionId, directory)
   if (transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync || transcript.reconnectResync) return
-  const data = transcript.entry.data
-  if (data.session.message.list(sessionId).length) return
+  if (transcript.entry.data.session.message.list(sessionId).length) return
   try {
-    data.session.message.invalidate(sessionId)
-    await data.session.message.sync(sessionId)
+    // The loaded page (oldest first) gives the SDK's own latest page without another read.
+    await transcript.entry.syncMessages(sessionId, page.slice(-SDK_MESSAGE_PAGE_SIZE), () => true)
   } catch (error) {
-    log.warn("Failed to sync OpenCode session messages", { instanceId, sessionId, error })
+    log.warn("Failed to seed OpenCode session messages", { instanceId, sessionId, error })
   }
 }
 
