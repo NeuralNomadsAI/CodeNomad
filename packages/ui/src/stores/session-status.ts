@@ -1,5 +1,5 @@
 import type { Session, SessionRetryState, SessionStatus } from "../types/session"
-import { getInstanceSessionIndicatorStatusCached, sessions } from "./session-state"
+import { getInstanceSessionIndicatorStatusCached, isSessionInWorkspaceScope, sessions } from "./session-state"
 import { shouldSessionHoldWakeLock } from "./wake-lock-eligibility"
 import { createSignal } from "solid-js"
 
@@ -156,6 +156,7 @@ export function getInstanceSessionIndicatorStatus(
   }
 
   for (const session of instanceSessions.values()) {
+    if (!isSessionInWorkspaceScope(instanceId, session.id)) continue
     if (session.id && getSessionIdleFadeClass(instanceId, session.id)) {
       return "idle"
     }

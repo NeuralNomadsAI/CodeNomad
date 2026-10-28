@@ -2,7 +2,7 @@ import { createSignal } from "solid-js"
 import type { WorktreeDescriptor } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
-import { getSessionRoot, sessions } from "./session-state"
+import { getSessionRoot, sessions, syncInstanceSessionIndicator } from "./session-state"
 import { getLogger } from "../lib/logger"
 import type { WorktreeReadyEvent } from "../lib/sse-manager"
 import { showToastNotification } from "../lib/notifications"
@@ -59,6 +59,8 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
           next.set(instanceId, typeof response.isGitRepo === "boolean" ? response.isGitRepo : null)
           return next
         })
+        // The inventory defines which held sessions the tab indicator counts.
+        syncInstanceSessionIndicator(instanceId)
       } catch (error) {
         log.warn(initialRead ? "Failed to load worktrees" : "Failed to reload worktrees", { instanceId, error })
         if (!initialRead || fresh) throw error
@@ -78,6 +80,7 @@ async function queueWorktreeRequest(instanceId: string, initial: boolean, fresh 
           next.set(instanceId, null)
           return next
         })
+        syncInstanceSessionIndicator(instanceId)
       }
     })
     worktreeReads.set(instanceId, read)

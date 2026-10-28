@@ -40,16 +40,14 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
 import { getRetrySeconds } from "./session-status"
 import { tGlobal } from "../lib/i18n"
 
 import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
-import { getGitRepoStatus, getWorktrees, gitRepoStatusByInstance, reloadWorktrees, worktreesByInstance } from "./worktrees"
-import { createEffect, createRoot, on } from "solid-js"
-import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
+import { getWorktrees, reloadWorktrees } from "./worktrees"
 import { normalizeSessionDirectory } from "./session-list-options"
 import {
   setSessionRevertV2,
@@ -305,6 +303,8 @@ function isChildSession(instanceId: string, sessionId: string): boolean | null {
 /** Session attention notifications concern root sessions only. */
 function isNotifiableSession(instanceId: string, sessionId: string | undefined | null): boolean {
   if (!sessionId) return true
+  // A held session outside the workspace scope belongs to another project's list.
+  if (sessions().get(instanceId)?.has(sessionId) && !isSessionInWorkspaceScope(instanceId, sessionId)) return false
 
   const child = isChildSession(instanceId, sessionId)
 
@@ -343,62 +343,6 @@ queueMicrotask(() => {
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
 
-// A workspace also receives the live events of nested checkouts of other
-// repositories it owns (an opened parent folder). An unknown session joins its
-// list only as the session inventory would list it: in the opened folder or a
-// registered worktree, or within a family the list already holds. A session
-// kept out waits (bounded) and is reconsidered when the worktree inventory
-// changes or its parent joins, so event order and a stale inventory converge.
-const MAX_DEFERRED_SESSIONS = 256
-const deferredSessions = new Map<string, Map<string, { directory: string; parentId?: string | null }>>()
-
-function belongsToSessionList(instanceId: string, session: { id: string; parentId?: string | null; location?: { directory?: string } }): boolean {
-  const held = sessions().get(instanceId)
-  if (session.parentId && held?.has(session.parentId)) return true
-  if (held && [...held.values()].some((member) => member.parentId === session.id)) return true
-  const directory = session.location?.directory
-  // An unread or failed inventory proves nothing: keep the session.
-  if (!directory || !worktreesByInstance().has(instanceId) || getGitRepoStatus(instanceId) === null) return true
-  if (isWorkspaceSessionDirectory(directory, instances().get(instanceId)?.folder ?? "", getWorktrees(instanceId))) return true
-  const deferred = deferredSessions.get(instanceId) ?? new Map()
-  deferred.delete(session.id)
-  deferred.set(session.id, { directory, parentId: session.parentId })
-  if (deferred.size > MAX_DEFERRED_SESSIONS) deferred.delete(deferred.keys().next().value!)
-  deferredSessions.set(instanceId, deferred)
-  watchDeferredSessions()
-  return false
-}
-
-function reconsiderDeferredSessions(instanceId: string, admits: (entry: { directory: string; parentId?: string | null }) => boolean): void {
-  const deferred = deferredSessions.get(instanceId)
-  if (!deferred) return
-  for (const [sessionId, entry] of [...deferred]) {
-    if (!admits(entry)) continue
-    deferred.delete(sessionId)
-    void fetchSessionInfo(instanceId, sessionId, entry.directory)
-  }
-  if (!deferred.size) deferredSessions.delete(instanceId)
-}
-
-function admitDeferredChildren(instanceId: string, parentId: string): void {
-  reconsiderDeferredSessions(instanceId, (entry) => entry.parentId === parentId)
-}
-
-// Created with the first deferral: stores in the import cycle are ready by then.
-let deferredWatcher = false
-function watchDeferredSessions(): void {
-  if (deferredWatcher) return
-  deferredWatcher = true
-  createRoot(() => createEffect(on([worktreesByInstance, gitRepoStatusByInstance, instances], () => {
-    for (const instanceId of [...deferredSessions.keys()]) {
-      const instance = instances().get(instanceId)
-      if (!instance) { deferredSessions.delete(instanceId); continue }
-      const worktrees = getWorktrees(instanceId)
-      reconsiderDeferredSessions(instanceId, (entry) => isWorkspaceSessionDirectory(entry.directory, instance.folder, worktrees))
-    }
-  }, { defer: true })))
-}
-
 async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
@@ -409,7 +353,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
   try {
     const info = await client.session.get({ sessionID: sessionId })
     const fetched = createClientSession(info, instanceId)
-    if (!sessions().get(instanceId)?.has(sessionId) && !belongsToSessionList(instanceId, fetched)) return null
 
     let updatedInstanceSessions: Map<string, Session> | undefined
     let shouldExpandAncestors = false
@@ -454,7 +397,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
     if (published && !published.parentId) prependSessionListId(instanceId, sessionId)
 
     if (shouldExpandAncestors) revealWorkingSubsession(instanceId, sessionId)
-    if (published) admitDeferredChildren(instanceId, sessionId)
 
     return fetched
   } catch (error) {
@@ -533,7 +475,6 @@ function handleSessionUpdate(
   const existingSession = instanceSessions.get(info.id)
 
   if (!existingSession) {
-    if (!belongsToSessionList(instanceId, { id: info.id, parentId: info.parentID, location: info.location })) return
     const newSession = {
       id: info.id,
       instanceId,
@@ -575,7 +516,6 @@ function handleSessionUpdate(
     if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
     }
-    admitDeferredChildren(instanceId, newSession.id)
 
     log.info(`[SSE] New session created: ${info.id}`, newSession)
   } else {
@@ -615,7 +555,6 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
 
   log.info(`[SSE] Session deleted: ${sessionId}`)
   nativeLifecycleGenerations.delete(`${instanceId}\0${sessionId}`)
-  deferredSessions.get(instanceId)?.delete(sessionId)
   dismissRetryToast(instanceId, sessionId)
   removeSessionRuntimeState(instanceId, sessionId)
 }

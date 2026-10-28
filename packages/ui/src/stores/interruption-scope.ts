@@ -4,7 +4,7 @@ import { getPendingRequestDirectory, getPermissionQueue, instances } from "./ins
 import { getFormQueue } from "./forms"
 import { getWorktrees } from "./worktrees"
 import { isWorkspaceSessionDirectory } from "./workspace-session-scope"
-import { sessions } from "./session-state"
+import { isSessionInWorkspaceScope, sessions } from "./session-state"
 import { getPermissionSessionId } from "../types/permission"
 
 function queuedRequests(instanceId: string) {
@@ -18,10 +18,11 @@ function queuedRequests(instanceId: string) {
 // repositories. Such a request is shown by another open project that lists its
 // directory (its folder or a registered worktree) and holds it in its own queue;
 // otherwise the owning folder shows it, so no request is left without a dock. A
-// request of a session this project holds is always shown with that session.
+// request of a session in this project's scope (its list, or the active
+// session's family) is always shown with that session.
 function shownHere(instanceId: string, item: ReturnType<typeof queuedRequests>[number]): boolean {
   const sessionId = item.kind === "permission" ? getPermissionSessionId(item.payload) : item.payload.sessionID
-  if (sessionId && sessions().get(instanceId)?.has(sessionId)) return true
+  if (sessionId && sessions().get(instanceId)?.has(sessionId) && isSessionInWorkspaceScope(instanceId, sessionId)) return true
   const directory = getPendingRequestDirectory(instanceId, item)
   if (!directory) return true
   const lists = (id: string) => isWorkspaceSessionDirectory(directory, instances().get(id)?.folder ?? "", getWorktrees(id))

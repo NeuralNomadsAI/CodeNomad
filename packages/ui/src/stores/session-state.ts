@@ -1,4 +1,4 @@
-import { batch, createSignal } from "solid-js"
+import { batch, createSignal, untrack } from "solid-js"
 
 import { getIdleSinceForStatusTransition, type Session, type SessionRetryState, type SessionStatus, type Agent, type Provider } from "../types/session"
 import { deleteSession, loadMessages, refreshSessionCatalog } from "./session-api"
@@ -29,7 +29,8 @@ import {
 } from "./session-tree"
 
 export type { SessionThread } from "./session-tree"
-import { getDirectoryOnlyWorktree } from "./worktrees"
+import { getDirectoryOnlyWorktree, getGitRepoStatus, worktreesByInstance } from "./worktrees"
+import { selectWorkspaceFamilyIds } from "./workspace-session-scope"
 
 const log = getLogger("session")
 let generationAdmissionSequence = 0
@@ -217,6 +218,33 @@ function isSessionSearchLoading(instanceId: string): boolean {
   return sessionSearch().get(instanceId)?.loading ?? false
 }
 
+// A workspace also holds sessions of nested checkouts of other repositories it
+// owns (an opened parent folder receives their live events). Its list,
+// indicators and notices show the inventory's scope: complete families with a
+// member in the opened folder or a registered worktree. Without a read
+// inventory, and for Git-unavailable folders (which project their own
+// directory), every held session is in scope. The active session's family is
+// always in scope: a session opened explicitly is shown where it was opened.
+const workspaceScopes = new Map<string, { sessions: unknown; worktrees: unknown; active?: string; scope: ReadonlySet<string> }>()
+
+function getWorkspaceSessionScope(instanceId: string): ReadonlySet<string> | null {
+  const all = sessions()
+  const worktrees = worktreesByInstance().get(instanceId)
+  if (!worktrees || getGitRepoStatus(instanceId) === null || getDirectoryOnlyWorktree(instanceId)) return null
+  const active = activeSessionId().get(instanceId)
+  const cached = workspaceScopes.get(instanceId)
+  if (cached && cached.sessions === all && cached.worktrees === worktrees && cached.active === active) return cached.scope
+  const scope = selectWorkspaceFamilyIds([...(all.get(instanceId)?.values() ?? [])].map((session) => ({
+    id: session.id, parentId: session.parentId, directory: session.location?.directory })),
+  instances().get(instanceId)?.folder ?? "", worktrees, active ? [active] : [])
+  workspaceScopes.set(instanceId, { sessions: all, worktrees, active, scope })
+  return scope
+}
+
+function isSessionInWorkspaceScope(instanceId: string, sessionId: string): boolean {
+  return getWorkspaceSessionScope(instanceId)?.has(sessionId) ?? true
+}
+
 function getIndicatorBucket(session: Pick<Session, "status" | "pendingPermission" | "pendingForm">): InstanceSessionIndicatorStatus | "idle" {
   if (session.pendingPermission || session.pendingForm) {
     return "permission"
@@ -284,7 +312,9 @@ function recomputeIndicatorCounts(instanceId: string, instanceSessions: Map<stri
   let working = 0
   let compacting = 0
 
+  const scope = untrack(() => getWorkspaceSessionScope(instanceId))
   for (const session of instanceSessions.values()) {
+    if (scope && !scope.has(session.id)) continue
     if (session.pendingPermission || session.pendingForm) {
       permission += 1
       continue
@@ -621,7 +651,7 @@ function withSession(instanceId: string, sessionId: string, updater: (session: S
     return next
   })
 
-  if (didUpdate && previousBucket && nextBucket) {
+  if (didUpdate && previousBucket && nextBucket && untrack(() => isSessionInWorkspaceScope(instanceId, sessionId))) {
     adjustIndicatorCounts(instanceId, previousBucket, nextBucket)
   }
 }
@@ -797,6 +827,8 @@ function writeSessionSelection(
 
 function writeActiveSession(instanceId: string, sessionId: string | null): void {
   writeSessionSelection(setActiveSessionId, instanceId, sessionId)
+  // The active session's family belongs to the workspace scope the indicator counts.
+  syncInstanceSessionIndicator(instanceId)
   void refreshSessionCatalog(instanceId).catch((error) => log.warn("Failed to refresh session catalog", { instanceId, error }))
   if (sessionId) {
     // Backfill authoritative Yolo state for the now-active session so the badge
@@ -967,7 +999,7 @@ function buildSessionThreads(instanceId: string, rootIds: string[], childIds?: S
 }
 
 function getSessionThreads(instanceId: string): SessionThread[] {
-  return buildSessionThreads(instanceId, getSessionListIds(instanceId))
+  return buildSessionThreads(instanceId, getSessionListIds(instanceId).filter((id) => isSessionInWorkspaceScope(instanceId, id)))
 }
 
 function getSessionSearchSessions(instanceId: string): Session[] {
@@ -1345,6 +1377,7 @@ async function runSessionCleanup(instanceId: string, excludeSessionId: string | 
 export {
   sessions,
   setSessions,
+  isSessionInWorkspaceScope,
   activeSessionId,
   activeParentSessionId,
   agents,

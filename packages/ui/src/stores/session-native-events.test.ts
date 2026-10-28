@@ -1,9 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
-import { serverApi } from "../lib/api-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
-import { ensureWorktreesLoaded, reloadWorktrees } from "./worktrees.ts"
 import { addInstance, handleInstanceInvalidation, removeInstance } from "./instances.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { handleNativeSessionEvent, handleSessionUpdate } from "./session-events.ts"
@@ -33,92 +31,6 @@ describe("native session event reducer", () => {
       } as any)
       assert.equal(sessions().get(instanceId)?.get(sessionId)?.status, "working")
     } finally {
-      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
-      clearInstanceDeletedSessionAuthority(instanceId)
-      removeInstance(instanceId, { authoritative: false })
-      sdkManager.destroyClientsForInstance(instanceId)
-    }
-  })
-
-  it("keeps a nested repository's live sessions out of an opened parent folder's list (#1154)", async () => {
-    const instanceId = "native-session-parent-folder"
-    const client = { session: {
-      active: async () => ({}),
-      get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, title: sessionID, version: "1", projectID: "repo-b",
-        location: { directory: "/home/projects/repo-b" }, time: { created: 1, updated: 1 } }),
-    } } as any
-    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
-    addInstance({ id: instanceId, folder: "/home", port: 0, pid: 0, proxyPath: "", status: "ready", client })
-    const original = serverApi.fetchWorktrees
-    serverApi.fetchWorktrees = async () => ({ isGitRepo: false, worktrees: [{ slug: "root", directory: "/home", directoryOnly: true }] }) as any
-    const created = (sessionID: string, directory: string, parentID?: string) => handleSessionUpdate(instanceId, {
-      id: `created-${sessionID}`, type: "session.created", created: 1, location: { directory },
-      data: { sessionID, title: sessionID, version: "1", ...(parentID ? { parentID } : {}), location: { directory } },
-    } as any)
-    try {
-      await ensureWorktreesLoaded(instanceId)
-      created("own", "/home")
-      created("nested", "/home/projects/repo-b")
-      created("own-child", "/home/projects/repo-b", "own")
-      // An unknown session reached through another event is fetched, then kept out the same way.
-      handleNativeSessionEvent(instanceId, { id: "renamed", type: "session.renamed", created: 2,
-        location: { directory: "/home/projects/repo-b" }, data: { sessionID: "nested-renamed", title: "Renamed" } } as any)
-      await delay(20)
-      assert.deepEqual([...sessions().get(instanceId)!.keys()].sort(), ["own", "own-child"],
-        "only what the session inventory would list: the opened folder and families it already holds")
-    } finally {
-      serverApi.fetchWorktrees = original
-      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
-      clearInstanceDeletedSessionAuthority(instanceId)
-      removeInstance(instanceId, { authoritative: false })
-      sdkManager.destroyClientsForInstance(instanceId)
-    }
-  })
-
-  it("converges with the inventory: an unread inventory keeps sessions, a late worktree and either family order admit them", async () => {
-    const instanceId = "native-session-parent-converge"
-    const directories: Record<string, string> = { "late-worktree": "/repo-wt", parent: "/elsewhere", child: "/repo",
-      "early-child": "/elsewhere", "late-parent": "/repo", kept: "/unknown" }
-    const parents: Record<string, string> = { child: "parent", "early-child": "late-parent" }
-    const client = { session: { active: async () => ({}),
-      get: async ({ sessionID }: { sessionID: string }) => ({ id: sessionID, title: sessionID, version: "1", projectID: "repo",
-        ...(parents[sessionID] ? { parentID: parents[sessionID] } : {}), location: { directory: directories[sessionID] }, time: { created: 1, updated: 1 } }),
-    } } as any
-    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
-    addInstance({ id: instanceId, folder: "/repo", port: 0, pid: 0, proxyPath: "", status: "ready", client })
-    const original = serverApi.fetchWorktrees
-    let inventory: () => Promise<any> = async () => { throw new Error("inventory unavailable") }
-    serverApi.fetchWorktrees = (() => inventory()) as any
-    const created = (sessionID: string) => handleSessionUpdate(instanceId, {
-      id: `created-${sessionID}`, type: "session.created", created: 1, location: { directory: directories[sessionID] },
-      data: { sessionID, title: sessionID, version: "1", ...(parents[sessionID] ? { parentID: parents[sessionID] } : {}),
-        location: { directory: directories[sessionID] } },
-    } as any)
-    const held = () => [...(sessions().get(instanceId)?.keys() ?? [])].sort()
-    try {
-      await ensureWorktreesLoaded(instanceId)
-      created("kept")
-      assert.deepEqual(held(), ["kept"], "a failed inventory is no proof that a session is foreign")
-      inventory = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo" }] })
-      await reloadWorktrees(instanceId)
-      // A worktree registered after its first session's event: the session waits, then joins.
-      created("late-worktree")
-      assert.equal(sessions().get(instanceId)?.has("late-worktree"), false)
-      inventory = async () => ({ isGitRepo: true, worktrees: [{ slug: "root", directory: "/repo" }, { slug: "wt", directory: "/repo-wt" }] })
-      await reloadWorktrees(instanceId)
-      await delay(20)
-      assert.equal(sessions().get(instanceId)?.has("late-worktree"), true)
-      // Child first: its family's parent joins although it lives elsewhere.
-      created("child")
-      created("parent")
-      // Child elsewhere first: it joins once its local parent does.
-      created("early-child")
-      assert.equal(sessions().get(instanceId)?.has("early-child"), false)
-      created("late-parent")
-      await delay(20)
-      assert.deepEqual(held(), ["child", "early-child", "kept", "late-parent", "late-worktree", "parent"])
-    } finally {
-      serverApi.fetchWorktrees = original
       setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
       clearInstanceDeletedSessionAuthority(instanceId)
       removeInstance(instanceId, { authoritative: false })
