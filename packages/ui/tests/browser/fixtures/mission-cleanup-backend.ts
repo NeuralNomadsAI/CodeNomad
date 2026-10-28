@@ -16,6 +16,8 @@ export function cleanupBackend() {
   const state = { owned: true }
   const storage: MissionStorage = {
     get: async key => values.get(key), set: async (key, value) => { values.set(key, structuredClone(value)) },
+    // Purge-capable like native storage: settled deletions can leave the journal.
+    remove: async key => { values.delete(key) },
     scan: async ({ prefix, after, limit = 100 }) => {
       const entries = [...values].filter(([key]) => key.startsWith(prefix) && (!after || key > after))
         .sort(([a], [b]) => a.localeCompare(b)).slice(0, limit).map(([key, value]) => ({ key, value }))

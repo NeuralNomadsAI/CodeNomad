@@ -1,4 +1,4 @@
-import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, stableToken, type MissionStorage } from "./journal"
+import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, missionDeletionRecordKey, stableToken, type MissionStorage } from "./journal"
 import { isMissionCoordinatorSession } from "./session-identity"
 import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
 import { parseRecurrenceDocument, RECURRENCE_STORAGE_PREFIX, type RecurrenceDocument } from "./recurrence-contract"
@@ -44,8 +44,10 @@ function passageJournal(storage: MissionStorage, doc: RecurrenceDocument, passag
     }
     return tail
   }
+  // The isolated passage journal cannot remove entries, so it never purges and has no deletion record.
+  const record = missionDeletionRecordKey(projectToken, missionID)
   const scoped: MissionStorage = {
-    get: async key => storage.get(`${physical}${suffix(key)}`),
+    get: async key => key === record ? undefined : storage.get(`${physical}${suffix(key)}`),
     set: async (key, value, supplied) => {
       const target = `${physical}${suffix(key)}`
       const fence = () => { assertSynchronousAuthorityGuard(current, "policy-unqualified"); supplied?.() }

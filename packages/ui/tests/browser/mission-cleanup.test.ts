@@ -24,7 +24,7 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-async function setup(f: ReturnType<typeof cleanupBackend>, target: string, loseAcknowledgement = false) {
+async function setup(f: ReturnType<typeof cleanupBackend>, target: string, loseAcknowledgement = false, afterLostCommit?: () => Promise<unknown>) {
   const page = await browser.newPage({ locale: "en-US" })
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: 'electron', __CODENOMAD_WINDOW_CONTEXT__: 'local', electronAPI: {
     claimClientStateAccess: async () => true, loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: null }), saveClientState: async () => true } })`)
@@ -36,7 +36,7 @@ async function setup(f: ReturnType<typeof cleanupBackend>, target: string, loseA
     const input = request.postDataJSON()
     const response = await f.app.inject({ method: "DELETE", url: new URL(request.url()).pathname, payload: input })
     requests.push({ input, status: response.statusCode })
-    if (loseAcknowledgement) { loseAcknowledgement = false; return route.abort("connectionreset") }
+    if (loseAcknowledgement) { loseAcknowledgement = false; await afterLostCommit?.(); return route.abort("connectionreset") }
     return route.fulfill({ status: response.statusCode, json: response.json() })
   })
   await page.goto(url)
@@ -102,6 +102,25 @@ test("a lost successful HTTP acknowledgement settles by reading receipts without
     await page.reload()
     assert.equal(requests.length, 1); assert.ok(f.native.has(mission.coordinatorSessionId))
     assert.equal((await f.control.snapshot()).cleanups?.[0].pending, 0)
+  } finally { await page.close(); await f.app.close() }
+})
+
+test("a lost acknowledgement whose cleanup history was purged settles by an explicit exact replay", async () => {
+  const f = cleanupBackend(), mission = await f.create("purged-ack")
+  // Capacity pressure purges the settled deletion before the editor reconciles.
+  const { page, requests } = await setup(f, "Private cleanup purged-ack", true, () => f.journal.purgeDeleted({ all: true }))
+  try {
+    const form = page.locator("form.mission-editor")
+    await submit(page); await form.getByRole("alert").waitFor()
+    assert.equal(requests.length, 1, "the passive reconciliation read never replays the deletion")
+    assert.deepEqual((await f.control.snapshot()).cleanups, []); assert.deepEqual((await f.control.snapshot()).missions, [])
+    await submit(page); await form.waitFor({ state: "detached" })
+    await page.getByText("No missions yet", { exact: true }).waitFor()
+    assert.equal(requests.length, 2, "exactly one explicit replay")
+    assert.deepEqual(requests[1].input, requests[0].input, "the immutable original request")
+    assert.deepEqual(requests.map(item => item.status), [200, 200])
+    assert.equal(f.removed.length, 1, "the record answers the replay without a second native removal")
+    assert.ok(f.native.has(mission.coordinatorSessionId))
   } finally { await page.close(); await f.app.close() }
 })
 

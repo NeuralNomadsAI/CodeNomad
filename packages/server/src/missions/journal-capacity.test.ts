@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, stableToken, type MissionStorage } from "./journal"
 import { cleanupReceiptID } from "./cleanup-projection"
-import { MISSION_MAX_ACTORS, MISSION_MAX_EVENTS, type MissionEvent, type MissionJsonValue } from "./model"
+import { MISSION_MAX_ACTORS, MISSION_MAX_EVENTS, MISSION_MAX_STORED_EVENTS, type MissionEvent, type MissionJsonValue } from "./model"
 
 function fixture() {
   const values = new Map<string, MissionJsonValue>()
@@ -181,9 +181,12 @@ test("every bounded cleanup target retains its own slot up to the 2000-event phy
   await f.journal.assertCanAppend(0)
   await f.journal.append(f.receipt(intent, targets[0]))
   await assert.rejects(f.journal.assertCanAppend(), /safety limit/)
+  // Reads stay bounded by the physical limit, which includes the deletion reserve.
   f.values.set(`${f.prefix}/msn_owned/evt_2001`, f.ordinary("evt_2001") as unknown as MissionJsonValue)
-  await assert.rejects(f.journal.events(), /exceeds the 2000-event safety limit/)
-  await assert.rejects(f.journal.assertCanAppend(), /exceeds the 2000-event safety limit/)
+  await assert.rejects(f.journal.assertCanAppend(), /reached the 2000-event safety limit/)
+  f.fillTo(MISSION_MAX_STORED_EVENTS + 1)
+  await assert.rejects(f.journal.events(), new RegExp(`exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`))
+  await assert.rejects(f.journal.assertCanAppend(), new RegExp(`exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit`))
 })
 
 test("legitimate retained cleanup receipts discharge only their exact declared target", async () => {

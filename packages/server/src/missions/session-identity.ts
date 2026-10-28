@@ -22,3 +22,14 @@ export const missionCoordinatorSessionID = (missionID: string, createdAt: number
 export const isMissionCoordinatorSession = (id: string, missionID: string) => derivedFrom(id, coordinatorSeed(missionID))
 export const missionTaskSessionID = (missionID: string, taskID: string, createdAt: number) => sessionID(taskSeed(missionID, taskID), createdAt)
 export const isMissionTaskSession = (id: string, missionID: string, taskID: string) => derivedFrom(id, taskSeed(missionID, taskID))
+
+/** `isMissionTaskSession` against many tasks at once, deriving each identity only once. */
+export function missionTaskSessionMatcher(tasks: Iterable<{ missionID: string; taskID: string }>): (id: string) => boolean {
+  const suffixes = new Set<string>(), original = new Set<string>()
+  for (const { missionID, taskID } of tasks) {
+    const seed = taskSeed(missionID, taskID)
+    suffixes.add(stableToken(seed, 14))
+    original.add(`ses_${stableToken(seed, 26)}`)
+  }
+  return id => /^ses_[0-9a-f]{12}[0-9a-f]{14}$/.test(id) && (suffixes.has(id.slice(16)) || original.has(id))
+}
