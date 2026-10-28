@@ -76,6 +76,42 @@ describe("OpenCode data read merge", () => {
     } finally { r.cleanup() }
   })
 
+  it("takes the page for identified parts a changed row left untouched", () => {
+    const tool = (id: string, status: string, metadata: Record<string, unknown> = {}) =>
+      ({ type: "tool", id, name: "bash", time: { created: 2 }, state: { status, input: {}, metadata } })
+    const withTools = (...content: unknown[]) => ({ ...row("live", "base"), content: [{ type: "text", text: "base" }, ...content] }) as unknown as SessionMessageInfo
+    const since = snapshotRows([withTools(tool("stranded", "streaming"), tool("busy", "running"))])
+    const live = withTools(tool("stranded", "streaming"), tool("busy", "running", { progress: 1 }))
+    const page = withTools(tool("stranded", "completed"), tool("busy", "running"))
+    const [merged] = mergePageWithSnapshot([live], [page], since) as any[]
+    assert.equal(merged.content[1].state.status, "completed", "an untouched part kept its stale live state")
+    assert.deepEqual(merged.content[2].state.metadata, { progress: 1 }, "a changed part lost its live version")
+    assert.equal(merged.content[0], (live as any).content[0], "parts without an identity stay live")
+  })
+
+  it("settles a stranded tool while a sibling tool reports progress during the fetch", async () => {
+    const instanceId = "opencode-merge-sibling-progress"
+    const stranded = { assistantMessageID: "live", id: "stranded" }
+    const busy = { assistantMessageID: "live", id: "busy" }
+    const pageTool = (id: string, state: Record<string, unknown>) => ({ type: "tool", id, name: "bash", time: { created: 2 }, state })
+    const r = await syncWith(instanceId, () => {
+      // The stranded tool never received `session.tool.called`.
+      emitEvent(instanceId, "session.tool.input.started", { ...stranded, name: "bash" })
+      emitEvent(instanceId, "session.tool.input.started", { ...busy, name: "bash" })
+      emitEvent(instanceId, "session.tool.called", { ...busy, input: {} })
+    }, () => {
+      emitEvent(instanceId, "session.tool.progress", { ...busy, metadata: { progress: 1 } })
+    }, () => [{ ...assistantRow("live", "base"), content: [{ type: "text", text: "base" },
+      pageTool("stranded", { status: "completed", input: {}, metadata: {}, content: [{ type: "text", text: "ok" }] }),
+      pageTool("busy", { status: "running", input: {}, metadata: {} })] }])
+    try {
+      const tools = (r.data.session.message.get(sessionId, "live") as any)?.content?.filter((part: any) => part.type === "tool")
+      assert.equal(r.reads(), 1)
+      assert.equal(tools?.find((part: any) => part.id === "stranded")?.state?.status, "completed", "the stranded tool stayed pending")
+      assert.deepEqual(tools?.find((part: any) => part.id === "busy")?.state?.metadata, { progress: 1 }, "the sibling's progress was rewound")
+    } finally { r.cleanup() }
+  })
+
   it("keeps a shell exit and a synthetic row created during the fetch", async () => {
     const instanceId = "opencode-merge-shell-synthetic"
     const r = await syncWith(instanceId, () => {}, () => {
