@@ -69,7 +69,9 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // Cached display revalidation is not a view/ownership transition. Message
   // admission still performs its own fresh authoritative mission read.
   const messagingDisabled = () => Boolean(editor()) || !["ready", "loading"].includes(state().status)
+  // Full maps (open, selected, read) and one row per mission.
   const missions = () => state().missions
+  const rows = () => state().summaries
   const family = (id: string) => state().activity?.missions.find(item => item.missionId === id)?.family
   const includesSession = (value: MissionMap, id: string) => value.coordinatorSessionId === id
     || missionIncludesSession(value.actors, id, family(value.id)) || missionDerivedSessionIncludes(props.instanceId, value, id)
@@ -118,11 +120,18 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     directory: scope, scheduleID: selectedSchedule, active: () => props.isActive?.() ?? true, refresh: recurrenceRefresh })
   const mission = createMemo(() => selectedSchedule() ? currentPassage.snapshot()?.mission
     : missions().find((candidate) => candidate.id === selectedMissionId()))
+  // The selected one-time Mission's detail needs its full map, even when it is closed.
+  const wantOwner = `selection:${createUniqueId()}`
+  createEffect(() => {
+    const instanceId = props.instanceId, id = selectedSchedule() ? undefined : selectedMissionId()
+    missionStore.want(instanceId, wantOwner, id)
+    onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
+  })
   const observedActivity = () => selectedSchedule() ? currentPassage.snapshot()?.activity : state().activity
   // Answers requested by a mission's declared actors and observed family, as listed under Needs you.
-  const openRequests = (value: MissionMap, activity?: MissionActivityProjection) => selectMissionAttention({ actors: value.actors,
-    forms: getFormQueue(props.instanceId), permissions: getPermissionQueue(props.instanceId), tasks: value.tasks,
-    family: activity?.missions.find(item => item.missionId === value.id)?.family })
+  const openRequests = (id: string, actors: readonly { sessionId: string }[], activity?: MissionActivityProjection) => selectMissionAttention({ actors,
+    forms: getFormQueue(props.instanceId), permissions: getPermissionQueue(props.instanceId), tasks: [],
+    family: activity?.missions.find(item => item.missionId === id)?.family })
     .filter(item => item.open && item.sessionId && item.kind !== "blocked").length
   const readerTarget = (target: MissionReaderTarget): MissionReaderTarget => {
     const current = currentPassage.snapshot()
@@ -246,7 +255,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     get tracking() { return tracking() }, detailId, registerRetry,
     get selectedRequests() {
       const passage = selectedSchedule() ? mission() : undefined, passageID = currentPassage.snapshot()?.passageID
-      return passage && passageID ? { passageID, count: openRequests(passage, observedActivity()) } : undefined
+      return passage && passageID ? { passageID, count: openRequests(passage.id, passage.actors, observedActivity()) } : undefined
     },
     get passage() {
       const passage = mission()
@@ -255,9 +264,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       return { reading: isReading(overview), onToggle: () => void read(overview),
         onOpenConversation: () => void openActor(passage.coordinatorSessionId) }
     } })
-  const missionEntries = createMemo((): MissionPickerEntry[] => missions().map(value => {
+  const missionEntries = createMemo((): MissionPickerEntry[] => rows().map(value => {
     const observed = state().activity?.missions.find(item => item.missionId === value.id)
-    const mark = missionMark(value, { openRequests: openRequests(value, state().activity), actorStates: observed?.actors.map(actor => actor.state),
+    const actors = value.actorSessionIds.map(sessionId => ({ sessionId }))
+    const mark = missionMark(value, { openRequests: openRequests(value.id, actors, state().activity), actorStates: observed?.actors.map(actor => actor.state),
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
       seen: missionFinishedSeen(scope(), value.id) })
     const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
@@ -268,7 +278,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         missionRelativeTime(value.updatedAt, locale())].filter(Boolean).join(" · ") }
   }))
   const pickerEntries = () => [...missionEntries(), ...recurrence.entries()]
-  const selectedKey = () => selectedSchedule() ? `schedule:${selectedSchedule()}` : mission() ? `mission:${mission()!.id}` : undefined
+  const selectedRow = () => selectedSchedule() ? undefined : rows().find(row => row.id === selectedMissionId())
+  const selectedKey = () => selectedSchedule() ? `schedule:${selectedSchedule()}` : selectedRow() ? `mission:${selectedRow()!.id}` : undefined
   const selectedOneTime = () => selectedSchedule() ? undefined : mission()
   const selectedOneTimeId = () => selectedOneTime()?.id
   const creating = () => editor()?.kind === "create"
@@ -277,7 +288,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const documentAttention = createDocumentAttention()
   createEffect(() => {
     if (state().status !== "ready") return
-    const completed = missions().filter(value => value.status === "completed").map(value => value.id)
+    const completed = rows().filter(value => value.status === "completed").map(value => value.id)
     const shown = (props.isActive?.() ?? true) && documentAttention() && !creating() && selectedOneTime()?.status === "completed"
       ? [selectedOneTime()!.id] : []
     const viewScope = scope()
@@ -349,11 +360,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           settleMissionEditor(action)
           if (!saved && action.mission) forgetMissionView(scope(), action.mission.id)
           void missionStore.refresh(instanceId).then(() => {
-            if (saved && current() && !editor() && missions().some(mission => mission.id === saved.id)) selectMission(saved.id)
+            if (saved && current() && !editor() && rows().some(row => row.id === saved.id)) selectMission(saved.id)
           })
         }} />
       }}</Show>
-      <Show when={state().status === "error" && missions().length > 0}>
+      <Show when={state().status === "error" && rows().length > 0}>
         <div class="mission-control-stale" role="status">
           <AlertTriangle class="h-3.5 w-3.5" aria-hidden="true" />
           {props.t("missions.control.error.stale")}
@@ -363,6 +374,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       {recurrence.view()}
 
       {/* Nothing below the picker until a Mission is selected; its detail is a separate section. */}
+      <Show when={selectedRow() && !mission()}><p role="status">{props.t("missions.control.loading")}</p></Show>
       <Show when={selectedOneTimeId()} keyed>{id => {
         // Keep the last known snapshot while the keyed detail is being disposed.
         const selected = createMemo<MissionMap>(previous => missions().find(value => value.id === id) ?? previous!)
@@ -383,7 +395,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       }}</Show>
 
       <Show when={!selectedSchedule()}><Switch>
-        <Match when={state().status === "loading" && missions().length === 0}>
+        <Match when={state().status === "loading" && rows().length === 0}>
           <StateMessage icon={<Loader2 class="h-5 w-5 animate-spin" />} title={props.t("missions.control.loading")} />
         </Match>
         <Match when={state().status === "unavailable"}>
@@ -393,7 +405,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             detail={props.t(UNAVAILABLE_DETAIL[state().reason ?? "plugin-unavailable"])}
           />
         </Match>
-        <Match when={state().status === "error" && missions().length === 0}>
+        <Match when={state().status === "error" && rows().length === 0}>
           <StateMessage
             icon={<AlertTriangle class="h-5 w-5" />}
             title={props.t("missions.control.error.title")}
@@ -402,7 +414,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             onAction={() => void missionStore.refresh(props.instanceId)}
           />
         </Match>
-        <Match when={state().status === "ready" && missions().length === 0 && !editor()}>
+        <Match when={state().status === "ready" && rows().length === 0 && !editor()}>
           <StateMessage
             icon={<Flag class="h-5 w-5" />}
             title={props.t("missions.control.empty.title")}

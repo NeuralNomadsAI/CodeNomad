@@ -22,6 +22,7 @@ import type {
   FileSystemListResponse,
   InstanceData,
   MissionListResponse,
+  MissionReadResponse,
   MissionRecurrenceReadPage,
   MissionMap,
   OpenCodeUpdateResponse,
@@ -697,8 +698,15 @@ export const serverApi = {
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
-  fetchMissions(instanceId: string): Promise<MissionListResponse> {
-    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`)
+  fetchMissions(instanceId: string, input: { include?: readonly string[]; summariesVersion?: string } = {}): Promise<MissionListResponse> {
+    const params = new URLSearchParams()
+    if (input.include?.length) params.set("include", input.include.join(","))
+    if (input.summariesVersion) params.set("summaries", input.summariesVersion)
+    const query = params.toString()
+    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions${query ? `?${query}` : ""}`)
+  },
+  fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
+    return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
   },
   fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current`, { signal })

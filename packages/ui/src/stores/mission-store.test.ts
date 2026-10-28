@@ -47,6 +47,7 @@ test("loads durable mission snapshots and represents optional unavailability", a
   assert.deepEqual(store.state("instance-1"), {
     status: "unavailable",
     missions: [],
+    summaries: [],
     reason: "plugin-unavailable",
   })
 })
@@ -71,6 +72,69 @@ test("retains authoritative pending cleanup identities across passive failures a
   delete initial.cleanupUnavailable; initial.cleanups = [{ ...cleanup, pending: 0, removed: 2 }]
   await store.refresh("instance-1")
   assert.equal(store.state("instance-1").cleanups![0].pending, 0)
+})
+
+const row = (id: string, status: "active" | "completed" = "completed") => ({ id, objective: id, status, coordinatorSessionId: "session-1",
+  actorSessionIds: ["session-1"], updatedAt: 1, revision: 1 })
+
+test("a summaries backend gets the wanted maps and the held version; rows survive an omitted list", async () => {
+  const open = available("open")
+  if (!open.available) throw new Error("fixture")
+  const closed = { ...open.missions[0], id: "mission-closed", objective: "closed", status: "completed" as const }
+  const requests: unknown[] = []
+  const responses: MissionListResponse[] = [
+    { ...open, summaries: [row("mission-open", "active"), row("mission-closed")], summariesVersion: "v1" },
+    { ...open, missions: [...open.missions, closed], summariesVersion: "v1" },
+    { ...open, summariesVersion: "v1" },
+  ]
+  const store = createMissionStore(async (_instanceId, request) => { requests.push(request); return responses.shift()! })
+  store.want("instance-1", "selection", "mission-closed")
+  await store.ensure("instance-1")
+  // The first read cannot know the backend lists summaries; the follow-up asks for the selection.
+  assert.deepEqual(requests, [{}, { include: ["mission-closed"], summariesVersion: "v1" }])
+  assert.deepEqual(store.state("instance-1").missions.map(mission => mission.id), ["mission-open", "mission-closed"])
+  assert.deepEqual(store.state("instance-1").summaries.map(value => value.id), ["mission-open", "mission-closed"], "the held rows answer an omitted list")
+  // Releasing the selection drops it from the next read; a held map needs no extra read.
+  store.want("instance-1", "selection", undefined)
+  await store.refresh("instance-1")
+  assert.deepEqual(requests.at(-1), { summariesVersion: "v1" })
+  assert.deepEqual(store.state("instance-1").missions.map(mission => mission.id), ["mission-open"])
+  assert.equal(requests.length, 3)
+})
+
+test("wanting a closed row reads it once; a full-snapshot backend never receives includes", async () => {
+  const open = available("open")
+  if (!open.available) throw new Error("fixture")
+  const requests: unknown[] = []
+  let summaries = true
+  const store = createMissionStore(async (_instanceId, request) => {
+    requests.push(request)
+    return summaries ? { ...open, summaries: [row("mission-open", "active"), row("mission-closed")], summariesVersion: "v1" } : open
+  })
+  await store.refresh("instance-1")
+  store.want("instance-1", "reader", "mission-closed")
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.deepEqual(requests, [{}, { include: ["mission-closed"], summariesVersion: "v1" }])
+  // Unknown rows and maps already held trigger nothing.
+  store.want("instance-1", "reader", "mission-unknown")
+  store.want("instance-1", "other", "mission-open")
+  await new Promise(resolve => setTimeout(resolve, 0))
+  assert.equal(requests.length, 2)
+  summaries = false
+  await store.refresh("instance-1")
+  assert.deepEqual(store.state("instance-1").summaries.map(value => value.id), ["mission-open"], "a full snapshot's maps are its rows")
+  assert.equal(store.state("instance-1").summariesVersion, undefined)
+  await store.refresh("instance-1")
+  assert.deepEqual(requests.at(-1), {})
+})
+
+test("an omitted list this view does not hold fails like any read, keeping the last good display", async () => {
+  const open = available("open")
+  if (!open.available) throw new Error("fixture")
+  const store = createMissionStore(async () => ({ ...open, summariesVersion: "v2" }))
+  await store.refresh("instance-1")
+  assert.equal(store.state("instance-1").status, "error")
+  assert.deepEqual(store.state("instance-1").summaries, [])
 })
 
 test("coalesces an in-flight invalidation into one trailing refresh", async () => {

@@ -3,6 +3,8 @@ import { MISSION_BRIEFING_RESPONSES_MAX, briefingSourcesExist, isAutomaticBriefi
 export type { MissionBriefing, MissionBriefingItem, MissionBriefingResponse } from "./briefing"
 import type { MissionTaskExecutionMode } from "./task-execution-mode"
 export type { MissionTaskExecutionMode } from "./task-execution-mode"
+import type { MissionSummary } from "./mission-summary"
+export type { MissionSummary } from "./mission-summary"
 import { hasInvalidControlHistory, isReportReceipt } from "./receipt-identity"
 import { hasInvalidReportNotificationHistory, isCoordinatorNotificationReport, sameNativeCall } from "./native-report-provenance"
 import { hasUnsettledNativeExecution, parseNativeCallObservation, projectNativeCallObservation, type MissionNativeExecution, type NativeCallObservation } from "./native-call-observation"
@@ -223,10 +225,36 @@ export interface MissionSnapshot {
   cleanupUnavailable?: boolean
 }
 
+/** The plugin's `list` read: full maps of the open missions and the included
+ * ones, plus a row for every live map. `summaries` is omitted, with the same
+ * `summariesVersion`, when the caller already holds that version. */
+export interface MissionList extends MissionSnapshot {
+  summaries?: MissionSummary[]
+  summariesVersion: string
+}
+
+/** The plugin's `mission` read: one mission's range, `mission` absent when it
+ * holds no live map, with that range's cleanups and the project damage flags. */
+export interface MissionRead {
+  version: typeof MISSION_SCHEMA_VERSION
+  projectID: string
+  generatedAt: number
+  mission?: MissionMap
+  cleanups: MissionCleanup[]
+  cleanupUnavailable?: boolean
+  controlUnavailable?: boolean
+  notificationUnavailable?: boolean
+}
+
+/** Without `summariesVersion` (a plugin without `list`) every live map is in `missions`. */
 export interface MissionListAvailableResponse extends MissionSnapshot {
   available: true
   activity: MissionActivityProjection
+  summaries?: MissionSummary[]
+  summariesVersion?: string
 }
+
+export type MissionReadResponse = (MissionRead & { available: true }) | MissionListUnavailableResponse
 
 /** Why Missions cannot be read: this backend has no local bridge to run them
  * (`host-unavailable`), OpenCode has not loaded the plugin or it does not answer

@@ -1,7 +1,10 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 
-import type { MissionListResponse, MissionMap, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
+import type { OpenCodeClient } from "@opencode/client"
+import type { MissionActivityProjection, MissionList, MissionListResponse, MissionListUnavailableResponse, MissionMap, MissionRead,
+  MissionReadResponse, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
+import { MISSION_LIST_MAX_INCLUDE } from "../../missions/mission-summary"
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
@@ -35,6 +38,13 @@ interface MissionRouteDeps {
 }
 
 const MissionParamsSchema = z.object({ id: z.string().trim().min(1).max(200) })
+const MissionReadParamsSchema = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) })
+// `include`: comma-separated mission IDs; `summaries`: the summariesVersion the caller holds.
+const ListQuerySchema = z.object({
+  include: z.string().max(MISSION_LIST_MAX_INCLUDE * 101).transform(value => [...new Set(value.split(",").filter(Boolean))])
+    .pipe(z.array(z.string().min(1).max(100)).max(MISSION_LIST_MAX_INCLUDE)).optional(),
+  summaries: z.string().min(1).max(64).optional(),
+})
 const RequestID = z.string().trim().min(1).max(128)
 const UpdateSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), notes: z.string().max(20_000).optional(),
@@ -46,68 +56,47 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   registerMissionRecurrenceSnapshot(app, deps)
   registerMissionRecurrenceCreate(app, deps)
   registerMissionRecurrenceCurrent(app, deps)
-  app.get<{ Params: { id: string } }>("/api/workspaces/:id/missions", async (request, reply): Promise<MissionListResponse> => {
-    const lifetime = requestAdmission(request, reply)
-    const parsed = MissionParamsSchema.safeParse(request.params)
-    if (!parsed.success || !deps.workspaceManager.get(parsed.data.id)) {
-      lifetime.dispose()
-      reply.code(404)
-      return unavailable("workspace-unavailable")
-    }
-
-    const ownedLocation = deps.workspaceManager.getServiceLocation(parsed.data.id)
-    if (!ownedLocation) { lifetime.dispose(); return unavailable("workspace-unavailable") }
-    // Without its bridge this backend never provisions the plugin: reconnecting or
-    // reloading OpenCode cannot help, so say so before reading the inventory.
-    if (deps.missionsHost && !deps.missionsHost()) { lifetime.dispose(); return unavailable("host-unavailable") }
-    const workspace = deps.workspaceManager.get(parsed.data.id)
-    const displayCapture = captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, parsed.data.id, [ownedLocation.directory])
-    const location = { directory: ownedLocation.directory }
-    const options = locationRequestOptions(ownedLocation)
-
-    try {
-      const connection = await lifetime.wait(deps.workspaceManager.getSharedServiceConnection(parsed.data.id))
-      if (!connection) return unavailable("workspace-unavailable")
-      connection.assertCurrent()
-      const client = connection.client
-      const resolved = await client.location.get({ location }, options)
-      const inventory = await client.plugin.list({ location }, options)
-      const plugin = inventory.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
-      // Local V2 plugins currently advertise `server` but do not set `features.rpc`
-      // after registration. The reviewed typed call below is the RPC capability check.
-      if (plugin?.state.status === "failed") return unavailable("plugin-failed")
-      if (!plugin || plugin.state.status !== "active") {
-        return unavailable("plugin-unavailable")
-      }
-
+  // Open and included missions as full maps plus one summary row per mission,
+  // with activity for those maps only. A plugin without `list` (a reload can
+  // briefly pair builds) answers with its full snapshot and no summaries.
+  app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>("/api/workspaces/:id/missions", async (request, reply) => {
+    const query = ListQuerySchema.safeParse(request.query ?? {})
+    if (!query.success) return reply.code(400).send({ error: "Invalid mission list request" })
+    const input = { ...(query.data.include ? { include: query.data.include } : {}),
+      ...(query.data.summaries ? { summariesVersion: query.data.summaries } : {}) }
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign, observe }): Promise<MissionListResponse> => {
       // The registered RPC validates this JSON-Schema output before the generated client returns it.
-      const snapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location, ...options }) as MissionSnapshot
-      if (snapshot.projectID !== resolved.project.id) {
-        request.log.error({ workspaceId: parsed.data.id }, "Mission RPC returned a foreign project snapshot")
-        reply.code(502)
-        return unavailable("plugin-unavailable")
+      let listed: MissionSnapshot & Partial<Pick<MissionList, "summaries" | "summariesVersion">>
+      try { listed = await rpc.list(input, call) as MissionList }
+      catch (error) {
+        if (!isMissingMethod(error)) throw error
+        listed = await rpc.snapshot({}, call) as MissionSnapshot
       }
-      const displayCurrent = await lifetime.wait(displayCapture)
-      const deletionCurrent = await lifetime.wait(captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, parsed.data.id, [
-        ownedLocation.directory, ...snapshot.missions.flatMap(mission => mission.actors.map(actor => actor.location.directory)),
-      ]))
-      const activity = await projectMissionActivity({
-        client,
-        snapshot,
-        workspaceID: parsed.data.id,
-        ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager),
-        isCurrent: () => {
-          if (!displayCurrent?.() || !deletionCurrent?.() || lifetime.signal.aborted
-            || deps.workspaceManager.get(parsed.data.id) !== workspace
-            || !sameLocation(deps.workspaceManager.getServiceLocation(parsed.data.id) ?? { directory: "" }, ownedLocation)) return false
-          try { connection.assertCurrent(); return true } catch { return false }
-        },
-      })
-      return { available: true, ...snapshot, activity }
-    } catch (error) {
-      request.log.warn({ err: error, workspaceId: parsed.data.id }, "Mission plugin snapshot is unavailable")
-      return unavailable(isRpcFailure(error) ? "plugin-unavailable" : "workspace-unavailable")
-    } finally { lifetime.dispose() }
+      if (listed.projectID !== projectID) return foreign()
+      return { available: true, ...listed, activity: await observe(listed) }
+    })
+  })
+
+  // One mission's range for display reconciliation (lost acknowledgements,
+  // cleanup retries, a coordinator message's fresh read).
+  app.get<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID", async (request, reply) => {
+    const params = MissionReadParamsSchema.safeParse(request.params)
+    if (!params.success) return reply.code(400).send({ error: "Invalid mission read request" })
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionReadResponse> => {
+      let read: MissionRead
+      try { read = await rpc.mission({ missionID: params.data.missionID }, call) as MissionRead }
+      catch (error) {
+        if (!isMissingMethod(error)) throw error
+        const snapshot = await rpc.snapshot({}, call) as MissionSnapshot
+        const mission = snapshot.missions.find(value => value.id === params.data.missionID)
+        read = { version: snapshot.version, projectID: snapshot.projectID, generatedAt: snapshot.generatedAt, ...(mission ? { mission } : {}),
+          cleanups: (snapshot.cleanups ?? []).filter(cleanup => cleanup.missionID === params.data.missionID),
+          ...(snapshot.cleanupUnavailable ? { cleanupUnavailable: true } : {}), ...(snapshot.controlUnavailable ? { controlUnavailable: true } : {}),
+          ...(snapshot.notificationUnavailable ? { notificationUnavailable: true } : {}) }
+      }
+      if (read.projectID !== projectID) return foreign()
+      return { available: true, ...read }
+    })
   })
 
   app.post<{ Params: { id: string } }>("/api/workspaces/:id/missions", async (request, reply) => {
@@ -181,6 +170,81 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   })
 }
 
+const missionRpc = (client: OpenCodeClient) => client.rpc(CODENOMAD_MISSIONS_RPC)
+
+interface MissionPluginRead {
+  rpc: ReturnType<typeof missionRpc>
+  call: { location: { directory: string }; headers?: Record<string, string> }
+  projectID: string
+  /** A response naming another project: logged, answered 502 plugin-unavailable. */
+  foreign(): MissionListUnavailableResponse
+  /** Display activity of these maps' actors, fenced by this read's view and connection. */
+  observe(snapshot: MissionSnapshot): Promise<MissionActivityProjection>
+}
+
+/** The read routes' shared path to the owned Location's active plugin. */
+async function readMissionPlugin<T>(request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply, deps: MissionRouteDeps,
+  read: (plugin: MissionPluginRead) => Promise<T>): Promise<T | MissionListUnavailableResponse> {
+  const lifetime = requestAdmission(request, reply)
+  const parsed = MissionParamsSchema.safeParse(request.params)
+  if (!parsed.success || !deps.workspaceManager.get(parsed.data.id)) {
+    lifetime.dispose()
+    reply.code(404)
+    return unavailable("workspace-unavailable")
+  }
+  const workspaceID = parsed.data.id
+  const ownedLocation = deps.workspaceManager.getServiceLocation(workspaceID)
+  if (!ownedLocation) { lifetime.dispose(); return unavailable("workspace-unavailable") }
+  // Without its bridge this backend never provisions the plugin: reconnecting or
+  // reloading OpenCode cannot help, so say so before reading the inventory.
+  if (deps.missionsHost && !deps.missionsHost()) { lifetime.dispose(); return unavailable("host-unavailable") }
+  const workspace = deps.workspaceManager.get(workspaceID)
+  const displayCapture = captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, workspaceID, [ownedLocation.directory])
+  const location = { directory: ownedLocation.directory }
+  const options = locationRequestOptions(ownedLocation)
+
+  try {
+    const connection = await lifetime.wait(deps.workspaceManager.getSharedServiceConnection(workspaceID))
+    if (!connection) return unavailable("workspace-unavailable")
+    connection.assertCurrent()
+    const client = connection.client
+    const resolved = await client.location.get({ location }, options)
+    const inventory = await client.plugin.list({ location }, options)
+    const plugin = inventory.data.find((entry) => entry.id === CODENOMAD_MISSIONS_RPC_ID)
+    // Local V2 plugins currently advertise `server` but do not set `features.rpc`
+    // after registration. The reviewed typed call is the RPC capability check.
+    if (plugin?.state.status === "failed") return unavailable("plugin-failed")
+    if (!plugin || plugin.state.status !== "active") return unavailable("plugin-unavailable")
+    return await read({
+      rpc: missionRpc(client), call: { location, ...options }, projectID: resolved.project.id,
+      foreign: () => {
+        request.log.error({ workspaceId: workspaceID }, "Mission RPC returned a foreign project snapshot")
+        reply.code(502)
+        return unavailable("plugin-unavailable")
+      },
+      observe: async snapshot => {
+        const displayCurrent = await lifetime.wait(displayCapture)
+        const deletionCurrent = await lifetime.wait(captureDisplayIdentities(deps.worktreeDeletionFence, deps.workspaceManager, workspaceID, [
+          ownedLocation.directory, ...snapshot.missions.flatMap(mission => mission.actors.map(actor => actor.location.directory)),
+        ]))
+        return projectMissionActivity({
+          client, snapshot, workspaceID,
+          ownsLocation: deps.workspaceManager.ownsLocation.bind(deps.workspaceManager),
+          isCurrent: () => {
+            if (!displayCurrent?.() || !deletionCurrent?.() || lifetime.signal.aborted
+              || deps.workspaceManager.get(workspaceID) !== workspace
+              || !sameLocation(deps.workspaceManager.getServiceLocation(workspaceID) ?? { directory: "" }, ownedLocation)) return false
+            try { connection.assertCurrent(); return true } catch { return false }
+          },
+        })
+      },
+    })
+  } catch (error) {
+    request.log.warn({ err: error, workspaceId: workspaceID }, "Mission plugin snapshot is unavailable")
+    return unavailable(isRpcFailure(error) ? "plugin-unavailable" : "workspace-unavailable")
+  } finally { lifetime.dispose() }
+}
+
 async function mutate(request: FastifyRequest, reply: FastifyReply, deps: MissionRouteDeps, workspaceID: string,
   call: Parameters<Awaited<ReturnType<typeof prepareMissionMapMutation>>["run"]>[0]) {
   const lifetime = requestAdmission(request, reply)
@@ -200,8 +264,13 @@ function mutationError(reply: import("fastify").FastifyReply, error: unknown) {
   reply.code(503).send({ error: "Mission plugin unavailable" })
 }
 
-function unavailable(reason: MissionUnavailableReason): MissionListResponse {
+function unavailable(reason: MissionUnavailableReason): MissionListUnavailableResponse {
   return { available: false, reason, missions: [] }
+}
+
+/** An older plugin build, during a reload, registered no such method. */
+function isMissingMethod(error: unknown): boolean {
+  return Boolean(error && typeof error === "object" && (error as { type?: unknown }).type === "rpc.method_not_found")
 }
 
 function isRpcFailure(error: unknown): boolean {

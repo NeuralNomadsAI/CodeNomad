@@ -17,9 +17,9 @@ export async function sendMissionCoordinatorMessage(input: {
   let attempted = false
   try {
     const { instanceId, mission: original, current } = input
-    const snapshot = await serverApi.fetchMissions(instanceId)
-    const fresh = snapshot.missions.find(value => value.id === original.id)
-    if (!current() || !snapshot.available || !fresh || !missionAcceptsMessage(fresh)
+    const read = await serverApi.fetchMission(instanceId, original.id)
+    const fresh = read.available ? read.mission : undefined
+    if (!current() || !fresh || !missionAcceptsMessage(fresh)
       || fresh.coordinatorSessionId !== original.coordinatorSessionId || fresh.projectID !== original.projectID
       || !instances().get(instanceId)?.client) throw new Error("Mission changed")
     const text = input.text(fresh)

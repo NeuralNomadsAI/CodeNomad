@@ -32,7 +32,9 @@ async function setup(f: ReturnType<typeof cleanupBackend>, target: string, loseA
   const requests: Array<{ input: any; status: number }> = []
   await page.route("**/api/workspaces/fixture/missions**", async route => {
     const request = route.request()
-    if (request.method() === "GET") return route.fulfill({ json: { available: true, ...await f.control.snapshot() } })
+    // The panel's list as a full snapshot; one mission's reconciliation read through the real route.
+    if (request.method() === "GET" && new URL(request.url()).pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, ...await f.control.snapshot() } })
+    if (request.method() === "GET") return route.fulfill({ json: (await f.app.inject({ method: "GET", url: new URL(request.url()).pathname })).json() })
     const input = request.postDataJSON()
     const response = await f.app.inject({ method: "DELETE", url: new URL(request.url()).pathname, payload: input })
     requests.push({ input, status: response.statusCode })

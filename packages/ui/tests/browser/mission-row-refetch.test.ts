@@ -123,11 +123,12 @@ test("Cleanup preserves exact retry controls/open menus while current receipt te
     await menu!.focus()
     await refetch(page)
     assert.equal(await menu!.evaluate(e => e.isConnected && e === document.activeElement), true)
-    await page.route("**/api/workspaces/row-refetch/missions", async route => {
-      const cleanups = await page.evaluate(() => (window as any).missionRowFixture.receipt())
-      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups }) })
-    })
+    // The retry reconciles through its mission's read, then deletes on the same path.
     await page.route("**/api/workspaces/row-refetch/missions/mission", async route => {
+      if (route.request().method() === "GET") {
+        const cleanups = await page.evaluate(() => (window as any).missionRowFixture.receipt())
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups }) })
+      }
       posts++
       assert.equal(route.request().method(), "DELETE")
       assert.equal(route.request().postDataJSON().requestId, "request")
@@ -148,12 +149,12 @@ test("Cleanup replaced/settled receipts and newly disabled contexts fence delaye
     try {
       await prepare(page)
       const saved = await page.evaluate(() => (window as any).missionRowFixture.receipt())
-      await page.route("**/api/workspaces/row-refetch/missions", async route => {
-        reads++
-        await waiting
-        await route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups: saved }) })
-      })
       await page.route("**/api/workspaces/row-refetch/missions/mission", async route => {
+        if (route.request().method() === "GET") {
+          reads++
+          await waiting
+          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups: saved }) })
+        }
         writes++
         await route.fulfill({ contentType: "application/json", body: "{}" })
       })
@@ -194,11 +195,11 @@ test("switching cleanup instances clears old pending state, and late completion 
   try {
     await prepare(page)
     const saved = await page.evaluate(() => (window as any).missionRowFixture.receipt())
-    await page.route("**/api/workspaces/*/missions", async route => {
-      await (route.request().url().includes("/row-refetch/") ? oldRead : newRead)
-      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups: saved }) })
-    })
     await page.route("**/api/workspaces/*/missions/mission", async route => {
+      if (route.request().method() === "GET") {
+        await (route.request().url().includes("/row-refetch/") ? oldRead : newRead)
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups: saved }) })
+      }
       writes++
       await route.fulfill({ contentType: "application/json", body: "{}" })
     })

@@ -3,7 +3,7 @@ import { createEventRefreshScheduler, type RefreshUrgency } from "../lib/event-r
 import { serverEvents } from "../lib/server-events"
 import { createMissionStore } from "./mission-store"
 
-export const missionStore = createMissionStore((instanceId) => serverApi.fetchMissions(instanceId))
+export const missionStore = createMissionStore((instanceId, request) => serverApi.fetchMissions(instanceId, request))
 
 // Every native status change of a large running family is an invalidation:
 // activity revalidates at a bounded rate, journal changes promptly.

@@ -237,6 +237,13 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       }
     }
   })
+  // The reader needs its one-time Mission's full map, open or not.
+  const wantOwner = `reader:${props.scope}`
+  createEffect(() => {
+    const instanceId = props.instanceId, value = target()
+    missionStore.want(instanceId, wantOwner, value && !value.recurrence && value.kind !== "recurrence" ? value.missionId : undefined)
+    onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
+  })
   // A restored reader waits for session-list restoration before its first read.
   createEffect(() => {
     if (sessionListRestored(props.instanceId) && !target()?.recurrence && target()?.kind !== "recurrence") untrack(() => void missionStore.ensure(props.instanceId))

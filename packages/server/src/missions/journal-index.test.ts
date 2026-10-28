@@ -9,13 +9,14 @@ import { hasUnsettledNativeExecution } from "./native-call-observation"
 import { isCoordinatorNotificationReport } from "./native-report-provenance"
 import { missionWorkRemains } from "../opencode/missions/lifetime"
 import { fixture, seedCrossMission, step, type HistoryFixture } from "./journal-history-fixture"
+import { MISSION_SUMMARY_OBJECTIVE, missionSummary } from "./mission-summary"
 
 // `shared` and `settledBeyondHistory` come from the deterministic cross-mission test.
 const coverage = { purged: 0, interrupted: 0, activations: 0, foreign: 0, failed: 0, unconfirmed: 0, ties: 0, damaged: 0, open: 0, shared: 0, settledBeyondHistory: 0 }
 const RANDOM_COVERAGE = ["purged", "interrupted", "activations", "foreign", "failed", "unconfirmed", "ties", "damaged", "open"] as const
 
 function capture(index: MissionIndexHints, sessions: readonly string[]) {
-  return { aggregate: index.aggregate(), open: index.openIDs(), cleanups: index.cleanups(),
+  return { aggregate: index.aggregate(), open: index.openIDs(), cleanups: index.cleanups(), summaries: index.summaries(),
     refs: new Map(sessions.map(sessionID => [sessionID, index.refs(sessionID)])) }
 }
 
@@ -82,6 +83,7 @@ async function assertIndexed(f: HistoryFixture, label: string, rebuild: boolean)
     notificationUnavailable: Boolean(snapshot.notificationUnavailable), cleanupUnavailable: Boolean(snapshot.cleanupUnavailable),
     latestUpdatedAt: Math.max(0, ...snapshot.missions.map(mission => mission.updatedAt)) }, `${label}: aggregate`)
   assert.deepEqual(read.cleanups, snapshot.cleanups, `${label}: cleanups`)
+  assert.deepEqual(read.summaries, snapshot.missions.map(missionSummary), `${label}: summaries`)
   if (events.filter(event => event.type === "mission.deleted").length > 21) coverage.settledBeyondHistory++
 
   // Open: unsettled work by its own map or pending cleanup, plus damage local to a range.
@@ -272,10 +274,13 @@ test("index entries hold scalar ordering tokens and bounded labels, never event 
   await f.journal.readHints(hints => { assert.deepEqual(hints.openIDs(), []) })
   const entries = [...(f.index as unknown as { state: { entries: Map<string, unknown> } }).state.entries.values()]
   assert.equal(entries.length, 20)
-  const longest = (value: unknown): number => typeof value === "string" ? value.length
+  const longest = (value: unknown): number => typeof value === "string" ? Array.from(value).length
     : value instanceof Map ? Math.max(0, ...[...value].map(longest))
     : value && typeof value === "object" ? Math.max(0, ...Object.values(value).map(longest)) : 0
-  assert.ok(entries.every(entry => longest(entry) <= 240), "no string beyond a 240-character label")
+  // Cleanup labels hold 240 characters; a live map's summary row its title's objective label.
+  assert.ok(entries.every(entry => longest(entry) <= MISSION_SUMMARY_OBJECTIVE), "no string beyond a bounded label")
+  assert.ok(entries.every(entry => longest((entry as { cleanups: unknown }).cleanups) <= 240), "cleanup labels stay at 240 characters")
+  assert.ok(entries.some(entry => (entry as { summary?: unknown }).summary), "finished maps keep their summary row")
   for (const entry of entries) assert.deepEqual(Object.keys((entry as { first: object }).first).sort(), ["createdAt", "id"])
 })
 

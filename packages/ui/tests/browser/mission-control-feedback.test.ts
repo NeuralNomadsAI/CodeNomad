@@ -6,6 +6,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
+import { missionReadFixture } from "./mission-read-fixture"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-navigation"
@@ -177,6 +178,8 @@ async function navigable(values: MissionMap[]) {
       location: { directory: "/fixture" }, schedules: [] } })
     if (pathname.endsWith("/missions")) { counter.reads++; return route.fulfill({ json: { available: true, projectID: "project", missions: values,
       generatedAt: counter.reads, discardedEvents: 0 } }) }
+    const read = missionReadFixture(pathname, request.method(), values)
+    if (read) return route.fulfill({ json: read })
     if (/\/session\/ses_A$/.test(pathname)) return route.fulfill({ json: { data: { id: "ses_A", projectID: "project", title: "Coordinator", slug: "coordinator",
       version: "1", agent: "build", model: { id: "native", providerID: "native" }, location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } })
     if (pathname.endsWith("/agent")) return route.fulfill({ json: [{ id: "build", name: "build", mode: "primary" }] })

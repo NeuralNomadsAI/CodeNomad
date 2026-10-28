@@ -280,13 +280,13 @@ export function MissionEditor(props: {
         // A failed acknowledgement may follow a committed tombstone. Keep its
         // immutable request available for retry even after the list refreshes.
         if (deleteAttempted()) {
-          const snapshot = await serverApi.fetchMissions(instanceId)
+          const snapshot = await serverApi.fetchMission(instanceId, original.id)
           if (!current()) return
           if (!snapshot.available || snapshot.cleanupUnavailable) throw new MissionDeletionError(503)
-          const intent = snapshot.cleanups?.find(item => item.missionID === original.id && item.requestID === requestId
+          const intent = snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
             && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
           if (intent && intent.pending === 0) { props.onSaved(); return }
-          const live = snapshot.missions.find(item => item.id === original.id)
+          const live = snapshot.mission
           if (!intent && live && live.revision !== original.revision) throw new MissionDeletionError(404)
           // Neither the map nor its cleanup: capacity may have purged a committed
           // deletion's history. Its durable record answers this exact original request.
@@ -317,13 +317,13 @@ export function MissionEditor(props: {
         // Unknown intent keeps the original option/request fenced until verified.
         let key = deletionErrorKey(error)
         try {
-          const snapshot = await serverApi.fetchMissions(instanceId)
+          const snapshot = await serverApi.fetchMission(instanceId, original.id)
           if (!current()) return
-          const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups?.find(item => item.missionID === original.id && item.requestID === requestId
+          const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
             && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
           if (intent && intent.pending === 0) { props.onSaved(); return }
           if (intent) key = "missions.cleanup.error.pending"
-          else if (snapshot.available && !snapshot.cleanupUnavailable && snapshot.missions.some(item => item.id === original.id)
+          else if (snapshot.available && !snapshot.cleanupUnavailable && snapshot.mission
             && error instanceof MissionDeletionError && [400, 403, 409].includes(error.status)) setDeleteAttempted(false)
         } catch { /* Unknown observation is not permission to change the intent. */ }
         if (current()) { setError(t(key)); void missionStore.refresh(instanceId) }
