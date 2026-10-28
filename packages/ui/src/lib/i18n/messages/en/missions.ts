@@ -3,7 +3,7 @@ export const missionMessages = {
   "missions.recurrence.interruptedError": "Scheduling interrupted. Check status before resuming.",
   "missions.recurrence.trigger.manual": "Run now",
   "missions.recurrence.pending.checkNeeded": "This passage is not being observed. Check passage reconciles it without sending it again.",
-  "missions.recurrence.pending.retrying": "This passage has not started yet. It is retried automatically under the same identity.",
+  "missions.recurrence.pending.retrying": "This passage's start could not be confirmed. It is reconciled automatically under its original identity.",
   "missions.recurrence.lastError": "The last scheduled check failed at {time}. It retries automatically.",
   "missions.recurrence.followedConversations": "Followed conversations (optional)",
   "missions.recurrence.selectedConversation": "Selected conversation",

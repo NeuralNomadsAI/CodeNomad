@@ -44,6 +44,7 @@ test("native Job sleeps until due: <=25 daily wakes, one exact passage, restart 
   }) })
   const storage = {
     get: (key: string) => Effect.sync(() => {
+      if (statusWrites.has(key)) return statusWrites.get(key)
       const row = db.prepare("SELECT value FROM kv WHERE key=?").get(encode(key)) as { value: string } | undefined
       return row ? JSON.parse(row.value) : undefined
     }), set: (key: string, value: unknown) => Effect.sync(() => { statusWrites.set(key, value) }),

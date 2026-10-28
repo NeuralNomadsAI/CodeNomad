@@ -226,7 +226,7 @@ test("rows say Next, stuck passages explain their one action, history is plain a
     await page.locator("section.mission-detail.mission-schedule-detail").waitFor()
     assert.equal(await missionToolbarAction(page, "Start mission").count(), 0, "one-time controls stay with their Mission")
     assert.equal(await detail.count(), 1, "one detail at a time")
-    await detail.locator(".mission-schedule-notice").getByText("This passage has not started yet. It is retried automatically under the same identity.", { exact: true }).waitFor()
+    await detail.locator(".mission-schedule-notice").getByText("This passage's start could not be confirmed. It is reconciled automatically under its original identity.", { exact: true }).waitFor()
     await page.getByText(/^The last scheduled check failed at Oct 9, 2026/).waitFor()
     const items = detail.locator("button.mission-past-run")
     assert.match(await items.nth(0).innerText(), /^Oct 8, 2026, 8:15 AM · Not started$/)

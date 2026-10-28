@@ -3,7 +3,7 @@ export const missionMessages = {
   "missions.recurrence.interruptedError": "Programación interrumpida. Comprueba el estado antes de reanudar.",
   "missions.recurrence.trigger.manual": "Ejecutado ahora",
   "missions.recurrence.pending.checkNeeded": "Este pase no se está observando. Comprobar pase lo concilia sin volver a enviarlo.",
-  "missions.recurrence.pending.retrying": "Este pase aún no ha comenzado. Se reintenta automáticamente con la misma identidad.",
+  "missions.recurrence.pending.retrying": "No se pudo confirmar el inicio de este pase. Se concilia automáticamente con su identidad original.",
   "missions.recurrence.lastError": "La última comprobación programada falló a las {time}. Se reintenta automáticamente.",
   "missions.recurrence.followedConversations": "Conversaciones seguidas (opcional)",
   "missions.recurrence.selectedConversation": "Conversación seleccionada",

@@ -15,12 +15,16 @@ export type RecurrenceWakeError = z.infer<typeof recurrenceWakeErrorSchema>
 
 const key = (ctx: Ctx, scheduleID: string) => `${RECURRENCE_STORAGE_PREFIX}/status/${stableToken(
   `${ctx.location.project.id}\0${ctx.location.project.canonical}`, 24)}/${scheduleID}`
-const bestEffort = <A>(effect: () => Effect.Effect<A, unknown>) => Effect.suspend(effect).pipe(Effect.asVoid, Effect.catchCause(() => Effect.void))
+/** Succeeds with whether the displayed status changed; a failed write changed nothing known. */
+const bestEffort = (effect: () => Effect.Effect<boolean, unknown>) => Effect.suspend(effect).pipe(Effect.catchCause(() => Effect.succeed(false)))
 
 export const recordRecurrenceWakeError = (ctx: Ctx, scheduleID: string, value: RecurrenceWakeError) =>
-  bestEffort(() => ctx.storage.set(key(ctx, scheduleID), value))
-export const clearRecurrenceWakeError = (ctx: Ctx, scheduleID: string) =>
-  bestEffort(() => ctx.storage.remove(key(ctx, scheduleID)))
+  bestEffort(() => ctx.storage.set(key(ctx, scheduleID), value).pipe(Effect.as(true)))
+export const clearRecurrenceWakeError = (ctx: Ctx, scheduleID: string) => bestEffort(() => Effect.gen(function* () {
+  if ((yield* ctx.storage.get(key(ctx, scheduleID))) === undefined) return false
+  yield* ctx.storage.remove(key(ctx, scheduleID))
+  return true
+}))
 export const readRecurrenceWakeError = (ctx: Ctx, scheduleID: string) =>
   Effect.suspend(() => ctx.storage.get(key(ctx, scheduleID))).pipe(
     Effect.map(value => recurrenceWakeErrorSchema.safeParse(value).data),

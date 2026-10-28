@@ -282,8 +282,12 @@ A failed wake keeps the Job running: it records a display-only `lastError
 { code, at }` in a sibling kv key (outside the document revision) and retries with
 a capped backoff (30 s, 2 min, 5 min, 15 min, 1 h). A wake whose fresh passage
 reservation is followed by a thrown admission (outcome unknown) is a failed wake:
-it publishes `admission-failed` at once and the retry readmits the same pending
-identities. The next successful wake clears the warning. Only definitively fatal
+it publishes `admission-failed` at once and the retry reconciles the same pending
+identities. Its start may already be delivered (a lost native ACK), so a missing
+receipt never proves native absence and the UI says the start is unconfirmed, never
+that it has not started. The next successful wake clears the warning. Each warning
+that appears, changes or clears emits the schedule invalidation at the current
+revision. Only definitively fatal
 causes (Location or Job binding gone) end the Job as Interrupted with reason `error`; a missing or stopped schedule simply exits.
 
 ## Passage tools and journals

@@ -3,7 +3,7 @@ export const missionMessages = {
   "missions.recurrence.interruptedError": "定时调度已中断。恢复前请检查状态。",
   "missions.recurrence.trigger.manual": "立即运行",
   "missions.recurrence.pending.checkNeeded": "此次运行未被观察。“检查运行”会进行核对，而不会再次发送。",
-  "missions.recurrence.pending.retrying": "此次运行尚未开始。将使用相同的标识自动重试。",
+  "missions.recurrence.pending.retrying": "无法确认此次运行是否已开始。将使用原始标识自动核对。",
   "missions.recurrence.lastError": "上一次定时检查在 {time} 失败。将自动重试。",
   "missions.recurrence.followedConversations": "关注的对话（可选）",
   "missions.recurrence.selectedConversation": "已选对话",

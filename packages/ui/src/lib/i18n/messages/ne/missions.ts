@@ -3,7 +3,7 @@ export const missionMessages = {
   "missions.recurrence.interruptedError": "तालिकाअनुसार सञ्चालन अवरुद्ध भयो। पुनः जारी गर्नुअघि स्थिति जाँच्नुहोस्।",
   "missions.recurrence.trigger.manual": "अहिले चलाइयो",
   "missions.recurrence.pending.checkNeeded": "यो पासेज निगरानीमा छैन। पासेज जाँच्दा यसलाई फेरि नपठाई मिलाउँछ।",
-  "missions.recurrence.pending.retrying": "यो पासेज अझै सुरु भएको छैन। यसलाई उही पहिचानसहित स्वचालित रूपमा फेरि प्रयास गरिन्छ।",
+  "missions.recurrence.pending.retrying": "यो पासेजको सुरुवात पुष्टि गर्न सकिएन। यसलाई मूल पहिचानसहित स्वचालित रूपमा मिलाइन्छ।",
   "missions.recurrence.lastError": "अन्तिम तालिकाबद्ध जाँच {time} मा असफल भयो। यो स्वचालित रूपमा फेरि प्रयास हुन्छ।",
   "missions.recurrence.followedConversations": "पछ्याइएका कुराकानीहरू (ऐच्छिक)",
   "missions.recurrence.selectedConversation": "छानिएको कुराकानी",
