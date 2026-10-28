@@ -412,6 +412,43 @@ test("Inherit repairs an existing empty project experimental block that hides th
   } finally { await page.close() }
 })
 
+test("a depth read only makes the field read-only; only a write announces Saving", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  const read = Promise.withResolvers<void>(), write = Promise.withResolvers<void>(), reading = Promise.withResolvers<void>(), writing = Promise.withResolvers<void>()
+  let depth = 2
+  try {
+    await setup(page, "remote")
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/subagent-depth*", async route => {
+      if (route.request().method() === "GET") {
+        reading.resolve(); await read.promise
+        return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 }, effectiveDepth: depth,
+          project: { path: "fixture/opencode.jsonc", depth, expectation: `e${depth}` } } })
+      }
+      writing.resolve(); await write.promise
+      depth = route.request().postDataJSON().depth
+      return route.fulfill({ status: 204, body: "" })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await missionGeneralAction(page, "Create mission").click()
+    await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
+    const controls = page.locator("form.mission-editor .mission-depth"), input = controls.locator("input")
+    await reading.promise
+    assert.equal(await input.evaluate(element => (element as HTMLInputElement).readOnly), true, "a read locks the field")
+    assert.deepEqual(await controls.getByRole("status").allInnerTexts(), [], "and announces no save")
+    read.resolve()
+    await controls.getByText("OpenCode effective depth: 2", { exact: true }).waitFor()
+    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+    await input.fill("3"); await input.press("Enter")
+    await writing.promise
+    await controls.getByRole("status").filter({ hasText: "Saving…" }).waitFor()
+    assert.equal(await input.evaluate(element => (element as HTMLInputElement).readOnly), true, "a write locks the field too")
+    write.resolve()
+    await controls.getByText("OpenCode effective depth: 3", { exact: true }).waitFor()
+    assert.equal(await controls.getByText("Saving…", { exact: true }).count(), 0)
+  } finally { read.resolve(); write.resolve(); await page.close() }
+})
+
 test("Enter in the creation form's depth field saves the depth without creating the mission", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   let depth = 2, expectation = "e1"

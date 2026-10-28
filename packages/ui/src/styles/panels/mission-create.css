@@ -33,6 +33,15 @@
 .mission-create-options .mission-depth .window-actions { display: flex; flex-wrap: wrap; gap: var(--space-xs); margin-block-start: var(--space-xs); }
 
 .mission-create .window-footer { flex-wrap: wrap; }
+/* In the panel the form fills the height below the header and its footer sticks to the panel's
+   bottom edge, so Create keeps its place while asynchronous content above it (depth reads,
+   catalogs, alerts) resizes the body: short or long, the footer ends exactly at that edge.
+   A long form scrolls the panel, still the only scroller; the scroll padding keeps a focused
+   field clear of the footer. */
+.mission-control[data-creating] { padding-block-end: 0; scroll-padding-block-end: calc(var(--chrome-height) + 2 * var(--space-sm)); }
+.mission-control[data-creating] > .mission-create { display: flex; flex-direction: column; flex: 1 0 auto; margin-block-end: 0; border-block-end: 0; }
+.mission-control[data-creating] > .mission-create > .window-body { flex: 1 0 auto; }
+.mission-control[data-creating] > .mission-create > .window-footer { position: sticky; inset-block-end: 0; z-index: 1; }
 
 /* Saved briefs: one loading select atop Options, and an inline footer name prompt. */
 .mission-brief-picker { margin-block: var(--space-sm); }
