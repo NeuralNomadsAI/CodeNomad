@@ -694,6 +694,62 @@ try {
   assert.deepEqual((await client.session.get({ sessionID: managedReuseSession })).model, managedReuseActor.model)
   await probe(managedReuseSession, "managed-reuse-fresh")
   gate("managed root creation, environment and busy reuse preserve original ownership and durable queue")
+
+  stage = "finished mission history and journal index"
+  // Many finished missions through the real bundle, then a new activation whose
+  // index builds once over them. Last stage: its damage probe must not leak.
+  const history = []
+  for (let index = 0; index < 100; index++) {
+    const created = await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: `native-history-${index}`, objective: `Finished ${index}`, template: "custom" }, { location })
+    const finished = await invoke("report", { missionID: created.mission.id, outcome: "completed", summary: `Finished ${index}`, final: true },
+      created.mission.coordinatorSessionId, `history-${index}`)
+    assert.equal(finished.mission.status, "completed")
+    history.push(created.mission)
+  }
+  await client.location.reload({ signal: AbortSignal.timeout(20_000) })
+  await until(async () => { try { return Boolean(await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })) } catch { return false } })
+  const live = (await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "native-history-live", objective: "Live beside history", template: "custom" }, { location })).mission
+  const liveCoordinator = live.coordinatorSessionId
+  const liveTask = { missionID: live.id, taskKey: "history-work", title: "History work", brief: "Return evidence.", role: "reviewer", execution: task.execution, blockedBy: [] }
+  assert.equal((await invoke("delegate", liveTask, liveCoordinator, "history-declare")).disposition, "declared")
+  assert.equal((await invoke("report", { missionID: live.id, taskKey: liveTask.taskKey, outcome: "completed", summary: "History unaffected" },
+    liveCoordinator, "history-readout")).disposition, "reported")
+  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete({ missionID: history[0].id, requestID: "native-history-delete",
+    expectedRevision: (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions.find(mission => mission.id === history[0].id).revision }, { location }), { deleted: true })
+  const withHistory = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+  assert.equal(withHistory.missions.filter(mission => history.some(item => item.id === mission.id)).length, history.length - 1)
+  assert.equal(withHistory.discardedEvents, 0)
+  // Probe which reads see the whole journal: a damaged entry written beside the
+  // bundle (as another process would) is visible to full reads at once and to
+  // the activation's index only after its next rebuild, a minute away.
+  const { DatabaseSync } = await import("node:sqlite")
+  const database = new DatabaseSync(process.env.OPENCODE_DB)
+  try {
+    database.exec("PRAGMA busy_timeout = 10000")
+    const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
+    const liveKey = database.prepare("SELECT key FROM kv WHERE key LIKE ? LIMIT 1").get(`${namespace}codenomad-missions/v2/%/${live.id}/%`)?.key
+    assert.ok(liveKey, "The live mission's journal range is in the isolated native KV table")
+    const strayKey = `${liveKey.slice(0, liveKey.indexOf(`/${live.id}/`))}/stray-history-probe`
+    database.prepare("INSERT INTO kv(key,value,time_created,time_updated) VALUES(?,?,?,?)").run(strayKey, JSON.stringify({ damaged: true }), Date.now(), Date.now())
+    try {
+      assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).discardedEvents, 1, "Full reads see the entry at once")
+      const inspectedLive = await invoke("inspect", { missionID: live.id }, liveCoordinator, "history-inspect")
+      assert.equal(inspectedLive.mission.id, live.id)
+      assert.equal(inspectedLive.mission.controlUnavailable, undefined, "inspect reads the mission's own range, not the whole journal")
+      const turns = requests.length
+      await client.session.prompt({ sessionID: liveCoordinator, text: "History probe turn" })
+      await client.session.wait({ sessionID: liveCoordinator }, { signal: AbortSignal.timeout(20_000) })
+      const turn = requests.slice(turns).find(request => request.session === liveCoordinator)
+      assert.ok(turn?.messages.includes("Only this coordinator session"), "The context hook found the coordinator without a full read")
+      assert(!turn.messages.includes("Do not continue mission work"), "A full read would have stamped the damage and paused the context")
+      // The fixture RPC reports tool errors as opaque defects; the retry below names the cause.
+      await assert.rejects(invoke("delegate", { ...liveTask, taskKey: "history-refused" }, liveCoordinator, "history-refused"))
+    } finally { database.prepare("DELETE FROM kv WHERE key=?").run(strayKey) }
+  } finally { database.close() }
+  assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).discardedEvents, 0)
+  assert.equal((await invoke("delegate", { ...liveTask, taskKey: "history-refused" }, liveCoordinator, "history-accepted")).disposition, "declared",
+    "Only the damage refused the declaration: its authoritative gate read the entry the hints had not seen")
+  gate("finished history: creation, declaration, readout and deletion beside it; hinted reads skip it, write gates read it")
   assert.equal(failures.length, 0, "Every baseline expectation must pass; collected errors are never skipped or accepted")
   receipt.status = "passed"; receipt.passCount = gates.length
   receipt.finalSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); receipt.providerRequests = requests.length

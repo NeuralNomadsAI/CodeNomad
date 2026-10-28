@@ -24,7 +24,7 @@ export function fixture(seed: number) {
   const random = mulberry32(seed)
   const pick = <T>(items: readonly T[]): T | undefined => items[Math.floor(random() * items.length)]
   const values = new Map<string, MissionJsonValue>()
-  let failRemovalAfter = Infinity, removals = 0, fullScans = 0, tampered = false, unconfirmed = 0
+  let failRemovalAfter = Infinity, removals = 0, fullScans = 0, scannedEntries = 0, tampered = false, unconfirmed = 0
   let failSet: UncertainWrite | undefined, failRemove: UncertainWrite | undefined, failRecordReads = 0
   let firstPageHook: (() => Promise<void>) | undefined
   const project = { id: "project-1", canonical: "/repo", location: { directory: "/repo" } }
@@ -48,6 +48,7 @@ export function fixture(seed: number) {
       const keys = [...values.keys()].filter(key => key.startsWith(scanned) && (!after || key > after)).sort().slice(0, limit)
       const hook = after ? undefined : firstPageHook
       if (hook) { firstPageHook = undefined; await hook() }
+      scannedEntries += keys.length
       return { entries: keys.map(key => ({ key, value: structuredClone(values.get(key)!) })), next: keys.length === limit ? keys.at(-1) : undefined }
     },
     remove: async key => {
@@ -106,7 +107,10 @@ export function fixture(seed: number) {
     /** Bytes no journal writes (earlier builds, crashes, other processes). */
     tamper: (key: string, value: MissionJsonValue) => { tampered = true; values.set(key, value) },
     takeTampered: () => { const value = tampered; tampered = false; return value },
+    /** Scan pages over the whole project prefix. */
     fullScans: () => fullScans,
+    /** Entries returned by every scan, ranges included. */
+    scannedEntries: () => scannedEntries,
     /** Writes that landed but reported failure. */
     unconfirmed: () => unconfirmed,
     failRemovalsAfter: (count: number) => { failRemovalAfter = removals + count },

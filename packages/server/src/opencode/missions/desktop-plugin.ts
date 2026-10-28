@@ -7,7 +7,7 @@ import { sendMissionInput } from "../automation-plugin"
 import { isCleanupReason } from "../../missions/cleanup-projection"
 import { MissionJournal } from "../../missions/journal"
 import { MissionJournalIndex } from "../../missions/journal-index"
-import { retainMissionWork } from "./lifetime"
+import { hintsShowWork, retainMissionWork } from "./lifetime"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 
 /** One-time Missions only: the `codenomad-missions/v2` journal. Setup never
@@ -48,7 +48,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
           (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false, index)
           return async () => { ordinary = undefined; await dispose() }
         } catch (error) { ordinary = undefined; throw error }
-      }, console.error, () => retainMissionWork(() => journal.snapshot())) }
+      }, console.error, () => retainMissionWork(() => journal.snapshot(), () => journal.readHints(hintsShowWork))) }
       catch (error) { await disposeBusiness(); await promptHook.dispose(); index.dispose(); throw error }
       return async () => { ordinary = undefined; await disposeBusiness(); await promptHook.dispose();
         retireNativePassageBusiness(ctx.location); await disposePresence?.(); index.dispose() }

@@ -455,24 +455,19 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
             return
           }
           selected.current()
-          const instruction = await selected.control.contextFor(selected.readSessionID)
-          if (!active || !instruction) return
+          // One hinted membership read per turn: the instruction and the coordinator check share it.
+          const mission = await selected.control.contextFor(selected.readSessionID)
+          if (!active || !mission) return
           selected.current()
           if (selected.readSessionID !== event.sessionID) {
             event.system.push({ type: "text", text: `You are a native descendant of coordinator ${selected.readSessionID}. Return normal scoped results to your immediate parent; only the coordinator declares, revises, reports or finalizes the business plan. mission.inspect is read-only.` })
             for (const name of [...COORDINATOR_TOOLS, "report"]) delete event.tools[`mission_${name}`]
             return
           }
-          event.system.push({ type: "text", text: instruction })
+          event.system.push({ type: "text", text: mission.instruction })
           // Scheduled passages have no backend route for these actions: do not offer them.
           if (!selected.control.backendActions) for (const name of ["interrupt", "prepare"]) delete event.tools[`mission_${name}`]
-          const snapshot = await selected.control.snapshot()
-          if (!active) return
-          const mission = snapshot.missions.find((candidate) => candidate.status === "active"
-            && candidate.actors.some((actor) => actor.sessionId === event.sessionID))
-          if (mission && mission.coordinatorSessionId !== event.sessionID) {
-            for (const name of COORDINATOR_TOOLS) delete event.tools[`mission_${name}`]
-          }
+          if (!mission.coordinator) for (const name of COORDINATOR_TOOLS) delete event.tools[`mission_${name}`]
         } catch {
           // Mission context is additive. A damaged optional map must not block an otherwise valid model request.
         }
