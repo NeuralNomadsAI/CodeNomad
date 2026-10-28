@@ -87,6 +87,10 @@ test("a failed selected-map read stays parked until an explicit retry; a success
     await failing.page.waitForTimeout(900)
     assert.deepEqual(failing.includes, [[], ["closed"]], "one include read, then parked")
     assert.equal(await failing.page.evaluate(() => (window as any).missionFixture.snapshot().status), "error")
+    // Parked: the stale banner and the refresh button, never a claim that the map is being read.
+    assert.deepEqual(await failing.page.locator(".mission-control > p[role=status]").allTextContents(), [])
+    await failing.page.locator(".mission-control-stale").waitFor()
+    assert.equal(await missionRefresh(failing.page).isDisabled(), false)
     await missionRefresh(failing.page).click()
     await failing.page.waitForTimeout(500)
     assert.deepEqual(failing.includes, [[], ["closed"], ["closed"]], "an explicit retry reads once more")
@@ -132,6 +136,41 @@ test("an obsolete include response never unmounts the current selection's loaded
     assert.equal(await shownDetail(page, "Objective A").count(), 1)
     assert.deepEqual(includes.slice(-2), [["B"], ["A"]], "one follow-up for the current include")
   } finally { releaseA(); releaseB(); await page.close() }
+})
+
+test("hiding the panel cancels the follow-up an obsolete include answer would start; activation and a visible reader still load", async () => {
+  const maps = [mission("A", { status: "completed", updatedAt: 2 }), mission("B", { status: "completed", summary: "Closed B summary", updatedAt: 1 })]
+  let race = false, heldB = false, releaseB!: () => void
+  const waitB = new Promise<void>(resolve => { releaseB = resolve })
+  const { page, includes } = await panel(maps, async include => {
+    if (race && include.includes("B")) { heldB = true; await waitB }
+  })
+  const fixtureCall = (method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
+  try {
+    await choose(page, "A")
+    await shownDetail(page, "Objective A").waitFor()
+    race = true
+    await choose(page, "B")
+    while (!heldB) await page.waitForTimeout(10)
+    await choose(page, "A")
+    await fixtureCall("active", false)
+    assert.deepEqual(await page.evaluate(async () => (await import("/src/stores/missions.ts" as string)).missionStore.demandedInstanceIds()), [])
+    releaseB()
+    await page.waitForFunction(() => (window as any).missionFixture.snapshot().status === "ready")
+    await page.waitForTimeout(300)
+    assert.deepEqual(includes, [[], ["A"], ["B"]], "the hidden panel reads nothing more")
+    // Activation reads the current include.
+    await fixtureCall("active", true)
+    while (includes.length < 4) await page.waitForTimeout(10)
+    assert.deepEqual(includes[3], ["A"])
+    await shownDetail(page, "Objective A").waitFor()
+    // A central reader is demand of its own, with the panel hidden.
+    await fixtureCall("active", false)
+    race = false
+    await page.evaluate(async () => (await import("/src/stores/mission-view-state.ts" as string)).updateMissionProjectView("fixture", { reader: { missionId: "B", kind: "overview" } }))
+    await page.locator(".mission-reader").getByText("Closed B summary").waitFor()
+    assert.ok(includes.at(-1)!.includes("B"), "the reader's map was read")
+  } finally { releaseB(); await page.close() }
 })
 
 const mark = async (page: Page, title: string) => (await inlineMissionEntry(page, title)).locator(".mission-picker-mark").getAttribute("data-mark")

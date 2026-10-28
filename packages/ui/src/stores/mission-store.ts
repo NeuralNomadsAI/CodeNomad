@@ -49,6 +49,8 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   const wants = new Map<string, Map<string, string>>()
   /** The includes of each instance's read in flight. */
   const requested = new Map<string, readonly string[]>()
+  /** Deactivations per instance: a read's own follow-up survives only if none happened while it ran. */
+  const cancellations = new Map<string, number>()
 
   const state = (instanceId: string) => states().get(instanceId) ?? EMPTY_STATE
   // Store actions run inside callers' effects: reading state there must not
@@ -70,7 +72,7 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   const performRefresh = async (instanceId: string): Promise<void> => {
     const generation = (generations.get(instanceId) ?? 0) + 1
     generations.set(instanceId, generation)
-    const previous = peek(instanceId)
+    const previous = peek(instanceId), cancelled = cancellations.get(instanceId)
     update(instanceId, { ...previous, status: "loading", error: undefined })
     // Only a backend that answered with summaries understands includes and versions.
     const include = wanted(instanceId)
@@ -111,7 +113,8 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
         ...(response.cleanupUnavailable ? { cleanupUnavailable: true } : {}),
       }
       update(instanceId, next)
-      if (stale.length) trailing.add(instanceId)
+      // A deactivation since this read started cancelled its follow-up: activation reads again.
+      if (stale.length && cancellations.get(instanceId) === cancelled) trailing.add(instanceId)
     } catch (error) {
       if (generations.get(instanceId) !== generation) return
       // A failed read stays parked: only new demand, an invalidation or an explicit retry reads again.
@@ -154,6 +157,7 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       else {
         demand.delete(instanceId)
         trailing.delete(instanceId)
+        cancellations.set(instanceId, (cancellations.get(instanceId) ?? 0) + 1)
       }
     },
     want: (instanceId, owner, missionId) => untrack(() => {

@@ -376,7 +376,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       {recurrence.view()}
 
       {/* Nothing below the picker until a Mission is selected; its detail is a separate section. */}
-      <Show when={selectedRow() && !mission()}><p role="status">{props.t("missions.control.loading")}</p></Show>
+      {/* A parked failed read keeps the stale banner and the refresh button instead. */}
+      <Show when={selectedRow() && !mission() && state().status !== "error"}><p role="status">{props.t("missions.control.loading")}</p></Show>
       <Show when={selectedOneTimeId()} keyed>{id => {
         // Keep the last known snapshot while the keyed detail is being disposed.
         const selected = createMemo<MissionMap>(previous => missions().find(value => value.id === id) ?? previous!)

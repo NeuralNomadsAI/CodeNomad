@@ -156,6 +156,14 @@ test("registration inside an effect never subscribes it: a failed include read s
   }
 })
 
+/** Waits for a condition, failing (instead of hanging) after two seconds. */
+async function until(condition: () => boolean, what: string) {
+  for (let waited = 0; !condition(); waited += 5) {
+    if (waited > 2_000) throw new Error(`Timed out waiting for ${what}`)
+    await new Promise(resolve => setTimeout(resolve, 5))
+  }
+}
+
 test("a response for an obsolete include keeps the current wanted map and reads it once more", async () => {
   const open = available("open")
   if (!open.available) throw new Error("fixture")
@@ -169,22 +177,47 @@ test("a response for an obsolete include keeps the current wanted map and reads 
   })
   await store.refresh("instance-1")
   store.want("instance-1", "selection", "A")
-  while (!pending.length) await new Promise(resolve => setTimeout(resolve, 0))
+  await until(() => pending.length > 0, "A's read")
   pending.shift()!.resolve()
-  while (!store.state("instance-1").missions.some(mission => mission.id === "A")) await new Promise(resolve => setTimeout(resolve, 0))
+  await until(() => store.state("instance-1").missions.some(mission => mission.id === "A"), "A's map")
   store.want("instance-1", "selection", "B")
-  while (!pending.length) await new Promise(resolve => setTimeout(resolve, 0))
+  await until(() => pending.length > 0, "B's read")
   store.want("instance-1", "selection", "A")
   pending.shift()!.resolve()
-  while (!pending.length) await new Promise(resolve => setTimeout(resolve, 0))
+  await until(() => pending.length > 0, "A's follow-up")
   // B's answer is published, A's loaded map and activity stay while its follow-up runs.
   assert.deepEqual(store.state("instance-1").missions.map(mission => mission.id).sort(), ["A", "B"])
   assert.deepEqual(store.state("instance-1").activity?.missions.map(item => item.missionId).sort(), ["A", "B"])
   assert.deepEqual(pending[0].include, ["A"])
   pending.shift()!.resolve()
-  while (store.state("instance-1").status !== "ready") await new Promise(resolve => setTimeout(resolve, 0))
+  await until(() => store.state("instance-1").status === "ready", "the follow-up's answer")
   assert.deepEqual(store.state("instance-1").missions.map(mission => mission.id), ["A"])
   assert.equal(pending.length, 0)
+})
+
+test("a reader without panel demand gets its follow-up; a deactivation during a read cancels it", async () => {
+  const open = available("open")
+  if (!open.available) throw new Error("fixture")
+  const requests: unknown[] = []
+  let hide: (() => void) | undefined
+  const store = createMissionStore(async (_instanceId, request) => {
+    requests.push(request)
+    hide?.()
+    const closed = { ...open.missions[0], id: "mission-closed", status: "completed" as const }
+    return { ...open, missions: request.include?.includes(closed.id) ? [closed] : [], summaries: [row("mission-closed")], summariesVersion: "v1" }
+  })
+  // Restored reader, panel never shown: the first answer names the row, one follow-up reads it.
+  store.want("instance-1", "reader", "mission-closed")
+  await store.ensure("instance-1")
+  assert.deepEqual(requests, [{}, { include: ["mission-closed"], summariesVersion: "v1" }])
+  assert.equal(store.state("instance-1").missions.some(mission => mission.id === "mission-closed"), true)
+  // The panel shows then hides while a read for another selection runs.
+  store.setDemand("instance-1", true)
+  store.want("instance-1", "reader", undefined)
+  store.want("instance-1", "selection", "mission-other")
+  hide = () => { store.want("instance-1", "selection", "mission-closed"); store.setDemand("instance-1", false); hide = undefined }
+  await store.refresh("instance-1")
+  assert.equal(requests.length, 3, "the cancelled follow-up does not run")
 })
 
 test("an omitted list this view does not hold fails like any read, keeping the last good display", async () => {
