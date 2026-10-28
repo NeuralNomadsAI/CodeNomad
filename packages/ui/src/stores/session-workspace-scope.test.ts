@@ -114,9 +114,11 @@ it("notices of a nested repository's session follow where it is shown", async ()
   }
   serverApi.fetchWorktrees = (async (instanceId: string) => ({ isGitRepo: instanceId === nested,
     worktrees: [{ slug: "root", directory: folders[instanceId] }] })) as any
+  let releaseClosing: (value: unknown) => void = () => {}
   // Sessions unknown to the parent read as nested-repository sessions.
   const client = { session: { active: async () => ({}), get: async ({ sessionID }: { sessionID: string }) => {
     if (sessionID === "unreadable") throw new Error("503")
+    if (sessionID === "closing") await new Promise((resolve) => { releaseClosing = resolve })
     return { id: sessionID, title: sessionID, version: "1", projectID: "repo-b", location: { directory: folders[nested] }, time: { created: 1, updated: 1 } }
   } } } as any
   const open = async (id: string) => {
@@ -171,6 +173,14 @@ it("notices of a nested repository's session follow where it is shown", async ()
     assert.equal(notices("sessionEvents.sessionCompactedToast", "unreadable"), 0)
     compacted("own")
     assert.equal(notices("sessionEvents.sessionCompactedToast", "own"), 1)
+
+    // A project closed while an unknown session is read neither republishes nor announces it.
+    compacted("closing")
+    close(parent)
+    releaseClosing(undefined)
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    assert.equal(sessions().has(parent), false)
+    assert.equal(notices("sessionEvents.sessionCompactedToast", "closing"), 0)
   } finally {
     serverApi.fetchWorktrees = originalWorktrees
     close(nested)

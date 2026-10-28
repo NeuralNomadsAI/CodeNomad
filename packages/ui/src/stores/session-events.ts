@@ -48,6 +48,7 @@ import { tGlobal } from "../lib/i18n"
 
 import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getWorktrees, reloadWorktrees } from "./worktrees"
 import { normalizeSessionDirectory } from "./session-list-options"
 import {
@@ -354,9 +355,12 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
 
   const client = getRootClient(instanceId)
   void directory
+  const generation = getOpenCodeInstanceGeneration(instanceId)
 
   try {
     const info = await client.session.get({ sessionID: sessionId })
+    // A project closed or a client replaced during the read publishes nothing.
+    if (!instances().has(instanceId) || getOpenCodeInstanceGeneration(instanceId) !== generation) return null
     const fetched = createClientSession(info, instanceId)
 
     let updatedInstanceSessions: Map<string, Session> | undefined
