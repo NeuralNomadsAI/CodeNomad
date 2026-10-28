@@ -1,11 +1,14 @@
 import assert from "node:assert/strict"
 import test from "node:test"
+import Fastify from "fastify"
 
 import { fixture, type HistoryFixture } from "./journal-history-fixture"
 import { MISSION_INDEX_STALE_AFTER_MS, MissionJournalIndex } from "./journal-index"
 import { MISSION_MAX_STORED_EVENTS, type MissionJsonValue } from "./model"
 import { setupMissionsPlugin } from "../opencode/missions-plugin"
 import { hintsShowWork, retainMissionWork } from "../opencode/missions/lifetime"
+import { registerMissionRoutes } from "../server/routes/missions"
+import { WorktreeDeletionFence } from "../workspaces/worktree-session-evacuation"
 
 // Finished history that reads of other missions must not pay for: several
 // missions' worth of entries, since the event bound is per mission.
@@ -71,6 +74,70 @@ test("read-mostly paths read one mission's range, never the finished history", a
   assert.deepEqual([outbox.value, outbox.fullScans, outbox.entries <= own], [{ attempted: 0, failed: 0 }, 0, true])
   const retained = await cost(f, () => retainMissionWork(() => f.journal.snapshot(), () => f.journal.readHints(hintsShowWork)))
   assert.deepEqual([retained.value, retained.fullScans, retained.entries], [true, 0, 0])
+})
+
+test("the panel list reads the open ranges and the selection, never a closed map it was not asked for", async () => {
+  const { f, mission, own } = await liveMission(10)
+  const control = f.control()
+  const listed = await cost(f, () => control.list())
+  assert.deepEqual([listed.fullScans, listed.entries <= own], [0, true])
+  assert.deepEqual(listed.value.missions.map(value => value.id), [mission.id])
+  assert.equal(listed.value.summaries?.length, HISTORY_MISSIONS + 1)
+  assert.deepEqual(listed.value.summaries, (await f.journal.snapshot()).missions.map(value => listed.value.summaries!.find(row => row.id === value.id)))
+  // Unchanged rows are not resent; a selected closed mission costs its own range.
+  const selected = await cost(f, () => control.list({ include: ["msn_hist_007"], summariesVersion: listed.value.summariesVersion }))
+  assert.deepEqual([selected.fullScans, selected.entries <= own + EVENTS_PER_MISSION, selected.value.summaries], [0, true, undefined])
+  assert.deepEqual(selected.value.missions.map(value => value.id).sort(), [mission.id, "msn_hist_007"].sort())
+  const read = await cost(f, () => control.mission("msn_hist_007"))
+  assert.deepEqual([read.fullScans, read.entries, read.value.mission?.status], [0, EVENTS_PER_MISSION, "failed"])
+})
+
+test("GET /missions over the plugin observes and loads only open and selected missions", async () => {
+  const { f, mission, own } = await liveMission(11)
+  let handlers: Record<string, (input: unknown) => Promise<unknown>> | undefined
+  const registration = () => ({ dispose: async () => {} })
+  const dispose = await setupMissionsPlugin({
+    location: { directory: "/repo", project: { id: "project-1", canonical: "/repo" } },
+    storage: f.storage,
+    session: { get: async ({ sessionID }: { sessionID: string }) => f.native.get(sessionID), hook: async () => registration() },
+    tool: { transform: async (callback: (draft: unknown) => void) => { callback({ namespace: () => {}, add: () => {} }); return registration() } },
+    rpc: { register: async (_definition: unknown, value: typeof handlers) => { handlers = value; return { ...registration(), events: { emit: async () => {} } } } },
+  } as never, undefined, undefined, undefined, undefined, false, new MissionJournalIndex())
+  const observed: string[] = []
+  const client = {
+    location: { get: async () => ({ ...location, project: { id: "project-1" } }) },
+    plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
+    rpc: () => ({ list: (input: unknown) => handlers!.list(input), mission: (input: unknown) => handlers!.mission(input),
+      snapshot: () => { throw new Error("The panel never reads the full snapshot") } }),
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => { observed.push(sessionID); return { id: sessionID, projectID: "project-1", location } },
+      list: async () => ({ data: [], cursor: { next: null } }), inbox: { list: async () => [] }, active: async () => ({}),
+    },
+    shell: { list: async () => ({ location, data: [] }) }, form: { list: async () => ({ location, data: [] }) },
+    permission: { request: { list: async () => ({ location, data: [] }) } },
+  }
+  const app = Fastify({ logger: false })
+  const workspace = { id: "workspace-1" }
+  registerMissionRoutes(app, { workspaceManager: { get: () => workspace, getServiceLocation: () => location,
+    getSharedServiceConnection: async () => ({ client, assertCurrent() {} }), ownsLocation: async () => true,
+    getWorktreeIdentityForPath: async (_id: string, directory: string) => directory } as never, worktreeDeletionFence: new WorktreeDeletionFence() })
+  try {
+    // The activation's own index builds once, on its first read.
+    await app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions" })
+    observed.length = 0
+    const first = await cost(f, () => app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions" }).then(response => response.json()))
+    assert.deepEqual([first.fullScans, first.entries <= own, first.value.missions.map((value: { id: string }) => value.id)], [0, true, [mission.id]])
+    assert.equal(first.value.summaries.length, HISTORY_MISSIONS + 1)
+    assert.deepEqual([...new Set(observed)], [mission.coordinatorSessionId], "activity reads only the open mission's actors")
+    observed.length = 0
+    const url = `/api/workspaces/workspace-1/missions?include=msn_hist_042&summaries=${first.value.summariesVersion}`
+    const selected = await cost(f, () => app.inject({ method: "GET", url }).then(response => response.json()))
+    assert.deepEqual([selected.fullScans, selected.entries <= own + EVENTS_PER_MISSION, selected.value.summaries], [0, true, undefined])
+    assert.deepEqual(selected.value.activity.missions.map((value: { missionId: string }) => value.missionId).sort(), [mission.id, "msn_hist_042"].sort())
+    assert.deepEqual([...new Set(observed)].sort(), [mission.coordinatorSessionId, "ses_hist_42"].sort())
+    const one = await cost(f, () => app.inject({ method: "GET", url: "/api/workspaces/workspace-1/missions/msn_hist_042" }).then(response => response.json()))
+    assert.deepEqual([one.fullScans, one.entries, one.value.mission.id], [0, EVENTS_PER_MISSION, "msn_hist_042"])
+  } finally { await app.close(); await dispose() }
 })
 
 test("a project far beyond one mission's bound reads, creates, appends, deletes and purges", async () => {

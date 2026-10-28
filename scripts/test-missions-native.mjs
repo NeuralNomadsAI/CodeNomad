@@ -752,6 +752,23 @@ try {
   assert.equal(withHistory.discardedEvents, 0)
   assert.equal(withHistory.cleanups.length, 20)
   assert(!withHistory.cleanups.some(item => item.missionID === settled.at(-1).missionID), "The oldest settled deletion was purged")
+  // The panel's reads through the real routes and bundle: one row per live map, full maps
+  // only for open and included missions, activity only for those maps.
+  const panel = (suffix = "") => bridge.inject({ method: "GET", url: missionURL + suffix }).then(response => response.json())
+  const finished = id => history.some(item => item.id === id)
+  const listed = await panel()
+  assert.equal(listed.available, true)
+  assert.ok(listed.summariesVersion, "The bundle answers the list RPC")
+  assert.deepEqual(listed.summaries.filter(row => finished(row.id)).map(row => [row.id, row.status, row.revision, row.updatedAt]),
+    withHistory.missions.filter(mission => finished(mission.id)).map(mission => [mission.id, mission.status, mission.revision, mission.updatedAt]),
+    "Finished missions list as rows in snapshot order")
+  assert.ok(listed.missions.some(mission => mission.id === live.id), "The open mission's full map is listed")
+  assert(!listed.missions.some(mission => finished(mission.id)), "No finished map is loaded unasked")
+  assert.deepEqual(listed.activity.missions.map(item => item.missionId).sort(), listed.missions.map(mission => mission.id).sort(), "Activity observes only the listed maps")
+  const included = await panel(`?include=${history[1].id}&summaries=${listed.summariesVersion}`)
+  assert.deepEqual(included.missions.find(mission => mission.id === history[1].id), withHistory.missions.find(mission => mission.id === history[1].id),
+    "An included finished mission's range reads as its snapshot map")
+  assert.deepEqual((await panel(`/${history[1].id}`)).mission, withHistory.missions.find(mission => mission.id === history[1].id), "The single-mission read")
   // Probe which reads see the whole journal: a damaged entry written beside the
   // bundle (as another process would) is visible to full reads at once and to
   // the activation's index only after its next rebuild, a minute away.
@@ -769,6 +786,7 @@ try {
       const inspectedLive = await invoke("inspect", { missionID: live.id }, liveCoordinator, "history-inspect")
       assert.equal(inspectedLive.mission.id, live.id)
       assert.equal(inspectedLive.mission.controlUnavailable, undefined, "inspect reads the mission's own range, not the whole journal")
+      assert.equal((await panel()).discardedEvents, 0, "The panel list reads the hints, not the whole journal")
       const turns = requests.length
       await client.session.prompt({ sessionID: liveCoordinator, text: "History probe turn" })
       await client.session.wait({ sessionID: liveCoordinator }, { signal: AbortSignal.timeout(20_000) })
@@ -782,7 +800,7 @@ try {
   assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).discardedEvents, 0)
   assert.equal((await invoke("delegate", { ...liveTask, taskKey: "history-refused" }, liveCoordinator, "history-accepted")).disposition, "declared",
     "Only the damage refused the declaration: its authoritative gate read the entry the hints had not seen")
-  gate("finished history beyond one mission's bound: creation, declaration, readout, deletion and purge beside it; hinted reads skip it, write gates read it")
+  gate("finished history beyond one mission's bound: creation, declaration, readout, deletion and purge beside it; hinted reads and the panel list skip it, write gates read it")
   assert.equal(failures.length, 0, "Every baseline expectation must pass; collected errors are never skipped or accepted")
   receipt.status = "passed"; receipt.passCount = gates.length
   receipt.finalSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); receipt.providerRequests = requests.length

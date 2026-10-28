@@ -40,7 +40,7 @@ export function cleanupBackend() {
   const client = { ...http,
     location: { get: async ({ location }: { location: { directory: string } }) => ({ directory: location.directory, project: { id: "private-project" } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
-    rpc: () => ({ cleanupTarget: (input: any) => control.cleanupTarget(input), delete: async (input: any) => {
+    rpc: () => ({ cleanupTarget: (input: any) => control.cleanupTarget(input), mission: (input: any) => control.mission(input.missionID), delete: async (input: any) => {
       try { return await control.delete(input) } catch (error) {
         if (error instanceof MissionControlError) throw { type: "mission.rejected", message: error.message, data: { code: error.code } }
         throw error

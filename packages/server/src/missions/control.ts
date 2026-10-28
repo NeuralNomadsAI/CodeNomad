@@ -2,7 +2,8 @@ import path from "node:path"
 import { isDeepStrictEqual } from "node:util"
 import type { JsonValue, SessionMetadata } from "@opencode/client"
 
-import { MissionJournal, stableToken, type MissionStorage } from "./journal"
+import { MissionJournal, stableToken, type MissionStorage, type MissionView } from "./journal"
+import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import {
   MISSION_MAX_ACTORS,
@@ -10,7 +11,9 @@ import {
   MISSION_SCHEMA_VERSION,
   type MissionActor,
   type MissionEvent,
+  type MissionList,
   type MissionMap,
+  type MissionRead,
   type MissionReport,
   type MissionRevisedEvent,
   type MissionSnapshot,
@@ -133,6 +136,45 @@ export class MissionControl {
     }
     // Stable: equally updated maps keep the hints' snapshot order.
     return { missions: missions.sort((left, right) => right.updatedAt - left.updatedAt), controlUnavailable, notificationUnavailable }
+  }
+
+  /**
+   * The panel's read-mostly list: full maps of the open missions (`openIDs`)
+   * and of `include`, each re-read from its range, and a summary row per live
+   * map in snapshot order, those just re-read refreshed from their maps. Rows
+   * and the cleanup history are hints: a foreign write shows by the next
+   * rebuild. Summaries are omitted when `summariesVersion` already names them.
+   */
+  async list(input: { include?: readonly string[]; summariesVersion?: string } = {}): Promise<MissionList> {
+    const include = [...new Set(input.include ?? [])].slice(0, MISSION_LIST_MAX_INCLUDE)
+    const hinted = await this.journal.readHints(hints => ({ ids: [...new Set([...hints.openIDs(), ...include])],
+      aggregate: hints.aggregate(), cleanups: hints.cleanups(), summaries: hints.summaries() }))
+    const views = new Map<string, MissionView>()
+    for (const missionID of hinted.ids) views.set(missionID, await this.journal.missionView(missionID))
+    const damage = projectDamage(hinted.aggregate, [...views.values()])
+    const known = new Set(hinted.summaries.map(summary => summary.id))
+    const fresh = (missionID: string) => views.get(missionID)?.mission
+    // Stable: equally updated rows keep the hints' snapshot order.
+    const rows = [...hinted.summaries.flatMap(summary => !views.has(summary.id) ? [summary] : fresh(summary.id) ? [missionSummary(fresh(summary.id)!)] : []),
+      ...hinted.ids.flatMap(missionID => fresh(missionID) && !known.has(missionID) ? [missionSummary(fresh(missionID)!)] : [])]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+    const order = new Map(rows.map((row, index) => [row.id, index]))
+    const missions = hinted.ids.flatMap(missionID => fresh(missionID) ? [stampDamage(fresh(missionID)!, damage)] : [])
+      .sort((left, right) => order.get(left.id)! - order.get(right.id)!)
+    const summariesVersion = stableToken(JSON.stringify(rows), 32)
+    return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
+      missions, discardedEvents: hinted.aggregate.discardedEvents, cleanups: hinted.cleanups, ...damage,
+      ...(summariesVersion === input.summariesVersion ? {} : { summaries: rows }), summariesVersion }
+  }
+
+  /** One mission's range for display reconciliation, with its own cleanups and
+   * the hints' project damage flags (read-mostly: never a write's authority). */
+  async mission(missionID: string): Promise<MissionRead> {
+    const aggregate = await this.journal.readHints(hints => hints.aggregate())
+    const view = await this.journal.missionView(missionID)
+    const damage = projectDamage(aggregate, [view])
+    return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
+      ...(view.mission ? { mission: stampDamage(view.mission, damage) } : {}), cleanups: view.cleanups ?? [], ...damage }
   }
 
   /** `hintedMissions` for one session's selection: exactly `missionID`'s range, else the missions naming the session. */
@@ -1522,6 +1564,23 @@ export class MissionControl {
   private assertActive(): void {
     if (this.options.isActive && !this.options.isActive()) throw new Error("CodeNomad Missions is no longer available")
   }
+}
+
+type ProjectDamage = Pick<MissionSnapshot, "controlUnavailable" | "notificationUnavailable" | "cleanupUnavailable">
+
+/** The hints' project damage flags, plus those of ranges just read (fresher than
+ * their hints), set only when true as a snapshot sets them. */
+function projectDamage(aggregate: { controlUnavailable: boolean; notificationUnavailable: boolean; cleanupUnavailable: boolean },
+  views: readonly MissionView[]): ProjectDamage {
+  const flag = (key: keyof ProjectDamage) => aggregate[key] || views.some(view => view[key]) ? { [key]: true } : {}
+  return { ...flag("controlUnavailable"), ...flag("notificationUnavailable"), ...flag("cleanupUnavailable") }
+}
+
+/** A range's map stamped with the project damage flags, as a snapshot stamps every map. */
+function stampDamage(mission: MissionMap, damage: ProjectDamage): MissionMap {
+  if (damage.controlUnavailable) mission.controlUnavailable = true
+  if (damage.notificationUnavailable) mission.notificationUnavailable = true
+  return mission
 }
 
 function pathContains(root: string, candidate: string): boolean {

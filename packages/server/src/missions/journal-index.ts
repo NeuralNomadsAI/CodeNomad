@@ -2,6 +2,7 @@ import { compareEvents, type MissionCleanup, type MissionEvent } from "./model"
 import { orderMissionCleanups } from "./cleanup-projection"
 import { missionWorkRemains } from "../opencode/missions/lifetime"
 import type { MissionView } from "./journal"
+import { missionSummary, type MissionSummary } from "./mission-summary"
 
 /** How a mission's events name a session: its creation's coordinator or hand-off
  * author, or a task actor (independent dispatch or native binding). */
@@ -45,6 +46,8 @@ export interface MissionIndexHints {
     cleanupUnavailable: boolean; latestUpdatedAt: number }
   /** The snapshot's displayed cleanup history: every pending deletion, then the 20 newest settled. */
   cleanups(): MissionCleanup[]
+  /** One panel row per live map, in snapshot order. */
+  summaries(): MissionSummary[]
 }
 
 /** The scalars `compareEvents` reads, copied: an entry keeps no event. */
@@ -57,6 +60,7 @@ interface Entry {
   first?: OrderToken
   /** Live (non-deleted) map only. */
   updatedAt?: number
+  summary?: MissionSummary
   open: boolean
   discardedEvents: number
   controlUnavailable: boolean
@@ -227,7 +231,7 @@ function entryOf(view: MissionView): Entry | undefined {
   }
   return {
     missionID: view.missionID, refs, ...(first ? { first: { createdAt: first.createdAt, id: first.id } } : {}),
-    ...(mission ? { updatedAt: mission.updatedAt } : {}),
+    ...(mission ? { updatedAt: mission.updatedAt, summary: missionSummary(mission) } : {}),
     open: missionWorkRemains({ ...view, missions: mission ? [mission] : [] }),
     discardedEvents: view.discardedEvents, controlUnavailable: Boolean(view.controlUnavailable),
     notificationUnavailable: Boolean(view.notificationUnavailable), cleanupUnavailable: Boolean(view.cleanupUnavailable),
@@ -286,6 +290,11 @@ function hints(state: State, live: () => void): MissionIndexHints {
       // sort the full projection's tie order.
       return orderMissionCleanups(entries().filter(entry => entry.cleanups.length).sort(compareGroups)
         .flatMap(entry => entry.cleanups.map(cleanup => ({ ...cleanup, reasons: [...cleanup.reasons] }))))
+    },
+    summaries: () => {
+      live()
+      return entries().filter(entry => entry.summary).sort(compareEntries)
+        .map(({ summary }) => ({ ...summary!, actorSessionIds: [...summary!.actorSessionIds] }))
     },
   }
 }

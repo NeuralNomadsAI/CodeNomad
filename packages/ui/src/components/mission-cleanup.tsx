@@ -48,9 +48,9 @@ export function MissionCleanupPanel(props: {
     try {
       // Display data is never destructive authority. Reconcile the original
       // intent before an explicit retry, then let the native bridge revalidate.
-      const snapshot = await serverApi.fetchMissions(instanceId)
+      const snapshot = await serverApi.fetchMission(instanceId, saved.missionID)
       if (!current()) return
-      const fresh = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups?.find(item => item.deletionID === saved.deletionID
+      const fresh = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.deletionID === saved.deletionID
         && item.missionID === saved.missionID && item.requestID === saved.requestID
         && item.expectedRevision === saved.expectedRevision && item.deleteManagedSessions === saved.deleteManagedSessions)
       if (!fresh) throw new Error("Unconfirmed cleanup intent")
