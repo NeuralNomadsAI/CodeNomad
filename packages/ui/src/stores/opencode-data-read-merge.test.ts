@@ -1,6 +1,8 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { messageStoreBus } from "./message-v2/bus.ts"
+import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
+import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
 import { applyOpenCodeDataEvent, projectOpenCodeMessages } from "./opencode-data.ts"
 import { armLive, assistantRow, deltaDuring, readFixture, readTestingModel as model, readTestingSessionId as sessionId, settleSync, textOf } from "./opencode-data-read-testing.ts"
 
@@ -69,7 +71,8 @@ describe("OpenCode data read merge scenarios", () => {
         } as any)
         return { data: [assistantRow("reverted", "BASE", 50)], cursor: {} }
       }
-      return { data: authoritative, cursor: {} }
+      // Newest-first, like a native page.
+      return { data: [authoritative[1], authoritative[0]], cursor: {} }
     })
     try {
       let data = armLive(instanceId, "BASE")
@@ -80,11 +83,11 @@ describe("OpenCode data read merge scenarios", () => {
       assert.deepEqual(ids, ["live"], "the invalidated page became authoritative")
       assert.equal(textOf(data, "live"), "BASEXXX", "live text rewound by the exhausted page")
 
-      // The owed coalesced reconciliation runs once the destruction stops:
-      // history and the page's terminal tool state arrive through the fresh
-      // projection the resync publishes.
-      const deadline = Date.now() + 1000
-      while (Date.now() < deadline && reads <= 3) {
+      // The owed trailing read publishes its reconciliation: await the
+      // published page itself, not the next read starting.
+      const published = Date.now() + 2000
+      while (Date.now() < published
+        && !data.session.message.list(sessionId).some((message) => message.id === "history")) {
         await new Promise<void>((resolve) => setTimeout(resolve, 10))
       }
       data = applyOpenCodeDataEvent(instanceId, "/work", {
@@ -191,8 +194,10 @@ describe("OpenCode data read merge scenarios", () => {
         await settleSync(data.session.message.sync(sessionId), () => reads)
         const ids = data.session.message.list(sessionId).map((message) => message.id)
         // The empty and disjoint pages own their membership: only the created
-        // row rides along. The overlapping page already contains it.
+        // row rides along. The overlapping page already contains it, exactly
+        // once, with its live version.
         assert.ok(ids.includes("fresh"), `created row dropped: ${JSON.stringify(ids)}`)
+        assert.equal(ids.filter((id) => id === "fresh").length, 1, `created row duplicated: ${JSON.stringify(ids)}`)
         if (pageShape === "empty") {
           assert.deepEqual(ids, ["fresh"], `unexpected window: ${JSON.stringify(ids)}`)
         } else if (pageShape === "disjoint") {
@@ -288,8 +293,7 @@ describe("OpenCode data read merge scenarios", () => {
     try {
       // The reducer holds a wide latest page; the display navigated near the
       // live end and committed a latest window that still carries a resume
-      // cursor, with a narrower resident set.
-      const data = armLive(instanceId)
+      // cursor, with a narrower resident set installed in the display.
       const store = messageStoreBus.getOrCreate(instanceId)
       const rows = Array.from({ length: 30 }, (_, index) => {
         const id = `m${String(1300 + index).padStart(4, "0")}`
@@ -299,13 +303,23 @@ describe("OpenCode data read merge scenarios", () => {
         } as any)
         return id
       })
+      const data = armLive(instanceId)
       const resident = rows.slice(10)
-      store.addOrUpdateSession({ id: sessionId, parentId: null })
+      const residentRows = resident
+        .map((id) => data.session.message.get(sessionId, id))
+        .filter((row): row is NonNullable<typeof row> => row !== undefined)
+        .map((row) => normalizeSessionMessage(sessionId, row))
+      seedSessionMessagesV2(instanceId, { id: sessionId },
+        residentRows.map((item) => item.message),
+        new Map(residentRows.map((item) => [item.info.id, item.info])))
       store.setMessageWindow(sessionId, { kind: "latest", resumeCursor: "around", newerCursors: [] })
+      assert.ok(store.getSessionMessageIds(sessionId).length === resident.length, "resident rows were not installed")
       projectOpenCodeMessages(instanceId, sessionId, data)
       const displayed = store.getSessionMessageIds(sessionId)
       assert.ok(displayed.every((id) => resident.includes(id) || id === "live"),
         `rows above the navigated window were reinserted: ${JSON.stringify(displayed)}`)
+      assert.ok(displayed.includes("live"), "the live tail was not appended")
+      assert.ok(!displayed.includes(rows[0]), "a row above the navigated window was reinserted")
     } finally {
       f.cleanup()
     }

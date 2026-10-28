@@ -97,7 +97,7 @@ import {
 } from "./message-v2/message-window"
 import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
-import { captureOpenCodeReadMarks, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision, mergeOpenCodeLoadedPage, seedOpenCodeProjectionPage } from "./opencode-data"
+import { captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision, mergeOpenCodeLoadedPage, seedOpenCodeProjectionPage } from "./opencode-data"
 
 const log = getLogger("api")
 const sessionLog = getLogger("session")
@@ -1630,7 +1630,7 @@ async function loadMessages(
   const historyAuthority = messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId))
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const mutationRevision = getOpenCodeMutationRevision(instanceId, sessionId)
-  const readMarkSnapshot = captureOpenCodeReadMarks(instanceId, sessionId)
+  const readMarkSnapshot = captureOpenCodeRowSnapshot(instanceId, sessionId)
   const ownsLoadState = () => instances().get(instanceId)?.client === instanceClient
     && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
     && sessions().get(instanceId)?.has(sessionId) === true
@@ -1883,7 +1883,7 @@ async function loadMessages(
           // The reducer projection needs the same base, or later streaming
           // deltas reduce against rows it never held and the loaded messages
           // freeze at their snapshot text.
-          seedOpenCodeProjectionPage(instanceId, sessionId, session.location.directory, apiMessages)
+          seedOpenCodeProjectionPage(instanceId, sessionId, session.location.directory, apiMessages, readMarkSnapshot)
         }
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
         commitCurrentWindow(nextWindow, intent)

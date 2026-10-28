@@ -27,70 +27,76 @@ function apiMessage(id: string) {
 }
 
 describe("session-api running-session open", () => {
-  it("seeds an initial transcript page while the session keeps streaming", async () => {
-    const instanceId = "session-api-running-open"
-    const sessionId = "session"
-    const originalFetchWorktrees = serverApi.fetchWorktrees
-    serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
-      { slug: "root", directory: "/work", kind: "root" },
-    ] })
-    const client: any = { session: { active: async () => ({}) } }
-    ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
-    addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
-    setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
-    let reads = 0
-    client.message = {
-      list: async () => {
-        reads += 1
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        // A streaming event lands inside every fetch window: the session is
-        // mid-generation and its start event was never admitted (UI restart).
+  for (const preArmed of [true, false]) {
+    it(`seeds an initial transcript page while the session keeps streaming (${preArmed ? "reducer already holds the base" : "missed the start event"})`, async () => {
+      const instanceId = `session-api-running-open-${preArmed ? "warm" : "cold"}`
+      const sessionId = "session"
+      const originalFetchWorktrees = serverApi.fetchWorktrees
+      serverApi.fetchWorktrees = async () => ({ isGitRepo: true, worktrees: [
+        { slug: "root", directory: "/work", kind: "root" },
+      ] })
+      const client: any = { session: { active: async () => ({}) } }
+      ;(sdkManager as any).clients.set(`${instanceId}:/workspaces/${instanceId}/instance`, client)
+      addInstance({ id: instanceId, folder: "/work", port: 0, pid: 0, proxyPath: "", status: "ready", client })
+      setSessions((previous) => new Map(previous).set(instanceId, new Map([[sessionId, session(instanceId, sessionId)]])))
+      let reads = 0
+      client.message = {
+        list: async () => {
+          reads += 1
+          await new Promise<void>((resolve) => setImmediate(resolve))
+          // A streaming event lands inside every fetch window: the session is
+          // mid-generation and its start event may never have been admitted.
+          applyOpenCodeDataEvent(instanceId, "/work", {
+            id: `delta-${reads}`, type: "session.text.delta", created: 1000 + reads,
+            data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "X" },
+          } as any)
+          return { data: [apiMessage("msg_1")], cursor: {} }
+        },
+      }
+      if (preArmed) {
+        // The reducer already holds the running message's base text.
         applyOpenCodeDataEvent(instanceId, "/work", {
-          id: `delta-${reads}`, type: "session.text.delta", created: 1000 + reads,
-          data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "X" },
+          id: "arm-step", type: "session.step.started", created: 1,
+          data: { sessionID: sessionId, assistantMessageID: "msg_1", agent: "build", model: { providerID: "provider", id: "model" } },
         } as any)
-        return { data: [apiMessage("msg_1")], cursor: {} }
-      },
-    }
-    // The reducer already holds the running message's base text.
-    applyOpenCodeDataEvent(instanceId, "/work", {
-      id: "arm-step", type: "session.step.started", created: 1,
-      data: { sessionID: sessionId, assistantMessageID: "msg_1", agent: "build", model: { providerID: "provider", id: "model" } },
-    } as any)
-    applyOpenCodeDataEvent(instanceId, "/work", {
-      id: "arm-text", type: "session.text.started", created: 2, data: { sessionID: sessionId, assistantMessageID: "msg_1" },
-    } as any)
-    applyOpenCodeDataEvent(instanceId, "/work", {
-      id: "arm-base", type: "session.text.delta", created: 3,
-      data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "BASE" },
-    } as any)
-    try {
-      await loadMessages(instanceId, sessionId)
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: "arm-text", type: "session.text.started", created: 2, data: { sessionID: sessionId, assistantMessageID: "msg_1" },
+        } as any)
+        applyOpenCodeDataEvent(instanceId, "/work", {
+          id: "arm-base", type: "session.text.delta", created: 3,
+          data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "BASE" },
+        } as any)
+      }
+      try {
+        await loadMessages(instanceId, sessionId)
 
-      assert.ok(!getSessionMessagesLoadError(instanceId, sessionId), "a load error was set for a running session")
-      assert.ok(messagesLoaded().get(instanceId)?.has(sessionId))
-      assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["msg_1"])
-      assert.ok(reads <= 5, `message.list was issued ${reads} times for the initial open`)
+        assert.ok(!getSessionMessagesLoadError(instanceId, sessionId), "a load error was set for a running session")
+        assert.ok(messagesLoaded().get(instanceId)?.has(sessionId))
+        assert.deepEqual(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId), ["msg_1"])
+        assert.ok(reads <= 5, `message.list was issued ${reads} times for the initial open`)
 
-      // The reducer projection holds the same merged base (its in-window
-      // "X" kept its live version), so streaming keeps updating the loaded
-      // message: a later "Y" lands on "BASEX", not on the page's "BASE".
-      const data = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "tail", type: "session.text.delta", created: 5000,
-        data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "Y" },
-      } as any)
-      assert.ok(data.session.message.get(sessionId, "msg_1"), "the projection never held the loaded page")
-      projectOpenCodeMessages(instanceId, sessionId, data)
-      const record = messageStoreBus.getOrCreate(instanceId).getMessage("msg_1")
-      const texts = Object.values(record?.parts ?? {}).map((part: any) => String(part.data?.text ?? ""))
-      assert.ok(texts.some((text) => text.includes("BASEXY")), `streaming froze or rewound after the initial seed: ${JSON.stringify(texts)}`)
-    } finally {
-      serverApi.fetchWorktrees = originalFetchWorktrees
-      destroyOpenCodeData(instanceId)
-      messageStoreBus.unregisterInstance(instanceId)
-      setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
-      removeInstance(instanceId, { authoritative: false })
-      sdkManager.destroyClientsForInstance(instanceId)
-    }
-  })
+        // The reducer projection holds the same merged base (its in-window
+        // "X" kept its live version when the base predated the fetch), so
+        // streaming keeps updating the loaded message instead of freezing or
+        // rewinding it.
+        const data = applyOpenCodeDataEvent(instanceId, "/work", {
+          id: "tail", type: "session.text.delta", created: 5000,
+          data: { sessionID: sessionId, assistantMessageID: "msg_1", ordinal: 0, delta: "Y" },
+        } as any)
+        assert.ok(data.session.message.get(sessionId, "msg_1"), "the projection never held the loaded page")
+        projectOpenCodeMessages(instanceId, sessionId, data)
+        const record = messageStoreBus.getOrCreate(instanceId).getMessage("msg_1")
+        const texts = Object.values(record?.parts ?? {}).map((part: any) => String(part.data?.text ?? ""))
+        assert.ok(texts.some((text) => text.includes(preArmed ? "BASEXY" : "BASEY")),
+          `streaming froze or rewound after the initial seed: ${JSON.stringify(texts)}`)
+      } finally {
+        serverApi.fetchWorktrees = originalFetchWorktrees
+        destroyOpenCodeData(instanceId)
+        messageStoreBus.unregisterInstance(instanceId)
+        setSessions((previous) => { const next = new Map(previous); next.delete(instanceId); return next })
+        removeInstance(instanceId, { authoritative: false })
+        sdkManager.destroyClientsForInstance(instanceId)
+      }
+    })
+  }
 })
