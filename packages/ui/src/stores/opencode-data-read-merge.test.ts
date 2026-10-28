@@ -1,353 +1,131 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { messageStoreBus } from "./message-v2/bus.ts"
-import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
-import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
-import { applyOpenCodeDataEvent, projectOpenCodeMessages } from "./opencode-data.ts"
-import { armLive, assistantRow, deltaDuring, readFixture, readTestingModel as model, readTestingSessionId as sessionId, settleSync, textOf } from "./opencode-data-read-testing.ts"
+import type { SessionMessageInfo } from "@opencode/client"
+import { mergePageWithSnapshot, snapshotRows } from "./opencode-data-read-merge.ts"
+import {
+  armLive, assistantRow, delta, emitEvent, readFixture, readTestingModel as model,
+  readTestingSessionId as sessionId, settleSync, textOf,
+} from "./opencode-data-read-testing.ts"
 
-const toolStateOf = (data: ReturnType<typeof applyOpenCodeDataEvent>, messageId: string) => {
-  const row: any = data.session.message.get(sessionId, messageId)
-  return (row?.content?.find((part: any) => part.type === "tool")?.state as any)?.status
+const row = (id: string, text: string, completed?: number) =>
+  ({ ...assistantRow(id, text), time: { created: 100, ...(completed === undefined ? {} : { completed }) } }) as unknown as SessionMessageInfo
+
+/** Runs one reducer message sync whose fetches call `during` before answering `page(read)`. */
+async function syncWith(instanceId: string, arm: () => void, during: (read: number) => void, page: (read: number) => unknown[]) {
+  let reads = 0
+  const f = readFixture(instanceId, async () => {
+    reads += 1
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    during(reads)
+    return { data: page(reads), cursor: {} }
+  })
+  const data = armLive(instanceId)
+  arm()
+  data.session.message.invalidate(sessionId)
+  try {
+    await settleSync(data.session.message.sync(sessionId), () => reads)
+  } catch (error) {
+    f.cleanup()
+    throw error
+  }
+  return { data, reads: () => reads, ids: () => data.session.message.list(sessionId).map((message) => message.id), cleanup: f.cleanup }
 }
 
-describe("OpenCode data read merge scenarios", () => {
-  for (const revertOnRead of [1, 2, 3]) {
-    it(`never republishes a revert that lands during read ${revertOnRead}`, async () => {
-      const instanceId = `opencode-merge-revert-${revertOnRead}`
-      let reads = 0
-      const f = readFixture(instanceId, async () => {
-        reads += 1
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        deltaDuring(instanceId, reads)
-        if (reads < revertOnRead) {
-          // Keep the read contended without removing anything.
-          applyOpenCodeDataEvent(instanceId, "/work", {
-            id: `hold-${reads}`, type: "session.revert.committed", created: 3000 + reads,
-            data: { sessionID: sessionId, to: `zzz-${reads}` },
-          } as any)
-        }
-        if (reads === revertOnRead) {
-          applyOpenCodeDataEvent(instanceId, "/work", {
-            id: "revert", type: "session.revert.committed", created: 2000,
-            data: { sessionID: sessionId, to: "reverted" },
-          } as any)
-        }
-        return { data: reads <= revertOnRead ? [assistantRow("reverted", "gone", 50), assistantRow("live", "base", 100)] : [], cursor: {} }
-      })
-      try {
-        const data = armLive(instanceId)
-        data.session.message.invalidate(sessionId)
-        await settleSync(data.session.message.sync(sessionId), () => reads)
-        const ids = data.session.message.list(sessionId).map((message) => message.id)
-        assert.ok(!ids.includes("reverted"), `reverted row republished: ${JSON.stringify(ids)}`)
-        assert.ok(reads <= 5, `${reads} reads for one revert`)
-      } finally {
-        f.cleanup()
-      }
-    })
-  }
-
-  it("answers with live rows alone when destructive events outlast the attempts", async () => {
-    const instanceId = "opencode-merge-exhausted"
-    let reads = 0
-    let suffix = 0
-    const authoritative = [assistantRow("history", "settled", 10), {
-      id: "live", type: "assistant", agent: "build", model, time: { created: 100, completed: 400 },
-      content: [{ type: "text", text: "BASEXXX" }, {
-        type: "tool", id: "tool", name: "bash", time: { created: 2, ran: 3, completed: 4 },
-        state: { status: "completed", input: {}, metadata: {}, content: [] },
-      }],
-    }]
-    const f = readFixture(instanceId, async () => {
-      reads += 1
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      if (reads <= 3) {
-        // Every window both streams and removes: the page can never win.
-        deltaDuring(instanceId, reads)
-        applyOpenCodeDataEvent(instanceId, "/work", {
-          id: `revert-${reads}`, type: "session.revert.committed", created: 3000 + reads,
-          data: { sessionID: sessionId, to: `zzz-${suffix++}` },
-        } as any)
-        return { data: [assistantRow("reverted", "BASE", 50)], cursor: {} }
-      }
-      // Newest-first, like a native page.
-      return { data: [authoritative[1], authoritative[0]], cursor: {} }
-    })
-    try {
-      let data = armLive(instanceId, "BASE")
-      data.session.message.invalidate(sessionId)
-      await settleSync(data.session.message.sync(sessionId), () => reads)
-      assert.ok(reads <= 4, `${reads} reads before giving up on the page`)
-      let ids = data.session.message.list(sessionId).map((message) => message.id)
-      assert.deepEqual(ids, ["live"], "the invalidated page became authoritative")
-      assert.equal(textOf(data, "live"), "BASEXXX", "live text rewound by the exhausted page")
-
-      // The owed trailing read publishes its reconciliation while streaming
-      // keeps reducing — every delta lands on the reducer the moment it
-      // arrives, unlike the dropping mode.
-      const owed = Date.now() + 2000
-      let owedDeltas = 0
-      while (Date.now() < owed
-        && !data.session.message.list(sessionId).some((message) => message.id === "history")) {
-        owedDeltas += 1
-        deltaDuring(instanceId, 500 + owedDeltas, "D")
-        assert.ok(textOf(data, "live").endsWith("D".repeat(owedDeltas)),
-          `streaming was dropped while the reconciliation was owed (${owedDeltas} deltas): ${textOf(data, "live")}`)
-        await new Promise<void>((resolve) => setTimeout(resolve, 10))
-      }
-      assert.ok(owedDeltas > 0, "the reconciliation owed no streaming period")
-      assert.ok(
-        data.session.message.list(sessionId).some((message) => message.id === "history"),
-        "the owed reconciliation never published",
-      )
-
-      // Streaming stopped: when the published answer still kept live versions
-      // of resident rows the debt survives, and the follow-up trailing read
-      // converges — the reconciled terminal tool state reaches the display.
-      const converged = Date.now() + 2000
-      for (;;) {
-        const record = messageStoreBus.getOrCreate(instanceId).getMessage("live")
-        const toolPart = Object.values(record?.parts ?? {}).map((part: any) => part.data).find((part: any) => part.type === "tool")
-        if ((toolPart as any)?.state?.status === "completed" || Date.now() >= converged) break
-        await new Promise<void>((resolve) => setTimeout(resolve, 10))
-      }
-      const record = messageStoreBus.getOrCreate(instanceId).getMessage("live")
-      const toolPart = Object.values(record?.parts ?? {}).map((part: any) => part.data).find((part: any) => part.type === "tool")
-      assert.equal((toolPart as any)?.state?.status, "completed", "the reconciliation never reached the display")
-      data = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "quiet-delta", type: "session.text.delta", created: 5000,
-        data: { sessionID: sessionId, assistantMessageID: "live", ordinal: 0, delta: "." },
-      } as any)
-      ids = data.session.message.list(sessionId).map((message) => message.id)
-      assert.ok(ids.includes("history"), `reconciliation omitted history: ${JSON.stringify(ids)}`)
-      const tool = (data.session.message.get(sessionId, "live") as any)?.content?.find((part: any) => part.type === "tool")
-      assert.equal(tool?.state?.status, "completed", "the reconciled terminal tool state was dropped")
-      assert.ok(reads <= 8, `${reads} reads including the reconciliation`)
-    } finally {
-      f.cleanup()
-    }
-  })
-
-  it("keeps a cancelled inbox message gone", async () => {
-    const instanceId = "opencode-merge-cancelled"
-    let reads = 0
-    const f = readFixture(instanceId, async () => {
-      reads += 1
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      if (reads === 1) {
-        applyOpenCodeDataEvent(instanceId, "/work", {
-          id: "cancel", type: "session.inbox.cancelled", created: 2000,
-          data: { sessionID: sessionId, inboxID: "queued" },
-        } as any)
-        return { data: [assistantRow("queued", "cancelled", 40)], cursor: {} }
-      }
-      return { data: [], cursor: {} }
-    })
-    try {
-      applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "enqueue", type: "session.inbox.enqueued", created: 1,
-        data: { sessionID: sessionId, inboxID: "queued", item: { type: "user", payload: { text: "cancel me" }, delivery: "queue" } },
-      } as any)
-      const data = armLive(instanceId)
-      data.session.message.invalidate(sessionId)
-      await settleSync(data.session.message.sync(sessionId), () => reads)
-      const ids = data.session.message.list(sessionId).map((message) => message.id)
-      assert.ok(!ids.includes("queued"), `cancelled inbox message republished: ${JSON.stringify(ids)}`)
-    } finally {
-      f.cleanup()
-    }
-  })
-
-  it("keeps a terminal tool state that an event delivered inside the window", async () => {
-    const instanceId = "opencode-merge-tool-terminal"
-    let reads = 0
-    const runningToolPage = [{
-      id: "live", type: "assistant", agent: "build", model, time: { created: 100 },
-      content: [{ type: "tool", id: "tool", name: "bash", time: { created: 2 },
-        state: { status: "running", input: {}, metadata: {} } }],
-    }]
-    const f = readFixture(instanceId, async () => {
-      reads += 1
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "success", type: "session.tool.success", created: 2000,
-        data: { sessionID: sessionId, assistantMessageID: "live", id: "tool",
-          content: [{ type: "text", text: "done" }], metadata: {} },
-      } as any)
-      return { data: runningToolPage, cursor: {} }
-    })
-    try {
-      let data = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "step", type: "session.step.started", created: 1,
-        data: { sessionID: sessionId, assistantMessageID: "live", agent: "build", model },
-      } as any)
-      data = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "tool", type: "session.tool.input.started", created: 2,
-        data: { sessionID: sessionId, assistantMessageID: "live", id: "tool", name: "bash" },
-      } as any)
-      data = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "called", type: "session.tool.called", created: 3,
-        data: { sessionID: sessionId, assistantMessageID: "live", id: "tool", input: {} },
-      } as any)
-      data.session.message.invalidate(sessionId)
-      await settleSync(data.session.message.sync(sessionId), () => reads)
-      assert.equal(toolStateOf(data, "live"), "completed", "the page rewound the tool to running")
-    } finally {
-      f.cleanup()
-    }
+describe("OpenCode data read merge", () => {
+  it("keeps changed live rows, takes the page for rows changed only by a step boundary, adds created rows", () => {
+    const stamped = row("stamped", "page")
+    const streamed = row("streamed", "base")
+    const since = snapshotRows([stamped, streamed])
+    const live = [row("stamped", "page", 7), row("streamed", "base more"), row("created", "new"), row("newer", "new")]
+    const page = [row("streamed", "base m"), row("stamped", "page", 9)]
+    const merged = mergePageWithSnapshot(live, page, since)
+    assert.deepEqual(merged.map((message) => message.id), ["newer", "created", "streamed", "stamped"])
+    assert.equal(merged[2], live[1], "a changed live row keeps its live version")
+    assert.equal(merged[3], page[1], "a row whose only change is time.completed takes the page's terminal state")
   })
 
   for (const pageShape of ["empty", "disjoint", "overlapping"] as const) {
-    it(`keeps a row the stream created during the fetch, with a ${pageShape} page`, async () => {
-      const instanceId = `opencode-merge-create-${pageShape}`
-      let reads = 0
-      const f = readFixture(instanceId, async () => {
-        reads += 1
-        await new Promise<void>((resolve) => setImmediate(resolve))
-        applyOpenCodeDataEvent(instanceId, "/work", {
-          id: `fresh-${reads}`, type: "session.step.started", created: 500 + reads,
-          data: { sessionID: sessionId, assistantMessageID: "fresh", agent: "build", model },
-        } as any)
-        if (pageShape === "empty") return { data: [], cursor: {} }
-        if (pageShape === "disjoint") return { data: [assistantRow("unrelated", "x", 900)], cursor: {} }
-        return { data: [assistantRow("fresh", "page-snapshot", 500)], cursor: {} }
-      })
+    it(`keeps a row the stream created during the fetch exactly once, with a ${pageShape} page`, async () => {
+      const r = await syncWith(`opencode-merge-create-${pageShape}`, () => {}, () => {
+        emitEvent(`opencode-merge-create-${pageShape}`, "session.step.started", { assistantMessageID: "fresh", agent: "build", model, started: 500 })
+      }, () => pageShape === "empty" ? []
+        : pageShape === "disjoint" ? [assistantRow("unrelated", "x", 900)]
+          : [assistantRow("fresh", "page-snapshot", 500)])
       try {
-        const data = armLive(instanceId)
-        data.session.message.invalidate(sessionId)
-        await settleSync(data.session.message.sync(sessionId), () => reads)
-        const ids = data.session.message.list(sessionId).map((message) => message.id)
-        // The empty and disjoint pages own their membership: only the created
-        // row rides along. The overlapping page already contains it, exactly
-        // once, with its live version.
-        assert.ok(ids.includes("fresh"), `created row dropped: ${JSON.stringify(ids)}`)
-        assert.equal(ids.filter((id) => id === "fresh").length, 1, `created row duplicated: ${JSON.stringify(ids)}`)
-        if (pageShape === "empty") {
-          assert.deepEqual(ids, ["fresh"], `unexpected window: ${JSON.stringify(ids)}`)
-        } else if (pageShape === "disjoint") {
-          assert.deepEqual(ids, ["unrelated", "fresh"], `unexpected window: ${JSON.stringify(ids)}`)
-        }
-      } finally {
-        f.cleanup()
-      }
+        assert.equal(r.reads(), 1)
+        assert.deepEqual(r.ids(), pageShape === "disjoint" ? ["unrelated", "fresh"] : ["fresh"])
+        if (pageShape === "overlapping") assert.equal(textOf(r.data, "fresh"), "", "the created row lost its live version")
+      } finally { r.cleanup() }
     })
   }
 
-  it("drops a stale resident row the fetched page no longer has", async () => {
+  it("keeps a terminal tool state an event delivered during the fetch", async () => {
+    const instanceId = "opencode-merge-tool-terminal"
+    const live = { assistantMessageID: "live", id: "tool" }
+    const r = await syncWith(instanceId, () => {
+      emitEvent(instanceId, "session.tool.input.started", { ...live, name: "bash" })
+      emitEvent(instanceId, "session.tool.called", { ...live, input: {} })
+    }, () => {
+      emitEvent(instanceId, "session.tool.success", { ...live, content: [{ type: "text", text: "done" }], metadata: {} })
+    }, () => [{ ...assistantRow("live", "base"), content: [{ type: "text", text: "base" }, {
+      type: "tool", id: "tool", name: "bash", time: { created: 2 }, state: { status: "running", input: {}, metadata: {} },
+    }] }])
+    try {
+      const tool = (r.data.session.message.get(sessionId, "live") as any)?.content?.find((part: any) => part.type === "tool")
+      assert.equal(tool?.state?.status, "completed", "the page rewound the tool to running")
+    } finally { r.cleanup() }
+  })
+
+  it("keeps a shell exit and a synthetic row created during the fetch", async () => {
+    const instanceId = "opencode-merge-shell-synthetic"
+    const r = await syncWith(instanceId, () => {}, () => {
+      emitEvent(instanceId, "session.shell.started", { shell: { id: "sh1", command: "watch", status: "running", metadata: {} } }, "evt_shell1")
+      emitEvent(instanceId, "session.shell.ended", { shell: { id: "sh1", status: "exited", exit: 0 }, output: "done" })
+      emitEvent(instanceId, "session.synthetic", { text: "context", description: "ctx" }, "evt_syn1")
+    }, () => [{ id: "msg_shell1", type: "shell", shellID: "sh1", command: "watch", status: "running", time: { created: 10 } }])
+    try {
+      assert.deepEqual(r.ids(), ["msg_shell1", "msg_syn1"])
+      const shell = r.data.session.message.get(sessionId, "msg_shell1") as any
+      assert.equal(shell?.status, "exited", "the page rewound the shell to running")
+      assert.equal(shell?.output, "done", "the shell's output was dropped")
+    } finally { r.cleanup() }
+  })
+
+  it("drops a resident row the fetched page no longer has", async () => {
     const instanceId = "opencode-merge-stale-row"
-    let reads = 0
-    const f = readFixture(instanceId, async () => {
-      reads += 1
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      return { data: [assistantRow("live", "base", 100)], cursor: {} }
+    const r = await syncWith(instanceId, () => {
+      emitEvent(instanceId, "session.step.started", { assistantMessageID: "stale", agent: "build", model, started: 90 })
+    }, () => {}, () => [assistantRow("live", "base")])
+    try {
+      assert.deepEqual(r.ids(), ["live"])
+    } finally { r.cleanup() }
+  })
+
+  for (const kind of ["revert", "cancel"] as const) {
+    it(`restarts a read a ${kind} lands in, without resurrecting the removed row`, async () => {
+      const instanceId = `opencode-merge-destructive-${kind}`
+      const r = await syncWith(instanceId, () => {}, (read) => {
+        // Streaming continues in every fetch; the row is created and removed
+        // inside the first one, whose page still contains it.
+        delta(instanceId)
+        if (read !== 1) return
+        if (kind === "revert") {
+          emitEvent(instanceId, "session.step.started", { assistantMessageID: "removed", agent: "build", model, started: 200 })
+          emitEvent(instanceId, "session.revert.committed", { to: "removed" })
+        } else {
+          emitEvent(instanceId, "session.inbox.enqueued", {
+            inboxID: "removed", item: { type: "user", payload: { text: "cancel me" }, delivery: "queue" },
+          })
+          emitEvent(instanceId, "session.inbox.cancelled", { inboxID: "removed" })
+        }
+      }, (read) => read === 1
+        ? [assistantRow("removed", "stale", 200), assistantRow("live", "base")]
+        : [assistantRow("live", "base")])
+      try {
+        assert.equal(r.reads(), 2, "the destructive event did not restart the read")
+        assert.deepEqual(r.ids(), ["live"], "the removed row resurrected")
+        assert.equal(textOf(r.data, "live"), "baseXX", "the restarted read rewound streamed text")
+      } finally { r.cleanup() }
     })
-    try {
-      let data = armLive(instanceId)
-      data = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "stale", type: "session.step.started", created: 90,
-        data: { sessionID: sessionId, assistantMessageID: "stale", agent: "build", model },
-      } as any)
-      data.session.message.invalidate(sessionId)
-      await settleSync(data.session.message.sync(sessionId), () => reads)
-      const ids = data.session.message.list(sessionId).map((message) => message.id)
-      assert.deepEqual(ids, ["live"], `stale row survived: ${JSON.stringify(ids)}`)
-    } finally {
-      f.cleanup()
-    }
-  })
-
-  it("keeps a shell exit that an event delivered inside the window", async () => {
-    const instanceId = "opencode-merge-shell-exit"
-    let reads = 0
-    const runningShellPage = [{
-      id: "msg_shell1", type: "shell", shellID: "sh1", command: "watch", status: "running",
-      time: { created: 10 },
-    }]
-    const f = readFixture(instanceId, async () => {
-      reads += 1
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "shell-end", type: "session.shell.ended", created: 2000,
-        data: { sessionID: sessionId, shell: { id: "sh1", status: "exited", exit: 0 }, output: "done" },
-      } as any)
-      return { data: runningShellPage, cursor: {} }
-    })
-    try {
-      const data = applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "evt_shell1", type: "session.shell.started", created: 1,
-        data: { sessionID: sessionId, shell: { id: "sh1", command: "watch", status: "running", metadata: {} } },
-      } as any)
-      assert.ok(data.session.message.get(sessionId, "msg_shell1"), "the shell row was not armed")
-      data.session.message.invalidate(sessionId)
-      await settleSync(data.session.message.sync(sessionId), () => reads)
-      const row = data.session.message.get(sessionId, "msg_shell1") as any
-      assert.equal(row?.status, "exited", "the page rewound the shell to running")
-      assert.equal(row?.output, "done", "the shell's output was dropped")
-    } finally {
-      f.cleanup()
-    }
-  })
-
-  it("keeps a synthetic row created inside the window", async () => {
-    const instanceId = "opencode-merge-synthetic"
-    let reads = 0
-    const f = readFixture(instanceId, async () => {
-      reads += 1
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      applyOpenCodeDataEvent(instanceId, "/work", {
-        id: "evt_syn1", type: "session.synthetic", created: 2000,
-        data: { sessionID: sessionId, text: "context", description: "ctx" },
-      } as any)
-      return { data: [], cursor: {} }
-    })
-    try {
-      const data = armLive(instanceId)
-      data.session.message.invalidate(sessionId)
-      await settleSync(data.session.message.sync(sessionId), () => reads)
-      const ids = data.session.message.list(sessionId).map((message) => message.id)
-      assert.deepEqual(ids, ["msg_syn1"], `synthetic row dropped: ${JSON.stringify(ids)}`)
-    } finally {
-      f.cleanup()
-    }
-  })
-
-  it("keeps a latest window with a resume cursor navigated", async () => {
-    const instanceId = "opencode-merge-navigated-latest"
-    const f = readFixture(instanceId, async () => ({ data: [], cursor: {} }))
-    try {
-      // The reducer holds a wide latest page; the display navigated near the
-      // live end and committed a latest window that still carries a resume
-      // cursor, with a narrower resident set installed in the display.
-      const store = messageStoreBus.getOrCreate(instanceId)
-      const rows = Array.from({ length: 30 }, (_, index) => {
-        const id = `m${String(1300 + index).padStart(4, "0")}`
-        applyOpenCodeDataEvent(instanceId, "/work", {
-          id: `seed-${id}`, type: "session.step.started", created: 1300 + index,
-          data: { sessionID: sessionId, assistantMessageID: id, agent: "build", model },
-        } as any)
-        return id
-      })
-      const data = armLive(instanceId)
-      const resident = rows.slice(10)
-      const residentRows = resident
-        .map((id) => data.session.message.get(sessionId, id))
-        .filter((row): row is NonNullable<typeof row> => row !== undefined)
-        .map((row) => normalizeSessionMessage(sessionId, row))
-      seedSessionMessagesV2(instanceId, { id: sessionId },
-        residentRows.map((item) => item.message),
-        new Map(residentRows.map((item) => [item.info.id, item.info])))
-      store.setMessageWindow(sessionId, { kind: "latest", resumeCursor: "around", newerCursors: [] })
-      assert.ok(store.getSessionMessageIds(sessionId).length === resident.length, "resident rows were not installed")
-      projectOpenCodeMessages(instanceId, sessionId, data)
-      const displayed = store.getSessionMessageIds(sessionId)
-      assert.ok(displayed.every((id) => resident.includes(id) || id === "live"),
-        `rows above the navigated window were reinserted: ${JSON.stringify(displayed)}`)
-      assert.ok(displayed.includes("live"), "the live tail was not appended")
-      assert.ok(!displayed.includes(rows[0]), "a row above the navigated window was reinserted")
-    } finally {
-      f.cleanup()
-    }
-  })
-
+  }
 })

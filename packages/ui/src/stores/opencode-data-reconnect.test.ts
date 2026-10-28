@@ -164,7 +164,7 @@ async function converge(ctx: TestContext, done: () => boolean) {
   }
 }
 
-test("a message.list read never publishes an obsolete page while stream events keep arriving", async ctx => {
+test("a message.list read completes while stream events keep arriving, without rewinding them", async ctx => {
   ctx.mock.timers.enable({ apis: ["setTimeout"] })
   const f = fixture("reconnect-race")
   try {
@@ -185,31 +185,30 @@ test("a message.list read never publishes an obsolete page while stream events k
     f.data().session.message.sync(sessionId).then(() => { syncSettled = true }).catch(() => undefined)
     await converge(ctx, () => control.calls === 1 && control.pending())
 
-    // An arrival lands before the in-flight read returns: streamed events do
-    // not restart the read — the answer keeps every projected message's live
-    // version, so the authoritative page cannot rewind streamed text, and the
-    // read finishes in one round trip however long the stream lasts.
-    f.delta("x0 ")
+    // Ten arrivals land before the in-flight read returns: none restarts it,
+    // and the streamed message keeps its live version over the older page.
+    for (let round = 0; round < 10; round++) f.delta(`x${round} `)
+    const streamed = "seed probe " + Array.from({ length: 10 }, (_, round) => `x${round} `).join("")
     control.settle()
-    await microtasks()
-    ctx.mock.timers.tick(0)
-    await microtasks()
-    assert.ok(!control.pending(), "the read completed mid-stream")
-    assert.equal(control.calls, 1)
-    await converge(ctx, () => syncSettled === true)
-    assert.ok(syncSettled, "the sync promise settled")
-    await converge(ctx, () => f.sdkText() === "seed probe x0 ")
-    assert.equal(f.sdkText(), "seed probe x0 ", "streamed text survived the read")
+    await converge(ctx, () => syncSettled)
+    assert.ok(syncSettled, "the read completed mid-stream")
+    assert.equal(control.calls, 1, "stream events restarted the read")
+    assert.equal(f.sdkText(), streamed, "the page rewound streamed text")
 
-    // Deltas keep reducing afterwards; a read that finished quickly can leave
-    // the replay queue still draining, so the fast path resumes once it has.
-    f.delta("x1 ")
-    await converge(ctx, () => f.sdkText() === "seed probe x0 x1 ")
-    assert.equal(f.sdkText(), "seed probe x0 x1 ")
+    // Arrivals continue on the accepted page.
+    f.delta("after ")
+    await converge(ctx, () => f.sdkText() === `${streamed}after `)
+    assert.equal(f.sdkText(), `${streamed}after `)
 
-    // Authoritative reconciliation after a disconnect runs through a fresh
-    // projection (the reconnect resync), where the page has no live rows to
-    // merge over; the mid-stream reconnect tests cover that publication.
+    // A quiet read publishes the authoritative page.
+    f.data().session.message.invalidate(sessionId)
+    syncSettled = false
+    f.data().session.message.sync(sessionId).then(() => { syncSettled = true }).catch(() => undefined)
+    await converge(ctx, () => control.calls === 2 && control.pending())
+    control.settle()
+    await converge(ctx, () => syncSettled)
+    assert.equal(control.calls, 2)
+    assert.equal(f.sdkText(), f.authoritativeText())
   } finally { f.cleanup() }
 })
 

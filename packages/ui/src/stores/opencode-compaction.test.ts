@@ -118,7 +118,7 @@ test("same session IDs in distinct instances keep separate buffers and flush aut
   } finally { first.cleanup(); second.cleanup() }
 })
 
-test("SDK history reads flush pending chunks and reject a pre-delta page without duplication", async () => {
+test("SDK history reads flush pending chunks around the fetch and keep a streaming summary without duplication", async () => {
   const instanceId = "compaction-native-read"
   const previous = sseManager.getStatuses
   sseManager.getStatuses = () => new Map([[instanceId, "connected"]])
@@ -134,17 +134,15 @@ test("SDK history reads flush pending chunks and reject a pre-delta page without
     assert.equal(replies.length, 1)
     f.delta("A")
     replies[0](page(""))
-    await new Promise(resolve => setImmediate(resolve))
-    assert.equal(replies.length, 2, "admitted buffered delta fences stale SDK read")
-    replies[1](page("A"))
     await read
-    assert.equal(f.summary(), "A", "authoritative page must not double-append buffered text")
+    assert.equal(replies.length, 1, "a streaming summary must not restart the read")
+    assert.equal(f.summary(), "A", "the pre-delta page must neither rewind nor double-append buffered text")
     f.delta("B")
     data.session.message.invalidate("s")
     const nextRead = data.session.message.sync("s")
     await new Promise(resolve => setImmediate(resolve))
     assert.equal(f.summary(), "AB", "pending text is reduced before a new native read")
-    replies[2](page("AB"))
+    replies[1](page("AB"))
     await nextRead
     assert.equal(f.summary(), "AB")
     assert.equal(f.projections(), 2)

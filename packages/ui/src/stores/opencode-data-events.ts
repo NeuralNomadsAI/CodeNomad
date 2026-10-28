@@ -105,6 +105,18 @@ export function eventAffectsMessages(event: OpenCodeEvent): boolean {
   }
 }
 
+/** Events that remove or replace message content: a page fetched before
+ * them is obsolete. Streamed text, reasoning, tool progress, compaction text
+ * and new rows only extend it. */
+export function invalidatesFetchedPage(type: OpenCodeEvent["type"]): boolean {
+  return type === "session.deleted"
+    || type === "session.revert.committed"
+    || type === "session.inbox.cancelled"
+    || type === "session.compaction.started"
+    || type === "session.compaction.ended"
+    || type === "session.compaction.failed"
+}
+
 /** The session a native event belongs to, if any. */
 export function eventSessionId(event: OpenCodeEvent): string | undefined {
   const sessionId = (event as { data?: { sessionID?: unknown } }).data?.sessionID

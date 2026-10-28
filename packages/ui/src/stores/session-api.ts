@@ -97,7 +97,10 @@ import {
 } from "./message-v2/message-window"
 import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
-import { captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision, mergeOpenCodeLoadedPage, noteOpenCodeDisplayPublication, seedOpenCodeProjectionPage } from "./opencode-data"
+import {
+  captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision,
+  mergeOpenCodeLoadedPage, syncOpenCodeSessionMessages,
+} from "./opencode-data"
 
 const log = getLogger("api")
 const sessionLog = getLogger("session")
@@ -1552,9 +1555,6 @@ function commitMessageWindow(
 ) {
   const store = messageStoreBus.getOrCreate(instanceId)
   store.setMessageWindow(sessionId, window)
-  // Fence in-flight trailing publications: an ordinary load just published
-  // newer content, so an older trailing page must not overwrite it.
-  noteOpenCodeDisplayPublication(instanceId, sessionId)
   const existing = store.getScrollSnapshot(sessionId, MESSAGE_STREAM_SCROLL_SCOPE)
   const preservePosition = intent === "open"
   const atBottom = intent === "older" || intent === "latest"
@@ -1633,7 +1633,6 @@ async function loadMessages(
   const historyAuthority = messageHistoryAuthorities.get(messagePageKey(instanceId, sessionId))
   const generationCurrent = captureInstanceRequestAuthority(instanceId)
   const mutationRevision = getOpenCodeMutationRevision(instanceId, sessionId)
-  const rowSnapshot = captureOpenCodeRowSnapshot(instanceId, sessionId)
   const ownsLoadState = () => instances().get(instanceId)?.client === instanceClient
     && isCurrentMessageLoad(instanceId, sessionId, loadEpoch)
     && sessions().get(instanceId)?.has(sessionId) === true
@@ -1652,6 +1651,12 @@ async function loadMessages(
   })
   const messageRevision = store.getSessionRevision(sessionId)
   const liveMessageRevision = getOpenCodeMessageRevision(instanceId, sessionId)
+  // A first latest-window load has no resident rows a mid-stream page could
+  // rewind: it merges its page with the rows streamed during the fetch instead
+  // of retrying on revision conflicts. Reloads and history windows keep them.
+  const initialSeed = !storedWindow && currentWindow.kind === "latest" && planned.next.kind === "latest"
+    && !planned.cursor && store.getSessionMessageIds(sessionId).length === 0
+  const rowSnapshot = initialSeed ? captureOpenCodeRowSnapshot(instanceId, sessionId) : undefined
   let retryAfterRevisionConflict = false
   let committed = false
   let deferRelease = false
@@ -1772,13 +1777,6 @@ async function loadMessages(
       throw new Error("Repeated message cursor")
     }
     if (!isCurrent()) return false
-    // An initial open has no resident rows a mid-stream page could rewind:
-    // streaming continues on top of the seeded page instead of spending the
-    // whole revision-retry budget on a session that never goes quiet. A
-    // stored window, a saved history-window snapshot or resident rows mark a
-    // reload, which keeps its retry semantics.
-    const initialSeed = store.getSessionMessageIds(sessionId).length === 0
-      && storedWindow === undefined && currentWindow.kind === "latest"
 
     const forwardPage = intent === "oldest" || planned.forward
     const nextWindow = directWindow ?? (forwardPage
@@ -1789,10 +1787,8 @@ async function loadMessages(
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
     let apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
-    if (initialSeed) {
-      // Streamed text that arrived inside the initial fetch keeps its live
-      // version in both seeds instead of rewinding to the page's snapshot.
-      apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, [...apiMessages].reverse(), rowSnapshot).reverse()
+    if (rowSnapshot) {
+      apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, apiMessages.reverse(), rowSnapshot).reverse()
     }
     if (apiMessages.length === 0) {
       if (intent === "older") {
@@ -1877,22 +1873,22 @@ async function loadMessages(
       }
       if (!isCurrent()) return false
       const expectedRevision = nextWindow.kind === "latest" && !initialSeed ? messageRevision : undefined
-      if (!initialSeed && hasLatestRevisionConflict()) {
-        retryAfterRevisionConflict = true
-      } else if (!seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
+      if ((!initialSeed && hasLatestRevisionConflict())
+        || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
-        if (initialSeed) {
-          // The reducer projection needs the same base, or later streaming
-          // deltas reduce against rows it never held and the loaded messages
-          // freeze at their snapshot text.
-          seedOpenCodeProjectionPage(instanceId, sessionId, session.location.directory, apiMessages, rowSnapshot)
-        }
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
         commitCurrentWindow(nextWindow, intent)
         markSessionMessagesLoaded(instanceId, sessionId)
         reconcilePendingPermissionsV2(instanceId, sessionId)
         committed = true
+        // Streamed events reach the display only through the session reducer,
+        // which ignores them for messages it does not hold. A session known
+        // to be idle has no such message.
+        const current = sessions().get(instanceId)?.get(sessionId)
+        if (initialSeed && (current?.status !== "idle" || current.runtimeStatusKnown !== true)) {
+          void syncOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder)
+        }
       }
     }
     // A revision conflict keeps the flag through its bounded, backed-off retry.

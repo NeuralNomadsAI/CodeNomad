@@ -1,105 +1,60 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
-import { messageStoreBus } from "./message-v2/bus.ts"
-import { applyOpenCodeDataEvent, projectOpenCodeMessages } from "./opencode-data.ts"
-import { armLive, assistantRow, deltaDuring, readFixture, readTestingModel as model, readTestingSessionId as sessionId, settleSync, textOf } from "./opencode-data-read-testing.ts"
+import {
+  armLive, assistantRow, delta, emitEvent, readFixture, readTestingSessionId as sessionId, textOf,
+} from "./opencode-data-read-testing.ts"
 
-const history = {
-  id: "old", type: "assistant", agent: "build", model,
-  content: [], time: { created: 100, completed: 100 },
+/** Quiet means no new fetch for a window covering many fetch round trips, so
+ * a pending first fetch or a restarting read loop cannot look settled. */
+async function waitForQuietReads(reads: () => number, windowMs = 100, deadlineMs = 2_000): Promise<void> {
+  const deadline = Date.now() + deadlineMs
+  let lastReads = -1
+  let stableSince = Date.now()
+  while (Date.now() < deadline) {
+    await new Promise<void>((resolve) => setTimeout(resolve, 10))
+    const current = reads()
+    if (current !== lastReads) {
+      lastReads = current
+      stableSince = Date.now()
+    }
+    if (current > 0 && Date.now() - stableSince >= windowMs) return
+  }
+  assert.fail(`message.list reads never went quiet (last count ${lastReads})`)
 }
 
 describe("OpenCode data trailing read", () => {
-  it("answers a live read in one round trip, keeping the page's window and cursor", async () => {
+  it("settles a live message sync in one read while same-session deltas keep arriving", async () => {
     const instanceId = "opencode-data-trailing-read"
     let reads = 0
     const f = readFixture(instanceId, async () => {
       reads += 1
+      // One network round trip per read; a streaming delta for the same
+      // session lands inside every fetch window.
       await new Promise<void>((resolve) => setImmediate(resolve))
-      // A delta and a new row land inside every fetch window, however long
-      // the stream lasts.
-      deltaDuring(instanceId, reads)
-      applyOpenCodeDataEvent(instanceId, "/work", {
-        id: `fresh-${reads}`, type: "session.step.started", created: 2000 + reads,
-        data: { sessionID: sessionId, assistantMessageID: "fresh", agent: "build", model },
-      } as any)
+      delta(instanceId, ".")
       return {
-        data: [assistantRow("live", "base", 500), history],
-        cursor: { next: "cursor-page" },
+        data: [{ ...assistantRow("live", "base", 100), content: [{ type: "text", text: "base" }, {
+          type: "tool", id: "tool", name: "bash", time: { created: 2 }, state: { status: "streaming", input: "" },
+        }] }, assistantRow("fetched", "history", 90)],
+        cursor: { next: "older" },
       }
     })
     try {
       const data = armLive(instanceId)
-      data.session.message.invalidate(sessionId)
-      await settleSync(data.session.message.sync(sessionId), () => reads)
+      emitEvent(instanceId, "session.tool.input.started", { assistantMessageID: "live", id: "tool", name: "bash" })
+      // The execution boundary makes the SDK refresh the reducer's messages,
+      // since a tool is still streaming, while the session keeps streaming.
+      emitEvent(instanceId, "session.execution.succeeded")
 
-      assert.equal(reads, 1, "streaming events must not restart the read")
-      const ids = data.session.message.list(sessionId).map((message) => message.id)
-      assert.deepEqual(ids, ["old", "live", "fresh"], `unexpected merged window ${JSON.stringify(ids)}`)
-      assert.equal(textOf(data, "live"), "baseX", "the touched row lost its live version")
-      assert.equal(data.session.message.more(sessionId), true, "the fetched page's cursor was lost")
-    } finally {
-      f.cleanup()
-    }
-  })
+      await waitForQuietReads(() => reads)
+      assert.equal(reads, 1, "streaming deltas restarted the read")
+      assert.deepEqual(data.session.message.list(sessionId).map((message) => message.id), ["fetched", "live"])
+      assert.equal(textOf(data, "live"), "base.", "the page rewound the streamed text")
+      assert.equal(data.session.message.more(sessionId), true, "the page's cursor was lost")
 
-  it("never publishes a page that a destructive event invalidated", async () => {
-    const instanceId = "opencode-data-trailing-revert"
-    let reads = 0
-    const f = readFixture(instanceId, async () => {
-      reads += 1
-      await new Promise<void>((resolve) => setImmediate(resolve))
-      if (reads === 1) {
-        // A revert lands inside the fetch window: the fetched page predates
-        // it and still contains the reverted message, so the read restarts.
-        applyOpenCodeDataEvent(instanceId, "/work", {
-          id: "revert", type: "session.revert.committed", created: 2000,
-          data: { sessionID: sessionId, to: "reverted" },
-        } as any)
-        return { data: [assistantRow("reverted", "gone", 50)], cursor: {} }
-      }
-      return { data: [], cursor: {} }
-    })
-    try {
-      const data = armLive(instanceId)
-      data.session.message.invalidate(sessionId)
-      await settleSync(data.session.message.sync(sessionId), () => reads)
-
-      assert.ok(reads >= 2, "the destructive event restarted the read")
-      assert.ok(
-        data.session.message.list(sessionId).every((message) => message.id !== "reverted"),
-        "the invalidated page republished the reverted message",
-      )
-    } finally {
-      f.cleanup()
-    }
-  })
-
-  it("keeps reducing streaming events while the read is in flight", async () => {
-    const instanceId = "opencode-data-trailing-live"
-    let reads = 0
-    const release = new Promise<void>(() => {})
-    const f = readFixture(instanceId, async () => {
-      reads += 1
-      await release
-      return { data: [], cursor: {} }
-    })
-    try {
-      const data = armLive(instanceId)
-      data.session.message.invalidate(sessionId)
-      const pending = data.session.message.sync(sessionId).catch(() => undefined)
-      await new Promise<void>((resolve) => setImmediate(resolve))
-
-      // Deltas keep reducing on the fast path while the read never returns.
-      for (let index = 0; index < 5; index += 1) {
-        const updated = deltaDuring(instanceId, index, String(index))
-        projectOpenCodeMessages(instanceId, sessionId, updated)
-      }
-      const store = messageStoreBus.getOrCreate(instanceId)
-      const record = store.getMessage("live")
-      const texts = Object.values(record?.parts ?? {}).map((part: any) => String(part.data?.text ?? ""))
-      assert.ok(texts.some((text) => text.includes("01234")), `streaming froze behind the read: ${JSON.stringify(texts)}`)
-      void pending
+      delta(instanceId, "!")
+      assert.equal(textOf(data, "live"), "base.!", "streaming stopped reaching the reducer")
+      assert.equal(reads, 1)
     } finally {
       f.cleanup()
     }

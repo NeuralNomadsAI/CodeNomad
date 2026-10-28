@@ -60,8 +60,10 @@ direct resident-message anchor rather than replaying the path from the latest pa
 
 Timeline clicks, current-session search hits and missing restoration anchors share
 `loadMessageAnchor`. Window publication checks the request epoch, connection
-generation, mutation revision and cancellation. Latest-window reads also apply
-the stronger live-message revision check. Reading an old window never overwrites
+generation, mutation revision and cancellation. Latest-window reloads also apply
+the stronger live-message revision check; a first latest-window load merges its
+page with the rows streamed during its fetch ([TRANSCRIPT.md](TRANSCRIPT.md)).
+Reading an old window never overwrites
 the composer's model/agent from historical messages.
 
 The old transcript stays visible during a jump. A newer target supersedes the

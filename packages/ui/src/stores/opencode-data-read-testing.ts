@@ -4,11 +4,44 @@ import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
 import { sseManager } from "../lib/sse-manager.ts"
 
-const model = { providerID: "provider", id: "model" }
-const sessionId = "session"
+export const readTestingModel = { providerID: "provider", id: "model" }
+export const readTestingSessionId = "session"
+const sessionId = readTestingSessionId
 
-/** Stubs the authoritative session endpoints; message.list comes from the caller. */
-export function stubAuthoritativeSession(client: any, messages: () => Promise<any>) {
+export const assistantRow = (id: string, text?: string, created = 100): Record<string, unknown> => ({
+  id, type: "assistant", agent: "build", model: readTestingModel,
+  content: text === undefined ? [] : [{ type: "text", text }],
+  time: { created },
+})
+
+export const textOf = (data: ReturnType<typeof applyOpenCodeDataEvent>, messageId: string): string => {
+  const row: any = data.session.message.get(sessionId, messageId)
+  return String(row?.content?.find((part: any) => part.type === "text")?.text ?? "")
+}
+
+let sequence = 0
+export function emitEvent(instanceId: string, type: string, payload: Record<string, unknown> = {}, id?: string) {
+  const created = ++sequence
+  return applyOpenCodeDataEvent(instanceId, "/work", {
+    id: id ?? `evt_${created}`, type, created, data: { sessionID: sessionId, ...payload },
+  } as any)
+}
+
+/** Arms one live assistant row whose reduced text already holds `base`. */
+export function armLive(instanceId: string, base = "base") {
+  const live = { assistantMessageID: "live" }
+  emitEvent(instanceId, "session.step.started", { ...live, agent: "build", model: readTestingModel, started: 100 })
+  emitEvent(instanceId, "session.text.started", live)
+  return emitEvent(instanceId, "session.text.delta", { ...live, ordinal: 0, delta: base })
+}
+
+export const delta = (instanceId: string, text = "X", target = "live") =>
+  emitEvent(instanceId, "session.text.delta", { assistantMessageID: target, ordinal: 0, delta: text })
+
+/** Connected client stub whose message.list comes from the caller. */
+export function readFixture(instanceId: string, messages: () => Promise<any>) {
+  const client: any = getRootClient(instanceId)
+  sseManager.seedStatus(instanceId, "connected")
   client.session.get = async () => ({
     id: sessionId, title: sessionId, projectID: "project", location: { directory: "/work" },
     time: { created: 1, updated: 1 }, cost: 0,
@@ -19,45 +52,6 @@ export function stubAuthoritativeSession(client: any, messages: () => Promise<an
   client.permission.list = async () => []
   client.session.form.list = async () => []
   client.message.list = messages
-}
-
-export const assistantRow = (id: string, text?: string, created = 100): Record<string, unknown> => ({
-  id, type: "assistant", agent: "build", model,
-  content: text === undefined ? [] : [{ type: "text", text }],
-  time: { created },
-})
-
-export const textOf = (data: ReturnType<typeof applyOpenCodeDataEvent>, messageId: string): string => {
-  const row: any = data.session.message.get(sessionId, messageId)
-  return String(row?.content?.find((part: any) => part.type === "text")?.text ?? "")
-}
-
-/** Arms one live assistant row whose projected text already holds its base. */
-export function armLive(instanceId: string, base = "base") {
-  const baseData = { sessionID: sessionId, assistantMessageID: "live" }
-  let data = applyOpenCodeDataEvent(instanceId, "/work", {
-    id: "step", type: "session.step.started", created: 1, data: { ...baseData, agent: "build", model },
-  } as any)
-  data = applyOpenCodeDataEvent(instanceId, "/work", {
-    id: "text", type: "session.text.started", created: 2, data: { ...baseData },
-  } as any)
-  data = applyOpenCodeDataEvent(instanceId, "/work", {
-    id: "base", type: "session.text.delta", created: 3, data: { ...baseData, ordinal: 0, delta: base },
-  } as any)
-  return data
-}
-
-export const deltaDuring = (instanceId: string, ordinal: string | number, delta = "X", target = "live") =>
-  applyOpenCodeDataEvent(instanceId, "/work", {
-    id: `delta-${ordinal}`, type: "session.text.delta", created: 1000 + Number(ordinal),
-    data: { sessionID: sessionId, assistantMessageID: target, ordinal: 0, delta },
-  } as any)
-
-/** Client stub plus connected SSE status for one read fixture. */
-export function readFixture(instanceId: string, messages: () => Promise<any>) {
-  const client: any = getRootClient(instanceId)
-  sseManager.seedStatus(instanceId, "connected")
-  stubAuthoritativeSession(client, messages)
   return {
     client,
     cleanup() {
@@ -68,15 +62,17 @@ export function readFixture(instanceId: string, messages: () => Promise<any>) {
   }
 }
 
-/** Awaits the real sync promise; the timeout is only a failure bound. */
+/** Awaits the real sync promise; the timeout only bounds a failure. */
 export async function settleSync(sync: Promise<unknown>, reads: () => number): Promise<void> {
-  await Promise.race([
-    sync,
-    new Promise<void>((_, reject) => {
-      setTimeout(() => reject(new Error(`message.list sync did not settle (${reads()} reads)`)), 2000)
-    }),
-  ])
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      sync,
+      new Promise<void>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`message.list sync did not settle (${reads()} reads)`)), 2000)
+      }),
+    ])
+  } finally {
+    clearTimeout(timer)
+  }
 }
-
-export const readTestingSessionId = sessionId
-export const readTestingModel = model
