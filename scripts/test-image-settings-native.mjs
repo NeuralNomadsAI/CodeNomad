@@ -65,7 +65,9 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
   if (initial.generation) await settings.update("fixture", location, { generation: false })
   if (initial.mediaStorage) await settings.update("fixture", location, { mediaStorage: false })
   await until(snapshot => !snapshot.generation?.effective && !snapshot.mediaStorage?.effective, "turning settings off applies natively")
-  assert.deepEqual(parse(await readFile(globalFile, "utf8")).experimental, { subagent_depth: 2 })
+  assert.deepEqual(parse(await readFile(globalFile, "utf8")).experimental, {
+    subagent_depth: 2, ...(initial.generation ? { image_generate: false } : {}), ...(initial.mediaStorage ? { media_blob: false } : {}),
+  }, "Off is written as an explicit false the native schema accepts")
   await assert.rejects(settings.update("fixture", { directory: path.dirname(root) }, { mediaStorage: false }))
   console.log(`PASS native image settings (generation: ${Boolean(initial.generation)}, media storage: ${Boolean(initial.mediaStorage)}): `
     + "contract detection, JSONC save, hot reload, reset, unsupported-key refusal and foreign-location rejection")

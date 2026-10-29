@@ -21,9 +21,10 @@ export function ImageSettingsCard(props: { instanceId: string; location?: Locati
         <p class="settings-toggle-caption">{t("settings.images.unsupported")}</p>
       </Show>
       <Show when={data().generation}>{generation => {
+        const models = () => generation().models ?? []
         const label = (value: ImageGenerationSelection) => value === false ? t("settings.images.generation.off")
           : value === true ? t("settings.images.generation.auto")
-            : generation().models.find(model => model.ref === value)?.name ?? value
+            : models().find(model => model.ref === value)?.name ?? value
         return <div class="image-settings-generation">
           <label class="settings-toggle-row settings-toggle-row-compact">
             <span class="settings-toggle-title">
@@ -33,18 +34,21 @@ export function ImageSettingsCard(props: { instanceId: string; location?: Locati
               value={encode(generation().global)} onChange={event => void settings.save({ generation: decode(event.currentTarget.value) })}>
               <option value="off" selected={generation().global === false}>{t("settings.images.generation.off")}</option>
               <option value="auto" selected={generation().global === true}>{t("settings.images.generation.auto")}</option>
-              <For each={generation().models}>{model =>
+              <For each={models()}>{model =>
                 <option value={encode(model.ref)} selected={generation().global === model.ref}>{model.name}</option>}</For>
-              <Show when={typeof generation().global === "string" && !generation().models.some(model => model.ref === generation().global)}>
+              <Show when={typeof generation().global === "string" && !models().some(model => model.ref === generation().global)}>
                 <option value={encode(generation().global)} selected>{String(generation().global)}</option>
               </Show>
             </select>
           </label>
-          <Show when={generation().projectOverride}>{path =>
-            <p class="settings-toggle-caption" title={path()}>
-              {t("settings.images.generation.projectOverride", { value: label(generation().effective) })}
+          <Show when={generation().override}>{override =>
+            <p class="settings-toggle-caption" title={override().path}>
+              {t("settings.images.generation.override", { value: label(generation().effective) })}
             </p>}</Show>
-          <Show when={generation().effective !== false && !generation().models.length}>
+          <Show when={generation().models === null}>
+            <p class="settings-toggle-caption">{t("settings.images.generation.modelsUnavailable")}</p>
+          </Show>
+          <Show when={generation().effective !== false && generation().models?.length === 0}>
             <p class="settings-toggle-caption">{t("settings.images.generation.noModels")}</p>
           </Show>
         </div>
@@ -53,9 +57,9 @@ export function ImageSettingsCard(props: { instanceId: string; location?: Locati
         <SettingsChoiceRow checked={storage().global} title={t("settings.images.storage.title")}
           info={t("settings.images.storage.info")} disabled={settings.busy()}
           onChange={checked => void settings.save({ mediaStorage: checked })} />
-        <Show when={storage().projectOverride}>{path =>
-          <p class="settings-toggle-caption" title={path()}>
-            {t(storage().effective ? "settings.images.storage.projectOverride.on" : "settings.images.storage.projectOverride.off")}
+        <Show when={storage().override}>{override =>
+          <p class="settings-toggle-caption" title={override().path}>
+            {t(storage().effective ? "settings.images.storage.override.on" : "settings.images.storage.override.off")}
           </p>}</Show>
       </>}</Show>
     </>}</Show>

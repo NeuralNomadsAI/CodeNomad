@@ -1,9 +1,9 @@
+import path from "node:path"
 import { Service } from "@opencode/client/service"
 import type { ImageGenerationSelection, ImageModelOption, ImageSettingsSnapshot, PluginControlLocation } from "../api-types"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
-import type { PluginControlDocument } from "./plugin-control-document"
-import { editNativeSetting, readNativeSetting, removeEmptyNativeObject } from "./native-setting-document"
+import { editNativeSetting, readNativeSetting } from "./native-setting-document"
 import { readRuntimeContract } from "./compatibility/negotiate"
 
 const GENERATION = ["experimental", "image_generate"]
@@ -33,12 +33,25 @@ export function imageGenerationSelection(value: unknown): ImageGenerationSelecti
   return true
 }
 
-type Entry = { type: string; info?: { experimental?: Record<string, unknown> } }
+type Entry = { type: string; path?: string; info?: { experimental?: Record<string, unknown> } }
 /** Configuration documents, highest priority first. */
 const documents = (entries: readonly unknown[]) =>
   entries.filter((entry): entry is Entry & { type: "document" } => Boolean(entry) && (entry as Entry).type === "document").reverse()
 
-/** Global scope only: a project `experimental` object would hide every inherited experimental setting. */
+function samePath(left: string, right: string) {
+  const paths = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(left) ? path.win32 : path.posix
+  const normalize = (value: string) => paths.normalize(value).replace(/[\\/]$/, "")
+  return paths === path.win32 ? normalize(left).toLowerCase() === normalize(right).toLowerCase() : normalize(left) === normalize(right)
+}
+
+/** The native document that decides a value, when it is not the Global document this group writes. */
+function override(winner: Entry | undefined, target: string): { path?: string } | undefined {
+  if (!winner || winner.path !== undefined && samePath(winner.path, target)) return undefined
+  return winner.path === undefined ? {} : { path: winner.path }
+}
+
+/** Global scope only: OpenCode reads `media_blob` from the whole `experimental` object of the
+ * highest-priority document that has one, so a project block would hide inherited experimental settings. */
 export class ImageSettings {
   constructor(private readonly configuration: Pick<PluginControls, "readConfigDocuments" | "editConfigDocument">,
     private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection">) {}
@@ -54,53 +67,52 @@ export class ImageSettings {
     return { ...snapshot, connection, capability: imageSettingsCapability(contract) }
   }
 
-  private async imageModels(context: Awaited<ReturnType<ImageSettings["context"]>>): Promise<ImageModelOption[]> {
+  /** `null` when the native catalog cannot be read; the configured choice stays readable without it. */
+  private async imageModels(context: Awaited<ReturnType<ImageSettings["context"]>>): Promise<ImageModelOption[] | null> {
     const url = new URL("/api/model", context.connection.endpoint.url)
     url.searchParams.set("location[directory]", context.location.directory)
     url.searchParams.set("types", "image")
-    const response = await context.connection.fetch(url, {
-      headers: Service.headers(context.connection.endpoint), redirect: "error", signal: AbortSignal.timeout(5_000),
-    })
-    if (!response.ok) {
-      await response.body?.cancel()
-      throw new PluginControlsError("OpenCode image models are unavailable", "unavailable")
-    }
-    const body = await response.json() as { data?: unknown }
+    let data: unknown
+    try {
+      const response = await context.connection.fetch(url, {
+        headers: Service.headers(context.connection.endpoint), redirect: "error", signal: AbortSignal.timeout(5_000),
+      })
+      if (!response.ok) { await response.body?.cancel(); return null }
+      data = (await response.json() as { data?: unknown }).data
+    } catch { return null }
     context.connection.assertCurrent()
-    if (!Array.isArray(body.data)) throw new PluginControlsError("OpenCode image models are unavailable", "unavailable")
-    return body.data.flatMap((model: any) => typeof model?.providerID === "string" && typeof model?.id === "string"
+    if (!Array.isArray(data)) return null
+    return data.flatMap((model: any) => typeof model?.providerID === "string" && typeof model?.id === "string"
       ? [{ ref: `${model.providerID}/${model.id}`, name: typeof model.name === "string" && model.name ? model.name : model.id }] : [])
   }
 
   async read(workspaceId: string, location: PluginControlLocation): Promise<ImageSettingsSnapshot> {
     const context = await this.context(workspaceId, location)
     const global = context.documents.find(item => item.scope === "global")
-    const project = context.documents.find(item => item.scope === "project")
     const settings = documents(context.entries)
-    const projectSets = (keys: string[]) => project && readNativeSetting(project.document, keys) !== undefined ? project.path : undefined
 
     let generation: ImageSettingsSnapshot["generation"] = null
     if (context.capability.generation && global) {
-      // OpenCode reads this one field from the last document that sets it.
-      const effective = settings.find(entry => entry.info?.experimental?.image_generate !== undefined)
-      const projectOverride = projectSets(GENERATION)
+      // OpenCode reads this one field from the highest-priority document that sets it.
+      const winner = settings.find(entry => entry.info?.experimental?.image_generate !== undefined)
+      const overridden = override(winner, global.path)
       generation = {
         global: imageGenerationSelection(readNativeSetting(global.document, GENERATION)),
-        effective: imageGenerationSelection(effective?.info?.experimental?.image_generate),
-        ...(projectOverride ? { projectOverride } : {}),
+        effective: imageGenerationSelection(winner?.info?.experimental?.image_generate),
+        ...(overridden ? { override: overridden } : {}),
         models: await this.imageModels(context),
       }
     }
 
     let mediaStorage: ImageSettingsSnapshot["mediaStorage"] = null
     if (context.capability.mediaStorage && global) {
-      // OpenCode reads the whole `experimental` object of the last document that has one.
-      const latest = settings.find(entry => entry.info?.experimental !== undefined)
-      const projectOverride = projectSets(["experimental"])
+      // OpenCode reads the whole `experimental` object of the highest-priority document that has one.
+      const winner = settings.find(entry => entry.info?.experimental !== undefined)
+      const overridden = override(winner, global.path)
       mediaStorage = {
         global: readNativeSetting(global.document, MEDIA_STORAGE) === true,
-        effective: latest?.info?.experimental?.media_blob === true,
-        ...(projectOverride ? { projectOverride } : {}),
+        effective: winner?.info?.experimental?.media_blob === true,
+        ...(overridden ? { override: overridden } : {}),
       }
     }
     return { location: context.location, generation, mediaStorage }
@@ -115,15 +127,13 @@ export class ImageSettings {
     if (generation && typeof change.generation === "string" && !IMAGE_MODEL_REF.test(change.generation))
       throw new PluginControlsError("Invalid image model", "invalid")
     const keys = generation ? GENERATION : MEDIA_STORAGE
+    // Off is written as `false`: removing the key would expose a lower-priority document that enables it.
     const value = generation
-      ? change.generation === false ? undefined : typeof change.generation === "string" ? { model: change.generation } : true
-      : change.mediaStorage ? true : undefined
+      ? typeof change.generation === "string" ? { model: change.generation } : change.generation
+      : change.mediaStorage
     await this.configuration.editConfigDocument(workspaceId, location, "global", document => {
       context.connection.assertCurrent()
-      const updated = editNativeSetting(document, keys, value)
-      if (value !== undefined) return updated
-      const remaining: PluginControlDocument = { ...document, text: document.byteOrderMark ? updated.slice(1) : updated }
-      return removeEmptyNativeObject(remaining, ["experimental"]) ?? updated
+      return editNativeSetting(document, keys, value)
     })
     context.connection.assertCurrent()
   }

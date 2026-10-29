@@ -438,21 +438,22 @@ export interface PluginControlLocation {
 /** `false`: off; `true`: on with OpenCode's automatic model; string: on with this `providerID/modelID[#variant]` default. */
 export type ImageGenerationSelection = boolean | string
 export interface ImageModelOption { ref: string; name: string }
+/** The native document that decides the effective value instead of the Global one; no `path` for inline configuration. */
+export interface ImageSettingOverride { path?: string }
 /** A `null` group: the connected OpenCode's configuration contract has no such setting. */
 export interface ImageSettingsSnapshot {
   location: PluginControlLocation
   generation: {
     global: ImageGenerationSelection
     effective: ImageGenerationSelection
-    /** Project configuration that sets its own image generation over the global choice. */
-    projectOverride?: string
-    models: ImageModelOption[]
+    override?: ImageSettingOverride
+    /** `null` when the native image-model catalog could not be read. */
+    models: ImageModelOption[] | null
   } | null
   mediaStorage: {
     global: boolean
     effective: boolean
-    /** Project configuration whose `experimental` object hides the global choice. */
-    projectOverride?: string
+    override?: ImageSettingOverride
   } | null
 }
 export interface ImageSettingsMutation {

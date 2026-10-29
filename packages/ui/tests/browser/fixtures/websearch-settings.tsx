@@ -49,7 +49,7 @@ serverApi.getImageSettings = async (_id, directory) => {
   images.reads++
   return { location: { directory }, generation: images.supported ? { global: images.generation, effective: images.generation,
     models: [{ ref: "openai/gpt-image-2", name: "GPT Image 2" }] } : null,
-  mediaStorage: images.supported ? { global: images.mediaStorage, effective: false, projectOverride: `${directory}/opencode.jsonc` } : null }
+  mediaStorage: images.supported ? { global: images.mediaStorage, effective: false, override: { path: `${directory}/opencode.jsonc` } } : null }
 }
 serverApi.setImageSettings = async (_id, payload) => {
   images.writes.push(payload)

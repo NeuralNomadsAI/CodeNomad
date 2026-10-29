@@ -38,7 +38,8 @@ test("global image settings edit JSONC in place and report project overrides", a
     const globalFile = path.join(global, "opencode.jsonc"), projectFile = path.join(project, "opencode.jsonc")
     await writeFile(globalFile, '{\n  // preserved\n  "experimental": { "subagent_depth": 2 },\n  "shell": "keep"\n}\n')
     await writeFile(projectFile, "{}")
-    let schema: Record<string, unknown> = both, modelReads = 0
+    const ancestorFile = path.join(root, "opencode.json")
+    let schema: Record<string, unknown> = both, modelReads = 0, catalogStatus = 200, ancestor: unknown
     const connection: any = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "private" } },
       assertCurrent: () => {},
       fetch: async (url: URL, options: RequestInit) => {
@@ -48,12 +49,14 @@ test("global image settings edit JSONC in place and report project overrides", a
         assert.equal(url.pathname, "/api/model")
         assert.equal(url.searchParams.get("types"), "image")
         assert.equal(url.searchParams.get("location[directory]"), project)
+        if (catalogStatus !== 200) return new Response("unavailable", { status: catalogStatus })
         return Response.json({ location: { directory: project }, data: [
           { providerID: "openai", id: "gpt-image-2", name: "GPT Image 2" }, { providerID: "google", id: "imagen" }, { bad: true },
         ] })
       },
       client: { config: { get: async () => [ { type: "directory", path: global },
         { type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
+        ...(ancestor ? [{ type: "document", path: ancestorFile, info: ancestor }] : []),
         { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) } ] },
       plugin: { list: async () => ({ data: [] }) } },
     }
@@ -83,29 +86,42 @@ test("global image settings edit JSONC in place and report project overrides", a
     assert.equal(snapshot.generation?.effective, "openai/gpt-image-2")
     assert.equal(snapshot.mediaStorage?.effective, true)
 
-    // A project `experimental` object hides the global storage choice, but not the per-field generation choice.
+    // A higher `experimental` object hides the global storage choice, but not the per-field generation choice.
     await writeFile(projectFile, '{ "experimental": { "subagent_depth": 1 } }')
     snapshot = await settings.read("w", location)
     assert.equal(snapshot.generation?.effective, "openai/gpt-image-2")
-    assert.equal(snapshot.generation?.projectOverride, undefined)
-    assert.deepEqual(snapshot.mediaStorage, { global: true, effective: false, projectOverride: projectFile })
+    assert.equal(snapshot.generation?.override, undefined)
+    assert.deepEqual(snapshot.mediaStorage, { global: true, effective: false, override: { path: projectFile } })
     await writeFile(projectFile, '{ "experimental": { "image_generate": false } }')
     snapshot = await settings.read("w", location)
     assert.equal(snapshot.generation?.effective, false)
-    assert.equal(snapshot.generation?.projectOverride, projectFile)
+    assert.deepEqual(snapshot.generation?.override, { path: projectFile })
     assert.equal(await readFile(projectFile, "utf8"), '{ "experimental": { "image_generate": false } }', "the project is never written")
+    // The deciding document is reported wherever it lives, not only in the selected project's own file.
+    await writeFile(projectFile, "{}")
+    ancestor = { experimental: { image_generate: false } }
+    snapshot = await settings.read("w", location)
+    assert.equal(snapshot.generation?.effective, false)
+    assert.deepEqual(snapshot.generation?.override, { path: ancestorFile })
+    assert.deepEqual(snapshot.mediaStorage, { global: true, effective: false, override: { path: ancestorFile } })
+    ancestor = undefined
 
+    // Off is an explicit `false`, so a lower-priority document that enables it stays hidden.
     await settings.update("w", location, { generation: true })
     assert.equal(parse(await readFile(globalFile, "utf8")).experimental.image_generate, true)
     await settings.update("w", location, { generation: false })
     await settings.update("w", location, { mediaStorage: false })
     saved = await readFile(globalFile, "utf8")
-    assert.deepEqual(parse(saved).experimental, { subagent_depth: 2 }, "turning off removes only the owned keys")
-    await settings.update("w", location, { generation: true })
-    await writeFile(globalFile, '{ "experimental": { "image_generate": true } }')
-    await settings.update("w", location, { generation: false })
-    assert.equal(parse(await readFile(globalFile, "utf8")).experimental, undefined, "no empty experimental block is left behind")
+    assert.deepEqual(parse(saved).experimental, { subagent_depth: 2, image_generate: false, media_blob: false })
     await assert.rejects(settings.update("w", location, { generation: "no slash" }), /Invalid/)
+
+    // A failed model catalog leaves both choices readable.
+    catalogStatus = 503
+    snapshot = await settings.read("w", location)
+    assert.equal(snapshot.generation?.models, null)
+    assert.equal(snapshot.generation?.global, false)
+    assert.deepEqual(snapshot.mediaStorage, { global: false, effective: false })
+    catalogStatus = 200
 
     // Without the contract, nothing is read from the model catalog and nothing is written.
     schema = {}

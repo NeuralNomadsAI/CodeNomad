@@ -135,7 +135,9 @@ test("Images reads only while open, writes one Global setting at a time and hide
       { location: { directory: "/a" }, generation: "openai/gpt-image-2" },
       { location: { directory: "/a" }, mediaStorage: true },
     ])
-    await group.getByText("This project's experimental OpenCode settings take precedence: images stay inside each message here.", { exact: true }).waitFor()
+    await group.getByText("Another OpenCode configuration's experimental settings take precedence here: images stay inside each message.", { exact: true }).waitFor()
+    assert.equal(await group.locator('p[title="/a/opencode.jsonc"]').count(), 1, "the deciding document's path is the caption's tooltip")
+    assert.equal(await group.getByText("Image models could not be loaded.", { exact: true }).count(), 0)
 
     await page.evaluate(() => (window as any).fixture.reject())
     await generation.selectOption("off")

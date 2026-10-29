@@ -84,7 +84,7 @@ Search credentials remain service-global even when the provider choice is Projec
 ## Image generation and storage {#images}
 
 1. In **Settings → Providers**, expand **Images**.
-2. Under **Image generation**, choose **On, automatic model** or one of the image models offered by your connected providers. **Off** removes the Global choice.
+2. Under **Image generation**, choose **On, automatic model** or one of the image models offered by your connected providers. **Off** turns it off in the Global configuration.
 3. Check **Store images once** to keep each attached or generated image a single time instead of inside every message that uses it.
 
-Changes save automatically to the Global OpenCode configuration and apply to every project. Both are experimental OpenCode features: **Images** shows only the settings the connected OpenCode version supports. Agents get the image tool only while a connected provider offers an image model. Each image is a paid request that asks for permission first, then runs in the background and is saved as a file; the agent reports its path. **Store images once** applies to new messages. When a project's own OpenCode configuration sets image generation, or holds its own experimental settings, **Images** notes that the project's choice applies there.
+Changes save automatically to the Global OpenCode configuration and apply to every project. Both are experimental OpenCode features: **Images** shows only the settings the connected OpenCode version supports. Agents get the image tool only while a connected provider offers an image model. Each image is a paid request that asks for permission first, then runs in the background and is saved as a file; the agent reports its path. **Store images once** applies to new messages. When another OpenCode configuration, such as the project's own, decides a setting instead, **Images** says so under that setting.
