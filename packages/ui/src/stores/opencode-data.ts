@@ -798,7 +798,22 @@ export function getOpenCodeSessionInbox(instanceId: string, sessionId: string, d
 }
 
 export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string): Promise<void> {
-  await ensureTranscript(instanceId, sessionId, directory).entry.data.session.pending.sync(sessionId)
+  const transcript = ensureTranscript(instanceId, sessionId, directory)
+  const admitted = new Set(transcript.entry.data.session.pending.list(sessionId).map((item) => item.id))
+  await transcript.entry.data.session.pending.sync(sessionId)
+  // An item the reducer admitted that the authoritative inbox no longer lists
+  // was delivered or cancelled without events; a delivery's user message may
+  // never be admitted either. The disappearance owes the settlement read that
+  // reconciles both; nothing invalidated the SDK's message key, so it does
+  // here (an owed dropping-mode resync keeps the projection fenced).
+  const remaining = new Set(transcript.entry.data.session.pending.list(sessionId).map((item) => item.id))
+  if ([...admitted].some((id) => !remaining.has(id))) {
+    const current = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+    if (current === transcript && isTranscriptCurrent(instanceId, sessionId, transcript)) {
+      transcript.entry.data.session.message.invalidate(sessionId)
+      completeSettlementRead(instanceId, sessionId, transcript)
+    }
+  }
 }
 
 /** The session reducer's rows when a REST load starts its fetch. */
@@ -917,22 +932,45 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
     // window's membership. A newer execution supersedes the publication;
     // same-round activity does not.
     if (hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
-      const epoch = transcript.executionEpoch
-      void transcript.entry.data.session.message.sync(sessionId)
-        .catch(() => undefined)
-        .then(() => {
-          // Publish unless a newer execution superseded this settlement:
-          // same-round activity (a late terminal tool event) must not
-          // suppress the repair.
-          if (!isTranscriptCurrent(instanceId, sessionId, transcript)
-            || transcript.executionEpoch !== epoch) return
-          projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
-          retireDrainedTranscript(instanceId, sessionId, transcript)
-        })
+      completeSettlementRead(instanceId, sessionId, transcript)
     }
   }
   // A settlement deferred by parked or running work completes once that clears.
   retireDrainedTranscript(instanceId, sessionId, transcript)
+}
+
+/** Finish the SDK's own settlement read for this transcript: share its
+ * in-flight read when connected, start it when not, then project the
+ * reconciled page without touching the display window's membership. A newer
+ * admitted execution supersedes the publication; same-round activity does
+ * not. */
+function completeSettlementRead(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  const epoch = transcript.executionEpoch
+  void transcript.entry.data.session.message.sync(sessionId)
+    .catch(() => undefined)
+    .then(() => {
+      // Publish unless a newer execution superseded this settlement:
+      // same-round activity (a late terminal tool event) must not
+      // suppress the repair.
+      if (!isTranscriptCurrent(instanceId, sessionId, transcript)
+        || transcript.executionEpoch !== epoch) return
+      projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
+      retireDrainedTranscript(instanceId, sessionId, transcript)
+    })
+}
+
+/** Non-event settlement evidence: the liveness activity read observed a run
+ * the UI still believed working has settled, so the terminal event may never
+ * be delivered. The observation owes the same settlement read the terminal
+ * event would have finished. */
+export function observeNonEventSettlement(instanceId: string, sessionId: string): void {
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
+  if (!hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) return
+  // Unlike a terminal event, nothing invalidated the SDK's message key; a key
+  // an earlier sync completed would make this read a no-op.
+  transcript.entry.data.session.message.invalidate(sessionId)
+  completeSettlementRead(instanceId, sessionId, transcript)
 }
 
 /** The SDK reducer's own settlement-refresh condition: an assistant tool whose
