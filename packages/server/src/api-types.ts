@@ -435,6 +435,32 @@ export interface PluginControlLocation {
   workspaceID?: string
 }
 
+/** `false`: off; `true`: on with OpenCode's automatic model; string: on with this `providerID/modelID[#variant]` default. */
+export type ImageGenerationSelection = boolean | string
+export interface ImageModelOption { ref: string; name: string }
+/** A `null` group: the connected OpenCode's configuration contract has no such setting. */
+export interface ImageSettingsSnapshot {
+  location: PluginControlLocation
+  generation: {
+    global: ImageGenerationSelection
+    effective: ImageGenerationSelection
+    /** Project configuration that sets its own image generation over the global choice. */
+    projectOverride?: string
+    models: ImageModelOption[]
+  } | null
+  mediaStorage: {
+    global: boolean
+    effective: boolean
+    /** Project configuration whose `experimental` object hides the global choice. */
+    projectOverride?: string
+  } | null
+}
+export interface ImageSettingsMutation {
+  location: PluginControlLocation
+  generation?: ImageGenerationSelection
+  mediaStorage?: boolean
+}
+
 export interface SubagentDepthCapability { minimum: number; maximum?: number; default?: number }
 export interface SubagentDepthSnapshot {
   location: PluginControlLocation

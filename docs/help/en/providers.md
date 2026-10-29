@@ -4,7 +4,7 @@ Provider authentication belongs to the connected OpenCode service, not to the br
 
 ## Connect a model or search provider {#connect}
 
-1. Open a workspace, then **Settings → Providers**. **Models** starts expanded; expand **Web search** for search providers.
+1. Open a workspace, then **Settings → Providers**. **Models** starts expanded; expand **Web search** for search providers. **Images** holds the image settings.
 2. In that group, choose **Select provider**, then **Connect**.
 3. For a model provider, complete the native **Authentication method** offered: API key, OAuth or command. For OAuth, use **Open authorization page** and submit an authorization code only when requested. Search providers connect with an API key.
 4. Check the configured-provider row after completion. **Models** rereads after connections, account changes and reconnects; **Web search** also has **Refresh**.
@@ -80,3 +80,11 @@ Keep tokens/cookies out of shell history, screenshots and reports. Optional read
 Changes save automatically. **Default / inherited** uses inherited configuration or the saved native choice; a Project override wins over Global. **Disabled** turns search off at the selected scope; **Automatic provider** requests native automatic provider selection. **Web search** loads its connections and choices only while expanded. **Disconnect** removes a saved search key; a connection supplied by an environment variable is labelled read-only and has no **Disconnect**.
 
 Search credentials remain service-global even when the provider choice is Project-scoped. Saving a key does not select it as the search default. If reading/saving fails, refresh before retrying; do not replace configuration blindly. For native configuration details, see [OpenCode documentation](https://opencode.ai/v2/docs/) and [OpenCode setup](opencode.md).
+
+## Image generation and storage {#images}
+
+1. In **Settings → Providers**, expand **Images**.
+2. Under **Image generation**, choose **On, automatic model** or one of the image models offered by your connected providers. **Off** removes the Global choice.
+3. Check **Store images once** to keep each attached or generated image a single time instead of inside every message that uses it.
+
+Changes save automatically to the Global OpenCode configuration and apply to every project. Both are experimental OpenCode features: **Images** shows only the settings the connected OpenCode version supports. Agents get the image tool only while a connected provider offers an image model. Each image is a paid request that asks for permission first, then runs in the background and is saved as a file; the agent reports its path. **Store images once** applies to new messages. When a project's own OpenCode configuration sets image generation, or holds its own experimental settings, **Images** notes that the project's choice applies there.

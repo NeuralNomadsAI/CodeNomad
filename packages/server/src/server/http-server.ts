@@ -57,6 +57,8 @@ import { registerServiceUsageRoutes } from "./routes/service-usage"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
 import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
+import { ImageSettings } from "../opencode/image-settings"
+import { registerImageSettingsRoutes } from "./routes/image-settings"
 import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
@@ -334,6 +336,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPluginControlRoutes(app, { controls: configurationControls })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
+  registerImageSettingsRoutes(app, new ImageSettings(configurationControls, deps.workspaceManager))
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   const accounts = new ProviderAccountsService(deps.settings)

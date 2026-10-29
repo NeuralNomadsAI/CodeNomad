@@ -4,7 +4,7 @@ Anbieterauthentifizierung gehört zum verbundenen OpenCode-Dienst, nicht zum Bro
 
 ## Modell- oder Suchanbieter verbinden {#connect}
 
-1. Öffnen Sie einen Arbeitsbereich und dann **Einstellungen → Anbieter**. **Modelle** ist anfangs aufgeklappt; klappen Sie für Suchanbieter **Websuche** auf.
+1. Öffnen Sie einen Arbeitsbereich und dann **Einstellungen → Anbieter**. **Modelle** ist anfangs aufgeklappt; klappen Sie für Suchanbieter **Websuche** auf. **Bilder** enthält die Bildeinstellungen.
 2. Wählen Sie in dieser Gruppe zuerst **Anbieter auswählen**, dann **Verbinden**.
 3. Durchlaufen Sie bei einem Modellanbieter die angebotene native **Authentifizierungsmethode**: API-Schlüssel, OAuth oder Befehl. Verwenden Sie bei OAuth **Autorisierungsseite öffnen** und übermitteln Sie einen Autorisierungscode nur auf Aufforderung. Suchanbieter verbinden sich mit einem API-Schlüssel.
 4. Prüfen Sie nach Abschluss die Zeile des konfigurierten Anbieters. **Modelle** liest nach Verbindungen, Kontoänderungen und Wiederverbindungen erneut; **Websuche** bietet zusätzlich **Aktualisieren**.
@@ -80,3 +80,11 @@ Halten Sie Tokens/Cookies aus Shell-Verlauf, Screenshots und Berichten heraus. O
 Änderungen speichern automatisch. **Standard / geerbt** verwendet geerbte Konfiguration oder die gespeicherte native Auswahl; eine Projektüberschreibung hat Vorrang vor Global. **Deaktiviert** schaltet die Suche im gewählten Geltungsbereich aus; **Automatischer Anbieter** fordert native automatische Anbieterauswahl an. **Websuche** lädt ihre Verbindungen und Auswahlen nur, solange sie aufgeklappt ist. **Trennen** entfernt einen gespeicherten Suchschlüssel; eine von einer Umgebungsvariable bereitgestellte Verbindung ist als schreibgeschützt gekennzeichnet und hat kein **Trennen**.
 
 Suchzugangsdaten bleiben dienstglobal, auch bei projektbezogener Anbieterwahl. Das Speichern eines Schlüssels wählt ihn nicht als Suchstandard. Aktualisieren Sie bei Lese-/Speicherfehlern vor dem Wiederholen; ersetzen Sie Konfiguration nicht blind. Native Konfigurationsdetails finden Sie in der [OpenCode-Dokumentation](https://opencode.ai/v2/docs/) und [OpenCode-Einrichtung](opencode.md).
+
+## Bildgenerierung und -speicherung {#images}
+
+1. Klappen Sie unter **Einstellungen → Anbieter** den Bereich **Bilder** auf.
+2. Wählen Sie unter **Bildgenerierung** **An, automatisches Modell** oder eines der Bildmodelle Ihrer verbundenen Anbieter. **Aus** entfernt die globale Wahl.
+3. Aktivieren Sie **Bilder nur einmal speichern**, damit jedes angehängte oder erzeugte Bild nur einmal gespeichert wird statt in jeder Nachricht, die es verwendet.
+
+Änderungen werden automatisch in der globalen OpenCode-Konfiguration gespeichert und gelten für alle Projekte. Beides sind experimentelle OpenCode-Funktionen: **Bilder** zeigt nur die Einstellungen, die die verbundene OpenCode-Version unterstützt. Agenten erhalten das Bildwerkzeug nur, solange ein verbundener Anbieter ein Bildmodell anbietet. Jedes Bild ist eine kostenpflichtige Anfrage, die zuerst um Erlaubnis fragt, dann im Hintergrund läuft und als Datei gespeichert wird; der Agent nennt ihren Pfad. **Bilder nur einmal speichern** gilt für neue Nachrichten. Legt die eigene OpenCode-Konfiguration eines Projekts die Bildgenerierung fest oder enthält sie eigene experimentelle Einstellungen, weist **Bilder** darauf hin, dass dort die Wahl des Projekts gilt.

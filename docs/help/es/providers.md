@@ -4,7 +4,7 @@ La autenticación de proveedores pertenece al servicio OpenCode conectado, no al
 
 ## Conectar un proveedor de modelos o búsqueda {#connect}
 
-1. Abre un espacio de trabajo y después **Configuración → Proveedores**. **Modelos** empieza expandido; expande **Búsqueda web** para los proveedores de búsqueda.
+1. Abre un espacio de trabajo y después **Configuración → Proveedores**. **Modelos** empieza expandido; expande **Búsqueda web** para los proveedores de búsqueda. **Imágenes** reúne los ajustes de imágenes.
 2. En ese grupo, elige **Seleccionar proveedor** y después **Conectar**.
 3. Para un proveedor de modelos, completa el **Método de autenticación** nativo ofrecido: clave API, OAuth o comando. Para OAuth, usa **Abrir página de autorización** y envía un código de autorización solo cuando se solicite. Los proveedores de búsqueda se conectan con una clave API.
 4. Comprueba la fila del proveedor configurado al terminar. **Modelos** vuelve a leer tras las conexiones, los cambios de cuenta y las reconexiones; **Búsqueda web** también tiene **Actualizar**.
@@ -80,3 +80,11 @@ Mantén tokens/cookies fuera del historial de shell, capturas e informes. Los le
 Los cambios se guardan automáticamente. **Predeterminado / heredado** usa la configuración heredada o la elección nativa guardada; un valor de Proyecto prevalece sobre Global. **Desactivado** desactiva la búsqueda en el ámbito seleccionado; **Proveedor automático** solicita la selección automática nativa del proveedor. **Búsqueda web** carga sus conexiones y elecciones solo mientras está expandido. **Desconectar** elimina una clave de búsqueda guardada; una conexión proporcionada por una variable de entorno se etiqueta como de solo lectura y no tiene **Desconectar**.
 
 Las credenciales de búsqueda siguen siendo globales al servicio aunque la elección de proveedor tenga ámbito de Proyecto. Guardar una clave no la selecciona como búsqueda predeterminada. Si falla la lectura/el guardado, actualiza antes de reintentar; no reemplaces la configuración a ciegas. Para detalles de configuración nativa, consulta la [documentación de OpenCode](https://opencode.ai/v2/docs/) y la [configuración de OpenCode](opencode.md).
+
+## Generación y almacenamiento de imágenes {#images}
+
+1. En **Configuración → Proveedores**, expande **Imágenes**.
+2. En **Generación de imágenes**, elige **Activada, modelo automático** o uno de los modelos de imagen que ofrecen tus proveedores conectados. **Desactivada** elimina la elección Global.
+3. Marca **Guardar las imágenes una sola vez** para guardar cada imagen adjunta o generada una sola vez, en lugar de dentro de cada mensaje que la usa.
+
+Los cambios se guardan automáticamente en la configuración Global de OpenCode y se aplican a todos los proyectos. Ambas son funciones experimentales de OpenCode: **Imágenes** muestra solo los ajustes que admite la versión de OpenCode conectada. Los agentes solo tienen la herramienta de imágenes mientras un proveedor conectado ofrezca un modelo de imagen. Cada imagen es una solicitud de pago que pide permiso primero, se ejecuta en segundo plano y se guarda como archivo; el agente indica su ruta. **Guardar las imágenes una sola vez** se aplica a los mensajes nuevos. Cuando la configuración de OpenCode propia de un proyecto define la generación de imágenes, o tiene sus propios ajustes experimentales, **Imágenes** indica que allí se aplica la elección del proyecto.

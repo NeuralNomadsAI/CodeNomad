@@ -44,6 +44,19 @@ serverApi.setWebSearchSettings = async (_id, payload) => {
   if (hold) { hold = false; await new Promise<void>(resolve => { release = resolve }) }
   selections[payload.location.directory][payload.scope] = payload.provider
 }
+const images = { generation: false as boolean | string, mediaStorage: false, supported: true, reads: 0, writes: [] as any[] }
+serverApi.getImageSettings = async (_id, directory) => {
+  images.reads++
+  return { location: { directory }, generation: images.supported ? { global: images.generation, effective: images.generation,
+    models: [{ ref: "openai/gpt-image-2", name: "GPT Image 2" }] } : null,
+  mediaStorage: images.supported ? { global: images.mediaStorage, effective: false, projectOverride: `${directory}/opencode.jsonc` } : null }
+}
+serverApi.setImageSettings = async (_id, payload) => {
+  images.writes.push(payload)
+  if (reject) { reject = false; throw new Error("fixture mutation failure") }
+  if (payload.generation !== undefined) images.generation = payload.generation
+  if (payload.mediaStorage !== undefined) images.mediaStorage = payload.mediaStorage
+}
 const client = {
   provider: { list: async () => ({ data: [{ id: "openai", name: "OpenAI", integrationID: "openai" }, { id: "anthropic", name: "Anthropic", integrationID: "anthropic" }] }) },
   model: { list: async () => ({ data: [{ id: "gpt-5", name: "GPT-5", providerID: "openai" }, { id: "claude-sonnet-4", name: "Claude Sonnet 4", providerID: "anthropic" }] }) },
@@ -77,4 +90,4 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>{params.has("page")
       ? <ProvidersSettingsSection instanceId="web" location={{ directory: directory() }} />
       : <WebSearchSettingsCard instanceId="web" location={{ directory: directory() }} />}
 </main>}</ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
-;(window as any).fixture = { writes, keys, setDirectory, setActive, integrationLists: () => integrationLists, reject: () => { reject = true }, hold: () => { hold = true }, release: () => release?.() }
+;(window as any).fixture = { writes, keys, images, setDirectory, setActive, integrationLists: () => integrationLists, reject: () => { reject = true }, hold: () => { hold = true }, release: () => release?.() }

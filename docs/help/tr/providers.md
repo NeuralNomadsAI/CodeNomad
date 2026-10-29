@@ -4,7 +4,7 @@ Sağlayıcı kimlik doğrulaması, tarayıcı cihazına veya bir CodeNomad proje
 
 ## Bir modeli veya arama sağlayıcısını bağlayın {#connect}
 
-1. Çalışma alanı açıp **Ayarlar → Provider'lar** yoluna gidin. **Modeller** açık olarak başlar; arama sağlayıcıları için **Web araması** bölümünü genişletin.
+1. Çalışma alanı açıp **Ayarlar → Provider'lar** yoluna gidin. **Modeller** açık olarak başlar; arama sağlayıcıları için **Web araması** bölümünü genişletin. **Görseller** görsel ayarlarını içerir.
 2. O grupta **Provider seç** öğesini, ardından **Bağlan** öğesini seçin.
 3. Model sağlayıcısı için sunulan yerel **Kimlik doğrulama yöntemi** öğesini tamamlayın: API anahtarı, OAuth veya komut. OAuth için **Yetkilendirme sayfasını aç** öğesini kullanın ve yalnızca istendiğinde bir yetkilendirme kodu gönderin. Arama sağlayıcıları API anahtarıyla bağlanır.
 4. Tamamlandıktan sonra yapılandırılmış sağlayıcı satırını kontrol edin. **Modeller** bağlantılardan, hesap değişikliklerinden ve yeniden bağlanmalardan sonra yeniden okunur; **Web araması** bölümünde ayrıca **Yenile** vardır.
@@ -80,3 +80,11 @@ Belirteçleri/çerezleri kabuk geçmişinden, ekran görüntülerinden ve raporl
 Değişiklikler otomatik olarak kaydedilir. **Varsayılan / devralınan**, devralınan yapılandırmayı veya kaydedilen yerel seçimi kullanır; Proje geçersiz kılma Global'e galip gelir. **Devre dışı** seçilen kapsamda aramayı kapatır; **Otomatik sağlayıcı**, yerel otomatik sağlayıcı seçimi talep ediyor. **Web araması** bağlantılarını ve seçimlerini yalnızca genişletildiğinde yükler. **Bağlantıyı kes** kayıtlı bir arama anahtarını kaldırır; bir ortam değişkeninden sağlanan bağlantı salt okunur olarak etiketlenir ve **Bağlantıyı kes** eylemi yoktur.
 
 Arama kimlik bilgileri, sağlayıcı seçimi Proje kapsamında olsa bile hizmet geneli olarak kalır. Bir anahtarın kaydedilmesi, onu arama varsayılanı olarak seçmez. Okuma/kaydetme işlemi başarısız olursa, yeniden denemeden önce yenileyin; konfigürasyonu körü körüne değiştirmeyin. Yerel yapılandırma ayrıntıları için, bkz. [OpenCode belgeleri](https://opencode.ai/v2/docs/) ve [OpenCode kurulumu](opencode.md).
+
+## Görsel oluşturma ve saklama {#images}
+
+1. **Ayarlar → Provider'lar** içinde **Görseller** bölümünü genişletin.
+2. **Görsel oluşturma** altında **Açık, otomatik model** ya da bağlı sağlayıcılarınızın sunduğu görsel modellerinden birini seçin. **Kapalı**, Global seçimi kaldırır.
+3. Eklenen veya oluşturulan her görselin, onu kullanan her mesajın içinde değil yalnızca bir kez saklanması için **Görselleri bir kez sakla** seçeneğini işaretleyin.
+
+Değişiklikler Global OpenCode yapılandırmasına otomatik kaydedilir ve tüm projelere uygulanır. İkisi de deneysel OpenCode özellikleridir: **Görseller** yalnızca bağlı OpenCode sürümünün desteklediği ayarları gösterir. Ajanlar görsel aracını yalnızca bağlı bir sağlayıcı görsel modeli sunduğu sürece alır. Her görsel, önce izin isteyen, ardından arka planda çalışan ve dosya olarak kaydedilen ücretli bir istektir; ajan dosyanın yolunu bildirir. **Görselleri bir kez sakla** yeni mesajlara uygulanır. Bir projenin kendi OpenCode yapılandırması görsel oluşturmayı belirliyorsa veya kendi deneysel ayarlarını içeriyorsa, **Görseller** orada projenin seçiminin geçerli olduğunu belirtir.
