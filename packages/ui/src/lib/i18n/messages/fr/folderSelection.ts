@@ -39,7 +39,7 @@ export const folderSelectionMessages = {
   "folderSelection.temporary.button": "Nouvelle instance temporaire",
   "folderSelection.temporary.description": "Démarrer dans un dossier vide géré par CodeNomad ; à la fermeture de l'onglet, vous pourrez le garder ou le jeter",
   "folderSelection.clone.destination.title": "Choisir la destination du clone",
-  "folderSelection.clone.destination.description": "Selectionnez le dossier ou le depot doit etre clone.",
+  "folderSelection.clone.destination.description": "Sélectionnez le dossier qui contiendra le clone ; le dossier du dépôt y sera créé.",
   "folderSelection.clone.dialog.title": "Cloner un depot Git",
   "folderSelection.clone.dialog.description": "Clonez un depot Git dans un dossier local, puis ouvrez-le comme espace de travail.",
   "folderSelection.clone.dialog.repositoryUrl": "URL du depot",

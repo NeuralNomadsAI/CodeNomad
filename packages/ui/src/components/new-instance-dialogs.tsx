@@ -6,6 +6,8 @@ import { RemoteServerDialog } from "./remote-server-dialog"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { openNativeFolderDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
+import { parentDirectory, suggestCloneDestination } from "../lib/clone-destination"
+import { rememberCloneParent, uiState } from "../stores/preferences"
 
 interface NewInstanceDialogsOptions {
   /** Starting folder for pickers, usually the most recent project. */
@@ -27,6 +29,10 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
   const [isCloneDestinationBrowserOpen, setIsCloneDestinationBrowserOpen] = createSignal(false)
   const [cloneRepositoryUrl, setCloneRepositoryUrl] = createSignal("")
   const [cloneDestinationPath, setCloneDestinationPath] = createSignal("")
+  // The destination is the repository's folder inside a parent (browsed, else
+  // the last clone's, else the most recent project's) until the user types it.
+  const [cloneParent, setCloneParent] = createSignal<string | null>(null)
+  const [cloneDestinationEdited, setCloneDestinationEdited] = createSignal(false)
   const [cleanupCloneDestination, setCleanupCloneDestination] = createSignal(false)
   const [cloneDialogError, setCloneDialogError] = createSignal<string | null>(null)
   const [isCloningRepository, setIsCloningRepository] = createSignal(false)
@@ -35,8 +41,32 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
   function resetCloneDialog() {
     setCloneRepositoryUrl("")
     setCloneDestinationPath("")
+    setCloneParent(null)
+    setCloneDestinationEdited(false)
     setCleanupCloneDestination(false)
     setCloneDialogError(null)
+  }
+
+  function suggestedCloneParent(): string | undefined {
+    const recent = options.defaultPath()
+    return cloneParent() ?? uiState().lastCloneParent ?? (recent ? parentDirectory(recent) : undefined)
+  }
+
+  function handleCloneRepositoryUrlInput(repositoryUrl: string) {
+    setCloneRepositoryUrl(repositoryUrl)
+    if (!cloneDestinationEdited()) setCloneDestinationPath(suggestCloneDestination(suggestedCloneParent(), repositoryUrl))
+  }
+
+  function handleCloneDestinationInput(path: string) {
+    setCloneDestinationPath(path)
+    setCloneDestinationEdited(path.trim() !== "")
+  }
+
+  /** A browsed folder holds the clone: the repository's folder is created inside it. */
+  function chooseCloneParent(path: string) {
+    setCloneParent(path)
+    setCloneDestinationEdited(false)
+    setCloneDestinationPath(suggestCloneDestination(path, cloneRepositoryUrl()) || path)
   }
 
   function clone() {
@@ -64,6 +94,7 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
       })
       setIsCloneDialogOpen(false)
       resetCloneDialog()
+      rememberCloneParent(parentDirectory(result.path))
       if (!options.isLoading()) options.onSelectFolder(result.path)
     } catch (error) {
       setCloneDialogError(error instanceof Error ? error.message : String(error))
@@ -92,7 +123,7 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
 
   function handleCloneDestinationSelect(path: string) {
     setIsCloneDestinationBrowserOpen(false)
-    setCloneDestinationPath(path)
+    chooseCloneParent(path)
     setIsCloneDialogOpen(true)
   }
 
@@ -101,17 +132,23 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
     setIsCloneDialogOpen(true)
   }
 
+  // Open where the clone's folder would be created; it does not exist yet.
+  function cloneDestinationBrowsePath(): string | undefined {
+    const destination = cloneDestinationPath().trim()
+    if (!destination) return suggestedCloneParent()
+    return destination === cloneParent() ? destination : parentDirectory(destination) || destination
+  }
+
   async function handleCloneDestinationBrowse() {
     if (isCloningRepository()) return
 
-    const defaultPath = cloneDestinationPath() || options.defaultPath()
     if (supportsNativeDialogsInCurrentWindow()) {
       const selected = await openNativeFolderDialog({
         title: t("folderSelection.clone.destination.title"),
-        defaultPath,
+        defaultPath: cloneDestinationBrowsePath(),
       })
       if (selected) {
-        setCloneDestinationPath(selected)
+        chooseCloneParent(selected)
       }
       return
     }
@@ -138,7 +175,7 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
           open={isCloneDestinationBrowserOpen()}
           title={t("folderSelection.clone.destination.title")}
           description={t("folderSelection.clone.destination.description")}
-          initialPath={cloneDestinationPath() || options.defaultPath()}
+          initialPath={cloneDestinationBrowsePath()}
           onClose={handleCloneDestinationBrowserClose}
           onSelect={handleCloneDestinationSelect}
         />
@@ -175,7 +212,7 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
                   <input
                     class="selector-input w-full"
                     value={cloneRepositoryUrl()}
-                    onInput={(event) => setCloneRepositoryUrl(event.currentTarget.value)}
+                    onInput={(event) => handleCloneRepositoryUrlInput(event.currentTarget.value)}
                     placeholder={t("folderSelection.clone.dialog.repositoryUrlPlaceholder")}
                     disabled={isCloningRepository()}
                   />
@@ -187,7 +224,7 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
                     <input
                       class="selector-input w-full"
                       value={cloneDestinationPath()}
-                      onInput={(event) => setCloneDestinationPath(event.currentTarget.value)}
+                      onInput={(event) => handleCloneDestinationInput(event.currentTarget.value)}
                       placeholder={t("folderSelection.clone.dialog.destinationPathPlaceholder")}
                       disabled={isCloningRepository()}
                     />

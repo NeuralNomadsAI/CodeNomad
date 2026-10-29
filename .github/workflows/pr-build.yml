@@ -295,6 +295,7 @@ jobs:
           packages/ui/src/components/prompt-input/type-to-focus.test.ts
           packages/ui/src/components/user-message-navigation.test.ts
           packages/ui/src/lib/hotkey-bindings.test.ts
+          packages/ui/src/lib/clone-destination.test.ts
           packages/ui/src/components/session/session-bottom-pin-intent.test.ts
           packages/ui/src/components/session/session-idle-attention.test.ts
           packages/ui/src/components/session-list-visibility.test.ts

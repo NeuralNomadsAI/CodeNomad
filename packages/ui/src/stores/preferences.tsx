@@ -191,6 +191,8 @@ interface UiStateBucket {
   colorSchemePresets?: unknown
   activeColorSchemePresetId?: string
   recentFolders?: RecentFolder[]
+  /** The folder the last clone was created in, where the next clone is suggested. */
+  lastCloneParent?: string
   opencodeBinaries?: OpenCodeBinary[]
   remoteServers?: RemoteServerProfile[]
   models?: {
@@ -203,6 +205,7 @@ interface UiStateBucket {
 
 interface NormalizedUiState {
   recentFolders: RecentFolder[]
+  lastCloneParent?: string
   opencodeBinaries: OpenCodeBinary[]
   remoteServers: RemoteServerProfile[]
   models: {
@@ -469,6 +472,8 @@ function normalizeUiState(input?: UiStateBucket | null): NormalizedUiState {
         ...(typeof projectName === "string" && projectName.trim() ? { projectName: projectName.trim() } : {}),
       }
     }),
+    ...(typeof source.lastCloneParent === "string" && source.lastCloneParent.trim()
+      ? { lastCloneParent: source.lastCloneParent.trim() } : {}),
     opencodeBinaries: cloneArray<OpenCodeBinary>(source.opencodeBinaries, (b) => {
       if (!b || typeof b !== "object") return null
       const p = (b as any).path
@@ -1096,6 +1101,11 @@ function addRecentFolder(folderPath: string): void {
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to add recent folder", error))
 }
 
+function rememberCloneParent(folderPath: string): void {
+  if (!folderPath || folderPath === uiState().lastCloneParent) return
+  void patchStateOwner("ui", { lastCloneParent: folderPath }).catch((error) => log.error("Failed to remember clone folder", error))
+}
+
 function removeRecentFolder(folderPath: string): void {
   const next = recentFolders().filter((f) => f.path !== folderPath)
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to remove recent folder", error))
@@ -1529,6 +1539,7 @@ export function useConfig(): ConfigContextValue {
 export {
   preferences,
   uiState,
+  rememberCloneParent,
   serverSettings,
   recentFolders,
   opencodeBinaries,

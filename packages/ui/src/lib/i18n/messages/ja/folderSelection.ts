@@ -39,7 +39,7 @@ export const folderSelectionMessages = {
   "folderSelection.temporary.button": "新しい一時インスタンス",
   "folderSelection.temporary.description": "CodeNomad が管理する空のフォルダで開始し、タブを閉じるときに保持または破棄します",
   "folderSelection.clone.destination.title": "クローン先を選択",
-  "folderSelection.clone.destination.description": "リポジトリをクローンするフォルダを選択してください。",
+  "folderSelection.clone.destination.description": "クローンを置くフォルダーを選択してください。その中にリポジトリのフォルダーが作成されます。",
   "folderSelection.clone.dialog.title": "Git リポジトリをクローン",
   "folderSelection.clone.dialog.description": "Git リポジトリをローカルフォルダにクローンし、ワークスペースとして開きます。",
   "folderSelection.clone.dialog.repositoryUrl": "リポジトリ URL",

@@ -39,7 +39,7 @@ export const folderSelectionMessages = {
   "folderSelection.temporary.button": "नयाँ अस्थायी उदाहरण",
   "folderSelection.temporary.description": "CodeNomad ले व्यवस्थापन गर्ने खाली फोल्डरमा सुरु गर्नुहोस्; ट्याब बन्द गर्दा राख्न वा हटाउन सक्नुहुन्छ",
   "folderSelection.clone.destination.title": "क्लोन गन्तव्य चयन गर्नुहोस्",
-  "folderSelection.clone.destination.description": "रिपोजिटरी क्लोन गरिनुपर्ने फोल्डर चयन गर्नुहोस्।",
+  "folderSelection.clone.destination.description": "क्लोन राख्ने फोल्डर छान्नुहोस्; रिपोजिटरीको फोल्डर त्यसभित्र बनाइन्छ।",
   "folderSelection.clone.dialog.title": "Git रिपोजिटरी क्लोन गर्नुहोस्",
   "folderSelection.clone.dialog.description": "Git रिपोजिटरीलाई स्थानीय फोल्डरमा क्लोन गर्नुहोस्, त्यसपछि यसलाई आफ्नो कार्यस्थानको रूपमा खोल्नुहोस्।",
   "folderSelection.clone.dialog.repositoryUrl": "रिपोजिटरी URL",
