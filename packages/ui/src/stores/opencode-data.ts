@@ -804,12 +804,13 @@ export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: st
   // An item the reducer admitted that the authoritative inbox no longer lists
   // was delivered or cancelled without events; a delivery's user message may
   // never be admitted either. The disappearance owes the settlement read that
-  // reconciles both (a dropped-mode resync already owed subsumes it: the sync
-  // shares that read and the projection stays fenced).
+  // reconciles both; nothing invalidated the SDK's message key, so it does
+  // here (an owed dropping-mode resync keeps the projection fenced).
   const remaining = new Set(transcript.entry.data.session.pending.list(sessionId).map((item) => item.id))
   if ([...admitted].some((id) => !remaining.has(id))) {
     const current = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
     if (current === transcript && isTranscriptCurrent(instanceId, sessionId, transcript)) {
+      transcript.entry.data.session.message.invalidate(sessionId)
       completeSettlementRead(instanceId, sessionId, transcript)
     }
   }
@@ -966,6 +967,9 @@ export function observeNonEventSettlement(instanceId: string, sessionId: string)
   const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
   if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
   if (!hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) return
+  // Unlike a terminal event, nothing invalidated the SDK's message key; a key
+  // an earlier sync completed would make this read a no-op.
+  transcript.entry.data.session.message.invalidate(sessionId)
   completeSettlementRead(instanceId, sessionId, transcript)
 }
 

@@ -4,7 +4,7 @@ import { createEffect, createRoot } from "solid-js"
 import { messageStoreBus } from "./message-v2/bus.ts"
 import { seedSessionMessagesV2 } from "./message-v2/bridge.ts"
 import { normalizeSessionMessage } from "./message-v2/normalizers.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, observeNonEventSettlement, projectOpenCodeMessages, syncOpenCodeSessionInbox } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, finishOpenCodeDataEvent, getOpenCodeMessageRevision, getOpenCodeMutationRevision, getOpenCodeSessionInbox, observeNonEventSettlement, projectOpenCodeMessages, seedOpenCodeSessionMessages, syncOpenCodeSessionInbox } from "./opencode-data.ts"
 import { emptyLatestWindow } from "./message-v2/message-window.ts"
 import { getRootClient } from "./opencode-client.ts"
 import { sdkManager } from "../lib/sdk-manager.ts"
@@ -1349,6 +1349,8 @@ describe("OpenCode data projection", () => {
     const base = { sessionID: sessionId, assistantMessageID: "assistant" }
     const apply = (type: string, data: Record<string, unknown>, created = 1) =>
       applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    // A reducer an earlier sync completed (opened, seeded or reconnected) must still read.
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [])
     try {
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
@@ -1359,7 +1361,7 @@ describe("OpenCode data projection", () => {
       observeNonEventSettlement(instanceId, sessionId)
 
       await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
-      assert.ok(reads >= 1, "the liveness-observed settlement finished the read")
+      assert.equal(reads, 1, "the liveness-observed settlement finished the read")
       const healed = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
       assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed")
       assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
@@ -1388,6 +1390,8 @@ describe("OpenCode data projection", () => {
     const base = { sessionID: sessionId, assistantMessageID: "assistant" }
     const apply = (type: string, data: Record<string, unknown>, created = 1) =>
       applyOpenCodeDataEvent(instanceId, "/work", { id: type, type, created, data } as any)
+    // A reducer an earlier sync completed (opened, seeded or reconnected) must still read.
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [])
     try {
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
@@ -1405,13 +1409,20 @@ describe("OpenCode data projection", () => {
       projectOpenCodeMessages(instanceId, sessionId, streamed)
 
       read.resolve({ data: [authoritative], cursor: {} })
-      await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text === "kept")
+      // Wait until the observation's read landed in the reducer, then let its
+      // completion run before checking that nothing was published.
+      await waitForReplay(() => (streamed.session.message.get(sessionId, "assistant") as any)
+        ?.content?.find((part: any) => part.type === "tool")?.state?.status === "completed")
+      await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept")
       // The newer admitted execution fences the observation's publication; the
       // newer round's own settlement reconciles instead.
       assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "pending", "a newer execution supersedes the observation's publication")
 
+      // The fenced read still reconciled the reducer: the next projection (as
+      // the event dispatcher runs for the newer round's settlement) shows it.
       const settled = { id: "settled-2", type: "session.execution.succeeded", created: 20, data: { sessionID: sessionId } } as any
-      applyOpenCodeDataEvent(instanceId, "/work", settled)
+      projectOpenCodeMessages(instanceId, sessionId, applyOpenCodeDataEvent(instanceId, "/work", settled))
       finishOpenCodeDataEvent(instanceId, settled)
       await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
       assert.equal((messageStoreBus.getOrCreate(instanceId).getMessage("round-2")?.parts["round-2-text-0"]?.data as any)?.text, "kept", "the round keeps its events")
@@ -1438,6 +1449,8 @@ describe("OpenCode data projection", () => {
       reads += 1
       return { data: [delivered], cursor: {} }
     })
+    // A reducer an earlier sync completed (opened, seeded or reconnected) must still read.
+    await seedOpenCodeSessionMessages(instanceId, sessionId, "/work", [])
     try {
       applyOpenCodeDataEvent(instanceId, "/work", {
         id: "enqueue", type: "session.inbox.enqueued", created: 1,
@@ -1455,7 +1468,7 @@ describe("OpenCode data projection", () => {
         .map((entry: unknown) => (entry as { data?: { type?: string; text?: string } })?.data)
         .find((part) => part?.type === "text")?.text
       assert.equal(text, "queued prompt", "the delivered prompt's user message is admitted")
-      assert.ok(reads >= 1, "the disappearance owed one settlement read")
+      assert.equal(reads, 1, "the disappearance owed one settlement read")
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)

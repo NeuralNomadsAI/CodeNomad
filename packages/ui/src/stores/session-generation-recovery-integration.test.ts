@@ -6,7 +6,7 @@ import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { fetchSessions, refreshSessionRuntimeStatus, removeSessionRuntimeState } from "./session-api.ts"
-import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, seedOpenCodeSessionMessages } from "./opencode-data.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
 import { beginSessionGenerationAdmission, hydrateSessionGenerationRecovery, sessions, setSessions, setSessionStatus } from "./session-state.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
@@ -340,6 +340,8 @@ describe("native-outcome recovery through real session stores", () => {
     const base = { sessionID: "session", assistantMessageID: "assistant" }
     const apply = (type: string, data: Record<string, unknown>, created = 1) =>
       applyOpenCodeDataEvent(id, "/work", { id: type, type, created, data } as any)
+    // An opened session's reducer has completed its first message sync.
+    await seedOpenCodeSessionMessages(id, "session", "/work", [])
     try {
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
@@ -357,7 +359,7 @@ describe("native-outcome recovery through real session stores", () => {
       const healed = messageStoreBus.getOrCreate(id).getMessage("assistant")
       assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed", "the liveness observation finished the settlement read")
       assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
-      assert.ok(messageReads >= 1)
+      assert.equal(messageReads, 1)
     } finally {
       destroyOpenCodeData(id)
       fixture.cleanup()
