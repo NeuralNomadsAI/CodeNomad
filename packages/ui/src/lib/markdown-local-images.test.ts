@@ -44,6 +44,11 @@ describe("Markdown images of local files", () => {
     assert.equal(matchLocalImage(encoded, localImagePath("C:/images/a%20b.png")!), "literal")
     assert.equal(matchLocalImage(encoded.slice(0, 1), localImagePath("C:/images/a%20b.png")!), "space")
     assert.equal(matchLocalImage(encoded.slice(1), localImagePath("C:/images/a%20b.png")!), "literal")
+    // A file: URL path is already decoded: `a%2520b.png` names `a%20b.png` and never falls back to `a b.png`.
+    const fromUrl = localImagePath("file:///C:/images/a%2520b.png")!
+    assert.equal(fromUrl, "C:/images/a%20b.png")
+    assert.equal(matchLocalImage(encoded.slice(0, 1), fromUrl, false), undefined)
+    assert.equal(matchLocalImage(encoded, fromUrl, false), "literal")
   })
 
   it("collects completed tool images by file name and the tool's single-image file path, once per message revision", () => {
@@ -73,6 +78,9 @@ describe("Markdown images of local files", () => {
     assert.match(unnamed, />out\.png<\/span>/)
     const remote = await renderMarkdown("![remote](https://example.com/a.png)", { suppressHighlight: true })
     assert.match(remote, /<img src="https:\/\/example.com\/a.png" alt="remote">/)
+    const fileUrl = await renderMarkdown("![u](file:///C:/images/a%2520b.png)", { suppressHighlight: true })
+    assert.match(fileUrl, /data-local-image="C:\/images\/a%20b.png" data-local-image-exact /)
+    assert.doesNotMatch(await renderMarkdown("![p](C:/images/a%20b.png)", { suppressHighlight: true }), /data-local-image-exact/)
     const schemeRelative = await renderMarkdown("![cdn](//cdn.example.com/a.png)", { suppressHighlight: true })
     assert.match(schemeRelative, /<img src="\/\/cdn.example.com\/a.png" alt="cdn">/)
     const hostile = await renderMarkdown('![x"><script>alert(1)</script>](C:/a"onerror="alert(1).png)', { suppressHighlight: true })

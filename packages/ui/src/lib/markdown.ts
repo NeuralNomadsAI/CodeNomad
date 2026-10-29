@@ -5,7 +5,7 @@ import { getLogger } from "./logger"
 import { tGlobal } from "./i18n"
 import type { Highlighter } from "shiki/bundle/full"
 import { decodeHtmlEntities, escapeHtml } from "./text-render-utils"
-import { localImagePath } from "./markdown-local-images"
+import { isFileUrl, localImagePath } from "./markdown-local-images"
 
 const log = getLogger("actions")
 
@@ -610,7 +610,8 @@ function setupRenderer(isDark: boolean) {
     const local = localImagePath(href)
     if (local === undefined) return marked.Renderer.prototype.image.call(renderer, href, title, text)
     const label = text.trim() || escapeHtml(local.split("/").filter(Boolean).at(-1) ?? local)
-    return `<span class="markdown-local-image" data-local-image="${escapeHtml(local)}" title="${escapeHtml(local)}">${label}</span>`
+    const exact = isFileUrl(href) ? " data-local-image-exact" : ""
+    return `<span class="markdown-local-image" data-local-image="${escapeHtml(local)}"${exact} title="${escapeHtml(local)}">${label}</span>`
   }
 
   renderer.link = (href: string, title: string | null | undefined, text: string) => {

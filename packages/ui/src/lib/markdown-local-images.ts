@@ -30,11 +30,15 @@ const comparable = (value: string) => {
 
 export interface SessionImageCandidate { paths: string[]; source: string }
 
-/** Matches the literal path, then its percent-decoded form, against the transcript's images. */
-export function matchLocalImage(candidates: readonly SessionImageCandidate[], path: string): string | undefined {
+/** Matches the literal path against the transcript's images, then (for a plain path written in
+ * Markdown, never one already decoded from a `file:` URL) its percent-decoded form. */
+export function matchLocalImage(candidates: readonly SessionImageCandidate[], path: string, decodedFallback = true): string | undefined {
   const decoded = decode(path)
-  return matchPath(candidates, path) ?? (decoded !== path ? matchPath(candidates, decoded) : undefined)
+  return matchPath(candidates, path) ?? (decodedFallback && decoded !== path ? matchPath(candidates, decoded) : undefined)
 }
+
+/** Whether a Markdown image source is a `file:` URL, whose path is already decoded. */
+export const isFileUrl = (src: string) => /^file:/i.test(src.trim())
 
 /** An exact path, or a relative path against the end of exactly one known path
  * (candidates newest first, so a re-read file resolves to its latest image). */
@@ -58,6 +62,7 @@ function label(element: HTMLElement, failedSource?: string): HTMLSpanElement {
   const span = document.createElement("span")
   span.className = "markdown-local-image"
   span.dataset.localImage = element.dataset.localImage
+  if (element.dataset.localImageExact !== undefined) span.dataset.localImageExact = ""
   if (failedSource) span.dataset.failedSource = failedSource
   span.title = element.title
   span.textContent = element instanceof HTMLImageElement ? element.alt : element.textContent
@@ -68,7 +73,7 @@ function label(element: HTMLElement, failedSource?: string): HTMLSpanElement {
  * match disappears, or whose source fails to load, returns to its alt text; a changed source retries. */
 export function resolveLocalImages(container: ParentNode, candidates: readonly SessionImageCandidate[]): void {
   for (const element of container.querySelectorAll<HTMLElement>("[data-local-image]")) {
-    const source = matchLocalImage(candidates, element.dataset.localImage ?? "")
+    const source = matchLocalImage(candidates, element.dataset.localImage ?? "", element.dataset.localImageExact === undefined)
     if (element instanceof HTMLImageElement) {
       if (!source) element.replaceWith(label(element))
       else if (element.getAttribute("src") !== source) element.src = source
@@ -78,6 +83,7 @@ export function resolveLocalImages(container: ParentNode, candidates: readonly S
     const image = document.createElement("img")
     image.className = "markdown-local-image"
     image.dataset.localImage = element.dataset.localImage
+    if (element.dataset.localImageExact !== undefined) image.dataset.localImageExact = ""
     image.alt = element.textContent ?? ""
     image.title = element.title
     image.loading = "lazy"
