@@ -1,5 +1,6 @@
 export const commandMessages = {
   "commands.openHelp.failed": "Yardım tarayıcıda açılamadı. https://neuralnomadsai.github.io/CodeNomad/ adresini elle açın.",
+  "commands.openSponsor.failed": "CodeNomad'i destekleyin sayfası tarayıcıda açılamadı. {url} adresini elle açın.",
   "commandPalette.title": "Komut Paleti",
   "commandPalette.description": "Komutları ara ve çalıştır",
   "commandPalette.searchPlaceholder": "Komut yazın veya arayın...",
@@ -135,6 +136,9 @@ export const commandMessages = {
   "commands.openHelp.label": "Yardımı aç",
   "commands.openHelp.description": "CodeNomad kullanıcı kılavuzunu tarayıcınızda açın",
   "commands.openHelp.keywords": "yardım, kılavuz, belgeler",
+  "commands.openSponsor.label": "CodeNomad'i destekleyin",
+  "commands.openSponsor.description": "CodeNomad'e sponsor olma ve yardım etmenin diğer yolları hakkındaki sayfayı açın",
+  "commands.openSponsor.keywords": "destek, destekle, sponsor, sponsorluk, bağış, bağış yap, finansman, katkı",
   "commands.openAbout.label": "CodeNomad hakkında",
   "commands.openAbout.description": "Sürümü, güncellemeleri ve tanılamayı ayarlarda göster",
   "commands.openAbout.keywords": "hakkında, sürüm, güncellemeler, tanılama",

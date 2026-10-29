@@ -22,6 +22,7 @@
   "reportProblem": "Сообщить о проблеме",
   "download": { "label": "Скачать", "windows": "Скачать для Windows", "windowsDetail": "Установщик, x64", "macos": "Скачать для macOS", "macosDetail": "Apple Silicon", "intel": "Mac с Intel? Скачайте версию для Intel", "linux": "Скачать для Linux", "linuxDetail": "AppImage, x64", "mobile": "Работайте в CodeNomad с телефона", "mobileDetail": "Выполните сопряжение телефона с компьютером, на котором запущен CodeNomad." },
   "tour": { "label": "Беззвучный фрагмент CodeNomad 1.0: миссия с параллельными субагентами, слепое сравнение моделей, diff в Git, поиск по истории рабочего пространства, вкладки проектов и цветовые палитры", "poster": "Окна CodeNomad 1.0: миссии, форма вопросов, diff, изменения Git и сравнение моделей", "caption": "Смотреть полный 90-секундный обзор на YouTube" },
+  "funding": { "label": "Спонсировать", "action": "Спонсировать через {channel}", "recipient": "Получатель: {recipient}" },
   "github": "GitHub",
   "languageLabel": "Язык",
   "projectLinks": "Ссылки проекта",

@@ -1,4 +1,4 @@
-# Soporte y compilaciones desde el código fuente
+# Informes de errores y compilaciones desde el código fuente
 
 Usa el repositorio para informes de errores, versiones actuales y contribuciones. La [guía de solución de problemas](troubleshooting.md) cubre la recuperación segura antes de informar de una incidencia.
 

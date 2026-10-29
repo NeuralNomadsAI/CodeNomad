@@ -70,4 +70,4 @@ OpenCode verwaltet Anbieterverbindungen und seinen globalen Unterhaltungsspeiche
 | Anbieterschlüssel und Sprachzugangsdaten | Nur in den vorgesehenen Einstellungen/beim Zugangsdatenverwalter eingeben; prüfen, welcher Anbieter Daten erhält. Siehe [Sprache](voice.md). |
 | Debug-/Trace-Logs und Netzwerkmitschnitte | Nur Nötiges sammeln, lokal prüfen und vor Meldung schwärzen. Nicht voraussetzen, dass jede nachgelagerte Werkzeugausgabe frei von Geheimnissen ist. |
 
-**Einstellungen → Info → Fehler melden** bereitet begrenzte Diagnosen vor, ohne Listener, Adressen, Pfade, Zugangsdaten oder Unterhaltungsinhalte vorauszufüllen. Prüfen Sie vor dem Absenden alles selbst Ergänzte. Siehe [Support](support.md).
+**Einstellungen → Info → Fehler melden** bereitet begrenzte Diagnosen vor, ohne Listener, Adressen, Pfade, Zugangsdaten oder Unterhaltungsinhalte vorauszufüllen. Prüfen Sie vor dem Absenden alles selbst Ergänzte. Siehe [Fehlerberichte und Quellcode-Builds](support.md#report-a-bug).

@@ -22,6 +22,7 @@
   "reportProblem": "समस्या रिपोर्ट गर्नुहोस्",
   "download": { "label": "डाउनलोड गर्नुहोस्", "windows": "Windows का लागि डाउनलोड गर्नुहोस्", "windowsDetail": "Installer, x64", "macos": "macOS का लागि डाउनलोड गर्नुहोस्", "macosDetail": "Apple Silicon", "intel": "Intel Mac? Intel build डाउनलोड गर्नुहोस्", "linux": "Linux का लागि डाउनलोड गर्नुहोस्", "linuxDetail": "AppImage, x64", "mobile": "फोनबाट CodeNomad प्रयोग गर्नुहोस्", "mobileDetail": "CodeNomad चलिरहेको कम्प्युटरसँग आफ्नो फोन pair गर्नुहोस्।" },
   "tour": { "label": "CodeNomad 1.0 को आवाजविहीन पूर्वावलोकन: समानान्तर subagent सहितको मिसन, मोडलहरूको blind तुलना, Git diff, workspace इतिहास खोज, परियोजना ट्याबहरू र रङ प्यालेटहरू", "poster": "CodeNomad 1.0 का विन्डोहरू: मिसन, प्रश्न फारम, diff, Git परिवर्तन र मोडल तुलना", "caption": "पूरा 90 सेकेन्डको भ्रमण YouTube मा हेर्नुहोस्" },
+  "funding": { "label": "प्रायोजन", "action": "{channel} मार्फत प्रायोजन गर्नुहोस्", "recipient": "भुक्तानी प्राप्तकर्ता: {recipient}" },
   "github": "GitHub",
   "languageLabel": "भाषा",
   "projectLinks": "परियोजनाका लिङ्कहरू",

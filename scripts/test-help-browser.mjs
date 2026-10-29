@@ -66,6 +66,11 @@ for (const locale of ["en", "he", "ne", "ja", "zh-Hans"]) for (const colorScheme
     assert.equal(await page.locator(".sidebar a[aria-current=page]").first().getAttribute("href"), "index.html")
     assert.ok(await page.locator("article h1").isVisible())
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, "no page-wide horizontal overflow")
+    assert.equal(await page.locator(".site-links > *").count(), 4, "Download, Sponsor, GitHub and the language menu")
+    assert.deepEqual(await page.locator(".site-links > *").evaluateAll((elements) => elements.filter((element) => {
+      const box = element.getBoundingClientRect()
+      return box.left < 0 || box.right > document.documentElement.clientWidth
+    }).map((element) => element.textContent)), [], "every header item stays inside the viewport")
     assert.equal(await page.locator(".brand").evaluate((element) => getComputedStyle(element).borderRadius), "0px")
     if (size === "mobile") {
       assert.equal(await page.locator('.topics').getAttribute('open'), null)
@@ -232,6 +237,29 @@ test("the download button reveals one platform, fits narrow screens, and stays h
     assert.equal(await page.locator(".download-primary").isVisible(), false)
     assert.ok(await page.locator("article table").isVisible(), "the full table is the download path without JavaScript")
   } finally { await context.close() }
+})
+
+test("funding buttons are square 44px targets that span narrow screens, in both directions", async (ctx) => {
+  const [channel] = JSON.parse(await readFile(resolve(root, "docs/help/funding.json"), "utf8"))
+  for (const locale of ["en", "he"]) for (const width of [1440, 390]) {
+    const page = await browser.newPage({ viewport: { width, height: 900 } })
+    const label = JSON.parse(await readFile(resolve(root, `docs/help/i18n/${locale}.json`), "utf8")).funding.action.replace("{channel}", channel.name)
+    try {
+      for (const slug of ["sponsor", "download"]) {
+        await page.goto(`${base}${locale}/${slug}.html`)
+        const button = page.locator(".funding a").first()
+        assert.equal(await button.innerText(), label, `${locale}/${slug}: the label keeps its spaces around the channel name`)
+        const box = await button.boundingBox()
+        assert.ok(box.height >= 44, `${locale}/${slug}: 44px target`)
+        assert.equal(await button.evaluate((element) => getComputedStyle(element).borderRadius), "0px")
+        if (width === 390) assert.ok(box.width >= (await page.locator("article").boundingBox()).width - 1, `${locale}/${slug}: the button spans narrow screens`)
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${locale}/${slug}: no overflow at ${width}px`)
+      }
+      const path = join(screenshots, `sponsor-${locale}-${width}.png`)
+      await page.screenshot({ path, fullPage: true })
+      ctx.diagnostic(path)
+    } finally { await page.close() }
+  }
 })
 
 test("the home tour plays muted on wide screens, and narrow screens or reduced motion get only the poster", async (ctx) => {

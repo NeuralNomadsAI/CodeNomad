@@ -4,9 +4,9 @@
 
 1. Windows/Linux मा `Ctrl+Shift+P` वा macOS मा `Cmd+Shift+P` बाट **कमाण्ड प्यालेट** खोल्नुहोस्, वा देखिने button/menu item प्रयोग गर्नुहोस्।
 2. कार्य नाम लेख्नुहोस्। प्यालेटमा application कार्य र हालको Location का custom command छन्; उपलब्धता सक्रिय दृश्यमा निर्भर हुन्छ।
-3. हालको UI भाषामा बाह्य browser सन्दर्भमा यो गाइड खोल्न **मद्दत खोल्नुहोस्** चलाउनुहोस्। नेटिभ **मद्दत → CodeNomad मद्दत** ले उही गाइड खोल्छ।
+3. हालको UI भाषामा बाह्य browser सन्दर्भमा यो गाइड खोल्न **मद्दत खोल्नुहोस्** चलाउनुहोस्। नेटिभ **मद्दत → CodeNomad मद्दत** ले उही गाइड खोल्छ। **CodeNomad लाई आर्थिक सहयोग गर्नुहोस्** (नेटिभ **मद्दत → CodeNomad लाई आर्थिक सहयोग गर्नुहोस्**) ले त्यसै गरी [CodeNomad लाई आर्थिक सहयोग गर्नुहोस्](sponsor.md) पृष्ठ खोल्छ।
 
-मद्दतले एप दृश्य र मस्यौदा छुँदैन। खोल्न असफल भए सोझै [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) जानुहोस्। command खोजिनुमा shortcut अनुकूलन गर्न मिल्छ भन्ने होइन: shortcut manager ले 74 renderer कार्यको निश्चित catalogue समेट्छ, सबै palette वा native-menu कार्य होइन। यसमा **सत्र संक्षिप्त गर्नुहोस्**, **अन्तिम सन्देश फिर्ता लिनुहोस् (Undo)** वा **मद्दत खोल्नुहोस्** जस्ता **कुनै सर्टकट छैन** बाट सुरु हुने palette command पनि छन्; project-folder, terminal र editor कार्य स्थानीय डेस्कटप विन्डोमा मात्र चल्छन्।
+मद्दतले एप दृश्य र मस्यौदा छुँदैन। खोल्न असफल भए सोझै [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) जानुहोस्। command खोजिनुमा shortcut अनुकूलन गर्न मिल्छ भन्ने होइन: shortcut manager ले 75 renderer कार्यको निश्चित catalogue समेट्छ, सबै palette वा native-menu कार्य होइन। यसमा **सत्र संक्षिप्त गर्नुहोस्**, **अन्तिम सन्देश फिर्ता लिनुहोस् (Undo)** वा **मद्दत खोल्नुहोस्** जस्ता **कुनै सर्टकट छैन** बाट सुरु हुने palette command पनि छन्; project-folder, terminal र editor कार्य स्थानीय डेस्कटप विन्डोमा मात्र चल्छन्।
 
 ## record, अक्षम र reset {#customize}
 

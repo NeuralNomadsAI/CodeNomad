@@ -36,6 +36,7 @@ export const commandHotkeyDefinitions: HotkeyDefinition[] = [
   definition("token-usage-visibility", "app", "app", "settings.behavior.usageMetrics.title"),
   definition("auto-cleanup-blank-sessions", "app", "app", "settings.behavior.autoCleanup.title"),
   definition("open-help", "app", "app", "commands.openHelp.label"),
+  definition("open-sponsor", "app", "app", "commands.openSponsor.label"),
   definition("open-about", "app", "app", "commands.openAbout.label"),
 ]
 

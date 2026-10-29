@@ -39,3 +39,9 @@ npx @neuralnomads/codenomad --generate-token --launch
 - **Linux**: AppImage लाई executable बनाउनुहोस् वा Debian प्याकेज स्थापना गर्नुहोस्; [Linux मा स्थापना](install.md#linux-install) हेर्नुहोस्।
 - **macOS**: macOS ले पहिलो सुरुवात रोकेमा [macOS quarantine](troubleshooting.md#macos-quarantine) हेर्नुहोस्।
 - **हरेक प्लेटफर्म**: [आवश्यकता](install.md#requirements) मा सूचीबद्ध Git र अनुकूल OpenCode CLI स्थापना गर्नुहोस्, त्यसपछि [पहिलो सुरुवातमा OpenCode चयन गर्नुहोस्](install.md#first-launch)। सुरुवातका अन्य समस्या [समस्या समाधान](troubleshooting.md#desktop-launch) मा समेटिएका छन्।
+
+## विकासलाई आर्थिक सहयोग गर्नुहोस् {#support-development}
+
+CodeNomad निःशुल्क छ र स्वयंसेवकहरूले आफ्नै समयमा यसलाई maintain गर्छन्। यो तपाईं वा तपाईंको टोलीका लागि उपयोगी छ भने, प्रायोजनले यसलाई maintain गर्न र नयाँ OpenCode रिलिजसँग अनुकूल राख्न मद्दत गर्छ। प्रायोजनले के खर्च बेहोर्छ भन्ने कुरा [CodeNomad लाई आर्थिक सहयोग गर्नुहोस्](sponsor.md) पृष्ठले बताउँछ।
+
+{{funding}}

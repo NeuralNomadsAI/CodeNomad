@@ -70,4 +70,4 @@ OpenCode possède les connexions fournisseurs et son stockage global de conversa
 | Clés fournisseurs et identifiants vocaux | Saisir uniquement dans les paramètres/le propriétaire prévus ; vérifier quel fournisseur reçoit les données. Voir [Voix](voice.md). |
 | Journaux debug/trace et captures réseau | Collecter seulement le nécessaire, inspecter localement et masquer avant signalement. Ne pas supposer que toute sortie d’outil en aval est exempte de secrets. |
 
-**Paramètres → Info → Signaler un bug** prépare des diagnostics bornés sans préremplir les écoutes, adresses, chemins, identifiants ou contenu des conversations. Relisez ce que vous ajoutez avant soumission. Voir [Assistance](support.md).
+**Paramètres → Info → Signaler un bug** prépare des diagnostics bornés sans préremplir les écoutes, adresses, chemins, identifiants ou contenu des conversations. Relisez ce que vous ajoutez avant soumission. Voir [Signalement de bugs et compilation depuis les sources](support.md#report-a-bug).

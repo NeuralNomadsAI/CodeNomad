@@ -82,7 +82,7 @@ Das Arbeitsbereichs-Stammverzeichnis begrenzt, welche Ordner CodeNomad öffnet; 
 | Weiteres Gerät verbinden | [Fernsteuerung](remote-control.md), [Sicherheit](security.md), [Mobil](mobile.md) |
 | Arbeitsbereich anpassen | [Einstellungen](settings.md), [Tastenkürzel](shortcuts.md), [Sprache](voice.md), [Erweiterungen](extensions.md) |
 | Native Anwendung verwalten | [Desktop](desktop.md), [Browser-Vorschauen und SideCars](browser-sidecars.md), [Updates](updates.md) |
-| Probleme untersuchen oder beitragen | [Fehlerbehebung](troubleshooting.md), [Support und Quellcode-Builds](support.md) |
+| Probleme untersuchen oder beitragen | [Fehlerbehebung](troubleshooting.md), [Fehlerberichte und Quellcode-Builds](support.md), [CodeNomad unterstützen](sponsor.md) |
 
 ## Arbeit beobachten, ohne sie zu verändern {#monitor-work}
 

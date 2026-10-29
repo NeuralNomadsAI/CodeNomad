@@ -1,4 +1,4 @@
-# Support and source builds
+# Bug reports and source builds
 
 Use the repository for bug reports, current releases and contributions. The [troubleshooting guide](troubleshooting.md) covers safe recovery before you report an issue.
 

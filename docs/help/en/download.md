@@ -39,3 +39,9 @@ Download only from this page or the [official releases](https://github.com/Neura
 - **Linux**: make the AppImage executable or install the Debian package; see [Install on Linux](install.md#linux-install).
 - **macOS**: if macOS blocks the first launch, see [macOS quarantine](troubleshooting.md#macos-quarantine).
 - **Every platform**: install Git and a compatible OpenCode CLI as listed in the [requirements](install.md#requirements), then [select OpenCode on first launch](install.md#first-launch). Other launch problems are covered in [troubleshooting](troubleshooting.md#desktop-launch).
+
+## Support development {#support-development}
+
+CodeNomad is free and maintained by volunteers in their own time. If it is useful to you or your team, sponsoring helps keep it maintained and compatible with new OpenCode releases. The [Support CodeNomad](sponsor.md) page explains what sponsorship pays for.
+
+{{funding}}

@@ -6,7 +6,7 @@
 2. Wählen Sie einen Abschnitt. Lokale Electron-/Tauri-Fenster öffnen oder fokussieren ein natives Einstellungsfenster; Browser-/Remote-Ansichten verwenden die eingebettete Einstellungsseite.
 3. Prüfen Sie vor dem Verlassen den Geltungsbereich und mögliche **Speichern**-Aktionen.
 
-Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderung sofort speichern. Sprache, eigene Palettenfarben und Konfigurationsdateien behalten ein explizites **Speichern**. Ein fehlgeschlagenes Speichern bestätigt nicht die Wirksamkeit; öffnen/aktualisieren Sie den betreffenden Abschnitt vor Wiederholung. Erläuterungen liegen hinter dem **i** neben dem Titel einer Einstellung: Zeigen Sie darauf oder fokussieren Sie es, oder tippen Sie auf einem Touchscreen darauf.
+Die meisten Auswahlen wirken sofort, auch die Missionsvorgaben, die jede Änderung sofort speichern. Sprache, eigene Palettenfarben und Konfigurationsdateien behalten ein explizites **Speichern**. Ein fehlgeschlagenes Speichern bestätigt nicht die Wirksamkeit; öffnen/aktualisieren Sie den betreffenden Abschnitt vor Wiederholung. Erläuterungen liegen hinter dem **i** neben dem Titel einer Einstellung: Zeigen Sie darauf oder fokussieren Sie es, oder tippen Sie auf einem Touchscreen darauf. **Einstellungen → Info** enthält außerdem die Karte **CodeNomad unterstützen**: **Sponsern oder mitwirken** öffnet die Seite [CodeNomad unterstützen](sponsor.md).
 
 | Zustand | Was er steuert |
 | --- | --- |

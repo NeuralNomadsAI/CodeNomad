@@ -144,4 +144,4 @@ Yalıtılmış CodeNomad ayarlarına ihtiyacınız varsa bilinçli olarak ayrı 
 
 `codenomad --upgrade`, algılanan npm/pnpm/bun yöneticisini (hiçbiri algılanmazsa npm) kullanarak genel kararlı CLI paketini günceller. Çalışan bir sunucuyu yeniden başlatmaz veya OpenCode'u güncellemez. Proje yerel veya önizleme kurulumu için tam olarak npm paketini açıkça güncelleyin. Güncellemeden sonra yönetilen CodeNomad işleminizi bilinçli olarak yeniden başlatın; basılı adreslerini tekrar kontrol edin.
 
-Masaüstü bakımı için [Güncellemeler](updates.md)'ye, kaynak oluşturma komutları için [Destek](support.md)'ye ve sağlayıcı planı kullanımı için [Sağlayıcılar](providers.md)'ye bakın.
+Masaüstü bakımı için [Güncellemeler](updates.md)'ye, derleme komutları için [Kaynaktan derleyin](support.md#build-from-source) bölümüne ve sağlayıcı planı kullanımı için [Sağlayıcılar](providers.md)'ye bakın.

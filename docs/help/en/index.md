@@ -82,7 +82,7 @@ The workspace root limits which folders CodeNomad opens; it is not an agent sand
 | Connect another device | [Remote Control](remote-control.md), [Security](security.md), [Mobile](mobile.md) |
 | Adapt the workspace | [Settings](settings.md), [Shortcuts](shortcuts.md), [Voice](voice.md), [Extensions](extensions.md) |
 | Manage the native application | [Desktop](desktop.md), [Browser previews and SideCars](browser-sidecars.md), [Updates](updates.md) |
-| Diagnose or contribute | [Troubleshooting](troubleshooting.md), [Support and source builds](support.md) |
+| Diagnose or contribute | [Troubleshooting](troubleshooting.md), [Bug reports and source builds](support.md), [Support CodeNomad](sponsor.md) |
 
 ## Monitor work without changing it {#monitor-work}
 

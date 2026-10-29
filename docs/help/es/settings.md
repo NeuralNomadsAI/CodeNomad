@@ -6,7 +6,7 @@
 2. Selecciona una sección. Las ventanas locales de Electron y Tauri abren o enfocan una única ventana nativa de Preferencias; las vistas de navegador y remotas usan la pantalla de configuración integrada.
 3. Comprueba el ámbito del ajuste y cualquier acción de **Guardar** antes de salir.
 
-La mayoría de las elecciones se aplican inmediatamente, incluidas las preferencias de Misiones, que guardan cada cambio en cuanto lo haces. Voz, los colores de paletas personalizadas y Archivos de configuración conservan un **Guardar** explícito. Un guardado fallido no confirma que el cambio se haya aplicado; reabre o actualiza la sección correspondiente antes de reintentar. Las explicaciones están detrás de la **i** junto al título de un ajuste: pasa el puntero o enfócala, o tócala en una pantalla táctil.
+La mayoría de las elecciones se aplican inmediatamente, incluidas las preferencias de Misiones, que guardan cada cambio en cuanto lo haces. Voz, los colores de paletas personalizadas y Archivos de configuración conservan un **Guardar** explícito. Un guardado fallido no confirma que el cambio se haya aplicado; reabre o actualiza la sección correspondiente antes de reintentar. Las explicaciones están detrás de la **i** junto al título de un ajuste: pasa el puntero o enfócala, o tócala en una pantalla táctil. **Configuración → Info** también incluye la tarjeta **Apoyar a CodeNomad**: **Patrocinar o contribuir** abre la página [Apoyar a CodeNomad](sponsor.md).
 
 | Estado | Qué controla |
 | --- | --- |

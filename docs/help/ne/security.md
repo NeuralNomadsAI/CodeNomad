@@ -70,4 +70,4 @@ provider connection र global conversation storage OpenCode का हुन्
 | provider key र speech credential | अभिप्रेत settings/credential owner मा मात्र भर्नुहोस्; कुन provider ले data पाउँछ जाँच्नुहोस्। [आवाज](voice.md) हेर्नुहोस्। |
 | debug/trace log र network capture | आवश्यक मात्र सङ्कलन, स्थानीय निरीक्षण र report अघि redact गर्नुहोस्। downstream tool output secret-free छ नमान्नुहोस्। |
 
-**सेटिङहरू → जानकारी → बग रिपोर्ट गर्नुहोस्** ले listener, address, path, credential वा conversation content पूर्वभरण नगरी सीमित निदान तयार गर्छ। आफूले थपेको सामग्री बुझाउनुअघि समीक्षा गर्नुहोस्। [सहयोग](support.md) हेर्नुहोस्।
+**सेटिङहरू → जानकारी → बग रिपोर्ट गर्नुहोस्** ले listener, address, path, credential वा conversation content पूर्वभरण नगरी सीमित निदान तयार गर्छ। आफूले थपेको सामग्री बुझाउनुअघि समीक्षा गर्नुहोस्। [bug report र source build](support.md#report-a-bug) हेर्नुहोस्।

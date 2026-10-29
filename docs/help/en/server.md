@@ -144,4 +144,4 @@ Use a deliberately separate configuration if you need isolated CodeNomad setting
 
 `codenomad --upgrade` updates the global stable CLI package using the detected npm/pnpm/bun manager (npm if none is detected). It neither restarts a running server nor updates OpenCode. For a project-local or preview installation, update that exact npm package explicitly. Restart your managed CodeNomad process deliberately after updating; check its printed addresses again.
 
-See [Updates](updates.md) for desktop maintenance, [Support](support.md) for source-build commands, and [Providers](providers.md) for provider plan usage.
+See [Updates](updates.md) for desktop maintenance, [Build from source](support.md#build-from-source) for source-build commands, and [Providers](providers.md) for provider plan usage.

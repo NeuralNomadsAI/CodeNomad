@@ -39,3 +39,9 @@ Yalnızca bu sayfadan veya [resmî sürümlerden](https://github.com/NeuralNomad
 - **Linux**: AppImage'ı çalıştırılabilir yapın veya Debian paketini kurun; bkz. [Linux üzerine kurulum](install.md#linux-install).
 - **macOS**: macOS ilk başlatmayı engellerse bkz. [macOS karantinası](troubleshooting.md#macos-quarantine).
 - **Tüm platformlar**: [Gereksinimlerde](install.md#requirements) listelendiği gibi Git'i ve uyumlu bir OpenCode CLI'yi yükleyin, ardından [ilk başlatmada OpenCode'u seçin](install.md#first-launch). Diğer başlatma sorunları [sorun giderme](troubleshooting.md#desktop-launch) bölümünde ele alınır.
+
+## Geliştirmeyi destekleyin {#support-development}
+
+CodeNomad ücretsizdir ve gönüllüler tarafından boş zamanlarında sürdürülür. Size veya ekibinize faydalıysa sponsorluk, bakımının sürmesine ve yeni OpenCode sürümleriyle uyumlu kalmasına yardımcı olur. [CodeNomad'i destekleyin](sponsor.md) sayfası sponsorluğun neleri finanse ettiğini açıklar.
+
+{{funding}}

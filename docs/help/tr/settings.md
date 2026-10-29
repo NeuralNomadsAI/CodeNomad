@@ -6,7 +6,7 @@
 2. Bir bölüm seçin. Yerel Electron ve Tauri pencereleri bir yerel Tercihler penceresini açar veya odaklar; tarayıcı ve uzak görünümler yerleşik ayarlar ekranını kullanır.
 3. Ayrılmadan önce ayarın kapsamını ve herhangi bir **Kaydet** eylemini kontrol edin.
 
-Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses, özel palet renkleri ve Yapılandırma Dosyaları açık bir **Kaydet** eylemini korur. Kaydetmenin başarısız olması değişikliğin uygulandığını doğrulamaz; yeniden denemeden önce ilgili bölümü yeniden açın veya yenileyin. Açıklamalar, ayar başlığının yanındaki **i** simgesinin arkasındadır: üzerine gelin veya odaklanın ya da dokunmatik ekranda dokunun.
+Her değişikliği siz yaptıkça kaydeden Görev tercihleri dahil, çoğu seçim hemen uygulanır. Ses, özel palet renkleri ve Yapılandırma Dosyaları açık bir **Kaydet** eylemini korur. Kaydetmenin başarısız olması değişikliğin uygulandığını doğrulamaz; yeniden denemeden önce ilgili bölümü yeniden açın veya yenileyin. Açıklamalar, ayar başlığının yanındaki **i** simgesinin arkasındadır: üzerine gelin veya odaklanın ya da dokunmatik ekranda dokunun. **Ayarlar → Bilgi** bölümünde ayrıca **CodeNomad'i destekleyin** kartı bulunur: **Sponsor olun veya katkıda bulunun**, [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
 
 | Durum | Neyi yönetir |
 | --- | --- |

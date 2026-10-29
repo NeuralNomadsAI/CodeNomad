@@ -1,4 +1,4 @@
-# सहयोग र source build
+# bug report र source build
 
 bug report, current release र contribution का लागि repository प्रयोग गर्नुहोस्। issue report अघिको सुरक्षित recovery [समस्या समाधान गाइड](troubleshooting.md) मा छ।
 

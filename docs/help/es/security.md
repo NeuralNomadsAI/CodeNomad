@@ -70,4 +70,4 @@ OpenCode es propietario de las conexiones de proveedores y de su almacenamiento 
 | Claves de proveedores y credenciales de voz | Introdúcelas solo en la configuración/propietario de credenciales previsto; comprueba qué proveedor recibe los datos. Consulta [Voz](voice.md). |
 | Registros debug/trace y capturas de red | Recoge solo lo necesario, inspecciona localmente y oculta datos antes de informar. No supongas que la salida de todas las herramientas posteriores está libre de secretos. |
 
-**Configuración → Info → Informar de un error** prepara diagnósticos acotados sin rellenar listeners, direcciones, rutas, credenciales ni contenido de conversaciones. Revisa todo lo que añadas antes de enviarlo. Consulta [Soporte](support.md).
+**Configuración → Info → Informar de un error** prepara diagnósticos acotados sin rellenar listeners, direcciones, rutas, credenciales ni contenido de conversaciones. Revisa todo lo que añadas antes de enviarlo. Consulta [Informes de errores y compilaciones desde el código fuente](support.md#report-a-bug).

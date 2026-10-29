@@ -1,4 +1,4 @@
-# Support und Quellcode-Builds
+# Fehlerberichte und Quellcode-Builds
 
 Verwenden Sie das Repository für Fehlerberichte, aktuelle Releases und Beiträge. Die [Fehlerbehebung](troubleshooting.md) beschreibt sichere Wiederherstellung vor einer Meldung.
 
