@@ -36,11 +36,21 @@ function gitHubItem(raw: GitHubItem): ForgeWorkItem {
   }
 }
 
+/**
+ * Search words as literal quoted terms: GitHub's search language would
+ * otherwise let words such as `repo:other/project`, `OR` or `(...)` widen the
+ * search beyond this repository.
+ */
+export function literalSearchTerms(query: string): string {
+  return query.split(/\s+/).map(term => term.replace(/["():\\]/g, ""))
+    .filter(term => term && !/^(?:AND|OR|NOT)$/.test(term)).map(term => `"${term}"`).join(" ")
+}
+
 export const githubApi: ForgeApi = {
   provider: "github",
   anonymousBase: host => host === "github.com" ? "https://api.github.com/" : `https://${host}/api/v3/`,
   // Search returns one kind with its open total in a single bounded request (results stop at 1,000).
-  listPath: (path, kind, query, page) => `search/issues?q=${encode(`repo:${path} is:${kind === "issue" ? "issue" : "pr"} is:open ${query}`.trim())}`
+  listPath: (path, kind, query, page) => `search/issues?q=${encode(`repo:${path} is:${kind === "issue" ? "issue" : "pr"} is:open ${literalSearchTerms(query)}`.trim())}`
     + `&sort=updated&order=desc&per_page=${FORGE_PAGE_SIZE}&page=${page}`,
   itemPath: (path, _kind, number) => `repos/${path}/issues/${number}`,
   parseList(response, _kind, page) {
@@ -103,7 +113,10 @@ export const giteaApi: ForgeApi = {
   parseList(response, _kind, page) {
     const items = (json(response.body) as GiteaItem[]).slice(0, FORGE_PAGE_SIZE).map(giteaItem)
     const total = totalHeader(response, "x-total-count")
-    return { items, total, hasMore: total !== undefined ? page * FORGE_PAGE_SIZE < total : items.length === FORGE_PAGE_SIZE }
+    // The server may cap `limit` below the requested size; its Link header knows whether a page follows.
+    const link = response.headers.get("link")
+    return { items, total, hasMore: link !== undefined ? /rel="next"/.test(link)
+      : total !== undefined ? page * FORGE_PAGE_SIZE < total : items.length === FORGE_PAGE_SIZE }
   },
   parseItem(body, kind) {
     const item = giteaItem(json(body))

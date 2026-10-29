@@ -51,7 +51,7 @@ extension store चयनित CodeNomad कन्फिगरेसनछे�
 
 asset पहुँच हाल mount भएको host/session अनुसार हुन्छ, लेखकले छानेको session अनुसार होइन। local/remote reference अनुपलब्ध भनेर सूचीबद्ध हुन सक्छन्; asset API ले मनपरी remote URL ल्याउँदैन वा local file खोल्दैन। सत्र बदल्दा, disconnect वा consent खारेज गर्दा पुरानो पहुँच अमान्य हुन्छ।
 
-वस्तुहरू परियोजना फोल्डरको `upstream` remote बाट, नभए `origin` बाट आउँछन्। CodeNomad ले तिनलाई तपाईंले पहिले नै साइन इन गरेको GitHub, GitLab वा Gitea CLI (`gh`, `glab`, `tea`) मार्फत, वा सार्वजनिक repository का लागि अज्ञात रूपमा पढ्छ र कुनै टोकन भण्डारण गर्दैन; एक्सटेन्सनले repository को नाम र वस्तुहरू मात्र देख्छ। वस्तु खोल्दा CodeNomad ले त्यही forge मा त्यसको पृष्ठ तपाईंको ब्राउजरमा खोल्छ, बढीमा प्रति सेकेन्ड एक पटक; एक्सटेन्सनले अन्य ठेगानाहरू खोल्न सक्दैन।
+वस्तुहरू परियोजना फोल्डरको `upstream` remote बाट, नभए `origin` बाट आउँछन्। CodeNomad ले तिनलाई तपाईंले पहिले नै साइन इन गरेको GitHub, GitLab वा Gitea CLI (`gh`, `glab`, `tea`) मार्फत, वा सार्वजनिक repository का लागि अज्ञात रूपमा पढ्छ र कुनै टोकन भण्डारण गर्दैन; एक्सटेन्सनले repository को नाम र वस्तुहरू मात्र देख्छ। अज्ञात पठन github.com, gitlab.com, codeberg.org र gitea.com मा मात्र हुन्छ; स्व-होस्ट गरिएको forge त्यसमा साइन इन गरिएको CLI मार्फत मात्र पढिन्छ। वस्तु खोल्दा CodeNomad ले त्यही forge मा त्यसको पृष्ठ तपाईंको ब्राउजरमा खोल्छ, बढीमा प्रति सेकेन्ड एक पटक; एक्सटेन्सनले अन्य ठेगानाहरू खोल्न सक्दैन।
 
 लेखक code सीमित iframe मा चल्छ, trusted application renderer मा होइन। native/OpenCode bridge, credential पहुँच, general RPC, form, popup वा download पाउँदैन; network API र बाह्य स्रोत प्रतिबन्धित छन्। विस्तार UI addon हुन्, [OpenCode plugin](integrations.md) होइनन्।
 

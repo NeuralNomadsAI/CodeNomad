@@ -58,3 +58,30 @@ test("work item routes require explicit API 3 consent and the exact digest, read
     assert.equal((await list({ digest: assets.digest })).statusCode, 403, "other API versions hold no work item permission")
   } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
 })
+
+test("a caller that goes away cancels its host read", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-work-items-abort-")), app = Fastify(), store = new PanelExtensionStore(directory)
+  const pkg = await readPanelExtensionArchive(fixtureArchive("<p>Contribute</p>", API3))
+  let started!: () => void
+  const reading = new Promise<void>(resolve => { started = resolve })
+  let cancelled: Promise<boolean> | undefined
+  const forge = { list: (_folder: string, _input: unknown, signal: AbortSignal) => {
+    cancelled = new Promise<boolean>(resolve => signal.addEventListener("abort", () => resolve(true), { once: true }))
+    started()
+    return new Promise(() => {})
+  } } as unknown as ForgeWorkItems
+  registerPanelExtensionWorkItemRoutes(app, { store, forge, workspaceManager: { get: () => ({ id: "i", path: "/projects/app" }) } as any })
+  try {
+    await store.install(pkg)
+    await store.activate(pkg.manifest.id, pkg.digest, true)
+    const address = await app.listen({ host: "127.0.0.1", port: 0 })
+    const caller = new AbortController()
+    const response = fetch(`${address}/api/panel-extensions/${pkg.manifest.id}/workItems`, { method: "POST", signal: caller.signal,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ instanceId: "i", digest: pkg.digest, kind: "issue", query: "", page: 1, fresh: false }) }).catch(() => undefined)
+    await reading
+    caller.abort()
+    await response
+    assert.equal(await cancelled, true)
+  } finally { await app.close(); await rm(directory, { recursive: true, force: true }) }
+})

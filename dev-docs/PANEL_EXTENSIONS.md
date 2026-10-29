@@ -182,25 +182,35 @@ await codenomad.workItems.open("pullRequest", page.items[0].number) // { opened:
 ```
 
 `kind` is `issue` or `pullRequest` (GitLab merge requests). `query` holds words
-(a GitHub/GitLab/Gitea search among open items) or `#number`/`number` (that item
-in any state, or none); pages hold at most 20 items, up to page 50; `fresh`
-bypasses the 30-second cache. Addons choose only kind, query, page or number:
-the host (`server/src/forge/`) reads the project folder's `upstream` remote,
-else `origin`, else any forge remote, and never shows the addon the folder, the
-remote URL or credentials. The provider comes from the host (github.com,
-gitlab.com, codeberg.org, gitea.com), else a CLI signed in to it, else an
-anonymous API probe. Reads use the user's signed-in `gh api`, `glab api` or
-`tea api` (tea ≥ 0.12, with the login matching the host, its stderr status
-checked) with prompts, pagers, colour, update checks and telemetry disabled and a
-15-second limit, falling back to the anonymous REST API (public repositories,
-low rate limits); CodeNomad stores no token. Private repositories without a
-sign-in report `sign_in`.
+(a search among open items: literal quoted terms on GitHub, whose search
+qualifiers and operators are stripped) or `#number`/`number` (that item in any
+state, or none); pages hold at most 20 items, up to page 50, and never advertise
+a later one; `fresh` bypasses the 30-second cache. Addons choose only kind,
+query, page or number: the host (`server/src/forge/`) reads the project folder's
+`upstream` remote, else `origin`, else any forge remote (strictly validated host,
+HTTPS port and path segments), and never shows the addon the folder, the remote
+URL or credentials. Only items whose page lies under the repository's web
+address are published.
 
-`open` asks the server for the item's page on the repository's own forge
-(`forgeWebUrl`), never an addon URL, and opens it through the host's external
-link opener, at most once a second. The routes recheck consent before and after
-each read and drop the result when the project closed meanwhile; the channel
-caps four requests per frame and aborts on unmount and transport loss.
+github.com, gitlab.com, codeberg.org and gitea.com are read through the user's
+signed-in `gh api`, `glab api` or `tea api` (tea ≥ 0.12, with the login matching
+the exact host and port, its stderr status checked), falling back to their
+anonymous REST API (public repositories, low rate limits). Any other host is
+identified and read only through a CLI signed in to it, never contacted
+anonymously. CLIs run without a shell, with prompts, pagers, colour, update
+checks and telemetry disabled, a 15-second limit and a 4 MiB output budget;
+anonymous bodies are bounded to 4 MiB while streaming. CodeNomad stores no token.
+Private repositories without a sign-in report `sign_in`.
+
+Identical reads share one request, which is cancelled (CLI process or fetch)
+once every caller has gone; a cancelled read is never joined. At most four forge
+requests run host-wide, sixteen more wait, and further reads are refused. The
+routes cancel a read whose caller disconnects, recheck consent before and after
+each read and drop the result when the project closed meanwhile. `open` asks the
+server for the item's page on the repository's own forge (`forgeWebUrl`), never
+an addon URL, and opens it through the host's external link opener: one open at
+a time, at most once a second measured at the opener. The channel caps four
+requests per frame and aborts on unmount and transport loss.
 
 ### Sandbox
 
@@ -277,6 +287,7 @@ node scripts/test-panel-extension-native.mjs # Windows, isolated Tauri/WebView2
 node scripts/test-panel-extension-native.mjs --api2
 node scripts/test-panel-extension-native.mjs --api3
 node --import tsx --test packages/server/src/forge/forge.test.ts packages/server/src/server/routes/panel-extension-work-items.test.ts
+node --conditions=browser --import tsx --test packages/ui/src/components/panel-extensions/work-items-channel.test.ts
 node --import tsx --test packages/ui/src/components/panel-extensions/image-bounds.test.ts
 node scripts/run-session-pruning-native.mjs /absolute/path/to/opencode # isolated CLI/config/database
 # from packages/ui:
@@ -294,5 +305,5 @@ for online browse/search/consent, offline fallback, incompatibility and lifecycl
 
 - Right-panel customization keeps Extensions below a separator in a native disclosure, collapsed on each popup opening. Expanding mounts one compact searchable list combining installed and online addons, deduplicated by ID; collapse, dismissal and inactive/instance changes dispose its requests and confirmations; never add separate list modes or a floating extension window. The per-addon checkbox above the disclosure is the sole activation control, including for disabled installed addons; never add a manager switch or a per-window visibility gate. Reset changes built-in layout only, never addon consent. Keep metadata on hover/focus and technical consent details folded; retain explicit trust and digest-bound replacement/removal. Installation and activation are profile-wide. Legacy folder grants never become general consent.
 - External panel extensions use `components/panel-extensions/` and `styles/panels/panel-extensions.css`. The official online catalogue is in `NeuralNomadsAI/CodeNomad-Extensions`; metadata discovery never downloads author code. Inspect/install revalidate the exact index/manifest/digest and use bounded credential-free HTTPS GitHub release downloads, never client-provided URLs. Never import author JavaScript into the main renderer or expose native/OpenCode bridges. ZIPs contain only a manifest and a self-contained HTML panel; install/replacement revokes activation. API versions cover only the public `window.codenomad` contract; never make internal Solid modules or import paths part of it.
-- Extension API 3 requires explicit `repository.workItems.read` consent. `work-items-channel.ts` takes only kind/query/page/number from addons; the project folder, remote, provider and credentials stay host-side in `server/src/forge/` (CLI sign-ins or anonymous REST, never stored tokens, never `--paginate`). Opening uses the server-built forge page through `openExternalUrl`, rate-limited; never open addon-supplied URLs. Each API version carries exactly its own capability.
+- Extension API 3 requires explicit `repository.workItems.read` consent. `work-items-channel.ts` takes only kind/query/page/number from addons; the project folder, remote, provider and credentials stay host-side in `server/src/forge/` (CLI sign-ins or anonymous REST on the public forges only, never stored tokens, never `--paginate`, never addon text inside forge query syntax, never anonymous requests to other hosts). Opening uses the server-built forge page through `openExternalUrl`, rate-limited; never open addon-supplied URLs. Each API version carries exactly its own capability.
 - Extension API 1 stays context-only; API 2 requires explicit `session.assets.read` consent. `assets-channel.ts` derives session authority from the current mounted host, never author selectors, and exposes only bounded asset pages/exact digest-bound embedded reads. Use the presence-owned history bundle's fixed `assets`/`assetRead` methods, never transcript stores, generic RPC, remote downloads or filesystem fallbacks. Recheck consent and Location ownership after IO; revoke old-port/session/reconnect results. Gallery HTML belongs in the independent catalogue repository; never add it to the application renderer.

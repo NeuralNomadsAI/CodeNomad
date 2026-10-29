@@ -19,7 +19,7 @@ const OPEN_INTERVAL_MS = 1_000
  */
 export function useWorkItemsChannel(props: { instanceId: string; id: string; digest: string; send: (value: unknown) => void }) {
   const pending = new Set<AbortController>()
-  let disposed = false, connected = true, lastOpen = 0
+  let disposed = false, connected = true, lastOpen = 0, opening = false
   const abort = () => { for (const request of pending) request.abort() }
   onCleanup(serverEvents.onTransportStatus(status => {
     connected = status === "connected"
@@ -40,11 +40,16 @@ export function useWorkItemsChannel(props: { instanceId: string; id: string; dig
         result = await panelExtensionsApi.workItems(...args, listSchema.parse(input), controller.signal)
       } else {
         const request = openSchema.parse(input)
-        if (Date.now() - lastOpen < OPEN_INTERVAL_MS) throw new Error("Too frequent")
-        lastOpen = Date.now()
-        const { url } = await panelExtensionsApi.workItemUrl(...args, request.kind, request.number, controller.signal)
-        if (new URL(url).protocol !== "https:" || controller.signal.aborted) throw new Error("Unavailable")
-        result = { opened: await openExternalUrl(url, "panel-extension") }
+        // One open at a time, and the interval counts at the opener itself, so delayed answers cannot burst.
+        if (opening || Date.now() - lastOpen < OPEN_INTERVAL_MS) throw new Error("Too frequent")
+        opening = true
+        try {
+          const { url } = await panelExtensionsApi.workItemUrl(...args, request.kind, request.number, controller.signal)
+          if (new URL(url).protocol !== "https:" || controller.signal.aborted || disposed || !connected
+            || Date.now() - lastOpen < OPEN_INTERVAL_MS) throw new Error("Unavailable")
+          lastOpen = Date.now()
+          result = { opened: await openExternalUrl(url, "panel-extension") }
+        } finally { opening = false }
       }
       if (!disposed && connected && !controller.signal.aborted) props.send({ type: "workItems:result", id, result })
     } catch {

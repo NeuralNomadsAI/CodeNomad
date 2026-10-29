@@ -51,7 +51,7 @@
 
 资源访问跟随当前挂载的宿主/会话，而非作者选择的会话。本地/远程引用可能列为不可用；资源 API 不获取任意远程 URL 或打开本地文件。切换会话、断开连接或撤销同意会使旧访问失效。
 
-这些条目来自项目文件夹的 `upstream` 远程仓库，否则来自 `origin`。CodeNomad 使用您已登录的 GitHub、GitLab 或 Gitea CLI（`gh`、`glab`、`tea`）读取它们，公开仓库可匿名读取，且不存储任何令牌；扩展只能看到仓库名称和条目。打开条目时，CodeNomad 会在浏览器中打开该条目在同一平台上的页面，每秒最多一次；扩展无法打开其他地址。
+这些条目来自项目文件夹的 `upstream` 远程仓库，否则来自 `origin`。CodeNomad 使用您已登录的 GitHub、GitLab 或 Gitea CLI（`gh`、`glab`、`tea`）读取它们，公开仓库可匿名读取，且不存储任何令牌；扩展只能看到仓库名称和条目。匿名读取仅适用于 github.com、gitlab.com、codeberg.org 和 gitea.com；自托管平台只能通过已登录该平台的 CLI 读取。打开条目时，CodeNomad 会在浏览器中打开该条目在同一平台上的页面，每秒最多一次；扩展无法打开其他地址。
 
 作者代码在受限 iframe 中运行，而非可信应用渲染器。它无法获得原生/OpenCode 桥接、凭据访问、通用 RPC、表单、弹出窗口或下载；网络 API 和外部资源受限。扩展是界面附加组件，而非 [OpenCode 插件](integrations.md)。
 
