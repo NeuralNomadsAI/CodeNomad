@@ -6,7 +6,7 @@ Ein Projekt-Tab verbindet CodeNomad mit einem Ordner auf dem Backend-Rechner. Da
 
 1. Klicken Sie auf **Neue Instanz** (`+`), um die Startseite zu öffnen.
 2. Wählen Sie **Ordner durchsuchen**, wählen und öffnen Sie den Backend-Ordner; oder wählen Sie einen Eintrag unter **Letzte Ordner**.
-3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**.
+3. Für eine Repository-Kopie wählen Sie **Git-Repo klonen**, geben **Repository-URL** und **Zielordner** ein und wählen **Klonen**. **Zielordner** wird mit dem Repository-Namen im Ordner, der Ihren letzten Klon enthält vorbelegt, sonst neben Ihrem zuletzt geöffneten Projekt. **Durchsuchen** wählt den Ordner, der den Klon enthält; Sie können den Pfad auch bearbeiten, einschließlich des Ordnernamens des Klons.
 
 Einen Remote-Server zu durchsuchen bedeutet, dessen Dateisystem zu durchsuchen, nicht Ihr Telefon oder Notebook. Das Öffnen eines Projekts erzeugt keinen separaten OpenCode-Daemon pro Tab. Unterhaltungen sind native OpenCode-Sitzungen; ihre Lebensdauer entspricht nicht der des Tabs.
 

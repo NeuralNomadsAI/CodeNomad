@@ -6,7 +6,7 @@ Bir proje sekmesi CodeNomad'i arka uç bilgisayarındaki bir klasöre bağlar. S
 
 1. Ana sayfayı açmak için **Yeni instance** (`+`) öğesine tıklayın.
 2. **Klasörlere Göz At** öğesini seçin, arka uç klasörünü seçin ve açın; veya **Son Klasörler** altında bir giriş seçin.
-3. Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin.
+3. Depoyu kopyalamak için **Git Deposunu Klonla** eylemini seçin; **Depo URL'si** ve **Hedef klasör** alanlarını doldurup **Klonla** eylemini seçin. **Hedef klasör**, son klonunuzun bulunduğu klasörde (yoksa en son projenizin yanında) depo adıyla önceden doldurulur. **Göz At** klonu içerecek klasörü seçer; klon klasörünün adı dahil yolu elle de düzenleyebilirsiniz.
 
 Uzak bir sunucuya göz atmak, telefonunuzun veya dizüstü bilgisayarınızın değil, o sunucunun dosya sistemine göz atmak anlamına gelir. Bir projeyi açmak, her sekme için ayrı bir OpenCode arka plan programı oluşturmaz. Konuşmalar yerel OpenCode oturumlarıdır; bunların ömrü sekmenin ömrü değildir.
 

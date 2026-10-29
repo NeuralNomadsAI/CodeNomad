@@ -6,7 +6,7 @@ Un onglet de projet relie CodeNomad à un dossier sur l’ordinateur du backend.
 
 1. Cliquez sur **Nouvelle instance** (`+`) pour ouvrir l’accueil.
 2. Choisissez **Parcourir les dossiers**, sélectionnez le dossier du backend et ouvrez-le ; ou choisissez une entrée sous **Dossiers récents**.
-3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**.
+3. Pour une copie de dépôt, choisissez **Cloner un depot Git**, saisissez **URL du depot** et **Dossier de destination**, puis **Cloner**. **Dossier de destination** est prérempli avec le nom du dépôt, dans le dossier qui contient votre dernier clone, sinon à côté de votre projet le plus récent. **Parcourir** choisit le dossier qui contiendra le clone ; vous pouvez aussi modifier le chemin, y compris le nom du dossier du clone.
 
 Parcourir un serveur distant signifie parcourir son système de fichiers, pas votre téléphone ou ordinateur portable. Ouvrir un projet ne crée pas un démon OpenCode distinct par onglet. Les conversations sont des sessions natives OpenCode ; leur durée de vie n’est pas celle de l’onglet.
 

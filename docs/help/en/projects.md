@@ -6,7 +6,7 @@ A project tab connects CodeNomad to a folder on the backend computer. Opening a 
 
 1. Click **New instance** (`+`) to open the home page.
 2. Choose **Browse Folders**, select the backend folder and open it; or choose an entry under **Recent Folders**.
-3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**.
+3. For a repository copy, choose **Clone Git Repo**, enter **Repository URL** and **Destination folder**, then **Clone**. **Destination folder** is prefilled with the repository name in the folder that holds your last clone, or next to your most recent project. **Browse** chooses the folder that contains the clone; you can also edit the path, including the clone's folder name.
 
 Browsing a remote server means browsing that server's filesystem, not your phone or laptop. Opening a project does not create a separate OpenCode daemon for each tab. Conversations are native OpenCode sessions; their lifetime is not the tab's lifetime.
 

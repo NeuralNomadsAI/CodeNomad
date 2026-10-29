@@ -6,7 +6,7 @@ Una pestaña de proyecto conecta CodeNomad a una carpeta del equipo del backend.
 
 1. Haz clic en **Nueva instancia** (`+`) para abrir la página de inicio.
 2. Elige **Buscar carpetas**, selecciona la carpeta del backend y ábrela; o elige una entrada de **Carpetas recientes**.
-3. Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**.
+3. Para obtener una copia de un repositorio, elige **Clonar repo Git**, introduce la **URL del repositorio** y la **Carpeta de destino** y pulsa **Clonar**. La **Carpeta de destino** se rellena con el nombre del repositorio en la carpeta que contiene tu último clon, o junto a tu proyecto más reciente. **Buscar** elige la carpeta que contendrá el clon; también puedes editar la ruta, incluido el nombre de la carpeta del clon.
 
 Explorar un servidor remoto significa explorar el sistema de archivos de ese servidor, no el de tu teléfono o portátil. Abrir un proyecto no crea un daemon de OpenCode distinto para cada pestaña. Las conversaciones son sesiones nativas de OpenCode; su duración no es la de la pestaña.
 
