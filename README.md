@@ -8,7 +8,7 @@ CodeNomad is a **desktop and browser workspace for OpenCode V2** — built for d
 
 ![CodeNomad 0.20 workspace with project tabs, nested sessions, a conversation timeline, and the Status panel](docs/screenshots/workspace-0.20.png)
 
-*The 0.20 interface, rendered with demonstration data. [Download the latest stable release](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).*
+*The 0.20 interface, rendered with demonstration data. [Download the latest stable release](https://neuralnomadsai.github.io/CodeNomad/en/download.html).*
 
 ▶️ [Watch the 90-second tour of CodeNomad 1.0](https://youtu.be/IGuOApJ6-Kc)
 
@@ -37,7 +37,7 @@ CodeNomad is a **desktop and browser workspace for OpenCode V2** — built for d
 
 Available as both Electron and Tauri builds — choose based on your preference.
 
-Download the archive or package for your platform from [Releases](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
+Download the archive or package for your platform from the [download page](https://neuralnomadsai.github.io/CodeNomad/en/download.html) or [Releases](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
 
 | Platform | Electron | Tauri |
 |----------|----------|-------|

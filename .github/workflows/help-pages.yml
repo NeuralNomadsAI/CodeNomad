@@ -8,6 +8,7 @@ on:
       - 'docs/screenshots/**'
       - 'images/**'
       - 'scripts/*help*.mjs'
+      - 'scripts/fixtures/help-*.json'
       - 'packages/ui/src/lib/help-url.ts'
       - 'package.json'
       - 'packages/**/package.json'
@@ -20,6 +21,7 @@ on:
       - 'docs/screenshots/**'
       - 'images/**'
       - 'scripts/*help*.mjs'
+      - 'scripts/fixtures/help-*.json'
       - 'packages/ui/src/lib/help-url.ts'
       - 'package.json'
       - 'packages/**/package.json'
@@ -27,22 +29,58 @@ on:
       - '.node-version'
       - '.github/workflows/help-pages.yml'
   workflow_dispatch:
+  # A stable release uploads its binaries from main; republish so the download links follow it.
+  workflow_run:
+    workflows: [Release Binaries]
+    types: [completed]
+    branches: [main]
 
 permissions:
   contents: read
 
+# Production runs (dev pushes, manual runs from dev, accepted release events) serialize
+# checkout, resolution, build and deployment in one group. Pull requests and release events
+# rejected by the build gate get their own groups so they never replace a pending production run.
+concurrency:
+  group: >-
+    ${{ (github.event_name == 'pull_request' && format('help-pages-pr-{0}', github.event.pull_request.number))
+    || (github.event_name == 'workflow_run' && !(github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event == 'push') && format('help-pages-ignored-{0}', github.run_id))
+    || (github.ref == 'refs/heads/dev' && 'help-pages-production')
+    || format('help-pages-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
+    # A release event counts only for a successful push run on this repository's main branch.
+    if: >-
+      github.event_name != 'workflow_run'
+      || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.event == 'push')
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     steps:
+      # Release events build the trusted dev sources, never the release run's commit or artifacts.
       - uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event_name == 'workflow_run' && 'dev' || '' }}
+          persist-credentials: false
       - uses: actions/setup-node@v7.1.0
         with:
           node-version-file: .node-version
           cache: npm
       - run: npm ci --ignore-scripts
       - run: npm run test:help
-      - run: node scripts/build-help.mjs
+      - name: Resolve the latest complete stable release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/resolve-help-release.mjs "$RUNNER_TEMP/help-release.json"
+      - name: Build help with release downloads
+        if: github.event_name != 'pull_request'
+        run: node scripts/build-help.mjs --release "$RUNNER_TEMP/help-release.json"
+      - name: Build help without release data
+        if: github.event_name == 'pull_request'
+        run: node scripts/build-help.mjs
       - uses: actions/upload-pages-artifact@v5.0.0
         with:
           path: dist/help
@@ -54,9 +92,6 @@ jobs:
     permissions:
       pages: write
       id-token: write
-    concurrency:
-      group: help-pages
-      cancel-in-progress: false
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

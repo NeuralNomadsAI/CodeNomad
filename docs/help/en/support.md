@@ -21,6 +21,7 @@ If the GitHub form has incompatible fields, CodeNomad opens a plain issue with t
 | [CodeNomad repository](https://github.com/NeuralNomadsAI/CodeNomad) | Source, project activity and documentation. |
 | [Issues](https://github.com/NeuralNomadsAI/CodeNomad/issues) | Search existing reports before opening a reproducible bug or feature request. |
 | [Pull requests](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | Review proposed changes or coordinate a contribution. |
+| [Download page](download.md) | The latest stable desktop builds for your platform. |
 | [Latest release](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | Stable download artifacts. |
 | [All releases](https://github.com/NeuralNomadsAI/CodeNomad/releases) | Published previews and release notes. |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | Project organization. |

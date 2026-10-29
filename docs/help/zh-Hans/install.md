@@ -4,7 +4,7 @@
 
 ## 桌面下载 {#desktop-downloads}
 
-1. 打开[最新版本](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest)。
+1. 打开[下载页面](download.md)。
 2. 选择与你的操作系统和处理器匹配的构建。
 3. 解压 ZIP，或安装/运行对应平台的软件包，然后启动 CodeNomad。
 

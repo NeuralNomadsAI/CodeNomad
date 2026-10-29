@@ -4,7 +4,7 @@
 
 ## デスクトップ版のダウンロード {#desktop-downloads}
 
-1. [最新リリース](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest)を開きます。
+1. [ダウンロードページ](download.md)を開きます。
 2. お使いの OS とプロセッサーに合うビルドを選びます。
 3. ZIP を展開するか、プラットフォーム用パッケージをインストール／実行し、CodeNomad を起動します。
 

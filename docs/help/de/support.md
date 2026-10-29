@@ -21,6 +21,7 @@ Hat das GitHub-Formular inkompatible Felder, öffnet CodeNomad ein einfaches Iss
 | [CodeNomad-Repository](https://github.com/NeuralNomadsAI/CodeNomad) | Quelltext, Projektaktivität und Dokumentation. |
 | [Issues](https://github.com/NeuralNomadsAI/CodeNomad/issues) | Vor reproduzierbarer Fehlermeldung oder Funktionswunsch vorhandene Meldungen durchsuchen. |
 | [Pull Requests](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | Vorgeschlagene Änderungen prüfen oder Beitrag koordinieren. |
+| [Download-Seite](download.md) | Die neuesten stabilen Desktop-Builds für Ihre Plattform. |
 | [Neuestes Release](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | Stabile Download-Artefakte. |
 | [Alle Releases](https://github.com/NeuralNomadsAI/CodeNomad/releases) | Veröffentlichte Vorschauen und Release-Hinweise. |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | Projektorganisation. |

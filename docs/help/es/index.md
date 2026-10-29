@@ -1,8 +1,28 @@
-# Ayuda de CodeNomad
+# CodeNomad
 
-Usa esta guía para trabajar en el espacio de trabajo actual de CodeNomad, en escritorio o navegador, con tu servicio OpenCode. Se centra en los controles de CodeNomad, los límites de ejecución y la recuperación, no en tutoriales de configuración de OpenCode ni en un archivo de versiones.
+La cabina de mando de programación con IA para OpenCode: un espacio de trabajo de escritorio y navegador para desarrolladores que ejecutan muchos agentes en varios proyectos, conversaciones largas y worktrees de Git.
+
+OpenCode te da el motor. CodeNomad te da la cabina de mando. Se conecta al servicio compartido en segundo plano de OpenCode: tus sesiones pertenecen a OpenCode, otros clientes de ese servicio pueden usarlas y cerrar CodeNomad no las detiene.
+
+[Descargar CodeNomad](download.md)
+
+{{tour-video}}
+
+## Delega el trabajo largo a las Misiones {#missions}
+
+Describe el trabajo una sola vez. El coordinador de la misión lo planifica como un árbol de tareas, delega tareas acotadas a conversaciones nativas de OpenCode e informa de los resultados con sus pruebas. Ejecuta una misión una vez o cada día; crear una nunca inicia el trabajo hasta que tú lo decidas. Los guiones cubren la depuración, la entrega de producto y la comparación de dos modelos con un juez a ciegas. Consulta [Misiones](missions.md).
+
+## Sigue trabajando desde tu teléfono {#phone-access}
+
+Control remoto empareja un teléfono, una tableta u otro ordenador con tu backend de CodeNomad en ejecución mediante un enlace de un solo uso o un código QR, sin abrir un puerto de red entrante. Desde el teléfono puedes seguir las conversaciones y responder preguntas y permisos; los proyectos, las credenciales y la ejecución de los agentes permanecen en el equipo anfitrión. Consulta [Control remoto](remote-control.md) y [Móvil y PWA](mobile.md).
+
+## Oriéntate en historiales largos {#large-histories}
+
+Busca en todo el historial almacenado de una conversación, o clasifica los resultados del proyecto abierto y sus worktrees, incluidos la salida de las herramientas y el razonamiento cuando los necesites. La línea de tiempo de mensajes salta por sesiones largas sin cargar todos los mensajes intermedios. Consulta [Historial, búsqueda y limpieza](history.md).
 
 ## Lee esto primero {#read-this-first}
+
+Esta guía cubre el espacio de trabajo actual de CodeNomad, en escritorio o navegador, con tu servicio OpenCode: los controles de CodeNomad, los límites de ejecución y la recuperación, no tutoriales de configuración de OpenCode ni un archivo de versiones.
 
 CodeNomad conecta tu espacio de trabajo a un servicio compartido de OpenCode en segundo plano. Las sesiones y los mensajes pertenecen a OpenCode; las pestañas, los borradores del editor de mensajes y la disposición pertenecen al cliente CodeNomad. Cerrar una pestaña de proyecto cierra el proyecto en CodeNomad; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto. Cerrar CodeNomad no detiene OpenCode.
 

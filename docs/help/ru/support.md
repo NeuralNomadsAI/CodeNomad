@@ -21,6 +21,7 @@
 | [Репозиторий CodeNomad](https://github.com/NeuralNomadsAI/CodeNomad) | Исходники, активность проекта и документация. |
 | [Задачи](https://github.com/NeuralNomadsAI/CodeNomad/issues) | Поищите существующие отчёты перед воспроизводимой ошибкой или запросом функции. |
 | [Pull requests](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | Проверяйте предлагаемые изменения или согласуйте вклад. |
+| [Страница загрузки](download.md) | Последние стабильные настольные сборки для вашей платформы. |
 | [Последний релиз](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | Стабильные файлы загрузки. |
 | [Все релизы](https://github.com/NeuralNomadsAI/CodeNomad/releases) | Опубликованные предварительные версии и примечания. |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | Организация проекта. |

@@ -4,7 +4,7 @@ Elige un equipo de escritorio local o ejecuta el [servidor independiente](server
 
 ## Descargas de escritorio {#desktop-downloads}
 
-1. Abre [la última versión](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
+1. Abre [la página de descarga](download.md).
 2. Elige la compilación que corresponda a tu sistema operativo y procesador.
 3. Extrae el ZIP o instala/ejecuta el paquete de la plataforma y, después, inicia CodeNomad.
 

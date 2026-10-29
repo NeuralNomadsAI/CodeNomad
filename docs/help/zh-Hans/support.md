@@ -21,6 +21,7 @@ GitHub 表单字段不兼容时，CodeNomad 会打开包含相同报告信息的
 | [CodeNomad 仓库](https://github.com/NeuralNomadsAI/CodeNomad) | 源码、项目活动和文档。 |
 | [问题](https://github.com/NeuralNomadsAI/CodeNomad/issues) | 提交可复现错误或功能请求前，先搜索已有报告。 |
 | [拉取请求](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | 审查提议更改或协调贡献。 |
+| [下载页面](download.md) | 适用于你所用平台的最新稳定桌面构建。 |
 | [最新版本](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | 稳定下载产物。 |
 | [所有版本](https://github.com/NeuralNomadsAI/CodeNomad/releases) | 已发布预览和发行说明。 |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | 项目组织。 |
