@@ -7,7 +7,7 @@ import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { openNativeFolderDialog, supportsNativeDialogsInCurrentWindow } from "../lib/native/native-functions"
 import { parentDirectory, suggestCloneDestination } from "../lib/clone-destination"
-import { rememberCloneParent, uiState } from "../stores/preferences"
+import { lastCloneParent, rememberCloneParent } from "../stores/preferences"
 
 interface NewInstanceDialogsOptions {
   /** Starting folder for pickers, usually the most recent project. */
@@ -49,7 +49,7 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
 
   function suggestedCloneParent(): string | undefined {
     const recent = options.defaultPath()
-    return cloneParent() ?? uiState().lastCloneParent ?? (recent ? parentDirectory(recent) : undefined)
+    return cloneParent() ?? lastCloneParent() ?? (recent ? parentDirectory(recent) : undefined)
   }
 
   function handleCloneRepositoryUrlInput(repositoryUrl: string) {

@@ -1101,10 +1101,18 @@ function addRecentFolder(folderPath: string): void {
   void patchStateOwner("ui", { recentFolders: next }).catch((error) => log.error("Failed to add recent folder", error))
 }
 
+// This window's latest clone parent wins over the saved one, whatever the
+// order or outcome of saves; the saved one carries it to other windows and restarts.
+const [latestCloneParent, setLatestCloneParent] = createSignal<string>()
+
+function lastCloneParent(): string | undefined {
+  return latestCloneParent() ?? uiState().lastCloneParent
+}
+
 function rememberCloneParent(folderPath: string): void {
-  if (!folderPath || folderPath === uiState().lastCloneParent) return
-  // Shown at once: the next clone may be suggested before the server answers.
-  setUiStateBucket((previous) => ({ ...previous, lastCloneParent: folderPath }))
+  if (!folderPath) return
+  setLatestCloneParent(folderPath)
+  if (folderPath === uiState().lastCloneParent) return
   void patchStateOwner("ui", { lastCloneParent: folderPath }).catch((error) => log.error("Failed to remember clone folder", error))
 }
 
@@ -1541,6 +1549,7 @@ export function useConfig(): ConfigContextValue {
 export {
   preferences,
   uiState,
+  lastCloneParent,
   rememberCloneParent,
   serverSettings,
   recentFolders,

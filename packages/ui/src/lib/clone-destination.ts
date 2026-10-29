@@ -4,7 +4,9 @@
 /** The folder `git clone` creates for a repository: its last path segment without `.git`. */
 export function repositoryFolderName(repositoryUrl: string): string {
   // Like git: a source ending in `/.git` (a repository's Git folder) is named after the folder holding it.
-  const path = repositoryUrl.trim().replace(/[?#].*$/, "").replace(/[\\/]+$/, "").replace(/[\\/]\.git$/i, "").replace(/[\\/]+$/, "")
+  const source = repositoryUrl.trim()
+  // Only URLs carry a query or fragment; `#` is an ordinary character in a local path.
+  const path = (/^[a-z][\w+.-]*:\/\//i.test(source) ? source.replace(/[?#].*$/, "") : source).replace(/[\\/]+$/, "").replace(/[\\/]\.git$/i, "").replace(/[\\/]+$/, "")
   const name = path.split(/[\\/:]/).pop()?.replace(/\.git$/i, "") ?? ""
   return name === "." || name === ".." ? "" : name
 }

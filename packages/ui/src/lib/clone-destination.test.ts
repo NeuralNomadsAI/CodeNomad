@@ -9,6 +9,7 @@ it("names the clone folder like git clone", () => {
   assert.equal(repositoryFolderName("git@github.com:user/repo.git"), "repo")
   assert.equal(repositoryFolderName("https://host/user/repo?tab=readme#top"), "repo")
   assert.equal(repositoryFolderName("D:\\src\\repo\\.git"), "repo")
+  assert.equal(repositoryFolderName("D:\\src\\C#-examples"), "C#-examples")
   assert.equal(repositoryFolderName("/srv/repo.git/.git/"), "repo")
   assert.equal(repositoryFolderName(""), "")
 })
