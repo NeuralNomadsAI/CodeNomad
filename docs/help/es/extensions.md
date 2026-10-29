@@ -47,8 +47,11 @@ Cada reemplazo revoca la activación en todos los proyectos, incluso si la lista
 | --- | --- |
 | API 1 / `session.context` | Identificador de sesión actual (o ninguno), idioma y apariencia de la interfaz. Sin texto de transcripción ni acceso al sistema de archivos. |
 | API 2 / `session.assets.read` más contexto | Permiso revisado explícitamente para enumerar metadatos acotados de imágenes/adjuntos de resultados de herramientas de la sesión actual y leer bytes incrustados compatibles. No es acceso general a transcripciones, archivos o URL. |
+| API 3 / `repository.workItems.read` más contexto | Permiso revisado explícitamente para listar páginas limitadas de issues y pull requests del repositorio del proyecto en GitHub, GitLab o Gitea/Forgejo, y abrir uno en el navegador. No es acceso a archivos, credenciales ni a la red en general. |
 
 El acceso a recursos sigue al anfitrión/sesión montado actualmente, no a una sesión elegida por el autor. Las referencias locales/remotas pueden enumerarse como no disponibles; la API de recursos no obtiene URL remotas arbitrarias ni abre archivos locales. Cambiar de sesión, desconectar o revocar el consentimiento invalida el acceso anterior.
+
+Los elementos provienen del remoto `upstream` de la carpeta del proyecto o, si no existe, de `origin`. CodeNomad los lee con la CLI de GitHub, GitLab o Gitea en la que ya iniciaste sesión (`gh`, `glab`, `tea`), o de forma anónima en repositorios públicos, y no guarda ningún token; la extensión solo ve el nombre del repositorio y los elementos. La lectura anónima cubre github.com, gitlab.com, codeberg.org y gitea.com; una forja autoalojada solo se lee mediante su CLI con sesión iniciada en ella. Abrir un elemento pide a CodeNomad que abra su página en la misma forja en tu navegador, como máximo una vez por segundo; la extensión no puede abrir otras direcciones.
 
 El código del autor se ejecuta en un iframe restringido, no en el renderer de confianza de la aplicación. No recibe puente nativo/OpenCode, acceso a credenciales, RPC general, formularios, popups ni descargas; las API de red y los recursos externos están restringidos. Las extensiones son complementos de interfaz, no [plugins de OpenCode](integrations.md).
 

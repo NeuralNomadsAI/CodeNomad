@@ -3,7 +3,7 @@ import { promises as fs } from "node:fs"
 import path from "node:path"
 import { z } from "zod"
 import { ManifestSchema, PanelExtensionError, type PanelExtensionPackage } from "./archive"
-import { PANEL_EXTENSION_LIMITS, type PanelExtensionSummary } from "./contract"
+import { PANEL_EXTENSION_LIMITS, type PanelExtensionPermission, type PanelExtensionSummary } from "./contract"
 
 const RecordSchema = z.object({ manifest: ManifestSchema, html: z.string().max(PANEL_EXTENSION_LIMITS.htmlBytes),
   digest: z.string().regex(/^[a-f0-9]{64}$/), global: z.boolean(),
@@ -57,11 +57,12 @@ export class PanelExtensionStore {
     })
   }
 
-  async authorizeAssets(id: string, digest: string): Promise<void> {
+  /** The exact enabled package, granted `permission` by its manifest's API version. */
+  async authorize(id: string, digest: string, permission: PanelExtensionPermission): Promise<void> {
     const entry = (await this.list()).find(entry => entry.manifest.id === id)
     if (!entry) throw new PanelExtensionError("missing")
     if (entry.digest !== digest) throw new PanelExtensionError("conflict")
-    if (!entry.enabled || entry.manifest.apiVersion !== 2 || !entry.manifest.permissions.includes("session.assets.read")) {
+    if (!entry.enabled || !(entry.manifest.permissions as readonly string[]).includes(permission)) {
       throw new PanelExtensionError("disabled")
     }
   }

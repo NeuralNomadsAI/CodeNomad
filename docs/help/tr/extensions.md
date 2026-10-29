@@ -47,8 +47,11 @@ Paketin her değiştirilmesi, izin listesi değişmese bile tüm projelerde etki
 | --- | --- |
 | API 1 / `session.context` | Geçerli oturum tanımlayıcısı (veya hiçbiri), arayüz dili ve görünümü. Konuşma dökümü metni veya dosya sistemi erişimi yok. |
 | API 2 / `session.assets.read` artı bağlam | Sınırlı geçerli oturum aracı-sonuç resmini/ek meta verilerini listelemek ve desteklenen gömülü baytları okumak için açıkça gözden geçirilmiş izin. Genel konuşma dökümü, dosya veya URL erişimi değildir. |
+| API 3 / `repository.workItems.read` ve bağlam | GitHub, GitLab veya Gitea/Forgejo üzerindeki proje deposunun issue ve pull request'lerini sınırlı sayfalar halinde listelemek ve birini tarayıcıda açmak için açıkça incelenmiş izin. Dosya, kimlik bilgisi veya genel ağ erişimi değildir. |
 
 Varlık erişimi, yazarın seçtiği bir oturumu değil, halihazırda bağlı olan ana bilgisayarı/oturumu takip eder. Yerel/uzak referanslar mevcut değil olarak listelenebilir; API varlığı rastgele uzak URL'ler getirmez veya yerel dosyaları açmaz. Oturumları değiştirmek, bağlantıyı kesmek veya izni iptal etmek eski erişimi geçersiz kılar.
+
+Öğeler proje klasörünün `upstream` uzak deposundan, yoksa `origin`'den gelir. CodeNomad bunları oturum açtığınız GitHub, GitLab veya Gitea CLI'si (`gh`, `glab`, `tea`) ile ya da herkese açık depolarda anonim olarak okur ve hiçbir belirteç saklamaz; eklenti yalnızca depo adını ve öğeleri görür. Anonim okuma github.com, gitlab.com, codeberg.org ve gitea.com içindir; kendi barındırdığınız bir platform yalnızca orada oturum açılmış CLI'si üzerinden okunur. Bir öğeyi açmak, CodeNomad'den o öğenin aynı platformdaki sayfasını tarayıcınızda açmasını ister (saniyede en fazla bir kez); eklenti başka adresler açamaz.
 
 Yazar kodu güvenilir uygulama arayüzünde değil, kısıtlanmış iframe içinde çalışır. Native/OpenCode köprüsü, kimlik bilgilerine erişim, genel RPC, form gönderimi, açılır pencere veya indirme yetkisi almaz; ağ API'leri ve dış kaynaklar kısıtlıdır. Uzantılar [OpenCode eklentileri](integrations.md) değil, arayüz eklentileridir.
 

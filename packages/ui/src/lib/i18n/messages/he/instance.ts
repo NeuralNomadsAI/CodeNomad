@@ -1,6 +1,7 @@
 export const instanceMessages = {
   "panelExtensions.section": "הרחבות",
   "panelExtensions.assetsConsent": "הרשאה: קריאת תמונות וקבצים מתוצאות כלים בשיחה הנוכחית, המזהה שלה, השפה והמראה. ללא גישה למערכת הקבצים או לרשת.",
+  "panelExtensions.workItemsConsent": "הרשאה: קריאת שם המאגר של הפרויקט וה-issues וה-pull requests שלו ב-GitHub, ‏GitLab או Gitea/Forgejo (דרך gh, ‏glab או tea המחוברים שלכם, או באופן אנונימי למאגרים ציבוריים) ופתיחתם בדפדפן, וכן מזהה השיחה הנוכחית, השפה והמראה. ללא גישה למערכת הקבצים וללא גישת רשת אחרת.",
   "panelExtensions.empty": "אין הרחבות מותקנות.",
   "panelExtensions.catalog.title": "זמינות ברשת",
   "panelExtensions.catalog.search": "חיפוש הרחבות",

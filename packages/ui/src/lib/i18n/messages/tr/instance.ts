@@ -1,6 +1,7 @@
 export const instanceMessages = {
   "panelExtensions.section": "Uzantılar",
   "panelExtensions.assetsConsent": "İzin: geçerli oturumun araç sonuçlarındaki resim ve ekleri, kimliğini, dilini ve görünümünü okuma. Dosya sistemi veya ağ erişimi yok.",
+  "panelExtensions.workItemsConsent": "İzin: bu projenin depo adını ve GitHub, GitLab veya Gitea/Forgejo'daki issue ve pull request'lerini okumak (oturum açılmış gh, glab veya tea üzerinden ya da herkese açık depolar için anonim olarak) ve tarayıcınızda açmak; ayrıca geçerli oturum kimliği, dil ve görünüm. Dosya sistemi erişimi veya başka ağ erişimi yok.",
   "panelExtensions.empty": "Yüklü uzantı yok.",
   "panelExtensions.catalog.title": "Çevrimiçi kullanılabilir",
   "panelExtensions.catalog.search": "Uzantı ara",

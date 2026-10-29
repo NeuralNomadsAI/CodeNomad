@@ -15,9 +15,14 @@ test("ZIP contract is bounded and rejects unsupported APIs, paths, links, duplic
   assert.equal(pkg.manifest.id, fixtureManifest.id)
   assert.match(pkg.digest, /^[a-f0-9]{64}$/)
   for (const changes of [{ apiVersion: 2 }, { permissions: ["filesystem"] }, { repository: "https://github.com.evil.test/a/b" },
-    { id: "../outside" }, { server: "index.js" }, { repository: "https://github.com/a/b?token=secret" }]) {
+    { id: "../outside" }, { server: "index.js" }, { repository: "https://github.com/a/b?token=secret" },
+    { apiVersion: 3 }, { apiVersion: 3, permissions: ["session.context", "session.assets.read"] },
+    { apiVersion: 3, permissions: ["repository.workItems.read", "session.context"] }, { permissions: ["session.context", "repository.workItems.read"] },
+    { apiVersion: 4, permissions: ["session.context", "repository.workItems.read"] }]) {
     await assert.rejects(readPanelExtensionArchive(fixtureArchive("<p>x</p>", changes)), { code: "invalid" })
   }
+  const workItems = await readPanelExtensionArchive(fixtureArchive("<p>x</p>", { apiVersion: 3, permissions: ["session.context", "repository.workItems.read"] }))
+  assert.deepEqual([workItems.manifest.apiVersion, workItems.manifest.permissions], [3, ["session.context", "repository.workItems.read"]])
   const manifest = { name: "manifest.json", data: JSON.stringify(fixtureManifest) }
   for (const files of [
     [manifest, { name: "../panel.html", data: "x" }],

@@ -47,8 +47,11 @@ Jeder Ersatz widerruft die Aktivierung in allen Projekten, selbst bei unverände
 | --- | --- |
 | API 1 / `session.context` | Aktuelle Sitzungskennung (oder keine), Oberflächensprache und Darstellung. Kein Verlaufstext oder Dateisystemzugriff. |
 | API 2 / `session.assets.read` plus Kontext | Ausdrücklich geprüfte Berechtigung, begrenzte Bild-/Anhangsmetadaten aktueller Sitzungs-Werkzeugergebnisse aufzulisten und unterstützte eingebettete Bytes zu lesen. Kein allgemeiner Verlaufs-, Datei- oder URL-Zugriff. |
+| API 3 / `repository.workItems.read` plus Kontext | Ausdrücklich geprüfte Berechtigung, begrenzte Seiten der Issues und Pull Requests des Projekt-Repositorys auf GitHub, GitLab oder Gitea/Forgejo aufzulisten und eines davon im Browser zu öffnen. Kein Zugriff auf Dateien, Anmeldedaten oder das Netzwerk allgemein. |
 
 Asset-Zugriff folgt dem aktuell eingebundenen Host/der Sitzung, nicht einer vom Autor ausgewählten Sitzung. Lokale/entfernte Referenzen können als nicht verfügbar erscheinen; die Asset-API lädt keine beliebigen entfernten URLs und öffnet keine lokalen Dateien. Sitzungswechsel, Trennung oder Zustimmungswiderruf macht alten Zugriff ungültig.
+
+Die Einträge stammen vom Remote `upstream` des Projektordners, sonst von `origin`. CodeNomad liest sie mit der bereits angemeldeten GitHub-, GitLab- oder Gitea-CLI (`gh`, `glab`, `tea`) oder bei öffentlichen Repositorys anonym und speichert kein Token; die Erweiterung sieht nur den Repository-Namen und die Einträge. Anonym gelesen werden github.com, gitlab.com, codeberg.org und gitea.com; eine selbst gehostete Forge nur über ihre dort angemeldete CLI. Beim Öffnen eines Eintrags öffnet CodeNomad dessen Seite auf derselben Forge im Browser, höchstens einmal pro Sekunde; andere Adressen kann die Erweiterung nicht öffnen.
 
 Autorencode läuft in einem eingeschränkten iframe, nicht im vertrauenswürdigen Anwendungsrenderer. Er erhält keine native/OpenCode-Brücke, Zugangsdatenzugriff, allgemeines RPC, Formulare, Popups oder Downloads; Netzwerk-APIs und externe Ressourcen sind beschränkt. Erweiterungen sind UI-Add-ons, keine [OpenCode-Plugins](integrations.md).
 
