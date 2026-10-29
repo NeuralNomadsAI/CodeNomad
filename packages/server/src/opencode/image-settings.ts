@@ -52,8 +52,10 @@ function override(winner: Entry | undefined, target: string): { path?: string } 
   return winner?.path !== undefined && samePath(winner.path, target) ? undefined : located(winner)
 }
 
-/** The lower-priority document whose whole `experimental` object a new one in `target` would hide
- * (`entries` lowest priority first; a missing target sits just before its directory, as natively). */
+/** A lower-priority document whose whole `experimental` object a new one in `target` would hide
+ * (`entries` lowest priority first; a missing target sits just before its directory, as natively).
+ * Higher, Location-specific objects are ignored: the Global document also serves Locations without
+ * them, and the target's own native entry may be staler than its fresh `targetHasExperimental`. */
 function maskedBy(entries: readonly unknown[], target: string, targetHasExperimental: boolean): Entry | undefined {
   if (targetHasExperimental) return undefined
   const list = entries as Array<Entry | undefined>
@@ -61,9 +63,11 @@ function maskedBy(entries: readonly unknown[], target: string, targetHasExperime
   const directory = list.findIndex(entry => entry?.type === "directory" && entry.path !== undefined
     && samePath(entry.path, pathsFor(target).dirname(target)))
   const order = own >= 0 ? own : directory >= 0 ? directory - 0.5 : list.length
-  let winner = -1
-  list.forEach((entry, index) => { if (entry?.type === "document" && entry.info?.experimental !== undefined) winner = index })
-  return winner >= 0 && winner < order ? list[winner] : undefined
+  let masked: Entry | undefined
+  list.forEach((entry, index) => {
+    if (index < order && entry?.type === "document" && entry.info?.experimental !== undefined) masked = entry
+  })
+  return masked
 }
 
 /** Global scope only: OpenCode reads `media_blob` from the whole `experimental` object of the

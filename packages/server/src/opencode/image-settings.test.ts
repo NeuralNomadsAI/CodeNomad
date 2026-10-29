@@ -40,7 +40,7 @@ test("global image settings edit JSONC in place and report project overrides", a
     await writeFile(projectFile, "{}")
     const ancestorFile = path.join(root, "opencode.json")
     const lowerFile = path.join(global, "opencode.json")
-    let schema: Record<string, unknown> = both, modelReads = 0, catalogStatus = 200, ancestor: unknown, lower: unknown
+    let schema: Record<string, unknown> = both, modelReads = 0, catalogStatus = 200, ancestor: unknown, lower: unknown, staleGlobal: unknown
     let current = true, catalogFailure: "status" | "throw" | undefined
     const connection: any = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "private" } },
       assertCurrent: () => { if (!current) throw new Error("replaced connection") },
@@ -59,7 +59,7 @@ test("global image settings edit JSONC in place and report project overrides", a
       },
       client: { config: { get: async () => [ { type: "directory", path: global },
         ...(lower ? [{ type: "document", path: lowerFile, info: lower }] : []),
-        { type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
+        { type: "document", path: globalFile, info: staleGlobal ?? parse(await readFile(globalFile, "utf8")) },
         ...(ancestor ? [{ type: "document", path: ancestorFile, info: ancestor }] : []),
         { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) } ] },
       plugin: { list: async () => ({ data: [] }) } },
@@ -142,6 +142,16 @@ test("global image settings edit JSONC in place and report project overrides", a
     for (const change of [{ generation: true }, { mediaStorage: true }] as const)
       await assert.rejects(settings.update("w", location, change), /hide inherited experimental/)
     assert.equal(await readFile(globalFile, "utf8"), '{ "shell": "keep" }')
+    // A project's own object hides the lower Global one only here; other Locations still inherit it.
+    await writeFile(projectFile, '{ "experimental": { "subagent_depth": 1 } }')
+    assert.deepEqual((await settings.read("w", location)).blockedBy, { path: lowerFile })
+    await assert.rejects(settings.update("w", location, { mediaStorage: true }), /hide inherited experimental/)
+    await writeFile(projectFile, "{}")
+    // A stale native entry for the target cannot authorize a write the fresh document would turn into a mask.
+    staleGlobal = { experimental: { subagent_depth: 3 } }
+    await assert.rejects(settings.update("w", location, { mediaStorage: true }), /hide inherited experimental/)
+    assert.equal(await readFile(globalFile, "utf8"), '{ "shell": "keep" }')
+    staleGlobal = undefined
     // Once the Global document has its own object, writes edit it without changing what it already hides.
     await writeFile(globalFile, '{ "experimental": {} }')
     snapshot = await settings.read("w", location)
