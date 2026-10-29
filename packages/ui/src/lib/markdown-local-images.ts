@@ -17,7 +17,8 @@ export function localImagePath(src: string): string | undefined {
     return path.replace(/^\/([A-Za-z]:)/, "$1")
   }
   if (/^[A-Za-z][A-Za-z0-9+.-]*:/.test(value) && !/^[A-Za-z]:[\\/]/.test(value)) return undefined
-  return normalizePath(decode(value))
+  // A plain path stays literal (`a%20b.png` may be a real name); matching tries its decoded form second.
+  return normalizePath(value)
 }
 
 const normalizePath = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "")
@@ -29,9 +30,15 @@ const comparable = (value: string) => {
 
 export interface SessionImageCandidate { paths: string[]; source: string }
 
-/** Matches an exact path, or a relative path against the end of exactly one known path
+/** Matches the literal path, then its percent-decoded form, against the transcript's images. */
+export function matchLocalImage(candidates: readonly SessionImageCandidate[], path: string): string | undefined {
+  const decoded = decode(path)
+  return matchPath(candidates, path) ?? (decoded !== path ? matchPath(candidates, decoded) : undefined)
+}
+
+/** An exact path, or a relative path against the end of exactly one known path
  * (candidates newest first, so a re-read file resolves to its latest image). */
-export function matchLocalImage(candidates: Iterable<SessionImageCandidate>, path: string): string | undefined {
+function matchPath(candidates: readonly SessionImageCandidate[], path: string): string | undefined {
   const target = comparable(path)
   const relative = !target.startsWith("/") && !windowsPath(target) && !target.startsWith("../")
     ? `/${target.replace(/^(?:\.\/)+/, "")}` : undefined

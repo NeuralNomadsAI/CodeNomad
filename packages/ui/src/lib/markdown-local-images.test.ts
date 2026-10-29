@@ -39,6 +39,11 @@ describe("Markdown images of local files", () => {
     // A file read twice is one path: its relative reference resolves to the newest image.
     const reread = [{ paths: ["/project/output.png"], source: "new" }, { paths: ["/project/output.png"], source: "old" }]
     assert.equal(matchLocalImage(reread, "output.png"), "new")
+    // A plain path is literal first: a real `%20` name wins over the decoded space name, and decoding is the fallback.
+    const encoded = [{ paths: ["C:/images/a b.png"], source: "space" }, { paths: ["C:/images/a%20b.png"], source: "literal" }]
+    assert.equal(matchLocalImage(encoded, localImagePath("C:/images/a%20b.png")!), "literal")
+    assert.equal(matchLocalImage(encoded.slice(0, 1), localImagePath("C:/images/a%20b.png")!), "space")
+    assert.equal(matchLocalImage(encoded.slice(1), localImagePath("C:/images/a%20b.png")!), "literal")
   })
 
   it("collects completed tool images by file name and the tool's single-image file path, once per message revision", () => {
