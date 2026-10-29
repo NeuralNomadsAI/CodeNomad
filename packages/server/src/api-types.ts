@@ -436,6 +436,35 @@ export interface PluginControlLocation {
   workspaceID?: string
 }
 
+/** `false`: off; `true`: on with OpenCode's automatic model; string: on with this `providerID/modelID[#variant]` default. */
+export type ImageGenerationSelection = boolean | string
+export interface ImageModelOption { ref: string; name: string }
+/** The native document that decides the effective value instead of the Global one; no `path` for inline configuration. */
+export interface ImageSettingOverride { path?: string }
+/** A `null` group: the connected OpenCode's configuration contract has no such setting. */
+export interface ImageSettingsSnapshot {
+  location: PluginControlLocation
+  generation: {
+    global: ImageGenerationSelection
+    effective: ImageGenerationSelection
+    override?: ImageSettingOverride
+    /** `null` when the native image-model catalog could not be read. */
+    models: ImageModelOption[] | null
+  } | null
+  mediaStorage: {
+    global: boolean
+    effective: boolean
+    override?: ImageSettingOverride
+  } | null
+  /** The lower-priority document whose whole `experimental` object a new Global one would hide; writes are refused. */
+  blockedBy?: ImageSettingOverride
+}
+export interface ImageSettingsMutation {
+  location: PluginControlLocation
+  generation?: ImageGenerationSelection
+  mediaStorage?: boolean
+}
+
 export interface SubagentDepthCapability { minimum: number; maximum?: number; default?: number }
 export interface SubagentDepthSnapshot {
   location: PluginControlLocation

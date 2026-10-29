@@ -428,6 +428,12 @@ export const serverApi = {
   setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
   },
+  getImageSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").ImageSettingsSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings?${new URLSearchParams({ directory })}`)
+  },
+  setImageSettings(instanceId: string, payload: import("../../../server/src/api-types").ImageSettingsMutation): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings`, { method: "PUT", body: JSON.stringify(payload) })
+  },
   getSubagentDepth(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").SubagentDepthSnapshot> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
   },

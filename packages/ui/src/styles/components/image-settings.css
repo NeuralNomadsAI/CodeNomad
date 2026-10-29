@@ -1,0 +1,33 @@
+/* Settings → Providers → Images (settings/image-settings-card.tsx). */
+.image-settings {
+  display: grid;
+  gap: var(--space-sm);
+}
+
+.image-settings > * {
+  min-width: 0;
+}
+
+.image-settings [role="alert"] {
+  color: var(--status-error-fg);
+}
+
+.image-settings-generation > label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(10rem, 40%);
+  gap: var(--space-md);
+  padding-block: var(--space-sm);
+}
+
+.image-settings-generation .selector-trigger {
+  width: 100%;
+  min-width: 0;
+  box-sizing: border-box;
+}
+
+@media (max-width: 480px) {
+  .image-settings-generation > label {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-xs);
+  }
+}

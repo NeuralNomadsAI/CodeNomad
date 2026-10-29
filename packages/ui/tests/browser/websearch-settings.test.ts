@@ -109,6 +109,61 @@ test("Providers separates Models and Web search with shared row and input stylin
   } finally { await page.close() }
 })
 
+test("Images reads only while open, writes one Global setting at a time and hides what the runtime lacks", async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 1000 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  const images = () => page.evaluate(() => (window as any).fixture.images)
+  try {
+    await page.goto(`${url}?preview`)
+    await page.getByRole("heading", { name: "Images", exact: true }).waitFor()
+    assert.equal((await images()).reads, 0, "a folded Images group reads nothing")
+    await page.getByRole("heading", { name: "Images", exact: true }).click()
+    const group = page.getByRole("region", { name: "Images", exact: true })
+    const generation = group.getByLabel("Image generation", { exact: true })
+    await generation.waitFor()
+    assert.equal((await images()).reads, 1)
+    assert.deepEqual(await generation.locator("option").allInnerTexts(), ["Off", "On, automatic model", "GPT Image 2"])
+    assert.equal(await generation.inputValue(), "off")
+
+    await generation.selectOption("model:openai/gpt-image-2")
+    await page.waitForFunction(() => (document.querySelector('select[aria-label="Image generation"]') as HTMLSelectElement)?.value === "model:openai/gpt-image-2")
+    await group.getByLabel("Store images once", { exact: true }).check()
+    await page.waitForFunction(() => (document.querySelector('input[aria-label="Store images once"]') as HTMLInputElement)?.checked)
+    assert.deepEqual((await images()).writes, [
+      { location: { directory: "/a" }, generation: "openai/gpt-image-2" },
+      { location: { directory: "/a" }, mediaStorage: true },
+    ])
+    await group.getByText("Another OpenCode configuration's experimental settings take precedence here: images stay inside each message.", { exact: true }).waitFor()
+    assert.equal(await group.locator('p[title="/a/opencode.jsonc"]').count(), 1, "the deciding document's path is the caption's tooltip")
+    assert.equal(await group.getByText("Image models could not be loaded.", { exact: true }).count(), 0)
+
+    await page.evaluate(() => (window as any).fixture.reject())
+    await generation.selectOption("off")
+    await group.getByRole("alert").waitFor()
+    assert.equal(await generation.inputValue(), "model:openai/gpt-image-2", "a failed write keeps the saved choice")
+    assert.equal((await images()).writes.length, 3, "a failed write is not replayed")
+    if (process.env.CODENOMAD_IMAGE_SETTINGS_CAPTURE) await group.screenshot({ path: process.env.CODENOMAD_IMAGE_SETTINGS_CAPTURE })
+    for (const width of [900, 380]) {
+      await page.setViewportSize({ width, height: 1000 })
+      assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+    }
+
+    await page.evaluate(() => { (window as any).fixture.images.blocked = true; (window as any).fixture.setDirectory("/c") })
+    await group.getByText("Saving here would hide the experimental settings of another OpenCode configuration. Change these options in that file instead.", { exact: true }).waitFor()
+    assert.equal(await group.locator('p[title="/global/opencode.json"]').count(), 1)
+    assert.equal(await group.getByLabel("Image generation", { exact: true }).isDisabled(), true)
+    assert.equal(await group.getByLabel("Store images once", { exact: true }).isDisabled(), true)
+
+    await page.evaluate(() => { (window as any).fixture.images.blocked = false; (window as any).fixture.images.supported = false; (window as any).fixture.setDirectory("/b") })
+    await group.getByText("The connected OpenCode version has no image settings.", { exact: true }).waitFor()
+    assert.equal(await group.getByLabel("Image generation", { exact: true }).count(), 0)
+    assert.equal(await group.getByLabel("Store images once", { exact: true }).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("search connection failures are not replayed and late replies preserve the new context's draft", async () => {
   const page = await browser.newPage({ viewport: { width: 700, height: 1000 }, locale: "en-US" })
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))

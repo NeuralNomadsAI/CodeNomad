@@ -4,7 +4,7 @@ L’authentification des fournisseurs appartient au service OpenCode connecté, 
 
 ## Connecter un fournisseur de modèles ou de recherche {#connect}
 
-1. Ouvrez un espace de travail, puis **Paramètres → Fournisseurs**. **Modèles** est déplié au départ ; dépliez **Recherche web** pour les fournisseurs de recherche.
+1. Ouvrez un espace de travail, puis **Paramètres → Fournisseurs**. **Modèles** est déplié au départ ; dépliez **Recherche web** pour les fournisseurs de recherche. **Images** regroupe les réglages d'images.
 2. Dans ce groupe, choisissez **Sélectionner un fournisseur**, puis **Connecter**.
 3. Pour un fournisseur de modèles, effectuez la **Méthode d'authentification** native proposée : clé API, OAuth ou commande. Pour OAuth, utilisez **Ouvrir la page d'autorisation** et ne soumettez un code d’autorisation que si demandé. Les fournisseurs de recherche se connectent avec une clé API.
 4. Vérifiez la ligne du fournisseur configuré après la fin. **Modèles** relit l’état après les connexions, les changements de compte et les reconnexions ; **Recherche web** dispose aussi d’**Actualiser**.
@@ -80,3 +80,11 @@ Gardez les jetons/cookies hors de l’historique shell, des captures et des rapp
 Les changements s’enregistrent automatiquement. **Par défaut / hérité** utilise la configuration héritée ou le choix natif enregistré ; un remplacement Projet l’emporte sur Global. **Désactivé** coupe la recherche à la portée sélectionnée ; **Fournisseur automatique** demande la sélection automatique native. **Recherche web** ne charge ses connexions et ses choix que lorsque ce groupe est déplié. **Déconnecter** retire une clé de recherche enregistrée ; une connexion fournie par une variable d’environnement est indiquée en lecture seule et n’a pas de **Déconnecter**.
 
 Les identifiants de recherche restent globaux au service même si le choix du fournisseur est propre au Projet. Enregistrer une clé ne la sélectionne pas comme recherche par défaut. Si la lecture/l’enregistrement échoue, actualisez avant de réessayer ; ne remplacez pas la configuration aveuglément. Pour la configuration native, voir la [documentation OpenCode](https://opencode.ai/v2/docs/) et la [configuration d’OpenCode](opencode.md).
+
+## Génération et stockage d'images {#images}
+
+1. Dans **Paramètres → Fournisseurs**, dépliez **Images**.
+2. Sous **Génération d'images**, choisissez **Activée, modèle automatique** ou l'un des modèles d'image proposés par vos fournisseurs connectés. **Désactivée** la désactive dans la configuration Globale.
+3. Cochez **Stocker les images une seule fois** pour conserver chaque image jointe ou générée une seule fois, au lieu de la recopier dans chaque message qui l'utilise.
+
+Les changements sont enregistrés automatiquement dans la configuration OpenCode Globale et s'appliquent à tous les projets. Ce sont des fonctions expérimentales d'OpenCode : **Images** n'affiche que les réglages pris en charge par la version d'OpenCode connectée. Les agents ne disposent de l'outil d'image que si un fournisseur connecté propose un modèle d'image. Chaque image est une requête payante qui demande d'abord l'autorisation, puis s'exécute en arrière-plan et est enregistrée dans un fichier ; l'agent en indique le chemin. **Stocker les images une seule fois** s'applique aux nouveaux messages. Quand une autre configuration OpenCode, par exemple celle du projet, décide d'un réglage à sa place, **Images** l'indique sous ce réglage. Si l'enregistrement masquait les réglages expérimentaux d'un autre fichier de configuration OpenCode, **Images** reste en lecture seule et l'indique ; modifiez plutôt les options dans ce fichier.

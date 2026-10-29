@@ -199,6 +199,14 @@ jobs:
             node --import tsx scripts/test-subagent-depth-settings-native.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
+          # Settings → Providers → Images: contract detection on both runtimes,
+          # native acceptance and hot reload of the written values on the latest.
+          if ('${{ matrix.runtime }}' -eq 'latest') {
+            node --import tsx scripts/test-image-settings-native.mjs $cli --expect-supported
+          } else {
+            node --import tsx scripts/test-image-settings-native.mjs $cli
+          }
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-environment-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-fork-native.mjs $cli
