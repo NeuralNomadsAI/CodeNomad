@@ -3,6 +3,8 @@ import type { AddressInfo, Socket } from "node:net"
 import { markRemoteSocket } from "./request-origin"
 
 type Router = (request: http.IncomingMessage, response: http.ServerResponse) => void
+/** Takes an admitted WebSocket upgrade; false when nothing handled it. */
+type UpgradeRouter = (request: http.IncomingMessage, socket: Socket, head: Buffer) => boolean
 
 // The local Fastify listener's timeouts, so long uploads and idle keep-alive
 // connections behave the same remotely (Node's defaults are 300 s and 5 s).
@@ -17,8 +19,9 @@ export class RemoteIngress {
   private server: http.Server | null = null
   private readonly sockets = new Set<Socket>()
   private readonly devices = new WeakMap<Socket, string>()
+  private readonly upgraded = new Set<Socket>()
 
-  constructor(private readonly router: Router) {}
+  constructor(private readonly router: Router, private readonly upgrade: UpgradeRouter = () => false) {}
 
   /** Starts listening and returns the `host:port` tunnel target. */
   async start(): Promise<string> {
@@ -30,8 +33,13 @@ export class RemoteIngress {
       this.sockets.add(socket)
       socket.once("close", () => this.sockets.delete(socket))
     })
-    // The remote surface exposes no WebSocket endpoints.
-    server.on("upgrade", (_request, socket: Socket) => {
+    // Web previews are the only WebSocket endpoints of the remote surface.
+    server.on("upgrade", (request, socket: Socket, head: Buffer) => {
+      if (this.upgrade(request, socket, head)) {
+        this.upgraded.add(socket)
+        socket.once("close", () => this.upgraded.delete(socket))
+        return
+      }
       socket.end("HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n")
     })
     server.on("clientError", (_error, socket: Socket) => socket.destroy())
@@ -56,6 +64,11 @@ export class RemoteIngress {
     for (const socket of this.sockets) {
       if (this.devices.get(socket) === deviceId) socket.destroy()
     }
+  }
+
+  /** Closes every upgraded (preview WebSocket) connection, for example when the host turns previews off. */
+  disconnectUpgrades(): void {
+    for (const socket of this.upgraded) socket.destroy()
   }
 
   async stop(): Promise<void> {

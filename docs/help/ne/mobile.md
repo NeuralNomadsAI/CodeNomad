@@ -26,7 +26,7 @@ install विकल्प नभए पहिले HTTPS trust र browser sup
 
 ## touch layout मा काम {#touch-layout}
 
-navigation र tool खोल्न **बायाँ प्यानल** र **दायाँ प्यानल** प्रयोग गर्नुहोस्। साँघुरो layout मा desktop-चौडाइ canvas थोपर्नुको सट्टा प्यानल कुराकानीमाथि overlay हुन्छन्; एउटा floating panel खोल्दा अर्को बन्द हुन्छ। ठाउँ सीमित हुँदा conversation-header कार्य overflow menu मा जान्छन्।
+navigation र tool खोल्न **बायाँ प्यानल** र **दायाँ प्यानल** प्रयोग गर्नुहोस्। साँघुरो layout मा desktop-चौडाइ canvas थोपर्नुको सट्टा प्यानल कुराकानीमाथि overlay हुन्छन्; एउटा floating panel खोल्दा अर्को बन्द हुन्छ। floating सत्र प्यानलमा सत्र वा **उदाहरण जानकारी** रोज्दा, पहिले नै देखिएको सत्र भए पनि, तपाईंको छनोट देखाउन प्यानल बन्द हुन्छ; **पछाडि** र **अगाडि** ले यसलाई खुला राख्छन्। ठाउँ सीमित हुँदा conversation-header कार्य overflow menu मा जान्छन्।
 
 कम्पोजरको footer मै Agent, Model र Thinking रहन्छन्। field on-screen keyboard समेत देखिने कुराकानीअनुसार resize हुन्छ; लामो मस्यौदा scroll योग्य रहन्छन्। touch-मात्र device मा पठाउँदा on-screen keyboard फेरि खुल्दैन, त्यसैले तपाईं जवाफ पढ्न सक्नुहुन्छ; जारी राख्न कम्पोजरमा tap गर्नुहोस्। सत्र चलिरहँदा कम्पोजरको **थप कार्यहरू** मेनुले hardware-keyboard shortcut बिनै **सन्देश लाममा राख्नुहोस्** वा **अहिले पठाउनुहोस्** दिन्छ, जुन तपाईंको सामान्य पठाइले गर्दैन। interruption खोल्दा सुरक्षित उचाइ वा मस्यौदा नबदली कम्पोजर अस्थायी सानो हुन्छ। माथिको dock मा permission/question उत्तर दिँदा action footer पुग्न मिल्ने राख्नुहोस्। [कुराकानी](conversations.md) र [अनुमति](permissions.md) हेर्नुहोस्।
 
@@ -37,7 +37,7 @@ navigation र tool खोल्न **बायाँ प्यानल** र *
 | project, कुराकानी, file र permission | access control अन्तर्गत जोडिएको backend host मा चल्छन्। device attachment phone बाट upload हुन्छन्; project reference host मा resolve हुन्छन्। |
 | native desktop window, OS menu र host-native automation | PWA स्थापनाले दिँदैन। |
 | browser preview | native guest-browser क्षमता पाउँदैन; fallback rendering browser सीमामै रहन्छ। |
-| SideCar content र WebSocket | connection path मा निर्भर; Remote Control ले SideCar content proxy, preview content र WebSocket upgrade रोक्छ। [ठ्याक्कै प्रतिबन्ध](remote-control.md) हेर्नुहोस्। |
+| SideCar content र WebSocket | connection path मा निर्भर; Remote Control ले SideCar content proxy रोक्छ र host ले अनुमति दिँदा वेब पूर्वावलोकन तिनका WebSocket सहित दिन्छ। [ठ्याक्कै प्रतिबन्ध](remote-control.md) हेर्नुहोस्। |
 | microphone, clipboard, notification र install prompt | browser/OS support, secure context र user permission मा निर्भर। |
 | offline काम | offline backend वा cached API history छैन। static UI asset cache हुन सक्छन्, तर document र API response offline workspace होइनन्। |
 

@@ -49,6 +49,7 @@ jobs:
     needs:
       - authorize
       - tests
+      - tests-browser
       - tests-tauri-windows
       - tests-opencode-compatibility
       - tests-session-pruning-native
@@ -198,6 +199,14 @@ jobs:
             node --import tsx scripts/test-subagent-depth-settings-native.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
+          # Settings → Providers → Images: contract detection on both runtimes,
+          # native acceptance and hot reload of the written values on the latest.
+          if ('${{ matrix.runtime }}' -eq 'latest') {
+            node --import tsx scripts/test-image-settings-native.mjs $cli --expect-supported
+          } else {
+            node --import tsx scripts/test-image-settings-native.mjs $cli
+          }
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-environment-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-fork-native.mjs $cli
@@ -263,7 +272,7 @@ jobs:
         run: node --test scripts/desktop-server-resources.test.cjs scripts/prepare-node-runtime.test.cjs packages/tauri-app/scripts/configure-updater.test.mjs packages/tauri-app/scripts/updater-artifacts.test.mjs
 
       - name: Test CI fixture diagnostics and artifact announcements
-        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs
+        run: node --test scripts/native-fixture-diagnostics.test.mjs .github/scripts/comment-pr-artifacts.test.cjs .github/scripts/runtime-maintenance.test.cjs .github/scripts/binary-build-order.test.cjs .github/scripts/release-pr-notes.test.cjs
 
       - name: Test Electron client state
         env:
@@ -276,6 +285,7 @@ jobs:
         run: >-
           node --import tsx --test --test-force-exit
           packages/ui/src/components/browser-frame-security.test.ts
+          packages/ui/src/components/panel-extensions/work-items-channel.test.ts
           packages/ui/src/components/message-history-pagination.test.ts
           packages/ui/src/components/message-timeline-v2.test.ts
           packages/ui/src/components/session-outline-projection.test.ts
@@ -327,6 +337,7 @@ jobs:
           packages/ui/src/lib/server-meta.test.ts
           packages/ui/src/lib/theme-scheme.test.ts
           packages/ui/src/lib/trailing-resync.test.ts
+          packages/ui/src/lib/stream-staleness.test.ts
           packages/ui/src/stores/abort-created-workspace-cleanup.test.ts
           packages/ui/src/stores/app-session-reconciliation.test.ts
           packages/ui/src/stores/app-session-restore-queue.test.ts
@@ -348,7 +359,6 @@ jobs:
           packages/ui/src/stores/message-v2/message-status.test.ts
           packages/ui/src/stores/message-v2/message-window.test.ts
           packages/ui/src/stores/message-v2/normalizers.test.ts
-          packages/ui/src/stores/mission-store.test.ts
           packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/shell-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
@@ -369,6 +379,7 @@ jobs:
         run: >-
           node --conditions=browser --import tsx --test --test-force-exit
           packages/ui/src/components/mission-attention.test.ts
+          packages/ui/src/stores/mission-store.test.ts
           packages/ui/src/lib/native/preferences-window.test.ts
           packages/ui/src/components/mission-briefing-locales.test.ts
           packages/ui/src/components/mission-briefing-model.test.ts
@@ -439,6 +450,9 @@ jobs:
           packages/ui/src/stores/opencode-data-idle.test.ts
           packages/ui/src/stores/opencode-data-settlement.test.ts
           packages/ui/src/stores/opencode-data-reconnect.test.ts
+          packages/ui/src/stores/opencode-data-trailing-read.test.ts
+          packages/ui/src/stores/opencode-data-read-merge.test.ts
+          packages/ui/src/stores/session-api-running-open.test.ts
           packages/ui/src/stores/opencode-inbox-rebinding.test.ts
           packages/ui/src/stores/opencode-transcript-replay.test.ts
           packages/ui/src/stores/opencode-compaction.test.ts
@@ -455,6 +469,8 @@ jobs:
           packages/ui/src/stores/session-pruning-pagination.test.ts
           packages/ui/src/stores/permission-receipt-cache.test.ts
           packages/ui/src/stores/session-native-events.test.ts
+          packages/ui/src/stores/interruption-scope.test.ts
+          packages/ui/src/stores/session-workspace-scope.test.ts
           packages/ui/src/stores/session-outline.test.ts
           packages/ui/src/stores/runtime-contract.test.ts
           packages/ui/src/stores/session-lifecycle-signals.test.ts
@@ -462,6 +478,7 @@ jobs:
           packages/ui/src/stores/session-move-restore.test.ts
           packages/ui/src/stores/session-request-authority.test.ts
           packages/ui/src/stores/session-default-agent.test.ts
+          packages/ui/src/stores/session-create-pending.test.ts
           packages/ui/src/stores/history-search-sessions.test.ts
           packages/ui/src/stores/session-git-degraded.test.ts
           packages/ui/src/stores/session-send-lifecycle.test.ts
@@ -479,12 +496,6 @@ jobs:
       - name: Test Stats restoration and connection fences explicitly
         run: node --import tsx --test packages/server/src/opencode/service-usage.test.ts
 
-      - name: Install Chromium for UI rendering regressions
-        run: npx playwright install --with-deps chromium
-
-      - name: Test browser transcript rendering and navigation
-        run: xvfb-run -a npm run test:browser --workspace @codenomad/ui
-
       - name: Prepare Tauri test resources
         run: >-
           npm run dev:prep --workspace @codenomad/tauri-app &&
@@ -496,6 +507,55 @@ jobs:
 
       - name: Test owned Tauri zoom input script
         run: node --test packages/tauri-app/tests/window-zoom-script.test.mjs
+
+  # Browser rendering regressions shard four-wide: each runner executes its
+  # slice serially (the proven-stable mode) while the wall clock divides by
+  # the shard count. Interleaved slicing keeps letter-adjacent heavy clusters
+  # spread across shards.
+  tests-browser:
+    needs: authorize
+    if: ${{ needs.authorize.outputs.allowed == 'true' && !github.event.pull_request.draft }}
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+    runs-on: ubuntu-latest
+    # The slowest slice runs ~28 min of tests plus ~1 min of setup; a slow
+    # runner's dependency install once took 16.5 min and finished 33 s under
+    # the previous 45 min ceiling — infra spikes, not hangs, were the only
+    # thing the old margin caught (per-test timeouts bound real hangs).
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v7.1.0
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Chromium for UI rendering regressions
+        run: npx playwright install --with-deps chromium
+
+      - name: Run browser shard
+        run: xvfb-run -a node packages/ui/tests/browser/shard.mjs ${{ matrix.shard }} 4
+
+      - name: Upload fixture daemon diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: fixture-daemon-shard-${{ matrix.shard }}
+          path: |
+            /tmp/codenomad-fixture-run-*
+            /tmp/codenomad-fixture-standalone-*
+          if-no-files-found: ignore
+          retention-days: 7
 
   tests-tauri-windows:
     needs: authorize

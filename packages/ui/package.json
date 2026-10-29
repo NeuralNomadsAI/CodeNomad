@@ -1,6 +1,6 @@
 {
   "name": "@codenomad/ui",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "license": "MIT",
   "type": "module",
@@ -8,7 +8,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "test:browser": "node --import tsx --test --test-concurrency=1 tests/browser/*.test.ts",
+    "test:browser": "node tests/browser/run.mjs",
     "qualify:browser:native-mission-replay": "node --import tsx --test --test-concurrency=1 tests/browser/native-mission-integration.qualification.ts",
     "qualify:browser:timeline-sync": "node --import tsx tests/browser/timeline-sync.qualification.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json"
@@ -23,7 +23,6 @@
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "@tauri-apps/plugin-notification": "^2.3.3",
-    "@tauri-apps/plugin-opener": "^2.5.3",
     "@thisbeyond/solid-dnd": "^0.7.5",
     "ansi-sequence-parser": "^1.1.3",
     "debug": "^4.4.3",

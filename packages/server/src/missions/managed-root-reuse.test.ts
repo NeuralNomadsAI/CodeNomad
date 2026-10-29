@@ -2,8 +2,9 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionControl, MissionControlError } from "./control"
 import type { MissionDelegateInput, MissionManagedRootCreation, MissionSessionAdapter, NativeMissionSession } from "./control-types"
-import { stableToken, type MissionStorage } from "./journal"
+import type { MissionStorage } from "./journal"
 import type { MissionJsonValue } from "./model"
+import { isMissionTaskSession } from "./session-identity"
 
 function harness() {
   const values = new Map<string, MissionJsonValue>()
@@ -47,7 +48,7 @@ function harness() {
       managedCreates.push(input.taskKey)
       const mission = (await control.snapshot()).missions.find(mission => mission.id === input.missionID)!
       const task = mission.tasks.find(task => task.key === input.taskKey)!
-      assert.equal(task.actorSessionId, `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}`,
+      assert(isMissionTaskSession(task.actorSessionId!, mission.id, task.id),
         "The authenticated creation capability accepts only this task's deterministic root")
       const session = sessions.get(task.actorSessionId!) ?? await adapter.create({ id: task.actorSessionId!, title: task.title,
         location: coordinator.location, metadata: {}, ...task.execution })

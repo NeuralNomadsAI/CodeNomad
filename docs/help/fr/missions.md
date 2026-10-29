@@ -4,10 +4,10 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 
 ## Créer, puis démarrer explicitement {#create}
 
-1. Ouvrez **Missions** dans le panneau droit et choisissez **Créer une mission**.
+1. Ouvrez **Missions** dans le panneau droit et choisissez **Créer une mission**. Le formulaire remplace la liste des missions et les tâches de la mission sélectionnée jusqu’à ce que vous créiez ou annuliez.
 2. Remplissez **Que doit faire la mission ?** et vérifiez **Titre**, prérempli depuis la première phrase (jusqu’à 60 caractères).
 3. Sous **Quand**, sélectionnez **Une fois** ou **Chaque jour à**. Pour un travail quotidien, vérifiez le fuseau affiché ; **Modifier** permet un fuseau IANA.
-4. Développez **Options** pour **Scénario**, **Notes**, **Agents et modèles**, **Sessions des tâches**, les consignes enregistrées et les conversations suivies facultatives. Avec **Comparer deux modèles**, les sélecteurs **Modèle A** et **Modèle B** apparaissent dans le formulaire principal.
+4. Développez **Options** pour **Scénario**, **Notes**, **Agents et modèles**, **Sessions des tâches**, la **Profondeur d’imbrication des sous-sessions** du projet, les consignes enregistrées et les conversations suivies facultatives. Avec **Comparer deux modèles**, les sélecteurs **Modèle A** et **Modèle B** apparaissent dans le formulaire principal.
 5. Choisissez **Créer**. Sélectionnez la nouvelle entrée, puis utilisez son action ▶ distincte lorsque vous êtes prêt : **Démarrer la mission** pour un travail ponctuel, ou **Démarrer le programme {id}** pour un programme quotidien.
 
 **Créer ne démarre jamais le travail.** Une mission ponctuelle est préparée ; un programme quotidien est en pause. Ni la création ni l’enregistrement d’une consigne n’arment un minuteur. La création est limitée au projet/à la Location sélectionné et fige les profils demandés ainsi que la politique des sessions de tâches. La validation se trouve près du champ concerné ; un refus indiquant que rien n’a été envoyé laisse le brouillon disponible pour correction. Le coordinateur d’une mission ponctuelle peut aussi préparer pour vous une mission distincte, par exemple une suite : elle apparaît dans la liste comme **Préparée** et, comme toute mission, ne démarre que par son action ▶.
@@ -45,6 +45,22 @@ Le scénario guide la coordination ; il ne contourne pas les autorisations nativ
 
 Le graphe inclut les travaux terminés et retirés. Retirer une tâche n’arrête pas en soi sa conversation. Dans une mission ponctuelle, le coordinateur peut arrêter séparément les conversations d’une tâche retirée qu’il a lancée comme sous-agent natif, sans toucher aux autres tâches. **En cours** est l’état du cycle de vie de la mission, pas une preuve que son coordinateur travaille actuellement. Les textes complets se lisent dans le lecteur central, pas dans la liste des tâches ; **Détails techniques** replie les identifiants et les informations d’exécution demandées.
 
+### Couleurs et missions interrompues {#status-colours}
+
+Les marques des missions, les icônes des tâches et le chevron de la liste reprennent les couleurs de la liste des sessions : la couleur ne montre que ce qui vous attend maintenant.
+
+| Couleur | Signification |
+| --- | --- |
+| Rouge | Une réponse de votre part est attendue ; elle figure sous **Votre réponse est attendue**. |
+| Jaune, pulsant | Un travail est en cours. |
+| Orange | La mission est en pause ou interrompue, avec une action pour la poursuivre. |
+| Vert | Une mission terminée que vous n'avez pas encore ouverte dans cette fenêtre ; elle redevient neutre dès que vous la sélectionnez. |
+| Bleu | Une mission préparée, prête à démarrer comme un prompt rédigé. |
+
+Tout le reste est neutre, y compris les tâches terminées ou en échec : les résultats figurent dans le texte d'état et les icônes. Quand la liste est repliée, son chevron prend la plus urgente des couleurs rouge, jaune et vert parmi les autres missions ; comme pour les sessions repliées, l'orange et le bleu n'apparaissent que sur leurs propres lignes.
+
+Une mission est **Interrompue** quand son coordinateur s'est arrêté sans conclure alors que rien d'autre ne tourne. Une mission affichée **Échouée** peut aussi être reprise. Dans les deux cas, le premier bouton de la barre d'outils devient **Reprendre la mission interrompue** : il demande au coordinateur de refaire le point à partir du plan et des résultats enregistrés, et rouvre d'abord une mission échouée. Un coordinateur ne termine pas une mission ponctuelle en échec : quand il ne peut plus avancer seul, il vous pose une question sous **Votre réponse est attendue**. Vous seul arrêtez une mission.
+
 ### Points de situation et demandes de mise à jour {#briefings}
 
 Le coordinateur reçoit l’instruction de publier un point sur le projet après son plan initial, après le règlement des tâches, lorsqu’il attend un humain et avant le rapport final. Il s’agit d’une évaluation rédigée, pas d’un compteur d’activité en direct ni d’un signal périodique garanti. Un avis indique si le plan a changé depuis ce point.
@@ -57,7 +73,7 @@ Utilisez **Demander un point** sous la barre d’outils pour une nouvelle évalu
 2. Sous **Appliquer à**, choisissez **Toutes les missions** ou un scénario, puis réglez **Sessions des tâches** et, sous **Agents et modèles**, une ligne par rôle (coordinateur, puis les rôles du scénario). Chaque choix est enregistré immédiatement ; il n’y a pas de bouton Enregistrer.
 3. Dans la portée d’un scénario, les lignes affichent les valeurs globales marquées **Global**. Modifier un champ personnalise ce rôle à partir de ces valeurs ; son icône de retour réutilise les valeurs globales. **Réinitialiser** (après confirmation) efface seulement les agents et modèles de la portée affichée.
 4. À la création, utilisez **Options → Agents et modèles** pour des profils demandés spécifiques ; **Utiliser les réglages enregistrés** rétablit ceux qui sont enregistrés.
-5. Pour les limites de récursion native, modifiez **Profondeur d’imbrication des sous-sessions → Profondeur imposée pour le projet**. Appuyer sur Entrée ou quitter le champ enregistre une valeur valide modifiée ; **Hériter** enregistre aussitôt ; Échap abandonne une valeur non enregistrée.
+5. Pour les limites de récursion native, modifiez **Profondeur d’imbrication des sous-sessions → Profondeur imposée pour le projet**, ici ou sous **Options** à la création. Appuyer sur Entrée ou quitter le champ enregistre une valeur valide modifiée ; **Hériter** enregistre aussitôt ; Échap abandonne une valeur non enregistrée.
 
 | Réglage | Portée et effet |
 | --- | --- |
@@ -65,7 +81,7 @@ Utilisez **Demander un point** sous la barre d’outils pour une nouvelle évalu
 | Agent / Modèle / Réflexion | Sélections demandées du coordinateur/des rôles enregistrées à la création ; un acteur occupé ne change pas silencieusement pour un travail ultérieur. Les exécutions quotidiennes réutilisent leurs profils demandés figés. |
 | Sous-agents natifs | Les sessions de tâches utilisent les agents natifs subagent/all sous le coordinateur. |
 | Sessions indépendantes | Les sessions de tâches déclarées utilisent les agents primary/all et des conversations indépendantes ; cela ne désactive pas les assistants natifs internes. |
-| Profondeur d’imbrication des sous-sessions | Configuration de projet pour **toutes** les conversations OpenCode qui s’y trouvent, pas seulement les Missions. Vide hérite. L’enregistrement ne recharge pas OpenCode et ne change pas les conversations actives. |
+| Profondeur d’imbrication des sous-sessions | Configuration de projet pour **toutes** les conversations OpenCode qui s’y trouvent, pas seulement les Missions. Vide hérite : **Hériter** supprime le remplacement du projet ainsi qu’un bloc `experimental` qu’il laisse vide. OpenCode lit le bloc `experimental` du projet comme un tout ; les autres réglages expérimentaux qui y restent masquent donc toujours la profondeur globale. L’enregistrement ne recharge pas OpenCode et ne change pas les conversations actives. |
 
 **Valeur native par défaut** et **Global** diffèrent : le premier demande les valeurs par défaut propres à OpenCode, le second hérite du choix global ; choisir les valeurs natives par défaut dans la portée d’un scénario reste une exception explicite. La disponibilité du catalogue est vérifiée ; un profil demandé ne prouve pas celui qu’utilise actuellement une conversation. Les autorisations natives et la profondeur configurée régissent toujours les appels d’assistants internes dans les deux modes de tâches.
 
@@ -102,7 +118,7 @@ La date de création limite aussi les jours admissibles ; démarrer un nouveau p
 | --- | --- |
 | Onglet de projet CodeNomad | Ferme le projet dans CodeNomad ; les sessions natives continuent dans OpenCode. Rouvrez le projet pour les retrouver. |
 | Fenêtre entière, fermeture de l’application ou rechargement du moteur de rendu | Conserve les connexions de projet pour la restauration ; n’arrête pas le travail natif ni le service OpenCode. |
-| Backend CodeNomad | N’arrête pas OpenCode. La coordination ponctuelle CodeNomad dépend de sa présence ; ne supposez pas que de nouvelles affectations/commandes ponctuelles restent disponibles lorsqu’il est fermé. |
+| Backend CodeNomad | N’arrête pas OpenCode. Une mission ponctuelle en cours continue : son coordinateur, ses tâches en sous-agents natifs et les outils de mission fonctionnent dans OpenCode. L’affectation de tâches à des sessions indépendantes et la remise de leurs rapports au coordinateur, les missions que prépare le coordinateur, l’arrêt des conversations d’une tâche retirée, la récupération et le centre de mission attendent le backend, tout comme la poursuite d’une mission ponctuelle après un redémarrage du service OpenCode. |
 | Programme quotidien actif | Son horloge et l’exécution des passages fonctionnent dans le plugin/service OpenCode, y compris avec l’interface et le backend CodeNomad fermés. L’hôte d’exécution et le service OpenCode doivent rester actifs. |
 | Redémarrage du service OpenCode | Perd les tâches de planification propres au processus. Un programme censé être actif devient **Interrompue** jusqu’à un **Reprendre** explicite ; rouvrir CodeNomad ne le réarme pas. |
 
@@ -140,6 +156,6 @@ Utilisez **Modifier la mission sélectionnée** sur une mission ponctuelle modif
 2. Sélectionnez éventuellement **Supprimer aussi les conversations spécialistes créées pour cette mission** avant de confirmer.
 3. Vérifiez dans **Nettoyage des conversations** les nombres supprimés/conservés/en attente. Réessayez seulement le nettoyage restant enregistré si proposé.
 
-Supprimer une mission n’est pas l’arrêter ; utilisez d’abord l’arrêt et inspectez le travail restant. Les coordinateurs et conversations réutilisées sont conservés. Les spécialistes partagés, déplacés, ayant des enfants ou dont la propriété n’est pas vérifiable peuvent aussi être conservés. Un nettoyage partiel n’est ni annulé ni terminé silencieusement en arrière-plan. L’historique du nettoyage terminé reste disponible dans le lecteur d’ensemble.
+Supprimer une mission n’est pas l’arrêter ; utilisez d’abord l’arrêt et inspectez le travail restant. Les coordinateurs et conversations réutilisées sont conservés. Les spécialistes partagés, déplacés, ayant des enfants ou dont la propriété n’est pas vérifiable peuvent aussi être conservés. Un nettoyage partiel n’est ni annulé ni terminé silencieusement en arrière-plan. Le lecteur d’ensemble conserve les 20 nettoyages terminés les plus récents. Supprimer des missions libère leur stockage dans le projet : les missions supprimées plus anciennes sont effacées automatiquement.
 
 Voir [Autorisations](permissions.md), [Conversations](conversations.md) et [Configuration d’OpenCode](opencode.md) pour le travail natif et les commandes du service.

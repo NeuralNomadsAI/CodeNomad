@@ -2,8 +2,10 @@ import type { MissionDeleteInput, MissionInputTransport, MissionSessionAdapter }
 import { removeCleanupTarget, type MissionCleanupTarget } from "./native-session-cleanup"
 import { MissionControlError } from "./control-error"
 import { MissionJournal, stableToken } from "./journal"
+import { isMissionTaskSession } from "./session-identity"
 import { MISSION_SCHEMA_VERSION, type MissionDeletedEvent, type MissionEvent, type MissionMap, type MissionSnapshot } from "./model"
-import { cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReceipt, isCleanupReason, projectMissionCleanups } from "./cleanup-projection"
+import { cleanupReceiptID, cleanupReference, hasInvalidCleanupHistory, isCleanupReceipt, isCleanupReason, projectMissionCleanups } from "./cleanup-projection"
+import { deletionRecordCleanup } from "./journal-purge"
 
 // Called under the project's mutation lock, including retries across plugin reloads.
 export async function deleteMission(input: MissionDeleteInput, options: {
@@ -19,6 +21,8 @@ export async function deleteMission(input: MissionDeleteInput, options: {
   const deleteManagedSessions = input.deleteManagedSessions ?? false
   if (typeof deleteManagedSessions !== "boolean") throw new MissionControlError("deleteManagedSessions must be a boolean", "invalid-delete-option")
   const eventID = `evt_${stableToken(`${input.missionID}\0deleted-${input.requestID}`, 28)}`
+  const purged = await purgedDeletion(journal, input, eventID, deleteManagedSessions)
+  if (purged) return purged
   const previous = await journal.event(input.missionID, eventID)
   let deletion: MissionDeletedEvent
   if (previous) {
@@ -34,14 +38,14 @@ export async function deleteMission(input: MissionDeleteInput, options: {
     if (mission.control?.pending.length) throw new MissionControlError("Finish the pending native controls before deletion", "control-pending")
     if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before deleting", "revision-conflict")
     const cleanupTargets = deleteManagedSessions ? managedTargets(mission) : []
-    // Reserve enough room for terminal receipts before committing a destructive intent.
-    await journal.assertCanAppend(1 + cleanupTargets.length)
     deletion = {
       version: MISSION_SCHEMA_VERSION, id: eventID, type: "mission.deleted", missionID: mission.id,
       projectID: mission.projectID, requestID: input.requestID, expectedRevision: input.expectedRevision,
       createdAt: options.timestamp(snapshot), deleteManagedSessions,
       ...(deleteManagedSessions ? { cleanupTargets } : {}),
     }
+    // Reserve enough room for terminal receipts before committing a destructive intent.
+    await journal.assertCanAppend(deletion)
     await journal.append(deletion)
   }
   await options.changed(input.missionID, input.expectedRevision + 1)
@@ -51,7 +55,10 @@ export async function deleteMission(input: MissionDeleteInput, options: {
     await options.changed(input.missionID, input.expectedRevision + 1)
     if (!complete) throw new MissionControlError("Mission deleted; managed-session cleanup is pending. Retry the same deletion request.", "cleanup-pending")
   }
-  if (!deleteManagedSessions) return { deleted: true }
+  if (!deleteManagedSessions) {
+    await purgeSettled(journal)
+    return { deleted: true }
+  }
   const history = await journal.events()
   if (history.discardedEvents || hasInvalidCleanupHistory(history.events)) {
     throw new MissionControlError("Cannot confirm managed-session cleanup from a damaged journal", "cleanup-pending")
@@ -59,14 +66,33 @@ export async function deleteMission(input: MissionDeleteInput, options: {
   const summary = projectMissionCleanups(history.events.filter(event => event.missionID === deletion.missionID))
     .find(item => item.deletionID === deletion.id)
   if (!summary || summary.pending) throw new MissionControlError("Cannot confirm managed-session cleanup", "cleanup-pending")
+  await purgeSettled(journal)
   return { deleted: true, cleanup: summary }
+}
+
+// Best effort: the deletion already committed. Older settled deletions leave the
+// journal; the newest stay readable as cleanup history.
+async function purgeSettled(journal: MissionJournal): Promise<void> {
+  await journal.purgeDeleted().catch(() => undefined)
+}
+
+// An exact replay of a deletion whose events were purged answers from its record.
+async function purgedDeletion(journal: MissionJournal, input: MissionDeleteInput, eventID: string, deleteManagedSessions: boolean) {
+  const record = await journal.deletionRecord(input.missionID)
+  if (!record) return undefined
+  if (record.deletionID !== eventID) throw new MissionControlError("Mission not found", "mission-not-found")
+  if (record.requestID !== input.requestID || record.expectedRevision !== input.expectedRevision
+    || record.deleteManagedSessions !== deleteManagedSessions) {
+    throw new MissionControlError("Delete request ID was already used with a different request", "request-conflict")
+  }
+  return deleteManagedSessions ? { deleted: true as const, cleanup: deletionRecordCleanup(record) } : { deleted: true as const }
 }
 
 function managedTargets(mission: MissionMap): NonNullable<MissionDeletedEvent["cleanupTargets"]> {
   return mission.actors.filter((actor) => actor.kind === "specialist" && actor.managed
     && actor.sessionId !== mission.coordinatorSessionId
     && mission.tasks.some((task) => task.actorSessionId === actor.sessionId
-      && actor.sessionId === `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}`))
+      && isMissionTaskSession(actor.sessionId, mission.id, task.id)))
     .map((actor) => ({ sessionID: actor.sessionId, location: { ...actor.location } }))
 }
 
@@ -86,8 +112,8 @@ async function cleanup(deletion: MissionDeletedEvent, options: {
     let history: MissionEvent[]
     try {
       const observation = await journal.events()
-      // Display snapshots deliberately truncate missions and hide tombstones. Authority
-      // needs the complete bounded journal, including finished and deleted memberships.
+      // Display snapshots hide tombstones. Authority needs the complete bounded journal,
+      // including finished and deleted memberships.
       if (observation.discardedEvents || hasInvalidCleanupHistory(observation.events)) return false
       history = observation.events
       const receipt = await journal.event(deletion.missionID, receiptID)
@@ -149,8 +175,5 @@ export async function missionCleanupTarget(journal: MissionJournal, input: {
 }
 
 function referencedElsewhere(events: readonly MissionEvent[], missionID: string, sessionID: string): boolean {
-  return events.some((event) => event.missionID !== missionID && (
-    (event.type === "mission.created" && event.coordinator.sessionID === sessionID)
-    || (event.type === "task.dispatching" && event.actor.sessionID === sessionID)
-  ))
+  return events.some((event) => event.missionID !== missionID && cleanupReference(event) === sessionID)
 }

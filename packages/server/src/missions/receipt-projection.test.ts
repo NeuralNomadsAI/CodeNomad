@@ -100,7 +100,7 @@ for (const damage of ["noncanonical", "physical-key", "event", "mission", "proje
     assert.equal((projected as any).controlUnavailable, true)
     assert.deepEqual(projected.control!.pending, operation.targets.map(target => target.sessionID))
     assert.equal(projected.control!.id, operation.id); assert.equal(projected.control!.requestID, request.requestID)
-    await assert.rejects(f.journal.assertCanAppend(MISSION_MAX_EVENTS - f.values.size), /safety limit/)
+    await assert.rejects(f.journal.assertCanAppend(mission.id, MISSION_MAX_EVENTS - f.values.size), /safety limit/)
     f.allowControl()
     await assert.rejects(f.control.lifecycle(request))
     await assert.rejects(f.control.lifecycle({ ...request, requestID: "new-stop", action: "stop", expectedRevision: projected.revision }))
@@ -215,7 +215,8 @@ test("damage introduced during real notification admission prevents receipt publ
   assert.equal(result.failed, 1); assert.equal(f.counts().synthetics, 2)
   assert.equal(JSON.stringify(f.values.get(key)), JSON.stringify(bad))
   assert.equal((await f.control.snapshot()).missions[0].reports[0].notificationStatus, "pending")
-  await assert.rejects(f.control.retryPendingNotifications())
+  // The enumeration's hints never saw bytes written outside the journal; the item's own full read refuses it.
+  assert.deepEqual(await f.control.retryPendingNotifications().then(({ attempted, failed }) => ({ attempted, failed })), { attempted: 1, failed: 1 })
   assert.equal(f.counts().synthetics, 2)
 })
 

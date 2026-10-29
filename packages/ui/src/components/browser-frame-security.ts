@@ -1,6 +1,5 @@
 import type { RuntimeEnvironment } from "../lib/runtime-env"
-
-const FRAME_SANDBOX = "allow-scripts allow-forms allow-modals allow-popups allow-downloads"
+import { PREVIEW_SANDBOX_FLAGS as FRAME_SANDBOX } from "../../../server/src/previews/sandbox"
 
 /**
  * `allow-same-origin` lets a frame's own fetches and WebSocket handshakes stay
@@ -19,11 +18,35 @@ export function getBrowserFramePolicy(
   }
 }
 
+function isLoopbackHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "0.0.0.0" || hostname === "[::1]" || isIpv4Loopback(hostname)
+}
+
+/** Only a literal IPv4 `127.x.x.x` address: `127.example.com` is an ordinary
+ * domain. The URL parser canonicalizes shorthands like `127.1` first. */
+function isIpv4Loopback(hostname: string): boolean {
+  const parts = hostname.split(".")
+  if (parts.length !== 4 || parts[0] !== "127") return false
+  return parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+}
+
 export function isLoopbackPreviewUrl(rawUrl: string): boolean {
   try {
     const target = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `http://${rawUrl}`)
-    const hostname = target.hostname.toLowerCase()
-    return hostname === "localhost" || hostname === "0.0.0.0" || hostname === "[::1]" || /^127(?:\.|$)/.test(hostname)
+    return isLoopbackHostname(target.hostname.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+/** Strict anchor-href check for conversation links: only an explicit http(s)
+ * URL on a loopback host is routed through the session preview. Anything
+ * else (relative, schemed non-loopback, bare hostnames) keeps default link
+ * behavior. */
+export function isLoopbackHttpUrl(rawUrl: string): boolean {
+  if (!/^https?:\/\//i.test(rawUrl)) return false
+  try {
+    return isLoopbackHostname(new URL(rawUrl).hostname.toLowerCase())
   } catch {
     return false
   }

@@ -1,31 +1,25 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { missionRecoveryMessages as english } from "../../src/lib/i18n/messages/en/mission-recovery"
-import { createFixtureCache } from "./fixture-cache"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  cache = await createFixtureCache()
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    cacheDir: cache.cacheDir,
-    plugins: [solid(), { name: "mission-recovery-fixture", configureServer(s) {
-      s.middlewares.use("/mission-recovery-fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/mission-recovery-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-recovery.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-recovery-fixture`
+  const fixture = await borrowFixture({
+      name: "mission-recovery",
+      routes: [
+        { path: "/mission-recovery-fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-recovery.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { try { await browser?.close(); await server?.close() } finally { await cache?.dispose() } })
+after(async () => { try { await browser?.close() } finally { await cache?.dispose() } })
 const call = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).recoveryFixture[method](arg), { method, arg })
 async function setup(page: Page) {
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
@@ -128,10 +122,13 @@ test("lifecycle, native waits and unadmitted or resolved tasks suppress recovery
       assert.equal(await page.getByRole("button").count(), 0)
     }
     await call(page, "patch", { runState: "running" })
-    for (const status of ["completed", "failed", "stopped"]) {
+    for (const status of ["completed", "stopped"]) {
       await call(page, "patch", { status })
       assert.equal(await page.getByRole("button").count(), 0)
     }
+    await call(page, "patch", { status: "failed" })
+    assert.equal(await page.locator('[data-target="coordinator"] button').count(), 1, "a failed mission resumes through coordinator recovery")
+    assert.equal(await page.locator('[data-target="report"] button').count(), 0)
     await call(page, "patch", { status: "active", control: { pending: ["ses_coordinator"] } })
     assert.equal(await page.getByRole("button").count(), 0)
     await call(page, "patch", { control: null })

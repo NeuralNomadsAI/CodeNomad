@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { stat, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Page, type Request } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -24,7 +25,7 @@ before(async () => {
       if (closeDocumentForCustodyCheck) { res.destroy(); return }
       res.setHeader("Content-Type", "text/html")
       res.end(await s.transformIndexHtml("/mission-navigation", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-navigation.tsx"></script></body></html>'))
-    }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+    }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } }).catch(async error => { await cache.dispose(); throw error })
   server.httpServer!.on("listening", () => { ownedHTTP.listeningAt = Date.now() })
   server.httpServer!.on("close", () => { ownedHTTP.closedAt = Date.now() })
   server.httpServer!.on("connection", socket => {
@@ -45,6 +46,7 @@ before(async () => {
   shutdown.own(server); await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-navigation`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close() })
 

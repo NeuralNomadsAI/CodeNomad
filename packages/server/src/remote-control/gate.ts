@@ -1,7 +1,9 @@
+import type { IncomingMessage } from "node:http"
 import type { Socket } from "node:net"
 import type { FastifyReply, FastifyRequest } from "fastify"
 import { parseCookies, wantsHtml } from "../auth/http-auth"
 import type { RemoteControlDevice } from "../api-types"
+import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { routedPath } from "../server/routed-path"
 import { attachRemoteDevice, isRemoteRequest } from "./request-origin"
 
@@ -14,7 +16,8 @@ const DEVICE_COOKIE_MAX_AGE_SECONDS = 400 * 24 * 60 * 60
 // Reachable remotely without a paired device.
 const PUBLIC_PATHS = new Set([PAIR_PAGE_PATH, PAIR_EXCHANGE_PATH, "/api/auth/status"])
 // Host-only surfaces: local login/bootstrap, Remote Control management, desktop
-// windows, local tools and the automation bridge. Never reachable remotely.
+// windows, local tools and the automation bridge. Never reachable remotely, except
+// web previews through their capability token while the host allows them.
 const LOCAL_ONLY_PATHS = new Set(["/login", "/api/auth/login", "/api/auth/token", "/api/auth/password", "/api/auth/logout"])
 const LOCAL_ONLY_PREFIXES = ["/auth/", "/api/remote-control/", "/api/remote-proxy/", "/api/remote-servers/", "/api/opencode-plugin/", "/sidecars/", "/previews/"]
 const REMOTE_MANAGEMENT_READS = new Set(["/api/remote-control/status"])
@@ -27,6 +30,8 @@ export interface RemoteGateDeps {
   publicHost(): string | null
   authenticate(token: string | undefined): RemoteControlDevice | null
   assignDevice(socket: Socket, deviceId: string): void
+  /** Whether Remote Control serves this live web preview: the host allows previews and the token exists. */
+  servesPreview(token: string): boolean
 }
 
 /**
@@ -43,15 +48,19 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
   }
   for (const name of SPOOFABLE_HEADERS) delete request.headers[name]
 
-  const method = request.method.toUpperCase()
-  if (!SAFE_METHODS.has(method) && request.headers.origin !== `https://${host}`) {
-    reject(reply, 403, "Cross-origin request rejected")
-    return true
-  }
-
   const pathname = routedPath(request.raw.url ?? "/")
   if (pathname === null) {
     reject(reply, 400, "Invalid request path")
+    return true
+  }
+  // A preview's sandboxed document sends no device cookie and `Origin: null`; its
+  // capability token admits it, as on local listeners, while the host allows previews.
+  const previewToken = pathname.match(/^\/previews\/([^/]+)(?:\/|$)/)?.[1]
+  if (previewToken && deps.servesPreview(previewToken)) return false
+
+  const method = request.method.toUpperCase()
+  if (!SAFE_METHODS.has(method) && request.headers.origin !== `https://${host}`) {
+    reject(reply, 403, "Cross-origin request rejected")
     return true
   }
   if (isLocalOnly(pathname) && !PUBLIC_PATHS.has(pathname) && !(method === "GET" && REMOTE_MANAGEMENT_READS.has(pathname))) {
@@ -74,6 +83,19 @@ export function gateRemoteRequest(request: FastifyRequest, reply: FastifyReply, 
   if (method === "GET" && wantsHtml(request)) reply.header("connection", "close").redirect(PAIR_PAGE_PATH)
   else reject(reply, 401, "This device is not paired")
   return true
+}
+
+/**
+ * Admission for WebSocket upgrades arriving through the Remote Control ingress:
+ * only previews it serves, parsed as the preview proxy parses them.
+ */
+export function admitRemoteUpgrade(request: IncomingMessage, deps: RemoteGateDeps): boolean {
+  const host = deps.publicHost()
+  const target = request.url ?? ""
+  if (!host || request.headers.host !== host || !target.startsWith("/") || target.startsWith("//")) return false
+  for (const name of SPOOFABLE_HEADERS) delete request.headers[name]
+  const parsed = parsePreviewUpgradePath(target)
+  return parsed !== null && deps.servesPreview(parsed.token)
 }
 
 export function deviceCookie(token: string): string {

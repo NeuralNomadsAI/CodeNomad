@@ -36,7 +36,7 @@ Werden Farben schwer lesbar, wählen Sie eine integrierte Palette oder setzen di
 2. Öffnen Sie **Rechtes Panel anpassen** im rechten Panel. Wählen Sie integrierte Tabs und Statusabschnitte per Kontrollkästchen; mindestens ein Statusabschnitt bleibt sichtbar.
 3. Ziehen Sie rechte Panel-Tabs zum Umordnen. **Zurücksetzen** stellt integrierte Layoutauswahlen wieder her.
 
-Status enthält Tokeninformationen, Yolo-Modus, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts lassen Panels über der Unterhaltung schweben, statt sie einzuengen; ein schwebendes Panel zu öffnen schließt das andere.
+Status enthält Tokeninformationen, Yolo-Modus, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
 
 Integriertes Layout ist Fensterlayout, keine Projektänderung. Erweiterungskästchen sind anders: Sie aktivieren Code über alle Projekte dieser Konfiguration. **Zurücksetzen** ändert keine Erweiterungszustimmung. Siehe [Panel-Erweiterungen](extensions.md).
 

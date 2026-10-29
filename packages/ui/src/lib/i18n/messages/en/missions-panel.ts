@@ -34,6 +34,7 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "Schedule ID",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "In progress",
+  "missionsPanel.state.interrupted": "Interrupted",
   "missionsPanel.run.completed": "Completed",
   "missionsPanel.run.failed": "Failed",
   "missionsPanel.run.stopped": "Stopped",
@@ -67,8 +68,8 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "Mission actions",
   "missionsPanel.attention.permission.one": "{count} waiting",
   "missionsPanel.attention.permission.other": "{count} waiting",
-  "missionsPanel.attention.failed.one": "{count} failed",
-  "missionsPanel.attention.failed.other": "{count} failed",
+  "missionsPanel.attention.done.one": "{count} finished",
+  "missionsPanel.attention.done.other": "{count} finished",
   "missionsPanel.attention.working.one": "{count} running",
   "missionsPanel.attention.working.other": "{count} running",
 } as const

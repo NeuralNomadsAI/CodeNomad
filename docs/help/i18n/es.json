@@ -1,6 +1,7 @@
 {
   "language": "Español",
   "search": { "label": "Buscar en la ayuda", "clear": "Borrar", "empty": "Busque artículos y encabezados.", "noResults": "No hay resultados para «{query}». Pruebe otro término.", "failure": "No se pudo cargar la búsqueda. Recargue esta página o use los temas de ayuda.", "loading": "Cargando búsqueda…", "count": "{count} resultados" },
+  "release": { "published": "Versión {version}, publicada el {date}", "unavailable": "Los detalles de la versión están en la página de la última versión." },
   "siteTitle": "Ayuda de CodeNomad",
   "brand": "Ayuda",
   "tagline": "Un espacio de trabajo OpenCode para proyectos, sesiones y worktrees.",
@@ -19,7 +20,8 @@
   "editPage": "Editar esta página",
   "translatePage": "Traducir esta página",
   "reportProblem": "Informar de un problema",
-  "download": "Descargar",
+  "download": { "label": "Descargar", "windows": "Descargar para Windows", "windowsDetail": "Instalador, x64", "macos": "Descargar para macOS", "macosDetail": "Apple Silicon", "intel": "¿Mac con Intel? Descarga la versión para Intel", "linux": "Descargar para Linux", "linuxDetail": "AppImage, x64", "mobile": "Usa CodeNomad desde tu teléfono", "mobileDetail": "Empareja tu teléfono con el ordenador que ejecuta CodeNomad." },
+  "tour": { "label": "Vista previa sin sonido de CodeNomad 1.0: una misión con subagentes en paralelo, una comparación de modelos a ciegas, un diff de Git, la búsqueda en el historial del espacio de trabajo, las pestañas de proyectos y las paletas de colores", "poster": "Ventanas de CodeNomad 1.0: misiones, un formulario de preguntas, un diff, cambios de Git y una comparación de modelos", "caption": "Ver el recorrido completo de 90 segundos en YouTube" },
   "github": "GitHub",
   "languageLabel": "Idioma",
   "projectLinks": "Enlaces del proyecto",

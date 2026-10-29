@@ -1,33 +1,26 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import type { MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
-import { createFixtureCache } from "./fixture-cache"
 import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 import { captureMissionView } from "./mission-view-capture"
 
-let server: ViteDevServer, browser: Browser, url: string
-let cache: Awaited<ReturnType<typeof createFixtureCache>>
+let browser: Browser, url: string
 before(async () => {
-  cache = await createFixtureCache()
-  try {
-    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-      cacheDir: cache.cacheDir, plugins: [solid(), { name: "mission-result-reader", configureServer(s) {
-        s.middlewares.use("/mission-result-reader", async (_req, res) => {
-          res.setHeader("Content-Type", "text/html")
-          res.end(await s.transformIndexHtml("/mission-result-reader", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-result-reader.tsx"></script></body></html>'))
-        })
-      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-    await server.listen()
-    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-result-reader`
-    browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
-  } catch (error) { try { await server?.close() } finally { await cache.dispose() }; throw error }
+  const fixture = await borrowFixture({
+      name: "mission-result-reader",
+      routes: [
+        { path: "/mission-result-reader", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-result-reader.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
+  browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { try { await browser?.close() } finally { try { await server?.close() } finally { await cache?.dispose() } } })
+after(async () => { await browser?.close() })
 
 function snapshot() {
   const report: MissionReport = { id: "late", taskKey: "work", sessionId: "actor", createdAt: 2, outcome: "completed", late: true,

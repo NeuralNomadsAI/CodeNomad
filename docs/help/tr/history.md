@@ -7,13 +7,17 @@ Saklanan geçmiş, konuşma dökümünün şu anda görüntüledikleri ve modeli
 1. Konuşma başlığında **Sohbet geçmişinde ara** öğesini açın veya yapılandırılmış kısayolunu (varsayılan **Ctrl/Cmd+F**) kullanın.
 2. **Tüm oturum** veya **Tüm çalışma alanı** öğesini seçin ve bir arama terimi girin.
 3. Okunabilir metnin yanı sıra teknik içeriğe de ihtiyacınız varsa **Araçları ve düşünceleri dahil et** öğesini etkinleştirin.
-4. Bir alıntı seçin veya mevcut sayfanın ötesine geçmek için **Sonraki sonuçlar** öğesini kullanın.
+4. Bir alıntı seçin. **Tüm oturum** kapsamında kronolojik sayfalarda ilerlemek için **Sonraki sonuçlar** öğesini kullanın.
 
-Arama, yalnızca ekranda oluşturulmuş konuşma satırlarında değil, saklanan geçmişte düz metin olarak ve büyük/küçük harfe duyarsız yapılır. Çalışma alanı kapsamı, OpenCode hizmetindeki her projeyi değil, açılan projenin yetkili dizin ağacını ve çalışma ağaçlarını izler; sonuçları konuşmaya göre gruplanır ve her grup, konuşmanın başlığıyla ve onu şu anda barındıran çalışma ağacıyla adlandırılır. Dosya/görüntü eki baytları ile sağlayıcının opak durumu aranabilir metin değildir.
+**Tüm oturum**, saklanan geçmişte büyük/küçük harfe duyarsız tam ifade arar. **Tüm çalışma alanı**, açık projenin yetkili dizin ve çalışma ağaçlarında en fazla altı terimle arama yapıp en iyi 40 sonucu tek listede sıralar. Her konuşmanın en iyi eşleşmesi önce gelir; başlıklar ve güncel çalışma ağacı etiketleri sıralamayı korur. Terimler alıntılarda ve **Oturumda aç** sonrasında hedef konuşmada vurgulanır. Okunabilir metin ve isteğe bağlı araçlar ile düşünceler aranır.
 
-**Bu sayfa: … sonuç · … mesaj tarandı** ilerleme satırı, çalışma alanı toplamlarını değil, bu sonuç sayfasını açıklar. Sonuçlar gruplar halinde gelir. Atlanan büyük boyutlu veya desteklenmeyen mesajlar raporlanır; bir isabetin olmaması bu mesajların eşleşme içermediğini kanıtlamaz. Tarama sırasında gelen yeni iletilerin tutarlı bir şekilde dahil edilebilmesi için yeni bir aramaya ihtiyaç vardır.
+Konuşma sayfaları gruplar geldikçe **Bu sayfa: … sonuç · … mesaj tarandı** bilgisini gösterir. Proje araması **En iyi sonuçlar: …** ile kısmi tarama veya hariç tutulan dizinlere ilişkin kısa bildirimler gösterir. Sıralanmış arama çalışma ortamında yoksa **Tüm oturum** kullanın. Atlanan mesajlar bildirilir; yeni mesajlar için yeniden arayın.
 
 Boş arama açmak geçmişi taramaz. Sorguyu/kapsamı değiştirmek, pencereyi kapatmak veya oturumdan ayrılmak geçerliliğini yitiren aramayı iptal eder. Okuma başarısızsa **Yeniden dene** eylemini kullanın; bu istem göndermez veya geçmişi değiştirmez.
+
+Proje taraması her konumdaki en yeni en fazla 16.384 kayıtlı mesajdan başlar. **Daha eskiyi ara**, listeyi sonraki eski pencerenin en iyi sonuçlarıyla değiştirir. Bildirim, projenin her konumunda yeniden eskiye incelenen aralığı gösterir. Sıralama yalnızca o pencere içinde geçerlidir. Sorgu, kapsam veya teknik içerik değişikliği, aramayı kapatma ya da oturumdan ayrılma pencereyi sıfırlar. Yeni arama yeni mesajları da içerir.
+
+Arama penceresinin süresi dolarsa veya geçmiş değişirse **Yeni arama başlat**, aynı sorgu ve seçeneklerle en yeni mesajlardan başlar. Bildirim bu kurtarmayı açıklar. Olağan okuma hatalarında **Yeniden dene**, geçerli pencereyi tekrar okur.
 
 ## Sonuçları açın ve zaman çizelgesini kullanın {#timeline-navigation}
 
@@ -56,7 +60,7 @@ Sıkıştırma, OpenCode'un oturuma devam etmek için kullandığı bağlamı de
 2. Planlanan araç/akıl yürütme sayılarını ve atlanan içerik uyarılarını gözden geçirin.
 3. **Kaldır** öğesini onaylayın. Tüm oturum çalışması için konuşma dökümünün üzerindeki ilerlemeyi takip edin ve gerekirse iptal kontrolünü kullanın.
 
-Yalnızca uygun, tamamlanmış araçlar ve akıl yürütme parçaları kaldırılır. Etkin/tamamlanmamış içerik budanmaz; onayladığınız kapsamı sessizce genişletmek yerine değişmiş içerik reddedilir. Son metin ve mesaj/oturum meta verileri korunur, ancak kaldırılan teknik çıktı geri alınamaz. Onaylamadan önce gereken her şeyi koruyun.
+Yalnızca uygun, tamamlanmış araçlar ve akıl yürütme parçaları kaldırılır. Etkin/tamamlanmamış içerik budanmaz; OpenCode'un okuduğu haliyle (ekli dosyalar dahil) boyutu 16 MB üzerinde olan bir mesaj da budanmaz ve atlanan içerik sayılır; onayladığınız kapsamı sessizce genişletmek yerine değişmiş içerik reddedilir. Son metin ve mesaj/oturum meta verileri korunur, ancak kaldırılan teknik çıktı geri alınamaz. Onaylamadan önce gereken her şeyi koruyun.
 
 Oturum temizliği bütün oturum için atomik değildir. Sonraki mesaj çakışır veya başarısız olursa önceki başarılı kaldırmalar kalır. **İptal sonraki toplu işlemleri durdurur; zaten gönderilmiş toplu işlemi geri almaz**; o işlem yine de tamamlanabilir.
 

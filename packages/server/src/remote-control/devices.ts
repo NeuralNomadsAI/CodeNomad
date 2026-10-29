@@ -23,6 +23,8 @@ interface StoredState {
   devices: StoredDevice[]
   /** Set by Start and cleared only by Stop, so Remote Control resumes after a restart. */
   enabled?: boolean
+  /** Stored only when the host turns web previews off; they are served by default. */
+  previews?: false
 }
 
 /**
@@ -57,6 +59,17 @@ export class RemoteDeviceRegistry {
   setStartsOnLaunch(enabled: boolean): void {
     if (this.startsOnLaunch() === enabled) return
     this.state.enabled = enabled
+    this.persist()
+  }
+
+  previewsAllowed(): boolean {
+    return this.state.previews !== false
+  }
+
+  setPreviewsAllowed(allowed: boolean): void {
+    if (this.previewsAllowed() === allowed) return
+    if (allowed) delete this.state.previews
+    else this.state.previews = false
     this.persist()
   }
 
@@ -191,7 +204,11 @@ function readState(filePath: string): StoredState | null {
     typeof device === "object" && device !== null
     && typeof device.id === "string" && typeof device.name === "string" && /^[0-9a-f]{64}$/.test(String(device.tokenHash))
     && !Number.isNaN(Date.parse(String(device.createdAt))) && !Number.isNaN(Date.parse(String(device.lastSeenAt))))
-  return { version: 1, route: candidate.route, devices, ...(candidate.enabled === true ? { enabled: true } : {}) }
+  return {
+    version: 1, route: candidate.route, devices,
+    ...(candidate.enabled === true ? { enabled: true } : {}),
+    ...(candidate.previews === false ? { previews: false as const } : {}),
+  }
 }
 
 function publicDevice(device: StoredDevice): RemoteControlDevice {

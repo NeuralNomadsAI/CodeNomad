@@ -47,8 +47,11 @@ Every replacement revokes activation across all projects, even if the permission
 | --- | --- |
 | API 1 / `session.context` | Current session identifier (or none), interface language and appearance. No transcript text or filesystem access. |
 | API 2 / `session.assets.read` plus context | Explicitly reviewed permission to list bounded current-session tool-result image/attachment metadata and read supported embedded bytes. It is not general transcript, file or URL access. |
+| API 3 / `repository.workItems.read` plus context | Explicitly reviewed permission to list bounded pages of the project repository's issues and pull requests on GitHub, GitLab or Gitea/Forgejo, and to open one of them in the browser. It is not file, credential or general network access. |
 
 Asset access follows the currently mounted host/session, not an author-selected session. Local/remote references may be listed as unavailable; the asset API does not fetch arbitrary remote URLs or open local files. Switching sessions, disconnecting or revoking consent invalidates old access.
+
+Work items come from the project folder's `upstream` remote, else `origin`. CodeNomad reads them with the GitHub, GitLab or Gitea CLI you already signed in to (`gh`, `glab`, `tea`), or anonymously for public repositories, and stores no token; the extension sees only the repository name and the items. Anonymous reads cover github.com, gitlab.com, codeberg.org and gitea.com; a self-hosted forge is read only through its CLI signed in to it. Opening an item asks CodeNomad to open that item's page on the same forge in your browser, at most once a second; the extension cannot open other addresses.
 
 Author code runs in a restricted iframe, not in the trusted application renderer. It receives no native/OpenCode bridge, credential access, general RPC, forms, popups or downloads; network APIs and external resources are restricted. Extensions are UI addons, not [OpenCode plugins](integrations.md).
 

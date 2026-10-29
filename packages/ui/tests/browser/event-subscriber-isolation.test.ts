@@ -4,6 +4,9 @@ import { fileURLToPath } from "node:url"
 import Fastify, { type FastifyInstance } from "fastify"
 import pino from "pino"
 import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureCache } from "./fixture-cache"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { EventBus } from "../../../server/src/events/bus"
@@ -25,18 +28,21 @@ before(async () => {
   backend.get("/api/auth/status", async () => ({ authenticated: true }))
   await backend.listen({ host: "127.0.0.1", port: 0 })
   const target = `http://127.0.0.1:${(backend.server.address() as { port: number }).port}`
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "event-subscriber-isolation", configureServer(s) {
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
+    plugins: [shutdown.plugin, solid(), { name: "event-subscriber-isolation", configureServer(s) {
       s.middlewares.use("/fixture", async (_request, response) => {
         response.setHeader("Content-Type", "text/html")
         response.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/event-subscriber-isolation.tsx"></script></body></html>'))
       })
     } }], resolve: { dedupe: ["solid-js"] },
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null, proxy: { "/api": { target } } },
-  })
+  }).catch(async error => { await cache.dispose(); throw error })
+  shutdown.own(server)
   await server.listen()
   url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => {
   await browser?.close()

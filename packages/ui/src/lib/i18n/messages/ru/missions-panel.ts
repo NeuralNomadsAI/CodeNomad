@@ -34,6 +34,7 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "ID расписания",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "Выполняется",
+  "missionsPanel.state.interrupted": "Прервана",
   "missionsPanel.run.completed": "Завершено",
   "missionsPanel.run.failed": "Сбой",
   "missionsPanel.run.stopped": "Остановлено",
@@ -67,8 +68,8 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "Действия миссии",
   "missionsPanel.attention.permission.one": "{count} ожидает",
   "missionsPanel.attention.permission.other": "{count} ожидают",
-  "missionsPanel.attention.failed.one": "{count} с ошибкой",
-  "missionsPanel.attention.failed.other": "{count} с ошибкой",
+  "missionsPanel.attention.done.one": "{count} завершена",
+  "missionsPanel.attention.done.other": "{count} завершены",
   "missionsPanel.attention.working.one": "{count} выполняется",
   "missionsPanel.attention.working.other": "{count} выполняются",
 } as const

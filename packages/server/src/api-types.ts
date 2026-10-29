@@ -8,6 +8,7 @@ import type {
 } from "./config/schema"
 import type { FormInfo, OpenCodeEvent, PermissionRequest } from "@opencode/client"
 export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionContext, PanelExtensionCatalog, PanelExtensionCatalogEntry } from "./panel-extensions/contract"
+export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 export type { MissionRecurrenceReadPage } from "./missions/recurrence-reader-contract"
 
@@ -23,10 +24,12 @@ export type {
   MissionMap,
   MissionBriefing,
   MissionBriefingItem,
+  MissionReadResponse,
   MissionReport,
   MissionReportOutcome,
   MissionSnapshot,
   MissionStatus,
+  MissionSummary,
   MissionTask,
   MissionTaskStatus,
   MissionTemplateId,
@@ -433,12 +436,43 @@ export interface PluginControlLocation {
   workspaceID?: string
 }
 
+/** `false`: off; `true`: on with OpenCode's automatic model; string: on with this `providerID/modelID[#variant]` default. */
+export type ImageGenerationSelection = boolean | string
+export interface ImageModelOption { ref: string; name: string }
+/** The native document that decides the effective value instead of the Global one; no `path` for inline configuration. */
+export interface ImageSettingOverride { path?: string }
+/** A `null` group: the connected OpenCode's configuration contract has no such setting. */
+export interface ImageSettingsSnapshot {
+  location: PluginControlLocation
+  generation: {
+    global: ImageGenerationSelection
+    effective: ImageGenerationSelection
+    override?: ImageSettingOverride
+    /** `null` when the native image-model catalog could not be read. */
+    models: ImageModelOption[] | null
+  } | null
+  mediaStorage: {
+    global: boolean
+    effective: boolean
+    override?: ImageSettingOverride
+  } | null
+  /** The lower-priority document whose whole `experimental` object a new Global one would hide; writes are refused. */
+  blockedBy?: ImageSettingOverride
+}
+export interface ImageSettingsMutation {
+  location: PluginControlLocation
+  generation?: ImageGenerationSelection
+  mediaStorage?: boolean
+}
+
 export interface SubagentDepthCapability { minimum: number; maximum?: number; default?: number }
 export interface SubagentDepthSnapshot {
   location: PluginControlLocation
   capability: SubagentDepthCapability | null
   effectiveDepth: number | null
-  project: { path: string; depth: number | null; expectation: string } | null
+  /** `emptyExperimental`: the project holds an `experimental` object without properties, which
+   * hides every inherited experimental setting; Inherit removes it. */
+  project: { path: string; depth: number | null; expectation: string; emptyExperimental?: boolean } | null
 }
 
 export type PluginRuntimeSource =
@@ -726,6 +760,8 @@ export interface RemoteControlStatus {
   enabled: boolean
   /** The user started Remote Control and has not stopped it: it reconnects at launch. */
   startsOnLaunch: boolean
+  /** Paired devices may open web previews (on by default; only the host changes it). */
+  previews: boolean
   state: "stopped" | "connecting" | "connected" | "reconnecting" | "error"
   /** Public HTTPS origin while the tunnel is connected. */
   remoteUrl?: string
@@ -877,8 +913,8 @@ export interface ServerMeta {
   updateFeed?: UpdateFeed
   /** Newest release offered by the preview feed; stable updates use `support`. */
   update?: LatestReleaseInfo | null
-  /** Set when this request arrived through Remote Control, which serves no preview content. */
-  remoteControl?: true
+  /** Set when this request arrived through Remote Control while its host keeps web previews off. */
+  previewsUnavailable?: true
 }
 
 export type {

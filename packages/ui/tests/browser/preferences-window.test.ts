@@ -1,26 +1,23 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "preferences-fixture", configureServer(s) {
-      s.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root" style="height:100vh"></div><script type="module" src="/tests/browser/fixtures/preferences-window.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  const fixture = await borrowFixture({
+      name: "preferences-window",
+      routes: [
+        { path: "/fixture", html: "<html><body><div id=\"root\" style=\"height:100vh\"></div><script type=\"module\" src=\"/tests/browser/fixtures/preferences-window.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); })
 
 test("Preferences restores section and scroll after recreation and flushes an immediate close", async () => {
   const page = await browser.newPage({ viewport: { width: 1100, height: 760 }, locale: "en-US" })
@@ -94,5 +91,41 @@ test("Preferences restores section and scroll after recreation and flushes an im
   } catch (error) {
     console.error({ errors, content: (await page.locator("body").innerText()).slice(0, 1000) })
     throw error
+  } finally { await page.close() }
+})
+
+test("a session error is announced in the windows showing sessions, never again in Preferences", async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript({ content: `{
+    const w = window
+    w.__CODENOMAD_RUNTIME_HOST__ = "electron"
+    w.__CODENOMAD_WINDOW_CONTEXT__ = "preferences"
+    w.electronAPI = {
+      getPreferencesRequest: async () => ({ section: "general" }),
+      acceptPreferencesRequest: async () => {},
+      preferencesReady: async () => { w.ready = true },
+      onPreferencesSection: () => () => {},
+      onPreferencesCloseRequested: () => () => {},
+      onPreferencesTransitionRequested: () => () => {},
+      closeWindow: async () => {},
+    }
+  }` })
+  await page.route("**/api/**", route => new URL(route.request().url()).pathname.startsWith("/api/")
+    ? route.fulfill({ contentType: "application/json", body: "{}" })
+    : route.continue())
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => (window as any).ready)
+    await page.evaluate(() => (window as any).preferencesFixture.dispatch([{ type: "instance.event", instanceId: "workspace-1", event: {
+      id: "evt_failed", type: "session.execution.failed", created: Date.now(), location: { directory: "/project" },
+      data: { sessionID: "ses_limited", error: { message: "Usage limit reached" } } } }]))
+    // The window's event stream received it (the connection status follows every event).
+    await page.waitForFunction(() => (window as any).preferencesFixture.status("workspace-1") === "connected")
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)))
+    assert.equal(await page.getByRole("alertdialog").count(), 0, "the alert to acknowledge appears only where sessions are shown")
+    assert.equal(await page.getByText("Usage limit reached").count(), 0)
+    assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

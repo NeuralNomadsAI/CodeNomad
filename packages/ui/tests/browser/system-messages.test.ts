@@ -1,27 +1,24 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { waitForSearchHighlights } from "./search-highlight-assertions"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "system-fixture", configureServer(s) {
-      s.middlewares.use("/system-fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/system-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/system-messages.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/system-fixture`
+  const fixture = await borrowFixture({
+      name: "system-messages",
+      routes: [
+        { path: "/system-fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/system-messages.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close() })
 async function open(run: (page: Page) => Promise<void>, query = "") {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 }, locale: "en-US" })
   const errors: string[] = []

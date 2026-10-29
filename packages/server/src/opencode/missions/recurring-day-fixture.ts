@@ -61,6 +61,8 @@ export class RecurringDayFixture {
   jobStartFailure: "absent" | "registered" | undefined
   /** Transiently fails a native read of the daily schedule Job when this returns true. */
   failScheduleJobRead: (() => boolean) | undefined
+  /** Throws from a native SQL read matching this (an observation contract failure). */
+  failQuery: ((query: string) => boolean) | undefined
   /** Fresh native first admissions (a re-admitted ID after pruning counts again). */
   admissions = 0
   /** Controlled native I/O boundary; tests may hold admission after coordinator creation. */
@@ -73,6 +75,8 @@ export class RecurringDayFixture {
   readonly shells: unknown[] = []
   readonly background: unknown[] = []
   readonly errors: unknown[] = []
+  /** Native Bus publications (volatile UI invalidations) in order. */
+  readonly publications: Array<{ type: string; data: unknown; location: unknown }> = []
   private handlers = new Map<string, Record<string, Handler>>()
   private hooks: Array<(event: unknown) => Effect.Effect<unknown, unknown>> = []
   private sleepers = new Set<Sleeper>()
@@ -127,8 +131,7 @@ export class RecurringDayFixture {
       CREATE TABLE event_sequence(aggregate_id TEXT PRIMARY KEY,seq INTEGER,owner_id TEXT);
       CREATE TABLE event(id TEXT PRIMARY KEY,aggregate_id TEXT,seq INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,data TEXT,seq INTEGER);
-      CREATE TABLE session_inbox(session_id TEXT,id TEXT,payload TEXT);
-      CREATE TABLE session_pending(session_id TEXT);`)
+      CREATE TABLE session_inbox(session_id TEXT,id TEXT,payload TEXT);`)
     const configYamlPath = path.join(this.root, "profile.yaml")
     await writeFile(configYamlPath, "server:\n  environmentVariables: {}\n")
     this.profileScope = { channel: "day-test", configIdentity: configYamlPath,
@@ -177,6 +180,7 @@ export class RecurringDayFixture {
             && typeof params[0] === "string" && JSON.parse(params[0]).pending) committedPending = true
           return []
         }
+        if (this.failQuery?.(query)) throw new Error("Injected native query failure")
         return statement.all(...params as [])
       }) }) })
     const database = { db: { $client: sql, transaction: <A>(callback: () => Effect.Effect<A, unknown>) => Effect.promise(async () => {
@@ -236,7 +240,7 @@ export class RecurringDayFixture {
         this.jobs.delete(id)
         return record
       }), pendingBackground: Effect.sync(() => this.background) }
-    // Native shape (as of the 2.1.0 minimum): a borrowed Location graph holds Location services only; Database,
+    // Native shape (as of the minimum supported OpenCode): a borrowed Location graph holds Location services only; Database,
     // Session, Job and Bus are process-global and appear only in plugin/RPC contexts.
     const locationGraph = Context.make(tag("@opencode/Location"), location).pipe(
       Context.add(tag("@opencode/Form"), { list: () => Effect.sync(() => [...this.forms.values()]),
@@ -249,7 +253,8 @@ export class RecurringDayFixture {
       Context.add(tag("@opencode/Shell"), { list: () => Effect.sync(() => this.shells) }))
     this.graph = Context.merge(locationGraph, Context.make(tag("@opencode/storage/Database"), database).pipe(
       Context.add(tag("@opencode/Session"), native), Context.add(tag("@opencode/Job"), job),
-      Context.add(tag("@opencode/Bus"), { publish: () => Effect.void, listen: (listener: (event: unknown) => Effect.Effect<void>) =>
+      Context.add(tag("@opencode/Bus"), { publish: (definition: { type: string }, data: unknown, options: { location: unknown }) =>
+        Effect.sync(() => { this.publications.push({ type: definition.type, data, location: options.location }) }), listen: (listener: (event: unknown) => Effect.Effect<void>) =>
         Effect.sync(() => { this.busListeners.add(listener); return Effect.sync(() => { this.busListeners.delete(listener) }) }) }), Context.add(Clock.Clock, this.clock)))
     const map = await Effect.runPromise(RcMap.make({ idleTimeToLive: Infinity, lookup: () => Effect.sync(() => locationGraph) })
       .pipe(Effect.provideService(Scope.Scope, this.scope)))
@@ -433,7 +438,7 @@ export class RecurringDayFixture {
   }
   idle(id: string, failed = false) {
     this.db.prepare("UPDATE fixture_session SET active=0 WHERE id=?").run(id)
-    // Native shape (as of the 2.1.0 minimum): no persisted terminal event, only the durable idle projection.
+    // Native shape (as of the minimum supported OpenCode): no persisted terminal event, only the durable idle projection.
     const info = Schema.decodeUnknownSync(SessionMessage.Info)({ id: `msg_idle_${++this.serial}`, type: "idle",
       outcome: failed ? "failed" : "succeeded", time: { created: this.now } })
     this.db.prepare("INSERT INTO session_message VALUES(?,?,?,?,?)").run(info.id, id, "idle",

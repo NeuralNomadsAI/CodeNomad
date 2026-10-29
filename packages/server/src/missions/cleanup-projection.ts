@@ -1,5 +1,22 @@
 import { createHash } from "node:crypto"
-import { MISSION_MAX_EVENTS, MISSION_MAX_MISSIONS, type MissionCleanup, type MissionCleanupReason, type MissionDeletedEvent, type MissionEvent } from "./model"
+import type { MissionCleanup, MissionCleanupReason, MissionDeletedEvent, MissionEvent } from "./model"
+
+/** Settled cleanups shown after the pending ones. */
+export const SETTLED_CLEANUP_HISTORY = 20
+/** Payload bound of the displayed cleanups. */
+export const MAX_PROJECTED_CLEANUPS = 2_000
+
+/** The session a mission event makes that mission's member for shared-session cleanup checks. */
+export function cleanupReference(event: MissionEvent): string | undefined {
+  return event.type === "mission.created" ? event.coordinator.sessionID
+    : event.type === "task.dispatching" ? event.actor.sessionID : undefined
+}
+
+/** Targets of a tombstone still awaiting their exact receipt in these events. */
+export function pendingCleanupTargets(deletion: MissionDeletedEvent, events: readonly MissionEvent[]): string[] {
+  return (deletion.cleanupTargets ?? []).filter(target => !events.some(event => isCleanupReceipt(event, deletion, target.sessionID)))
+    .map(target => target.sessionID)
+}
 
 export function cleanupReceiptID(deletionID: string, sessionID: string): string {
   return `evt_${createHash("sha256").update(`${deletionID}\0cleanup\0${sessionID}`).digest("hex").slice(0, 28)}`
@@ -59,11 +76,15 @@ export function projectMissionCleanups(events: readonly MissionEvent[]): Mission
       results.push(projectDeletion(event, group, objective))
     }
   }
+  return orderMissionCleanups(results)
+}
+
+/** Newest first: every pending cleanup, then the `settled` newest settled ones. */
+export function orderMissionCleanups(results: MissionCleanup[], settled = SETTLED_CLEANUP_HISTORY): MissionCleanup[] {
   results.sort((a, b) => b.createdAt - a.createdAt || a.deletionID.localeCompare(b.deletionID))
-  // Keep EVERY pending intent within the journal's existing hard bound, even if
-  // newer completed deletions would otherwise push it out of the display window.
-  return [...results.filter(item => item.pending > 0), ...results.filter(item => item.pending === 0).slice(0, MISSION_MAX_MISSIONS)]
-    .slice(0, MISSION_MAX_EVENTS)
+  // Pending intents come first, so newer completed deletions never push one out of the display window.
+  return [...results.filter(item => item.pending > 0), ...results.filter(item => item.pending === 0).slice(0, settled)]
+    .slice(0, MAX_PROJECTED_CLEANUPS)
 }
 
 function projectDeletion(deletion: MissionDeletedEvent, group: readonly MissionEvent[], objective: string): MissionCleanup {

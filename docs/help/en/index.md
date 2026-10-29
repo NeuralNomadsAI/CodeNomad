@@ -1,8 +1,28 @@
-# CodeNomad help
+# CodeNomad
 
-Use this guide to operate the current CodeNomad desktop or browser workspace with your OpenCode service. It focuses on CodeNomad's controls, execution boundaries and recovery—not OpenCode configuration tutorials or a version archive.
+The AI coding cockpit for OpenCode: a desktop and browser workspace for developers who run many agents across projects, long conversations and Git worktrees.
+
+OpenCode gives you the engine. CodeNomad gives you the cockpit. It connects to OpenCode's shared background service: your sessions belong to OpenCode, other clients of that service can use them, and closing CodeNomad does not stop them.
+
+[Download CodeNomad](download.md)
+
+{{tour-video}}
+
+## Hand long work to Missions {#missions}
+
+Describe the work once. The mission's coordinator plans it as a task tree, delegates bounded tasks to native OpenCode conversations and reports results with their evidence. Run a mission once or every day; creating one never starts work until you choose to. Playbooks cover debugging, product delivery and comparing two models with a blind judge. See [Missions](missions.md).
+
+## Keep working from your phone {#phone-access}
+
+Remote Control pairs a phone, tablet or another computer with your running CodeNomad backend through a one-use link or QR code, without opening an inbound network port. From the phone you can follow conversations and answer questions and permissions; projects, credentials and agent execution stay on the host. See [Remote Control](remote-control.md) and [Mobile and PWA](mobile.md).
+
+## Find your way through long histories {#large-histories}
+
+Search a conversation's full stored history, or rank results across the opened project and its worktrees, including tool output and thinking when you need them. The message timeline jumps through long sessions without loading every message in between. See [History, search and cleanup](history.md).
 
 ## Read this first {#read-this-first}
+
+This guide covers the current CodeNomad desktop or browser workspace with your OpenCode service: CodeNomad's controls, execution boundaries and recovery, not OpenCode configuration tutorials or a version archive.
 
 CodeNomad connects your workspace to one shared OpenCode background service. Sessions and messages belong to OpenCode; tabs, composer drafts and layout belong to the CodeNomad client. Closing a project tab closes that project in CodeNomad, while sessions continue in OpenCode. Reopen the project to find them again. Closing CodeNomad does not stop OpenCode.
 
@@ -26,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | Projects, conversations, files and history | Backend's folders and native sessions | Connected server's folders and sessions | Host's authorized workspace surfaces |
 | Native Preferences and desktop windows | Available | Browser/remote settings stay in the client | Host-only desktop controls unavailable |
-| Session browser preview | Native in Electron and Windows Tauri; iframe on other Tauri platforms | Iframe where available | Host-only preview endpoints unavailable |
+| Session browser preview | Native in Electron and Windows Tauri; iframe on other Tauri platforms | Iframe where available | Iframe while the host allows web previews (the default) |
 | Native desktop/browser automation | Owned local windows/previews | Not a substitute for native desktop automation | Host-only automation endpoints unavailable |
 | Authentication | Local bootstrap or password session | Server password session | Paired-device credential |
 | PWA installation | Use the native app or a browser | Browser-dependent; secure context required | Browser-dependent; pairing still required |

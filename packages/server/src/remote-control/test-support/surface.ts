@@ -5,6 +5,7 @@ import type { TestContext } from "node:test"
 import type { OpenRemoteTunnelOptions, RemoteTunnel } from "@codenomad/remote-tunnel"
 import { AuthManager } from "../../auth/manager"
 import { createLogger } from "../../logger"
+import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../../server/http-server"
 import { RemoteDeviceRegistry } from "../devices"
 import { RemoteControlManager } from "../manager"
@@ -39,9 +40,13 @@ export async function startRemoteSurface(t: TestContext, options: {
   let target = ""
   let stopTunnel: (error?: string) => void = () => undefined
   let app: ReturnType<typeof createHttpServer>["instance"] | undefined
+  let previewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
+  const previewManager = new PreviewManager()
   const manager = new RemoteControlManager({
     registry: new RemoteDeviceRegistry(path.join(directory, "remote-control-devices.json")),
     router: () => (app ? (request, response) => app!.routing(request, response) : null),
+    previewUpgrade: () => previewUpgrade,
+    hasPreview: (token) => previewManager.get(token) !== undefined,
     logger,
     openTunnel: async (tunnelOptions) => {
       target = tunnelOptions.target
@@ -73,7 +78,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     instanceStore: stub,
     speechService: stub,
     sidecarManager: stub,
-    previewManager: stub,
+    previewManager,
     remoteControlManager: manager,
     authManager,
     clientConnectionManager: stub,
@@ -85,6 +90,7 @@ export async function startRemoteSurface(t: TestContext, options: {
     automationBridgeToken: "bridge-token",
   })
   app = server.instance
+  previewUpgrade = server.previewUpgrade
   app.get("/api/test/echo", async (request) => ({
     loopbackPrivileges: authManager.isLoopbackRequest(request),
     forwardedFor: request.headers["x-forwarded-for"] ?? null,
@@ -104,6 +110,7 @@ export async function startRemoteSurface(t: TestContext, options: {
   const { pairing } = await manager.start()
   return {
     manager,
+    previewManager,
     pairing,
     code: new URL(pairing.url).hash.slice(1),
     target: () => target,

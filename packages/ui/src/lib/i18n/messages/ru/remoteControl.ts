@@ -12,6 +12,8 @@ export const remoteControlMessages = {
   "remoteControl.start": "Запустить удалённое управление",
   "remoteControl.newLink": "Создать новую ссылку сопряжения",
   "remoteControl.stop": "Остановить удалённое управление",
+  "remoteControl.previews.title": "Веб-предпросмотр",
+  "remoteControl.previews.caption": "Сопряжённые устройства могут открывать веб-предпросмотр. Адрес каждого предпросмотра открывает его страницу без сопряжения, поэтому держите его в тайне.",
   "remoteControl.pairing.title": "Подключить другое устройство",
   "remoteControl.pairing.description": "Отсканируйте QR-код или откройте одноразовую ссылку на другом устройстве.",
   "remoteControl.pairing.qrAlt": "QR-код сопряжения удалённого управления",

@@ -6,7 +6,7 @@ import { serverApi } from "../lib/api-client.ts"
 import type { Session } from "../types/session.ts"
 import { addInstance, removeInstance } from "./instances.ts"
 import { fetchSessions, refreshSessionRuntimeStatus, removeSessionRuntimeState } from "./session-api.ts"
-import { applyOpenCodeDataEvent } from "./opencode-data.ts"
+import { applyOpenCodeDataEvent, destroyOpenCodeData, projectOpenCodeMessages, seedOpenCodeSessionMessages } from "./opencode-data.ts"
 import { handleNativeSessionEvent } from "./session-events.ts"
 import { beginSessionGenerationAdmission, hydrateSessionGenerationRecovery, sessions, setSessions, setSessionStatus } from "./session-state.ts"
 import { messageStoreBus } from "./message-v2/bus.ts"
@@ -311,5 +311,100 @@ describe("native-outcome recovery through real session stores", () => {
       assert.equal(fixture.current()?.outcome, undefined)
       assert.equal(fixture.current()?.generationRecovery, null)
     } finally { fixture.cleanup() }
+  })
+
+  it("heals a stranded transcript when liveness observes a settlement without its terminal event", async () => {
+    const id = "recovery-liveness-settlement-read"
+    const fixture = setup(id)
+    // The transcript strands a tool at "streaming" (its terminal tool event and
+    // the execution settlement both fell inside a disconnect window), the
+    // persisted page holds the completed truth, and the liveness activity read
+    // is the only settlement evidence.
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+      }],
+    }
+    let messageReads = 0
+    ;(fixture.client as any).message = { list: async () => {
+      messageReads += 1
+      return { data: [authoritative], cursor: {} }
+    } }
+    ;(fixture.client.session as any).inbox = { list: async () => [] }
+    ;(fixture.client as any).permission = { list: async () => [] }
+    ;(fixture.client.session as any).form = { list: async () => [] }
+    const base = { sessionID: "session", assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(id, "/work", { id: type, type, created, data } as any)
+    // An opened session's reducer has completed its first message sync.
+    await seedOpenCodeSessionMessages(id, "session", "/work", [])
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const data = apply("session.tool.success", { ...base, id: "tool", content: [{ type: "text", text: "ok" }], metadata: {} }, 3)
+      projectOpenCodeMessages(id, "session", data)
+      assert.equal((messageStoreBus.getOrCreate(id).getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "pending")
+      setSessionStatus(id, "session", "working")
+
+      await refreshSessionRuntimeStatus(id)
+
+      assert.equal(fixture.current()?.status, "idle")
+      for (let turn = 0; turn < 500 && !((messageStoreBus.getOrCreate(id).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed"); turn++) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0))
+      }
+      const healed = messageStoreBus.getOrCreate(id).getMessage("assistant")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.status, "completed", "the liveness observation finished the settlement read")
+      assert.equal((healed?.parts.tool?.data as any)?.state?.output, "ok")
+      assert.equal(messageReads, 1)
+    } finally {
+      destroyOpenCodeData(id)
+      fixture.cleanup()
+    }
+  })
+
+  it("reads no messages for a session the activity map still lists", async () => {
+    const id = "recovery-liveness-still-active"
+    const fixture = setup(id)
+    const authoritative = {
+      id: "assistant", type: "assistant", agent: "build",
+      model: { providerID: "provider", id: "model" },
+      time: { created: 1, completed: 3 },
+      content: [{
+        type: "tool", id: "tool", name: "bash", time: { created: 2, completed: 3 },
+        state: { status: "completed", input: { command: "pwd" }, metadata: {}, content: [{ type: "text", text: "ok" }] },
+      }],
+    }
+    let messageReads = 0
+    ;(fixture.client as any).message = { list: async () => {
+      messageReads += 1
+      return { data: [authoritative], cursor: {} }
+    } }
+    ;(fixture.client.session as any).inbox = { list: async () => [] }
+    ;(fixture.client as any).permission = { list: async () => [] }
+    ;(fixture.client.session as any).form = { list: async () => [] }
+    const base = { sessionID: "session", assistantMessageID: "assistant" }
+    const apply = (type: string, data: Record<string, unknown>, created = 1) =>
+      applyOpenCodeDataEvent(id, "/work", { id: type, type, created, data } as any)
+    try {
+      apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
+      apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
+      const data = apply("session.tool.success", { ...base, id: "tool", content: [{ type: "text", text: "ok" }], metadata: {} }, 3)
+      projectOpenCodeMessages(id, "session", data)
+      setSessionStatus(id, "session", "working")
+      fixture.client.session.active = async () => ({ session: {} })
+
+      await refreshSessionRuntimeStatus(id)
+
+      assert.equal(fixture.current()?.status, "working")
+      assert.equal(messageReads, 0, "an observed run reads no transcript page")
+      assert.equal((messageStoreBus.getOrCreate(id).getMessage("assistant")?.parts.tool?.data as any)?.state?.status, "pending")
+    } finally {
+      destroyOpenCodeData(id)
+      fixture.cleanup()
+    }
   })
 })

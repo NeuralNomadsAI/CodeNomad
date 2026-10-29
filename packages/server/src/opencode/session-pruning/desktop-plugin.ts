@@ -6,7 +6,7 @@ import { Context, Effect, Exit, Predicate, Scope } from "effect"
 import { registerPendingSnapshot } from "./pending-snapshot"
 
 // The bundled factory is wrapped by a tiny auto-discovered native entry.
-// No tools, commands or model hooks are registered, even while CodeNomad is open.
+// Backend presence owns the history/pruning RPCs and the Code Mode session_search tool.
 export function desktopPlugin(presenceDirectory: string | readonly string[]) {
   return Plugin.define({
     id: plugin.id,

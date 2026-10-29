@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { tmpdir } from "node:os"
 import { createHash } from "node:crypto"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Locator, type Page, type Request } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -35,6 +36,7 @@ before(async () => {
     shutdown.own(server); await server.listen()
     url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-native-family`
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
   } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 }, { timeout: 60000 })
 after(async () => { try { await browser?.close() } finally { await server?.close() }; console.info(`Family fixture logs: ${output}`) })
@@ -351,8 +353,9 @@ test("390x600 RTL touch visual investigation retains exact child/grandchild draf
     }
     await openSessions(); await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
     for (const id of ["child", "grandchild"]) {
+      // Choosing from the floating session panel closes it.
       await openSessions(); await select(page, id)
-      await page.locator(".shell-panel-toggle--left button:visible").tap()
+      await page.locator(".session-floating-drawer:visible").waitFor({ state: "detached" })
       await page.getByText(`Bounded native history ses_${id} 2`, { exact: true }).waitFor()
       const empty = await captureComposer(page, `rtl-touch-${id}-empty`, `ses_${id}`)
        assert.equal(empty.overlay, null, "empty touch composers do not mount permanent keyboard help")
@@ -413,7 +416,8 @@ test("native Chromium touch resize preserves the chosen proportion, exact draft 
     await page.waitForFunction(() => document.documentElement.dir === "rtl")
     await page.locator(".shell-panel-toggle--left button:visible").tap()
     await expand(page, "A"); await expand(page, "actor"); await select(page, "child")
-    await page.locator(".shell-panel-toggle--left button:visible").tap()
+    // Choosing from the floating session panel closes it.
+    await page.locator(".session-floating-drawer:visible").waitFor({ state: "detached" })
     await composer(page).fill("Touch resize draft ses_child")
     await captureComposer(page, "rtl-touch-child-before-resize", "ses_child")
     const resize = page.locator(".prompt-resize-handle:visible"), rect = await resize.boundingBox()
@@ -488,10 +492,14 @@ test("390px RTL Attention selects the exact same-active-child permission before 
   const ctx = await setup("attention-same-child-rtl", true), { page, requests } = ctx
   try {
     await page.waitForFunction(() => document.documentElement.dir === "rtl")
+    // Each choice from the floating session panel closes it; reopen it to expand the family.
     await page.locator(".shell-panel-toggle--left button:visible").tap()
-    await select(page, "A"); await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
+    await select(page, "A")
+    await page.locator(".session-floating-drawer:visible").waitFor({ state: "detached" })
+    await page.locator(".shell-panel-toggle--left button:visible").tap()
+    await expand(page, "A"); await expand(page, "actor"); await expand(page, "child")
     await select(page, "grandchild")
-    await page.locator(".shell-panel-toggle--left button:visible").tap()
+    await page.locator(".session-floating-drawer:visible").waitFor({ state: "detached" })
     await page.evaluate(() => window.missionNativeFamily.askPermission())
     await page.locator('.interruption-dock .interruption-navigation button').filter({ has: page.locator('svg.lucide-chevron-right') }).tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("global-fixture.txt"))

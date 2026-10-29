@@ -3,7 +3,7 @@ import type { PluginControlLocation, SubagentDepthCapability, SubagentDepthSnaps
 import type { WorkspaceManager } from "../workspaces/manager"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
 import type { PluginControlDocument } from "./plugin-control-document"
-import { editNativeSetting, readNativeSetting } from "./native-setting-document"
+import { editNativeSetting, readNativeSetting, removeEmptyNativeObject } from "./native-setting-document"
 import { readRuntimeContract } from "./compatibility/negotiate"
 
 const keys = ["experimental", "subagent_depth"]
@@ -48,15 +48,16 @@ export class SubagentDepthSettings {
 
   async read(workspaceId: string, location: PluginControlLocation): Promise<SubagentDepthSnapshot> {
     const context = await this.context(workspaceId, location)
-    let effectiveDepth: number | null = context.capability?.default ?? null
-    for (const entry of context.entries) {
-      if (entry.type === "document" && entry.info.experimental?.subagent_depth !== undefined)
-        effectiveDepth = depth(entry.info.experimental.subagent_depth)
-    }
+    // OpenCode reads the whole `experimental` object of the highest-priority document that has one
+    // (`Config.latest`), without merging, so a project block without the depth hides the global depth.
+    const experimental = [...context.entries].reverse().find(entry => entry.type === "document" && entry.info.experimental !== undefined)
+    const configured = experimental?.type === "document" ? experimental.info.experimental?.subagent_depth : undefined
+    const effectiveDepth = configured === undefined ? context.capability?.default ?? null : depth(configured)
     const project = context.documents.find(item => item.scope === "project")
     return { location: context.location, capability: context.capability, effectiveDepth,
       project: project ? { path: project.path, depth: depth(readNativeSetting(project.document, keys)),
-        expectation: expectation(project.document) } : null }
+        expectation: expectation(project.document),
+        ...(removeEmptyNativeObject(project.document, ["experimental"]) === undefined ? {} : { emptyExperimental: true }) } : null }
   }
 
   async update(workspaceId: string, location: PluginControlLocation, value: number | null, expected: string): Promise<void> {
@@ -71,7 +72,11 @@ export class SubagentDepthSettings {
     await this.documents.editConfigDocument(workspaceId, location, "project", document => {
       context.connection.assertCurrent()
       if (expectation(document) !== expected) throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
-      return editNativeSetting(document, keys, value === null ? undefined : value)
+      if (value !== null) return editNativeSetting(document, keys, value)
+      // An emptied project `experimental` object would still hide every inherited experimental setting.
+      const removed = editNativeSetting(document, keys, undefined)
+      const remaining = { ...document, text: document.byteOrderMark ? removed.slice(1) : removed }
+      return removeEmptyNativeObject(remaining, ["experimental"]) ?? removed
     })
     context.connection.assertCurrent()
   }

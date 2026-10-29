@@ -50,6 +50,21 @@ test("the start choice survives restarts and is written only when it changes", (
   assert.equal(open().startsOnLaunch(), false)
 })
 
+test("web previews are allowed by default and the host's opt-out survives restarts", (t) => {
+  const { file, open } = fixture(t)
+  const registry = open()
+  assert.equal(registry.previewsAllowed(), true)
+  registry.setPreviewsAllowed(true)
+  assert.equal(fs.existsSync(file), false)
+
+  registry.setPreviewsAllowed(false)
+  assert.equal(open().previewsAllowed(), false)
+  assert.equal(JSON.parse(fs.readFileSync(file, "utf8")).previews, false)
+  open().setPreviewsAllowed(true)
+  assert.equal(open().previewsAllowed(), true)
+  assert.equal("previews" in JSON.parse(fs.readFileSync(file, "utf8")), false)
+})
+
 test("pairing at the device limit replaces and reports the least recently seen device", (t) => {
   const { open, advance } = fixture(t)
   const registry = open()

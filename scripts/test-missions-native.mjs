@@ -55,7 +55,7 @@ const { registerAutomationPluginRoute } = await tsImport("../packages/server/src
 const { registerMissionRoutes } = await tsImport("../packages/server/src/server/routes/missions.ts", import.meta.url)
 const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
 const { CODENOMAD_MISSIONS_RPC } = await tsImport("../packages/server/src/missions/rpc.ts", import.meta.url)
-const { stableToken } = await tsImport("../packages/server/src/missions/journal.ts", import.meta.url)
+const { isMissionTaskSession } = await tsImport("../packages/server/src/missions/session-identity.ts", import.meta.url)
 let child, stopped, manager, plugin, removeBridge, output = "", failure, held, hold = false, stage = "setup"
 const diagnosticReads = []
 const gates = [], failedGates = [], failures = []
@@ -170,7 +170,7 @@ try {
         const task = mission?.tasks.find(value => value.key === command.input?.taskKey)
         const actor = mission?.actors.find(value => value.sessionId === task?.actorSessionId)
         Object.assign(receipt.rejectedAdmission, { taskStatus: task?.status, actorSessionID: actor?.sessionId, actorManaged: actor?.managed,
-          expectedFreshActorSessionID: task && `ses_${stableToken(`${mission.id}\0task\0${task.id}`, 26)}` })
+          actorDerivedFromTask: task && actor ? isMissionTaskSession(actor.sessionId, mission.id, task.id) : undefined })
         receipt.failureSnapshot = snapshot
       })().catch(() => { receipt.rejectedAdmission.observation = "unknown" }))
       return
@@ -537,6 +537,33 @@ try {
   await rejectedMutation("DELETE", `/${cleanup.mission.id}`, { ...cleanupRequest, deleteManagedSessions: false }, 409, "request-conflict")
   gate("opt-in managed specialist deletion preserves coordinator and reused session")
 
+  stage = "settled deletion purge"
+  // Twenty newer settled deletions push both earlier ones past the retained cleanup
+  // history: native storage.remove clears their entries, their deletion records stay.
+  for (let index = 0; index < 20; index++) {
+    const extra = await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: `native-purge-${index}`, objective: `Purge fixture ${index}`, template: "custom" }, { location })
+    assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete({
+      missionID: extra.mission.id, requestID: `native-purge-delete-${index}`, expectedRevision: extra.mission.revision,
+    }, { location }), { deleted: true })
+  }
+  const purgedSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+  assert.equal(purgedSnapshot.discardedEvents, 0)
+  assert.equal(purgedSnapshot.cleanupUnavailable, undefined)
+  assert.equal(purgedSnapshot.cleanups.length, 20, "The newest settled deletions stay as cleanup history")
+  assert(!purgedSnapshot.cleanups.some(item => [crudCreated.mission.id, cleanup.mission.id].includes(item.missionID)), "Purged deletions leave the journal")
+  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete(deletion, { location }), { deleted: true }, "A purged deletion replays from its record")
+  const purgedReplay = await bridge.inject({ method: "DELETE", url: `${missionURL}/${cleanup.mission.id}`, payload: cleanupRequest })
+  assert.equal(purgedReplay.statusCode, 200, purgedReplay.body)
+  assert.deepEqual(purgedReplay.json(), cleanupReceipt, "A purged cleanup replays its exact receipt")
+  await rejectedMutation("DELETE", `/${cleanup.mission.id}`, { ...cleanupRequest, deleteManagedSessions: false }, 409, "request-conflict")
+  await assert.rejects(client.rpc(CODENOMAD_MISSIONS_RPC).create(crudInput, { location }),
+    error => error.type === "mission.rejected" && error.data?.code === "mission-deleted", "A purged mission cannot be recreated")
+  // A tombstone answers a changed creation with request-conflict; only its record remains after removal.
+  await assert.rejects(client.rpc(CODENOMAD_MISSIONS_RPC).create({ ...crudInput, objective: "Different creation" }, { location }),
+    error => error.type === "mission.rejected" && error.data?.code === "mission-deleted", "Native storage.remove cleared the purged creation event")
+  assert.equal((await client.session.get({ sessionID: crudCoordinator })).id, crudCoordinator, "Purging preserves conversations")
+  gate("settled deletion purge frees journal entries and keeps recreation and replay evidence")
+
   stage = "Play Pause Resume and terminal Stop"
   const preparedResponse = await bridge.inject({ method: "POST", url: missionURL, payload: { requestId: "native-run-create", objective: "Controlled mission", template: "custom" } })
   assert.equal(preparedResponse.statusCode, 200, preparedResponse.body)
@@ -667,10 +694,117 @@ try {
   assert.deepEqual((await client.session.get({ sessionID: managedReuseSession })).model, managedReuseActor.model)
   await probe(managedReuseSession, "managed-reuse-fresh")
   gate("managed root creation, environment and busy reuse preserve original ownership and durable queue")
+
+  stage = "finished mission history and journal index"
+  // Many finished missions through the real bundle, then a new activation whose
+  // index builds once over them. Last stage: its damage probe must not leak.
+  const history = []
+  for (let index = 0; index < 100; index++) {
+    const created = await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: `native-history-${index}`, objective: `Finished ${index}`, template: "custom" }, { location })
+    const finished = await invoke("report", { missionID: created.mission.id, outcome: "completed", summary: `Finished ${index}`, final: true },
+      created.mission.coordinatorSessionId, `history-${index}`)
+    assert.equal(finished.mission.status, "completed")
+    history.push(finished.mission)
+  }
+  // The journal bound is per mission: the finished missions' own ranges, seeded in
+  // the isolated KV table as an earlier activation left them, take the project past
+  // one mission's 2,036-entry bound while each mission stays far below it.
+  const { DatabaseSync } = await import("node:sqlite")
+  const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
+  const journalEntries = (database, range) => database.prepare("SELECT COUNT(*) AS count FROM kv WHERE substr(key, 1, ?) = ?").get(range.length, range).count
+  let journalRange
+  const seeding = new DatabaseSync(process.env.OPENCODE_DB)
+  try {
+    seeding.exec("PRAGMA busy_timeout = 10000")
+    const historyKey = seeding.prepare("SELECT key FROM kv WHERE key LIKE ? LIMIT 1").get(`${namespace}codenomad-missions/v2/%/${history[0].id}/%`)?.key
+    assert.ok(historyKey, "The finished missions' journal ranges are in the isolated native KV table")
+    journalRange = `${historyKey.slice(0, historyKey.indexOf(`/${history[0].id}/`))}/`
+    const insert = seeding.prepare("INSERT INTO kv(key,value,time_created,time_updated) VALUES(?,?,?,?)")
+    // One transaction: thousands of autocommits would idle the client's keep-alive connection past the daemon's timeout.
+    seeding.exec("BEGIN IMMEDIATE")
+    for (const mission of history) {
+      for (let index = 0; index < 22; index++) {
+        const id = `evt_seeded_${String(index).padStart(2, "0")}`
+        insert.run(`${journalRange}${mission.id}/${id}`, JSON.stringify({ version: 1, id, type: "mission.updated", missionID: mission.id, projectID: mission.projectID,
+          createdAt: mission.createdAt + 1 + index, requestID: `seeded-${index}`, expectedRevision: 1, notesSpecified: false, objective: `Seeded ${index}` }), Date.now(), Date.now())
+      }
+    }
+    seeding.exec("COMMIT")
+    assert.ok(journalEntries(seeding, journalRange) > 2_036, "The project holds more than one mission's bound")
+  } finally { seeding.close() }
+  await client.location.reload({ signal: AbortSignal.timeout(20_000) })
+  await until(async () => { try { return Boolean(await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })) } catch { return false } })
+  const live = (await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "native-history-live", objective: "Live beside history", template: "custom" }, { location })).mission
+  const liveCoordinator = live.coordinatorSessionId
+  const liveTask = { missionID: live.id, taskKey: "history-work", title: "History work", brief: "Return evidence.", role: "reviewer", execution: task.execution, blockedBy: [] }
+  assert.equal((await invoke("delegate", liveTask, liveCoordinator, "history-declare")).disposition, "declared")
+  assert.equal((await invoke("report", { missionID: live.id, taskKey: liveTask.taskKey, outcome: "completed", summary: "History unaffected" },
+    liveCoordinator, "history-readout")).disposition, "reported")
+  const beforeDelete = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+  assert.equal(beforeDelete.missions.find(mission => mission.id === history[0].id).revision, history[0].revision + 22, "Seeded entries read as the mission's own events")
+  // The deletion's retention purge pushes the oldest settled deletion past the history, through native storage.remove.
+  const settled = beforeDelete.cleanups.filter(item => item.pending === 0)
+  assert.equal(settled.length, 20)
+  assert.deepEqual(await client.rpc(CODENOMAD_MISSIONS_RPC).delete({ missionID: history[0].id, requestID: "native-history-delete",
+    expectedRevision: beforeDelete.missions.find(mission => mission.id === history[0].id).revision }, { location }), { deleted: true })
+  const withHistory = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })
+  assert.equal(withHistory.missions.filter(mission => history.some(item => item.id === mission.id)).length, history.length - 1)
+  assert.equal(withHistory.discardedEvents, 0)
+  assert.equal(withHistory.cleanups.length, 20)
+  assert(!withHistory.cleanups.some(item => item.missionID === settled.at(-1).missionID), "The oldest settled deletion was purged")
+  // The panel's reads through the real routes and bundle: one row per live map, full maps
+  // only for open and included missions, activity only for those maps.
+  const panel = (suffix = "") => bridge.inject({ method: "GET", url: missionURL + suffix }).then(response => response.json())
+  const finished = id => history.some(item => item.id === id)
+  const listed = await panel()
+  assert.equal(listed.available, true)
+  assert.ok(listed.summariesVersion, "The bundle answers the list RPC")
+  assert.deepEqual(listed.summaries.filter(row => finished(row.id)).map(row => [row.id, row.status, row.revision, row.updatedAt]),
+    withHistory.missions.filter(mission => finished(mission.id)).map(mission => [mission.id, mission.status, mission.revision, mission.updatedAt]),
+    "Finished missions list as rows in snapshot order")
+  assert.ok(listed.missions.some(mission => mission.id === live.id), "The open mission's full map is listed")
+  assert(!listed.missions.some(mission => finished(mission.id)), "No finished map is loaded unasked")
+  assert.deepEqual(listed.activity.missions.map(item => item.missionId).sort(), listed.missions.map(mission => mission.id).sort(), "Activity observes only the listed maps")
+  const included = await panel(`?include=${history[1].id}&summaries=${listed.summariesVersion}`)
+  assert.deepEqual(included.missions.find(mission => mission.id === history[1].id), withHistory.missions.find(mission => mission.id === history[1].id),
+    "An included finished mission's range reads as its snapshot map")
+  assert.deepEqual((await panel(`/${history[1].id}`)).mission, withHistory.missions.find(mission => mission.id === history[1].id), "The single-mission read")
+  // Probe which reads see the whole journal: a damaged entry written beside the
+  // bundle (as another process would) is visible to full reads at once and to
+  // the activation's index only after its next rebuild, a minute away.
+  const database = new DatabaseSync(process.env.OPENCODE_DB)
+  try {
+    database.exec("PRAGMA busy_timeout = 10000")
+    assert.equal(journalEntries(database, `${journalRange}${settled.at(-1).missionID}/`), 0, "Native storage.remove cleared the purged range")
+    assert.ok(journalEntries(database, journalRange) > 2_036, "The project still holds more than one mission's bound")
+    const liveKey = database.prepare("SELECT key FROM kv WHERE key LIKE ? LIMIT 1").get(`${namespace}codenomad-missions/v2/%/${live.id}/%`)?.key
+    assert.ok(liveKey, "The live mission's journal range is in the isolated native KV table")
+    const strayKey = `${liveKey.slice(0, liveKey.indexOf(`/${live.id}/`))}/stray-history-probe`
+    database.prepare("INSERT INTO kv(key,value,time_created,time_updated) VALUES(?,?,?,?)").run(strayKey, JSON.stringify({ damaged: true }), Date.now(), Date.now())
+    try {
+      assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).discardedEvents, 1, "Full reads see the entry at once")
+      const inspectedLive = await invoke("inspect", { missionID: live.id }, liveCoordinator, "history-inspect")
+      assert.equal(inspectedLive.mission.id, live.id)
+      assert.equal(inspectedLive.mission.controlUnavailable, undefined, "inspect reads the mission's own range, not the whole journal")
+      assert.equal((await panel()).discardedEvents, 0, "The panel list reads the hints, not the whole journal")
+      const turns = requests.length
+      await client.session.prompt({ sessionID: liveCoordinator, text: "History probe turn" })
+      await client.session.wait({ sessionID: liveCoordinator }, { signal: AbortSignal.timeout(20_000) })
+      const turn = requests.slice(turns).find(request => request.session === liveCoordinator)
+      assert.ok(turn?.messages.includes("Only this coordinator session"), "The context hook found the coordinator without a full read")
+      assert(!turn.messages.includes("Do not continue mission work"), "A full read would have stamped the damage and paused the context")
+      // The fixture RPC reports tool errors as opaque defects; the retry below names the cause.
+      await assert.rejects(invoke("delegate", { ...liveTask, taskKey: "history-refused" }, liveCoordinator, "history-refused"))
+    } finally { database.prepare("DELETE FROM kv WHERE key=?").run(strayKey) }
+  } finally { database.close() }
+  assert.equal((await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).discardedEvents, 0)
+  assert.equal((await invoke("delegate", { ...liveTask, taskKey: "history-refused" }, liveCoordinator, "history-accepted")).disposition, "declared",
+    "Only the damage refused the declaration: its authoritative gate read the entry the hints had not seen")
+  gate("finished history beyond one mission's bound: creation, declaration, readout, deletion and purge beside it; hinted reads and the panel list skip it, write gates read it")
   assert.equal(failures.length, 0, "Every baseline expectation must pass; collected errors are never skipped or accepted")
   receipt.status = "passed"; receipt.passCount = gates.length
   receipt.finalSnapshot = await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location }); receipt.providerRequests = requests.length
-  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, explicit targeted coordinator/report recovery without replay, native outcome/queued idle boundary, revise/late report, lifecycle create/update/delete idempotence, Play/Pause/Resume/terminal Stop, optional managed specialist cleanup, structured HTTP/RPC mutation errors and transcript preservation, presence restart; ${root}`)
+  console.log(`PASS ${version}: native catalog, selection, busy queue, conflict, environment, idle/busy coordinator resumption, report outbox recovery with/without restart, explicit targeted coordinator/report recovery without replay, native outcome/queued idle boundary, revise/late report, lifecycle create/update/delete idempotence, Play/Pause/Resume/terminal Stop, optional managed specialist cleanup, settled deletion purge, structured HTTP/RPC mutation errors and transcript preservation, presence restart; ${root}`)
 } catch (error) {
   if (!failedGates.includes(stage)) failedGates.push(stage)
   receipt.status = "failed"; receipt.failure = { stage, message: error.message, stack: error.stack }

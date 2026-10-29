@@ -3,7 +3,9 @@ import { createHash } from "node:crypto"
 import { pruneAllRequestSchema, pruneRequestSchema, pruneResultSchema, type PruneRequest, type PruneResult } from "./contract"
 import { planPrune, previewContent, revision } from "./planner"
 import { canonicalContent } from "./revision"
+import { canReleaseMedia, projectStoredMedia, releaseDroppedMedia } from "./media-blob"
 
+const MESSAGE_LIMIT = 16 * 1024 * 1024
 type BlockReason = Extract<PruneResult, { status: "blocked" }>["reason"]
 
 // Internal kernel. No async callback or network work is allowed while the
@@ -31,20 +33,25 @@ export function pruneTransaction(
         return result
       }
     }
-    const row = db.prepare(`SELECT type, data FROM session_message WHERE session_id=? AND id=?
-      AND length(CAST(data AS BLOB)) <= 16777216`).get(request.sessionID, request.messageID)
+    const row = db.prepare(`SELECT type, data, length(CAST(data AS BLOB)) AS bytes FROM session_message WHERE session_id=? AND id=?
+      AND length(CAST(data AS BLOB)) <= ?`).get(request.sessionID, request.messageID, MESSAGE_LIMIT)
     if (!row || row.type !== "assistant" || typeof row.data !== "string") return { status: "blocked", reason: "not_deletable" }
     const data = JSON.parse(row.data)
-    const preview = previewContent(data)
+    // Compare what the caller hashed from native reads; the same budget bounds the native form.
+    const projection = projectStoredMedia(db, data, Number(row.bytes), MESSAGE_LIMIT)
+    if (projection.status === "limit") return { status: "blocked", reason: "not_deletable" }
+    if (projection.status === "unsupported" || !canReleaseMedia(db, data)) return { status: "blocked", reason: "unsupported_storage" }
+    const preview = previewContent(projection.data)
     if (preview.status !== "preview") return preview
     const indexes = selected?.indexes ?? preview.parts.map(part => part.index)
     if (!indexes.length) return { status: "blocked", reason: "not_deletable" }
-    const plan = planPrune(data, { ...request, indexes })
+    const plan = planPrune(data, { ...request, indexes }, projection.data)
     if (plan.status !== "planned") return plan
     const update = db.prepare("UPDATE session_message SET data=json_set(data,'$.content',json(?)) WHERE session_id=? AND id=? AND data=?")
       .run(JSON.stringify(plan.content), request.sessionID, request.messageID, row.data)
     if (update.changes !== 1) return { status: "blocked", reason: "conflict" }
-    const result: PruneResult = { status: "pruned", messageID: request.messageID, revision: revision(plan.content), removedCount: indexes.length }
+    releaseDroppedMedia(db, request.sessionID, request.messageID, data, { ...data, content: plan.content })
+    const result: PruneResult = { status: "pruned", messageID: request.messageID, revision: revision(plan.projected), removedCount: indexes.length }
     if (key) {
       const now = Date.now()
       // A receipt contains hashes/counts/IDs only, not deleted tool payloads.

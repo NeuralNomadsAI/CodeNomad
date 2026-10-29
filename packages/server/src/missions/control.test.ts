@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { MISSION_MAX_ACTORS, MISSION_MAX_EVENTS, MISSION_MAX_MISSIONS, type MissionJsonValue } from "./model"
+import { MISSION_MAX_ACTORS, MISSION_MAX_EVENTS, type MissionJsonValue } from "./model"
 
 import {
   MissionControl,
@@ -198,18 +198,19 @@ test("persists native execution through a failed admission and restart without s
   }), /differs from the task contract/)
 })
 
-test("rejects a twenty-first mission without hiding an active mission", async () => {
+test("a project keeps creating missions past twenty, all listed", async () => {
   const { create, sessions, storage } = harness()
   const control = create()
-  for (let index = 0; index <= MISSION_MAX_MISSIONS; index++) {
+  const count = 25
+  for (let index = 0; index < count; index++) {
     const id = `ses_coordinator_${index}`
     sessions.sessions.set(id, { ...sessions.sessions.get("ses_coordinator")!, id })
-    const start = () => control.inspect(id, { start: { objective: `Mission ${index}`, template: "custom" } }, `start-${index}`)
-    if (index < MISSION_MAX_MISSIONS) await start()
-    else await assert.rejects(start, (error: unknown) => error instanceof MissionControlError && error.code === "mission-limit")
+    await control.inspect(id, { start: { objective: `Mission ${index}`, template: "custom" } }, `start-${index}`)
   }
-  assert.equal(storage.values.size, MISSION_MAX_MISSIONS)
-  assert.equal((await create().snapshot()).discardedEvents, 0)
+  assert.equal(storage.values.size, count)
+  const snapshot = await create().snapshot()
+  assert.equal(snapshot.missions.length, count)
+  assert.equal(snapshot.discardedEvents, 0)
   const replay = await control.inspect("ses_coordinator_0", { start: { objective: "Mission 0", template: "custom" } }, "start-0")
   assert.ok(replay.mission)
 })
@@ -793,11 +794,12 @@ test("bounds and validates persisted journal records", async () => {
   assert.equal(snapshot.missions.length, 0)
 })
 
-test("rejects a new event before the durable journal can exceed its safety limit", async () => {
+test("rejects a new event before its mission's durable range can exceed its safety limit", async () => {
   const storage = new MemoryStorage()
   const journal = new MissionJournal(storage, "project-1", "/repo", () => 100)
+  // Unreadable entries still occupy their mission's range.
   for (let index = 0; index < MISSION_MAX_EVENTS; index += 1) {
-    storage.values.set(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/seed/${index.toString().padStart(4, "0")}`, { seed: index })
+    storage.values.set(`${MISSION_JOURNAL_STORAGE_PREFIX}/${journal.projectToken}/msn_capacity/${index.toString().padStart(4, "0")}`, { seed: index })
   }
 
   await assert.rejects(journal.append({

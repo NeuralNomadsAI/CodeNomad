@@ -4,10 +4,10 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 ## Oluşturun, ardından açıkça başlatın {#create}
 
-1. Sağ panelde **Görevler** bölümünü açıp **Görev oluştur** eylemini seçin.
+1. Sağ panelde **Görevler** bölümünü açıp **Görev oluştur** eylemini seçin. Form, oluşturana veya iptal edene kadar görev listesinin ve seçili görevin görev düğümlerinin yerini alır.
 2. **Görev ne yapmalı?** alanını doldurun ve ilk cümleden otomatik doldurulan **Başlık** alanını kontrol edin (en fazla 60 karakter).
 3. **Ne zaman** altında **Bir kez** veya **Her gün saat** seçeneğini belirleyin. Günlük işler için gösterilen saat dilimini doğrulayın; **Değiştir** ile bir IANA saat dilimi girebilirsiniz.
-4. **Rehber**, **Notlar**, **Ajanlar ve modeller**, **Görev oturumları**, kayıtlı özetler ve isteğe bağlı takip edilen konuşmalar için **Seçenekler** bölümünü genişletin. **İki modeli karşılaştır** seçildiğinde **Model A** ve **Model B** seçicileri ana formda görünür.
+4. **Rehber**, **Notlar**, **Ajanlar ve modeller**, **Görev oturumları**, projenin **Alt oturum iç içe geçme derinliği** ayarı, kayıtlı özetler ve isteğe bağlı takip edilen konuşmalar için **Seçenekler** bölümünü genişletin. **İki modeli karşılaştır** seçildiğinde **Model A** ve **Model B** seçicileri ana formda görünür.
 5. **Oluştur** eylemini seçin. Yeni kaydı seçip hazır olduğunuzda ayrı ▶ eylemini kullanın: tek seferlik işler için **Görevi başlat**, günlük zamanlama için **{id} zamanlamasını başlat**.
 
 **Oluşturmak hiçbir zaman işi başlatmaz.** Tek seferlik görev hazırlanır; günlük zamanlama duraklatılmış durumdadır. Ne oluşturma ne de özeti kaydetme bir zamanlayıcıyı devreye alır. Oluşturma seçili proje/Location kapsamındadır ve istenen profillerle görev oturumu ilkesini sabitler. Doğrulama mesajları ilgili alanın yanındadır; hiçbir şey gönderilmediğini belirten bir ret durumunda taslak düzeltilebilmesi için korunur. Tek seferlik bir görevin koordinatörü sizin için takip işi gibi ayrı bir görev de hazırlayabilir: bu görev listede **Hazır** olarak görünür ve diğer her görev gibi yalnızca ▶ eylemiyle başlar.
@@ -45,6 +45,22 @@ Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı gar
 
 Grafik tamamlanan ve plandan çıkarılan işleri de içerir. Bir görevi plandan çıkarmak konuşmasını kendiliğinden durdurmaz. Tek seferlik bir görevde koordinatör, OpenCode alt ajanı olarak başlattığı ve plandan çıkarılan bir görevin konuşmalarını diğer görevlere dokunmadan ayrıca durdurabilir. **Sürüyor**, görevin yaşam döngüsü durumudur; koordinatörün o anda çalıştığının kanıtı değildir. Ayrıntılı metin paneldeki görev listesinde değil, merkezi okuyucudadır; **Teknik ayrıntılar** altında kimlikler ve istenen yürütme bilgileri kapalı tutulur.
 
+### Renkler ve kesintiye uğrayan görevler {#status-colours}
+
+Görev işaretleri, görev düğümü simgeleri ve listenin oku oturum listesinin renklerini kullanır: renk yalnızca şu anda size ihtiyaç duyan şeyi gösterir.
+
+| Renk | Anlamı |
+| --- | --- |
+| Kırmızı | Sizden bir yanıt bekleniyor; **Yanıtınız gerekiyor** altında listelenir. |
+| Sarı, yanıp sönen | Çalışma sürüyor. |
+| Turuncu | Görev duraklatıldı veya kesintiye uğradı; devam ettirmek için bir eylem var. |
+| Yeşil | Bu pencerede henüz açmadığınız tamamlanmış bir görev; seçtiğiniz anda nötr olur. |
+| Mavi | Hazırlanmış bir görev; yazılmış bir istem gibi başlatılmaya hazırdır. |
+
+Geri kalan her şey nötrdür; tamamlanan ve başarısız görev düğümleri de: sonuçlar durum metninde ve simgelerde yer alır. Liste daraltılmışken oku, diğer görevler arasında kırmızı, sarı ve yeşilden en acil olanı alır; daraltılmış oturumlarda olduğu gibi turuncu ve mavi yalnızca kendi satırlarında görünür.
+
+Koordinatörü sonuca varmadan durduğunda ve başka hiçbir şey çalışmıyorken bir görev **Kesintiye uğradı** olur. **Başarısız** olarak gösterilen bir görev de sürdürülebilir. İki durumda da araç çubuğunun ilk düğmesi **Kesintiye uğrayan görevi kurtar** olur: koordinatörden kayıtlı plan ve sonuçlara göre yeniden değerlendirme yapmasını ister ve başarısız bir görevi önce yeniden açar. Koordinatör tek seferlik bir görevi başarısız olarak bitirmez: kendi başına devam edemediğinde **Yanıtınız gerekiyor** altında size bir soru sorar. Bir görevi yalnızca siz durdurursunuz.
+
 ### Durum özetleri ve güncelleme istekleri {#briefings}
 
 Koordinatöre ilk plandan sonra, her görev sonuçlandırıldığında, insan yanıtı beklerken ve son rapordan önce bir proje durum özeti yayımlaması talimatı verilir. Bu, yazılmış bir değerlendirmedir; canlı etkinlik sayacı veya garantili periyodik yaşam sinyali değildir. Bir bildirim, durum özetinden sonra haritanın değiştiğini belirtir.
@@ -57,7 +73,7 @@ Yeni bir koordinatör değerlendirmesi için araç çubuğunun altındaki **Gün
 2. **Uygulanacak kapsam** altında **Tüm görevler** veya bir rehber seçin; ardından **Görev oturumları** ayarını ve **Ajanlar ve modeller** altında her rol için bir satırı (önce koordinatör, sonra rehberin rolleri) belirleyin. Her seçim hemen kaydedilir; Kaydet düğmesi yoktur.
 3. Bir rehber kapsamında satırlar, **Genel** olarak işaretlenmiş genel değerleri gösterir. Bir alanı değiştirmek o rolü bu değerlerden başlayarak özelleştirir; geri alma simgesi yeniden genel değerleri kullanır. **Sıfırla** (onaydan sonra) yalnızca gösterilen kapsamın ajanlarını ve modellerini temizler.
 4. Oluşturma sırasında belirli profiller istemek için **Seçenekler → Ajanlar ve modeller** yolunu kullanın; **Kaydedilmiş varsayılanları kullan** kayıtlı olanları geri getirir.
-5. OpenCode'un özyineleme sınırları için **Alt oturum iç içe geçme derinliği → Proje için belirlenen derinlik** alanını düzenleyin. Enter'a basmak veya alandan çıkmak, değişmiş geçerli bir değeri kaydeder; **Devral** hemen kaydeder; Escape kaydedilmemiş bir değeri atar.
+5. OpenCode'un özyineleme sınırları için **Alt oturum iç içe geçme derinliği → Proje için belirlenen derinlik** alanını burada veya oluşturma sırasında **Seçenekler** altında düzenleyin. Enter'a basmak veya alandan çıkmak, değişmiş geçerli bir değeri kaydeder; **Devral** hemen kaydeder; Escape kaydedilmemiş bir değeri atar.
 
 | Ayar | Kapsam ve etki |
 | --- | --- |
@@ -65,7 +81,7 @@ Yeni bir koordinatör değerlendirmesi için araç çubuğunun altındaki **Gün
 | Ajan / Model / Düşünme | Oluşturmayla kaydedilen koordinatör/rol tercihleri; meşgul bir aktör sonraki işlere uyması için sessizce değiştirilmez. Günlük çalıştırmalar sabitlenmiş profil tercihlerini yeniden kullanır. |
 | OpenCode alt ajanları | Görev oturumları koordinatörün altında subagent/all ajanlarını kullanır. |
 | Bağımsız oturumlar | Bildirilen görev oturumları primary/all ajanlarını ve bağımsız konuşmaları kullanır; bu, dahili OpenCode yardımcılarını devre dışı bırakmaz. |
-| Alt oturum iç içe geçme derinliği | Yalnızca Görevler için değil, oradaki **tüm** OpenCode konuşmaları için proje yapılandırması. Boş bırakılırsa devralınır. Kaydetme OpenCode'u yeniden yüklemez veya çalışan konuşmaları değiştirmez. |
+| Alt oturum iç içe geçme derinliği | Yalnızca Görevler için değil, oradaki **tüm** OpenCode konuşmaları için proje yapılandırması. Boş bırakılırsa devralınır: **Devral**, proje geçersiz kılmasını ve boş bıraktığı `experimental` bloğunu kaldırır. OpenCode projenin `experimental` bloğunu bir bütün olarak okur; bu nedenle orada tutulan diğer deneysel ayarlar genel derinliği gizlemeye devam eder. Kaydetme OpenCode'u yeniden yüklemez veya çalışan konuşmaları değiştirmez. |
 
 **Yerel varsayılan** ile **Genel** farklıdır: ilki OpenCode'un kendi varsayılanlarını ister, ikincisi genel seçimi devralır; bir rehber kapsamında yerel varsayılanları seçmek açık bir istisna olarak kalır. Katalog kullanılabilirliği kontrol edilir; istenen profil, bir konuşmanın o anda kullandığı profilin kanıtı değildir. Her iki görev modunda da dahili yardımcı çağrılarını OpenCode izinleri ve yapılandırılmış derinlik yönetir.
 
@@ -102,7 +118,7 @@ Oluşturulma zamanı da uygun günlük işleri sınırlar; yeni bir zamanlamayı
 | --- | --- |
 | CodeNomad proje sekmesi | Projeyi CodeNomad'de kapatır; yerel işler OpenCode'da devam eder ve projeyi yeniden açtığınızda konuşmalar bulunur. |
 | Pencerenin tamamı, uygulamadan çıkış veya arayüzün yeniden yüklenmesi | Proje bağlantılarını geri yükleme için korur; OpenCode işlerini veya hizmetini durdurmaz. |
-| CodeNomad arka ucu | OpenCode'u durdurmaz. Tek seferlik CodeNomad koordinasyonu arka ucun varlığına bağlıdır; kapalıyken yeni tek seferlik iş atama/kontrol olanaklarının kullanılabilir kalacağını varsaymayın. |
+| CodeNomad arka ucu | OpenCode'u durdurmaz. Çalışan tek seferlik bir görev sürer: koordinatörü, OpenCode alt ajanı olarak yürüyen görevleri ve görev araçları OpenCode içinde çalışır. Bağımsız oturumlara görev atama ve raporlarını koordinatöre iletme, koordinatörün hazırladığı görevler, plandan çıkarılan bir görevin konuşmalarını durdurma, kurtarma ve Görev Kontrolü arka ucu bekler; OpenCode hizmetinin yeniden başlatılmasından sonra tek seferlik bir görevi sürdürmek de öyle. |
 | Çalışan günlük zamanlama | Saat ve çalıştırma yürütmesi, CodeNomad arayüzü ve arka ucu kapalıyken de OpenCode eklentisinde/hizmetinde sürer. Yürütme ana bilgisayarı ve OpenCode hizmeti çalışır durumda kalmalıdır. |
 | OpenCode hizmetinin yeniden başlatılması | Sürece bağlı zamanlama işleri kaybolur. Çalışması istenen zamanlama, açıkça **Sürdür** seçilene kadar **Kesintiye uğradı** durumuna geçer; CodeNomad'i yeniden açmak onu devreye almaz. |
 
@@ -140,6 +156,6 @@ Düzenlenebilir tek seferlik görevde **Seçili görevi düzenle** eylemini kull
 2. Onaylamadan önce isteğe bağlı olarak **Bu görev için oluşturulan uzman konuşmalarını da sil** seçeneğini işaretleyin.
 3. Kaldırılan/korunan/bekleyen sayılarını **Konuşma temizliği** bölümünde kontrol edin. Sunuluyorsa yalnızca kaydedilmiş, kalan temizliği yeniden deneyin.
 
-Görevi silmek durdurmakla aynı şey değildir; önce Durdur'u kullanıp kalan işleri inceleyin. Koordinatörler ve yeniden kullanılan konuşmalar korunur. Paylaşılan, taşınan, alt konuşması bulunan veya sahipliği doğrulanamayan uzmanlar da korunabilir. Kısmi temizlik geri alınmaz ve arka planda sessizce tamamlanmaz. Tamamlanan temizlik geçmişi genel bakış okuyucusunda kullanılabilir kalır.
+Görevi silmek durdurmakla aynı şey değildir; önce Durdur'u kullanıp kalan işleri inceleyin. Koordinatörler ve yeniden kullanılan konuşmalar korunur. Paylaşılan, taşınan, alt konuşması bulunan veya sahipliği doğrulanamayan uzmanlar da korunabilir. Kısmi temizlik geri alınmaz ve arka planda sessizce tamamlanmaz. Genel bakış okuyucusu tamamlanan en son 20 temizliği tutar. Görevleri silmek projedeki depolama alanlarını boşaltır: daha eski silinmiş görevler otomatik olarak temizlenir.
 
 OpenCode işleri ve hizmet kontrolleri için [İzinler](permissions.md), [Konuşmalar](conversations.md) ve [OpenCode kurulumu](opencode.md) sayfalarına bakın.

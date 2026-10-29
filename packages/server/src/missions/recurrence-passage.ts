@@ -1,4 +1,5 @@
-import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, stableToken, type MissionStorage } from "./journal"
+import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, missionDeletionRecordKey, stableToken, type MissionStorage } from "./journal"
+import { isMissionCoordinatorSession } from "./session-identity"
 import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
 import { parseRecurrenceDocument, RECURRENCE_STORAGE_PREFIX, type RecurrenceDocument } from "./recurrence-contract"
 
@@ -25,7 +26,7 @@ export function archivedRecurrencePassage(storage: MissionStorage, input: Recurr
   if (!receipt || !("missionID" in receipt.result)) throw new Error("Archived recurrence result unavailable")
   const isolated = passageJournal(storage, doc, receipt.passage.id, () => { throw new Error("Archived recurrence is read-only") })
   if (receipt.result.missionID !== isolated.missionID
-    || receipt.result.conversationID !== `ses_${stableToken(`${isolated.missionID}\0coordinator`, 26)}`)
+    || !isMissionCoordinatorSession(receipt.result.conversationID, isolated.missionID))
     throw new Error("Archived recurrence mission conflict")
   return { receipt, ...isolated }
 }
@@ -43,8 +44,11 @@ function passageJournal(storage: MissionStorage, doc: RecurrenceDocument, passag
     }
     return tail
   }
+  // The isolated passage journal cannot remove entries, so it never purges and has no deletion record.
+  const record = missionDeletionRecordKey(projectToken, missionID)
   const scoped: MissionStorage = {
-    get: async key => storage.get(`${physical}${suffix(key)}`),
+    isolated: true,
+    get: async key => key === record ? undefined : storage.get(`${physical}${suffix(key)}`),
     set: async (key, value, supplied) => {
       const target = `${physical}${suffix(key)}`
       const fence = () => { assertSynchronousAuthorityGuard(current, "policy-unqualified"); supplied?.() }
@@ -53,13 +57,15 @@ function passageJournal(storage: MissionStorage, doc: RecurrenceDocument, passag
       await storage.set(target, value, fence)
     },
     scan: async ({ prefix, after, limit = 100 }) => {
-      if (prefix !== virtual || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Recurrence journal scan conflict")
+      // The whole virtual project, or the passage mission's own range.
+      const range = prefix === virtual ? "/" : prefix === `${virtual}/${missionID}/` ? `/${missionID}/` : undefined
+      if (!range || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error("Recurrence journal scan conflict")
       const nativeAfter = after === undefined ? undefined : `${physical}${suffix(after)}`
-      const page = await storage.scan({ prefix: `${physical}/`, after: nativeAfter, limit })
+      const page = await storage.scan({ prefix: `${physical}${range}`, after: nativeAfter, limit })
       if (!Array.isArray(page.entries) || page.entries.length > limit) throw new Error("Invalid recurrence journal page")
-      let previous = nativeAfter ?? `${physical}/`
+      let previous = nativeAfter ?? `${physical}${range}`
       const entries = page.entries.map(entry => {
-        if (!entry.key.startsWith(`${physical}/`) || entry.key <= previous) throw new Error("Invalid recurrence journal placement")
+        if (!entry.key.startsWith(`${physical}${range}`) || entry.key <= previous) throw new Error("Invalid recurrence journal placement")
         const key = `${virtual}${entry.key.slice(physical.length)}`
         suffix(key)
         previous = entry.key

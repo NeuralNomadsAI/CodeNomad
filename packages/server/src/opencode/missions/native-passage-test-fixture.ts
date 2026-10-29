@@ -61,7 +61,7 @@ export async function passageFixture(business = true) {
       creates++
       const session = { ...input, projectID: "project", location: { directory: root } }
       sessions.set(input.id, session)
-      states.set(input.id, { id: input.id, projectID: "project", directory: root, active: false, inbox: 0, pending: 0,
+      states.set(input.id, { id: input.id, projectID: "project", directory: root, active: false, inbox: 0,
         suspended: false, runningTools: 0, failed: false, messagePresent: false })
       return session
     },

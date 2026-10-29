@@ -11,6 +11,7 @@ interface RouteDeps {
 
 const DeviceParams = z.object({ id: z.string().uuid() })
 const PairBody = z.object({ code: z.string().min(1).max(256) })
+const PreviewsBody = z.object({ enabled: z.boolean() })
 const PAIR_TEMPLATE_URL = new URL("./auth-pages/remote-pair.html", import.meta.url)
 let pairTemplate: string | null = null
 
@@ -43,6 +44,16 @@ export function registerRemoteControlRoutes(app: FastifyInstance, deps: RouteDep
   app.delete("/api/remote-control", async (request, reply) => {
     if (!requireLocalControl(request, reply)) return
     return deps.manager.stop()
+  })
+
+  app.put("/api/remote-control/previews", async (request, reply) => {
+    if (!requireLocalControl(request, reply)) return
+    const parsed = PreviewsBody.safeParse(request.body)
+    if (!parsed.success) {
+      reply.code(400)
+      return { error: parsed.error.message }
+    }
+    return deps.manager.setPreviewsAllowed(parsed.data.enabled)
   })
 
   app.get("/api/remote-control/devices", async (request, reply) => {

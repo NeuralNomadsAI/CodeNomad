@@ -47,6 +47,8 @@ export const sessionMessages = {
   "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "新しいセッション",
   "sessionList.actions.newSession.title": "新しいセッション",
+  "sessionList.actions.newSession.failedTitle": "セッションを作成できませんでした",
+  "sessionList.actions.newSession.failedMessage": "セッションの作成に失敗しました。接続を確認して、もう一度お試しください。",
   "sessionList.actions.copyId.ariaLabel": "セッション ID をコピー",
   "sessionList.actions.copyId.title": "セッション ID をコピー",
   "sessionList.actions.reload.ariaLabel": "セッションを再読み込み",

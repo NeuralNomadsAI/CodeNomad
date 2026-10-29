@@ -1,6 +1,7 @@
 export const instanceMessages = {
   "panelExtensions.section": "拡張機能",
   "panelExtensions.assetsConsent": "権限：現在のセッションのツール結果の画像・添付ファイル、識別子、言語、外観を読み取ります。ファイルシステムやネットワークにはアクセスしません。",
+  "panelExtensions.workItemsConsent": "権限: このプロジェクトのリポジトリ名と、GitHub、GitLab、Gitea/Forgejo 上の issue と pull request を読み取り（サインイン済みの gh、glab、tea 経由、または公開リポジトリでは匿名）、ブラウザーで開くこと。現在のセッション ID、言語、外観も含みます。ファイルシステムへのアクセスやその他のネットワークアクセスはありません。",
   "panelExtensions.empty": "インストール済みの拡張機能はありません。",
   "panelExtensions.catalog.title": "オンラインで利用可能",
   "panelExtensions.catalog.search": "拡張機能を検索",

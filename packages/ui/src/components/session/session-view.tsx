@@ -1,4 +1,4 @@
-import { Show, createMemo, createEffect, createSignal, on, onCleanup, onMount, type Component, type JSXElement } from "solid-js"
+import { Show, createMemo, createEffect, createSignal, on, onCleanup, type Component, type JSXElement } from "solid-js"
 import type { SessionInboxUser, SessionInboxUserPayload } from "@opencode/client"
 import type { Session } from "../../types/session"
 import { createAgentAttachment, createFileAttachment, createSkillAttachment, type Attachment } from "../../types/attachment"
@@ -15,7 +15,7 @@ import { observeTimelineRailBoundary } from "./timeline-rail-boundary"
 import { addAttachment, clearAttachments, getAttachments, removeAttachment } from "../../stores/attachments"
 import { instances, waitForInstanceReady } from "../../stores/instances"
 import { getMessageNextCursor, hasMoreMessages, isLatestMessageWindow, loadLatestMessageWindow, loadMessages, loadMoreMessages, loadNewerMessageWindow, loadOldestMessageWindow, loadMessageAnchor, sendMessage, forkSession, renameSession, isSessionMessagesLoading, getSessionMessagesLoadError, markSessionIdleSeen, ensureSessionAncestorsExpanded, setActiveSessionFromList, runShellCommand, abortSession, backgroundSession } from "../../stores/sessions"
-import { canMarkSessionIdleSeen } from "./session-idle-attention"
+import { canMarkSessionIdleSeen, createDocumentAttention } from "./session-idle-attention"
 import { clearSessionIdleFade, IDLE_STATUS_VISIBILITY_MS, getSessionStatus, isSessionBusy as getSessionBusyStatus, markSessionIdleFadeStarted } from "../../stores/session-status"
 import { showAlertDialog } from "../../stores/alerts"
 import { getLogger } from "../../lib/logger"
@@ -61,24 +61,7 @@ interface SessionViewProps {
 }
 
 export const SessionView: Component<SessionViewProps> = (props) => {
-  const [documentAttentionActive, setDocumentAttentionActive] = createSignal(false)
-
-  onMount(() => {
-    const updateDocumentAttention = () => setDocumentAttentionActive(canMarkSessionIdleSeen({
-      active: true,
-      visibilityState: document.visibilityState,
-      focused: document.hasFocus(),
-    }))
-    updateDocumentAttention()
-    window.addEventListener("focus", updateDocumentAttention)
-    window.addEventListener("blur", updateDocumentAttention)
-    document.addEventListener("visibilitychange", updateDocumentAttention)
-    onCleanup(() => {
-      window.removeEventListener("focus", updateDocumentAttention)
-      window.removeEventListener("blur", updateDocumentAttention)
-      document.removeEventListener("visibilitychange", updateDocumentAttention)
-    })
-  })
+  const documentAttentionActive = createDocumentAttention()
   const { t } = useI18n()
   const { preferences } = useConfig()
   const session = () => props.activeSessions.get(props.sessionId) ?? sessions().get(props.instanceId)?.get(props.sessionId)
@@ -114,7 +97,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     const target = missionReader()
     if (!target || target.kind === "recurrence" || target.recurrence) return
     const state = missionStore.state(props.instanceId)
-    if ((state.status === "ready" || state.status === "unavailable") && !state.missions.some(mission => mission.id === target.missionId))
+    if ((state.status === "ready" || state.status === "unavailable") && !state.summaries.some(row => row.id === target.missionId))
       updateMissionProjectView(props.instanceFolder, { reader: undefined })
   })
   const filePreview = createMemo(() => {

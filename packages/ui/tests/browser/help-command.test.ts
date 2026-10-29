@@ -4,28 +4,23 @@ import { fileURLToPath } from "node:url"
 import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-let cache: Awaited<ReturnType<typeof createFixtureCache>>, server: ViteDevServer, browser: Browser, url: string
+let cache: Awaited<ReturnType<typeof createFixtureCache>>, browser: Browser, url: string
 before(async () => {
-  cache = await createFixtureCache()
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), cacheDir: cache.cacheDir, logLevel: "error",
-    plugins: [solid(), { name: "help-command-fixture", configureServer(s) {
-      s.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/help-command.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  const fixture = await borrowFixture({
+      name: "help-command",
+      routes: [
+        { path: "/fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/help-command.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { try { await browser?.close() } finally { try { await server?.close() } finally { await cache?.dispose() } } })
+after(async () => { try { await browser?.close() } finally { try { } finally { await cache?.dispose() } } })
 
 for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri", "local"], ["electron", "remote"], ["tauri", "remote"]]) test(`${host}/${context}: native help command and palette open the live UI locale externally`, async () => {
   const page = await browser.newPage()
@@ -49,7 +44,7 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
          transformCallback: fn => { callback = fn; return 1 },
          invoke: async (command, args) => {
            if (command === 'plugin:event|listen') { handler = args.handler; window.deliverMenu = payload => callback({payload}); return handler }
-           if (command === 'plugin:opener|open_url') { if(window.failOpen) throw new Error('opener failure'); window.opened.push([command, args]) }
+           if (command === 'open_external_url') { if(window.failOpen) throw new Error('opener failure'); window.opened.push([command, args]) }
            if (command === 'open_preferences_window') window.preferences.push(args.request.section)
          },
        }
@@ -68,7 +63,7 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
     await page.waitForFunction(() => (window as any).opened.length === 1)
     const readUrl = () => page.evaluate(() => {
       const opened = (window as any).opened.at(-1)
-      return opened[0] === "plugin:opener|open_url" ? opened[1].url : opened[0]
+      return opened[0] === "open_external_url" ? opened[1].url : opened[0]
     })
      assert.equal(await readUrl(), "https://neuralnomadsai.github.io/CodeNomad/fr/")
      if (context === "local") {

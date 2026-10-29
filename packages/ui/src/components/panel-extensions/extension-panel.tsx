@@ -4,6 +4,7 @@ import { panelExtensionsApi } from "../../lib/panel-extensions-api"
 import { useI18n } from "../../lib/i18n"
 import { PANEL_EXTENSION_SANDBOX, panelExtensionDocument } from "./frame-document"
 import { useAssetsChannel } from "./assets-channel"
+import { useWorkItemsChannel } from "./work-items-channel"
 import { resolveCssColor } from "../../lib/css-color"
 
 export function ExtensionPanel(props: {
@@ -21,8 +22,11 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   let authenticated = false
   const handshake = crypto.randomUUID()
   const controller = new AbortController()
-  const receiveAssets = props.entry.manifest.apiVersion === 2 ? useAssetsChannel({ instanceId: props.instanceId, id: props.entry.manifest.id, digest: props.entry.digest,
-    sessionId: () => props.context.sessionId, send: value => { if (!disposed && authenticated) port?.postMessage(value) } }) : () => {}
+  const send = (value: unknown) => { if (!disposed && authenticated) port?.postMessage(value) }
+  const authority = { instanceId: props.instanceId, id: props.entry.manifest.id, digest: props.entry.digest, send }
+  // Each API version carries exactly its own capability.
+  const receive = props.entry.manifest.apiVersion === 2 ? useAssetsChannel({ ...authority, sessionId: () => props.context.sessionId })
+    : props.entry.manifest.apiVersion === 3 ? useWorkItemsChannel(authority) : () => {}
   void panelExtensionsApi.panel(props.instanceId, props.entry.manifest.id, props.entry.digest, controller.signal).then(result => {
     if (!disposed) setDocument(panelExtensionDocument(result.html, handshake, props.entry.manifest.apiVersion))
   }).catch(() => { if (!disposed) setFailed(true) })
@@ -33,7 +37,7 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
     // The canvas role is a color-mix(); frames receive a concrete colour.
     colors.surface = resolveCssColor("--surface-canvas")
     const context = { ...props.context, apiVersion: props.entry.manifest.apiVersion,
-      ...(props.entry.manifest.apiVersion === 2 ? { colors } : {}) }
+      ...(props.entry.manifest.apiVersion >= 2 ? { colors } : {}) }
     if (authenticated) port?.postMessage({ type: "context", context })
   }
   createEffect(publish)
@@ -49,7 +53,7 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
     port = channel.port1
     port.onmessage = event => {
       if (!disposed && !authenticated && event.data?.type === "ready" && event.data.handshake === handshake) { authenticated = true; publish() }
-      else if (!disposed && authenticated && props.entry.manifest.apiVersion === 2) void receiveAssets(event.data)
+      else if (!disposed && authenticated) void receive(event.data)
     }
     frame?.contentWindow?.postMessage({ type: "codenomad:init" }, "*", [channel.port2])
   }

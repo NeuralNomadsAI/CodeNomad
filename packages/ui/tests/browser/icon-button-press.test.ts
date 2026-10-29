@@ -1,29 +1,24 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  cache = await createFixtureCache()
-  server = await createServer({ configFile: false, cacheDir: cache.cacheDir, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    plugins: [solid(), { name: "icon-button-press-fixture", configureServer(s) {
-      s.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/icon-button-press.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  const fixture = await borrowFixture({
+      name: "icon-button-press",
+      routes: [
+        { path: "/fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/icon-button-press.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
+after(async () => { await browser?.close(); await cache?.dispose() })
 
 const waves = (control: Locator) => control.locator(".MuiTouchRipple-ripple, .MuiTouchRipple-child").count()
 

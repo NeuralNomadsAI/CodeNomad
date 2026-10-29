@@ -33,8 +33,10 @@ import { compactMission, compactMissionTask, compactMissionTasks, nativeAssignme
 import { missionBriefingToolSchema, parseMissionBriefingRequest } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
 import { MISSION_TITLE_MAX, parseMissionTitle } from "../missions/mission-title"
+import { MISSION_LIST_MAX_INCLUDE } from "../missions/mission-summary"
 import { createMissionWriterRetirement } from "./missions/writer-retirement"
 import type { NativeHumanAnswerGate } from "../missions/human-answer"
+import type { MissionJournalIndex } from "../missions/journal-index"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
@@ -104,6 +106,8 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         definition: typeof CODENOMAD_MISSIONS_RPC,
       handlers: {
         snapshot(input: unknown): Promise<unknown>
+        list(input: unknown): Promise<unknown>
+        mission(input: unknown): Promise<unknown>
         recurrenceSnapshot(input: unknown): Promise<unknown>
         recurrenceControl(input: unknown): Promise<unknown>
         recurrenceControlStatus(input: unknown): Promise<unknown>
@@ -134,7 +138,8 @@ export interface MissionsPluginPolicy {
 }
 
 export async function setupMissionsPlugin(context: MissionsPluginContext, transport?: MissionInputTransport,
-  policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate, business = true): Promise<() => Promise<void>> {
+  policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate, business = true,
+  journalIndex?: MissionJournalIndex): Promise<() => Promise<void>> {
   let active = true
   let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
@@ -155,6 +160,11 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     })
   }
   let rpcRegistration: Awaited<ReturnType<MissionsPluginContext["rpc"]["register"]>> | undefined
+  // Journal purges need native removal; a context without it keeps every entry.
+  const removal = typeof context.storage.remove === "function" ? { remove: (key: string) => writer.run(async () => {
+    assertActive()
+    await writer.write(() => context.storage.remove(key))
+  }) } : {}
   const control = new MissionControl({
     project: {
       id: context.location.project.id,
@@ -168,18 +178,20 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       publicationFence?.()
       current?.()
       await writer.write(() => context.storage.set(key, value))
-    }) } : { get: key => context.storage.get(key), scan: options => context.storage.scan(options),
+    }), ...removal } : { get: key => context.storage.get(key), scan: options => context.storage.scan(options),
       set: (key, value, current) => writer.run(async () => {
         assertActive()
         current?.()
         await writer.write(() => context.storage.set(key, value))
-      }) },
+      }), ...removal },
     sessions: context.session,
     isActive: () => active,
     transport,
     createManagedRoot,
     authorizeNativeReport: policy?.authorizeNativeReport,
     humanGate,
+    journalIndex,
+    completedFinalOnly: true,
     validateProfiles: async (profiles, directory, taskMode) => {
       if (profiles) validateMissionProfileCatalog(profiles, await readMissionCatalog(context, directory), taskMode)
     },
@@ -194,6 +206,15 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     await policy?.configure(control)
     const handlers: Parameters<MissionsPluginContext["rpc"]["register"]>[1] = {
       snapshot: async () => JSON.parse(JSON.stringify(await control.snapshot())),
+      list: async input => {
+        const value = object(input)
+        if (value.include !== undefined && (!Array.isArray(value.include) || value.include.length > MISSION_LIST_MAX_INCLUDE)) throw new Error("Invalid mission list request")
+        return JSON.parse(JSON.stringify(await control.list({
+          ...(value.include === undefined ? {} : { include: (value.include as unknown[]).map(id => requiredText(id, "missionID", 100)) }),
+          ...(value.summariesVersion === undefined ? {} : { summariesVersion: requiredText(value.summariesVersion, "summariesVersion", 64) }),
+        })))
+      },
+      mission: async input => JSON.parse(JSON.stringify(await control.mission(requiredText(object(input).missionID, "missionID", 100)))),
       // Bundled Effect entry replaces this at registration with the native
       // request-graph handlers. A Promise setup graph never has Job authority.
       recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
@@ -238,7 +259,8 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
-      snapshot: tracked(handlers.snapshot), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
+      snapshot: tracked(handlers.snapshot), list: tracked(handlers.list), mission: tracked(handlers.mission),
+      recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
       recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
       recurrenceRunNow: tracked(handlers.recurrenceRunNow), recurrenceRunNowStatus: tracked(handlers.recurrenceRunNowStatus),
       recurrenceRead: tracked(handlers.recurrenceRead),
@@ -446,24 +468,19 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
             return
           }
           selected.current()
-          const instruction = await selected.control.contextFor(selected.readSessionID)
-          if (!active || !instruction) return
+          // One hinted membership read per turn: the instruction and the coordinator check share it.
+          const mission = await selected.control.contextFor(selected.readSessionID)
+          if (!active || !mission) return
           selected.current()
           if (selected.readSessionID !== event.sessionID) {
             event.system.push({ type: "text", text: `You are a native descendant of coordinator ${selected.readSessionID}. Return normal scoped results to your immediate parent; only the coordinator declares, revises, reports or finalizes the business plan. mission.inspect is read-only.` })
             for (const name of [...COORDINATOR_TOOLS, "report"]) delete event.tools[`mission_${name}`]
             return
           }
-          event.system.push({ type: "text", text: instruction })
+          event.system.push({ type: "text", text: mission.instruction })
           // Scheduled passages have no backend route for these actions: do not offer them.
           if (!selected.control.backendActions) for (const name of ["interrupt", "prepare"]) delete event.tools[`mission_${name}`]
-          const snapshot = await selected.control.snapshot()
-          if (!active) return
-          const mission = snapshot.missions.find((candidate) => candidate.status === "active"
-            && candidate.actors.some((actor) => actor.sessionId === event.sessionID))
-          if (mission && mission.coordinatorSessionId !== event.sessionID) {
-            for (const name of COORDINATOR_TOOLS) delete event.tools[`mission_${name}`]
-          }
+          if (!mission.coordinator) for (const name of COORDINATOR_TOOLS) delete event.tools[`mission_${name}`]
         } catch {
           // Mission context is additive. A damaged optional map must not block an otherwise valid model request.
         }
@@ -577,7 +594,7 @@ const reportSchema = {
     evidence: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
     next: { type: "array", maxItems: 12, items: { type: "string", maxLength: 2_000 } },
     artifact: { description: "Optional structured playbook evidence. Required for completed Debugging tasks and Compare comparator reports. Compare uses a version 1 comparison with completed model-a/model-b runRefs, criterion scores for both, evidence and verdict a, b, equivalent or inconclusive; run roles return ordinary output without artifacts." },
-    final: { type: "boolean", description: "Coordinator-only terminal mission report." },
+    final: { type: "boolean", description: "Coordinator-only terminal mission report. A one-time mission finishes only as completed; when it cannot continue on its own, ask the human with the native question tool instead of finishing." },
   },
   required: ["outcome", "summary"],
   additionalProperties: false,

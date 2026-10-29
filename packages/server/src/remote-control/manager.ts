@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http"
+import type { Socket } from "node:net"
 import type { OpenRemoteTunnelOptions, RemoteTunnel } from "@codenomad/remote-tunnel"
 import type {
   RemoteControlDevice,
@@ -8,7 +9,7 @@ import type {
 } from "../api-types"
 import type { Logger } from "../logger"
 import { deviceNameFromUserAgent, pairingFromCode, type RemoteDeviceRegistry } from "./devices"
-import type { RemoteGateDeps } from "./gate"
+import { admitRemoteUpgrade, type RemoteGateDeps } from "./gate"
 import { RemoteIngress } from "./ingress"
 import type { RemoteControlOwnerLease } from "./owner-lease"
 
@@ -18,6 +19,10 @@ interface ManagerOptions {
   registry: RemoteDeviceRegistry
   /** Routes a decrypted request into the CodeNomad HTTP application. */
   router: () => ((request: IncomingMessage, response: ServerResponse) => void) | null
+  /** Proxies an admitted web preview WebSocket upgrade; false when no preview path matched. */
+  previewUpgrade?: () => ((request: IncomingMessage, socket: Socket, head: Buffer) => boolean) | null
+  /** Whether a web preview capability token is live. */
+  hasPreview?: (token: string) => boolean
   logger: Logger
   /** Self-hosted OpenTunnel API; the hosted relay when omitted. */
   tunnelApi?: string
@@ -42,6 +47,9 @@ export class RemoteControlManager {
       const route = options.router()
       if (route) route(request, response)
       else response.writeHead(503).end()
+    }, (request, socket, head) => {
+      const upgrade = admitRemoteUpgrade(request, this.gate()) ? options.previewUpgrade?.() : null
+      return upgrade ? upgrade(request, socket, head) : false
     })
   }
 
@@ -57,6 +65,7 @@ export class RemoteControlManager {
       manageable: true,
       enabled: this.enabled,
       startsOnLaunch: this.options.registry.startsOnLaunch(),
+      previews: this.options.registry.previewsAllowed(),
       state,
       ...(tunnel ? { remoteUrl: tunnel.url } : {}),
       pairedDevices: this.options.registry.list().length,
@@ -127,11 +136,23 @@ export class RemoteControlManager {
     return revoked
   }
 
+  previewsAllowed(): boolean {
+    return this.options.registry.previewsAllowed()
+  }
+
+  /** The host's choice; turning previews off also closes their live WebSockets. */
+  setPreviewsAllowed(allowed: boolean): RemoteControlStatus {
+    this.options.registry.setPreviewsAllowed(allowed)
+    if (!allowed) this.ingress.disconnectUpgrades()
+    return this.status()
+  }
+
   gate(): RemoteGateDeps {
     return {
       publicHost: () => (this.enabled ? this.tunnel?.hostname ?? null : null),
       authenticate: (token) => this.options.registry.authenticate(token),
       assignDevice: (socket, deviceId) => this.ingress.assignDevice(socket, deviceId),
+      servesPreview: (token) => this.options.registry.previewsAllowed() && this.options.hasPreview?.(token) === true,
     }
   }
 

@@ -1,13 +1,11 @@
 import { Component, createSignal, Show, For, createEffect } from "solid-js"
 import { Dialog } from "@kobalte/core/dialog"
 import { isSelectablePrimaryAgent, type Session, type Agent } from "../types/session"
-import { getParentSessions, createSession, setActiveParentSession } from "../stores/sessions"
+import { getParentSessions, setActiveParentSession, startNewSession } from "../stores/sessions"
 import { instances } from "../stores/instances"
 import { closeInstanceTab } from "../stores/app-tabs"
 import { agents } from "../stores/sessions"
-import { getLogger } from "../lib/logger"
 import { useI18n } from "../lib/i18n"
-const log = getLogger("session")
 
 
 interface SessionPickerProps {
@@ -57,11 +55,8 @@ const SessionPicker: Component<SessionPickerProps> = (props) => {
   async function handleNewSession() {
     setIsCreating(true)
     try {
-      const session = await createSession(props.instanceId, selectedAgent())
-      setActiveParentSession(props.instanceId, session.id)
-      props.onClose()
-    } catch (error) {
-      log.error("Failed to create session:", error)
+      const session = await startNewSession(props.instanceId, selectedAgent())
+      if (session) props.onClose()
     } finally {
       setIsCreating(false)
     }

@@ -1,34 +1,27 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import { REASONING_RENDER_CHARACTER_LIMIT } from "../../src/lib/message-render-cache"
 import { TEXT_REVEAL_CHARACTER_STEP } from "../../src/lib/render-text-window"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  try {
-    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-      plugins: [shutdown.plugin, solid(), { name: "reasoning-stream", configureServer(s) {
-        s.middlewares.use("/reasoning-fixture", async (_req, res) => {
-          res.setHeader("Content-Type", "text/html")
-          res.end(await s.transformIndexHtml("/reasoning-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/session.tsx"></script></body></html>'))
-        })
-      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-      server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
+  const fixture = await borrowFixture({
+      name: "reasoning-stream",
+      routes: [
+        { path: "/reasoning-fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/session.tsx\"></script></body></html>" },
+      ],
     })
-    shutdown.own(server)
-    await server.listen()
-    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/reasoning-fixture`
+  try {
+    url = fixture.url
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
-  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
+    armFixtureNavigationBudget(browser)
+  } catch (error) { throw error }
 })
-after(async () => { try { await browser?.close() } finally { await server?.close() } })
+after(async () => { try { await browser?.close() } finally { } })
 
 const line = "Live reasoning keeps arriving while the model thinks past the display bound.\n"
 const cardSelector = '.message-reasoning-card[data-part-id="msg_assistant-reasoning-0"]'

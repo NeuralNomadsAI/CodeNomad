@@ -3,6 +3,7 @@ export { stableToken } from "./receipt-identity"
 
 import {
   MISSION_MAX_EVENTS,
+  MISSION_MAX_STORED_EVENTS,
   MISSION_MAX_ACTORS,
   MISSION_MAX_TASKS,
   MISSION_SCHEMA_VERSION,
@@ -11,6 +12,7 @@ import {
   type MissionEvent,
   type MissionJsonValue,
   type MissionLocation,
+  type MissionMap,
   type MissionReport,
   type MissionRevisedEvent,
   type MissionSnapshot,
@@ -27,60 +29,237 @@ import { parseMissionTitle } from "./mission-title"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
-import { cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
+import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
+import { parseDeletionRecord, planDeletionPurge, type MissionDeletionRecord } from "./journal-purge"
+import { MissionJournalIndex, noteMissionJournalWrite, type MissionIndexHints, type MissionIndexRange, type SynchronousHint } from "./journal-index"
 
 // Storage generation, independent of the event wire/schema version. No legacy reads.
 export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
 const PAGE_SIZE = 100
 const MAX_TEXT = 20_000
 const MAX_SHORT_TEXT = 240
+// A key's mission range, relative to the project prefix; anything else lies outside every range.
+const RANGE = /^\/([A-Za-z0-9_-]{3,100})\//
+const MISSION_FULL = `Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit of this mission`
+const RANGE_OVER_BOUND = `Mission journal exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit of one mission`
 type CapacityIntent = Extract<MissionEvent, { type: "mission.deleted" | "mission.control-requested" }>
 interface CapacitySlot { intent: CapacityIntent; sessionID: string }
+/** `unreadable`: missions whose deletion record could not be read, kept as damage. */
+interface Observation { events: MissionEvent[]; discardedEvents: number; purged: MissionEvent[]; unreadable: string[] }
+
+/** One mission's range reduced like a snapshot: `mission` is absent when the
+ * range holds no live map (deleted, purged, damaged or unknown). */
+export interface MissionView extends Omit<MissionSnapshot, "missions"> {
+  missionID: string
+  mission?: MissionMap
+  events: MissionEvent[]
+}
 
 export interface MissionStorage {
   get(key: string): Promise<MissionJsonValue | undefined>
   /** Async adapters repeat current after preparation; not a native commit proof. */
   set(key: string, value: MissionJsonValue, current?: () => void): Promise<void>
+  /** Purge-capable storage only; without it settled deletions stay in the journal. */
+  remove?(key: string): Promise<void>
   scan(options: { prefix: string; after?: string; limit?: number }): Promise<{
     entries: readonly { key: string; value: MissionJsonValue }[]
     next?: string
   }>
+  /** Set by adapters that map the journal's keys onto another physical namespace
+   * (recurrence passages): their writes never reach the ordinary journal. */
+  readonly isolated?: true
 }
 
 export class MissionJournal {
   readonly projectToken: string
 
+  /** `index`: the plugin activation's shared index; without one, `readHints` builds its own. */
   constructor(
     private readonly storage: MissionStorage,
     private readonly projectID: string,
     projectCanonical: string,
     private readonly now: () => number = Date.now,
+    private index?: MissionJournalIndex,
   ) {
     this.projectToken = stableToken(`${projectID}\0${projectCanonical}`, 24)
+    if (index && storage.isolated) throw new Error("Isolated mission journals are not indexed")
+    index?.attach(this.projectToken)
   }
 
+  /** Reads the cross-mission index hints under the append exclusion. They may miss
+   * writes outside this process's write generation until the next rebuild, so they
+   * never authorize a write or native effect (`MissionJournalIndex`). `read` only
+   * extracts values synchronously and must not keep the hints: range reads
+   * (`missionView`) happen after `readHints` resolves. A thenable result rejects. */
+  readHints<T>(read: (hints: MissionIndexHints) => SynchronousHint<T>): Promise<T> {
+    if (this.storage.isolated) return Promise.reject(new Error("Isolated mission journals are not indexed"))
+    if (!this.index) { this.index = new MissionJournalIndex(); this.index.attach(this.projectToken) }
+    const index = this.index
+    return runMissionExclusive(`append:${this.projectToken}`, () => index.read({
+      scan: visit => this.scanRanges(visit),
+      range: async missionID => this.range(missionID, await this.observeMission(missionID)),
+    }, read))
+  }
+
+  /** Every ordinary write attempt, before it starts: the index re-reads that mission. */
+  private written(missionID: string): void {
+    if (this.storage.isolated) return
+    // Counted with or without an index: other journals' indexes see it as foreign.
+    const generation = noteMissionJournalWrite(this.projectToken)
+    this.index?.written(missionID, generation)
+  }
+
+  /** A paginated scan must not straddle a purge's removals, so observations take
+   * the append exclusion (FIFO, shared by bundle incarnations). Holders of that
+   * exclusion use `observe`; storage adapters must never read the journal. */
   async events(): Promise<{ events: MissionEvent[]; discardedEvents: number }> {
+    const { events, discardedEvents } = await runMissionExclusive(`append:${this.projectToken}`, () => this.observe())
+    return { events, discardedEvents }
+  }
+
+  /** One mission's share of `events()`: its key range `<prefix>/<missionID>/`,
+   * read under the same exclusion, parsing, bound and purge resolution. Entries
+   * outside every mission range count only in the project observation. */
+  async missionEvents(missionID: string): Promise<{ events: MissionEvent[]; discardedEvents: number }> {
+    const { events, discardedEvents } = await runMissionExclusive(`append:${this.projectToken}`, () => this.observeMission(missionID))
+    return { events, discardedEvents }
+  }
+
+  /** One mission's share of `snapshot()`, reduced from its range alone. Its
+   * damage flags and discarded count are this range's own; the project values are
+   * their aggregate plus damage outside every mission range. */
+  async missionView(missionID: string): Promise<MissionView> {
+    return this.range(missionID, await runMissionExclusive(`append:${this.projectToken}`, () => this.observeMission(missionID))).view
+  }
+
+  private range(missionID: string, { events, discardedEvents, unreadable }: Observation): MissionIndexRange {
+    const { missions: [mission], ...view } = this.reduce(events, discardedEvents)
+    return { view: { ...view, missionID, ...(mission ? { mission } : {}), events }, uncertain: unreadable.length > 0 }
+  }
+
+  private async observeMission(missionID: string): Promise<Observation> {
+    // No unsafe ID owns a range: entries there never parse as events.
+    return isSafeKey(missionID) ? this.observe(`${this.prefix()}/${missionID}/`) : { events: [], discardedEvents: 0, purged: [], unreadable: [] }
+  }
+
+  /** A group without its creation event whose mission left a deletion record is
+   * a purge in progress (or a late write after it): it leaves the observation.
+   * Every other incomplete group remains damage evidence. */
+  private async observe(prefix = this.prefix()): Promise<Observation> {
     const events: MissionEvent[] = []
     let discardedEvents = 0
+    const bound = this.rangeBound()
     let after: string | undefined
     do {
-      const page = await this.storage.scan({ prefix: this.prefix(), after, limit: PAGE_SIZE })
+      const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
       for (const entry of page.entries) {
-        if (events.length + discardedEvents >= MISSION_MAX_EVENTS) {
-          throw new Error(`Mission journal exceeds the ${MISSION_MAX_EVENTS}-event safety limit`)
-        }
+        bound(entry.key)
         const event = this.parseEntry(entry.key, entry.value)
         if (!event) discardedEvents += 1
         else events.push(event)
       }
       after = page.next
     } while (after)
+    return this.resolve(events, discardedEvents)
+  }
 
-    return { events, discardedEvents }
+  /** No mission range, nor the entries outside every range together, is read
+   * past `MISSION_MAX_STORED_EVENTS`; a whole project has no bound of its own.
+   * Returns the counted key's mission. */
+  private rangeBound(): (key: string) => string | undefined {
+    const prefix = this.prefix(), counts = new Map<string, number>()
+    return key => {
+      const missionID = key.startsWith(prefix) ? RANGE.exec(key.slice(prefix.length))?.[1] : undefined
+      const count = (counts.get(missionID ?? "") ?? 0) + 1
+      if (count > MISSION_MAX_STORED_EVENTS) throw new Error(RANGE_OVER_BOUND)
+      counts.set(missionID ?? "", count)
+      return missionID
+    }
+  }
+
+  /** The index build: one key-ordered scan of the project, resolved and reduced
+   * one mission range at a time like `observeMission`, under the same read bound.
+   * Returns the entries outside every range. */
+  private async scanRanges(visit: (range: MissionIndexRange) => void): Promise<number> {
+    const prefix = this.prefix(), bound = this.rangeBound()
+    let stray = 0, group: { missionID: string; events: MissionEvent[]; discardedEvents: number } | undefined
+    const flush = async () => { if (group) visit(this.range(group.missionID, await this.resolve(group.events, group.discardedEvents))) }
+    let after: string | undefined
+    do {
+      const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
+      for (const entry of page.entries) {
+        const missionID = bound(entry.key)
+        if (!missionID) { stray++; continue }
+        if (group?.missionID !== missionID) { await flush(); group = { missionID, events: [], discardedEvents: 0 } }
+        const event = this.parseEntry(entry.key, entry.value)
+        if (event) group.events.push(event)
+        else group.discardedEvents++
+      }
+      after = page.next
+    } while (after)
+    await flush()
+    return stray
+  }
+
+  private async resolve(events: MissionEvent[], discardedEvents: number): Promise<Observation> {
+    const created = new Set(events.flatMap(event => event.type === "mission.created" ? [event.missionID] : []))
+    const purged = new Set<string>(), unreadable: string[] = []
+    for (const missionID of new Set(events.map(event => event.missionID))) {
+      if (created.has(missionID)) continue
+      // Unreadable records keep the group as damage, never as proof of a purge.
+      if (await this.readRecord(missionID).catch(() => { unreadable.push(missionID); return undefined })) purged.add(missionID)
+    }
+    return { events: events.filter(event => !purged.has(event.missionID)), discardedEvents,
+      purged: events.filter(event => purged.has(event.missionID)), unreadable }
+  }
+
+  /** The record a purged deleted mission leaves. Read on every storage: only
+   * purging and the deletion reserve need removal support. */
+  async deletionRecord(missionID: string): Promise<MissionDeletionRecord | undefined> {
+    return isSafeKey(missionID) ? this.readRecord(missionID) : undefined
+  }
+
+  /** Removes settled deleted missions beyond the recent cleanup history (all of
+   * them when `all`), plus leftovers of interrupted purges. Returns removed entries. */
+  purgeDeleted(options: { all?: boolean } = {}): Promise<number> {
+    return runMissionExclusive(`append:${this.projectToken}`, () => this.purgeUnlocked(options.all ?? false))
+  }
+
+  private async purgeUnlocked(all: boolean): Promise<number> {
+    const storage = this.storage
+    if (!storage.remove) return 0
+    const { events, discardedEvents, purged } = await this.observe()
+    let removed = 0
+    for (const event of purged) { this.written(event.missionID); await storage.remove(this.eventKey(event.missionID, event.id)); removed++ }
+    // Damaged storage cannot establish settled cleanup, receipts or membership.
+    if (discardedEvents || hasInvalidCleanupHistory(events) || hasInvalidControlHistory(events)
+      || hasInvalidReportNotificationHistory(events)) return removed
+    for (const purge of planDeletionPurge(events, all ? 0 : SETTLED_CLEANUP_HISTORY)) {
+      // The record is durable before the first removal and never removed.
+      const key = this.recordKey(purge.missionID)
+      const existing = await storage.get(key)
+      if (existing === undefined) { this.written(purge.missionID); await storage.set(key, purge.record as unknown as MissionJsonValue) }
+      else if (parseDeletionRecord(existing, this.projectID, purge.missionID)?.deletionID !== purge.record.deletionID) continue
+      this.written(purge.missionID)
+      for (const event of purge.events) { await storage.remove(this.eventKey(event.missionID, event.id)); removed++ }
+    }
+    return removed
+  }
+
+  private async readRecord(missionID: string): Promise<MissionDeletionRecord | undefined> {
+    const value = await this.storage.get(this.recordKey(missionID))
+    if (value === undefined) return undefined
+    const record = parseDeletionRecord(value, this.projectID, missionID)
+    if (!record) throw new Error("Mission deletion record is damaged")
+    return record
   }
 
   async snapshot(): Promise<MissionSnapshot> {
     const { events, discardedEvents } = await this.events()
+    return this.reduce(events, discardedEvents)
+  }
+
+  private reduce(events: readonly MissionEvent[], discardedEvents: number): MissionSnapshot {
     const snapshot = reduceMissionEvents(events, this.now())
     snapshot.projectID = this.projectID
     snapshot.discardedEvents += discardedEvents
@@ -111,15 +290,24 @@ export class MissionJournal {
     return parsed
   }
 
-  async assertCanAppend(count: number | MissionEvent = 1): Promise<void> {
-    const event = typeof count === "number" ? undefined
-      : this.parseEntry(this.eventKey(count.missionID, count.id), JSON.parse(JSON.stringify(count)))
-    if (typeof count !== "number" && !event) throw new Error("Mission event is not durable owned JSON")
-    const capacity = await this.storedCapacity()
-    const required = event ? this.requiredCapacity(event, capacity.cleanupSlots) : count as number
-    if (capacity.count + capacity.cleanupSlots.size + required > MISSION_MAX_EVENTS) {
-      throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
-    }
+  /** Refuses, before any side effect, an `event` (or `count` more ordinary entries
+   * of mission `request`) that its mission's range cannot hold. */
+  async assertCanAppend(request: MissionEvent | string, count = 1): Promise<void> {
+    const event = typeof request === "string" ? undefined
+      : this.parseEntry(this.eventKey(request.missionID, request.id), JSON.parse(JSON.stringify(request)))
+    if (typeof request !== "string" && !event) throw new Error("Mission event is not durable owned JSON")
+    if (!await this.fits(event?.missionID ?? request as string, event ?? count)) throw new Error(MISSION_FULL)
+  }
+
+  /** Capacity is one mission's own: only its range is read, whatever the project holds. */
+  private async fits(missionID: string, request: MissionEvent | number): Promise<boolean> {
+    const capacity = await this.storedCapacity(missionID)
+    const slots = capacity.cleanupSlots
+    const required = typeof request === "number" ? request : this.requiredCapacity(request, slots)
+    // Deletion intents and already reserved receipts may spend the mission's deletion reserve.
+    const limit = typeof request !== "number" && (request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots))
+      ? MISSION_MAX_STORED_EVENTS : MISSION_MAX_EVENTS
+    return capacity.count + slots.size + required <= limit
   }
 
   private async appendUnlocked(event: MissionEvent, current?: () => void): Promise<void> {
@@ -134,19 +322,16 @@ export class MissionJournal {
       if (JSON.stringify(existing) !== JSON.stringify(stored)) throw new Error("Mission event identity collision")
       return
     }
-    const capacity = await this.storedCapacity()
-    const required = this.requiredCapacity(parsed, capacity.cleanupSlots)
-    if (capacity.count + capacity.cleanupSlots.size + required > MISSION_MAX_EVENTS) {
-      throw new Error(`Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit`)
-    }
+    if (!await this.fits(parsed.missionID, parsed)) throw new Error(MISSION_FULL)
+    this.written(parsed.missionID)
     current?.()
     await this.storage.set(key, stored, current)
   }
 
   private requiredCapacity(event: MissionEvent, slots: Map<string, CapacitySlot>): number {
     if (this.matchesCapacityReceipt(event, slots)) return 0
-    // A newer Stop replaces only this mission's pending start/pause slots.
-    // Physical events, cleanup reservations and other missions remain counted.
+    // A newer Stop replaces only its pending start/pause slots; physical events
+    // and cleanup reservations remain counted.
     const superseded = event.type === "mission.control-requested" && event.action === "stop"
       ? [...slots.values()].filter(({ intent }) => intent.type === "mission.control-requested" && intent.action !== "stop"
         && intent.projectID === event.projectID && intent.missionID === event.missionID
@@ -156,7 +341,8 @@ export class MissionJournal {
       + (event.type === "mission.control-requested" ? event.targets.length : 0) - superseded
   }
 
-  private async storedCapacity(): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot> }> {
+  private async storedCapacity(missionID: string): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot> }> {
+    const prefix = `${this.prefix()}/${safeKey(missionID)}/`
     let count = 0
     // Physical deterministic receipt keys include mission scope. Retain the
     // original intent/target as well: a different event kind cannot spend them.
@@ -170,9 +356,9 @@ export class MissionJournal {
     }
     let after: string | undefined
     do {
-      const page = await this.storage.scan({ prefix: this.prefix(), after, limit: PAGE_SIZE })
+      const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
       count += page.entries.length
-      if (count > MISSION_MAX_EVENTS) throw new Error(`Mission journal exceeds the ${MISSION_MAX_EVENTS}-event safety limit`)
+      if (count > MISSION_MAX_STORED_EVENTS) throw new Error(RANGE_OVER_BOUND)
       for (const entry of page.entries) {
         // Invalid entries still consume physical space, but supply no authority
         // to establish, supersede or discharge a reservation.
@@ -215,6 +401,15 @@ export class MissionJournal {
   private prefix(): string {
     return `${MISSION_JOURNAL_STORAGE_PREFIX}/${this.projectToken}`
   }
+
+  private recordKey(missionID: string): string {
+    return missionDeletionRecordKey(this.projectToken, missionID)
+  }
+}
+
+// Beside, never under, the scanned journal prefix: records cost no journal capacity.
+export function missionDeletionRecordKey(projectToken: string, missionID: string): string {
+  return `${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${projectToken}/${safeKey(missionID)}`
 }
 
 function safeKey(value: string): string {
@@ -467,6 +662,11 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         .some(field => Object.prototype.hasOwnProperty.call(input, field))
         && text(input.reportID, MAX_SHORT_TEXT) && text(input.admissionID, MAX_SHORT_TEXT)
         ? { ...eventBase(input), type: "report.notified", reportID: input.reportID, admissionID: input.admissionID }
+        : undefined
+    case "mission.reopened":
+      return onlyFields(input, ["version", "id", "type", "missionID", "projectID", "createdAt", "expectedRevision"])
+        && Number.isSafeInteger(input.expectedRevision) && Number(input.expectedRevision) >= 1
+        ? { ...eventBase(input), type: "mission.reopened", expectedRevision: Number(input.expectedRevision) }
         : undefined
     case "mission.finished": {
       const failure = input.nativeFailure

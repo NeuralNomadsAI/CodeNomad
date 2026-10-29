@@ -47,7 +47,6 @@ import {
   loading,
   setLoading,
   cleanupBlankSessions,
-  syncInstanceSessionIndicator,
   updateThreadTotalsForParent,
   setSessionPage,
   prependSessionListId,
@@ -97,7 +96,10 @@ import {
 } from "./message-v2/message-window"
 import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
-import { getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision } from "./opencode-data"
+import {
+  captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision,
+  mergeOpenCodeLoadedPage, observeNonEventSettlement, seedOpenCodeSessionMessages,
+} from "./opencode-data"
 
 const log = getLogger("api")
 const sessionLog = getLogger("session")
@@ -119,7 +121,6 @@ interface MessagePageRequest {
 
 const messagePageRequests = new Map<string, MessagePageRequest>()
 const messageHistoryAuthorities = new Map<string, object>()
-const createSessionAuthorities = new Map<string, object>()
 const deleteSessionAuthorities = new Map<string, object>()
 const MAX_LATEST_WINDOW_REVISION_RETRIES = 3
 const LATEST_WINDOW_RETRY_DELAY_MS = 50
@@ -462,6 +463,13 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   // including without a delivered SSE event; the later activity read wins.
   if (outcomes.size) active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
+  // A run the UI still believed working that the final activity read does not
+  // list settled during an SSE gap; its terminal event may never be delivered.
+  // The observation owes the transcript's settlement read.
+  const settledWithoutEvent: string[] = []
+  for (const [id, baseline] of captured) {
+    if (baseline.status === "working" && !Object.prototype.hasOwnProperty.call(active, id)) settledWithoutEvent.push(id)
+  }
   setSessions(previous => {
     const next = new Map(previous)
     const current = new Map(next.get(instanceId) ?? [])
@@ -480,6 +488,7 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
     return next
   })
   reconcilePendingSessionIndicators(instanceId)
+  for (const sessionId of settledWithoutEvent) observeNonEventSettlement(instanceId, sessionId)
   return active
 }
 
@@ -1037,7 +1046,6 @@ async function searchSessions(instanceId: string, query: string): Promise<void> 
     const deletedSessionIds = getAuthoritativelyDeletedSessionIdsForInstance(instanceId)
     const currentSearchResults = searchResults.filter((session) => !deletedSessionIds.has(session.id))
 
-    syncInstanceSessionIndicator(instanceId)
     setSessionSearchResults(instanceId, trimmedQuery, currentSearchResults.map((session) => session.id), requestId)
   } catch (error) {
     log.error("Failed to search sessions:", error)
@@ -1084,6 +1092,25 @@ function toClientSessionV2(instanceId: string, apiSession: SDKSession, existingS
   }
 }
 
+function isCreatingSession(instanceId: string): boolean {
+  return loading().creatingSession.get(instanceId) === true
+}
+
+// Creations can overlap (the sidebar's and the draft composer's first send):
+// the instance stays busy until the last one settles.
+const creationsInFlight = new Map<string, number>()
+
+function trackCreation(instanceId: string, delta: 1 | -1): void {
+  const count = (creationsInFlight.get(instanceId) ?? 0) + delta
+  if (count > 0) creationsInFlight.set(instanceId, count)
+  else creationsInFlight.delete(instanceId)
+  setLoading((prev) => {
+    const next = { ...prev }
+    next.creatingSession.set(instanceId, count > 0)
+    return next
+  })
+}
+
 async function createSession(instanceId: string, agent?: string): Promise<Session> {
   const instance = instances().get(instanceId)
   if (!instance || !instance.client) {
@@ -1100,23 +1127,25 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
   const primaryAgents = instanceAgents.filter(isSelectablePrimaryAgent)
   const selectedAgent = agent || primaryAgents[0]?.id || ""
 
-  const defaultModel = await getDefaultModel(instanceId, selectedAgent)
-  if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
-
-  if (selectedAgent && isModelValid(instanceId, defaultModel)) {
-    await setAgentModelPreference(instanceId, selectedAgent, defaultModel)
-    if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
-  }
-
-  setLoading((prev) => {
-    const next = { ...prev }
-    next.creatingSession.set(instanceId, true)
-    return next
-  })
-  const loadingAuthority = {}
-  createSessionAuthorities.set(instanceId, loadingAuthority)
+  // Pending spans the whole flow — catalog/config reads included — so a slow
+  // network shows feedback from the first click instead of silence. There is
+  // deliberately no client-side timeout and no coalescing here: session.create
+  // is not idempotent, an aborted request may still commit server-side and
+  // arrive later through the session.created event, so a slow creation stays
+  // visibly in progress until the request settles one way or the other, each
+  // call sends its own request, and repeated UI triggers are deduplicated by
+  // the startNewSession action instead.
+  trackCreation(instanceId, 1)
 
   try {
+    const defaultModel = await getDefaultModel(instanceId, selectedAgent)
+    if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
+
+    if (selectedAgent && isModelValid(instanceId, defaultModel)) {
+      await setAgentModelPreference(instanceId, selectedAgent, defaultModel)
+      if (!generationCurrent()) throw new Error("Session creation was superseded by reconnect")
+    }
+
     log.info(`[HTTP] POST /session.create for instance ${instanceId}`)
     const info = await client.session.create({
       agent: selectedAgent || null,
@@ -1138,7 +1167,6 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId)
     prependSessionListId(instanceId, session.id)
 
     const instanceProviders = providers().get(instanceId) || []
@@ -1184,14 +1212,7 @@ async function createSession(instanceId: string, agent?: string): Promise<Sessio
     log.error("Failed to create session:", error)
     throw error
   } finally {
-    if (createSessionAuthorities.get(instanceId) === loadingAuthority) {
-      createSessionAuthorities.delete(instanceId)
-      setLoading((prev) => {
-        const next = { ...prev }
-        next.creatingSession.set(instanceId, false)
-        return next
-      })
-    }
+    trackCreation(instanceId, -1)
   }
 }
 
@@ -1226,7 +1247,6 @@ async function forkSession(
     return next
   })
 
-  syncInstanceSessionIndicator(instanceId)
 
   if (!forkedSession.parentId) prependSessionListId(instanceId, forkedSession.id)
 
@@ -1324,7 +1344,6 @@ function removeSessionRuntimeState(instanceId: string, sessionId: string, author
     return next
   })
 
-  syncInstanceSessionIndicator(instanceId)
   removeSessionListId(instanceId, sessionId)
 
   // Drop normalized message state and caches for this session.
@@ -1635,6 +1654,12 @@ async function loadMessages(
   })
   const messageRevision = store.getSessionRevision(sessionId)
   const liveMessageRevision = getOpenCodeMessageRevision(instanceId, sessionId)
+  // A first latest-window load has no resident rows a mid-stream page could
+  // rewind: it merges its page with the rows streamed during the fetch instead
+  // of retrying on revision conflicts. Reloads and history windows keep them.
+  const initialSeed = !storedWindow && currentWindow.kind === "latest" && planned.next.kind === "latest"
+    && !planned.cursor && store.getSessionMessageIds(sessionId).length === 0
+  const rowSnapshot = initialSeed ? captureOpenCodeRowSnapshot(instanceId, sessionId) : undefined
   let retryAfterRevisionConflict = false
   let committed = false
   let deferRelease = false
@@ -1764,7 +1789,10 @@ async function loadMessages(
       : withOlderCursor(resolvedNext, olderCursor))
     const hasLatestRevisionConflict = () => nextWindow.kind === "latest"
       && getOpenCodeMessageRevision(instanceId, sessionId) !== liveMessageRevision
-    const apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
+    let apiMessages = responseAscending ? [...response.data] : [...response.data].reverse()
+    if (rowSnapshot) {
+      apiMessages = mergeOpenCodeLoadedPage(instanceId, sessionId, apiMessages.reverse(), rowSnapshot).reverse()
+    }
     if (apiMessages.length === 0) {
       if (intent === "older") {
         // V2 boundary cursors do not guarantee another page. An exhausted
@@ -1772,9 +1800,9 @@ async function loadMessages(
         // Keep their window identity (including live/latest authority) and
         // scroll anchor; only retire the cursor that reached the boundary.
         commitCurrentWindow(withOlderCursor(currentWindow, undefined), "open")
-      } else if (hasLatestRevisionConflict() || (intent === "open" && planned.cursor)) {
+      } else if (!initialSeed && (hasLatestRevisionConflict() || (intent === "open" && planned.cursor))) {
         retryAfterRevisionConflict = true
-      } else if (store.getSessionRevision(sessionId) !== messageRevision) {
+      } else if (!initialSeed && store.getSessionRevision(sessionId) !== messageRevision) {
         retryAfterRevisionConflict = true
       } else {
         store.reconcileEmptyAuthoritativeSnapshot(sessionId)
@@ -1847,8 +1875,9 @@ async function loadMessages(
         id: sessionId, title: session?.title, parentId: session?.parentId ?? null, revert: session?.revert,
       }
       if (!isCurrent()) return false
-      const expectedRevision = nextWindow.kind === "latest" ? messageRevision : undefined
-      if (hasLatestRevisionConflict() || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
+      const expectedRevision = nextWindow.kind === "latest" && !initialSeed ? messageRevision : undefined
+      if ((!initialSeed && hasLatestRevisionConflict())
+        || !seedSessionMessagesV2(instanceId, sessionForV2, messages, messagesInfo, expectedRevision, false)) {
         retryAfterRevisionConflict = true
       } else {
         store.trimSessionMessages(sessionId, MESSAGE_WINDOW_PAGE_SIZE)
@@ -1856,6 +1885,13 @@ async function loadMessages(
         markSessionMessagesLoaded(instanceId, sessionId)
         reconcilePendingPermissionsV2(instanceId, sessionId)
         committed = true
+        // Streamed events reach the display only through the session reducer,
+        // which ignores them for messages it does not hold. A session known
+        // to be idle has no such message.
+        const current = sessions().get(instanceId)?.get(sessionId)
+        if (initialSeed && (current?.status !== "idle" || current.runtimeStatusKnown !== true)) {
+          void seedOpenCodeSessionMessages(instanceId, sessionId, current?.location.directory ?? instance.folder, authoritativeApiMessages)
+        }
       }
     }
     // A revision conflict keeps the flag through its bounded, backed-off retry.
@@ -2019,6 +2055,7 @@ function isLatestMessageWindow(instanceId: string, sessionId: string): boolean {
 
 export {
   createSession,
+  isCreatingSession,
   deleteSession,
   removeSessionRuntimeState,
   fetchAgents,

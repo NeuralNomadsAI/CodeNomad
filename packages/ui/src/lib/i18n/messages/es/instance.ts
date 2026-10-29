@@ -1,6 +1,7 @@
 export const instanceMessages = {
   "panelExtensions.section": "Extensiones",
   "panelExtensions.assetsConsent": "Permiso: leer imágenes y adjuntos de resultados de herramientas de la sesión actual, su identificador, idioma y apariencia. Sin acceso al sistema de archivos ni a la red.",
+  "panelExtensions.workItemsConsent": "Permiso: leer el nombre del repositorio de este proyecto y sus issues y pull requests en GitHub, GitLab o Gitea/Forgejo (mediante tu gh, glab o tea con sesión iniciada, o de forma anónima en repositorios públicos) y abrirlos en tu navegador, además del identificador de la sesión actual, el idioma y la apariencia. Sin acceso al sistema de archivos ni otro acceso a la red.",
   "panelExtensions.empty": "No hay extensiones instaladas.",
   "panelExtensions.catalog.title": "Disponibles en línea",
   "panelExtensions.catalog.search": "Buscar extensiones",

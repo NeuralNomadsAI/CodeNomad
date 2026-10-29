@@ -26,7 +26,7 @@ Si l’installation manque, confirmez d’abord la confiance HTTPS et la prise e
 
 ## Travailler avec les dispositions tactiles {#touch-layout}
 
-Utilisez les commandes **Volet gauche** et **Volet droit** pour ouvrir navigation et outils. Sur les dispositions étroites, les panneaux recouvrent la conversation au lieu d’imposer une largeur de bureau ; ouvrir un panneau flottant ferme l’autre. Les actions d’en-tête passent dans leur menu de débordement si l’espace manque.
+Utilisez les commandes **Volet gauche** et **Volet droit** pour ouvrir navigation et outils. Sur les dispositions étroites, les panneaux recouvrent la conversation au lieu d’imposer une largeur de bureau ; ouvrir un panneau flottant ferme l’autre. Choisir une session ou **Infos de l'instance** dans le panneau flottant des sessions le ferme pour afficher votre choix, même la session déjà affichée ; **Retour** et **Avancer** le laissent ouvert. Les actions d’en-tête passent dans leur menu de débordement si l’espace manque.
 
 La zone de saisie garde Agent, Modèle et Réflexion dans son pied. Le champ se redimensionne avec la conversation visible, y compris le clavier à l’écran ; les longs brouillons restent défilables. Sur les appareils uniquement tactiles, l’envoi ne rouvre pas le clavier à l’écran, pour que vous puissiez lire la réponse ; touchez la zone de saisie pour continuer. Pendant qu’une session travaille, le menu **Plus d'actions** de la zone de saisie propose **Mettre le message en file d'attente** ou **Injecter maintenant**, selon ce que votre envoi normal ne fait pas, sans nécessiter de raccourci de clavier physique. Ouvrir une interruption compacte temporairement la zone de saisie sans changer sa hauteur enregistrée ni son brouillon. Répondez aux autorisations/questions dans le dock au-dessus, en gardant son pied d’actions accessible. Voir [Conversations](conversations.md) et [Autorisations](permissions.md).
 
@@ -37,7 +37,7 @@ La zone de saisie garde Agent, Modèle et Réflexion dans son pied. Le champ se 
 | Projets, conversations, fichiers et autorisations | Opèrent sur l’hôte backend connecté, sous ses contrôles d’accès. Les pièces jointes d’appareil sont transférées depuis le téléphone ; les références de projet sont résolues sur l’hôte. |
 | Fenêtres natives de bureau, menus système et automatisation native de l’hôte | Non fournis par l’installation de la PWA. |
 | Aperçu navigateur | N’acquiert pas de capacités natives de navigateur invité ; le rendu de repli reste limité par le navigateur. |
-| Contenu SideCar et WebSockets | Dépendent du chemin de connexion ; le Contrôle à distance bloque le proxy de contenu SideCar, le contenu d’aperçu et les mises à niveau WebSocket. Voir ses [restrictions exactes](remote-control.md). |
+| Contenu SideCar et WebSockets | Dépendent du chemin de connexion ; le Contrôle à distance bloque le proxy de contenu SideCar et sert les aperçus web, avec leurs WebSockets, tant que l’hôte les autorise. Voir ses [restrictions exactes](remote-control.md). |
 | Microphone, presse-papiers, notifications et proposition d’installation | Dépendent de la prise en charge navigateur/système, du contexte sécurisé et des permissions utilisateur. |
 | Travail hors ligne | Aucun backend hors ligne ni historique API en cache. Les ressources d’interface statiques peuvent être en cache, mais les documents et réponses API ne constituent pas un espace de travail hors ligne. |
 

@@ -2,6 +2,8 @@ import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { chromium, type Browser, type Page } from "playwright"
+import { createFixtureShutdown } from "./fixture-shutdown"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
@@ -12,9 +14,10 @@ let server: ViteDevServer, browser: Browser, baseUrl: string
 let fixtureCache: Awaited<ReturnType<typeof createFixtureCache>> | undefined
 before(async () => {
   fixtureCache = await createFixtureCache()
+  const shutdown = createFixtureShutdown(fixtureCache)
   server = await createServer({
     cacheDir: fixtureCache.cacheDir,
-    configFile: false, root, logLevel: "error", plugins: [solid(), {
+    configFile: false, root, logLevel: "error", plugins: [shutdown.plugin, solid(), {
       name: "browser-fixture",
       configureServer(server) {
         server.middlewares.use("/fixture", async (req, res) => {
@@ -30,9 +33,11 @@ before(async () => {
     // navigation while a browser assertion is in progress.
     server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
   })
+  shutdown.own(server)
   await server.listen()
   baseUrl = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close(); await fixtureCache?.dispose() })
 

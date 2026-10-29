@@ -18,9 +18,9 @@ async function fixture(kind: "valid" | "no-fence" | "delete-aba" | "connection" 
   const client = {
     location: { get: async () => ({ ...location, project: { id: "project-test" } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
-    rpc: () => ({ snapshot: async () => {
+    rpc: () => ({ list: async () => {
       if (kind === "delete-aba") await fence.run("/repo", ["/repo"], async () => {})
-      return snapshot
+      return { ...snapshot, cleanups: [], summariesVersion: "version-1" }
     } }),
     session: {
       active: async () => {

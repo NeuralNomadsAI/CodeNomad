@@ -118,7 +118,7 @@ test("explicit old-key writer cannot change fresh maps, signed grants/receipts o
       return mission && { missionID, coordinatorSessionID: mission.coordinatorSessionId, revision: mission.revision,
         status: mission.status, runState: mission.runState!, controlPending: Boolean(mission.control?.pending.length),
         control: mission.control, controlUnavailable: mission.controlUnavailable, roots }
-    }, assertJournalCapacity: async () => journal.assertCanAppend(2),
+    }, assertJournalCapacity: async intent => journal.assertCanAppend(intent.missionID, 2),
   })
   const requestID = "fresh-create"
   const missionID = `msn_${stableToken(`${projectID}\0${requestID}`, 24)}`

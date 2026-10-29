@@ -26,7 +26,7 @@ Si falta la instalación, confirma primero la confianza HTTPS y la compatibilida
 
 ## Trabajar con disposiciones táctiles {#touch-layout}
 
-Usa los controles **Panel izquierdo** y **Panel derecho** para abrir la navegación y las herramientas. En disposiciones estrechas, los paneles se superponen a la conversación en lugar de imponer un lienzo de anchura de escritorio; abrir un panel flotante cierra el otro. Las acciones de la cabecera de conversación pasan al menú de desbordamiento cuando falta espacio.
+Usa los controles **Panel izquierdo** y **Panel derecho** para abrir la navegación y las herramientas. En disposiciones estrechas, los paneles se superponen a la conversación en lugar de imponer un lienzo de anchura de escritorio; abrir un panel flotante cierra el otro. Elegir una sesión o **Info de la instancia** en el panel flotante de sesiones lo cierra para mostrar tu elección, incluso la sesión ya mostrada; **Atrás** y **Adelante** lo mantienen abierto. Las acciones de la cabecera de conversación pasan al menú de desbordamiento cuando falta espacio.
 
 El editor de mensajes mantiene Agente, Modelo y Razonamiento en su pie. El campo cambia de tamaño con la conversación visible, incluido el teclado en pantalla; los borradores largos siguen siendo desplazables. En dispositivos solo táctiles, enviar no vuelve a abrir el teclado en pantalla, para que puedas leer la respuesta; toca el editor para continuar. Mientras una sesión se ejecuta, el menú **Más acciones** del editor ofrece **Poner mensaje en cola** o **Intervenir ahora**, lo que no haga tu envío normal, sin necesitar un atajo de teclado físico. Abrir una interrupción compacta temporalmente el editor sin cambiar su altura guardada ni su borrador. Responde permisos/preguntas en el panel superior, manteniendo accesible su pie de acciones. Consulta [Conversaciones](conversations.md) y [Permisos](permissions.md).
 
@@ -37,7 +37,7 @@ El editor de mensajes mantiene Agente, Modelo y Razonamiento en su pie. El campo
 | Proyectos, conversaciones, archivos y permisos | Operan en el equipo del backend conectado, sujetos a sus controles de acceso. Los adjuntos del dispositivo se suben desde el teléfono; las referencias del proyecto se resuelven en el anfitrión. |
 | Ventanas nativas de escritorio, menús del sistema operativo y automatización nativa del anfitrión | No se obtienen al instalar la PWA. |
 | Vista previa de navegador | No adquiere capacidades nativas de navegador invitado; la representación alternativa sigue limitada por el navegador. |
-| Contenido de SideCar y WebSockets | Dependen de la vía de conexión; Control remoto bloquea el proxy de contenido de SideCar, el contenido de vistas previas y las actualizaciones a WebSocket. Consulta sus [restricciones exactas](remote-control.md). |
+| Contenido de SideCar y WebSockets | Dependen de la vía de conexión; Control remoto bloquea el proxy de contenido de SideCar y sirve las vistas previas web, con sus WebSockets, mientras el anfitrión las permita. Consulta sus [restricciones exactas](remote-control.md). |
 | Micrófono, portapapeles, notificaciones y solicitud de instalación | Dependen de la compatibilidad del navegador/sistema operativo, el contexto seguro y los permisos del usuario. |
 | Trabajo sin conexión | No hay backend sin conexión ni historial API en caché. Los recursos estáticos de interfaz pueden almacenarse en caché, pero los documentos y respuestas API no son un espacio de trabajo sin conexión. |
 

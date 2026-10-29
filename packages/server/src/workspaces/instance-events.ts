@@ -12,6 +12,8 @@ import { InstanceEventQueue } from "./instance-event-queue"
 const RECONNECT_DELAY_MS = 1000
 const LOCATION_OWNER_CACHE_MS = 2000
 const SESSION_LOCATION_CACHE_MS = 2000
+const ROUTING_RESYNC_MIN_MS = 5000
+const ROUTING_RESYNC_MAX_MS = 60_000
 const GLOBAL_EVENT_TYPES = new Set([
   "agent.updated",
   "command.updated",
@@ -84,6 +86,7 @@ export class InstanceEventBridge {
   private readonly sessionLocations = new Map<string, { expiresAt: number; location: Promise<LocationRef | undefined> }>()
   private readonly ptyLocations = new Map<string, LocationRef>()
   private readonly shellLocations = new Map<string, LocationRef>()
+  private readonly routingResyncs = new Map<string, { next: number; interval: number; timer?: ReturnType<typeof setTimeout> }>()
   private readonly onWorkspaceStarted = (event: { workspace: { id: string } }) => {
     this.advanceWorkspace(event.workspace.id)
     this.clearLocationCaches()
@@ -93,11 +96,13 @@ export class InstanceEventBridge {
   private readonly onWorkspaceStopped = (event: { workspaceId: string }) => {
     this.advanceWorkspace(event.workspaceId)
     this.clearLocationCaches()
+    this.clearRoutingResync(event.workspaceId)
     this.publishStatus(event.workspaceId, "disconnected", "workspace stopped")
   }
   private readonly onWorkspaceError = (event: { workspace: { id: string } }) => {
     this.advanceWorkspace(event.workspace.id)
     this.clearLocationCaches()
+    this.clearRoutingResync(event.workspace.id)
     this.publishStatus(event.workspace.id, "disconnected", "workspace error")
   }
   private readonly onWorktreesChanged = () => this.invalidateOwners()
@@ -112,6 +117,7 @@ export class InstanceEventBridge {
 
   shutdown() {
     this.controller.abort()
+    this.clearRoutingResync()
     // Release the current source's credential-bearing key and its token.
     this.daemonSource = undefined
     const bus = this.options.eventBus
@@ -128,6 +134,8 @@ export class InstanceEventBridge {
     while (!this.controller.signal.aborted) {
       this.generation += 1
       this.clearLocationCaches()
+      // Reconnecting reconciles every instance, including pending routing pulses.
+      this.clearRoutingResync()
       this.updateStatus("connecting")
       const attempt = new AbortController()
       let failure: Error | undefined
@@ -254,11 +262,17 @@ export class InstanceEventBridge {
         const lookupStarted = Date.now()
         let allowed = !location
         let revision: number
-        do {
-          revision = this.ownershipRevision
-          if (location) allowed = await this.resolveLocationOwner(instanceId, location, current, route.signal)
-          if (!current()) return
-        } while (revision !== this.ownershipRevision)
+        try {
+          do {
+            revision = this.ownershipRevision
+            if (location) allowed = await this.resolveLocationOwner(instanceId, location, current, route.signal)
+            if (!current()) return
+          } while (revision !== this.ownershipRevision)
+        } catch {
+          // The event may belong to this recipient: make it reconcile instead of losing it silently.
+          if (current()) this.requestRoutingResync(instanceId)
+          return
+        }
         // Stopped recipients and work from an earlier connection never publish.
         if (!this.options.workspaceManager.list().some(workspace => workspace.id === instanceId)) return
         const now = Date.now()
@@ -340,15 +354,44 @@ export class InstanceEventBridge {
       ? this.options.workspaceManager.ownsDirectory(instanceId, location.directory, "event")
       : this.options.workspaceManager.ownsLocation(instanceId, location, undefined, signal, "event")
     const owns = Promise.resolve().then(resolve).catch(() => current() ? resolve() : false)
-      .catch(error => {
-        if (current()) this.options.logger.warn({ err: error, instanceId, location }, "Failed to resolve instance event location owner")
-        return false
-      })
     const entry = { expiresAt: Number.POSITIVE_INFINITY, owns }
     this.locationOwners.set(key, entry)
-    const settle = () => { entry.expiresAt = Date.now() + LOCATION_OWNER_CACHE_MS }
-    void owns.then(settle, settle)
+    void owns.then(() => { entry.expiresAt = Date.now() + LOCATION_OWNER_CACHE_MS }, error => {
+      // Never cache a failure: the next event for this location looks it up again.
+      if (this.locationOwners.get(key) === entry) this.locationOwners.delete(key)
+      if (current()) this.options.logger.warn({ err: error, instanceId, location }, "Failed to resolve instance event location owner")
+    })
     return owns
+  }
+
+  /** Pulses one instance's status (error, then connected) so its clients run their
+   * reconnect reconciliation for an event that could not be routed. Leading and
+   * trailing; the interval doubles while failures persist and resets after a quiet one. */
+  private requestRoutingResync(instanceId: string): void {
+    const state = this.routingResyncs.get(instanceId)
+    if (state?.timer) return
+    const now = Date.now()
+    if (!state || now >= state.next) {
+      this.pulseRoutingResync(instanceId, ROUTING_RESYNC_MIN_MS)
+      return
+    }
+    state.timer = setTimeout(() => this.pulseRoutingResync(instanceId, Math.min(state.interval * 2, ROUTING_RESYNC_MAX_MS)), state.next - now)
+    state.timer.unref?.()
+  }
+
+  private pulseRoutingResync(instanceId: string, interval: number): void {
+    this.routingResyncs.set(instanceId, { next: Date.now() + interval, interval })
+    if (this.status !== "connected" || !this.options.workspaceManager.list().some(workspace => workspace.id === instanceId)) return
+    this.publishStatus(instanceId, "error", "event routing failed")
+    this.publishStatus(instanceId, "connected")
+  }
+
+  private clearRoutingResync(instanceId?: string): void {
+    for (const [id, state] of this.routingResyncs) {
+      if (instanceId !== undefined && id !== instanceId) continue
+      clearTimeout(state.timer)
+      this.routingResyncs.delete(id)
+    }
   }
 
   private invalidateOwners(): void {

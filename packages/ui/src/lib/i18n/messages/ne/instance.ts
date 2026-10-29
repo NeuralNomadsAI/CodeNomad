@@ -1,6 +1,7 @@
 export const instanceMessages = {
   "panelExtensions.section": "विस्तारहरू",
   "panelExtensions.assetsConsent": "अनुमति: हालको सत्रका उपकरण परिणामका छवि र संलग्नक, पहिचान, भाषा र रूप पढ्ने। फाइल प्रणाली वा नेटवर्कमा पहुँच छैन।",
+  "panelExtensions.workItemsConsent": "अनुमति: यस परियोजनाको repository नाम र GitHub, GitLab वा Gitea/Forgejo मा यसका issues र pull requests पढ्ने (साइन इन गरिएको gh, glab वा tea मार्फत, वा सार्वजनिक repository का लागि अज्ञात रूपमा) र तपाईंको ब्राउजरमा खोल्ने, साथै हालको सत्रको पहिचानकर्ता, भाषा र रूप। फाइल प्रणाली वा अन्य नेटवर्क पहुँच छैन।",
   "panelExtensions.empty": "कुनै विस्तार स्थापित छैन।",
   "panelExtensions.catalog.title": "अनलाइन उपलब्ध",
   "panelExtensions.catalog.search": "विस्तार खोज्नुहोस्",

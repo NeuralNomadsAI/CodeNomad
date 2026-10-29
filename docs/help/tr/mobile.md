@@ -26,7 +26,7 @@ Kurulum eksikse önce HTTPS güvenini ve tarayıcı desteğini doğrulayın, ard
 
 ## Dokunmatik yerleşimlerle çalışın {#touch-layout}
 
-Gezinmeyi ve araçları açmak için **Sol panel** ve **Sağ panel** kontrollerini kullanın. Dar düzenlerde paneller, masaüstü genişliğinde bir tuvali zorlamak yerine konuşmayı üst üste bindirir; bir yüzer panelin açılması diğerini kapatır. Konuşma başlığı eylemleri, alan sınırlı olduğunda taşma menüsüne taşınır.
+Gezinmeyi ve araçları açmak için **Sol panel** ve **Sağ panel** kontrollerini kullanın. Dar düzenlerde paneller, masaüstü genişliğinde bir tuvali zorlamak yerine konuşmayı üst üste bindirir; bir yüzer panelin açılması diğerini kapatır. Yüzer oturum panelinde bir oturum veya **Instance Bilgisi** seçmek, zaten gösterilen oturum olsa bile seçiminizi göstermek için paneli kapatır; **Geri** ve **İleri** paneli açık tutar. Konuşma başlığı eylemleri, alan sınırlı olduğunda taşma menüsüne taşınır.
 
 İleti düzenleyicisi Ajan, Model ve Düşünme kontrollerini alt satırında tutar. Alan, ekran klavyesi dahil görünür konuşmaya göre boyutlanır; uzun taslaklar kaydırılabilir. Yalnızca dokunmatik cihazlarda gönderme ekran klavyesini yeniden açmaz; böylece yanıtı okuyabilirsiniz, devam etmek için ileti düzenleyicisine dokunun. Bir oturum çalışırken ileti düzenleyicisinin **Diğer eylemler** menüsü, normal gönderiminizin yapmadığı davranışı (**Mesajı kuyruğa ekle** veya **Şimdi yönlendir**) donanım klavyesi kısayolu gerektirmeden sunar. İstek açmak kayıtlı yükseklik veya taslağı değiştirmeden ileti düzenleyicisini geçici küçültür. İzin/soruları üstündeki istek panelinde, yanıt eylemlerinin bulunduğu sabit alt bölüm erişilebilir kalacak şekilde yanıtlayın. Bkz. [Konuşmalar](conversations.md) ve [İzinler](permissions.md).
 
@@ -37,7 +37,7 @@ Gezinmeyi ve araçları açmak için **Sol panel** ve **Sağ panel** kontrolleri
 | Projeler, konuşmalar, dosyalar ve izinler | Erişim kontrollerine bağlı olarak bağlı arka uç ana bilgisayarda çalışın. Cihaz ekleri telefondan yüklenir; proje referansları ana bilgisayarda çözümlenir. |
 | Yerel masaüstü pencereleri, işletim sistemi menüleri ve ana makineye özgü otomasyon | PWA kurulduğunda sağlanmaz. |
 | Tarayıcı önizlemesi | Yerel konuk tarayıcı yetenekleri kazanmaz; geri dönüş oluşturma tarayıcıyla sınırlı kalır. |
-| SideCar içeriği ve WebSockets | Bağlantı yoluna bağlıdır; Uzaktan Kontrol SideCar içerik proxy'sini, önizleme içeriğini ve WebSocket yükseltmelerini engeller. [Tüm kısıtlamalara](remote-control.md) bakın. |
+| SideCar içeriği ve WebSockets | Bağlantı yoluna bağlıdır; Uzaktan Kontrol SideCar içerik proxy'sini engeller ve ana makine izin verdiği sürece web önizlemelerini WebSocket bağlantılarıyla birlikte sunar. [Tüm kısıtlamalara](remote-control.md) bakın. |
 | Mikrofon, pano, bildirimler ve yükleme istemi | Tarayıcı/işletim sistemi desteğine, güvenli içeriğe ve kullanıcı izinlerine bağlıdır. |
 | Çevrimdışı çalışma | Çevrimdışı arka uç veya önbelleğe alınmış API geçmişi yok. Statik kullanıcı arayüzü varlıkları önbelleğe alınabilir ancak belgeler ve API yanıtları çevrimdışı bir çalışma alanı değildir. |
 

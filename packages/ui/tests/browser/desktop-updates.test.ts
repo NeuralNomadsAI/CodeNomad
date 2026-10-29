@@ -2,27 +2,23 @@ import assert from "node:assert/strict"
 import { readFile } from "node:fs/promises"
 import { before, after, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-let browser: Browser, server: ViteDevServer, url: string
+let browser: Browser, url: string
 before(async () => {
-  server = await createServer({
-    configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    cacheDir: "node_modules/.vite-desktop-updates", resolve: { dedupe: ["solid-js"] },
-    plugins: [solid(), { name: "updater-fixture", configureServer(server) {
-      server.middlewares.use("/fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await server.transformIndexHtml("/fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/desktop-updates.tsx"></script></body></html>'))
-      })
-    } }], server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
+  const fixture = await borrowFixture({
+      name: "desktop-updates",
+      routes: [
+        { path: "/fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/desktop-updates.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); })
 
 async function fixture(scenario: string, host = "tauri", context = "local", meta: object = {}, query = ""): Promise<Page> {
   // The Preferences card follows the browser locale.
@@ -92,7 +88,7 @@ test("unsigned Tauri, Electron and remote windows use downloads without installi
     const page = await fixture("unsigned", host, context)
     try {
       await page.getByRole("button", { name: "Check updates" }).click()
-      await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url" || c.command === "web-open"))
+      await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "open_external_url" || c.command === "web-open"))
       const calls = await page.evaluate(() => (window as any).calls)
       assert.equal(calls.filter((c: any) => c.command === "install_desktop_update").length, 0)
       assert.equal(calls.filter((c: any) => c.command === "check_desktop_update").length, host === "tauri" && context === "local" ? 1 : 0)
@@ -163,7 +159,7 @@ const notificationAction = (page: Page, title: string) => page.locator("div")
   .last().getByRole("button", { name: "Get update" })
 
 const openedUrls = (page: Page) => page.evaluate(() =>
-  (window as any).calls.filter((c: any) => c.command === "plugin:opener|open_url").map((c: any) => c.args.url))
+  (window as any).calls.filter((c: any) => c.command === "open_external_url").map((c: any) => c.args.url))
 
 test("support and preview notifications check the saved feed natively", async () => {
   for (const title of ["Upgrade required", "Update available"]) {
@@ -193,7 +189,7 @@ test("a notified release that cannot be installed in place opens its own release
       await serveMeta(page, notificationMeta("preview"))
       await page.evaluate(() => (window as any).fixture.releases())
       await notificationAction(page, title).click()
-      await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+      await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "open_external_url"))
       assert.deepEqual(await openedUrls(page), [url])
       assert.equal(await page.getByText("CodeNomad is up to date.").count(), 0)
     } finally { await page.close() }
@@ -229,7 +225,7 @@ test("the Preferences update button installs in place, or opens the release it s
   const unsigned = await fixture("unsigned", "tauri", "preferences", meta, "?settings")
   try {
     await unsigned.getByRole("button", { name: "Install update" }).click()
-    await unsigned.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+    await unsigned.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "open_external_url"))
     assert.deepEqual(await openedUrls(unsigned), ["https://example.com/preview"])
   } finally { await unsigned.close() }
 
@@ -255,7 +251,7 @@ test("another window's update in progress is not reported as a failure", async (
     await serveMeta(page, notificationMeta("preview"))
     await page.evaluate(() => (window as any).fixture.releases())
     await notificationAction(page, "Update available").click()
-    await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+    await page.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "open_external_url"))
     assert.deepEqual(await openedUrls(page), ["https://example.com/preview"])
   } finally { await page.close() }
 })
@@ -278,7 +274,7 @@ test("release pages follow the feed: previews list every release", async () => {
     try {
       await serveMeta(unsigned, { updateFeed: feed })
       await unsigned.getByRole("button", { name: "Check updates" }).click()
-      await unsigned.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+      await unsigned.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "open_external_url"))
       assert.deepEqual(await openedUrls(unsigned), [url])
     } finally { await unsigned.close() }
 
@@ -287,7 +283,7 @@ test("release pages follow the feed: previews list every release", async () => {
     try {
       await reloaded.getByText(/The update could not be completed/).waitFor()
       await reloaded.getByRole("button", { name: "Get update" }).click()
-      await reloaded.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "plugin:opener|open_url"))
+      await reloaded.waitForFunction(() => (window as any).calls.some((c: any) => c.command === "open_external_url"))
       assert.deepEqual(await openedUrls(reloaded), [url])
     } finally { await reloaded.close() }
   }

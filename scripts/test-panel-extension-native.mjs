@@ -21,12 +21,13 @@ const build = spawnSync("cargo", ["build", "-p", "codenomad-panel-extension-fixt
 assert.equal(build.error, undefined, String(build.error))
 assert.equal(build.status, 0, build.stdout + build.stderr)
 const { panelExtensionDocument } = await tsImport(new URL("../packages/ui/src/components/panel-extensions/frame-document.ts", import.meta.url).href, import.meta.url)
-const apiVersion = process.argv.includes("--api2") ? 2 : 1
+const apiVersion = process.argv.includes("--api3") ? 3 : process.argv.includes("--api2") ? 2 : 1
 const document = panelExtensionDocument(`<h1>External panel</h1><p id="session"></p><script>
   const results = { parent: 'unknown', network: 'unknown', context: null, nativeGlobal: typeof window.__TAURI_INTERNALS__ };
   try { parent.document; results.parent = 'allowed'; } catch { results.parent = 'blocked'; }
   codenomad.onContext(context => { results.context = context.sessionId; document.querySelector('#session').textContent = context.sessionId; });
   if (codenomad.assets) codenomad.onContext(async () => { results.asset = (await codenomad.assets.list()).entries[0].name; });
+  if (codenomad.workItems) codenomad.onContext(async () => { results.workItem = (await codenomad.workItems.list({ kind: 'issue' })).items[0].title; });
   fetch('/api/forbidden').then(() => results.network = 'allowed').catch(() => results.network = 'blocked');
   // On Windows Tauri globals may be injected. Their presence is not permission.
   if (window.__TAURI_INTERNALS__) {
@@ -53,6 +54,7 @@ const server = createServer((request, response) => {
       channel.port1.onmessage = e => {
         if (e.data?.handshake === 'fixture-handshake') channel.port1.postMessage({ type: 'context', context: { apiVersion: ${apiVersion}, sessionId: 'native-session', locale: 'en', appearance: 'light' } });
         else if (e.data?.type === 'assets:request') channel.port1.postMessage({ type: 'assets:result', id: e.data.id, result: { entries: [{ name: 'Native asset' }], cursor: null } });
+        else if (e.data?.type === 'workItems:request') channel.port1.postMessage({ type: 'workItems:result', id: e.data.id, result: { status: 'ok', items: [{ title: 'Native work item' }] } });
       };
       frame.contentWindow.postMessage({ type: 'codenomad:init' }, '*', [channel.port2]);
     }
@@ -76,6 +78,7 @@ try {
   assert.equal(reports[0].network, "blocked")
   assert.equal(reports[0].context, "native-session")
   if (apiVersion === 2) assert.equal(reports[0].asset, "Native asset")
+  if (apiVersion === 3) assert.equal(reports[0].workItem, "Native work item")
   console.log(JSON.stringify({ nativeParent: "allowed", nativeChild: "blocked", ...reports[0] }, null, 2))
 } finally {
   await new Promise(resolve => server.close(resolve))

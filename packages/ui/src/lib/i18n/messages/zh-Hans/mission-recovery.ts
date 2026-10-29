@@ -5,5 +5,6 @@ export const missionRecoveryMessages = {
   "missions.recovery.error.busy": "原生工作或未解决的等待阻止了恢复。请打开会话。",
   "missions.recovery.error.unknown": "无法验证原生活动。恢复请求未获准。",
   "missions.recovery.error.conflict": "任务计划或恢复目标已更改。请刷新任务计划后重试。",
+  "missions.recovery.error.member": "此任务的一个会话现已属于另一个活动任务。请先完成或停止该任务。",
   "missions.recovery.error.failed": "无法确认恢复请求是否获准。请刷新任务计划后重试。",
 }

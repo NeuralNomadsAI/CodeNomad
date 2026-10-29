@@ -21,6 +21,7 @@ GitHub form मा incompatible field भए CodeNomad ले उही report �
 | [CodeNomad repository](https://github.com/NeuralNomadsAI/CodeNomad) | source, project गतिविधि र documentation। |
 | [Issues](https://github.com/NeuralNomadsAI/CodeNomad/issues) | reproducible bug वा feature request खोल्नुअघि विद्यमान report खोज्नुहोस्। |
 | [Pull requests](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | प्रस्तावित परिवर्तन समीक्षा वा contribution समन्वय। |
+| [डाउनलोड पृष्ठ](download.md) | तपाईंको प्लेटफर्मका लागि नवीनतम stable desktop build। |
 | [नवीनतम release](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | stable download artifact। |
 | [सबै release](https://github.com/NeuralNomadsAI/CodeNomad/releases) | published preview र release note। |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | project संगठन। |

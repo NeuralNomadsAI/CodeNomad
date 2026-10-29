@@ -47,8 +47,11 @@ Chaque remplacement révoque l’activation dans tous les projets, même si les 
 | --- | --- |
 | API 1 / `session.context` | Identifiant de session courante (ou aucun), langue et apparence d’interface. Aucun texte de transcription ni accès aux fichiers. |
 | API 2 / `session.assets.read` plus contexte | Permission explicitement examinée pour lister des métadonnées bornées d’images de résultats d’outils/pièces jointes de la session courante et lire les octets intégrés pris en charge. Ce n’est pas un accès général aux transcriptions, fichiers ou URL. |
+| API 3 / `repository.workItems.read` plus le contexte | Permission examinée explicitement pour lister des pages bornées d’issues et de pull requests du dépôt du projet sur GitHub, GitLab ou Gitea/Forgejo, et en ouvrir une dans le navigateur. Ce n’est pas un accès aux fichiers, aux identifiants ni au réseau en général. |
 
 L’accès aux ressources suit l’hôte/la session actuellement monté, pas une session choisie par l’auteur. Des références locales/distantes peuvent être listées comme indisponibles ; l’API de ressources ne récupère pas d’URL distantes arbitraires et n’ouvre pas de fichiers locaux. Changer de session, déconnecter ou révoquer le consentement invalide l’ancien accès.
+
+Les éléments viennent du remote `upstream` du dossier du projet, sinon d’`origin`. CodeNomad les lit avec la CLI GitHub, GitLab ou Gitea à laquelle vous êtes déjà connecté (`gh`, `glab`, `tea`), ou anonymement pour les dépôts publics, et ne stocke aucun jeton ; l’extension ne voit que le nom du dépôt et les éléments. La lecture anonyme couvre github.com, gitlab.com, codeberg.org et gitea.com ; une forge auto-hébergée n’est lue que via sa CLI connectée à elle. Ouvrir un élément demande à CodeNomad d’ouvrir sa page sur la même forge dans votre navigateur, au plus une fois par seconde ; l’extension ne peut pas ouvrir d’autres adresses.
 
 Le code de l’auteur s’exécute dans une iframe restreinte, pas dans le moteur de rendu de confiance de l’application. Il ne reçoit aucun pont natif/OpenCode, accès aux identifiants, RPC général, formulaire, fenêtre surgissante ou téléchargement ; les API réseau et ressources externes sont restreintes. Les extensions sont des modules d’interface, pas des [plugins OpenCode](integrations.md).
 

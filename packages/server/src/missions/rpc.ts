@@ -3,9 +3,9 @@ import { missionProfilesSchema } from "./playbook-profiles"
 import { missionTaskModeSchema } from "./task-execution-mode"
 import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
-import { missionCleanupSchema } from "./cleanup-projection"
-import { MISSION_MAX_EVENTS } from "./model"
+import { MAX_PROJECTED_CLEANUPS, missionCleanupSchema } from "./cleanup-projection"
 import { MISSION_TITLE_MAX } from "./mission-title"
+import { MISSION_LIST_MAX_INCLUDE, missionSummarySchema } from "./mission-summary"
 import { missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
 import { recurrenceCurrentContentWire } from "./recurrence-current"
@@ -168,6 +168,18 @@ const mutationMissionResult = {
 
 const requestID = { type: "string", minLength: 1, maxLength: 128 } as const
 
+const snapshotProperties = {
+  version: { type: "number", const: 1 },
+  projectID: { type: "string" },
+  generatedAt: { type: "number" },
+  missions: { type: "array", items: mission },
+  discardedEvents: { type: "number" },
+  cleanups: { type: "array", maxItems: MAX_PROJECTED_CLEANUPS, items: missionCleanupSchema },
+  cleanupUnavailable: { type: "boolean" },
+  controlUnavailable: { type: "boolean" },
+  notificationUnavailable: { type: "boolean" },
+} as const
+
 export const CODENOMAD_MISSIONS_RPC = {
   id: CODENOMAD_MISSIONS_RPC_ID,
   methods: {
@@ -273,22 +285,26 @@ export const CODENOMAD_MISSIONS_RPC = {
     },
     snapshot: {
       input: { type: "object", properties: {}, additionalProperties: false },
-      output: {
-        type: "object",
-        properties: {
-          version: { type: "number", const: 1 },
-          projectID: { type: "string" },
-          generatedAt: { type: "number" },
-          missions: { type: "array", items: mission },
-          discardedEvents: { type: "number" },
-          cleanups: { type: "array", maxItems: MISSION_MAX_EVENTS, items: missionCleanupSchema },
-          cleanupUnavailable: { type: "boolean" },
-          controlUnavailable: { type: "boolean" },
-          notificationUnavailable: { type: "boolean" },
-        },
-        required: ["version", "projectID", "generatedAt", "missions", "discardedEvents"],
-        additionalProperties: false,
-      },
+      output: { type: "object", properties: snapshotProperties,
+        required: ["version", "projectID", "generatedAt", "missions", "discardedEvents"], additionalProperties: false },
+    },
+    // Read-mostly panel reads from the journal index and per-mission ranges (`MissionControl.list`/`mission`).
+    list: {
+      input: { type: "object", properties: {
+        include: { type: "array", maxItems: MISSION_LIST_MAX_INCLUDE, items: { type: "string", minLength: 1, maxLength: 100 } },
+        summariesVersion: { type: "string", minLength: 1, maxLength: 64 },
+      }, additionalProperties: false },
+      output: { type: "object", properties: { ...snapshotProperties,
+        summaries: { type: "array", items: missionSummarySchema }, summariesVersion: { type: "string" } },
+        required: ["version", "projectID", "generatedAt", "missions", "discardedEvents", "cleanups", "summariesVersion"], additionalProperties: false },
+    },
+    mission: {
+      input: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 } }, required: ["missionID"], additionalProperties: false },
+      output: { type: "object", properties: {
+        version: snapshotProperties.version, projectID: snapshotProperties.projectID, generatedAt: snapshotProperties.generatedAt, mission,
+        cleanups: snapshotProperties.cleanups, cleanupUnavailable: { type: "boolean" }, controlUnavailable: { type: "boolean" },
+        notificationUnavailable: { type: "boolean" },
+      }, required: ["version", "projectID", "generatedAt", "cleanups"], additionalProperties: false },
     },
     create: {
       errors: missionMutationErrors,

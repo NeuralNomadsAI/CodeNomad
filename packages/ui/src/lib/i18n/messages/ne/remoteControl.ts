@@ -12,6 +12,8 @@ export const remoteControlMessages = {
   "remoteControl.start": "रिमोट कन्ट्रोल सुरु गर्नुहोस्",
   "remoteControl.newLink": "नयाँ जोडी लिंक बनाउनुहोस्",
   "remoteControl.stop": "रिमोट कन्ट्रोल रोक्नुहोस्",
+  "remoteControl.previews.title": "वेब पूर्वावलोकन",
+  "remoteControl.previews.caption": "जोडिएका उपकरणहरूले वेब पूर्वावलोकन खोल्न सक्छन्। प्रत्येक पूर्वावलोकन ठेगानाले जोडाइबिना आफ्नो पृष्ठ खोल्छ, त्यसैले यसलाई निजी राख्नुहोस्।",
   "remoteControl.pairing.title": "अर्को उपकरण जडान गर्नुहोस्",
   "remoteControl.pairing.description": "QR कोड स्क्यान गर्नुहोस् वा अर्को उपकरणमा एकपटक प्रयोग हुने लिंक खोल्नुहोस्।",
   "remoteControl.pairing.qrAlt": "रिमोट कन्ट्रोल जोडी QR कोड",

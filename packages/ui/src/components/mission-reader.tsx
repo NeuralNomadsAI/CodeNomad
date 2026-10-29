@@ -237,6 +237,18 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       }
     }
   })
+  // The reader needs its one-time Mission's full map, open or not. Only the
+  // instance and target identities drive the registration, never store publications.
+  const wantOwner = `reader:${props.scope}`
+  const wantedMission = createMemo(() => {
+    const value = target()
+    return value && !value.recurrence && value.kind !== "recurrence" ? value.missionId : undefined
+  })
+  createEffect(() => {
+    const instanceId = props.instanceId, missionId = wantedMission()
+    untrack(() => missionStore.want(instanceId, wantOwner, missionId))
+    onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
+  })
   // A restored reader waits for session-list restoration before its first read.
   createEffect(() => {
     if (sessionListRestored(props.instanceId) && !target()?.recurrence && target()?.kind !== "recurrence") untrack(() => void missionStore.ensure(props.instanceId))

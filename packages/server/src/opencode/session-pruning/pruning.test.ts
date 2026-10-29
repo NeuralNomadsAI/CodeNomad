@@ -161,7 +161,8 @@ test("refuses file-backed writes, but supports explicit read-only preview", asyn
   const db = fixture(filename)
   try {
     assert.deepEqual(pruneIsolatedMessage(db, input(), "/work"), { status: "blocked", reason: "maintenance_required" })
-    assert.deepEqual(await readPruningPreview(filename, input(), { directory: "/work" }, "p"), data)
+    assert.deepEqual(await readPruningPreview(filename, input(), { directory: "/work" }, "p"),
+      { status: "ok", data, bytes: Buffer.byteLength(JSON.stringify(data)) })
     assert.equal(await readPruningPreview(filename, input(), { directory: "/other" }, "p"), undefined)
     assert.equal(await readPruningPreview(filename, input(), { directory: "/work", workspaceID: "foreign" }, "p"), undefined)
     assert.equal(await readPruningPreview(filename, input(), { directory: "/work" }, "foreign"), undefined)
@@ -175,6 +176,7 @@ test("loading the plugin registers RPC without reading or writing a database", a
   let disposed = false
   const cleanup = await plugin.setup({
     location: { directory: "/work" }, options: {},
+    tool: { transform: async () => ({ dispose: async () => {} }) },
     rpc: { register: async (definition: any, implementation: any) => {
       assert.equal(definition.id, "codenomad.session-pruning")
       handlers = implementation

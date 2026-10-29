@@ -1,4 +1,6 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
+import type { HistoryRankedInput } from "../../../server/src/opencode/session-pruning/history-ranked-contract"
+import type { RankedHistoryResult } from "../../../server/src/server/routes/session-history-ranked-contract"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionRecurrenceSnapshot } from "../../../server/src/api-types"
 import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -20,6 +22,7 @@ import type {
   FileSystemListResponse,
   InstanceData,
   MissionListResponse,
+  MissionReadResponse,
   MissionRecurrenceReadPage,
   MissionMap,
   OpenCodeUpdateResponse,
@@ -240,6 +243,11 @@ export const serverApi = {
       method: "POST", body: JSON.stringify(input), signal,
     })
   },
+  queryRankedHistory(instanceId: string, input: HistoryRankedInput, signal?: AbortSignal): Promise<RankedHistoryResult> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/ranked`, {
+      method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
   pruneSessionHistory(instanceId: string, input: PruneBatch, signal?: AbortSignal): Promise<PruneBatchResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/prune`, {
       method: "POST", body: JSON.stringify(input), signal,
@@ -375,6 +383,9 @@ export const serverApi = {
   createRemoteControlPairing(): Promise<RemoteControlPairing> {
     return request<RemoteControlPairing>("/api/remote-control/pairings", { method: "POST" })
   },
+  setRemoteControlPreviews(enabled: boolean): Promise<RemoteControlStatus> {
+    return request<RemoteControlStatus>("/api/remote-control/previews", { method: "PUT", body: JSON.stringify({ enabled }) })
+  },
   fetchRemoteControlDevices(): Promise<{ devices: RemoteControlDevice[] }> {
     return request<{ devices: RemoteControlDevice[] }>("/api/remote-control/devices")
   },
@@ -416,6 +427,12 @@ export const serverApi = {
   },
   setWebSearchSettings(instanceId: string, payload: import("../../../server/src/api-types").WebSearchSettingsMutation): Promise<void> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/websearch-settings`, { method: "PUT", body: JSON.stringify(payload) })
+  },
+  getImageSettings(instanceId: string, directory: string): Promise<import("../../../server/src/api-types").ImageSettingsSnapshot> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings?${new URLSearchParams({ directory })}`)
+  },
+  setImageSettings(instanceId: string, payload: import("../../../server/src/api-types").ImageSettingsMutation): Promise<void> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/image-settings`, { method: "PUT", body: JSON.stringify(payload) })
   },
   getSubagentDepth(instanceId: string, directory: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").SubagentDepthSnapshot> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/subagent-depth?${new URLSearchParams({ directory })}`, { signal })
@@ -687,8 +704,19 @@ export const serverApi = {
   readInstanceData(id: string): Promise<InstanceData> {
     return request<InstanceData>(`/api/storage/instances/${encodeURIComponent(id)}`)
   },
-  fetchMissions(instanceId: string): Promise<MissionListResponse> {
-    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions`)
+  fetchMissions(instanceId: string, input: { include?: readonly string[]; summariesVersion?: string } = {}): Promise<MissionListResponse> {
+    const params = new URLSearchParams()
+    if (input.include?.length) params.set("include", input.include.join(","))
+    if (input.summariesVersion) params.set("summaries", input.summariesVersion)
+    const query = params.toString()
+    return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions${query ? `?${query}` : ""}`)
+  },
+  fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
+    return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
+  },
+  /** The same read from the authoritative full snapshot, for admitting an application-authored prompt. */
+  fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
+    return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/admission`)
   },
   fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current`, { signal })

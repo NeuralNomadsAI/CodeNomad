@@ -4,7 +4,7 @@ Yerel bir masaüstü ana bilgisayarı seçin veya [bağımsız sunucu](server.md
 
 ## Masaüstü indirmeleri {#desktop-downloads}
 
-1. [En son sürümü](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest)'yi açın.
+1. [İndirme sayfasını](download.md) açın.
 2. İşletim sisteminize ve işlemcinize uygun yapıyı seçin.
 3. ZIP'i çıkarın veya platform paketini kurun/çalıştırın, ardından CodeNomad'i başlatın.
 
@@ -45,7 +45,7 @@ Electron Debian kurulumu, Chromium'un korumalı alanını yapılandırır. Kurul
 
 | Gereksinim | Nerede bulunması gerektiği | Mevcut gereksinim |
 | --- | --- | --- |
-| OpenCode CLI | Geçerli olduğu yerde seçilen WSL dağıtımı da dahil olmak üzere seçilen yürütme ana bilgisayarı | Minimum **2.1.2**; **2.1.4** önerilen/uygun hedeftir. Daha yeni veya özel sürümler, test edilmemiş sürüm yasağı yerine sözleşme doğrulamasından geçer. |
+| OpenCode CLI | Geçerli olduğu yerde seçilen WSL dağıtımı da dahil olmak üzere seçilen yürütme ana bilgisayarı | Minimum **2.1.2**; **2.2.1** önerilen/uygun hedeftir. Daha yeni veya özel sürümler, test edilmemiş sürüm yasağı yerine sözleşme doğrulamasından geçer. |
 | Git | CodeNomad arka uç hesabının `PATH`'si | Depo kimliği, Git işlemleri ve çalışma ağaçları için gereklidir. |
 | Node.js/npm | Bağımsız sunucu ve kaynak derleme ana bilgisayarı | Node.js 24 LTS; tekrarlanabilir kaynak derlemeleri `.node-version` (**24.20.0**) kullanır. Masaüstü çalışma zamanı/kurulum kaynaklarına dahildir. |
 | Çalışma alanı klasörü | Arka uçtan erişilebilen disk | Uzak bir tarayıcı tarafından çıkarılan yerel cihaz klasörü değil, açıkça açılmış bir fiziksel klasör. |

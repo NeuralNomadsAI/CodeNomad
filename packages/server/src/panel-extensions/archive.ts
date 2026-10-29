@@ -18,6 +18,7 @@ export const ManifestFields = z.object({
 export const ManifestSchema = z.discriminatedUnion("apiVersion", [
   ManifestFields.extend({ apiVersion: z.literal(1), permissions: z.tuple([z.literal("session.context")]) }).strict(),
   ManifestFields.extend({ apiVersion: z.literal(2), permissions: z.tuple([z.literal("session.context"), z.literal("session.assets.read")]) }).strict(),
+  ManifestFields.extend({ apiVersion: z.literal(3), permissions: z.tuple([z.literal("session.context"), z.literal("repository.workItems.read")]) }).strict(),
 ])
 
 export interface PanelExtensionPackage { manifest: PanelExtensionManifest; html: string; digest: string }

@@ -89,6 +89,21 @@ when a member belongs to the local scope. Moving within this workspace's worktre
 changes the execution directory and badge, while keeping the conversation in the
 same CodeNomad project tab.
 
+Live sessions follow the same scope at display. An opened folder also receives the
+events of a nested checkout of another repository it owns (a parent folder such as
+the home directory); the store holds every session it receives, and the session
+list, tab indicator (derived per sessions snapshot and scope), idle fade, and
+completion, compaction and retry notices show only the workspace scope; a
+needs-input notice of an out-of-scope session follows the interruption dock that
+shows its request
+(`stores/session-state.ts` `getWorkspaceSessionScope`, from
+`selectWorkspaceFamilyIds`): complete families with a member in the opened folder
+or a registered worktree, plus the active session's family, so a session opened
+explicitly is shown where it was opened. The scope is reactive, so a late worktree
+inventory and either family order converge. An unread or failed inventory and a
+Git-unavailable folder (which projects its own directory) keep every held session
+in scope (`stores/session-workspace-scope.test.ts`).
+
 During refresh, the first directory page is partial: it must not replace existing
 worktree rows before inventory reconciliation completes. An unavailable inventory
 must likewise preserve those rows. `workspace-session-scope.test.ts` and the

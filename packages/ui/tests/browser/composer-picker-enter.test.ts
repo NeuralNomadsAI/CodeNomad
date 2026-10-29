@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Route } from "playwright"
 import type { ViteDevServer } from "vite"
 import { startDeviceUploadFixture } from "./fixtures/device-upload-server.mjs"
@@ -8,6 +9,7 @@ let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
   ;({ server, url } = await startDeviceUploadFixture())
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close() })
 

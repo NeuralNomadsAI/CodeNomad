@@ -1,10 +1,12 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
 import type { MissionMap } from "../../../server/src/api-types"
+import { missionReadFixture } from "./mission-read-fixture"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-navigation"
@@ -23,10 +25,11 @@ before(async () => {
         res.setHeader("Content-Type", "text/html")
         res.end(await s.transformIndexHtml(name, `<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/${fixture}.tsx"></script></body></html>`))
       })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
+    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } }).catch(async error => { await cache.dispose(); throw error })
   shutdown.own(server); await server.listen()
   base = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}`
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 after(async () => { await browser?.close(); await server?.close() })
 
@@ -175,6 +178,8 @@ async function navigable(values: MissionMap[]) {
       location: { directory: "/fixture" }, schedules: [] } })
     if (pathname.endsWith("/missions")) { counter.reads++; return route.fulfill({ json: { available: true, projectID: "project", missions: values,
       generatedAt: counter.reads, discardedEvents: 0 } }) }
+    const read = missionReadFixture(pathname, request.method(), values)
+    if (read) return route.fulfill({ json: read })
     if (/\/session\/ses_A$/.test(pathname)) return route.fulfill({ json: { data: { id: "ses_A", projectID: "project", title: "Coordinator", slug: "coordinator",
       version: "1", agent: "build", model: { id: "native", providerID: "native" }, location: { directory: "/fixture" }, time: { created: 1, updated: 1 } } } })
     if (pathname.endsWith("/agent")) return route.fulfill({ json: [{ id: "build", name: "build", mode: "primary" }] })

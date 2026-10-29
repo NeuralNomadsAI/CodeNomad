@@ -3,6 +3,8 @@ import { MISSION_BRIEFING_RESPONSES_MAX, briefingSourcesExist, isAutomaticBriefi
 export type { MissionBriefing, MissionBriefingItem, MissionBriefingResponse } from "./briefing"
 import type { MissionTaskExecutionMode } from "./task-execution-mode"
 export type { MissionTaskExecutionMode } from "./task-execution-mode"
+import type { MissionSummary } from "./mission-summary"
+export type { MissionSummary } from "./mission-summary"
 import { hasInvalidControlHistory, isReportReceipt } from "./receipt-identity"
 import { hasInvalidReportNotificationHistory, isCoordinatorNotificationReport, sameNativeCall } from "./native-report-provenance"
 import { hasUnsettledNativeExecution, parseNativeCallObservation, projectNativeCallObservation, type MissionNativeExecution, type NativeCallObservation } from "./native-call-observation"
@@ -11,8 +13,13 @@ import { projectLifecycle, type MissionControlRequestedEvent, type MissionContro
 
 export const MISSION_SCHEMA_VERSION = 1 as const
 export const MISSION_MAX_ACTORS = 8
+/** Ordinary entries of one mission's journal range; a project holds any number of missions. */
 export const MISSION_MAX_EVENTS = 2_000
-export const MISSION_MAX_MISSIONS = 20
+/** Room above a mission's ordinary limit for its deletion tombstone and reserved
+ * receipts, so a full mission can still be deleted. */
+export const MISSION_DELETION_RESERVE = 4 * (1 + MISSION_MAX_ACTORS)
+/** Physical read bound of one mission's journal range. */
+export const MISSION_MAX_STORED_EVENTS = MISSION_MAX_EVENTS + MISSION_DELETION_RESERVE
 export const MISSION_MAX_TASKS = 96
 export const MISSION_MAX_HISTORY = 50
 
@@ -218,10 +225,36 @@ export interface MissionSnapshot {
   cleanupUnavailable?: boolean
 }
 
+/** The plugin's `list` read: full maps of the open missions and the included
+ * ones, plus a row for every live map. `summaries` is omitted, with the same
+ * `summariesVersion`, when the caller already holds that version. */
+export interface MissionList extends MissionSnapshot {
+  summaries?: MissionSummary[]
+  summariesVersion: string
+}
+
+/** The plugin's `mission` read: one mission's range, `mission` absent when it
+ * holds no live map, with that range's cleanups and the project damage flags. */
+export interface MissionRead {
+  version: typeof MISSION_SCHEMA_VERSION
+  projectID: string
+  generatedAt: number
+  mission?: MissionMap
+  cleanups: MissionCleanup[]
+  cleanupUnavailable?: boolean
+  controlUnavailable?: boolean
+  notificationUnavailable?: boolean
+}
+
+/** Without `summariesVersion` (a plugin without `list`) every live map is in `missions`. */
 export interface MissionListAvailableResponse extends MissionSnapshot {
   available: true
   activity: MissionActivityProjection
+  summaries?: MissionSummary[]
+  summariesVersion?: string
 }
+
+export type MissionReadResponse = (MissionRead & { available: true }) | MissionListUnavailableResponse
 
 /** Why Missions cannot be read: this backend has no local bridge to run them
  * (`host-unavailable`), OpenCode has not loaded the plugin or it does not answer
@@ -410,6 +443,12 @@ export interface MissionFinishedEvent extends MissionEventBase {
   nativeFailure?: { operationID: string; sessionID: string; messageID: string; evidenceID: string; inputDigest: string }
 }
 
+/** The user resumed a failed mission through coordinator recovery: it is active again. */
+export interface MissionReopenedEvent extends MissionEventBase {
+  type: "mission.reopened"
+  expectedRevision: number
+}
+
 export interface MissionBriefedEvent extends MissionEventBase {
   type: "mission.briefed"
   actorSessionID: string
@@ -435,6 +474,7 @@ export type MissionEvent =
   | MissionTaskReportedEvent
   | MissionReportNotifiedEvent
   | MissionFinishedEvent
+  | MissionReopenedEvent
   | MissionBriefedEvent
 
 export function reduceMissionEvents(events: readonly MissionEvent[], now = Date.now()): MissionSnapshot {
@@ -456,8 +496,8 @@ export function reduceMissionEvents(events: readonly MissionEvent[], now = Date.
     version: MISSION_SCHEMA_VERSION,
     projectID: missions[0]?.projectID ?? events[0]?.projectID ?? "",
     generatedAt: now,
-    missions: missions.slice(0, MISSION_MAX_MISSIONS),
-    discardedEvents: discarded.count + Math.max(0, missions.length - MISSION_MAX_MISSIONS),
+    missions,
+    discardedEvents: discarded.count,
     ...(hasInvalidControlHistory(events) ? { controlUnavailable: true } : {}),
     ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),
   }
@@ -497,6 +537,8 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   })
 
   let stoppedForReports = false
+  // Index of the finish in effect: a resumed failure no longer finishes the mission.
+  let finishedAt = -1
   for (const event of events) {
     updatedAt = Math.max(updatedAt, event.createdAt)
     if (event.projectID !== created.projectID || event.missionID !== created.missionID) {
@@ -778,7 +820,17 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       if (report && !isCoordinatorNotificationReport(report)) discarded.count += 1
       continue
     }
-    if (event.type === "mission.finished") status = event.outcome
+    if (event.type === "mission.finished") {
+      status = event.outcome
+      finishedAt = events.indexOf(event)
+      continue
+    }
+    if (event.type === "mission.reopened") {
+      // Only a failure can be resumed, at the exact revision the user saw.
+      if (status !== "failed" || event.expectedRevision !== events.indexOf(event)) { discarded.count += 1; continue }
+      status = "active"
+      finishedAt = -1
+    }
   }
 
   for (const task of tasks.values()) {
@@ -794,10 +846,9 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
 
   const lifecycle = projectLifecycle(events)
   const firstStop = events.findIndex(event => event.type === "mission.control-requested" && event.action === "stop")
-  const firstFinished = events.findIndex(event => event.type === "mission.finished")
   // Denial receipts in the normal final-report/native-settlement interval do
   // not rewrite the already recorded terminal result. A prior Stop remains terminal.
-  const finishedBeforeStop = firstFinished >= 0 && firstFinished < firstStop
+  const finishedBeforeStop = finishedAt >= 0 && finishedAt < firstStop
   if (lifecycle.runState === "stopped" && !finishedBeforeStop) {
     status = "stopped"
     for (const task of tasks.values()) {
@@ -838,7 +889,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     status,
     ...lifecycle,
     ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),
-    summary: [...events].reverse().find((event): event is MissionFinishedEvent => event.type === "mission.finished")?.summary,
+    summary: finishedAt >= 0 ? (events[finishedAt] as MissionFinishedEvent).summary : undefined,
     coordinatorSessionId: created.coordinator.sessionID,
     actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),
     tasks: taskList,
@@ -853,6 +904,6 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   }
 }
 
-export function compareEvents(left: MissionEvent, right: MissionEvent): number {
+export function compareEvents(left: Pick<MissionEvent, "createdAt" | "id">, right: Pick<MissionEvent, "createdAt" | "id">): number {
   return left.createdAt - right.createdAt || left.id.localeCompare(right.id)
 }

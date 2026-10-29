@@ -76,7 +76,7 @@ export function missionAuthorityHandlers(authority: NativeMissionAuthority, effe
 export function rejectUnsignedMissionMutators<T extends Record<string, (...args: any[]) => any>>(handlers: T,
   namespace: "codenomad.missions" | typeof CODENOMAD_MISSIONS_AUTHORITY_RPC.id = "codenomad.missions"): T {
   return Object.fromEntries(Object.entries(handlers).map(([name, handler]) => [name,
-    (namespace === "codenomad.missions" ? name === "snapshot" || name === "cleanupTarget"
+    (namespace === "codenomad.missions" ? ["snapshot", "list", "mission", "cleanupTarget"].includes(name)
       : name === "state" || name === "challenge" || name === "receipt") ? handler
       : async () => rejectAuthority("unsigned-privileged-method"),
   ])) as T

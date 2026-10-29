@@ -7,13 +7,17 @@ Stored history, what the transcript currently displays and the model's compacted
 1. Open **Search chat history** in the conversation header, or use its configured shortcut (default **Ctrl/Cmd+F**).
 2. Select **Entire session** or **Entire workspace** and enter a search term.
 3. Enable **Include tools and thinking** if you need technical content as well as readable text.
-4. Select an excerpt, or use **Next results** to continue beyond the current page.
+4. Select an excerpt. In **Entire session**, use **Next results** to continue through chronological pages.
 
-Search is literal and case-insensitive, over stored history rather than only mounted transcript rows. Workspace scope follows the opened project's authorized directory tree and worktrees, not every project on the OpenCode service; its results are grouped by conversation, each named by its title and the worktree that currently holds it. File/image attachment bytes and opaque provider state are not searchable text.
+**Entire session** matches a literal phrase case-insensitively across stored history. **Entire workspace** ranks the opened project's authorized directory tree and worktrees using up to six query terms, showing at most 40 best results in one list. Each conversation's best hit comes first, with titles and current worktree labels kept in rank order. Query terms are highlighted in excerpts and in the destination transcript after **Open in session**. Searchable content is readable text plus the optional tools and thinking content.
 
-The progress line **This page: … results · … messages scanned** describes this result page, not workspace totals. Results arrive in batches. Skipped oversized or unsupported messages are reported; absence of a hit does not prove those messages contain no match. New messages arriving during a scan need a fresh search to be included consistently.
+Conversation pages show **This page: … results · … messages scanned** as batches arrive. Workspace search shows **Best results: …** and compact notices for partial scans or excluded directories. When ranked search is unavailable in the runtime, use **Entire session**. Skipped messages are reported; run a fresh search to include new messages.
 
 Opening an empty search does not scan history. Changing query/scope, closing the window or leaving the session cancels obsolete search work. If a read fails, use **Retry**; it does not submit a prompt or mutate history.
+
+Project scans start with up to 16,384 newest stored messages per location. **Search further back** replaces the list with the next older window's best results. The note names the examined range, from the most recent messages to later message ordinals, newest first within each project location. Results are ranked only within that window. Changing query, scope or **Include tools and thinking**, closing search or leaving the session resets the window. New messages are included by starting a fresh search.
+
+If a search window expires or its history changes, **Start fresh search** restarts from the newest messages with the same query and options. A notice explains this recovery. Ordinary read failures keep **Retry**, which retries the current window.
 
 ## Open results and use the timeline {#timeline-navigation}
 
@@ -56,7 +60,7 @@ Compaction changes the context OpenCode uses to continue the session. It is not 
 2. Review the planned tool/reasoning counts and any skipped-content warning.
 3. Confirm **Remove**. For whole-session work, follow the progress above the transcript and use its cancellation control if needed.
 
-Only eligible completed tools and reasoning are removed. Active/incomplete content is not pruned; changed content is refused rather than silently expanding what you confirmed. Final text and message/session metadata remain, but removed technical output has no undo. Preserve anything you need before confirming.
+Only eligible completed tools and reasoning are removed. Active/incomplete content is not pruned, nor is a message larger than 16 MB as OpenCode reads it (attached files included), which counts as skipped content; changed content is refused rather than silently expanding what you confirmed. Final text and message/session metadata remain, but removed technical output has no undo. Preserve anything you need before confirming.
 
 Session cleanup is not atomic across the whole session. Successful earlier removals remain if a later message conflicts or fails. **Cancellation stops future batches; it does not roll back an already dispatched batch**, which may still commit.
 

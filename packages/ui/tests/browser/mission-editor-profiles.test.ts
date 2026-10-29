@@ -1,17 +1,15 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import type {} from "./fixtures/mission-editor-lifetime"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create"
 const openOptions = (page: Page) => page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
 const openAgents = async (page: Page) => {
@@ -21,16 +19,15 @@ const openAgents = async (page: Page) => {
   await agents.click()
 }
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [solid(), shutdown.plugin, { name: "mission-editor-profiles", configureServer(s) { s.middlewares.use("/editor-profiles", async (_req, res) => {
-      res.setHeader("Content-Type", "text/html")
-      res.end(await s.transformIndexHtml("/editor-profiles", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-lifetime.tsx"></script></body></html>'))
-    }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  shutdown.own(server)
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/editor-profiles`
+  const fixture = await borrowFixture({
+      name: "mission-editor-profiles",
+      routes: [
+        { path: "/editor-profiles", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-editor-lifetime.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 
 test("inactivation cancels visible catalog demand and late responses cannot populate the fenced editor", async () => {
@@ -85,7 +82,7 @@ test("inactivation cancels visible catalog demand and late responses cannot popu
     assert.deepEqual(errors, [])
   } finally { release(); await page.close() }
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); })
 
 test("real editor sends exact coordinator/reviewer model variants and deep-held unknown creation keeps them across remount", async () => {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
@@ -282,7 +279,8 @@ test("recurring creation shares the draft, prefills its title and picks named co
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     const form = page.locator("form.mission-editor")
     assert.equal(await form.locator("details").first().locator(":scope > summary").innerText(), "Options")
-    assert.equal(await form.locator("header").count(), 0, "the panel's Create button heads the form")
+    assert.equal(await form.locator(":scope > header").count(), 0, "the panel's Create button heads the form")
+    assert.equal(await page.locator(".mission-picker-control").isVisible(), false, "the creation form replaces the current-mission line")
     assert.equal(await form.getByRole("button", { name: /start/i }).count(), 0, "creation never offers a start action; Play stays separate")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Daily review\nReview the latest work and report changes.")
     await form.getByLabel("Every day at", { exact: true }).check()
@@ -304,7 +302,8 @@ test("recurring creation shares the draft, prefills its title and picks named co
     assert.equal(await title.getAttribute("maxlength"), "60")
     assert.equal(await title.inputValue(), "Daily review")
     assert.equal(await form.locator("textarea").first().inputValue(), "Daily review\nReview the latest work and report changes.")
-    assert.equal(await form.locator('input[type="number"]').count(), 0)
+    assert.equal(await form.locator('input[type="number"]').count(), await form.locator('.mission-depth input[type="number"]').count(),
+      "the only number field is the project's native nesting depth")
     assert.doesNotMatch(await form.innerText(), /Publications|Native calls|Effect budget/)
     assert.equal(await form.getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
     const overrides = form.locator("summary").filter({ hasText: /^Agents and models$/ })

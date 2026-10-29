@@ -1,6 +1,7 @@
 export const instanceMessages = {
   "panelExtensions.section": "Расширения",
   "panelExtensions.assetsConsent": "Разрешение: чтение изображений и вложений из результатов инструментов текущей сессии, её идентификатора, языка и оформления. Без доступа к файловой системе и сети.",
+  "panelExtensions.workItemsConsent": "Разрешение: читать имя репозитория этого проекта и его issues и pull requests на GitHub, GitLab или Gitea/Forgejo (через ваш авторизованный gh, glab или tea либо анонимно для публичных репозиториев) и открывать их в браузере, а также идентификатор текущей сессии, язык и оформление. Без доступа к файловой системе и другого сетевого доступа.",
   "panelExtensions.empty": "Нет установленных расширений.",
   "panelExtensions.catalog.title": "Доступны онлайн",
   "panelExtensions.catalog.search": "Поиск расширений",

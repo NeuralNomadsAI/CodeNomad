@@ -48,6 +48,8 @@ import { registerMissionRecurrenceManual } from "./routes/mission-recurrence-man
 import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
+import { registerPanelExtensionWorkItemRoutes } from "./routes/panel-extension-work-items"
+import { ForgeWorkItems } from "../forge/work-items"
 import type { PanelExtensionStore } from "../panel-extensions/store"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
@@ -57,6 +59,8 @@ import { registerServiceUsageRoutes } from "./routes/service-usage"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
 import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
+import { ImageSettings } from "../opencode/image-settings"
+import { registerImageSettingsRoutes } from "./routes/image-settings"
 import { PROMPT_INLINE_FILE_LIMITS, ServerMeta, SESSION_ENVIRONMENT_FAILED_ERROR_CODE } from "../api-types"
 import { InstanceStore } from "../storage/instance-store"
 import type { AutoAcceptManager } from "../permissions/auto-accept-manager"
@@ -71,8 +75,11 @@ import { proxyWebSocket } from "./proxy-websocket"
 import type { PreviewManager } from "../previews/manager"
 import type { RemoteControlManager } from "../remote-control/manager"
 import { gateRemoteRequest, PAIR_EXCHANGE_PATH, PAIR_PAGE_PATH } from "../remote-control/gate"
+import { isRemoteRequest } from "../remote-control/request-origin"
 import { routedPath } from "./routed-path"
 import { buildPreviewRuntimeBridge, rewritePreviewImportMap, rewritePreviewJavaScriptImports } from "../previews/runtime-bridge"
+import { PREVIEW_SANDBOX_FLAGS } from "../previews/sandbox"
+import { parsePreviewUpgradePath } from "../previews/upgrade-path"
 import { forwardRuntimeRequest } from "../opencode/compatibility/proxy"
 import { requestAdmission } from "./request-admission"
 import { LOCATION_CONTEXT_HEADER, locationRequestOptions, readLocationContext } from "../opencode/compatibility/location"
@@ -331,6 +338,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPluginControlRoutes(app, { controls: configurationControls })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
+  registerImageSettingsRoutes(app, new ImageSettings(configurationControls, deps.workspaceManager))
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   const accounts = new ProviderAccountsService(deps.settings)
@@ -343,7 +351,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
   registerConfigFileRoutes(app)
-  registerMetaRoutes(app, { serverMeta: deps.serverMeta })
+  const remotePreviewsAllowed = () => deps.remoteControlManager.previewsAllowed()
+  registerMetaRoutes(app, { serverMeta: deps.serverMeta, remotePreviewsAllowed })
   registerEventRoutes(app, {
     eventBus: deps.eventBus,
     registerClient: registerSseClient,
@@ -387,6 +396,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
+  if (deps.panelExtensions) registerPanelExtensionWorkItemRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, forge: new ForgeWorkItems() })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger, authManager: deps.authManager })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
@@ -394,7 +404,7 @@ export function createHttpServer(deps: HttpServerDeps) {
     authManager: deps.authManager,
     logger: proxyLogger,
   })
-  setupPreviewWebSocketProxy(app, {
+  const previewUpgrade = setupPreviewWebSocketProxy(app, {
     previewManager: deps.previewManager,
     authManager: deps.authManager,
     logger: proxyLogger,
@@ -409,13 +419,14 @@ export function createHttpServer(deps: HttpServerDeps) {
 
 
   if (deps.uiDevServerUrl) {
-    setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger)
+    setupDevProxy(app, deps.uiDevServerUrl, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
   } else {
-    setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger)
+    setupStaticUi(app, deps.uiStaticDir, deps.authManager, deps.previewManager, proxyLogger, remotePreviewsAllowed)
   }
 
   return {
     instance: app,
+    previewUpgrade,
     start: async (): Promise<HttpServerStartResult> => {
       const attemptListen = async (requestedPort: number) => {
         const dualStackWildcard = isWildcardHost(deps.bindHost) && isIP(stripHostBrackets(deps.bindHost)) === 6
@@ -607,7 +618,23 @@ function setupSideCarWebSocketProxy(app: FastifyInstance, deps: SideCarWebSocket
   })
 }
 
-function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocketProxyDeps) {
+type PreviewUpgrade = (request: import("http").IncomingMessage, socket: Socket, head: Buffer) => boolean
+
+/** Returns the path-preview upgrade handler, which Remote Control reuses for the previews it serves. */
+function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocketProxyDeps): PreviewUpgrade {
+  const proxy = (request: import("http").IncomingMessage, socket: Socket, head: Buffer, parsed: { token: string; pathname: string; search: string }) => {
+    void proxyPreviewWebSocketUpgrade({
+      request,
+      socket,
+      head,
+      token: parsed.token,
+      incomingPath: parsed.pathname,
+      search: parsed.search,
+      previewManager: deps.previewManager,
+      authManager: deps.authManager,
+      logger: deps.logger,
+    })
+  }
   app.server.on("upgrade", (request, socket, head) => {
     const rawUrl = request.url ?? "/"
     const capabilityToken = parsePreviewCapabilityHost(request.headers.host)
@@ -624,19 +651,14 @@ function setupPreviewWebSocketProxy(app: FastifyInstance, deps: PreviewWebSocket
     if (!parsed) {
       return
     }
-
-    void proxyPreviewWebSocketUpgrade({
-      request,
-      socket: socket as Socket,
-      head,
-      token: parsed.token,
-      incomingPath: parsed.pathname,
-      search: parsed.search,
-      previewManager: deps.previewManager,
-      authManager: deps.authManager,
-      logger: deps.logger,
-    })
+    proxy(request, socket as Socket, head, parsed)
   })
+  return (request, socket, head) => {
+    const parsed = parsePreviewUpgradePath(request.url ?? "/")
+    if (!parsed) return false
+    proxy(request, socket, head, parsed)
+    return true
+  }
 }
 
 export function registerInstanceProxyRoutes(app: FastifyInstance, deps: InstanceProxyDeps) {
@@ -1741,6 +1763,7 @@ function setupStaticUi(
   authManager: AuthManager,
   previewManager: PreviewManager,
   logger: Logger,
+  remotePreviewsAllowed: () => boolean,
 ) {
   if (!uiDir) {
     app.log.warn("UI static directory not provided; API endpoints only")
@@ -1754,7 +1777,7 @@ function setupStaticUi(
 
   app.addHook("preHandler", (request, reply, done) => {
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
       return
     }
     done()
@@ -1776,7 +1799,7 @@ function setupStaticUi(
     }
 
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
       return
     }
 
@@ -1799,6 +1822,7 @@ function setupDevProxy(
   authManager: AuthManager,
   previewManager: PreviewManager,
   logger: Logger,
+  remotePreviewsAllowed: () => boolean,
 ) {
   app.log.info({ upstreamBase }, "Proxying UI requests to development server")
   app.setNotFoundHandler((request: FastifyRequest, reply: FastifyReply) => {
@@ -1809,7 +1833,7 @@ function setupDevProxy(
     }
 
     const session = authManager.getSessionFromRequest(request)
-    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger)) {
+    if (session && proxyPreviewFallbackFromReferer(request, reply, previewManager, logger, remotePreviewsAllowed)) {
       return
     }
 
@@ -1827,7 +1851,12 @@ function proxyPreviewFallbackFromReferer(
   reply: FastifyReply,
   previewManager: PreviewManager,
   logger: Logger,
+  remotePreviewsAllowed: () => boolean,
 ): boolean {
+  // Remote Control serves preview content only while its host allows it.
+  if (isRemoteRequest(request) && !remotePreviewsAllowed()) {
+    return false
+  }
   const rawUrl = request.raw.url ?? request.url ?? ""
   const pathname = rawUrl.split("?")[0] ?? ""
   if (!isPreviewFallbackPath(pathname)) {
@@ -2195,30 +2224,6 @@ function parseSideCarUpgradePath(rawUrl: string): { sidecarId: string; pathname:
   }
 }
 
-function parsePreviewUpgradePath(rawUrl: string): { token: string; pathname: string; search: string } | null {
-  let parsed: URL
-  try {
-    parsed = new URL(rawUrl, "http://localhost")
-  } catch {
-    return null
-  }
-
-  const match = parsed.pathname.match(/^\/previews\/([^/]+)(?:\/.*)?$/)
-  if (!match) {
-    return null
-  }
-
-  try {
-    return {
-      token: decodeURIComponent(match[1] ?? ""),
-      pathname: parsed.pathname,
-      search: parsed.search,
-    }
-  } catch {
-    return null
-  }
-}
-
 export function parsePreviewCapabilityHost(host: string | undefined): string | null {
   const hostname = host?.replace(/:\d+$/, "").toLowerCase() ?? ""
   return hostname.match(/^([0-9a-f-]{36})\.preview\.localhost$/)?.[1] ?? null
@@ -2239,6 +2244,12 @@ async function proxySideCarWebSocketUpgrade(args: {
 
   if (!isWebSocketUpgradeRequest(request)) {
     rejectUpgrade(socket, 400, "Bad Request")
+    return
+  }
+
+  // Upgrades bypass the HTTP preHandler: refuse opaque origins here as it does.
+  if (request.headers.origin === "null") {
+    rejectUpgrade(socket, 403, "Forbidden")
     return
   }
 
@@ -2404,6 +2415,12 @@ function rewritePreviewResponseHeaders(
   delete next["content-security-policy-report-only"]
   delete next["set-cookie"]
   delete next["set-cookie2"]
+  // Path previews share CodeNomad's origin: keep every document opaque however it
+  // is opened, and keep the capability path out of Referer headers to other sites.
+  if (publicBase) {
+    next["content-security-policy"] = `sandbox ${PREVIEW_SANDBOX_FLAGS}`
+    next["referrer-policy"] = "same-origin"
+  }
 
   const locationHeader = next.location
   const location = Array.isArray(locationHeader) ? locationHeader[0] : locationHeader

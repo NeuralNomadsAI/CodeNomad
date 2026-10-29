@@ -7,13 +7,17 @@ Gespeicherter Verlauf, aktuell angezeigter Gesprächsverlauf und komprimierter M
 1. Öffnen Sie **Chat-Verlauf durchsuchen** im Unterhaltungskopf oder verwenden Sie das zugewiesene Tastenkürzel (standardmäßig **Ctrl/Cmd+F**).
 2. Wählen Sie **Gesamte Sitzung** oder **Gesamter Arbeitsbereich** und geben Sie einen Suchbegriff ein.
 3. Aktivieren Sie **Werkzeuge und Denkblöcke einbeziehen**, wenn Sie neben lesbarem Text auch technische Inhalte benötigen.
-4. Wählen Sie einen Auszug oder verwenden Sie **Weitere Ergebnisse**, um nach der aktuellen Seite fortzufahren.
+4. Wählen Sie einen Auszug. Unter **Gesamte Sitzung** blättern Sie mit **Weitere Ergebnisse** durch chronologische Seiten.
 
-Die Suche ist wörtlich und unabhängig von Groß-/Kleinschreibung; sie durchsucht den gespeicherten Verlauf, nicht nur eingeblendete Zeilen. Der Arbeitsbereichsumfang folgt dem autorisierten Verzeichnisbaum und den Worktrees des geöffneten Projekts, nicht jedem Projekt des OpenCode-Dienstes; seine Ergebnisse sind nach Unterhaltung gruppiert, jeweils benannt nach ihrem Titel und dem Worktree, der sie derzeit enthält. Datei-/Bildanhangsbytes und undurchsichtiger Anbieterzustand sind kein durchsuchbarer Text.
+**Gesamte Sitzung** sucht eine wörtliche Phrase ohne Beachtung der Groß-/Kleinschreibung im gespeicherten Verlauf. **Gesamter Arbeitsbereich** durchsucht den autorisierten Verzeichnisbaum und die Worktrees des geöffneten Projekts mit bis zu sechs Suchbegriffen und zeigt höchstens 40 beste Treffer in einer Liste. Der beste Treffer jeder Unterhaltung kommt zuerst; Titel und aktuelle Worktree-Namen bleiben in Rangfolge. Begriffe werden in Auszügen und nach **In Sitzung öffnen** im Zieltranskript hervorgehoben. Durchsucht werden lesbarer Text und optional Werkzeuge und Denkblöcke.
 
-Die Fortschrittszeile **Diese Seite: … Ergebnisse · … Nachrichten durchsucht** beschreibt diese Ergebnisseite, keine Arbeitsbereichssummen. Ergebnisse kommen stapelweise. Übersprungene übergroße oder nicht unterstützte Nachrichten werden gemeldet; fehlende Treffer beweisen nicht, dass diese Nachrichten keinen Treffer enthalten. Neue Nachrichten während eines Suchlaufs benötigen eine neue Suche, um konsistent berücksichtigt zu werden.
+Unterhaltungsseiten zeigen beim Eintreffen der Stapel **Diese Seite: … Ergebnisse · … Nachrichten durchsucht**. Die Projektsuche zeigt **Beste Ergebnisse: …** sowie kompakte Hinweise auf Teilsuchen oder ausgeschlossene Verzeichnisse. Ist die sortierte Suche in der Laufzeit nicht verfügbar, verwenden Sie **Gesamte Sitzung**. Übersprungene Nachrichten werden gemeldet; starten Sie für neue Nachrichten eine neue Suche.
 
 Das Öffnen einer leeren Suche durchsucht keinen Verlauf. Änderungen an Begriff/Umfang, Schließen des Fensters oder Verlassen der Sitzung brechen veraltete Sucharbeit ab. Verwenden Sie bei einem Lesefehler **Erneut versuchen**; dies sendet keinen Prompt und ändert keinen Verlauf.
+
+Projektsuchen beginnen bei höchstens 16.384 neuesten gespeicherten Nachrichten je Ort. **Weiter zurück suchen** ersetzt die Liste durch die besten Treffer des nächsten älteren Fensters. Der Hinweis nennt den geprüften Bereich, je Projektort von neu nach alt. Die Rangfolge gilt nur innerhalb dieses Fensters. Änderungen an Suchtext, Bereich oder technischen Inhalten, Schließen der Suche oder Verlassen der Sitzung setzen das Fenster zurück. Eine neue Suche berücksichtigt neue Nachrichten.
+
+Läuft ein Suchfenster ab oder ändert sich sein Verlauf, beginnt **Neue Suche starten** mit denselben Suchbegriffen und Optionen bei den neuesten Nachrichten. Ein Hinweis erklärt die Wiederherstellung. Bei gewöhnlichen Lesefehlern wiederholt **Erneut versuchen** das aktuelle Fenster.
 
 ## Ergebnisse öffnen und Timeline nutzen {#timeline-navigation}
 
@@ -56,7 +60,7 @@ Komprimierung ändert den Kontext, mit dem OpenCode die Sitzung fortsetzt. Sie g
 2. Prüfen Sie die geplanten Werkzeug-/Denkprozesszahlen und Warnungen zu übersprungenen Inhalten.
 3. Bestätigen Sie **Entfernen**. Verfolgen Sie bei ganzen Sitzungen den Fortschritt über dem Verlauf und verwenden Sie bei Bedarf die Abbruchsteuerung.
 
-Nur geeignete abgeschlossene Werkzeuge und Denkprozesse werden entfernt. Aktive/unvollständige Inhalte werden nicht bereinigt; geänderte Inhalte werden abgelehnt, statt den bestätigten Umfang stillschweigend auszuweiten. Endgültiger Text und Nachrichten-/Sitzungsmetadaten bleiben erhalten, entfernte technische Ausgaben lassen sich aber nicht wiederherstellen. Sichern Sie benötigte Inhalte vor der Bestätigung.
+Nur geeignete abgeschlossene Werkzeuge und Denkprozesse werden entfernt. Aktive/unvollständige Inhalte werden nicht bereinigt, ebenso wenig eine Nachricht, die in der von OpenCode gelesenen Form (einschließlich angehängter Dateien) größer als 16 MB ist und als übersprungener Inhalt zählt; geänderte Inhalte werden abgelehnt, statt den bestätigten Umfang stillschweigend auszuweiten. Endgültiger Text und Nachrichten-/Sitzungsmetadaten bleiben erhalten, entfernte technische Ausgaben lassen sich aber nicht wiederherstellen. Sichern Sie benötigte Inhalte vor der Bestätigung.
 
 Sitzungsbereinigung ist nicht über die gesamte Sitzung atomar. Frühere erfolgreiche Entfernungen bleiben bestehen, wenn eine spätere Nachricht einen Konflikt oder Fehler verursacht. **Abbrechen stoppt künftige Stapel; ein bereits versandter Stapel wird nicht zurückgerollt** und kann weiterhin festgeschrieben werden.
 

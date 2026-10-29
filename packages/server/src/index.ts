@@ -528,10 +528,13 @@ async function main() {
   })
   // Decrypted Remote Control requests enter the same application as local ones.
   let remoteControlRouter: ((request: IncomingMessage, response: ServerResponse) => void) | null = null
+  let remoteControlPreviewUpgrade: ReturnType<typeof createHttpServer>["previewUpgrade"] | null = null
   const remoteControlManager = new RemoteControlManager({
     registry: new RemoteDeviceRegistry(path.join(configDir, "remote-control-devices.json")),
     lease: new RemoteControlOwnerLease(path.join(configDir, "remote-control.owner")),
     router: () => remoteControlRouter,
+    previewUpgrade: () => remoteControlPreviewUpgrade,
+    hasPreview: (token) => previewManager.get(token) !== undefined,
     tunnelApi: process.env.CODENOMAD_REMOTE_CONTROL_API?.trim() || undefined,
     logger: logger.child({ component: "remote-control" }),
   })
@@ -624,8 +627,9 @@ async function main() {
   if (httpsServer) servers.push(httpsServer)
   if (bridgeServer !== httpServer) servers.push(bridgeServer)
   // Remote Control enters the application users reach: a private listener is not it.
-  const routingApp = (options.http || nativeParent.available || !httpsServer ? httpServer : httpsServer).instance
-  remoteControlRouter = (request, response) => routingApp.routing(request, response)
+  const routingServer = options.http || nativeParent.available || !httpsServer ? httpServer : httpsServer
+  remoteControlRouter = (request, response) => routingServer.instance.routing(request, response)
+  remoteControlPreviewUpgrade = routingServer.previewUpgrade
 
   const [httpStart, httpsStart, bridgeStart] = await Promise.all([
     httpServer.start(),

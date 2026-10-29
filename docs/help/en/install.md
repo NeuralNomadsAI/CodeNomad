@@ -4,7 +4,7 @@ Choose a local desktop host or run the [standalone server](server.md). In both c
 
 ## Desktop downloads {#desktop-downloads}
 
-1. Open [the latest release](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
+1. Open [the download page](download.md).
 2. Choose the build matching your operating system and processor.
 3. Extract the ZIP or install/run the platform package, then launch CodeNomad.
 
@@ -45,7 +45,7 @@ The Electron Debian installation configures Chromium's sandbox. Do not disable t
 
 | Requirement | Where it must be available | Current requirement |
 | --- | --- | --- |
-| OpenCode CLI | Selected execution host, including the selected WSL distribution where applicable | Minimum **2.1.2**; **2.1.4** is the recommended/qualified target. Newer or custom versions undergo contract validation rather than an untested-version ban. |
+| OpenCode CLI | Selected execution host, including the selected WSL distribution where applicable | Minimum **2.1.2**; **2.2.1** is the recommended/qualified target. Newer or custom versions undergo contract validation rather than an untested-version ban. |
 | Git | CodeNomad backend account's `PATH` | Required for repository identity, Git operations and worktrees. |
 | Node.js/npm | Standalone-server and source-build host | Node.js 24 LTS; reproducible source builds use `.node-version` (**24.20.0**). Bundled with desktop runtime/installation resources. |
 | Workspace folder | Backend-accessible disk | An explicitly opened physical folder, not a device-local folder inferred by a remote browser. |

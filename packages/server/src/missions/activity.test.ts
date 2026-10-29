@@ -140,8 +140,25 @@ test("unattributed Shells do not erase positive execution, wait or queued-input 
   assert.deepEqual(await states({ ...base, inbox: { specialist: [{ id: "pending" }] } }, actors, tasks), { specialist: "queued" })
 })
 
-test("does not treat admitted report notification as coordinator consumption", async () => {
-  assert.deepEqual(await states({ sessions: { coordinator: {} } }, [actor("coordinator", "coordinator")]), { coordinator: "unknown" })
+test("an idle coordinator of a running mission owes its final report unless a report is still being delivered", async () => {
+  const coordinator = [actor("coordinator", "coordinator")]
+  assert.deepEqual(await states({ sessions: { coordinator: {} } }, coordinator), { coordinator: "idle-without-report" })
+  assert.deepEqual(await states({ sessions: { coordinator: {} }, inbox: { coordinator: [{ id: "pending" }] } }, coordinator), { coordinator: "queued" })
+  const project = async (patch: Partial<MissionMap>) => {
+    const value = snapshot(coordinator)
+    const result = await projectMissionActivity({ client: native({ sessions: { coordinator: {} } }), workspaceID: "workspace-1",
+      snapshot: { ...value, missions: [{ ...value.missions[0]!, ...patch }] }, ownsLocation: async () => true })
+    return result.missions[0]!.actors[0]!.state
+  }
+  const report = { id: "report", taskKey: "task", sessionId: "specialist", outcome: "completed" as const, summary: "Done",
+    evidence: [], next: [], createdAt: 2 }
+  assert.equal(await project({ reports: [{ ...report, notificationStatus: "pending" }] }), "unknown")
+  assert.equal(await project({ reports: [{ ...report, notificationStatus: "admitted" }] }), "idle-without-report")
+  assert.equal(await project({ reports: [{ ...report, delivery: "native-return", notificationStatus: "pending" }] }), "idle-without-report",
+    "a native return never wakes the coordinator through a notification")
+  for (const patch of [{ runState: "paused" }, { runState: "prepared" }, { status: "completed" }, { status: "failed" }] as const) {
+    assert.equal(await project(patch), "unknown", JSON.stringify(patch))
+  }
 })
 
 test("projects pending Forms and permissions without changing plan state", async () => {
@@ -217,6 +234,31 @@ test("deduplicates bounded native actor and location reads across missions", asy
   assert.equal(gets, 1)
   assert.equal(inboxes, 1)
   assert.equal(locationReads, 1)
+})
+
+test("many missions keep native reads bounded and observe running, then other active missions first", async () => {
+  let gets = 0
+  // Both edge actors are natively running: observed ones read as running, unobserved as unknown.
+  const client = native({ active: { prepared_19_6: { type: "running" }, prepared_19_7: { type: "running" } } }) as OpenCodeClient & Record<string, unknown>
+  const get = client.session.get
+  client.session.get = async (...args: Parameters<typeof get>) => { gets += 1; return get(...args) }
+  const base = snapshot([actor("unused")]).missions[0]!
+  // Newest first: 20 prepared and 30 completed missions of 8 actors each, then the oldest one running.
+  const missions: MissionMap[] = [
+    ...Array.from({ length: 20 }, (_, index) => ({ ...base, id: `msn_prepared_${index}`, runState: "prepared" as const,
+      actors: Array.from({ length: 8 }, (_, slot) => actor(`prepared_${index}_${slot}`)), tasks: [] })),
+    ...Array.from({ length: 30 }, (_, index) => ({ ...base, id: `msn_done_${index}`, status: "completed" as const,
+      actors: Array.from({ length: 8 }, (_, slot) => actor(`done_${index}_${slot}`)), tasks: [] })),
+    { ...base, id: "msn_running", actors: [actor("running_worker")], tasks: [task("running_worker")] },
+  ]
+  const result = await projectMissionActivity({ client, snapshot: { ...snapshot([]), missions }, workspaceID: "workspace-1", ownsLocation: async () => true })
+  const state = (id: string, slot = 0) => result.missions.find(item => item.missionId === id)!.actors[slot]!.state
+  assert.equal(result.missions.length, 51)
+  assert.equal(gets, 160, "one bounded read budget, however many missions")
+  assert.equal(state("msn_running"), "idle-without-report", "the oldest running mission is observed first")
+  assert.equal(state("msn_prepared_19", 6), "running", "then the other active missions")
+  assert.equal(state("msn_prepared_19", 7), "unknown", "the 161st actor is beyond the budget")
+  assert.equal(state("msn_done_0"), "unknown")
 })
 
 const binding = { generation: 1, parentSessionID: "coordinator", toolCallID: "call-one", parentMessageID: "message-one" }

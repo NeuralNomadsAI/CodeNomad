@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -38,6 +39,7 @@ before(async () => {
     await prepareInterruptionDock(server)
     url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
   } catch (error) {
     try { await disposeFixture() }
     catch (cleanupError) { throw new AggregateError([error, cleanupError], "Interruption fixture setup and cleanup failed") }

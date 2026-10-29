@@ -45,7 +45,7 @@ test("lost control replies read exact request/revision status without starting J
     assert.equal((db.prepare("SELECT value FROM kv").get() as { value: string }).value, bytes)
     const due = { kind: "manual" as const, requestID: "manual_one", expectedRevision: 2, at: 2 }
     const passageID = recurrencePassageID(stableToken("project\0/project", 24), "schedule_one", 0, due)
-    const passage = { id: passageID, messageID: recurrenceMessageID(passageID), coordinatorSessionID: recurrenceCoordinatorSessionID("project", passageID), scheduleRevision: 0, createdAt: 2, due }
+    const passage = { id: passageID, messageID: recurrenceMessageID(passageID), coordinatorSessionID: recurrenceCoordinatorSessionID("project", passageID, 2), scheduleRevision: 0, createdAt: 2, due }
     const manualDoc = { ...doc, revision: 3, pending: { passage, admission: null } }
     db.prepare("UPDATE kv SET value=? WHERE key=?").run(JSON.stringify(manualDoc), key)
     const manualInput = { scheduleID: "schedule_one", requestID: "manual_one", expectedRevision: 2 }

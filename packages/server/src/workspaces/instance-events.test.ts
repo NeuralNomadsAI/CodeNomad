@@ -412,6 +412,70 @@ describe("InstanceEventBridge", () => {
     }
   })
 
+  it("pulses only the recipient whose ownership lookup keeps failing, backing off while it persists", async (t) => {
+    const gates = [deferred<void>(), deferred<void>()]
+    let failedOwnerChecks = 0
+    const asked = (id: string) => ({ type: "permission.asked", location: { directory: "/repo-b" }, data: { id } }) as OpenCodeEvent
+    const manager = {
+      list: () => [{ id: "failed", path: "/repo-a" }, { id: "owner", path: "/repo-b" }],
+      ownsDirectory: async (workspaceId: string) => {
+        if (workspaceId === "owner") return true
+        failedOwnerChecks++
+        throw new Error("persistent lookup failure")
+      },
+      subscribeToSharedService: async (signal?: AbortSignal) => (async function* () {
+        yield serverConnected()
+        yield asked("p1")
+        await gates[0].promise
+        yield asked("p2")
+        await gates[1].promise
+        yield asked("p3")
+        await new Promise<void>((resolve) => signal?.addEventListener("abort", () => resolve(), { once: true }))
+      })(),
+    } as unknown as WorkspaceManager
+    const bus = new EventBus()
+    const received: string[] = []
+    const pulses: string[] = []
+    bus.on("instance.event", (event) => {
+      if (event.event.type !== "server.connected") received.push(`${event.instanceId}:${(event.event.data as { id: string }).id}`)
+    })
+    bus.on("instance.eventStatus", (event) => {
+      if (event.status === "error") pulses.push(`${event.instanceId}:${event.reason}`)
+      else if (pulses.length && event.status === "connected") pulses.push(`${event.instanceId}:connected`)
+    })
+    const bridge = new InstanceEventBridge({ workspaceManager: manager, eventBus: bus, logger })
+    const settled = async (check: () => boolean) => {
+      for (let i = 0; i < 200 && !check(); i++) await new Promise<void>((resolve) => setImmediate(resolve))
+      assert.ok(check())
+    }
+    const pulse = ["failed:event routing failed", "failed:connected"]
+
+    try {
+      bus.publish({ type: "workspace.started", workspace: manager.list()[0] as any })
+      await waitFor(() => received.length === 1 && pulses.length === 2)
+      assert.deepEqual(received, ["owner:p1"])
+      assert.deepEqual(pulses, pulse, "an unroutable event reconciles that recipient alone, immediately")
+      assert.equal(failedOwnerChecks, 2, "a failed lookup is retried once, then never cached")
+
+      t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: Date.now() })
+      gates[0].resolve()
+      await settled(() => received.length === 2 && failedOwnerChecks === 4)
+      assert.deepEqual(pulses, pulse, "a failure inside the interval waits for the trailing pulse")
+      t.mock.timers.tick(5000)
+      assert.deepEqual(pulses, [...pulse, ...pulse])
+
+      gates[1].resolve()
+      await settled(() => received.length === 3 && failedOwnerChecks === 6)
+      t.mock.timers.tick(9999)
+      assert.equal(pulses.length, 4, "a persisting failure doubles the interval")
+      t.mock.timers.tick(1)
+      assert.deepEqual(pulses, [...pulse, ...pulse, ...pulse])
+      assert.deepEqual(received, ["owner:p1", "owner:p2", "owner:p3"])
+    } finally {
+      bridge.shutdown()
+    }
+  })
+
   it("does not publish to an owner stopped during an ownership retry", async () => {
     const retry = deferred<boolean>()
     let checks = 0

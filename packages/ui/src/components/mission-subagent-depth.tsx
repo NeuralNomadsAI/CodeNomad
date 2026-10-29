@@ -135,14 +135,17 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
       placeholder={t("missions.depth.inherit")} aria-describedby={description} value={state().draft} disabled={disabled()} readOnly={locked()}
       onInput={event => entry().state[1]({ ...state(), draft: event.currentTarget.value, invalidInput: event.currentTarget.validity.badInput, rejected: false, dirty: true, saved: false })}
       onChange={commit} onKeyDown={event => {
-        if (event.key === "Enter") commit()
+        // Enter saves the depth only, never the enclosing mission form.
+        if (event.key === "Enter") { event.preventDefault(); commit() }
         else if (event.key === "Escape" && state().dirty && !locked()) { event.preventDefault(); event.stopPropagation(); discard() }
       }} ref={field} /></label>
     <span id={description} class="sr-only">{t("missions.depth.hint")}</span>
     <div class="window-actions">
       {/* Pressing the button keeps focus in the field, so leaving it cannot first save the typed value.
           While a read or write runs it stays focusable and inert rather than disabled. */}
-      <button type="button" class="window-action" disabled={disabled() || state().draft === "" && !state().dirty} aria-disabled={locked() ? "true" : undefined}
+      {/* Also available when an empty project experimental block hides the inherited depth. */}
+      <button type="button" class="window-action" disabled={disabled() || state().draft === "" && !state().dirty && !state().snapshot?.project?.emptyExperimental}
+        aria-disabled={locked() ? "true" : undefined}
         onPointerDown={event => event.preventDefault()} onClick={inherit}>{t("missions.depth.inherit")}</button>
       {/* Clean values revalidate by themselves; refreshing is only a recovery step. */}
       <Show when={state().error || ["uncertain", "confirming"].includes(state().phase)}>

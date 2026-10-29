@@ -11,9 +11,10 @@ import { getLogger } from "../lib/logger"
 import { isExecutionTerminalEvent } from "../lib/native-execution-events"
 import { createCompactionDeltaBuffer } from "./compaction-delta-buffer"
 import {
-  boundedTranscript, eventAffectsMessages, eventMayAppendMessage, eventSessionId,
+  boundedTranscript, eventAffectsMessages, eventMayAppendMessage, eventSessionId, invalidatesFetchedPage,
   MAX_TRANSCRIPT_MESSAGES,
 } from "./opencode-data-events"
+import { mergePageWithSnapshot, snapshotRows, type OpenCodeRowSnapshot } from "./opencode-data-read-merge"
 import { createReconnect, type ReconnectCapture } from "./opencode-reconnect"
 
 const log = getLogger("session")
@@ -21,7 +22,6 @@ const log = getLogger("session")
 type DataEntry = {
   data: Data
   emit: (event: OpenCodeEvent) => void
-  fencePendingReads: (sessionId: string) => void
   syncMessages: (sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) => Promise<boolean>
   syncAuthoritative: (sessionId: string, isCurrent: () => boolean) => Promise<boolean>
   dispose: () => void
@@ -67,6 +67,9 @@ type TranscriptEntry = {
   retryCount: number
   retryTimer?: ReturnType<typeof setTimeout>
   retireWhenDrained: boolean
+  /** Admitted `session.execution.started` events; a settlement's publication
+   * fence is a newer execution, not same-round activity. */
+  executionEpoch: number
   queue: QueuedTranscriptEvent[]
   onResynced?: (data: Data) => void
 }
@@ -81,6 +84,8 @@ const MAX_TRANSCRIPT_REPLAY_CHUNK = 64
 const TRANSCRIPT_RESYNC_QUIET_MS = 25
 const TRANSCRIPT_RETRY_DELAY_MS = 25
 const MAX_TRANSCRIPT_RETRY_DELAY_MS = 1000
+// The page size of the SDK's own `message.sync`.
+const SDK_MESSAGE_PAGE_SIZE = 20
 const entries = new Map<string, DataEntry>()
 const transcriptEntries = new Map<string, TranscriptEntry>()
 const mutationRevisions = new Map<string, ReturnType<typeof createSignal<number>>>()
@@ -143,7 +148,8 @@ export function getOpenCodeInstanceGeneration(instanceId: string): number {
 function createDataEntry(instanceId: string, directory: string): DataEntry {
   const listeners = new Set<(event: { name: OpenCodeEvent["type"]; details: OpenCodeEvent }) => void>()
   const messageSnapshots = new Map<string, SessionMessageInfo[]>()
-  const eventRevisions = new Map<string, number>()
+  // Bumped only by events that make a fetched page obsolete.
+  const destructiveRevisions = new Map<string, number>()
   const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
   let disposed = false
   return createRoot((dispose) => {
@@ -169,26 +175,29 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
               return async (input: { sessionID: string }, options?: unknown) => {
                 // Native terminal-tool reconciliation replaces its cache after
                 // awaiting this response, without fencing intervening events.
-                // Keep the live projection until one trailing read is current;
-                // never merge an obsolete page into newer streaming messages.
+                // A destructive event during the fetch makes the page obsolete
+                // and restarts the read; streamed events only extend it, so the
+                // page merges with the rows they created or changed.
                 for (;;) {
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
                   // A current native page can already contain buffered text.
-                  // Reduce it before taking read authority, never append it
-                  // again to a page that was fetched after delta admission.
+                  // Reduce it before the row snapshot, never append it again
+                  // to a page that was fetched after delta admission.
                   compactionDeltas.flush(instanceId, input.sessionID)
                   const snapshot = messageSnapshots.get(input.sessionID)
                   if (snapshot) return { data: [...snapshot].reverse(), cursor: {} }
-                  const revision = eventRevisions.get(input.sessionID) ?? 0
+                  const revision = destructiveRevisions.get(input.sessionID) ?? 0
+                  const since = snapshotRows(data.session.message.list(input.sessionID))
                   const response = await (client.message.list as any)(input, options)
                   if (disposed || getOpenCodeInstanceGeneration(instanceId) !== instanceGeneration) {
                     throw new Error("Stale read from disposed OpenCode projection")
                   }
                   compactionDeltas.flush(instanceId, input.sessionID)
-                  if ((eventRevisions.get(input.sessionID) ?? 0) !== revision) continue
-                  return response
+                  if ((destructiveRevisions.get(input.sessionID) ?? 0) !== revision) continue
+                  const live = data.session.message.list(input.sessionID)
+                  return { ...response, data: mergePageWithSnapshot(live, response.data, since) }
                 }
               }
             },
@@ -207,18 +216,17 @@ function createDataEntry(instanceId: string, directory: string): DataEntry {
     })
     const emit = (details: OpenCodeEvent) => {
       // Isolated fresh-entry resyncs already fence their entire transaction.
-      // Only events applied to this reducer invalidate its own pending reads.
+      // Only destructive events applied to this reducer restart its own reads.
       const sessionId = eventSessionId(details)
-      if (sessionId) eventRevisions.set(sessionId, (eventRevisions.get(sessionId) ?? 0) + 1)
+      if (sessionId && invalidatesFetchedPage(details.type)) {
+        destructiveRevisions.set(sessionId, (destructiveRevisions.get(sessionId) ?? 0) + 1)
+      }
       for (const listener of listeners) listener({ name: details.type, details })
     }
     return {
       data,
       emit(details: OpenCodeEvent) {
         emit(details)
-      },
-      fencePendingReads(sessionId: string) {
-        eventRevisions.set(sessionId, (eventRevisions.get(sessionId) ?? 0) + 1)
       },
       async syncMessages(sessionId: string, messages: SessionMessageInfo[], isCurrent: () => boolean) {
         messageSnapshots.set(sessionId, messages)
@@ -284,6 +292,7 @@ function ensureTranscript(instanceId: string, sessionId: string, directory: stri
     resyncGeneration: 0,
     retryCount: 0,
     retireWhenDrained: false,
+    executionEpoch: 0,
     queue: [],
   }
   transcriptEntries.set(key, transcript)
@@ -681,6 +690,13 @@ export function applyOpenCodeDataEvent(
   if (typeof sessionId === "string" && !coalesced) {
     const key = messageRevisionKey(instanceId, sessionId)
     fullDataRevisions.set(key, (fullDataRevisions.get(key) ?? 0) + 1)
+    if (event.type === "session.execution.started") {
+      // Publication fence for a settlement's reconciliation read: only a newer
+      // execution supersedes it, never same-round activity such as a late
+      // terminal tool event.
+      const transcript = transcriptEntries.get(key)
+      if (transcript) transcript.executionEpoch += 1
+    }
     if (eventAffectsMessages(event)) messageRevisions.set(key, (messageRevisions.get(key) ?? 0) + 1)
     if (event.type === "session.inbox.cancelled" || event.type === "session.revert.committed") bumpMutationRevision(key)
     if (skipUnobservedCompaction && event.type.startsWith("session.compaction.") && !transcriptEntries.has(key)) {
@@ -717,9 +733,9 @@ export function applyOpenCodeDataEvent(
       return transcript.entry.data
     }
     if (event.type === "session.compaction.delta" && !coalesced) {
-      // Admission fences both CodeNomad and SDK reads immediately, even though
-      // the reactive payload is reduced only once per interval.
-      entry.fencePendingReads(sessionId)
+      // The message revision above fences CodeNomad reads at admission, even
+      // though the reactive payload is reduced only once per interval. SDK
+      // reads flush the buffer before and after their fetch instead.
       if (admission) admission.deferred = true
       compactionDeltas.push(instanceId, sessionId, event, { instanceId, directory, onDeferred, onResynced, publication: admission?.publication })
       return entry.data
@@ -782,7 +798,60 @@ export function getOpenCodeSessionInbox(instanceId: string, sessionId: string, d
 }
 
 export async function syncOpenCodeSessionInbox(instanceId: string, sessionId: string, directory: string): Promise<void> {
-  await ensureTranscript(instanceId, sessionId, directory).entry.data.session.pending.sync(sessionId)
+  const transcript = ensureTranscript(instanceId, sessionId, directory)
+  const admitted = new Set(transcript.entry.data.session.pending.list(sessionId).map((item) => item.id))
+  await transcript.entry.data.session.pending.sync(sessionId)
+  // An item the reducer admitted that the authoritative inbox no longer lists
+  // was delivered or cancelled without events; a delivery's user message may
+  // never be admitted either. The disappearance owes the settlement read that
+  // reconciles both; nothing invalidated the SDK's message key, so it does
+  // here (an owed dropping-mode resync keeps the projection fenced).
+  const remaining = new Set(transcript.entry.data.session.pending.list(sessionId).map((item) => item.id))
+  if ([...admitted].some((id) => !remaining.has(id))) {
+    const current = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+    if (current === transcript && isTranscriptCurrent(instanceId, sessionId, transcript)) {
+      transcript.entry.data.session.message.invalidate(sessionId)
+      completeSettlementRead(instanceId, sessionId, transcript)
+    }
+  }
+}
+
+/** The session reducer's rows when a REST load starts its fetch. */
+export function captureOpenCodeRowSnapshot(instanceId: string, sessionId: string): OpenCodeRowSnapshot {
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  return snapshotRows(transcript ? transcript.entry.data.session.message.list(sessionId) : [])
+}
+
+/** Merges a REST-loaded page (newest first) with the reducer rows created or
+ * changed since `since`, as the reducer's own reads do. */
+export function mergeOpenCodeLoadedPage(
+  instanceId: string,
+  sessionId: string,
+  page: SessionMessageInfo[],
+  since: OpenCodeRowSnapshot,
+): SessionMessageInfo[] {
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  return transcript ? mergePageWithSnapshot(transcript.entry.data.session.message.list(sessionId), page, since) : page
+}
+
+/** Fills a session reducer that holds no rows with the newest rows of a loaded
+ * page: it ignores streamed events for messages it does not hold, so a message
+ * that was already streaming when the session opened would stay frozen. */
+export async function seedOpenCodeSessionMessages(
+  instanceId: string,
+  sessionId: string,
+  directory: string,
+  page: SessionMessageInfo[],
+): Promise<void> {
+  const transcript = ensureTranscript(instanceId, sessionId, directory)
+  if (transcript.rotating || transcript.resyncing || transcript.needsAuthoritativeResync || transcript.reconnectResync) return
+  if (transcript.entry.data.session.message.list(sessionId).length) return
+  try {
+    // The loaded page (oldest first) gives the SDK's own latest page without another read.
+    await transcript.entry.syncMessages(sessionId, page.slice(-SDK_MESSAGE_PAGE_SIZE), () => true)
+  } catch (error) {
+    log.warn("Failed to seed OpenCode session messages", { instanceId, sessionId, error })
+  }
 }
 
 // The reduce store mutates message rows in place (Solid `produce`), so list and
@@ -853,9 +922,63 @@ export function finishOpenCodeDataEvent(instanceId: string, event: OpenCodeEvent
   if (!transcript) return
   // The caller has projected the synchronous page. Queued terminal updates and
   // overflow recovery must publish their final page before releasing its reducer.
-  if (isExecutionTerminalEvent(event)) transcript.retireWhenDrained = true
+  if (isExecutionTerminalEvent(event)) {
+    transcript.retireWhenDrained = true
+    // The SDK's own settlement refresh (a terminal event with a still streaming
+    // or running tool invalidates and re-reads messages) is skipped while the
+    // stream is not connected and never publishes its result. Finish it here:
+    // this sync shares the SDK's in-flight read when connected and starts it
+    // when not, then projects the reconciled page without touching the display
+    // window's membership. A newer execution supersedes the publication;
+    // same-round activity does not.
+    if (hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) {
+      completeSettlementRead(instanceId, sessionId, transcript)
+    }
+  }
   // A settlement deferred by parked or running work completes once that clears.
   retireDrainedTranscript(instanceId, sessionId, transcript)
+}
+
+/** Finish the SDK's own settlement read for this transcript: share its
+ * in-flight read when connected, start it when not, then project the
+ * reconciled page without touching the display window's membership. A newer
+ * admitted execution supersedes the publication; same-round activity does
+ * not. */
+function completeSettlementRead(instanceId: string, sessionId: string, transcript: TranscriptEntry): void {
+  const epoch = transcript.executionEpoch
+  void transcript.entry.data.session.message.sync(sessionId)
+    .catch(() => undefined)
+    .then(() => {
+      // Publish unless a newer execution superseded this settlement:
+      // same-round activity (a late terminal tool event) must not
+      // suppress the repair.
+      if (!isTranscriptCurrent(instanceId, sessionId, transcript)
+        || transcript.executionEpoch !== epoch) return
+      projectOpenCodeMessages(instanceId, sessionId, transcript.entry.data, true)
+      retireDrainedTranscript(instanceId, sessionId, transcript)
+    })
+}
+
+/** Non-event settlement evidence: the liveness activity read observed a run
+ * the UI still believed working has settled, so the terminal event may never
+ * be delivered. The observation owes the same settlement read the terminal
+ * event would have finished. */
+export function observeNonEventSettlement(instanceId: string, sessionId: string): void {
+  const transcript = transcriptEntries.get(messageRevisionKey(instanceId, sessionId))
+  if (!transcript || !isTranscriptCurrent(instanceId, sessionId, transcript)) return
+  if (!hasUnsettledToolRow(transcript.entry.data.session.message.list(sessionId))) return
+  // Unlike a terminal event, nothing invalidated the SDK's message key; a key
+  // an earlier sync completed would make this read a no-op.
+  transcript.entry.data.session.message.invalidate(sessionId)
+  completeSettlementRead(instanceId, sessionId, transcript)
+}
+
+/** The SDK reducer's own settlement-refresh condition: an assistant tool whose
+ * terminal event may still be owed (or was swallowed from `streaming`). */
+function hasUnsettledToolRow(messages: SessionMessageInfo[]): boolean {
+  return messages.some((message) => message.type === "assistant"
+    && message.content.some((part) => part.type === "tool"
+      && (part.state.status === "streaming" || part.state.status === "running")))
 }
 
 export function destroyOpenCodeData(instanceId: string, sessionId?: string): void {

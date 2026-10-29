@@ -37,6 +37,7 @@ for (const version of ["0.0.0-beta-19425", "future-release", undefined]) {
         app: { version },
         options: { databasePath: filename },
         location,
+        tool: { transform: async () => ({ dispose: async () => {} }) },
         session: { get: async () => ({ location: { directory: root, workspaceID }, projectID: "p" }) },
         storage: {
           set: async (key: string, value: unknown) => {

@@ -4,10 +4,10 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 
 ## Erstellen, dann ausdrücklich starten {#create}
 
-1. Öffnen Sie **Missionen** im rechten Panel und wählen Sie **Mission erstellen**.
+1. Öffnen Sie **Missionen** im rechten Panel und wählen Sie **Mission erstellen**. Das Formular ersetzt die Missionsliste und die Aufgaben der ausgewählten Mission, bis Sie erstellen oder abbrechen.
 2. Füllen Sie **Was soll die Mission tun?** aus und prüfen Sie **Titel**, der aus dem ersten Satz vorbelegt wird (bis 60 Zeichen).
 3. Wählen Sie unter **Wann** entweder **Einmal** oder **Täglich um**. Prüfen Sie für tägliche Arbeit die angezeigte Zeitzone; **Ändern** erlaubt eine IANA-Zone.
-4. Klappen Sie **Optionen** für **Playbook**, **Notizen**, **Agenten und Modelle**, **Aufgabensitzungen**, gespeicherte Aufträge und optional verfolgte Unterhaltungen auf. Mit **Zwei Modelle vergleichen** erscheinen die Auswahlfelder **Modell A** und **Modell B** im Hauptformular.
+4. Klappen Sie **Optionen** für **Playbook**, **Notizen**, **Agenten und Modelle**, **Aufgabensitzungen**, die **Verschachtelungstiefe der Untersitzungen** des Projekts, gespeicherte Aufträge und optional verfolgte Unterhaltungen auf. Mit **Zwei Modelle vergleichen** erscheinen die Auswahlfelder **Modell A** und **Modell B** im Hauptformular.
 5. Wählen Sie **Erstellen**. Wählen Sie den neuen Eintrag und verwenden Sie bei Bereitschaft die separate ▶-Aktion: **Mission starten** für einmalige Arbeit oder **Zeitplan {id} starten** für einen täglichen Zeitplan.
 
 **Erstellen startet niemals Arbeit.** Eine einmalige Mission ist vorbereitet; ein täglicher Zeitplan pausiert. Weder Erstellen noch das Speichern eines Auftrags aktiviert einen Timer. Die Erstellung gilt für das ausgewählte Projekt/die Location und friert angeforderte Profile sowie die Aufgabensitzungsrichtlinie ein. Validierung steht neben dem betroffenen Feld; eine Verweigerung mit dem Hinweis, dass nichts gesendet wurde, lässt den Entwurf zur Korrektur verfügbar. Der Koordinator einer einmaligen Mission kann auch eine separate Mission für Sie vorbereiten, etwa eine Folgemission: Sie erscheint in der Liste als **Vorbereitet** und startet wie jede Mission nur über ihre ▶-Aktion.
@@ -45,6 +45,22 @@ Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und
 
 Der Graph enthält abgeschlossene und zurückgezogene Arbeit. Eine Aufgabe zurückzuziehen stoppt nicht von selbst deren Unterhaltung. In einer einmaligen Mission kann der Koordinator die Unterhaltungen einer zurückgezogenen Aufgabe, die er als nativen Subagenten gestartet hat, separat stoppen, ohne andere Aufgaben zu berühren. **In Arbeit** ist der Lebenszykluszustand der Mission, kein Beweis, dass der Koordinator gerade läuft. Vollständiger Text gehört in die zentrale Leseansicht, nicht die Aufgabenliste des Panels; **Technische Details** klappt Kennungen und angeforderte Ausführungsinformationen ein.
 
+### Farben und unterbrochene Missionen {#status-colours}
+
+Missionsmarkierungen, Aufgabensymbole und das Chevron der Liste verwenden die Farben der Sitzungsliste: Farbe zeigt nur, was Sie jetzt braucht.
+
+| Farbe | Bedeutung |
+| --- | --- |
+| Rot | Eine Antwort von Ihnen wird erwartet; sie steht unter **Braucht Sie**. |
+| Gelb, pulsierend | Es wird gearbeitet. |
+| Orange | Die Mission ist pausiert oder unterbrochen, mit einer Aktion zum Fortsetzen. |
+| Grün | Eine abgeschlossene Mission, die Sie in diesem Fenster noch nicht geöffnet haben; sie wird neutral, sobald Sie sie auswählen. |
+| Blau | Eine vorbereitete Mission, bereit zum Start wie ein verfasster Prompt. |
+
+Alles andere ist neutral, auch erledigte und fehlgeschlagene Aufgaben: Ergebnisse stehen im Statustext und in den Symbolen. Ist die Liste eingeklappt, übernimmt ihr Chevron die dringendste Farbe aus Rot, Gelb und Grün unter den anderen Missionen; wie bei eingeklappten Sitzungen erscheinen Orange und Blau nur in ihren eigenen Zeilen.
+
+Eine Mission ist **Unterbrochen**, wenn ihr Koordinator ohne Abschluss angehalten hat, während nichts anderes läuft. Eine als **Fehlgeschlagen** angezeigte Mission kann ebenfalls fortgesetzt werden. In beiden Fällen wird die erste Schaltfläche der Werkzeugleiste zu **Unterbrochene Mission wiederherstellen**: Sie bittet den Koordinator, anhand des gespeicherten Plans und der Ergebnisse neu zu bewerten, und öffnet eine fehlgeschlagene Mission zuvor wieder. Ein Koordinator beendet eine einmalige Mission nicht als fehlgeschlagen: Kommt er allein nicht weiter, stellt er Ihnen eine Frage unter **Braucht Sie**. Nur Sie stoppen eine Mission.
+
 ### Lageberichte und Aktualisierungsanfragen {#briefings}
 
 Der Koordinator erhält die Anweisung, nach dem ersten Plan, nach Aufgabenerledigungen, beim Warten auf Menschen und vor dem Abschlussbericht einen Projektlagebericht zu veröffentlichen. Dies ist eine verfasste Einschätzung, kein Live-Aktivitätszähler oder garantierter periodischer Heartbeat. Ein Hinweis kennzeichnet Änderungen der Karte seit dem Lagebericht.
@@ -57,7 +73,7 @@ Verwenden Sie **Update anfordern** unter der Symbolleiste für eine neue Koordin
 2. Wählen Sie unter **Anwenden auf** entweder **Alle Missionen** oder ein Playbook und legen Sie dann **Aufgabensitzungen** sowie unter **Agenten und Modelle** eine Zeile pro Rolle fest (Koordinator, dann die Rollen des Playbooks). Jede Auswahl wird sofort gespeichert; es gibt keine Speichern-Schaltfläche.
 3. In einem Playbook-Bereich zeigen die Zeilen die globalen Werte mit der Kennzeichnung **Global**. Das Ändern eines Felds passt diese Rolle ausgehend von ihnen an; ihr Zurücksetzen-Symbol verwendet wieder die globalen Werte. **Zurücksetzen** (nach Bestätigung) löscht nur die Agenten und Modelle des angezeigten Bereichs.
 4. Verwenden Sie beim Erstellen **Optionen → Agenten und Modelle** für bestimmte angeforderte Profile; **Gespeicherte Standardwerte verwenden** stellt die gespeicherten wieder her.
-5. Bearbeiten Sie für native Rekursionsgrenzen **Verschachtelungstiefe der Untersitzungen → Vorgegebene Tiefe für das Projekt**. Enter oder das Verlassen des Felds speichert einen geänderten gültigen Wert; **Erben** speichert sofort; Escape verwirft einen ungespeicherten Wert.
+5. Bearbeiten Sie für native Rekursionsgrenzen **Verschachtelungstiefe der Untersitzungen → Vorgegebene Tiefe für das Projekt**, hier oder beim Erstellen unter **Optionen**. Enter oder das Verlassen des Felds speichert einen geänderten gültigen Wert; **Erben** speichert sofort; Escape verwirft einen ungespeicherten Wert.
 
 | Einstellung | Geltungsbereich und Wirkung |
 | --- | --- |
@@ -65,7 +81,7 @@ Verwenden Sie **Update anfordern** unter der Symbolleiste für eine neue Koordin
 | Agent / Modell / Denken | Bei Erstellung erfasste Koordinator-/Rollenauswahl; ein beschäftigter Akteur wird für spätere Arbeit nicht stillschweigend umgestellt. Tägliche Läufe verwenden ihre eingefrorenen angeforderten Profile erneut. |
 | Native Subagenten | Aufgabensitzungen verwenden native subagent/all-Agenten unter dem Koordinator. |
 | Unabhängige Sitzungen | Erklärte Aufgabensitzungen verwenden primary/all-Agenten und unabhängige Unterhaltungen; dies deaktiviert keine internen nativen Helfer. |
-| Verschachtelungstiefe der Untersitzungen | Projektkonfiguration für **alle** dortigen OpenCode-Unterhaltungen, nicht nur Missionen. Leer bedeutet Vererbung. Speichern lädt OpenCode nicht neu und ändert keine laufenden Unterhaltungen. |
+| Verschachtelungstiefe der Untersitzungen | Projektkonfiguration für **alle** dortigen OpenCode-Unterhaltungen, nicht nur Missionen. Leer bedeutet Vererbung: **Erben** entfernt die Projektüberschreibung und einen dadurch leer gewordenen `experimental`-Block. OpenCode liest den `experimental`-Block des Projekts als Ganzes, sodass dort verbleibende andere experimentelle Einstellungen die globale Tiefe weiterhin verdecken. Speichern lädt OpenCode nicht neu und ändert keine laufenden Unterhaltungen. |
 
 **Nativer Standard** und **Global** unterscheiden sich: Ersteres fordert die eigenen Standards von OpenCode an, Letzteres erbt die globale Auswahl; native Standards in einem Playbook-Bereich zu wählen bleibt eine ausdrückliche Ausnahme. Katalogverfügbarkeit wird geprüft; ein angefordertes Profil beweist nicht das aktuell verwendete Profil einer Unterhaltung. Native Berechtigungen und konfigurierte Tiefe regeln interne Helferaufrufe weiterhin in beiden Aufgabenmodi.
 
@@ -102,7 +118,7 @@ Auch die Erstellungszeit begrenzt zulässige tägliche Arbeit; der Start eines n
 | --- | --- |
 | CodeNomad-Projekt-Tab | Schließt das Projekt in CodeNomad; native Sitzungen laufen in OpenCode weiter. Öffnen Sie das Projekt erneut, um sie wiederzufinden. |
 | Ganzes Fenster, App beenden oder Renderer neu laden | Bewahrt Projektverbindungen für die Wiederherstellung; stoppt weder native Arbeit noch den OpenCode-Dienst. |
-| CodeNomad-Backend | Stoppt OpenCode nicht. Einmalige CodeNomad-Koordination hängt von der Backend-Präsenz ab; nehmen Sie keine weitere Verfügbarkeit neuer einmaliger Vergaben/Steuerung bei geschlossenem Backend an. |
+| CodeNomad-Backend | Stoppt OpenCode nicht. Eine laufende einmalige Mission läuft weiter: Ihr Koordinator, ihre Aufgaben als native Subagenten und die Missionswerkzeuge laufen in OpenCode. Das Zuweisen von Aufgaben an unabhängige Sitzungen und das Zustellen ihrer Berichte an den Koordinator, vom Koordinator vorbereitete Missionen, das Stoppen der Unterhaltungen einer zurückgezogenen Aufgabe, Wiederherstellung und die Missionszentrale warten auf das Backend, ebenso das Fortsetzen einer einmaligen Mission nach einem OpenCode-Dienstneustart. |
 | Laufender täglicher Zeitplan | Uhr und Durchlauf laufen im OpenCode-Plugin/-Dienst, auch bei geschlossener CodeNomad-Oberfläche und Backend. Ausführungshost und OpenCode-Dienst müssen weiterlaufen. |
 | OpenCode-Dienstneustart | Verliert prozesslokale Zeitplanjobs. Ein auf laufend gesetzter Zeitplan wird **Unterbrochen** bis zu einem ausdrücklichen **Fortsetzen**; erneutes Öffnen von CodeNomad aktiviert ihn nicht wieder. |
 
@@ -140,6 +156,6 @@ Verwenden Sie **Ausgewählte Mission bearbeiten** für eine bearbeitbare einmali
 2. Wählen Sie optional vor dem Bestätigen **Auch die für diese Mission erstellten Fachunterhaltungen löschen**.
 3. Prüfen Sie **Gespräche bereinigen** auf entfernt/behalten/offen-Zahlen. Wiederholen Sie gegebenenfalls nur die verbleibende erfasste Bereinigung.
 
-Eine Mission zu löschen ist nicht dasselbe wie sie zu stoppen; verwenden Sie zuerst Stop und prüfen Sie verbleibende Arbeit. Koordinatoren und wiederverwendete Unterhaltungen bleiben erhalten. Auch geteilte, verschobene oder nicht nachweislich zugehörige Spezialisten-Unterhaltungen sowie solche mit Untersitzungen können erhalten bleiben. Teilbereinigung wird nicht zurückgerollt und nicht stillschweigend im Hintergrund abgeschlossen. Abgeschlossener Bereinigungsverlauf bleibt in der Übersicht verfügbar.
+Eine Mission zu löschen ist nicht dasselbe wie sie zu stoppen; verwenden Sie zuerst Stop und prüfen Sie verbleibende Arbeit. Koordinatoren und wiederverwendete Unterhaltungen bleiben erhalten. Auch geteilte, verschobene oder nicht nachweislich zugehörige Spezialisten-Unterhaltungen sowie solche mit Untersitzungen können erhalten bleiben. Teilbereinigung wird nicht zurückgerollt und nicht stillschweigend im Hintergrund abgeschlossen. Die Übersicht behält die 20 zuletzt abgeschlossenen Bereinigungen. Gelöschte Missionen geben ihren Speicher im Projekt frei: Ältere gelöschte Missionen werden automatisch entfernt.
 
 Siehe [Berechtigungen](permissions.md), [Unterhaltungen](conversations.md) und [OpenCode-Einrichtung](opencode.md) für native Arbeit und Dienststeuerung.

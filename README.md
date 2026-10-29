@@ -8,7 +8,9 @@ CodeNomad is a **desktop and browser workspace for OpenCode V2** — built for d
 
 ![CodeNomad 0.20 workspace with project tabs, nested sessions, a conversation timeline, and the Status panel](docs/screenshots/workspace-0.20.png)
 
-*The 0.20 interface, rendered with demonstration data. [Download the latest stable release](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).*
+*The 0.20 interface, rendered with demonstration data. [Download the latest stable release](https://neuralnomadsai.github.io/CodeNomad/en/download.html).*
+
+▶️ [Watch the 90-second tour of CodeNomad 1.0](https://youtu.be/IGuOApJ6-Kc)
 
 [User help](https://neuralnomadsai.github.io/CodeNomad/) · [Read the English guide on GitHub](docs/help/en/index.md) — multilingual help for current CodeNomad and OpenCode V2.
 
@@ -35,7 +37,7 @@ CodeNomad is a **desktop and browser workspace for OpenCode V2** — built for d
 
 Available as both Electron and Tauri builds — choose based on your preference.
 
-Download the archive or package for your platform from [Releases](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
+Download the archive or package for your platform from the [download page](https://neuralnomadsai.github.io/CodeNomad/en/download.html) or [Releases](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
 
 | Platform | Electron | Tauri |
 |----------|----------|-------|
@@ -90,7 +92,7 @@ npx @neuralnomads/codenomad-dev --password "your-password" --launch
 
 ## OpenCode V2 and upgrading from 0.19.x
 
-CodeNomad **1.0.0 requires OpenCode V2**: **2.1.2 minimum, 2.1.4 recommended**, including the Code Mode JavaScript job-ordering fix. OpenCode V1 and the former V2 beta protocol are not supported. The current requirements are maintained in [`runtime-support.ts`](packages/server/src/opencode/runtime-support.ts).
+CodeNomad **1.0.0 requires OpenCode V2**: **2.1.2 minimum, 2.2.1 recommended**, including the Code Mode JavaScript job-ordering fix. OpenCode V1 and the former V2 beta protocol are not supported. The current requirements are maintained in [`runtime-support.ts`](packages/server/src/opencode/runtime-support.ts).
 
 - **One shared OpenCode service** owns sessions and messages. Closing a CodeNomad tab, window, or backend leaves that service running. Desktop tabs, drafts, and layout are restored separately for each window.
 - **Use an existing CLI or install from CodeNomad.** Executables on `PATH` are preferred; the setup screen also supports a selected executable and a shared user npm installation. The former private CodeNomad OpenCode installation is no longer used.
@@ -164,7 +166,7 @@ Add SideCar as:
 
 ## Requirements
 
-- **[OpenCode V2](https://opencode.ai/v2/docs/)** — 2.1.2 minimum and 2.1.4 recommended for CodeNomad 1.0.0. Install/select it through desktop setup or provide a compatible CLI on the server host.
+- **[OpenCode V2](https://opencode.ai/v2/docs/)** — 2.1.2 minimum and 2.2.1 recommended for CodeNomad 1.0.0. Install/select it through desktop setup or provide a compatible CLI on the server host.
 - **[Git](https://git-scm.com/downloads)** — a prerequisite for full functionality (repository identity, Git operations and worktrees). Git must be executable in the CodeNomad backend's `PATH`; it is not bundled with the desktop installers.
 - **Node.js and npm** — required for the standalone npm server and source builds, bundled with desktop releases. Use **Node.js 24 LTS**; development and release builds use the version in [`.node-version`](.node-version) (currently 24.20.0).
 

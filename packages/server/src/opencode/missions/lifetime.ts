@@ -1,3 +1,4 @@
+import type { MissionIndexHints } from "../../missions/journal-index"
 import type { MissionSnapshot } from "../../missions/model"
 import { hasUnsettledNativeExecution } from "../../missions/native-call-observation"
 import { isCoordinatorNotificationReport } from "../../missions/native-report-provenance"
@@ -14,8 +15,17 @@ export function missionWorkRemains(snapshot: MissionSnapshot): boolean {
     || mission.reports.some(report => isCoordinatorNotificationReport(report) && report.notificationStatus === "pending"))
 }
 
-/** Unknown storage must not tear down executors captured by native work. */
-export async function retainMissionWork(read: () => Promise<MissionSnapshot>): Promise<boolean> {
+/** Unknown storage must not tear down executors captured by native work. `hinted`
+ * (the journal index) may only retain: an empty or failed answer is confirmed by
+ * the authoritative `read` before presence is released. */
+export async function retainMissionWork(read: () => Promise<MissionSnapshot>, hinted?: () => Promise<boolean>): Promise<boolean> {
+  if (await hinted?.().catch(() => false)) return true
   try { return missionWorkRemains(await read()) }
   catch { return true }
+}
+
+/** The index's answer for `retainMissionWork`: an open mission, or project damage outside every open one. */
+export function hintsShowWork(hints: MissionIndexHints): boolean {
+  const { discardedEvents, controlUnavailable, notificationUnavailable, cleanupUnavailable } = hints.aggregate()
+  return hints.openIDs().length > 0 || discardedEvents > 0 || controlUnavailable || notificationUnavailable || cleanupUnavailable
 }

@@ -9,27 +9,22 @@ interface DrawerLayoutOptions {
   rightOpen: boolean
 }
 
+/**
+ * Narrowing shrinks the conversation to its minimum, then the right panel down to its
+ * minimum, where it hides; then the left panel down to its minimum, where it hides.
+ * Each panel shrinks once and hides at the end of its own compression, so the other
+ * never changes width when one hides and widening retraces the same layouts.
+ */
 export function resolveEmbeddedDrawers(options: DrawerLayoutOptions) {
-  const left = options.leftOpen && options.hostWidth >= options.minimumCenterWidth + options.minimumLeftWidth
-  const right =
-    options.rightOpen &&
-    options.hostWidth >=
-      options.minimumCenterWidth + options.minimumRightWidth + (options.leftOpen ? options.minimumLeftWidth : 0)
   const availableWidth = Math.max(0, options.hostWidth - options.minimumCenterWidth)
   const desiredLeftWidth = Math.max(options.minimumLeftWidth, options.leftWidth)
   const desiredRightWidth = Math.max(options.minimumRightWidth, options.rightWidth)
-
-  if (left && right) {
-    const leftWidth = Math.min(desiredLeftWidth, availableWidth - options.minimumRightWidth)
-    return { left, right, leftWidth, rightWidth: Math.min(desiredRightWidth, availableWidth - leftWidth) }
-  }
-
-  return {
-    left,
-    right,
-    leftWidth: left ? Math.min(desiredLeftWidth, availableWidth - (right ? desiredRightWidth : 0)) : desiredLeftWidth,
-    rightWidth: right ? Math.min(desiredRightWidth, availableWidth - (left ? desiredLeftWidth : 0)) : desiredRightWidth,
-  }
+  const left = options.leftOpen && availableWidth >= options.minimumLeftWidth
+  // The right panel shrinks first: it docks only beside a wanted left panel at full width.
+  const right = options.rightOpen && availableWidth >= options.minimumRightWidth + (options.leftOpen ? desiredLeftWidth : 0)
+  const leftWidth = left ? Math.min(desiredLeftWidth, availableWidth) : desiredLeftWidth
+  const rightWidth = right ? Math.min(desiredRightWidth, availableWidth - (left ? leftWidth : 0)) : desiredRightWidth
+  return { left, right, leftWidth, rightWidth }
 }
 
 export function clampEmbeddedDrawerWidth(width: number, minimumWidth: number, maximumWidth: number, desiredWidth: number) {

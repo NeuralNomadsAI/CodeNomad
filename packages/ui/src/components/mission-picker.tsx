@@ -91,6 +91,8 @@ export function MissionPicker(props: {
   entries: MissionPickerEntry[]; selectedKey?: string; onSelect: (entry: MissionPickerEntry) => void
   expanded: boolean; onExpandedChange: (expanded: boolean) => void
   onCreate: () => void; createDisabled: boolean
+  /** The creation form replaces the current-mission line and list. */
+  creating?: boolean
   trailing?: JSX.Element
 }) {
   const { t } = useI18n()
@@ -99,10 +101,12 @@ export function MissionPicker(props: {
   const [api, setApi] = createSignal<ListApi>()
   let root!: HTMLDivElement, field!: HTMLButtonElement
   const selected = () => props.entries.find(entry => entry.key === props.selectedKey)
-  const attention = createMemo(() => missionPickerAttention(props.entries, props.selectedKey))
+  // Like a collapsed session parent: the open list shows each mark itself.
+  const attention = createMemo(() => props.expanded ? undefined : missionPickerAttention(props.entries, props.selectedKey))
   const expanderLabel = () => {
     const action = t(props.expanded ? "missionsPanel.picker.collapse" : "missionsPanel.picker.expand")
-    const activity = missionPickerAttentionLabel(t, attention().counts)
+    const counts = attention()?.counts
+    const activity = counts ? missionPickerAttentionLabel(t, counts) : ""
     return activity ? t("missionsPanel.picker.withAttention", { action, attention: activity }) : action
   }
   const close = (focus: boolean) => { setOpen(false); setApi(undefined); if (focus) field.focus({ preventScroll: true }) }
@@ -113,7 +117,7 @@ export function MissionPicker(props: {
     document.addEventListener("pointerdown", outside, true)
     onCleanup(() => document.removeEventListener("pointerdown", outside, true))
   })
-  createEffect(() => { if (props.entries.length === 0 && open()) close(false) })
+  createEffect(() => { if ((props.entries.length === 0 || props.creating) && open()) close(false) })
   const onFieldKey = (event: KeyboardEvent) => {
     if (composing(event)) return
     if (!open()) {
@@ -136,10 +140,10 @@ export function MissionPicker(props: {
         disabled={props.createDisabled} onClick={() => props.onCreate()}><Plus class="h-4 w-4" aria-hidden="true" /></button>
       {props.trailing}
     </div>
-    <div class="mission-picker-control">
+    <div class="mission-picker-control" hidden={props.creating}>
       <button type="button" class="mission-picker-expander" aria-expanded={props.expanded}
         aria-controls={props.expanded ? inlineId : undefined} aria-label={expanderLabel()} title={expanderLabel()}
-        data-attention={attention().kind} disabled={props.entries.length === 0 && !props.expanded}
+        data-attention={attention()?.kind} disabled={props.entries.length === 0 && !props.expanded}
         onClick={() => props.onExpandedChange(!props.expanded)}>
         <ChevronRight class="disclosure-chevron h-3.5 w-3.5" aria-hidden="true" />
       </button>
@@ -160,7 +164,7 @@ export function MissionPicker(props: {
         </div>
       </Show>
     </div>
-    <Show when={props.expanded && props.entries.length > 0}>
+    <Show when={props.expanded && props.entries.length > 0 && !props.creating}>
       <div class="mission-picker-inline">
         <MissionPickerList id={inlineId} label={t("missions.control.mapLabel")} entries={props.entries}
           selectedKey={props.selectedKey} onSelect={entry => choose(entry, false)} />

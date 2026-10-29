@@ -6,7 +6,8 @@ import { selectNativePassageBusiness, prepareNativePassageSession, retireNativeP
 import { sendMissionInput } from "../automation-plugin"
 import { isCleanupReason } from "../../missions/cleanup-projection"
 import { MissionJournal } from "../../missions/journal"
-import { retainMissionWork } from "./lifetime"
+import { MissionJournalIndex } from "../../missions/journal-index"
+import { hintsShowWork, retainMissionWork } from "./lifetime"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 
 /** One-time Missions only: the `codenomad-missions/v2` journal. Setup never
@@ -15,7 +16,9 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
   return {
     id: "codenomad.missions",
     setup: async ctx => {
-      const journal = new MissionJournal(ctx.storage, ctx.location.project.id, ctx.location.project.canonical)
+      // One per activation, never module-global: a reloaded revision may reuse this module.
+      const index = new MissionJournalIndex()
+      const journal = new MissionJournal(ctx.storage, ctx.location.project.id, ctx.location.project.canonical, undefined, index)
       let ordinary: MissionBusinessRoute | undefined
       const disposeBusiness = await setupMissionsBusiness(ctx, async sessionID =>
         await selectNativePassageBusiness(ctx, sessionID, humanGate) ?? (ordinary && { ...ordinary, readSessionID: sessionID }))
@@ -42,13 +45,13 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
             }, beforeTool: async () => {} }
             ordinary = selected
           }, beforeTool: async () => {}, beforeJournalWrite: async () => {} },
-          (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false)
+          (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false, index)
           return async () => { ordinary = undefined; await dispose() }
         } catch (error) { ordinary = undefined; throw error }
-      }, console.error, () => retainMissionWork(() => journal.snapshot())) }
-      catch (error) { await disposeBusiness(); await promptHook.dispose(); throw error }
+      }, console.error, () => retainMissionWork(() => journal.snapshot(), () => journal.readHints(hintsShowWork))) }
+      catch (error) { await disposeBusiness(); await promptHook.dispose(); index.dispose(); throw error }
       return async () => { ordinary = undefined; await disposeBusiness(); await promptHook.dispose();
-        retireNativePassageBusiness(ctx.location); await disposePresence?.() }
+        retireNativePassageBusiness(ctx.location); await disposePresence?.(); index.dispose() }
     },
   }
 }

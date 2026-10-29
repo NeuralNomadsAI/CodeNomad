@@ -1,9 +1,9 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { WINDOWS_DRIVES_ROOT } from "../../../server/src/api-types"
 
 interface Scenario {
@@ -15,7 +15,7 @@ interface Scenario {
   windowsDrives?: boolean
 }
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 
 function metadataFor(scenario: Scenario, requestedPath?: string | null) {
   if (scenario.windowsDrives && requestedPath === WINDOWS_DRIVES_ROOT) {
@@ -73,30 +73,18 @@ const field = (page: Page) => page.locator(".directory-browser-current-path")
 const options = (page: Page) => page.locator(".directory-browser-destination")
 
 before(async () => {
-  server = await createServer({
-    configFile: false,
-    root: fileURLToPath(new URL("../..", import.meta.url)),
-    logLevel: "error",
-    plugins: [solid(), {
-      name: "directory-browser-fixture",
-      configureServer(s) {
-        s.middlewares.use("/directory-browser-fixture", async (_req, res) => {
-          res.setHeader("Content-Type", "text/html")
-          res.end(await s.transformIndexHtml("/directory-browser-fixture",
-            '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/directory-browser.tsx"></script></body></html>'))
-        })
-      },
-    }],
-    resolve: { dedupe: ["solid-js"] },
-    optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/directory-browser-fixture`
+  const fixture = await borrowFixture({
+      name: "directory-browser",
+      routes: [
+        { path: "/directory-browser-fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/directory-browser.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
 
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close() })
 
 for (const mode of ["directories", "files"] as const) {
   test(`parent stays visible in the list without a duplicate address option (${mode})`, async () => {

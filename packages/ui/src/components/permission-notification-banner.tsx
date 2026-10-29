@@ -1,8 +1,7 @@
 import { Show, createMemo, type Component } from "solid-js"
 import { ShieldAlert } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
-import { getPermissionQueueLength } from "../stores/instances"
-import { getFormQueue } from "../stores/forms"
+import { getInterruptionQueue } from "../stores/interruption-scope"
 
 interface PermissionNotificationBannerProps {
   instanceId: string
@@ -11,8 +10,9 @@ interface PermissionNotificationBannerProps {
 
 const PermissionNotificationBanner: Component<PermissionNotificationBannerProps> = (props) => {
   const { t } = useI18n()
-  const permissionCount = createMemo(() => getPermissionQueueLength(props.instanceId))
-  const formCount = createMemo(() => getFormQueue(props.instanceId).length)
+  const shown = createMemo(() => getInterruptionQueue(props.instanceId))
+  const permissionCount = createMemo(() => shown().filter(item => item.kind === "permission").length)
+  const formCount = createMemo(() => shown().filter(item => item.kind === "form").length)
   const queueLength = createMemo(() => permissionCount() + formCount())
   const hasRequests = createMemo(() => queueLength() > 0)
   const label = createMemo(() => {

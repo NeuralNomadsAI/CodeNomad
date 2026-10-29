@@ -1,27 +1,23 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
-let server: ViteDevServer, browser: Browser, url: string, cache: Awaited<ReturnType<typeof createFixtureCache>>
+let browser: Browser, url: string, cache: Awaited<ReturnType<typeof createFixtureCache>>
 before(async () => {
-  cache = await createFixtureCache()
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), cacheDir: cache.cacheDir,
-    logLevel: "error", plugins: [solid(), { name: "mission-row-refetch", configureServer(s) {
-      s.middlewares.use("/mission-row-refetch", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/mission-row-refetch", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-row-refetch.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-row-refetch`
+  const fixture = await borrowFixture({
+      name: "mission-row-refetch",
+      routes: [
+        { path: "/mission-row-refetch", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-row-refetch.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close(); await cache?.dispose() })
+after(async () => { await browser?.close(); await cache?.dispose() })
 async function prepare(page: Page) {
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   await page.goto(url)
@@ -127,11 +123,12 @@ test("Cleanup preserves exact retry controls/open menus while current receipt te
     await menu!.focus()
     await refetch(page)
     assert.equal(await menu!.evaluate(e => e.isConnected && e === document.activeElement), true)
-    await page.route("**/api/workspaces/row-refetch/missions", async route => {
-      const cleanups = await page.evaluate(() => (window as any).missionRowFixture.receipt())
-      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups }) })
-    })
+    // The retry reconciles through its mission's read, then deletes on the same path.
     await page.route("**/api/workspaces/row-refetch/missions/mission", async route => {
+      if (route.request().method() === "GET") {
+        const cleanups = await page.evaluate(() => (window as any).missionRowFixture.receipt())
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups }) })
+      }
       posts++
       assert.equal(route.request().method(), "DELETE")
       assert.equal(route.request().postDataJSON().requestId, "request")
@@ -152,12 +149,12 @@ test("Cleanup replaced/settled receipts and newly disabled contexts fence delaye
     try {
       await prepare(page)
       const saved = await page.evaluate(() => (window as any).missionRowFixture.receipt())
-      await page.route("**/api/workspaces/row-refetch/missions", async route => {
-        reads++
-        await waiting
-        await route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups: saved }) })
-      })
       await page.route("**/api/workspaces/row-refetch/missions/mission", async route => {
+        if (route.request().method() === "GET") {
+          reads++
+          await waiting
+          return route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups: saved }) })
+        }
         writes++
         await route.fulfill({ contentType: "application/json", body: "{}" })
       })
@@ -198,11 +195,11 @@ test("switching cleanup instances clears old pending state, and late completion 
   try {
     await prepare(page)
     const saved = await page.evaluate(() => (window as any).missionRowFixture.receipt())
-    await page.route("**/api/workspaces/*/missions", async route => {
-      await (route.request().url().includes("/row-refetch/") ? oldRead : newRead)
-      await route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups: saved }) })
-    })
     await page.route("**/api/workspaces/*/missions/mission", async route => {
+      if (route.request().method() === "GET") {
+        await (route.request().url().includes("/row-refetch/") ? oldRead : newRead)
+        return route.fulfill({ contentType: "application/json", body: JSON.stringify({ available: true, cleanups: saved }) })
+      }
       writes++
       await route.fulfill({ contentType: "application/json", body: "{}" })
     })

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -27,6 +28,7 @@ before(async () => {
       shutdown.own(server); await server.listen()
       url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/lifecycle-navigation`
       browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined }); ready = true
+      armFixtureNavigationBudget(browser)
     }, diagnose: async () => {},
     cleanup: async () => { if (!ready) { if (server) await server.close(); else await cache.dispose() } },
     onObservationError: () => {}, onCleanupError: error => console.error("navigation fixture cleanup", error),

@@ -34,6 +34,7 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "तालिका ID",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "प्रगतिमा",
+  "missionsPanel.state.interrupted": "अवरुद्ध",
   "missionsPanel.run.completed": "सम्पन्न",
   "missionsPanel.run.failed": "असफल",
   "missionsPanel.run.stopped": "रोकिएको",
@@ -67,8 +68,8 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "मिसन कार्यहरू",
   "missionsPanel.attention.permission.one": "{count} पर्खिरहेको",
   "missionsPanel.attention.permission.other": "{count} पर्खिरहेका",
-  "missionsPanel.attention.failed.one": "{count} असफल",
-  "missionsPanel.attention.failed.other": "{count} असफल",
+  "missionsPanel.attention.done.one": "{count} सम्पन्न",
+  "missionsPanel.attention.done.other": "{count} सम्पन्न",
   "missionsPanel.attention.working.one": "{count} चलिरहेको",
   "missionsPanel.attention.working.other": "{count} चलिरहेका",
 } as const

@@ -21,12 +21,14 @@ methods, the integration OpenCode's maintainers recommend for plugins
 - `revision.ts`: browser-safe canonical content hashing.
 - `planner.ts`: completed-assistant checks and technical-part-only selection.
 - `preview-store.ts`: explicit read-only database access, including history before compaction.
+- `media-blob.ts`: the native read form of rows stored with OpenCode's optional media storage (`experimental.media_blob`: `media:<sha256>` refs into `blob`, owned through `blob_ref`). Preview, pruning, prune candidates, navigation windows and assets inline refs, or give the native unavailable placeholder, exactly as native reads do, within the same byte budgets measured on that form. Rows naming no ref pass through untouched; ref-backed rows whose blob tables are missing or unrecognized fail closed as `unsupported_storage`.
 - `database-path.ts`: daemon-side OpenCode data-directory/environment conventions, with an optional path override.
 - `transaction.ts`: synchronous content-only CAS and atomic idempotency receipt.
 - `claim-fence.ts`: native execution-claim and database-identity checks.
 - `service.ts`: database connection and a fresh `ctx.storage` challenge.
 - `isolated-store.ts`: in-memory-only test adapter; never a live write bypass.
 - `plugin.ts`: native RPC registration and post-commit notifications.
+- `history-ranked-service.ts`: the presence-owned Code Mode `codenomad.session_search` tool and versioned ranked-history RPC; ranking, scope and bounds are specified in [full-history queries](SESSION_HISTORY_QUERIES.md).
 - `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry.
 - `tui.ts` / `tui-reload.ts`: companion cache invalidation via the public TUI API.
 
@@ -39,8 +41,13 @@ The UI offers individual, per-message, group and session cleanup entry points. I
 fetches the native message, resolves selected tools by ID and reasoning by a unique
 content/time match, then sends indexes plus a canonical SHA-256 content revision.
 Ambiguous reasoning or stale content fails closed. It never submits replacement text.
-Selections allow up to 100,001 unique indices (0–100,000), within a 1 MiB broker
-body and 16 MiB stored-message budget. Larger messages fail closed.
+The plugin compares that revision with the native read form (`media-blob.ts`), writes
+surviving parts in their stored form, and in the same transaction releases the
+`blob_ref` rows of refs the removed parts alone named, deleting blobs no ref keeps,
+as native content updates do.
+Selections allow up to 100,001 unique indices (0-100,000), within a 1 MiB broker
+body. Each message must fit the 16 MiB stored and serialized native-read budgets,
+with or without media refs; larger messages fail closed.
 
 `POST /api/workspaces/:id/session-pruning/{preview,prune}` validates workspace
 ownership from the native session location and participates in the worktree deletion
@@ -85,7 +92,9 @@ Locking and claim checks: [the audited boundary](SESSION_PRUNING_SAFETY.md).
 The native fixture covers real preview/prune RPC, active-generation refusal, both
 prompt/transaction orderings, retry receipts, two event subscribers, next primary
 request payload, fork isolation, pre-compaction deletion without summary changes,
-and server restart. Unit tests cover rollback and client projection/read races.
+server restart, and a tool file result read through navigation, assets and pruning
+in whichever form the runtime stores it (with `experimental.media_blob`, a blob ref
+whose ref and blob the prune releases). Unit tests cover rollback and client projection/read races.
 The mock's usage numbers are synthetic; never cite them as provider token savings.
 
 Unvalidated: native WSL runs, interactive TUI, two desktop windows/scroll,

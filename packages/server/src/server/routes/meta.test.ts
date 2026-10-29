@@ -11,7 +11,8 @@ test("metadata reports the backend process platform regardless of client user ag
     localUrl: "http://127.0.0.1:9899", eventsUrl: "/api/events", host: "127.0.0.1",
     listeningMode: "local", localPort: 9899, hostLabel: "fixture", workspaceRoot: "/fixture", addresses: [],
   }
-  registerMetaRoutes(app, { serverMeta: meta })
+  // Previews are off for Remote Control: a local request still has them.
+  registerMetaRoutes(app, { serverMeta: meta, remotePreviewsAllowed: () => false })
   // `name` is the server's readable OS release (#979); it is omitted when the OS
   // does not report one, so JSON then carries only platform and arch.
   const name = serverOperatingSystemName()
@@ -26,7 +27,7 @@ test("metadata reports the backend process platform regardless of client user ag
       assert.equal(response.statusCode, 200)
       assert.deepEqual(response.json().system, expected)
       assert.equal(response.json().workspaceRoot, meta.workspaceRoot)
-      assert.equal(response.json().remoteControl, undefined, "a local request is not a Remote Control client")
+      assert.equal(response.json().previewsUnavailable, undefined, "a local request is not a Remote Control client")
     }
     assert.equal(meta.system, undefined, "route must not mutate shared metadata")
     meta.system = { platform: "client-provided-platform", arch: "client-provided-arch", name: "client-provided-name" }

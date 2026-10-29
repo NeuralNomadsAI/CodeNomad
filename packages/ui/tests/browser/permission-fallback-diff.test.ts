@@ -1,31 +1,23 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error",
-    cacheDir: cache.cacheDir,
-    plugins: [solid(), shutdown.plugin, { name: "permission-fallback-fixture", configureServer(s) {
-      s.middlewares.use("/permission-fallback-fixture", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/permission-fallback-fixture", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/permission-fallback-diff.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] },
-    server: { host: "127.0.0.1", port: 0, hmr: false, watch: null },
-  })
-  shutdown.own(server)
-  await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/permission-fallback-fixture`
+  const fixture = await borrowFixture({
+      name: "permission-fallback-diff",
+      routes: [
+        { path: "/permission-fallback-fixture", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/permission-fallback-diff.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { try { await browser?.close() } finally { await server?.close() } })
+after(async () => { try { await browser?.close() } finally { } })
 
 async function openFixture(page: Page, clipboard: "success" | "failure" | "pending") {
   const errors: string[] = []

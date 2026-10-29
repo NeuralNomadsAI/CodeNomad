@@ -21,6 +21,7 @@ Si el formulario de GitHub tiene campos incompatibles, CodeNomad abre una incide
 | [Repositorio de CodeNomad](https://github.com/NeuralNomadsAI/CodeNomad) | Código fuente, actividad del proyecto y documentación. |
 | [Incidencias](https://github.com/NeuralNomadsAI/CodeNomad/issues) | Busca informes existentes antes de abrir un error reproducible o una petición de función. |
 | [Pull requests](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | Revisa cambios propuestos o coordina una contribución. |
+| [Página de descarga](download.md) | Las últimas compilaciones de escritorio estables para tu plataforma. |
 | [Última versión](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | Artefactos de descarga estables. |
 | [Todas las versiones](https://github.com/NeuralNomadsAI/CodeNomad/releases) | Versiones preliminares publicadas y notas de versión. |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | Organización del proyecto. |

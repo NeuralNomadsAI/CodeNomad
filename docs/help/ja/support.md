@@ -21,6 +21,7 @@ GitHub フォームに互換性のないフィールドがある場合は、同�
 | [CodeNomad リポジトリ](https://github.com/NeuralNomadsAI/CodeNomad) | ソース、プロジェクトの活動、ドキュメント。 |
 | [Issue](https://github.com/NeuralNomadsAI/CodeNomad/issues) | 再現可能な不具合や機能要望を投稿する前に、既存の報告を検索します。 |
 | [プルリクエスト](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | 提案された変更のレビューや、貢献の調整。 |
+| [ダウンロードページ](download.md) | お使いのプラットフォーム向けの最新の安定版デスクトップビルド。 |
 | [最新リリース](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | 安定版のダウンロード資産。 |
 | [全リリース](https://github.com/NeuralNomadsAI/CodeNomad/releases) | 公開済みプレビューとリリースノート。 |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | プロジェクト組織。 |

@@ -1,33 +1,29 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
 import type { MissionActorActivity, MissionMap, MissionTask } from "../../../server/src/api-types"
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import { captureMissionView } from "./mission-view-capture"
 import { inlineMissionEntry, missionDetail, missionEntryStatus, missionGeneralAction, missionPicker, selectMission,
   selectedMissionTitle } from "./mission-actions"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [solid(), shutdown.plugin, { name: "mission-layout", configureServer(s) {
-      s.middlewares.use("/mission-layout", async (_req, res) => {
-        res.setHeader("Content-Type", "text/html")
-        res.end(await s.transformIndexHtml("/mission-layout", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-control.tsx"></script></body></html>'))
-      })
-    } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  shutdown.own(server); await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-layout`
+  const fixture = await borrowFixture({
+      name: "mission-panel-layout",
+      routes: [
+        { path: "/mission-layout", html: "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-control.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); })
 
 const hour = 3_600_000
 const task = (key: string, title: string, status: MissionTask["status"], blockedBy: string[] = []): MissionTask => ({ id: `task-${key}`, key, title,

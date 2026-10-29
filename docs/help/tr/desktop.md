@@ -60,8 +60,8 @@ macOS Tauri'nin ortak WebKit deposu korunur; silinmesi diğer profilleri etkiler
 
 1. Yerel **Görünüm → Yakınlaştır**, **Uzaklaştır** veya **Gerçek boyut** kullanın; klavye/tekerlek girişi de ana bilgisayar desteğini takip eder.
 2. Paneller arasında geçiş yapmak için sabit dış başlık köşelerinde **Sol panel** ve **Sağ panel** öğesini kullanın. Bu düzen izin verdiğinde çekmeceleri sabitleyin/sabitlemeyi kaldırın.
-3. Kontroller artık sığmıyorsa yakınlaştırmayı azaltın veya pencereyi genişletin; dar düzenler kontrolleri menülere ve panelleri kaplamalara taşır.
+3. Kontroller artık sığmıyorsa yakınlaştırmayı azaltın veya pencereyi genişletin; dar düzenler kontrolleri menülere taşır ve artık sığmayan panelleri kapatır.
 
 Ana yerel ve uzak masaüstü pencereleri, uygulama yakınlaştırmasına göre ölçeklenen ve monitörün çalışma alanıyla sınırlanan en az 390 × 600 CSS pikselini ayırır. Yakınlaştırma çok küçük bir pencereyi büyütebilir; uzaklaştırmak zaten daha büyük olanı küçültmez. Tercihler ve tarayıcı önizleme alt öğelerinin ayrı boyut kuralları vardır.
 
-Paneller, yüzmeden önce minimum bir konuşma genişliği bırakır. Konuşma genişliğinin 420 CSS pikselinin altında, zaman çizelgesi gizlenir ve başlık eylemleri taşma menüsünü kullanır; kaydedilen zaman çizelgesi tercihi korunur. Bu geometri değişiklikleri istem taslağınızı veya yerel oturumunuzu değiştirmez. Bkz. [Ayarlar ve düzen](settings.md) ve [Tarayıcı önizlemeleri ve SideCars](browser-sidecars.md).
+Paneller minimum bir konuşma genişliği bırakır. Artık sığmayan sabitlenmiş bir panel, önce sağ panel olmak üzere, kapanır ve sabitlenmişken onu kapatmadıysanız pencerede yeniden yer olduğunda geri gelir; yer yokken açtığınız bir panel konuşmanın üzerinde yüzer. Konuşma genişliğinin 420 CSS pikselinin altında, zaman çizelgesi gizlenir ve başlık eylemleri taşma menüsünü kullanır; kaydedilen zaman çizelgesi tercihi korunur. Bu geometri değişiklikleri istem taslağınızı veya yerel oturumunuzu değiştirmez. Bkz. [Ayarlar ve düzen](settings.md) ve [Tarayıcı önizlemeleri ve SideCars](browser-sidecars.md).

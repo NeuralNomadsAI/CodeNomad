@@ -13,7 +13,10 @@ import { canonicalContent } from "../../../server/src/opencode/session-pruning/r
 import type { ClientPart } from "../types/message"
 
 import { addRecentModelPreference, getModelThinkingSelection, setAgentModelPreference } from "./preferences"
-import { beginSessionGenerationAdmission, providers, sessions, withSession } from "./session-state"
+import { beginSessionGenerationAdmission, providers, sessions, setActiveParentSession, withSession } from "./session-state"
+import { createSession } from "./session-api"
+import { showAlertDialog } from "./alerts"
+import type { Session } from "../types/session"
 import { isSessionBusy } from "./session-status"
 import { getDefaultModel, isModelValid } from "./session-models"
 import { updateSessionInfo } from "./message-v2/session-info"
@@ -47,6 +50,44 @@ function admitSessionAction<T>(
       throw error
     }
   })
+}
+
+// One creation at a time per instance for user-triggered entries (sidebar
+// button, new-session hotkey, command palette): while the action's creation is
+// pending, further triggers are ignored instead of stacking duplicate requests.
+// The guard deliberately lives at the UI-action layer, not in createSession:
+// distinct flows such as the draft composer's first-prompt creation call
+// createSession directly and stay independent, and every call keeps sending its
+// own request with its own model/generation.
+const pendingNewSessions = new Map<string, Promise<Session | null>>()
+
+/**
+ * Creates and activates a new session for a user-triggered entry point (sidebar
+ * button, new-session hotkey, command palette). Failures — including a rejected
+ * create request on a stalled network — surface as an alert instead of silence.
+ * Returns the activated session, or null when creation failed.
+ */
+function startNewSession(instanceId: string, agent?: string): Promise<Session | null> {
+  const pending = pendingNewSessions.get(instanceId)
+  if (pending) return pending
+  const attempt = (async () => {
+    try {
+      const session = await createSession(instanceId, agent)
+      setActiveParentSession(instanceId, session.id)
+      return session
+    } catch (error) {
+      log.error("Failed to create session:", error)
+      showAlertDialog(tGlobal("sessionList.actions.newSession.failedMessage"), {
+        title: tGlobal("sessionList.actions.newSession.failedTitle"),
+        variant: "error",
+      })
+      return null
+    }
+  })().finally(() => {
+    if (pendingNewSessions.get(instanceId) === attempt) pendingNewSessions.delete(instanceId)
+  })
+  pendingNewSessions.set(instanceId, attempt)
+  return attempt
 }
 
 export function stageSessionRevert(instanceId: string, sessionId: string, messageId: string): Promise<void> {
@@ -694,6 +735,7 @@ export {
   renameSession,
   runShellCommand,
   sendMessage,
+  startNewSession,
   updateSessionAgent,
   updateSessionModel,
 }

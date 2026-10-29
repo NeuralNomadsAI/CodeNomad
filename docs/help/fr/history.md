@@ -7,13 +7,17 @@ L’historique enregistré, ce que la transcription affiche actuellement et le c
 1. Ouvrez **Rechercher dans l'historique du chat** dans l’en-tête de conversation, ou utilisez son raccourci configuré (**Ctrl/Cmd+F** par défaut).
 2. Sélectionnez **Session entière** ou **Workspace entier** et saisissez un terme.
 3. Activez **Inclure les outils et réflexions** si vous avez besoin du contenu technique en plus du texte lisible.
-4. Sélectionnez un extrait ou utilisez **Résultats suivants** pour dépasser la page actuelle.
+4. Sélectionnez un extrait. Dans **Session entière**, utilisez **Résultats suivants** pour parcourir les pages chronologiques.
 
-La recherche est littérale et insensible à la casse, sur l’historique enregistré plutôt que les seules lignes de transcription montées. La portée de l’espace de travail suit l’arborescence autorisée et les worktrees du projet ouvert, pas tous les projets du service OpenCode ; ses résultats sont regroupés par conversation, chacune nommée par son titre et le worktree qui la contient actuellement. Les octets des pièces jointes fichier/image et l’état opaque du fournisseur ne sont pas du texte recherchable.
+**Session entière** recherche une expression littérale sans tenir compte de la casse dans l’historique enregistré. **Workspace entier** classe les résultats de l’arborescence et des worktrees autorisés du projet ouvert à partir de six termes au maximum et affiche les 40 meilleurs dans une liste. Le meilleur résultat de chaque conversation apparaît d’abord, avec son titre et son worktree actuel dans l’ordre du classement. Les termes sont surlignés dans les extraits et dans la conversation après **Ouvrir dans la session**. Le contenu recherché comprend le texte lisible et, en option, les outils et réflexions.
 
-La ligne de progression **Cette page : … résultats · … messages parcourus** décrit cette page de résultats, pas les totaux de l’espace de travail. Les résultats arrivent par lots. Les messages trop volumineux ou non pris en charge ignorés sont signalés ; l’absence de résultat ne prouve pas qu’ils ne contiennent aucune correspondance. Les nouveaux messages arrivant pendant un parcours nécessitent une nouvelle recherche pour être inclus de façon cohérente.
+Les pages de conversation affichent **Cette page : … résultats · … messages parcourus** à mesure que les lots arrivent. Le projet affiche **Meilleurs résultats : …** et des avis compacts pour les analyses partielles ou les dossiers exclus. Si le classement est indisponible dans cet environnement, utilisez **Session entière**. Les messages ignorés sont signalés ; relancez la recherche pour inclure les nouveaux messages.
 
 Ouvrir une recherche vide ne parcourt pas l’historique. Changer la requête/la portée, fermer la fenêtre ou quitter la session annule le travail de recherche obsolète. Si une lecture échoue, utilisez **Réessayer** ; cela n’envoie pas de prompt et ne modifie pas l’historique.
+
+L’analyse commence par les 16 384 messages enregistrés les plus récents au maximum par emplacement. **Chercher plus loin dans le passé** remplace la liste par les meilleurs résultats de la fenêtre précédente. La note indique la plage examinée, du plus récent au plus ancien dans chaque emplacement du projet. Le classement porte uniquement sur cette fenêtre. Modifier la requête, la portée ou l’option de contenu technique, fermer la recherche ou quitter la session réinitialise la fenêtre. Une nouvelle recherche inclut les nouveaux messages.
+
+Si une fenêtre de recherche expire ou si son historique change, **Relancer la recherche** repart des messages les plus récents avec la même requête et les mêmes options. Une note explique cette reprise. Pour un échec de lecture ordinaire, **Réessayer** relance la fenêtre actuelle.
 
 ## Ouvrir les résultats et utiliser la chronologie {#timeline-navigation}
 
@@ -56,7 +60,7 @@ Le compactage change le contexte utilisé par OpenCode pour poursuivre la sessio
 2. Vérifiez les nombres d’outils/raisonnements prévus et les avertissements de contenu ignoré.
 3. Confirmez **Supprimer**. Pour une session entière, suivez la progression au-dessus de la transcription et utilisez sa commande d’annulation au besoin.
 
-Seuls les outils et raisonnements terminés admissibles sont retirés. Le contenu actif/incomplet n’est pas élagué ; un contenu modifié est refusé plutôt que d’élargir silencieusement votre confirmation. Le texte final et les métadonnées de message/session restent, mais les sorties techniques supprimées ne sont pas récupérables. Préservez ce dont vous avez besoin avant de confirmer.
+Seuls les outils et raisonnements terminés admissibles sont retirés. Le contenu actif/incomplet n’est pas élagué, pas plus qu’un message de plus de 16 Mo tel qu’OpenCode le lit (fichiers joints compris), qui compte comme contenu ignoré ; un contenu modifié est refusé plutôt que d’élargir silencieusement votre confirmation. Le texte final et les métadonnées de message/session restent, mais les sorties techniques supprimées ne sont pas récupérables. Préservez ce dont vous avez besoin avant de confirmer.
 
 Le nettoyage n’est pas atomique sur toute la session. Les suppressions antérieures réussies restent si un message ultérieur entre en conflit ou échoue. **L’annulation arrête les lots futurs ; elle n’annule pas un lot déjà envoyé**, qui peut encore être appliqué.
 

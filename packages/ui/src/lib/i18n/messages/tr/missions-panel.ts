@@ -34,6 +34,7 @@ export const missionsPanelMessages = {
   "missionsPanel.technical.schedule": "Zamanlama kimliği",
   "missionsPanel.schedule.zoned": "{time} ({zone})",
   "missionsPanel.state.inProgress": "Sürüyor",
+  "missionsPanel.state.interrupted": "Kesintiye uğradı",
   "missionsPanel.run.completed": "Tamamlandı",
   "missionsPanel.run.failed": "Başarısız",
   "missionsPanel.run.stopped": "Durduruldu",
@@ -67,8 +68,8 @@ export const missionsPanelMessages = {
   "missionsPanel.picker.actions": "Görev eylemleri",
   "missionsPanel.attention.permission.one": "{count} bekliyor",
   "missionsPanel.attention.permission.other": "{count} bekliyor",
-  "missionsPanel.attention.failed.one": "{count} başarısız",
-  "missionsPanel.attention.failed.other": "{count} başarısız",
+  "missionsPanel.attention.done.one": "{count} bitti",
+  "missionsPanel.attention.done.other": "{count} bitti",
   "missionsPanel.attention.working.one": "{count} çalışıyor",
   "missionsPanel.attention.working.other": "{count} çalışıyor",
 } as const

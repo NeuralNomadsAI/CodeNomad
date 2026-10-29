@@ -1,8 +1,28 @@
-# CodeNomad 帮助
+# CodeNomad
 
-本指南介绍如何将当前 CodeNomad 桌面或浏览器工作区与 OpenCode 服务配合使用，重点说明 CodeNomad 的控件、执行边界和恢复方式，而非 OpenCode 配置教程或版本归档。
+面向 OpenCode 的 AI 编程驾驶舱：为在多个项目、长对话和 Git 工作树中运行大量智能体的开发者打造的桌面与浏览器工作区。
+
+OpenCode 提供引擎，CodeNomad 提供驾驶舱。它连接到 OpenCode 的共享后台服务：你的会话属于 OpenCode，该服务的其他客户端也可以使用它们，关闭 CodeNomad 也不会停止它们。
+
+[下载 CodeNomad](download.md)
+
+{{tour-video}}
+
+## 将长时间工作交给任务 {#missions}
+
+只需描述一次工作。任务的协调者将其规划为任务树，把有界任务委派给原生 OpenCode 对话，并报告结果及其证据。任务可以运行一次或每天运行；创建任务后，在你选择启动之前绝不会开始工作。剧本涵盖调试、产品交付，以及由盲评裁判比较两个模型。参阅[任务](missions.md)。
+
+## 用手机继续工作 {#phone-access}
+
+远程控制通过一次性链接或二维码，将手机、平板或另一台电脑与运行中的 CodeNomad 后端配对，无需开放入站网络端口。你可以在手机上跟进对话、回答问题和权限请求；项目、凭据和智能体执行都保留在主机上。参阅[远程控制](remote-control.md)和[移动设备与 PWA](mobile.md)。
+
+## 在长历史记录中找到方向 {#large-histories}
+
+搜索对话的完整已存储历史，或对所打开项目及其工作树中的结果进行排序，需要时还可包含工具输出和思考内容。消息时间线可在长会话中跳转，而无需加载中间的每条消息。参阅[历史记录、搜索与清理](history.md)。
 
 ## 请先阅读 {#read-this-first}
+
+本指南介绍当前 CodeNomad 桌面或浏览器工作区与 OpenCode 服务的配合使用：CodeNomad 的控件、执行边界和恢复方式，而非 OpenCode 配置教程或版本归档。
 
 CodeNomad 将工作区连接到一个共享的 OpenCode 后台服务。会话和消息属于 OpenCode；标签页、输入框草稿和布局属于 CodeNomad 客户端。关闭标签页会在 CodeNomad 中关闭该项目，但会话继续在 OpenCode 中运行，重新打开项目即可再次找到。关闭 CodeNomad 也不等于停止 OpenCode。
 
@@ -26,7 +46,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | --- | --- | --- | --- |
 | 项目、对话、文件和历史记录 | 后端的文件夹和原生会话 | 所连接服务器的文件夹和会话 | 主机授权的工作区界面 |
 | 原生偏好设置和桌面窗口 | 可用 | 浏览器/远程设置保留在客户端内 | 主机专用桌面控件不可用 |
-| 会话浏览器预览 | Electron 和 Windows Tauri 使用原生预览；其他 Tauri 平台使用 iframe | 支持时使用 iframe | 主机专用预览端点不可用 |
+| 会话浏览器预览 | Electron 和 Windows Tauri 使用原生预览；其他 Tauri 平台使用 iframe | 支持时使用 iframe | 主机允许网页预览时使用 iframe（默认） |
 | 原生桌面/浏览器自动化 | 所拥有的本地窗口/预览 | 不能代替原生桌面自动化 | 主机专用自动化端点不可用 |
 | 认证 | 本地初始化或密码会话 | 服务器密码会话 | 配对设备凭据 |
 | PWA 安装 | 使用原生应用或浏览器 | 取决于浏览器；需要安全上下文 | 取决于浏览器；仍需配对 |

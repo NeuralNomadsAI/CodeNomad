@@ -26,7 +26,7 @@ Fehlt die Installation, prüfen Sie zuerst HTTPS-Vertrauen und Browserunterstüt
 
 ## Touch-Layouts nutzen {#touch-layout}
 
-Öffnen Sie Navigation und Werkzeuge über **Linke Seitenleiste** und **Rechte Seitenleiste**. In schmalen Layouts überlagern Panels die Unterhaltung, statt eine Desktop-breite Fläche zu erzwingen; ein schwebendes Panel zu öffnen schließt das andere. Aktionen im Unterhaltungskopf wandern bei Platzmangel ins Überlaufmenü.
+Öffnen Sie Navigation und Werkzeuge über **Linke Seitenleiste** und **Rechte Seitenleiste**. In schmalen Layouts überlagern Panels die Unterhaltung, statt eine Desktop-breite Fläche zu erzwingen; ein schwebendes Panel zu öffnen schließt das andere. Die Auswahl einer Sitzung oder von **Instanz-Info** im schwebenden Sitzungspanel schließt es, um Ihre Auswahl zu zeigen, auch bei der bereits angezeigten Sitzung; **Zurück** und **Vorwärts** lassen es geöffnet. Aktionen im Unterhaltungskopf wandern bei Platzmangel ins Überlaufmenü.
 
 Das Eingabefeld behält Agent, Modell und Denken in der Fußzeile. Seine Größe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtastatur; lange Entwürfe bleiben scrollbar. Auf reinen Touch-Geräten öffnet Senden die Bildschirmtastatur nicht erneut, damit Sie die Antwort lesen können; tippen Sie zum Fortfahren auf das Eingabefeld. Während eine Sitzung läuft, bietet das Menü **Weitere Aktionen** des Eingabefelds **Nachricht einreihen** oder **Jetzt einschieben** an, je nachdem, was Ihr normales Senden nicht tut, ohne ein Tastenkürzel einer Hardwaretastatur zu benötigen. Eine Unterbrechung verkleinert das Eingabefeld vorübergehend, ohne gespeicherte Höhe oder Entwurf zu ändern. Beantworten Sie Berechtigungen/Fragen im Dock darüber und halten Sie dessen Aktionsfußzeile erreichbar. Siehe [Unterhaltungen](conversations.md) und [Berechtigungen](permissions.md).
 
@@ -37,7 +37,7 @@ Das Eingabefeld behält Agent, Modell und Denken in der Fußzeile. Seine Größe
 | Projekte, Unterhaltungen, Dateien und Berechtigungen | Arbeiten auf dem verbundenen Backend-Host unter dessen Zugriffskontrollen. Geräteanhänge werden vom Telefon hochgeladen; Projektreferenzen auf dem Host aufgelöst. |
 | Native Desktop-Fenster, OS-Menüs und hostnative Automatisierung | Werden nicht durch PWA-Installation bereitgestellt. |
 | Browser-Vorschau | Erhält keine nativen Gastbrowserfähigkeiten; Ersatzdarstellung bleibt browserbegrenzt. |
-| SideCar-Inhalte und WebSockets | Hängen vom Verbindungsweg ab; Fernsteuerung blockiert SideCar-Inhaltsproxy, Vorschauinhalte und WebSocket-Upgrades. Siehe deren [genaue Einschränkungen](remote-control.md). |
+| SideCar-Inhalte und WebSockets | Hängen vom Verbindungsweg ab; Fernsteuerung blockiert den SideCar-Inhaltsproxy und liefert Web-Vorschauen samt WebSockets aus, solange der Host sie erlaubt. Siehe deren [genaue Einschränkungen](remote-control.md). |
 | Mikrofon, Zwischenablage, Benachrichtigungen und Installationsaufforderung | Hängen von Browser-/OS-Unterstützung, sicherem Kontext und Benutzerrechten ab. |
 | Offline-Arbeit | Kein Offline-Backend und kein zwischengespeicherter API-Verlauf. Statische Oberflächendateien können im Cache liegen, Dokumente und API-Antworten sind aber kein Offline-Arbeitsbereich. |
 

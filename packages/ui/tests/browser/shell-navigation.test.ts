@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
 import solid from "vite-plugin-solid"
@@ -27,6 +28,7 @@ before(async () => {
     await server.listen()
     url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/fixture`
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
   } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
 }, { timeout: 60000 })
 after(async () => { try { await browser?.close() } finally { await server?.close() } })
@@ -300,19 +302,125 @@ test("session history navigates like a browser without recording its own moves",
   } finally { await context.close() }
 })
 
-test("phone history buttons act inside the session overlay like list selection", async () => {
+test("phone list selection reveals the conversation; history buttons keep the session overlay", async () => {
   const context = await browser.newContext({ viewport: { width: 390, height: 760 }, hasTouch: true, isMobile: true })
   const { page, errors } = await open(context)
   try {
     await page.evaluate(() => { for (const id of ["alpha", "beta"]) (window as any).fixture.addSession(id) })
+    const row = page.locator('.session-sidebar [data-session-id="alpha"] .session-item-select')
     await toggle(page, "left").tap()
     await waitDrawers(page, "floating", "closed")
-    await page.locator('.session-sidebar [data-session-id="alpha"] .session-item-select').tap()
+    await row.tap()
     await waitSelected(page, "alpha")
-    const afterSelection = (await drawers(page)).left
+    await waitDrawers(page, "closed", "closed")
+    // Reopened, the overlay still marks the shown session; choosing it again reveals it again.
+    await toggle(page, "left").tap()
+    await waitDrawers(page, "floating", "closed")
+    assert.equal(await row.getAttribute("aria-current"), "true")
+    await row.tap()
+    await waitDrawers(page, "closed", "closed")
+    assert.equal(await selected(page), "alpha")
+    // Back and Forward move through history inside the overlay.
+    await toggle(page, "left").tap()
+    await waitDrawers(page, "floating", "closed")
     await back(page).tap(); await waitSelected(page, "session")
-    assert.equal((await drawers(page)).left, afterSelection, "history mirrors ordinary selection's drawer behaviour")
+    assert.equal((await drawers(page)).left, "floating")
     await forward(page).tap(); await waitSelected(page, "alpha")
+    assert.equal((await drawers(page)).left, "floating")
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("narrowing never grows or brings back a panel, and widening retraces the same layouts", async () => {
+  const context = await browser.newContext({ viewport: { width: 1400, height: 900 } })
+  const { page, errors } = await open(context)
+  const layout = () => page.evaluate(() => ({
+    left: Math.round(document.querySelector(".session-sidebar-container")?.getBoundingClientRect().width ?? 0),
+    right: Math.round(document.querySelector(".session-right-panel")?.getBoundingClientRect().width ?? 0),
+  }))
+  const resize = async (width: number) => {
+    await page.setViewportSize({ width, height: 900 })
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    return layout()
+  }
+  try {
+    await waitDrawers(page, "pinned", "pinned")
+    const widths = Array.from({ length: 51 }, (_, index) => 1400 - index * 20)
+    const narrowing = new Map<number, { left: number; right: number }>()
+    let previous = await layout()
+    for (const width of widths) {
+      const current = await resize(width)
+      assert.ok(current.left <= previous.left && current.right <= previous.right, `${width}px: ${JSON.stringify(previous)} -> ${JSON.stringify(current)}`)
+      narrowing.set(width, current)
+      previous = current
+    }
+    for (const width of [...widths].reverse()) assert.deepEqual(await resize(width), narrowing.get(width), `${width}px`)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("dismissing a floating panel by clicking outside leaves focus on the clicked control", async () => {
+  const context = await browser.newContext({ viewport: { width: 390, height: 760 } })
+  const { page, errors } = await open(context)
+  try {
+    // The fixture's "Outside target" button stands for any focusable control outside the shell.
+    await page.evaluate(() => { document.getElementById("outside")!.style.cssText += ";position:fixed;bottom:8px;right:8px;z-index:100000" })
+    await toggle(page, "left").click()
+    await waitDrawers(page, "floating", "closed")
+    await page.locator(".session-floating-drawer .session-sidebar-header button").first().focus()
+    await page.locator("#outside").click()
+    await waitDrawers(page, "closed", "closed")
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))))
+    assert.equal(await page.evaluate(() => document.activeElement?.id), "outside")
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+for (const side of ["left", "right"] as const) test(`the ${side} panel closed for room hands keyboard focus to its toggle`, async () => {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 900 } })
+  const { page, errors } = await open(context)
+  try {
+    await waitDrawers(page, "pinned", "pinned")
+    await page.locator(side === "left" ? ".session-sidebar-header button" : ".right-panel-tab-bar button").first().focus()
+    await page.setViewportSize({ width: 390, height: 900 })
+    await waitDrawers(page, "closed", "closed")
+    await page.waitForFunction(side => document.activeElement?.closest(`.shell-panel-toggle--${side}`) !== null, side)
+    assert.deepEqual(errors, [])
+  } finally { await context.close() }
+})
+
+test("panels that lose their docked room close instead of covering the conversation and return with it", async () => {
+  const context = await browser.newContext({ viewport: { width: 1600, height: 900 } })
+  const { page, errors } = await open(context)
+  const resize = async (width: number, left: string, right: string) => {
+    await page.setViewportSize({ width, height: 900 })
+    await waitDrawers(page, left, right)
+  }
+  try {
+    await waitDrawers(page, "pinned", "pinned")
+    // Both panels need 810 px beside the conversation; the session panel alone 610.
+    await resize(700, "pinned", "closed")
+    await resize(1600, "pinned", "pinned")
+    // A minimized window briefly reports a tiny viewport; restoring brings both back.
+    await resize(160, "closed", "closed")
+    await resize(1600, "pinned", "pinned")
+    // Opened without room, a panel floats; room docks it and brings the other back.
+    await resize(390, "closed", "closed")
+    await toggle(page, "left").click()
+    await waitDrawers(page, "floating", "closed")
+    await resize(1600, "pinned", "pinned")
+    // Opening the other panel takes the room of a docked one, which returns when it is free.
+    await resize(700, "pinned", "closed")
+    await toggle(page, "left").click()
+    await waitDrawers(page, "closed", "pinned")
+    await toggle(page, "left").click()
+    await waitDrawers(page, "pinned", "closed")
+    // A panel closed by the user stays closed when room returns.
+    await toggle(page, "left").click()
+    await waitDrawers(page, "closed", "pinned")
+    await toggle(page, "right").click()
+    await waitDrawers(page, "closed", "closed")
+    await resize(1600, "closed", "closed")
     assert.deepEqual(errors, [])
   } finally { await context.close() }
 })

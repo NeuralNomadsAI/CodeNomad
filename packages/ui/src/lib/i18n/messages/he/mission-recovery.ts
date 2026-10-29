@@ -5,5 +5,6 @@ export const missionRecoveryMessages = {
   "missions.recovery.error.busy": "עבודה פעילה או המתנה שלא נפתרה מונעות שחזור. יש לפתוח את השיחה.",
   "missions.recovery.error.unknown": "לא ניתן היה לאמת את הפעילות המקורית. בקשת השחזור לא התקבלה.",
   "missions.recovery.error.conflict": "המשימה או יעד השחזור השתנו. יש לרענן את המשימה לפני ניסיון נוסף.",
+  "missions.recovery.error.member": "שיחה של משימה זו שייכת כעת למשימה פעילה אחרת. סיימו או עצרו קודם את המשימה ההיא.",
   "missions.recovery.error.failed": "לא ניתן היה לאשר שבקשת השחזור התקבלה. יש לרענן את המשימה לפני ניסיון נוסף.",
 }

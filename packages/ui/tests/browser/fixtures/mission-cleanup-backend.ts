@@ -16,6 +16,8 @@ export function cleanupBackend() {
   const state = { owned: true }
   const storage: MissionStorage = {
     get: async key => values.get(key), set: async (key, value) => { values.set(key, structuredClone(value)) },
+    // Purge-capable like native storage: settled deletions can leave the journal.
+    remove: async key => { values.delete(key) },
     scan: async ({ prefix, after, limit = 100 }) => {
       const entries = [...values].filter(([key]) => key.startsWith(prefix) && (!after || key > after))
         .sort(([a], [b]) => a.localeCompare(b)).slice(0, limit).map(([key, value]) => ({ key, value }))
@@ -38,7 +40,7 @@ export function cleanupBackend() {
   const client = { ...http,
     location: { get: async ({ location }: { location: { directory: string } }) => ({ directory: location.directory, project: { id: "private-project" } }) },
     plugin: { list: async () => ({ data: [{ id: "codenomad.missions", state: { status: "active" } }] }) },
-    rpc: () => ({ cleanupTarget: (input: any) => control.cleanupTarget(input), delete: async (input: any) => {
+    rpc: () => ({ cleanupTarget: (input: any) => control.cleanupTarget(input), mission: (input: any) => control.mission(input.missionID), delete: async (input: any) => {
       try { return await control.delete(input) } catch (error) {
         if (error instanceof MissionControlError) throw { type: "mission.rejected", message: error.message, data: { code: error.code } }
         throw error

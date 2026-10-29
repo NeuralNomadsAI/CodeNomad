@@ -8,11 +8,9 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import Fastify from "fastify"
 import pino from "pino"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Page, type Route } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-editor-lifetime"
 import { missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
 import { AuthManager } from "../../../server/src/auth/manager"
@@ -39,19 +37,19 @@ const CHECK = `Check control outcome for ${TITLE}`, PLAY = `Play schedule ${TITL
 const PAUSE = `Pause schedule ${TITLE}`, STOP = `Stop schedule ${TITLE}`, RUN_NOW = `Run ${TITLE} now`, PASSAGE = `Check the pending passage of ${TITLE}`
 type Action = "play" | "pause" | "stop" | "resume" | "check"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
-  server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-    plugins: [solid(), shutdown.plugin, { name: "start-intent", configureServer(s) { s.middlewares.use("/recurrence", async (_req, res) => {
-      res.setHeader("Content-Type", "text/html")
-      res.end(await s.transformIndexHtml("/recurrence", '<html><body><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-editor-lifetime.tsx"></script><script type="module" src="/tests/browser/fixtures/mission-recurrence-alerts.tsx"></script></body></html>'))
-    }) } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-  shutdown.own(server); await server.listen()
-  url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/recurrence`
+  const fixture = await borrowFixture({
+      name: "mission-recurrence-start-intent",
+      routes: [
+        { path: "/recurrence", html: "<html><body><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-editor-lifetime.tsx\"></script><script type=\"module\" src=\"/tests/browser/fixtures/mission-recurrence-alerts.tsx\"></script></body></html>" },
+      ],
+    })
+  url = fixture.url
   browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+  armFixtureNavigationBudget(browser)
 })
-after(async () => { await browser?.close(); await server?.close() })
+after(async () => { await browser?.close(); })
 
 async function fixture() {
   await mkdir(path.join(tmpdir(), "opencode"), { recursive: true })

@@ -107,10 +107,12 @@ const provider = createServer(async (request, response) => {
   } catch (error) { providerError = error; response.destroy(error) }
 })
 await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
+const { mediaProbeTool, testSessionMediaBlobNative } = await import("./test-session-media-blob-native.mjs")
 await writeFile(path.join(root, "plugin", "index.ts"), `
 export default { id:'pruning-test-fixture', async setup(ctx) {
   await ctx.session.hook('http.request', event => event.request.headers.set('x-pruning-test-kind', event.kind))
   await ctx.tool.transform(editor => editor.add({ name:'prune_probe', description:'Fixture', input:{type:'object',properties:{}}, options:{codemode:false}, execute:async()=>({content:'TOOL_PRUNING_CANARY'}) }))
+  await ctx.tool.transform(editor => editor.add(${mediaProbeTool}))
   await ctx.permission.hook('evaluate', event => { if(event.action === 'read') event.effect = 'ask' })
   ${ui ? "await ctx.tool.transform(editor => editor.add({ name:'bash', description:'Isolated inert fixture', input:{type:'object',properties:{}}, options:{codemode:false}, execute:async()=>({content:'TOOL_PRUNING_CANARY'}) }))" : ""}
 } }
@@ -123,6 +125,8 @@ env.OPENCODE_CONFIG_CONTENT = JSON.stringify({
     baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only",
   }, models: { fixture: {} } } },
   plugins: [path.join(root, "plugin")],
+  // Runtimes with optional blob storage externalize tool files; others ignore the key.
+  experimental: { media_blob: true },
 })
 function start() {
   const child = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--log-level", "debug", "--print-logs"], { cwd: root, env, windowsHide: true })
@@ -285,7 +289,11 @@ try {
   assert.deepEqual(first.find(reasoningEnded).data.native, reasoning.native, "native SSE and HTTP retain identical provider replay metadata")
   console.log("PASS: native reasoning replay metadata agrees between SSE and HTTP")
   const { testSessionHistoryNative } = await import("./test-session-history-native.mjs")
-  await testSessionHistoryNative({ client, location, locationOptions, template: target })
+  const historyDirectory = path.join(root, "history-project")
+  await mkdir(historyDirectory)
+  execFileSync("git", ["init", historyDirectory], { stdio: "pipe" })
+  const historyLocation = { directory: historyDirectory }
+  await testSessionHistoryNative({ client, location: historyLocation, locationOptions: locationRequestOptions(historyLocation), template: target })
   const { testSessionNavigationNative } = await import("./test-session-navigation-native.mjs")
   await testSessionNavigationNative({ client, location, locationOptions, template: target })
   if (ui) {
@@ -366,6 +374,14 @@ try {
   assert.equal((await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "prune", location, input: historical }, locationOptions)).output.status, "pruned")
   assert.deepEqual((await client.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
   assert.deepEqual(await client.session.context({ sessionID: fork.id }), contextBefore, "deleting pre-compaction content does not rewrite or re-expand a summary")
+  await testSessionMediaBlobNative({ client, location, locationOptions, db, revision, generate: async (sessionID) => {
+    primaryCount = 0
+    probeName = "media_probe"
+    try {
+      await client.session.prompt({ sessionID, text: "Use media_probe, then conclude" })
+      await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
+    } finally { probeName = "prune_probe" }
+  } })
   assert.equal(db.prepare("PRAGMA integrity_check").get().integrity_check, "ok")
   const enqueued = first.filter(event => event.type === "session.inbox.enqueued")
   assert(enqueued.length > 0)

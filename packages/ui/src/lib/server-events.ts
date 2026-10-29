@@ -9,6 +9,7 @@ import {
 } from "./event-transport"
 import { getLogger } from "./logger"
 import { retryWithBackoff, isRetryableError } from "./retry-utils"
+import { createStreamStalenessWatchdog } from "./stream-staleness"
 import { authRecovery } from "./auth-recovery"
 
 const RETRY_BASE_DELAY = 1000
@@ -31,10 +32,25 @@ class ServerEvents {
   private connectGeneration = 0
   private retryDelay = RETRY_BASE_DELAY
   private retryTimer: ReturnType<typeof setTimeout> | null = null
+  private watchdog = createStreamStalenessWatchdog({
+    onStale: () => this.restart("stream stale"),
+  })
 
   constructor() {
     authRecovery.onRestored(() => this.restart("authentication restored"))
-    if (typeof window !== "undefined") void this.connect()
+    if (typeof window !== "undefined") {
+      // Minimal renderer globals (tests, embedded previews) may define window
+      // without event APIs; the probes are enhancements, never requirements.
+      window.addEventListener?.("online", () => this.probeStale("network online"))
+      if (typeof document !== "undefined") {
+        document.addEventListener?.("visibilitychange", () => {
+          if (document.visibilityState === "visible") {
+            this.probeStale("visibility restored")
+          }
+        })
+      }
+      void this.connect()
+    }
   }
 
   private async connect() {
@@ -45,6 +61,7 @@ class ServerEvents {
       this.emitTransportStatus("disconnected")
       this.connection.disconnect()
       this.connection = null
+      this.watchdog.setConnected(false)
     }
 
     logSse("Connecting to backend events stream")
@@ -52,7 +69,9 @@ class ServerEvents {
     try {
       const connection = await connectWorkspaceEvents({
         onBatch: (events) => {
-          if (generation === this.connectGeneration) this.dispatchBatch(events)
+          if (generation !== this.connectGeneration) return
+          this.watchdog.activity()
+          this.dispatchBatch(events)
         },
         onError: () => {
           if (generation !== this.connectGeneration) {
@@ -70,6 +89,7 @@ class ServerEvents {
           if (generation !== this.connectGeneration) {
             return
           }
+          this.watchdog.activity()
           logSse("Events stream connected")
           this.retryDelay = RETRY_BASE_DELAY
           this.notify(this.openHandlers, undefined, "open")
@@ -78,6 +98,7 @@ class ServerEvents {
           if (generation !== this.connectGeneration) {
             return
           }
+          this.watchdog.activity()
           const identity = getClientIdentity()
           const pongPayload = { ...identity, pingTs: payload.ts }
 
@@ -102,6 +123,7 @@ class ServerEvents {
       }
 
       this.connection = connection
+      this.watchdog.setConnected(true)
     } catch (error) {
       if (generation !== this.connectGeneration) {
         return
@@ -110,6 +132,7 @@ class ServerEvents {
       logSse("Events stream failed to connect, scheduling reconnect", {
         error: error instanceof Error ? error.message : String(error),
       })
+      this.watchdog.setConnected(false)
       this.scheduleReconnect()
     }
   }
@@ -129,6 +152,7 @@ class ServerEvents {
       this.connection = null
     }
 
+    this.watchdog.setConnected(false)
     this.emitTransportStatus("disconnected")
 
     logSse("Events stream disconnected, scheduling reconnect", { delayMs: this.retryDelay })
@@ -201,9 +225,22 @@ class ServerEvents {
     return () => this.statusHandlers.delete(handler)
   }
 
+  probeStale(reason: string): void {
+    // Elapsed-time probe, not the interval's episode flag: the resume/online
+    // probe is the fast path and must reconnect as soon as the same threshold
+    // has elapsed, without waiting for the interval backstop to tick first.
+    if (!this.connection || !this.watchdog.probe()) {
+      return
+    }
+
+    logSse("Probing stale events stream", { reason })
+    this.restart(reason)
+  }
+
   restart(reason = "manual restart"): void {
     this.retryDelay = RETRY_BASE_DELAY
     this.clearReconnectTimer()
+    this.watchdog.setConnected(false)
 
     if (this.connection) {
       this.emitTransportStatus("disconnected")

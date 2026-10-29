@@ -1,5 +1,6 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { chromium, type Browser, type Page } from "playwright"
 import type { ViteDevServer } from "vite"
 import { startDeviceUploadFixture } from "./fixtures/device-upload-server.mjs"
@@ -11,6 +12,7 @@ before(async () => {
   ;({ server, url } = await startDeviceUploadFixture())
   try {
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
+    armFixtureNavigationBudget(browser)
   } catch (error) {
     await server.close()
     throw error

@@ -4,10 +4,10 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 ## Create, then explicitly start {#create}
 
-1. Open **Missions** in the right panel and choose **Create mission**.
+1. Open **Missions** in the right panel and choose **Create mission**. The form replaces the mission list and the selected mission's tasks until you create or cancel.
 2. Fill **What should the mission do?** and check **Title**, prefilled from the first sentence (up to 60 characters).
 3. Under **When**, select **Once** or **Every day at**. For daily work, verify the displayed time zone; **Change** allows an IANA zone.
-4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
+4. Expand **Options** for **Playbook**, **Notes**, **Agents and models**, **Task sessions**, the project's **Subsession nesting depth**, saved briefs and optional followed conversations. With **Compare two models**, the **Model A** and **Model B** selectors appear in the main form.
 5. Choose **Create**. Select the new entry, then use its separate ▶ action when ready: **Start mission** for one-time work, or **Play schedule {id}** for a daily schedule.
 
 **Create never starts work.** A one-time mission is prepared; a daily schedule is paused. Neither creation nor saving a brief arms a timer. Creation is scoped to the selected project/Location and freezes the requested profiles and task-session policy. Validation is beside the affected field; a refusal that says nothing was sent leaves the draft available for correction. The coordinator of a one-time mission can also prepare a separate mission for you, such as a follow-up: it appears in the list as **Prepared** and, like any mission, starts only from its ▶ action.
@@ -45,6 +45,22 @@ The playbook guides coordination; it does not bypass native permissions or guara
 
 The graph includes completed and retired work. Retiring a task does not itself stop its conversation. In a one-time mission, the coordinator can separately stop the conversations of a retired task it launched as a native subagent, without touching other tasks. **In progress** is the mission's lifecycle state, not proof that its coordinator is currently running. Full prose belongs in the central reader, not the panel's task list; **Technical details** folds identifiers and requested execution information.
 
+### Colours and interrupted missions {#status-colours}
+
+Mission marks, task icons and the list's chevron use the session list's colours: colour shows only what needs you now.
+
+| Colour | Meaning |
+| --- | --- |
+| Red | An answer is expected from you; it is listed under **Needs you**. |
+| Yellow, pulsing | Work is running. |
+| Orange | The mission is paused, or interrupted, with an action to continue it. |
+| Green | A completed mission you have not opened yet in this window; it turns neutral once you select it. |
+| Blue | A prepared mission, ready to start like a composed prompt. |
+
+Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons. While the list is collapsed, its chevron takes the most urgent of red, yellow and green among the other missions; like collapsed sessions, orange and blue show only on their own rows.
+
+A mission is **Interrupted** when its coordinator stopped without concluding while nothing else runs. A mission shown as **Failed** can also be resumed. In both cases the first toolbar button becomes **Recover interrupted mission**: it asks the coordinator to reassess from the saved plan and results, and first reopens a failed mission. A coordinator does not end a one-time mission as failed: when it cannot continue on its own, it asks you a question under **Needs you**. Only you stop a mission.
+
 ### Briefings and update requests {#briefings}
 
 The coordinator is instructed to publish a project briefing after its initial plan, after task settlements, when waiting for a human and before the final report. This is an authored assessment, not a live activity counter or guaranteed periodic heartbeat. A notice identifies when the map has changed since the briefing.
@@ -57,7 +73,7 @@ Use **Request an update** below the toolbar for a fresh coordinator assessment, 
 2. Under **Apply to**, choose **All missions** or one playbook, then set **Task sessions** and, under **Agents and models**, one row per role (coordinator, then the playbook's roles). Each choice is saved immediately; there is no Save button.
 3. In a playbook scope, rows show the global values marked **Global**. Changing a field customizes that role starting from them; its revert icon uses the global values again. **Reset** (after confirmation) clears only the agents and models of the shown scope.
 4. In creation, use **Options → Agents and models** for specific requested profiles; **Use saved defaults** restores the saved ones.
-5. For native recursion limits, edit **Subsession nesting depth → Depth override for the project**. Pressing Enter or leaving the field saves a changed valid value; **Inherit** saves at once; Escape discards an unsaved value.
+5. For native recursion limits, edit **Subsession nesting depth → Depth override for the project**, here or under creation **Options**. Pressing Enter or leaving the field saves a changed valid value; **Inherit** saves at once; Escape discards an unsaved value.
 
 | Setting | Scope and effect |
 | --- | --- |
@@ -65,7 +81,7 @@ Use **Request an update** below the toolbar for a fresh coordinator assessment, 
 | Agent / Model / Thinking | Requested coordinator/role selections recorded with creation; a busy actor is not silently switched to satisfy later work. Daily runs reuse their frozen requested profiles. |
 | Native subagents | Task sessions use native subagent/all agents under the coordinator. |
 | Independent sessions | Declared task sessions use primary/all agents and independent conversations; this does not disable internal native helpers. |
-| Subsession nesting depth | Project configuration for **all** OpenCode conversations there, not just Missions. Empty inherits. Saving does not reload OpenCode or change running conversations. |
+| Subsession nesting depth | Project configuration for **all** OpenCode conversations there, not just Missions. Empty inherits: **Inherit** removes the project override and an `experimental` block it leaves empty. OpenCode reads the project's `experimental` block as a whole, so other experimental settings kept there still hide the global depth. Saving does not reload OpenCode or change running conversations. |
 
 **Native default** and **Global** are different: the former requests OpenCode's own defaults, the latter inherits the global choice; choosing native defaults in a playbook scope remains an explicit exception. Catalog availability is checked; a requested profile is not proof of the profile a conversation currently uses. Native permissions and configured depth still govern internal helper calls in either task mode.
 
@@ -102,7 +118,7 @@ Creation time also bounds eligible daily work; starting a new schedule is not pe
 | --- | --- |
 | CodeNomad project tab | Closes the project in CodeNomad; native sessions continue in OpenCode. Reopen the project to find them again. |
 | Whole window, app quit or renderer reload | Preserves project connections for restoration; does not stop native work or the OpenCode service. |
-| CodeNomad backend | Does not stop OpenCode. One-time CodeNomad coordination depends on backend presence; do not assume new one-time dispatch/control remains available while it is closed. |
+| CodeNomad backend | Does not stop OpenCode. A running one-time mission continues: its coordinator, native subagent tasks and mission tools run in OpenCode. Assigning tasks to independent sessions and delivering their reports to the coordinator, missions the coordinator prepares, stopping a retired task's conversations, recovery and Mission Control wait for the backend, as does continuing a one-time mission after an OpenCode service restart. |
 | Running daily schedule | Its clock and passage execution run in the OpenCode plugin/service, including with CodeNomad UI and backend closed. The execution host and OpenCode service must stay running. |
 | OpenCode service restart | Loses process-local schedule jobs. A desired-running schedule becomes **Interrupted** until an explicit **Resume**; reopening CodeNomad does not rearm it. |
 
@@ -140,6 +156,6 @@ Use **Edit selected mission** on an editable one-time mission; on a conflict, cl
 2. Optionally select **Also delete specialist conversations created for this mission** before confirming.
 3. Check **Conversation cleanup** for removed/kept/pending counts. Retry only the remaining recorded cleanup if offered.
 
-Deleting a mission is not the same as stopping it; use Stop and inspect remaining work first. Coordinators and reused conversations are kept. Shared, moved, child-bearing or unverifiably owned specialists may also be retained. Partial cleanup is not rolled back and is not silently completed in the background. Completed cleanup history remains available in the overview reader.
+Deleting a mission is not the same as stopping it; use Stop and inspect remaining work first. Coordinators and reused conversations are kept. Shared, moved, child-bearing or unverifiably owned specialists may also be retained. Partial cleanup is not rolled back and is not silently completed in the background. The overview reader keeps the 20 most recent completed cleanups. Deleting missions frees their project storage: older deleted missions are cleared automatically.
 
 See [Permissions](permissions.md), [Conversations](conversations.md) and [OpenCode setup](opencode.md) for native work and service controls.

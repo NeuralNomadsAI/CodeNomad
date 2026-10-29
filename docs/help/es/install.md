@@ -4,7 +4,7 @@ Elige un equipo de escritorio local o ejecuta el [servidor independiente](server
 
 ## Descargas de escritorio {#desktop-downloads}
 
-1. Abre [la última versión](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
+1. Abre [la página de descarga](download.md).
 2. Elige la compilación que corresponda a tu sistema operativo y procesador.
 3. Extrae el ZIP o instala/ejecuta el paquete de la plataforma y, después, inicia CodeNomad.
 
@@ -45,7 +45,7 @@ La instalación Debian de Electron configura el aislamiento de Chromium. No desa
 
 | Requisito | Dónde debe estar disponible | Requisito actual |
 | --- | --- | --- |
-| CLI de OpenCode | Equipo de ejecución seleccionado, incluida la distribución WSL seleccionada cuando corresponda | Mínimo **2.1.2**; **2.1.4** es la versión recomendada/verificada. Las versiones más nuevas o personalizadas pasan una validación de contratos en lugar de prohibirse por no haberse probado. |
+| CLI de OpenCode | Equipo de ejecución seleccionado, incluida la distribución WSL seleccionada cuando corresponda | Mínimo **2.1.2**; **2.2.1** es la versión recomendada/verificada. Las versiones más nuevas o personalizadas pasan una validación de contratos en lugar de prohibirse por no haberse probado. |
 | Git | `PATH` de la cuenta del backend de CodeNomad | Necesario para la identidad del repositorio, las operaciones Git y los worktrees. |
 | Node.js/npm | Equipo del servidor independiente y de compilación desde el código fuente | Node.js 24 LTS; las compilaciones reproducibles desde el código fuente usan `.node-version` (**24.20.0**). Incluido con los recursos de ejecución/instalación de escritorio. |
 | Carpeta del espacio de trabajo | Disco accesible para el backend | Una carpeta física abierta explícitamente, no una carpeta local del dispositivo deducida por un navegador remoto. |

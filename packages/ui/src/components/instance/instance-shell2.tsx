@@ -40,8 +40,7 @@ import PromptInput from "../prompt-input"
 import PromptContextControls from "../prompt-input/PromptContextControls"
 import { useI18n } from "../../lib/i18n"
 import { hotkeyLabel, withHotkey } from "../../lib/hotkeys"
-import { getPermissionQueueLength } from "../../stores/instances"
-import { getFormQueue } from "../../stores/forms"
+import { getInterruptionQueue } from "../../stores/interruption-scope"
 import SessionSidebar from "./shell/SessionSidebar"
 import { useSessionSidebarRequests } from "./shell/useSessionSidebarRequests"
 import RightPanel from "./shell/right-panel/RightPanel"
@@ -87,7 +86,7 @@ import { useInstanceSessionContext } from "./shell/useInstanceSessionContext"
 import { isPermissionAutoAcceptEnabled } from "../../stores/permission-auto-accept"
 import { readClientLayoutValue, writeClientLayoutValue } from "../../stores/client-state"
 import { runtimeEnv } from "../../lib/runtime-env"
-import { getServerMeta, remoteControlClient } from "../../lib/server-meta"
+import { getServerMeta, previewsUnavailable } from "../../lib/server-meta"
 import { useInterruptionViewport } from "./shell/useInterruptionViewport"
 
 const log = getLogger("session")
@@ -283,7 +282,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     onCleanup(() => document.removeEventListener("pointerdown", handleFloatingDrawerPointerDown, true))
   })
 
-  // Remote Control serves no previews: its clients hide the preview entry points.
+  // Remote Control clients hide the preview entry points while their host keeps previews off.
   onMount(() => { void getServerMeta().catch(() => undefined) })
 
   onMount(() => {
@@ -431,10 +430,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     return t("instanceShell.connection.unknown")
   }
 
-  const hasPendingRequests = createMemo(() => {
-    const permissions = getPermissionQueueLength(props.instance.id)
-    return permissions + getFormQueue(props.instance.id).length > 0
-  })
+  const hasPendingRequests = createMemo(() => getInterruptionQueue(props.instance.id).length > 0)
 
   const activePromptInputApi = createMemo(() => {
     const sessionId = activeSessionIdForInstance()
@@ -667,7 +663,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
       icon: <Search class="w-4 h-4" aria-hidden="true" />,
       onSelect: handleChatSearchClick,
     })
-    if (!remoteControlClient()) items.push({
+    if (!previewsUnavailable()) items.push({
       key: "preview",
       label: previewToggleLabel(),
       checked: activeSessionPreview()?.mode === "preview",
@@ -1050,6 +1046,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   const handleSidebarSessionSelect = (sessionId: string) => {
     if (sessionId === "info" && showingInfoView()) handleBackToConversation()
     else handleSessionSelect(sessionId)
+    // A floating session panel covers the conversation: choosing from its list, the shown
+    // session included, reveals the choice. Back/Forward select without closing it.
+    if (!leftPinned() && leftOpen()) closeLeftDrawer()
   }
 
   function handleProjectInterruptionClick() {
@@ -1132,7 +1131,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                           >
                             <Search class="w-5 h-5" aria-hidden="true" />
                           </IconButton>
-                          <Show when={!remoteControlClient()}>{renderPreviewToggleButton()}</Show>
+                          <Show when={!previewsUnavailable()}>{renderPreviewToggleButton()}</Show>
                           {renderFullscreenButton()}
                           <TranscriptFilters open={filtersOpen()} onOpenChange={setFiltersOpen}
                             overflowAnchor={() => headerActionsCollapsed()

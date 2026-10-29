@@ -11,7 +11,7 @@ import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-famil
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
-// `@opencode/SessionExecution` is not exposed to plugin or Location contexts (as of the 2.1.0 minimum); the
+// `@opencode/SessionExecution` is not exposed to plugin or Location contexts (as of the minimum supported OpenCode); the
 // native Session service re-exports its `active` Effect as the set of running session IDs.
 const sessionTag = tag("@opencode/Session"), formTag = tag("@opencode/Form")
 const permissionTag = tag("@opencode/Permission"), shellTag = tag("@opencode/Shell")
@@ -22,12 +22,12 @@ const runningToolsSQL = `SELECT count(*) AS count FROM session_message, json_eac
   AND json_extract(part.value,'$.state.status') IN ('running','streaming')`
 // Native always projects each execution terminal into a durable `idle` message
 // (`outcome: succeeded | failed | interrupted`); the `event` log is only written
-// when Bus persistence is configured, which `serve` leaves off (as of the 2.1.0 minimum).
+// when Bus persistence is configured, which `serve` leaves off (as of the minimum supported OpenCode).
 const failedTurnsSQL = `SELECT count(*) AS count FROM session_message
   WHERE session_id=? AND type='idle' AND json_extract(data,'$.outcome')='failed'`
 export type PassageSessionObservation = {
   id: string; parentID?: string; projectID: string; directory: string; workspaceID?: string
-  active: boolean; inbox: number; pending: number; suspended: boolean; runningTools: number
+  active: boolean; inbox: number; suspended: boolean; runningTools: number
   failed: boolean; messagePresent: boolean
   /** Execution claim written before this service process started and not live here:
    * a restart cut the turn. An owned unmanaged `serve` never sweeps such claims. */
@@ -100,8 +100,8 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
         if (!Number.isSafeInteger(value) || Number(value) < 0) throw new Error("Native passage coverage unavailable")
         return Number(value)
       }
+      // Queued input, admitted or not, lives in the native session inbox.
       const inbox = await count("SELECT count(*) AS count FROM session_inbox WHERE session_id=?", [id])
-      const pending = await count("SELECT count(*) AS count FROM session_pending WHERE session_id=?", [id])
       const runningTools = await count(runningToolsSQL, [id])
       const active = activeSet(await run(running)).has(id)
       const failedTurns = await count(failedTurnsSQL, [id])
@@ -114,7 +114,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       return { id, projectID: session.project_id, directory: path.normalize(session.directory),
         ...(session.parent_id == null ? {} : { parentID: String(session.parent_id) }),
         ...(session.workspace_id == null ? {} : { workspaceID: String(session.workspace_id) }),
-        active, inbox, pending, suspended: claimedAt != null, runningTools,
+        active, inbox, suspended: claimedAt != null, runningTools,
         failed: failedTurns > 0, messagePresent,
         orphaned: claimedAt != null && !active && Number(claimedAt) < startedAt }
     },

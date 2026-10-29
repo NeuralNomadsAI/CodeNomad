@@ -47,6 +47,8 @@ export const sessionMessages = {
   "sessionList.expand.withChildActivity": "{action} — {activity}",
   "sessionList.actions.newSession.ariaLabel": "新建会话",
   "sessionList.actions.newSession.title": "新建会话",
+  "sessionList.actions.newSession.failedTitle": "无法新建会话",
+  "sessionList.actions.newSession.failedMessage": "新建会话失败。请检查网络连接后重试。",
   "sessionList.actions.copyId.ariaLabel": "复制会话 ID",
   "sessionList.actions.copyId.title": "复制会话 ID",
   "sessionList.actions.reload.ariaLabel": "重新加载会话",

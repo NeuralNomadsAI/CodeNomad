@@ -1,31 +1,27 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
+import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright"
-import { createServer, type ViteDevServer } from "vite"
-import solid from "vite-plugin-solid"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
-import { createFixtureCache } from "./fixture-cache"
-import { createFixtureShutdown } from "./fixture-shutdown"
 import { missionPickerExpander, missionPickerField, missionPopupOption, missionDetail, missionGeneralAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
 
-let server: ViteDevServer, browser: Browser, url: string
+let browser: Browser, url: string
 before(async () => {
-  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
+  const fixture = await borrowFixture({
+      name: "mission-panel-host",
+      routes: [
+        { path: "/mission-panel-host", html: "<html><head><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"></head><body style=\"margin:0\"><div id=\"root\"></div><script type=\"module\" src=\"/tests/browser/fixtures/mission-panel-host.tsx\"></script></body></html>" },
+      ],
+    })
   try {
-    server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
-      plugins: [solid(), shutdown.plugin, { name: "mission-panel-host", configureServer(s) {
-        s.middlewares.use("/mission-panel-host", async (_req, res) => {
-          res.setHeader("Content-Type", "text/html")
-          res.end(await s.transformIndexHtml("/mission-panel-host", '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0"><div id="root"></div><script type="module" src="/tests/browser/fixtures/mission-panel-host.tsx"></script></body></html>'))
-        })
-      } }], resolve: { dedupe: ["solid-js"] }, optimizeDeps: { exclude: ["lucide-solid"] }, server: { host: "127.0.0.1", port: 0, hmr: false, watch: null } })
-    shutdown.own(server); await server.listen()
-    url = `http://127.0.0.1:${(server.httpServer!.address() as { port: number }).port}/mission-panel-host`
+    url = fixture.url
     browser = await chromium.launch({ executablePath: process.env.CODENOMAD_BROWSER_PATH || undefined })
-  } catch (error) { if (server) await server.close(); else await cache.dispose(); throw error }
+    armFixtureNavigationBudget(browser)
+  } catch (error) { throw error }
 })
-after(async () => { try { await browser?.close() } finally { await server?.close() } })
+after(async () => { await browser?.close() })
 
 const TASKS = 60
 const task = (index: number): MissionTask => ({ id: `task-${index}`, key: `t${index}`, title: `Step ${index + 1} of the long migration`,

@@ -40,13 +40,15 @@ import {
   type SessionRetryState,
   type SessionStatus,
 } from "../types/session"
-import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, syncInstanceSessionIndicator, withSession } from "./session-state"
+import { activeSessionId, getAuthoritativelyDeletedSessionIdsForInstance, invalidateSessionMessageLoad, isSessionInWorkspaceScope, prependSessionListId, revealWorkingSubsession, sessions, setSessionStatus, setSessions, withSession } from "./session-state"
 import { mergeFetchedSessionRuntimeState } from "./session-generation-recovery"
+import { showsRequestOfSession } from "./interruption-scope"
 import { getRetrySeconds } from "./session-status"
 import { tGlobal } from "../lib/i18n"
 
 import { fetchSessions, loadMessages, refreshSessionCatalog, removeSessionRuntimeState } from "./session-api"
 import { getRootClient } from "./opencode-client"
+import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getWorktrees, reloadWorktrees } from "./worktrees"
 import { normalizeSessionDirectory } from "./session-list-options"
 import {
@@ -64,6 +66,8 @@ const COMPACTION_TOAST_MS = 10000
 const pendingSessionFetches = new Map<string, {
   status: SessionStatus
   retry?: SessionRetryState | null
+  /** Settles once the session's metadata read ends. */
+  settled: Promise<void>
 }>()
 const nativeLifecycleGenerations = new Map<string, number>()
 // The live backoff countdown of one session; it ends when that session's next
@@ -301,8 +305,12 @@ function isChildSession(instanceId: string, sessionId: string): boolean | null {
 }
 
 /** Session attention notifications concern root sessions only. */
-function isNotifiableSession(instanceId: string, sessionId: string | undefined | null): boolean {
+function isNotifiableSession(instanceId: string, sessionId: string | undefined | null, category: "needsInput" | "sessionDone"): boolean {
   if (!sessionId) return true
+  // A held session outside the workspace scope belongs to another project's
+  // list; its request still notifies where this project's dock shows it.
+  if (sessions().get(instanceId)?.has(sessionId) && !isSessionInWorkspaceScope(instanceId, sessionId)
+    && (category !== "needsInput" || !showsRequestOfSession(instanceId, sessionId))) return false
 
   const child = isChildSession(instanceId, sessionId)
 
@@ -327,7 +335,7 @@ function getSessionTitle(instanceId: string, sessionId: string | undefined | nul
 
 /** Routed like every notification: screen, history and/or system per Settings → Notifications. */
 function notifySessionAttention(category: "needsInput" | "sessionDone", instanceId: string, sessionId: string | undefined | null): void {
-  if (!isNotifiableSession(instanceId, sessionId)) return
+  if (!isNotifiableSession(instanceId, sessionId, category)) return
   const label = getSessionTitle(instanceId, sessionId)
   const message = label
     ? tGlobal(category === "needsInput" ? "sessionEvents.notify.needsInput" : "sessionEvents.notify.done", { label })
@@ -341,15 +349,23 @@ queueMicrotask(() => {
 
 const ALLOWED_TOAST_VARIANTS = new Set<ToastVariant>(["info", "success", "warning", "error"])
 
+/** Whether the project is still open on the OpenCode data generation captured earlier. */
+function isInstanceGenerationCurrent(instanceId: string, generation: number): boolean {
+  return instances().has(instanceId) && getOpenCodeInstanceGeneration(instanceId) === generation
+}
+
 async function fetchSessionInfo(instanceId: string, sessionId: string, directory?: string): Promise<Session | null> {
   const instance = instances().get(instanceId)
   if (!instance?.client) return null
 
   const client = getRootClient(instanceId)
   void directory
+  const generation = getOpenCodeInstanceGeneration(instanceId)
 
   try {
     const info = await client.session.get({ sessionID: sessionId })
+    // A project closed or a client replaced during the read publishes nothing.
+    if (!isInstanceGenerationCurrent(instanceId, generation)) return null
     const fetched = createClientSession(info, instanceId)
 
     let updatedInstanceSessions: Map<string, Session> | undefined
@@ -388,7 +404,6 @@ async function fetchSessionInfo(instanceId: string, sessionId: string, directory
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     reconcilePendingSessionIndicators(instanceId)
 
     const published = updatedInstanceSessions?.get(sessionId)
@@ -409,32 +424,35 @@ function ensureSessionStatus(
   status: SessionStatus,
   directory?: string,
   retry?: SessionRetryState | null,
-) {
+): Promise<void> {
   const existing = sessions().get(instanceId)?.get(sessionId)
   if (existing) {
     setSessionStatus(instanceId, sessionId, status, { retry })
-    return
+    return Promise.resolve()
   }
 
-  const key = `${instanceId}:${sessionId}`
+  // Reads coalesce within one instance generation: a replaced client reads again.
+  const key = `${instanceId}:${getOpenCodeInstanceGeneration(instanceId)}:${sessionId}`
   const existingFetch = pendingSessionFetches.get(key)
   if (existingFetch) {
     existingFetch.status = status
     existingFetch.retry = retry
-    return
+    return existingFetch.settled
   }
 
-  const pendingState = { status, retry }
+  const pendingState: { status: SessionStatus; retry?: SessionRetryState | null; settled: Promise<void> } = { status, retry, settled: Promise.resolve() }
   const pending = (async () => {
     const fetched = await fetchSessionInfo(instanceId, sessionId, directory)
     if (!fetched) return
     setSessionStatus(instanceId, sessionId, pendingState.status, { retry: pendingState.retry })
   })()
 
+  pendingState.settled = pending
   pendingSessionFetches.set(key, pendingState)
   void pending.finally(() => {
     if (pendingSessionFetches.get(key) === pendingState) pendingSessionFetches.delete(key)
   })
+  return pending
 }
 
 function handleSessionUpdate(
@@ -510,7 +528,6 @@ function handleSessionUpdate(
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
     if (!newSession.parentId) {
       prependSessionListId(instanceId, newSession.id)
     }
@@ -542,7 +559,6 @@ function handleSessionUpdate(
       return next
     })
 
-    syncInstanceSessionIndicator(instanceId, updatedInstanceSessions)
   }
   reconcilePendingSessionIndicators(instanceId)
 }
@@ -560,9 +576,24 @@ function handleSessionDeleted(instanceId: string, event: EventSessionDeleted): v
 /** Native provider backoff. The next attempt's step events clear it as ordinary work. */
 function handleRetryScheduled(instanceId: string, event: SessionRetryScheduled): void {
   const sessionId = event.data.sessionID
-  advanceNativeLifecycle(instanceId, sessionId)
+  const generation = advanceNativeLifecycle(instanceId, sessionId)
+  const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
   const retry = mapNativeSessionRetry(event.data)
-  ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory, retry)
+  const held = sessions().get(instanceId)?.has(sessionId)
+  const resolved = ensureSessionStatus(instanceId, sessionId, "working", event.location?.directory, retry)
+  if (held) showRetryToast(instanceId, sessionId, retry)
+  // An unknown session's scope is known once its metadata is read and
+  // published; by then the next attempt may have replaced this backoff, or
+  // the project may have closed.
+  else void resolved.then(() => {
+    if (isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionId)
+      && isCurrentNativeLifecycle(instanceId, sessionId, generation)) showRetryToast(instanceId, sessionId, retry)
+  })
+}
+
+function showRetryToast(instanceId: string, sessionId: string, retry: SessionRetryState): void {
+  // Shown by the project whose list shows the session, not by an owning parent.
+  if (sessions().get(instanceId)?.has(sessionId) && !isSessionInWorkspaceScope(instanceId, sessionId)) return
   const remainingSeconds = getRetrySeconds(retry.next)
   const countdown =
     remainingSeconds > 0
@@ -591,9 +622,23 @@ function handleSessionCompacted(instanceId: string, event: SessionCompactionEnde
   advanceNativeLifecycle(instanceId, sessionID)
 
   const existing = sessions().get(instanceId)?.get(sessionID)
-  if (existing) setSessionStatus(instanceId, sessionID, "working", { force: true })
-  else ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory)
+  if (existing) {
+    setSessionStatus(instanceId, sessionID, "working", { force: true })
+    announceCompaction(instanceId, event)
+  } else {
+    // An unknown session's scope is known once its metadata is read and
+    // published; a failed read, a deletion or a closed project announces nothing.
+    const instanceGeneration = getOpenCodeInstanceGeneration(instanceId)
+    void ensureSessionStatus(instanceId, sessionID, "working", event.location?.directory).then(() => {
+      if (isInstanceGenerationCurrent(instanceId, instanceGeneration) && sessions().get(instanceId)?.has(sessionID)) announceCompaction(instanceId, event)
+    })
+  }
+}
 
+function announceCompaction(instanceId: string, event: SessionCompactionEnded): void {
+  const sessionID = event.data.sessionID
+  // Announced by the project whose list shows the session, not by an owning parent.
+  if (sessions().get(instanceId)?.has(sessionID) && !isSessionInWorkspaceScope(instanceId, sessionID)) return
   if (!claimCompactionNotice(event)) return
   const instanceSessions = sessions().get(instanceId)
   const session = instanceSessions?.get(sessionID)
