@@ -19,7 +19,7 @@ export function registerPanelExtensionAssetRoutes(app: FastifyInstance, deps: {
         const { id } = idSchema.parse(request.params)
         const schema = (method === "assets" ? assetsInputSchema : assetReadInputSchema).extend(authority).strict()
         const { instanceId, digest, ...input } = schema.parse(request.body)
-        await deps.store.authorizeAssets(id, digest)
+        await deps.store.authorize(id, digest, "session.assets.read")
         const connection = await deps.workspaceManager.getSharedServiceConnection(instanceId)
         if (!connection) throw new PanelExtensionError("unavailable")
         connection.assertCurrent()
@@ -39,7 +39,7 @@ export function registerPanelExtensionAssetRoutes(app: FastifyInstance, deps: {
         const current = await client.session.get({ sessionID: input.sessionID })
         if (JSON.stringify(readLocationRef(current.location)) !== JSON.stringify(location)
           || !await deps.workspaceManager.ownsLocation(instanceId, current.location, client)) return reply.code(409).send({ error: "Session moved" })
-        await deps.store.authorizeAssets(id, digest)
+        await deps.store.authorize(id, digest, "session.assets.read")
         connection.assertCurrent()
         if (output.status === "blocked") return reply.code(503).send({ error: "Assets unavailable" })
         return output

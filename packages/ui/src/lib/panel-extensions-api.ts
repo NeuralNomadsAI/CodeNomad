@@ -1,4 +1,6 @@
-import type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionCatalog } from "../../../server/src/api-types"
+import type {
+  ForgeWorkItemKind, ForgeWorkItemsResult, PanelExtensionManifest, PanelExtensionSummary, PanelExtensionCatalog,
+} from "../../../server/src/api-types"
 import { CODENOMAD_API_BASE } from "./api-base"
 import { authenticatedFetch } from "./auth-recovery"
 import type { AssetTarget, AssetsResult, AssetReadResult } from "../../../server/src/opencode/session-pruning/assets-contract"
@@ -15,6 +17,10 @@ export const panelExtensionsApi = {
     request<Extract<AssetsResult, { status: "page" }>>(`/${encodeURIComponent(id)}/assets`, { method: "POST", body: JSON.stringify({ instanceId, digest, sessionID, cursor }), signal }),
   assetRead: (instanceId: string, id: string, digest: string, sessionID: string, target: AssetTarget, signal: AbortSignal) =>
     request<Extract<AssetReadResult, { status: "asset" }>>(`/${encodeURIComponent(id)}/assetRead`, { method: "POST", body: JSON.stringify({ instanceId, digest, sessionID, target }), signal }),
+  workItems: (instanceId: string, id: string, digest: string, input: { kind: ForgeWorkItemKind; query: string; page: number; fresh: boolean }, signal: AbortSignal) =>
+    request<ForgeWorkItemsResult>(`/${encodeURIComponent(id)}/workItems`, { method: "POST", body: JSON.stringify({ instanceId, digest, ...input }), signal }),
+  workItemUrl: (instanceId: string, id: string, digest: string, kind: ForgeWorkItemKind, number: number, signal: AbortSignal) =>
+    request<{ url: string }>(`/${encodeURIComponent(id)}/workItemUrl`, { method: "POST", body: JSON.stringify({ instanceId, digest, kind, number }), signal }),
   catalog: (refresh: boolean, signal: AbortSignal) => request<PanelExtensionCatalog>(`/catalog${refresh ? "?refresh=true" : ""}`, { signal }),
   inspectCatalog: (id: string, digest: string) => request<{ manifest: PanelExtensionManifest; digest: string }>("/catalog/inspect", {
     method: "POST", body: JSON.stringify({ id, digest }),

@@ -18,6 +18,8 @@ import { fixtureArchive, fixtureManifest } from "../../../server/src/panel-exten
 import { registerPanelExtensionRoutes } from "../../../server/src/server/routes/panel-extensions"
 import { createPanelExtensionCatalog, PANEL_EXTENSION_CATALOG_URL } from "../../../server/src/panel-extensions/catalog"
 import { registerPanelExtensionAssetRoutes } from "../../../server/src/server/routes/panel-extension-assets"
+import { registerPanelExtensionWorkItemRoutes } from "../../../server/src/server/routes/panel-extension-work-items"
+import type { ForgeWorkItems } from "../../../server/src/forge/work-items"
 
 const app = Fastify()
 let server: ViteDevServer, browser: Browser, url: string, root: string, store: PanelExtensionStore
@@ -29,6 +31,7 @@ const onlineDigest = createHash("sha256").update(onlineArchive).digest("hex")
 const onlineEntry = { manifest: fixtureManifest, description: "A catalogue example", digest: onlineDigest, release: { tag: "v1.0.0", asset: "example.session-1.0.0.zip" } }
 let catalogEntries = [onlineEntry], catalogOffline = false, archiveRequests = 0
 let assetUri = "", holdAssets: (() => Promise<void>) | undefined, assetReads = 0
+const workItemReads: Array<Record<string, unknown>> = []
 before(async () => {
   root = await mkdtemp(path.join(os.tmpdir(), "opencode-panel-browser-"))
   store = new PanelExtensionStore(root)
@@ -51,6 +54,16 @@ before(async () => {
         target: { messageID: "m", part: 0, index: 0, digest: "a".repeat(64) } }] : [], cursor: null } : { status: "asset", mime: "image/png", uri: assetUri } }
     } } } }) as any,
   } })
+  registerPanelExtensionWorkItemRoutes(app, { store, workspaceManager: { get: (id: string) => ["first", "second"].includes(id) ? { id, path: `/${id}` } as any : undefined },
+    forge: {
+      list: async (folder: string, input: { kind: string; query: string; page: number }) => {
+        workItemReads.push({ folder, ...input })
+        return { status: "ok", repository: { provider: "gitlab", host: "gitlab.com", path: "team/app", webUrl: "https://gitlab.com/team/app", access: "cli" },
+          items: [{ kind: input.kind, number: 42, title: "Fix the parser", state: "open", draft: false, author: "dev", labels: ["bug"], updatedAt: "2026-10-29T00:00:00Z",
+            url: "https://gitlab.com/team/app/-/merge_requests/42" }], page: input.page, hasMore: false, total: 1 }
+      },
+      itemUrl: async (_folder: string, kind: string, number: number) => `https://gitlab.com/team/app/-/${kind === "issue" ? "issues" : "merge_requests"}/${number}`,
+    } as unknown as ForgeWorkItems })
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
   const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   server = await createServer({ configFile: false, root: fileURLToPath(new URL("../..", import.meta.url)), logLevel: "error", cacheDir: cache.cacheDir,
@@ -415,6 +428,44 @@ test("API2 grants only current-session asset pages and bounded thumbnails; sessi
     await store.activate(pkg.manifest.id, pkg.digest, false); await changed(view)
     await view.locator("iframe[title='Session example']").waitFor({ state: "detached" })
   } finally { holdAssets = undefined; release?.(); await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+})
+
+test("API3 lists the project's forge work items and opens their host-built pages, rate-limited; other APIs hold no work items", async () => {
+  const html = `<p id="result"></p><p id="palette"></p><p id="open"></p><script>
+    codenomad.onContext(async context => {
+      document.querySelector('#palette').textContent = context.colors ? 'colors' : 'none';
+      const page = await codenomad.workItems.list({ kind: 'pullRequest', query: 'parser', page: 1 }).catch(error => ({ error: error.message }));
+      document.querySelector('#result').textContent = page.error ?? [page.repository.provider, page.repository.path, page.total, page.items.map(item => '!' + item.number + ' ' + item.title).join()].join('|');
+    });
+    window.openTwice = async () => {
+      const first = await codenomad.workItems.open('pullRequest', 42).then(result => result.opened, () => 'rejected');
+      const second = await codenomad.workItems.open('pullRequest', 43).then(result => result.opened, () => 'rejected');
+      document.querySelector('#open').textContent = first + ',' + second;
+    };
+  </script>`
+  const pkg = await readPanelExtensionArchive(fixtureArchive(html, { apiVersion: 3, permissions: ["session.context", "repository.workItems.read"] }))
+  await store.install(pkg); await store.activate(pkg.manifest.id, pkg.digest, true)
+  const view = await page()
+  try {
+    await view.evaluate(() => { (window as any).opened = []; window.open = ((url: string) => { (window as any).opened.push(url); return null }) as typeof window.open })
+    await view.getByRole("tab", { name: "Session example", exact: true }).click()
+    const frame = view.frameLocator("iframe[title='Session example']")
+    await frame.locator("#result").filter({ hasText: "gitlab|team/app|1|!42 Fix the parser" }).waitFor()
+    assert.equal(await frame.locator("#palette").textContent(), "colors")
+    assert.deepEqual(workItemReads.at(-1), { folder: "/first", kind: "pullRequest", query: "parser", page: 1, fresh: false }, "the host reads its own project folder")
+    await frame.locator("body").evaluate(() => (window as any).openTwice())
+    await frame.locator("#open").filter({ hasText: "true,rejected" }).waitFor()
+    assert.deepEqual(await view.evaluate(() => (window as any).opened), ["https://gitlab.com/team/app/-/merge_requests/42"])
+    await store.activate(pkg.manifest.id, pkg.digest, false); await changed(view)
+    await view.locator("iframe[title='Session example']").waitFor({ state: "detached" })
+  } finally { await view.close(); await store.remove(pkg.manifest.id, pkg.digest) }
+
+  const context = await installDirect(`<p id="api"></p><script>document.querySelector('#api').textContent = typeof codenomad.workItems;</script>`)
+  const plain = await page()
+  try {
+    await plain.getByRole("tab", { name: "Session example", exact: true }).click()
+    await plain.frameLocator("iframe[title='Session example']").locator("#api").filter({ hasText: "undefined" }).waitFor()
+  } finally { await plain.close(); await store.remove(context.manifest.id, context.digest) }
 })
 
 test("API2 observes failed/pruned assets and fences native disconnects and connection generations", async () => {

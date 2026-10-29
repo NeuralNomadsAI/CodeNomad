@@ -1,6 +1,7 @@
 export const instanceMessages = {
   "panelExtensions.section": "扩展",
   "panelExtensions.assetsConsent": "权限：读取当前会话工具结果的图像和附件，以及会话标识、语言和外观。无文件系统或网络访问权限。",
+  "panelExtensions.workItemsConsent": "权限：读取此项目的仓库名称及其在 GitHub、GitLab 或 Gitea/Forgejo 上的 issue 和 pull request（通过您已登录的 gh、glab 或 tea，公开仓库可匿名读取），并在浏览器中打开它们；另含当前会话标识符、语言和外观。无文件系统访问或其他网络访问。",
   "panelExtensions.empty": "未安装扩展。",
   "panelExtensions.catalog.title": "在线可用",
   "panelExtensions.catalog.search": "搜索扩展",
