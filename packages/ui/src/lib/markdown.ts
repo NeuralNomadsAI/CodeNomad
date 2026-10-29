@@ -5,6 +5,7 @@ import { getLogger } from "./logger"
 import { tGlobal } from "./i18n"
 import type { Highlighter } from "shiki/bundle/full"
 import { decodeHtmlEntities, escapeHtml } from "./text-render-utils"
+import { isFileUrl, localImagePath } from "./markdown-local-images"
 
 const log = getLogger("actions")
 
@@ -601,6 +602,16 @@ function setupRenderer(isDark: boolean) {
     }
 
     return renderCodeBlock(`<pre><code class="language-${escapedLang}">${escapeHtml(decodedCode)}</code></pre>`)
+  }
+
+  // A local file path cannot load in the renderer: keep its alt text, which Markdown.tsx swaps
+  // for the transcript's own image of that path when it has one.
+  renderer.image = (href: string, title: string | null, text: string) => {
+    const local = localImagePath(href)
+    if (local === undefined) return marked.Renderer.prototype.image.call(renderer, href, title, text)
+    const label = text.trim() || escapeHtml(local.split("/").filter(Boolean).at(-1) ?? local)
+    const exact = isFileUrl(href) ? " data-local-image-exact" : ""
+    return `<span class="markdown-local-image" data-local-image="${escapeHtml(local)}"${exact} title="${escapeHtml(local)}">${label}</span>`
   }
 
   renderer.link = (href: string, title: string | null | undefined, text: string) => {

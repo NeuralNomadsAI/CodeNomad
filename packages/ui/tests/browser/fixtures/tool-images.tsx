@@ -1,6 +1,7 @@
 import { Show } from "solid-js"
 import { render } from "solid-js/web"
 import ToolCall from "../../../src/components/tool-call"
+import { Markdown } from "../../../src/components/markdown"
 import type { ToolCallPart } from "../../../src/components/tool-call/types"
 import { ConfigProvider } from "../../../src/stores/preferences"
 import { I18nProvider } from "../../../src/lib/i18n"
@@ -63,12 +64,22 @@ function completed(kind: string, name: string) {
     content: [{ id: "tool", type: "tool", name, time: { created: 1, completed: time },
       state: { status: "completed", input: { return_image: true }, content: content(kind) } }] }
 }
+/** An agent answer whose Markdown image names a local file, beside the read tool that holds its bytes. */
+const answer = (text: string) => ({ id: "answer-message", type: "assistant", agent: "build", model, time: { created: 2, completed: ++time },
+  content: [{ id: "answer", type: "text", text }] })
+const readSheep = (uri = png.uri) => ({ ...completed("only", "read"), content: [{ id: "tool", type: "tool", name: "read", time: { created: 1, completed: time },
+  state: { status: "completed", input: { filePath: "C:\\Users\\me\\Temp\\images\\sheep.png" },
+    content: [{ ...png, uri, name: "C:\\Users\\me\\Temp\\images\\sheep.png" }] } }] })
+const answerRecord = () => store.getMessage("answer-message")?.parts["answer-message-text-0"]
 await applyUiSettings({ toolInputsVisibility: "hidden", toolOutputExpansion: "expanded",
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { other: "expanded", read: "expanded" } } })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <main style={{ width: "min(720px, 100%)", padding: "20px", "box-sizing": "border-box" }}>
     <Show when={record()}>{part => <ToolCall toolCall={part().data as ToolCallPart} partVersion={part().revision}
       messageId={messageId} instanceId={instanceId} sessionId={sessionId} />}</Show>
+    <Show when={answerRecord()}>{part => <section class="fixture-answer">
+      <Markdown part={part().data as any} instanceId={instanceId} sessionId={sessionId} />
+    </section>}</Show>
   </main>
 </ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 ;(window as any).fixture = {
@@ -86,6 +97,10 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     emit("session.tool.success", { id: "tool", content: content("mixed"), executed: true })
   },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
+  localImageAnswer: async (read: "none" | "valid" | "broken") => {
+    messages = [...(read === "none" ? [] : [readSheep(read === "broken" ? "data:image/png;base64,broken" : png.uri)]), answer("Voici ton mouton !\n\n![Un petit mouton](C:/Users/me/Temp/images/sheep.png)\n\n![Absent](C:/Users/me/missing.png)")]
+    await loadMessages(instanceId, sessionId, { force: true })
+  },
   deferred: () => ({ path: deferredUri(), base64: png.uri.slice(png.uri.indexOf(",") + 1) }),
   execute: async (phase: string) => {
     const input = { code: "const results = await Promise.all([tools.paint({ prompt: 'sky' }), tools.fail({})]);\nreturn results" }
