@@ -59,7 +59,7 @@ test("global image settings edit JSONC in place and report project overrides", a
       },
       client: { config: { get: async () => [ { type: "directory", path: global },
         ...(lower ? [{ type: "document", path: lowerFile, info: lower }] : []),
-        { type: "document", path: globalFile, info: staleGlobal ?? parse(await readFile(globalFile, "utf8")) },
+        ...(await readFile(globalFile, "utf8").then(text => [{ type: "document", path: globalFile, info: staleGlobal ?? parse(text) }], () => [])),
         ...(ancestor ? [{ type: "document", path: ancestorFile, info: ancestor }] : []),
         { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) } ] },
       plugin: { list: async () => ({ data: [] }) } },
@@ -158,6 +158,26 @@ test("global image settings edit JSONC in place and report project overrides", a
     assert.equal(snapshot.blockedBy, undefined)
     await settings.update("w", location, { mediaStorage: true })
     assert.deepEqual(parse(await readFile(globalFile, "utf8")).experimental, { media_blob: true })
+    lower = undefined
+
+    // Another writer creates a higher Global document after acquisition: the edit retargets to it, so the
+    // masking analysis made for the acquired document no longer applies and the write is refused.
+    await rm(globalFile)
+    await writeFile(lowerFile, '{ "experimental": { "subagent_depth": 7, "todo": true } }')
+    lower = parse(await readFile(lowerFile, "utf8"))
+    let retarget = true
+    const racing = new ImageSettings({
+      readConfigDocuments: async (...args: Parameters<PluginControls["readConfigDocuments"]>) => {
+        const acquired = await controls.readConfigDocuments(...args)
+        if (retarget) { retarget = false; await writeFile(globalFile, "{}") }
+        return acquired
+      },
+      editConfigDocument: (...args: Parameters<PluginControls["editConfigDocument"]>) => controls.editConfigDocument(...args),
+    }, manager)
+    await assert.rejects(racing.update("w", location, { mediaStorage: true }), /configuration changed/)
+    assert.equal(await readFile(globalFile, "utf8"), "{}")
+    assert.deepEqual(parse(await readFile(lowerFile, "utf8")).experimental, { subagent_depth: 7, todo: true })
+    await rm(lowerFile)
     lower = undefined
 
     // Without the contract, nothing is read from the model catalog and nothing is written.

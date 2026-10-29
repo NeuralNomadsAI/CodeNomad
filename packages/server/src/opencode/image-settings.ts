@@ -154,11 +154,14 @@ export class ImageSettings {
     const value = generation
       ? typeof change.generation === "string" ? { model: change.generation } : change.generation
       : change.mediaStorage
-    const target = context.documents.find(item => item.scope === "global")?.path
+    const acquired = context.documents.find(item => item.scope === "global")
     await this.configuration.editConfigDocument(workspaceId, location, "global", document => {
       context.connection.assertCurrent()
+      // The masking analysis below is only valid for the document it was computed against.
+      if (!acquired || document.requestedPath !== acquired.document.requestedPath)
+        throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
       // A new Global `experimental` object would hide a lower-priority one from every whole-object reader.
-      if (target && maskedBy(context.entries, target, readNativeSetting(document, ["experimental"]) !== undefined))
+      if (maskedBy(context.entries, acquired.path, readNativeSetting(document, ["experimental"]) !== undefined))
         throw new PluginControlsError("Saving would hide inherited experimental OpenCode settings", "conflict")
       return editNativeSetting(document, keys, value)
     })
