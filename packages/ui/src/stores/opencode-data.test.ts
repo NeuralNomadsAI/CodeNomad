@@ -988,7 +988,7 @@ describe("OpenCode data projection", () => {
           data: { sessionID: sessionId, assistantMessageID: `fill-${index}`, finish: "stop" },
         } as any)
       }
-      data = applyOpenCodeDataEvent(instanceId, "/work", { id: "model", type: "session.model.selected", created: 501, data: { sessionID: sessionId, model: { providerID: "provider", id: "next" } } } as any,
+      data = applyOpenCodeDataEvent(instanceId, "/work", { id: "evt_model", type: "session.model.selected", created: 501, data: { sessionID: sessionId, model: { providerID: "provider", id: "next" } } } as any,
         (next) => { applied += 1; projectOpenCodeMessages(instanceId, sessionId, next) })
       projectOpenCodeMessages(instanceId, sessionId, data)
       await new Promise<void>((resolve) => setImmediate(resolve))
@@ -998,7 +998,7 @@ describe("OpenCode data projection", () => {
       // the event and duplicate that SDK-owned refresh.
       assert.equal(reads, 1)
       assert.equal(applied, 1)
-      assert.ok(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).includes("model"))
+      assert.ok(messageStoreBus.getOrCreate(instanceId).getSessionMessageIds(sessionId).includes("msg_model"))
     } finally {
       destroyOpenCodeData(instanceId)
       if (messageStoreBus.getInstance(instanceId)) messageStoreBus.unregisterInstance(instanceId)
@@ -1175,7 +1175,7 @@ describe("OpenCode data projection", () => {
       const stranded = messageStoreBus.getOrCreate(instanceId).getMessage("assistant")
       assert.equal((stranded?.parts.tool?.data as any)?.state?.status, "pending")
 
-      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
 
@@ -1214,7 +1214,7 @@ describe("OpenCode data projection", () => {
       sseManager.seedStatus(instanceId, "connected")
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
-      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
 
@@ -1250,7 +1250,7 @@ describe("OpenCode data projection", () => {
     try {
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
-      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
 
@@ -1304,7 +1304,7 @@ describe("OpenCode data projection", () => {
     try {
       apply("session.step.started", { ...base, agent: "build", model: { providerID: "provider", id: "model" } }, 1)
       apply("session.tool.input.started", { ...base, id: "tool", name: "bash" }, 2)
-      const settled = { id: "settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled", type: "session.execution.succeeded", created: 4, data: { sessionID: sessionId } } as any
       applyOpenCodeDataEvent(instanceId, "/work", settled)
       finishOpenCodeDataEvent(instanceId, settled)
       // The stranded tool's terminal event arrives late, same round: the SDK
@@ -1421,7 +1421,7 @@ describe("OpenCode data projection", () => {
 
       // The fenced read still reconciled the reducer: the next projection (as
       // the event dispatcher runs for the newer round's settlement) shows it.
-      const settled = { id: "settled-2", type: "session.execution.succeeded", created: 20, data: { sessionID: sessionId } } as any
+      const settled = { id: "evt_settled-2", type: "session.execution.succeeded", created: 20, data: { sessionID: sessionId } } as any
       projectOpenCodeMessages(instanceId, sessionId, applyOpenCodeDataEvent(instanceId, "/work", settled))
       finishOpenCodeDataEvent(instanceId, settled)
       await waitForReplay(() => (messageStoreBus.getOrCreate(instanceId).getMessage("assistant")?.parts.tool?.data as any)?.state?.status === "completed")
@@ -1479,7 +1479,7 @@ describe("OpenCode data projection", () => {
   it("keeps another session's live reducer after a terminal event", () => {
     const instanceId = "opencode-data-session-isolation"
     const event = (sessionID: string, type: string, data: Record<string, unknown> = {}) => ({
-      id: `${sessionID}-${type}`, type, created: 1,
+      id: `evt_${sessionID}-${type}`, type, created: 1,
       data: { sessionID, assistantMessageID: `${sessionID}-assistant`, ...data },
     } as any)
     try {

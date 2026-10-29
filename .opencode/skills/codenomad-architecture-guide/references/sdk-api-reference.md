@@ -2,7 +2,7 @@
 
 ## Package
 
-CodeNomad server and UI pin `@opencode/client@2.1.0`. The runtime CLI is managed independently; startup validates authenticated loopback `/api/info`, then (only to identify an outdated daemon) `/api/status`, then `/api/health`, advancing only on HTTP 404 with the same endpoint, credentials and deadline. Each response has its own validated schema and a 64 KiB bound. The shared transport forwards canonical `server.info()` unchanged. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
+CodeNomad server and UI pin `@opencode/client@2.2.1`. The runtime CLI is managed independently; startup validates authenticated loopback `/api/info`, then (only to identify an outdated daemon) `/api/status`, then `/api/health`, advancing only on HTTP 404 with the same endpoint, credentials and deadline. Each response has its own validated schema and a 64 KiB bound. The shared transport forwards canonical `server.info()` unchanged. Review official V2 docs, installed declarations, generated routes and native regression tests together when upgrading.
 
 Runtime requirements live in `packages/server/src/opencode/runtime-support.ts`: minimum 2.2.3 (the `experimental_image_generate` image tool contract, Code Mode JavaScript job ordering and the `native`/`metadata.keepID` replay contract), with the recommendation (2.2.5) tracked separately. Native builds share the daemon's Effect/public SDK instead of bundling a second runtime. The shared connection binds authenticated runtime identity, the canonical client and forwarding transport. Admission precedes functional requests/plugin provisioning; unlisted custom/prerelease/future labels require authenticated bounded API recognition. Never add operation-specific retry fallbacks. See `dev-docs/OPENCODE_COMPATIBILITY.md` for the version boundaries and `dev-docs/OPENCODE_RUNTIME_SETUP.md` for admission.
 
@@ -36,7 +36,7 @@ Native Forms own pending interruption state. Global Forms use `sessionID: "globa
 
 Mutations use `permission.reply({ decision })`, `session.command({ name })`, `session.interrupt({ resume })`, `session.fork({ before? })`, `session.inbox.update({ delivery })` and `session.message.get(...)`. Credential removal is global and takes only `credentialID`. Plugin activation state comes from catalog reads and `plugin.updated`.
 
-Wait, instructions, import/export, stats and log use `/api/experimental/session/...` paths. Cancellation is `DELETE /api/session/:sessionID/form/:formID`. Preserve generated response envelopes in the proxy: `session.active` consumes `{ data }`, while `project.list` consumes an array. Native `cursor.next` remains the sole continuation authority.
+Wait, instructions, import/export, stats and log use `/api/experimental/session/...` paths. Cancellation is `DELETE /api/session/:sessionID/form/:formID`. Preserve HTTP response envelopes in the proxy: the native active-session wire response carries `{ data }`; the public Promise client's `session.active()` returns the decoded session-ID record. `project.list` returns an array. Native `cursor.next` remains the sole continuation authority.
 
 ## Routing
 

@@ -20,7 +20,7 @@ function fixture(instanceId: string) {
   let data!: ReturnType<typeof applyOpenCodeDataEvent>
   const emit = (type: string, payload: any = {}) => {
     data = applyOpenCodeDataEvent(instanceId, "/fixture", {
-      type, id: `event-${++sequence}`, created: sequence,
+      type, id: `evt_${++sequence}`, created: sequence,
       data: { sessionID: "s", ...payload }, location: { directory: "/fixture" },
     } as any, () => { projections++ })
     return data

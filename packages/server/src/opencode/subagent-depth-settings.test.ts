@@ -115,6 +115,17 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     await writeFile(globalFile, "{}")
     await writeFile(projectFile, "{}")
     assert.equal((await settings.read("w", location)).effectiveDepth, null, "missing default stays unknown")
+    await writeFile(globalFile, '{"experimental":{"schedules":true,"subagent_depth":2}}')
+    await settings.update("w", location, 3, (await settings.read("w", location)).project!.expectation)
+    assert.deepEqual(parse(await readFile(projectFile, "utf8")).experimental, { schedules: true, subagent_depth: 3 })
+    await settings.update("w", location, null, (await settings.read("w", location)).project!.expectation)
+    assert.deepEqual(parse(await readFile(projectFile, "utf8")).experimental, { schedules: true })
+    assert.equal((await settings.read("w", location)).effectiveDepth, null, "remaining schedules block selects the native depth default")
+    await writeFile(projectFile, '{"experimental":{"schedules":false}}')
+    await settings.update("w", location, 0, (await settings.read("w", location)).project!.expectation)
+    assert.deepEqual(parse(await readFile(projectFile, "utf8")).experimental, { schedules: false, subagent_depth: 0 })
+    await writeFile(path.join(project, "opencode.json"), "{}")
+    await assert.rejects(settings.read("w", location), /JSON and JSONC/)
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
 })
 
@@ -192,6 +203,22 @@ test("any project depth override writes CodeNomad's marked rule once, and Inheri
   await save(null)
   assert.equal(await readFile(projectFile, "utf8"), original, "Inherit removes the depth and the rule, restoring the file")
   assert.deepEqual(await nesting(), { effect: "deny", hidden: true })
+}))
+
+test("depth overrides preserve inherited schedules together with General's nesting rule", () => nestingFixture(async ({
+  globalFile, save, saved, nesting,
+}) => {
+  const global = JSON.stringify({ experimental: { schedules: true } })
+  await writeFile(globalFile, global)
+  await save(3)
+  assert.deepEqual((await saved()).experimental, { schedules: true, subagent_depth: 3 })
+  assert.deepEqual((await saved()).agents, allowRule)
+  assert.deepEqual(await nesting(), { effect: "allow" })
+  await save(null)
+  assert.deepEqual((await saved()).experimental, { schedules: true })
+  assert.equal((await saved()).agents, undefined)
+  assert.deepEqual(await nesting(), { effect: "deny", hidden: true })
+  assert.equal(await readFile(globalFile, "utf8"), global)
 }))
 
 test("the override writes the rule whatever else decides, and Inherit leaves every other rule", () => nestingFixture(async ({

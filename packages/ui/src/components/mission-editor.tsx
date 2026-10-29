@@ -3,7 +3,7 @@ import type { MissionMap } from "../../../server/src/api-types"
 import { compareModelError, freezeCompareProfiles, sameCompareModel, type MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
-import { deletionErrorKey, MissionDeletionError } from "../lib/mission-cleanup"
+import { deletionErrorKey, missionCleanupPending, MissionDeletionError } from "../lib/mission-cleanup"
 import { missionStore } from "../stores/missions"
 import { createMissionViewFence } from "../lib/mission-view-fence"
 import { isDefinitiveCreationRejection, missionMutationErrorKey, recurrenceCreationRefusalKey } from "../lib/mission-mutation"
@@ -318,7 +318,7 @@ export function MissionEditor(props: {
           if (!snapshot.available || snapshot.cleanupUnavailable) throw new MissionDeletionError(503)
           const intent = snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
             && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
-          if (intent && intent.pending === 0) { props.onSaved(); return }
+          if (intent && !missionCleanupPending(intent)) { props.onSaved(); return }
           const live = snapshot.mission
           if (!intent && live && live.revision !== original.revision) throw new MissionDeletionError(404)
           // Neither the map nor its cleanup: capacity may have purged a committed
@@ -354,8 +354,8 @@ export function MissionEditor(props: {
           if (!current()) return
           const intent = snapshot.available && !snapshot.cleanupUnavailable && snapshot.cleanups.find(item => item.missionID === original.id && item.requestID === requestId
             && item.expectedRevision === original.revision && item.deleteManagedSessions === deleteManagedSessions())
-          if (intent && intent.pending === 0) { props.onSaved(); return }
-          if (intent) key = "missions.cleanup.error.pending"
+          if (intent && !missionCleanupPending(intent)) { props.onSaved(); return }
+          if (intent) key = intent.documentPending ? "missions.cleanup.documentPending" : "missions.cleanup.error.pending"
           else if (snapshot.available && !snapshot.cleanupUnavailable && snapshot.mission
             && error instanceof MissionDeletionError && [400, 403, 409].includes(error.status)) setDeleteAttempted(false)
         } catch { /* Unknown observation is not permission to change the intent. */ }
@@ -534,7 +534,8 @@ export function MissionEditor(props: {
       }}>{t("missions.control.refresh")}</button></Show>
       <Show when={kind === "create"} fallback={
         <button type="submit" class="button-primary" disabled={locked() || !isActive() || (kind !== "delete" && !objective().trim())}>
-          {t(pending() ? "missions.control.mutation.pending" : kind === "delete" ? "missions.control.delete" : "missions.control.save")}
+          {t(pending() ? "missions.control.mutation.pending" : kind === "delete"
+            ? deleteAttempted() ? "missions.control.retry" : "missions.control.delete" : "missions.control.save")}
         </button>}>
         <button type="submit" class="button-primary" disabled={createDisabled()}>
           {t(pending() || creationPending() ? "missions.control.mutation.pending" : "missions.create.submit")}

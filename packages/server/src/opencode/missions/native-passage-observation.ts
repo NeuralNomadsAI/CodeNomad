@@ -20,17 +20,18 @@ const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
 const runningToolsSQL = `SELECT count(*) AS count FROM session_message, json_each(session_message.data,'$.content') AS part
   WHERE session_id=? AND session_message.type='assistant' AND json_extract(part.value,'$.type')='tool'
   AND json_extract(part.value,'$.state.status') IN ('running','streaming')`
-// Native always projects each execution terminal into a durable `idle` message
+// Native projects settled busy periods into a durable `idle` message
 // (`outcome: succeeded | failed | interrupted`); the `event` log is only written
 // when Bus persistence is configured, which `serve` leaves off (as of the minimum supported OpenCode).
-const failedTurnsSQL = `SELECT count(*) AS count FROM session_message
-  WHERE session_id=? AND type='idle' AND json_extract(data,'$.outcome')='failed'`
+const terminalSQL = `SELECT id,seq,type,json_extract(data,'$.outcome') AS outcome FROM session_message
+  WHERE session_id=? ORDER BY seq DESC LIMIT 1`
 export type PassageSessionObservation = {
   id: string; parentID?: string; projectID: string; directory: string; workspaceID?: string
   active: boolean; inbox: number; suspended: boolean; runningTools: number
   failed: boolean; messagePresent: boolean
-  /** Execution claim written before this service process started and not live here:
-   * a restart cut the turn. An owned unmanaged `serve` never sweeps such claims. */
+  /** Durable input/idle sequence correlation; family quiescence is checked separately. */
+  terminal?: { inputMessageID: string; messageID: string; outcome: "succeeded" | "failed" | "interrupted" }
+  /** An old claim can be waiting for asynchronous native restart recovery. */
   orphaned?: boolean
 }
 export interface NativePassageObservation {
@@ -44,6 +45,23 @@ export interface NativePassageObservation {
 }
 
 const serviceStartedAt = Date.now() - process.uptime() * 1000
+
+/** Read-only recognition of the private terminal/background projections before
+ * admitting work. Zero-row queries validate columns/functions without a scan. */
+export const qualifyNativePassageStorage = Effect.fn("missions.qualifyPassageStorage")(function* () {
+  const found = yield* Effect.serviceOption(databaseTag)
+  const database = Option.isSome(found) ? found.value as { db?: { $client?: SqlClient.SqlClient } } : undefined
+  if (!Predicate.isFunction(database?.db?.$client?.unsafe)) throw new Error("Native passage storage unavailable")
+  for (const sql of [
+    "SELECT id,seq,type,json_extract(data,'$.outcome') AS outcome FROM session_message WHERE 0",
+    "SELECT json_extract(value,'$.recovery.kind') AS kind FROM kv WHERE 0",
+  ]) {
+    const read = database.db!.$client!.unsafe(sql, []).withoutTransform
+    if (!Effect.isEffect(read)) throw new Error("Native passage storage contract unavailable")
+    const result = yield* read
+    if (!Array.isArray(result) || result.length) throw new Error("Native passage storage recognition incomplete")
+  }
+})
 
 /** Read-only native contracts, not signed authority or event replay. Unknown
  * coverage fails closed. SQL only observes durable inbox/claim and ancestry. */
@@ -104,7 +122,21 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       const inbox = await count("SELECT count(*) AS count FROM session_inbox WHERE session_id=?", [id])
       const runningTools = await count(runningToolsSQL, [id])
       const active = activeSet(await run(running)).has(id)
-      const failedTurns = await count(failedTurnsSQL, [id])
+      // seq is the native durable publication order, not message-ID or wall-clock order.
+      // A terminal covers every coalesced drain in its busy period. Requiring the
+      // latest projection to be idle also fences later delivered inputs/steps.
+      const anchor = (await query(`SELECT id,seq,type FROM session_message WHERE session_id=?
+        AND ${messageID === undefined ? "type IN ('user','synthetic') ORDER BY seq ASC" : "id=?"} LIMIT 1`,
+      messageID === undefined ? [id] : [id, messageID]))[0]
+      const last = (await query(terminalSQL, [id]))[0]
+      const terminal = anchor && typeof anchor.id === "string" && ["user", "synthetic"].includes(String(anchor.type))
+        && Number.isSafeInteger(anchor.seq) && Number(anchor.seq) >= 0 && last?.type === "idle" && typeof last.id === "string"
+        && Number.isSafeInteger(last.seq) && Number(last.seq) > Number(anchor.seq)
+        && ["succeeded", "failed", "interrupted"].includes(String(last.outcome))
+        ? { inputMessageID: anchor.id, messageID: last.id, outcome: last.outcome as "succeeded" | "failed" | "interrupted" } : undefined
+      const correlatedFailures = terminal ? await count(`SELECT count(*) AS count FROM session_message
+        WHERE session_id=? AND seq>? AND seq<=? AND type='idle' AND json_extract(data,'$.outcome')='failed'`,
+      [id, anchor!.seq, last!.seq]) : 0
       const messagePresent = messageID !== undefined && ((await query("SELECT id FROM session_message WHERE session_id=? AND id=?", [id, messageID])).length === 1
         || (await query("SELECT id FROM session_inbox WHERE session_id=? AND id=?", [id, messageID])).length === 1)
       assertCurrent()
@@ -115,7 +147,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
         ...(session.parent_id == null ? {} : { parentID: String(session.parent_id) }),
         ...(session.workspace_id == null ? {} : { workspaceID: String(session.workspace_id) }),
         active, inbox, suspended: claimedAt != null, runningTools,
-        failed: failedTurns > 0, messagePresent,
+        failed: correlatedFailures > 0, messagePresent, ...(terminal ? { terminal } : {}),
         orphaned: claimedAt != null && !active && Number(claimedAt) < startedAt }
     },
     children: async (id: string) => {
@@ -127,6 +159,18 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       return children.map(row => row.id as string)
     },
     requests: async (sessionIDs: readonly string[]) => {
+      // A completed background child can still have an undelivered notification
+      // which resumes its parent. Native removes this durable record only after
+      // delivery; process-local active and empty inboxes cannot close that gap.
+      const background = await query(`SELECT json_extract(value,'$.recovery.kind') AS kind,
+        json_extract(value,'$.recovery.sessionID') AS sessionID,
+        json_extract(value,'$.recovery.parentSessionID') AS parentSessionID,
+        json_extract(value,'$.recovery.childSessionID') AS childSessionID
+        FROM kv WHERE key>='job.background/' AND key<'job.background0' LIMIT 1025`, [])
+      if (background.length > 1024 || background.some(item => item.kind === "subagent"
+        ? typeof item.parentSessionID !== "string" || typeof item.childSessionID !== "string"
+        : !["shell", "image"].includes(String(item.kind)) || typeof item.sessionID !== "string"))
+        throw new Error("Native passage background coverage unavailable")
       const read = async (operation: NativeEffect, codec: Schema.Codec<unknown, unknown>) => {
         const value = await run(operation)
         Schema.decodeUnknownSync(codec)(value)
@@ -144,6 +188,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       const family = new Set(sessionIDs)
       return [...pendingForms, ...pendingPermissions].some(item => item.sessionID == null || family.has(String(item.sessionID)))
         || runningShells.some(item => item.status === "running")
+        || background.some(item => [item.sessionID, item.parentSessionID, item.childSessionID].some(id => typeof id === "string" && family.has(id)))
     },
   } satisfies NativePassageObservation
 })

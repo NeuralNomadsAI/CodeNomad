@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto"
-import { chmod, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, writeFile } from "node:fs/promises"
+import { constants } from "node:fs"
+import { access, chmod, lstat, mkdir, open, readFile, readlink, realpath, rename, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { applyEdits, modify, parse, parseTree, type FormattingOptions, type Node as JsonNode, type ParseError } from "jsonc-parser"
 
@@ -52,6 +53,13 @@ export interface PluginControlDocumentFileSystem {
   inspectMany(requestedPaths: readonly string[]): Promise<Array<{ writePath: string; exists: boolean }>>
   load(requestedPath: string): Promise<PluginControlDocumentLoad>
   replace(document: PluginControlDocument, updated: string, options?: PluginControlDocumentReplaceOptions): Promise<void>
+  prepare?(document: PluginControlDocument, updated: string, options?: PluginControlDocumentReplaceOptions): Promise<PluginControlDocumentPrepared>
+}
+
+export interface PluginControlDocumentPrepared {
+  verify(): Promise<void>
+  commit(): Promise<void>
+  dispose(): Promise<void>
 }
 
 export async function readPluginControlDocument(
@@ -112,6 +120,7 @@ export const hostPluginControlDocumentFileSystem: PluginControlDocumentFileSyste
   inspectMany: (requestedPaths) => Promise.all(requestedPaths.map(inspectHostDocument)),
   load: loadHostDocument,
   replace: replaceHostDocument,
+  prepare: prepareHostDocument,
 }
 
 async function inspectHostDocument(requestedPath: string): Promise<{ writePath: string; exists: boolean }> {
@@ -146,12 +155,39 @@ async function replaceHostDocument(
   updated: string,
   options?: PluginControlDocumentReplaceOptions,
 ): Promise<void> {
+  const prepared = await prepareHostDocument(document, updated, options)
+  try { await prepared.commit() } finally { await prepared.dispose() }
+}
+
+async function prepareHostDocument(
+  document: PluginControlDocument,
+  updated: string,
+  options?: PluginControlDocumentReplaceOptions,
+): Promise<PluginControlDocumentPrepared> {
   const directory = path.dirname(document.writePath)
-  await mkdir(directory, { recursive: true })
   const temporary = `${document.writePath}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`
   let created = false
-  let releaseLock: (() => Promise<void>) | undefined
+  let lock: Awaited<ReturnType<typeof acquireReplacementLock>> | undefined
+  let committed = false, disposed = false
+  const dispose = async () => {
+    if (disposed) return
+    disposed = true
+    if (lock) await lock.release()
+    if (created) await rm(temporary, { force: true }).catch(() => undefined)
+  }
+  const verify = async () => {
+    if (disposed || committed) throw new PluginControlDocumentError("OpenCode configuration preparation is closed", "conflict")
+    await assertUnchanged(document)
+    if (!lock || !await lock.verify())
+      throw new PluginControlDocumentError("OpenCode configuration is being updated by another process", "conflict")
+  }
   try {
+    await mkdir(directory, { recursive: true })
+    if (document.exists) {
+      if (!(document.mode & 0o222)) throw new PluginControlDocumentError("OpenCode configuration is read-only", "filesystem")
+      await access(document.writePath, constants.W_OK)
+    }
+    await access(directory, constants.W_OK)
     const file = await open(temporary, "wx", document.mode)
     created = true
     try {
@@ -164,37 +200,27 @@ async function replaceHostDocument(
     // document mode explicitly so a restrictive umask cannot silently tighten
     // user files and host behavior matches the WSL backend.
     await chmod(temporary, document.mode)
-    const lock = await acquireReplacementLock(document.writePath)
-    releaseLock = lock.release
-    await assertUnchanged(document)
-    try {
-      options?.beforeCommit?.()
-    } catch (error) {
-      throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error })
-    }
-    // The connection fence may run arbitrary application code in tests and a
-    // non-CodeNomad editor does not honor our lock. Close that final window
-    // before the atomic rename while the cross-profile lock remains held.
-    await assertUnchanged(document)
-    if (!await lock.verify()) {
-      throw new PluginControlDocumentError("OpenCode configuration is being updated by another process", "conflict")
-    }
-    try {
-      await rename(temporary, document.writePath)
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code
-      if (code === "EISDIR" || code === "ENOTDIR" || code === "EEXIST" || code === "ENOTEMPTY") {
-        throw new PluginControlDocumentError("OpenCode configuration changed during the update", "conflict", { cause: error })
+    lock = await acquireReplacementLock(document.writePath)
+    await verify()
+    return { verify, dispose, commit: async () => {
+      await verify()
+      try { options?.beforeCommit?.() }
+      catch (error) { throw new PluginControlDocumentError("OpenCode configuration replacement is no longer authorized", "filesystem", { cause: error }) }
+      await verify()
+      try { await rename(temporary, document.writePath) }
+      catch (error) {
+        const code = (error as NodeJS.ErrnoException).code
+        if (["EISDIR", "ENOTDIR", "EEXIST", "ENOTEMPTY"].includes(code ?? ""))
+          throw new PluginControlDocumentError("OpenCode configuration changed during the update", "conflict", { cause: error })
+        throw new PluginControlDocumentError("Unable to atomically replace OpenCode configuration", "filesystem", { cause: error })
       }
-      throw error
-    }
-    created = false
+      created = false
+      committed = true
+    } }
   } catch (error) {
+    await dispose()
     if (error instanceof PluginControlDocumentError) throw error
     throw new PluginControlDocumentError("Unable to atomically replace OpenCode configuration", "filesystem", { cause: error })
-  } finally {
-    if (releaseLock) await releaseLock().catch(() => undefined)
-    if (created) await rm(temporary, { force: true }).catch(() => undefined)
   }
 }
 
@@ -255,6 +281,9 @@ async function acquireReplacementLock(writePath: string): Promise<{ release: () 
 
 async function assertUnchanged(document: PluginControlDocument): Promise<void> {
   try {
+    const destination = await resolveHostWriteDestination(document.requestedPath)
+    if (path.relative(destination, document.writePath) !== "")
+      throw new PluginControlDocumentError("OpenCode configuration destination changed during the update", "conflict")
     const current = await readBoundedFile(document.writePath)
     if (!document.exists || !current.contents.equals(encodeOriginal(document))) {
       throw new PluginControlDocumentError("OpenCode configuration changed during the update", "conflict")

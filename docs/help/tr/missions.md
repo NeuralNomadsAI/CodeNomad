@@ -12,6 +12,8 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 **Oluşturmak hiçbir zaman işi başlatmaz.** Tek seferlik görev hazırlanır; günlük zamanlama duraklatılmış durumdadır. Ne oluşturma ne de özeti kaydetme bir zamanlayıcıyı devreye alır. Oluşturma seçili proje/Location kapsamındadır ve istenen profillerle görev oturumu ilkesini sabitler. Doğrulama mesajları ilgili alanın yanındadır; hiçbir şey gönderilmediğini belirten bir ret durumunda taslak düzeltilebilmesi için korunur. Tek seferlik bir görevin koordinatörü sizin için takip işi gibi ayrı bir görev de hazırlayabilir: bu görev listede **Hazır** olarak görünür ve diğer her görev gibi yalnızca ▶ eylemiyle başlar.
 
+Kayıtlı tek seferlik görevler yürütme kontrollerini, görev ağacını, konuşmalarını ve nihai raporlarını korur. Bunları doğrudan sürdürebilir veya tamamlayabilirsiniz. Kayıtlı günlük zamanlamalar mevcut kontrolleriyle listede kalır.
+
 ### İş akışı rehberleri {#playbooks}
 
 **Rehber** seçicisinin hemen altında seçili rehberin tek cümlelik açıklaması gösterilir. **Ayrıntıları gör**, seçili rehberi merkezi okuyucuda açar: adımlarını, rollerini ve sonda katlanmış olarak, ajanlarının aldığı tam İngilizce talimatları. [İş akışı rehberleri](playbooks.md) her rehberin adımlarını, rollerini ve sorularını ve CodeNomad'in neleri denetlediğini açıklar.
@@ -109,6 +111,8 @@ CodeNomad çalıştığı sürece projedeki her ajan konuşması, görev koordin
 
 ## Profiller, iş devri ve derinlik {#profiles}
 
+Derinliği kaydetmek, proje yapılandırmasında etkin yerel zamanlamaları korur. Projedeki açık bir `schedules:false` kapalı kalır; derinliği kaldırmak zamanlama ayarını korur. Yerel ayarlar kaydedilmeden önce aynı katmandaki JSON ve JSONC dosyalarının çakışması giderilmelidir.
+
 1. **Yeni görev varsayılanları** ayarını düzenlemek için Görevler dişli simgesini veya **Ayarlar → Görevler** yolunu kullanın.
 2. **Uygulanacak kapsam** altında **Tüm görevler** veya bir rehber seçin; ardından **Görev oturumları** ayarını ve **Ajanlar ve modeller** altında her rol için bir satırı (önce koordinatör, sonra rehberin rolleri) belirleyin. Her seçim hemen kaydedilir; Kaydet düğmesi yoktur.
 3. Bir rehber kapsamında satırlar, **Genel** olarak işaretlenmiş genel değerleri gösterir. Bir alanı değiştirmek o rolü bu değerlerden başlayarak özelleştirir; geri alma simgesi yeniden genel değerleri kullanır. **Sıfırla** (onaydan sonra) yalnızca gösterilen kapsamın ajanlarını ve modellerini temizler.
@@ -198,6 +202,6 @@ Düzenlenebilir tek seferlik görevde **Seçili görevi düzenle** eylemini kull
 2. Onaylamadan önce isteğe bağlı olarak **Bu görev için oluşturulan uzman konuşmalarını da sil** seçeneğini işaretleyin.
 3. Kaldırılan/korunan/bekleyen sayılarını **Konuşma temizliği** bölümünde kontrol edin. Sunuluyorsa yalnızca kaydedilmiş, kalan temizliği yeniden deneyin.
 
-Görevi silmek durdurmakla aynı şey değildir; önce Durdur'u kullanıp kalan işleri inceleyin. Koordinatörler ve yeniden kullanılan konuşmalar korunur. Paylaşılan, taşınan, alt konuşması bulunan veya sahipliği doğrulanamayan uzmanlar da korunabilir. Kısmi temizlik geri alınmaz ve arka planda sessizce tamamlanmaz. Genel bakış okuyucusu tamamlanan en son 20 temizliği tutar. Görevleri silmek projedeki depolama alanlarını boşaltır: daha eski silinmiş görevler otomatik olarak temizlenir.
+Görevi silmek durdurmakla aynı şey değildir; önce Durdur'u kullanıp kalan işleri inceleyin. Koordinatörler ve yeniden kullanılan konuşmalar korunur. Paylaşılan, taşınan, alt konuşması bulunan veya sahipliği doğrulanamayan uzmanlar da korunabilir. Kısmi temizlik geri alınmaz ve arka planda sessizce tamamlanmaz. Konuşma temizliği 0 bekleyen gösterse bile silme doğrulaması beklenirken görev kartı kaybolabilir. Silme doğrulanana kadar özgün **Tekrar dene** eylemini kullanmaya devam edin; aynı silme isteği ve seçenekler korunur. Genel bakış okuyucusu tamamlanan en son 20 temizliği tutar. Görevleri silmek projedeki depolama alanlarını boşaltır: daha eski silinmiş görevler otomatik olarak temizlenir.
 
 OpenCode işleri ve hizmet kontrolleri için [İzinler](permissions.md), [Konuşmalar](conversations.md) ve [OpenCode kurulumu](opencode.md) sayfalarına bakın.

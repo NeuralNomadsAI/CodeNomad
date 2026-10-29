@@ -2,24 +2,29 @@ import { MissionControlError } from "./control-error"
 import type { MissionInputTransport } from "./control-types"
 import { MissionJournal, parseMissionEvent } from "./journal"
 import { isDeepStrictEqual } from "node:util"
-import { parseMissionLifecycleReply } from "./lifecycle-schema"
+import { parseMissionLifecycleReply, parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { controlOperationID, controlReceiptID, recurrenceMessageID } from "./receipt-identity"
-import type { MissionLifecycleInput, MissionControlRequestedEvent } from "./lifecycle-model"
+import type { MissionLifecycleInput, MissionControlRequestedEvent, MissionNativeAcknowledgement } from "./lifecycle-model"
 import { MISSION_SCHEMA_VERSION, type MissionMap, type MissionSnapshot } from "./model"
 
 /** Targets controlled at once. Each one is a bridge call that walks and interrupts a
  * whole native family, so a mission with many actors controls them in waves. */
 export const MISSION_CONTROL_CONCURRENCY = 8
 
-// Explicit user actions only. Report recovery never calls this module.
-// The caller owns the same project lock used by dispatch and report admission.
-export async function controlMission(input: MissionLifecycleInput, options: {
+export interface MissionLifecycleOptions {
   journal: MissionJournal
   transport?: MissionInputTransport
   isActive?: () => boolean
   timestamp(snapshot: MissionSnapshot): number
   changed(missionID: string, revision: number): Promise<void>
-}): Promise<{ mission: MissionMap }> {
+  beforeIntent?(mission: MissionMap, input: MissionLifecycleInput, at: number): Promise<void>
+  acknowledged?(mission: MissionMap, acknowledgement: MissionNativeAcknowledgement): Promise<void>
+  recordedAcknowledgement?(mission: MissionMap, sessionID: string, operationID: string): Promise<MissionNativeAcknowledgement | undefined>
+}
+
+// Explicit user actions only. Report recovery never calls this module.
+// The caller owns the same project lock used by dispatch and report admission.
+export async function controlMission(input: MissionLifecycleInput, options: MissionLifecycleOptions): Promise<{ mission: MissionMap }> {
   const { journal } = options
   const eventID = controlOperationID(input.missionID, input.requestID)
   let snapshot = await journal.snapshot()
@@ -66,6 +71,7 @@ export async function controlMission(input: MissionLifecycleInput, options: {
       targets, createdAt: options.timestamp(snapshot),
     }
     await journal.assertCanAppend(event)
+    await options.beforeIntent?.(mission, input, event.createdAt)
     await journal.append(event)
     snapshot = await journal.snapshot()
     mission = snapshot.missions.find(mission => mission.id === input.missionID)!
@@ -87,12 +93,20 @@ export async function controlMission(input: MissionLifecycleInput, options: {
     const before = await journal.snapshot()
     const fresh = currentMission(before)
     if (!fresh.control!.pending.includes(sessionID)) return
-    if (options.isActive?.() === false || !options.transport?.lifecycle) throw new Error("Mission controls unavailable")
-    const reply = await options.transport.lifecycle(fresh.coordinatorSessionId, { missionID: fresh.id, operationID: operation.id, sessionID,
-      ...(operation.recurrence ? { recurrence: operation.recurrence } : {}) })
-    const nativeAcknowledgement = parseMissionLifecycleReply(reply, { missionID: fresh.id, operationID: operation.id, sessionID,
-      action: operation.action, ...(operation.recurrence ? { recurrence: operation.recurrence } : {}) })
+    if (options.isActive?.() === false) throw new Error("Mission controls unavailable")
+    const expected = { missionID: fresh.id, operationID: operation.id, sessionID,
+      action: operation.action, ...(operation.recurrence ? { recurrence: operation.recurrence } : {}) }
+    const recorded = await options.recordedAcknowledgement?.(fresh, sessionID, operation.id)
+    let nativeAcknowledgement: MissionNativeAcknowledgement | undefined
+    if (recorded !== undefined) nativeAcknowledgement = parseMissionNativeAcknowledgement(recorded, expected)
+    else {
+      if (options.isActive?.() === false || !options.transport?.lifecycle) throw new Error("Mission controls unavailable")
+      const reply = await options.transport.lifecycle(fresh.coordinatorSessionId, { missionID: fresh.id, operationID: operation.id, sessionID,
+        ...(operation.recurrence ? { recurrence: operation.recurrence } : {}) })
+      nativeAcknowledgement = parseMissionLifecycleReply(reply, expected)
+    }
     if (!nativeAcknowledgement) throw new Error("Unknown native control acknowledgement")
+    await options.acknowledged?.(fresh, nativeAcknowledgement)
     const after = await journal.snapshot()
     const settled = currentMission(after)
     if (!settled.control!.pending.includes(sessionID)) return

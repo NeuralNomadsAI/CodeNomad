@@ -4,6 +4,9 @@ Missions coordinate native OpenCode V2 work through a durable project map,
 dependency-aware tasks, human controls and readable results. OpenCode owns execution;
 Missions gives the user a coherent way to specify, follow and reuse that work.
 
+Native integration boundaries, private Core service shapes and per-invocation
+lifetime requirements: [Missions native contracts](MISSIONS_NATIVE_CONTRACTS.md).
+
 Recurring passages run in the OpenCode service with CodeNomad closed; never run them
 through a persistent CodeNomad backend. Native qualification: §Validation and
 `MISSIONS_RECURRING_QUALIFICATION.md`.
@@ -398,7 +401,18 @@ Mission Control manages map metadata through the authenticated CodeNomad routes 
 
 Deletion optionally accepts `deleteManagedSessions: true`. Immutable targets are recorded in the tombstone, and per-session receipts reserve journal capacity before removal. Only deterministically created specialist roots with matching native creation metadata and exact project/location identity qualify. Coordinators, reused sessions, actors referenced by another mission (including finished/deleted maps), and roots with children are retained. Native removal is recursive, so descendants are outside this opt-in. The plugin delegates removal to the authenticated desktop bridge, because native plugin contexts lack `session.list/remove`. The bridge obtains authoritative intent through the narrow read-only `cleanupTarget` RPC, revalidates ownership/connection/worktree fences and calls the native HTTP client. It never modifies OpenCode storage directly. An incomplete cleanup returns `503 cleanup-pending` after the tombstone is committed; replay the exact original request ID, revision and option. The editor retains that request through live snapshot refreshes and locks the option after the first attempt. Only an explicit retry resumes cleanup.
 
-**Purging deleted missions** (`missions/journal-purge.ts`). Once every cleanup target of a tombstone has its receipt, the journal removes that mission's events through the optional `MissionStorage.remove` (native `storage.remove`); storage without it keeps every entry. Deletion keeps the 20 newest settled deletions (`SETTLED_CLEANUP_HISTORY`: the cleanup history and the editor's lost-acknowledgement check read them) and purges older ones. When an attempted deletion finds neither its map nor its cleanup, the editor's explicit retry resubmits the original request, revision and option, and the record below answers it; passive refreshes only read. Purging is retention only: capacity is per mission (§Safety limits), so a full mission makes room through its own deletion reserve and other missions never wait on a purge. A deleted mission stays while it references, as coordinator or task actor, a session another unsettled mission could still clean up (a deterministic task root of a non-deleted mission, or a pending tombstone target): that reference is the shared-membership evidence cleanup retains such sessions on. Damaged journals (discarded entries, invalid cleanup, control or notification history) are never purged.
+`MissionCleanup.pending` counts native session targets; optional `documentPending`
+independently records unconfirmed unified-document compaction. A unified deletion
+persists `mission.deleted.documentCleanup: true` and reserves one additional exact
+receipt in that mission's deletion capacity. Successful compaction followed by its
+verified readback permits `mission.document-cleaned`, bound to the original deletion
+identity. Until that receipt is durable, `documentPending: true` retains the exact
+retry even when the map is absent and the native pending count is zero. Failed
+reads and lost compaction acknowledgements preserve that state; passive reads only
+project journal evidence. A confirmed receipt projects false, and journal-only
+deletions keep the optional field absent.
+
+**Purging deleted missions** (`missions/journal-purge.ts`). Once every cleanup target of a tombstone and its required document compaction have exact receipts, the journal removes that mission's events through the optional `MissionStorage.remove` (native `storage.remove`); storage without it keeps every entry. Deletion keeps the 20 newest settled deletions (`SETTLED_CLEANUP_HISTORY`: the cleanup history and the editor's lost-acknowledgement check read them) and purges older ones. Native-pending and document-pending deletions precede that settled history and retain their journal ranges and activation-index work hints. When an attempted deletion finds neither its map nor its cleanup, the editor's explicit retry resubmits the original request, revision and option, and the record below answers it; passive refreshes only read. Purging is retention only: capacity is per mission (§Safety limits), so a full mission makes room through its own deletion reserve and other missions never wait on a purge. A deleted mission stays while it references, as coordinator or task actor, a session another unsettled mission could still clean up (a deterministic task root of a non-deleted mission, or a pending tombstone target): that reference is the shared-membership evidence cleanup retains such sessions on. Damaged journals (discarded entries, invalid cleanup, control or notification history) are never purged.
 
 Before the first removal the purge writes a deletion record at `codenomad-missions/v2/deleted/<projectToken>/<missionID>`, beside the scanned journal prefix: it costs no journal capacity, is only point-read (by every storage adapter, with or without removal support; the isolated recurrence-passage adapter, which never purges, has none) and is never removed. It holds the deletion request ID, revision and option plus the settled cleanup summary (240-character objective label, counts, reasons). The record refuses the mission's deterministic recreation (create, prepared hand-offs and inspect-start replays answer `mission-deleted` before any native effect) and answers an exact deletion replay with the original summary; another request ID answers `mission-not-found`, a changed revision or option `request-conflict`. Removal starts with `mission.created`, then tombstones, then intents before receipts. A group without its creation event whose mission has a valid record leaves the observation, so every intermediate state reads without discarded events, reopened cleanup or reservations; late writes to a purged mission are absorbed the same way and removed by the next purge, which also resumes an interrupted one. Without a readable record such a group stays damage evidence. Per-mission reads (`missionEvents()`/`missionView()`) scan only that mission's key range `<prefix>/<missionID>/` (the isolated recurrence-passage adapter accepts its own mission's range besides the whole virtual prefix) with the same parsing, read bound and record handling; their discarded count and damage flags are that range's own, and the snapshot's project values aggregate them plus entries outside every mission range. A paginated observation (`events()`/`snapshot()` or a per-mission read) takes the same `append:<projectToken>` exclusion as appends and purges, so it never assembles pages from both sides of a removal; code already holding it uses the private unlocked observer, and storage adapters never read the journal. Builds without purge support read a journal mid-purge as damaged and never consult deletion records.
 
@@ -619,7 +633,37 @@ provenance and failed-middle-page Retry, and never promote partial evidence to a
 
 ### Explicit execution controls
 
-The UI creates missions with `prepared: true`. Its one-screen form has a single **Create** button that only creates; the prepared mission is then started by its explicit Play, never automatically by creation. A single Play button starts a prepared mission or resumes a paused one; Pause and terminal Stop are adjacent. Mission journals created without `prepared` run until an explicit control changes them. `POST /api/workspaces/:id/missions/:missionID/control` brokers the typed `lifecycle` RPC (`action: start | pause | stop`, `requestId`, `expectedRevision`).
+One-time product creation, including the coordinator's inspect-start tool, stores
+a paused unified Mission document and a prepared map. The form's **Create** button
+creates an unprompted coordinator and records its exact native identity; the
+explicit first Play admits the original lifecycle message. Creation and immediate
+Play leave native schedules, experimental settings and service supervision alone.
+A single Play button starts a prepared mission or resumes a paused one; Pause and
+terminal Stop are adjacent. `POST /api/workspaces/:id/missions/:missionID/control`
+brokers the typed `lifecycle` RPC (`action: start | pause | stop`, `requestId`,
+`expectedRevision`).
+
+The product entry acquires the unified document's conditional storage from the
+current native RPC invocation. New document creation checks `documentCapabilities`.
+Journal-only missions retain their immediate Play/Pause/Stop, edits, declarations,
+continuations and final reports through the existing journal path. Reads and
+mutations preserve their stored representation; scheduling requires an explicitly
+configured unified document. Each map's optional `document`
+projection exposes configuration/time generations, first-Play request and message,
+admitted launch count and settings-activation progress. First-Play intent is saved
+before lifecycle publication/native admission; incomplete publication keeps the
+original request identity reserved. Replay uses that identity, and only the exact
+coordinator admission acknowledgement increments the count. The business journal
+retains its existing range, revision, result and lifecycle receipt contracts.
+
+Deleting a map with a unified document first persists its stopped desired state
+and exact deletion request/revision/options. Pending passages, wake/mapping
+reconciliation and unacknowledged configuration effects retain the complete
+document. The bounded tombstone registry reserves capacity before journal deletion;
+at capacity the stopped map stays visible. After the existing journal/native-session
+cleanup succeeds, the document compacts to its original-request tombstone. Lost
+publication/compaction acknowledgements retain the exact retry identity. Native
+conversations follow the existing opt-in cleanup policy and are kept by default.
 
 `mission.control-requested` records the durable desired state and exact root actors before native side effects; `mission.control-applied` receipts track acknowledgements. The project mutation lock serializes controls with assignments and report admissions. Partial failure returns `503 control-pending`, and the snapshot retains the original request and remaining targets for an explicit retry, including after a UI/plugin restart. Old completed requests cannot replay their side effects over newer states. Stop may supersede an incomplete start/pause; no lifecycle action can restart a stopped/completed/failed mission (a failed one resumes only through coordinator recovery, §Targeted recovery). Receipt capacity is reserved before intent publication. The plugin controls at most eight targets at once (`MISSION_CONTROL_CONCURRENCY` in `missions/lifecycle.ts`), each its own bridge call and family walk, so a mission with many actors is paused, resumed or stopped in waves; a target that fails leaves only itself pending for the explicit retry.
 
@@ -670,6 +714,15 @@ the next native `experimental` object (`opencode/experimental-layers.ts`) belong
 the Global write target and equals its fresh document, since native entries lag
 behind writes and normalize what they load; otherwise the object stays. The snapshot
 flags such an object (`emptyExperimental`) so Inherit can repair it.
+The shared two-key editor
+(`opencode/native-experimental-settings.ts`) materializes inherited
+`schedules:true` when setting a depth would hide that activation, preserves an
+explicit local false and depth zero, and copies only these two known keys.
+A remaining schedules
+block selects the native depth default unless it also holds a depth. Native
+settings refuse simultaneous JSON/JSONC files in one layer. The schedule
+capability reader independently recognizes the consumed API shapes and reads the
+effective Location flag and its block origin through the acquired connection.
 `node --import tsx scripts/test-subagent-depth-settings-native.mjs <absolute-isolated-opencode-cli>`
 (also in the latest-runtime CI job) qualifies this against a private runtime: depth
 capability, JSONC save/reset preserving comments and siblings, Global image storage

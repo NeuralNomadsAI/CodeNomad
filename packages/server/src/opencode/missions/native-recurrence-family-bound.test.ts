@@ -109,12 +109,20 @@ test("real native SQL observation walks a 41-session family and bounds one paren
   try {
     await f.start(); await f.finish()
     db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
-      CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT);
-      CREATE TABLE session_inbox(id TEXT,session_id TEXT);`)
+      CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT,seq INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE session_inbox(id TEXT,session_id TEXT);
+      CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
     const coordinator = f.passage.coordinatorSessionID, insert = db.prepare("INSERT INTO session_v2 VALUES(?,?,'project',?,NULL,NULL)")
     insert.run(coordinator, null, f.root)
-    db.prepare("INSERT INTO session_message VALUES(?,?,'synthetic','{}')").run(f.passage.messageID, coordinator)
+    const input = db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES(?,?,'synthetic','{}')")
+    const idle = db.prepare("INSERT INTO session_message(id,session_id,type,data) VALUES(?,?,'idle','{\"outcome\":\"succeeded\"}')")
+    input.run(f.passage.messageID, coordinator)
+    idle.run("msg_root_idle", coordinator)
     for (let i = 0; i < 40; i++) insert.run(`ses_sql_${String(i).padStart(2, "0")}`, i < 8 ? coordinator : `ses_sql_${String(i % 8).padStart(2, "0")}`, f.root)
+    for (let i = 0; i < 40; i++) {
+      const id = `ses_sql_${String(i).padStart(2, "0")}`
+      input.run(`msg_input_${i}`, id); idle.run(`msg_idle_${i}`, id)
+    }
     const running = new Set<string>(), tag = (name: string) => Context.Service<never, unknown>(name)
     let graph = Context.empty() as Context.Context<never>
     for (const [name, value] of [

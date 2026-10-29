@@ -24,7 +24,7 @@ code 1 on any failure.
 | Letter | Acceptance journey | Asserts |
 | --- | --- | --- |
 | A | 1, daily useful work | With backend, bridge and presence closed, the due passage runs read → shell → `mission_inspect` → final `mission_report`; completed archive, one start, schedule still running with nextDueAt = due + 24 h |
-| B | 2, restart with pending | The owned service is killed mid-turn and relaunched: Interrupted (`service-restart`) with the same pending passage; Resume archives `ended-without-report`/`interrupted` with the original single start and no further provider turn |
+| B | 2, restart with pending | The owned standalone service is killed mid-turn and relaunched: Interrupted (`service-restart`) with the same pending passage; Resume observes the old claim as uncertain, without archive, cursor advance or a second original start |
 | C | 3, Run now | Two Run now passages on one schedule, each completed with one start and its own session; the evidence records the response to an exact duplicate of the first request |
 | G | 3, Run now | Run now on a paused schedule completes through the settlement-only observer; the schedule stays paused with nextDueAt null |
 | D | 4, Pause/Stop | Pause before due leaves no root session through due + 30 s; Stop is terminal and a later Resume is refused |
@@ -88,5 +88,9 @@ Paths below are under `packages/server/src/` unless stated.
   (`MISSIONS.md` §Validation).
 - Open: the managed service's restart, including its boot-time sweep of orphaned
   claims (B restarts an owned `serve` process with a hard kill).
+- `scripts/test-missions-terminal-native.mjs` qualifies the production terminal
+  reader on an isolated runtime: old inactive claim through repeated observations,
+  native resume under the original input, seq-correlated idle, unrelated old
+  failures and an outstanding native background-child delivery.
 - Open: a native admission whose `recordAdmission` write is lost reads as never
   admitted once its start message is pruned.

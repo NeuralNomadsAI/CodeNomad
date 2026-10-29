@@ -68,6 +68,21 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
+  it("keeps plugin source editing on the selected JSONC target while native settings require one document per layer", async () => {
+    const f = await fixture()
+    try {
+      const lower = path.join(path.dirname(f.globalFile), "opencode.json")
+      await writeFile(lower, '{"plugins":["lower-plugin"]}')
+      await writeFile(f.globalFile, '{"plugins":[]}')
+      await assert.rejects(f.controls.readConfigDocuments("w", f.location, undefined, true), /JSON and JSONC coexist/)
+      await f.sources.add("w", { location: f.location, scope: "global", spec: "fixture-plugin" })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["fixture-plugin"])
+      await f.sources.remove("w", { location: f.location, scope: "global", target: "fixture-plugin", entryIndex: 0 })
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, [])
+      assert.equal(await readFile(lower, "utf8"), '{"plugins":["lower-plugin"]}')
+    } finally { await f.cleanup() }
+  })
+
   it("refuses a package already declared in any effective scope, whatever its form", async () => {
     const f = await fixture()
     try {

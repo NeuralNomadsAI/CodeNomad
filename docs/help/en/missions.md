@@ -12,6 +12,8 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 **Create never starts work.** A one-time mission is prepared; a daily schedule is paused. Neither creation nor saving a brief arms a timer. Creation is scoped to the selected project/Location and freezes the requested profiles and task-session policy. Validation is beside the affected field; a refusal that says nothing was sent leaves the draft available for correction. The coordinator of a one-time mission can also prepare a separate mission for you, such as a follow-up: it appears in the list as **Prepared** and, like any mission, starts only from its ▶ action.
 
+Saved one-time missions retain their execution controls, task tree, conversations and final reports. Resume or finish them directly. Saved daily schedules remain listed with their existing controls.
+
 ### Playbooks {#playbooks}
 
 The **Playbook** selector shows the selected playbook's one-sentence description directly below it. **See details** opens the selected playbook in the central reader: its steps, its roles and, folded at the end, the exact English instructions its agents receive. [Playbooks](playbooks.md) explains each playbook's steps, roles and questions, and what CodeNomad checks.
@@ -109,6 +111,8 @@ While CodeNomad is running, every agent conversation in the project, mission coo
 
 ## Profiles, delegation and depth {#profiles}
 
+Saving a depth preserves enabled native schedules in the project configuration. An explicit project `schedules:false` stays disabled; removing the depth keeps the schedules setting. Conflicting JSON and JSONC files must be resolved before saving native settings.
+
 1. Use the Missions gear or **Settings → Missions** to edit **New mission defaults**.
 2. Under **Apply to**, choose **All missions** or one playbook, then set **Task sessions** and, under **Agents and models**, one row per role (coordinator, then the playbook's roles). Each choice is saved immediately; there is no Save button.
 3. In a playbook scope, rows show the global values marked **Global**. Changing a field customizes that role starting from them; its revert icon uses the global values again. **Reset** (after confirmation) clears only the agents and models of the shown scope.
@@ -198,6 +202,6 @@ Use **Edit selected mission** on an editable one-time mission; on a conflict, cl
 2. Optionally select **Also delete specialist conversations created for this mission** before confirming.
 3. Check **Conversation cleanup** for removed/kept/pending counts. Retry only the remaining recorded cleanup if offered.
 
-Deleting a mission is not the same as stopping it; use Stop and inspect remaining work first. Coordinators and reused conversations are kept. Shared, moved, child-bearing or unverifiably owned specialists may also be retained. Partial cleanup is not rolled back and is not silently completed in the background. The overview reader keeps the 20 most recent completed cleanups. Deleting missions frees their project storage: older deleted missions are cleared automatically.
+Deleting a mission is not the same as stopping it; use Stop and inspect remaining work first. Coordinators and reused conversations are kept. Shared, moved, child-bearing or unverifiably owned specialists may also be retained. Partial cleanup is not rolled back and is not silently completed in the background. The mission card can disappear while deletion confirmation is still pending, even when conversation cleanup shows 0 pending. Keep using the original **Try again** action until deletion is confirmed; it retains the same deletion request and options. The overview reader keeps the 20 most recent completed cleanups. Deleting missions frees their project storage: older deleted missions are cleared automatically.
 
 See [Permissions](permissions.md), [Conversations](conversations.md) and [OpenCode setup](opencode.md) for native work and service controls.

@@ -44,6 +44,8 @@ import { MISSION_LIST_MAX_INCLUDE } from "../missions/mission-summary"
 import { createMissionWriterRetirement } from "./missions/writer-retirement"
 import type { NativeHumanAnswerGate } from "../missions/human-answer"
 import type { MissionJournalIndex } from "../missions/journal-index"
+import type { MissionDocumentAccess } from "../missions/mission-document-one-time"
+import { NativeMissionDocumentStore } from "../missions/mission-document-store"
 
 interface MutationContext {
   error(type: typeof MISSION_RPC_REJECTION, message: string, data: { code: string; noEffect?: { requestID: string; missionID: string } }): unknown
@@ -112,6 +114,8 @@ export interface MissionsPluginContext extends MissionCatalogClient {
       register(
         definition: typeof CODENOMAD_MISSIONS_RPC,
       handlers: {
+        documentCapabilities(input: unknown): Promise<unknown>
+        documentActivation(input: unknown): Promise<unknown>
         snapshot(input: unknown): Promise<unknown>
         list(input: unknown): Promise<unknown>
         mission(input: unknown): Promise<unknown>
@@ -149,7 +153,7 @@ export interface MissionsPluginPolicy {
 
 export async function setupMissionsPlugin(context: MissionsPluginContext, transport?: MissionInputTransport,
   policy?: MissionsPluginPolicy, createManagedRoot?: MissionManagedRootCreation, humanGate?: NativeHumanAnswerGate, business = true,
-  journalIndex?: MissionJournalIndex): Promise<() => Promise<void>> {
+  journalIndex?: MissionJournalIndex, documents?: MissionDocumentAccess): Promise<() => Promise<void>> {
   let active = true
   let notificationOutbox: MissionNotificationOutbox | undefined
   const registrations: Registration[] = []
@@ -201,6 +205,9 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     authorizeNativeReport: policy?.authorizeNativeReport,
     humanGate,
     journalIndex,
+    documents,
+    documentReads: documents ? async use => use(new NativeMissionDocumentStore({ get: key => context.storage.get(key),
+      compareAndSet: async () => { throw new Error("Read-only Mission document projection") } }, context.location.project.id, context.location.project.canonical)) : undefined,
     completedFinalOnly: true,
     validateProfiles: async (profiles, directory, taskMode) => {
       if (profiles) validateMissionProfileCatalog(profiles, await readMissionCatalog(context, directory), taskMode)
@@ -215,6 +222,8 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
   try {
     await policy?.configure(control)
     const handlers: Parameters<MissionsPluginContext["rpc"]["register"]>[1] = {
+      documentCapabilities: async () => { throw new Error("Native Mission document graph unavailable") },
+      documentActivation: async () => { throw new Error("Native Mission document graph unavailable") },
       snapshot: async () => JSON.parse(JSON.stringify(await control.snapshot())),
       list: async input => {
         const value = object(input)
@@ -277,6 +286,8 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       delete: async (input, context) => { assertActive(); return mutationResult(context, () => control.delete(parseDeleteMissionInput(input))) },
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
+      documentCapabilities: tracked(handlers.documentCapabilities),
+      documentActivation: tracked(handlers.documentActivation),
       snapshot: tracked(handlers.snapshot), list: tracked(handlers.list), mission: tracked(handlers.mission),
       content: tracked(handlers.content), tasks: tracked(handlers.tasks), panelPage: tracked(handlers.panelPage), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
       recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
@@ -349,7 +360,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, product delivery, or two-model comparison mission. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. A map too large for one result lists its tasks in pages: follow taskPage.nextTaskOffset with taskOffset. Any value too large for one result is replaced by { omittedCharacters, read }: pass read as the whole input to read that value in slices, following each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
+        description: "Inspect the caller's durable mission map and optional native catalog, or prepare a paused custom, debugging, Wayfinder, product delivery, or two-model comparison mission. The user presses Play in CodeNomad before Mission work begins; creation never sends a coordinator prompt. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. A map too large for one result lists its tasks in pages: follow taskPage.nextTaskOffset with taskOffset. Any value too large for one result is replaced by { omittedCharacters, read }: pass read as the whole input to read that value in slices, following each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {

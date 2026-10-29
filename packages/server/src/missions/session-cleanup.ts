@@ -4,7 +4,8 @@ import { MissionControlError } from "./control-error"
 import { MissionJournal, stableToken } from "./journal"
 import { isMissionTaskSession } from "./session-identity"
 import { MISSION_SCHEMA_VERSION, type MissionDeletedEvent, type MissionEvent, type MissionMap, type MissionSnapshot } from "./model"
-import { cleanupReceiptID, cleanupReference, hasInvalidCleanupHistory, isCleanupReceipt, isCleanupReason, projectMissionCleanups } from "./cleanup-projection"
+import { cleanupReceiptID, cleanupReference, documentCleanupReceiptID, hasInvalidCleanupHistory, isCleanupReceipt,
+  isCleanupReason, isDocumentCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
 import { deletionRecordCleanup } from "./journal-purge"
 
 // Called under the project's mutation lock, including retries across plugin reloads.
@@ -15,6 +16,9 @@ export async function deleteMission(input: MissionDeleteInput, options: {
   isActive?: () => boolean
   timestamp(snapshot: MissionSnapshot): number
   changed(missionID: string, revision: number): Promise<void>
+  beforeDelete?(deletion: MissionDeletedEvent): Promise<void>
+  documentCleanupRequired?(missionID: string): Promise<boolean>
+  finishDocumentCleanup?(deletion: MissionDeletedEvent): Promise<void>
 }): Promise<{ deleted: true; cleanup?: import("./model").MissionCleanup }> {
   const { journal } = options
   if (options.isActive?.() === false) throw new Error("CodeNomad Missions is no longer available")
@@ -31,6 +35,7 @@ export async function deleteMission(input: MissionDeleteInput, options: {
       throw new MissionControlError("Delete request ID was already used with a different request", "request-conflict")
     }
     deletion = previous
+    if (!await documentConfirmed(journal, deletion)) await options.beforeDelete?.(deletion)
   } else {
     const snapshot = await journal.snapshot()
     const mission = snapshot.missions.find((candidate) => candidate.id === input.missionID)
@@ -43,9 +48,11 @@ export async function deleteMission(input: MissionDeleteInput, options: {
       projectID: mission.projectID, requestID: input.requestID, expectedRevision: input.expectedRevision,
       createdAt: options.timestamp(snapshot), deleteManagedSessions,
       ...(deleteManagedSessions ? { cleanupTargets } : {}),
+      ...(await options.documentCleanupRequired?.(mission.id) ? { documentCleanup: true as const } : {}),
     }
     // Reserve enough room for terminal receipts before committing a destructive intent.
     await journal.assertCanAppend(deletion)
+    await options.beforeDelete?.(deletion)
     await journal.append(deletion)
   }
   await options.changed(input.missionID, input.expectedRevision + 1)
@@ -55,7 +62,9 @@ export async function deleteMission(input: MissionDeleteInput, options: {
     await options.changed(input.missionID, input.expectedRevision + 1)
     if (!complete) throw new MissionControlError("Mission deleted; managed-session cleanup is pending. Retry the same deletion request.", "cleanup-pending")
   }
-  if (!deleteManagedSessions) {
+  await finishDocumentCleanup(deletion, options)
+  if (deletion.documentCleanup) await options.changed(input.missionID, input.expectedRevision + 1)
+  if (!deleteManagedSessions && !deletion.documentCleanup) {
     await purgeSettled(journal)
     return { deleted: true }
   }
@@ -65,9 +74,38 @@ export async function deleteMission(input: MissionDeleteInput, options: {
   }
   const summary = projectMissionCleanups(history.events.filter(event => event.missionID === deletion.missionID))
     .find(item => item.deletionID === deletion.id)
-  if (!summary || summary.pending) throw new MissionControlError("Cannot confirm managed-session cleanup", "cleanup-pending")
+  if (!summary || summary.pending || summary.documentPending) throw new MissionControlError("Cannot confirm mission cleanup", "cleanup-pending")
   await purgeSettled(journal)
   return { deleted: true, cleanup: summary }
+}
+
+async function documentConfirmed(journal: MissionJournal, deletion: MissionDeletedEvent): Promise<boolean> {
+  if (!deletion.documentCleanup) return false
+  const receipt = await journal.event(deletion.missionID, documentCleanupReceiptID(deletion.id))
+  if (receipt && !isDocumentCleanupReceipt(receipt, deletion)) throw new MissionControlError("Document cleanup evidence is invalid", "cleanup-pending")
+  return receipt !== undefined
+}
+
+async function finishDocumentCleanup(deletion: MissionDeletedEvent, options: {
+  journal: MissionJournal; isActive?: () => boolean
+  finishDocumentCleanup?(deletion: MissionDeletedEvent): Promise<void>
+}) {
+  if (await documentConfirmed(options.journal, deletion)) return
+  try {
+    if (deletion.documentCleanup && !options.finishDocumentCleanup) throw new Error("Document cleanup unavailable")
+    if (options.isActive?.() === false) throw new Error("Mission cleanup unavailable")
+    await options.finishDocumentCleanup?.(deletion)
+    if (!deletion.documentCleanup) return
+    const history = await options.journal.missionEvents(deletion.missionID)
+    if (history.discardedEvents || hasInvalidCleanupHistory(history.events)) throw new Error("Document cleanup journal is damaged")
+    await options.journal.append({ version: MISSION_SCHEMA_VERSION, id: documentCleanupReceiptID(deletion.id),
+      type: "mission.document-cleaned", missionID: deletion.missionID, projectID: deletion.projectID,
+      deletionID: deletion.id, createdAt: deletion.createdAt }, () => {
+      if (options.isActive?.() === false) throw new Error("Mission cleanup unavailable")
+    })
+  } catch {
+    throw new MissionControlError("Mission deleted; document cleanup confirmation is pending. Retry the same deletion request.", "cleanup-pending")
+  }
 }
 
 // Best effort: the deletion already committed. Older settled deletions leave the
@@ -85,7 +123,7 @@ async function purgedDeletion(journal: MissionJournal, input: MissionDeleteInput
     || record.deleteManagedSessions !== deleteManagedSessions) {
     throw new MissionControlError("Delete request ID was already used with a different request", "request-conflict")
   }
-  return deleteManagedSessions ? { deleted: true as const, cleanup: deletionRecordCleanup(record) } : { deleted: true as const }
+  return deleteManagedSessions || record.documentCleanup ? { deleted: true as const, cleanup: deletionRecordCleanup(record) } : { deleted: true as const }
 }
 
 function managedTargets(mission: MissionMap): NonNullable<MissionDeletedEvent["cleanupTargets"]> {

@@ -29,8 +29,9 @@ Ceilings (`missions/recurrence-contract.ts`): 64 schedules per project, a 64 KiB
 configuration, a 256 KiB document and 64 remembered conversations
 (watched plus cursor-retaining); beyond that ceiling the document is refused, so never
 reset deduplication silently. Never add signing keys, authority epochs, grants,
-standing/child authority, per-effect receipts, budgets or ledgers, per-tool effect
-accounting or exact event-log replay to schedules, settlement or snapshots; human
+standing/child authority, per-effect receipts, per-tool budgets or ledgers, per-tool effect
+accounting or exact event-log replay to schedules, settlement or snapshots; the
+unified document owns the user-visible admitted-passage limit and count. Human
 answers use the UI-answer marks below.
 
 Native kv offers no compare-and-swap, so the plugin serializes document updates and
@@ -185,14 +186,17 @@ The implementation relies on existing native contracts, qualified at their calle
 - Plugin tools receive native session, message and call identity.
 - Jobs are process-local and disappear when the service restarts.
 - A turn holds a durable execution claim (`session_v2.time_suspended`) until its
-  terminal event; a hard kill leaves the claim without one. Never rely on native
-  continuation after a restart.
+  terminal event; a hard kill preserves that claim. Managed native recovery can
+  resume it asynchronously after a restart.
 
-Resume never sends a continuation or replacement coordinator prompt. A claim
-written before the current service process started and not live now is a turn
-cut by a restart: once the rest of the family is quiescent, the passage settles
-`ended-without-report` with reason `interrupted` ("Interrupted by a restart").
-If native work later resumes such a claim anyway, its effects remain unknown.
+Resume observes the original coordinator input and native continuation. Every
+remaining claim blocks settlement, including an old claim absent from
+`Session.active`. Require the original input and a later durable idle in native
+`session_message.seq` order, then recheck the whole family, claims, inboxes,
+requests and outstanding background deliveries. Missing/pruned input, an
+uncorrelated terminal or a changed second observation keeps the same pending
+uncertain. Never infer a terminal from age, inactivity or a timeout; never send a
+second original prompt after admission has been recorded.
 
 Plugin-side mechanisms cover three native gaps:
 
@@ -226,8 +230,9 @@ Desired running without a live native Job is displayed as **Interrupted** with
 an interruption reason. Service restart therefore leaves scheduling Interrupted.
 Do not rearm from plugin load, a read, UI reopen or backend reconnect.
 Only explicit Resume may restore scheduling; pending work is reconciled first.
-An Interrupted schedule keeps its passage pending; a passage cut by the restart
-settles as interrupted after Resume, without waiting for a native continuation.
+An Interrupted schedule keeps its passage pending. Resume reconciles its original
+identities and observes native continuation until terminal correlation and full
+family quiescence are available.
 
 ## Write-ahead passage start and recovery
 
@@ -260,8 +265,8 @@ deterministic start message exists (delivered or inbox):
 - Absent for a transient cause: retry admission on a later wake with the **same**
   session and message identities (native first admission wins), never a new one.
   Retry applies only while no admission was ever recorded. Once recorded, a later
-  native absence of the start message (pruned history) is observed history: the
-  passage settles by family quiescence and the message is never sent again.
+  native absence of the start message (pruned history) keeps terminal correlation
+  uncertain and the original message is never sent again.
 Run now cannot overlap an unresolved pending passage or bypass terminal Stop.
 A manual run never counts as another scheduled civil day's completion.
 
@@ -337,8 +342,15 @@ Supported outcomes are:
   terminal failure in the family without a completed final report. Never guessed
   from prose or an idle flag.
 - `ended-without-report`: settled native work ended without a final report and
-  without native terminal failure; reason `interrupted` when a family claim was
-  cut by a service restart.
+  without native terminal failure; reason `interrupted` requires a correlated
+  native idle whose outcome is interrupted.
+
+The terminal reader uses native `session_message.seq`, anchored to the original
+coordinator input or exact fresh managed-root assignment. Historical failures
+before that input are excluded. Reused external roots retain uncertainty while
+their entry/family provenance is unqualified. The bounded `job.background/` KV
+projection (kind and session IDs only, ≤1024 records) blocks settlement while a
+completed child still owes its native parent notification.
 
 Atomically archive the result, clear pending and update the scheduled `lastDaily`
 in the guarded schedule document. Keep history at ≤30; do not let a crash between
@@ -436,7 +448,8 @@ Expose state including Interrupted and `interruptionReason` when applicable.
 Expose pending status `starting | running | settling | uncertain`, exact identity,
 latestResult and history. `starting` means a live Job/observer is handling a not
 yet admitted start; `uncertain` (with reason `not-observed` or `admission-failing`)
-only when no observer is live or its latest admission attempt failed. History and pending
+when no observer is live, admission is unconfirmed, or terminal correlation stays
+unknown. Native activity remains a separate observation. History and pending
 items carry their `daily | manual` trigger; a non-blocking `lastError` is exposed
 while relevant.
 Actions reflect terminality, unresolved controls and pending passage state.
@@ -451,9 +464,10 @@ Read-only projections and invalidations never start work or settle unknown sends
    in both task modes.
 2. **Restart with pending:** restart the service during a pending passage → reopen
    shows Interrupted → explicit Resume reconciles existing session/message/inbox →
-   no second coordinator message → settled archive (`ended-without-report` /
-   `interrupted` when the restart cut the turn) → next day. Missing/uncertain evidence
-   stays pending, and only Resume rearms scheduling.
+   observe native recovery with no second coordinator message → archive only after
+   correlated terminal and whole-family quiescence. An old claim or missing
+   correlation stays pending and uncertain through repeated wakes; only Resume
+   rearms the daily Job.
 3. **Run now:** explicit authenticated Run now uses the shared write-ahead path;
    duplicate request/status reads produce no second passage. An unresolved pending
    passage blocks overlap. A lost reply is reread, never automatically resent.
@@ -476,6 +490,51 @@ daemon or user Mission.
 
 ## Agent conventions
 
-- Missions autonomy target is explicitly native: the OpenCode service/plugin runs scheduled passages with both CodeNomad UI and intermediary backend closed; neither a persistent CodeNomad backend nor a window timer is a substitute. One process-local native Job per running schedule sleeps until min(nextDueAt, now + 1h), then rereads clock/document and admits only the latest due civil day newer than lastDaily. A native session-execution terminal event (Bus `listen`, 3 s debounce) also wakes the Job so archives follow family quiescence promptly; the event is a wake hint, never settlement evidence. Pause/Stop cancel the Job; desired running without a live Job is Interrupted until explicit Resume, never automatic rearming. Do not rely on native continuation after a restart: Resume never sends one, and a family turn cut by the restart settles `ended-without-report` / `interrupted`.
+### Unified document foundation
+
+`missions/launch-policy.ts` and `mission-document{,-state,-store}.ts` provide a
+strict internal configuration codec and conditional document store. Their
+`codenomad-missions/documents-v1` namespace owns paused creation, immediate/at/in/
+every/cron/multi launch policies, one optional source condition, combined end
+bounds, and a global admitted-passage count. Relative origins are frozen at first
+Play; the absolute slot end applies to recorded due times, including late arrivals.
+Each passage references its execution journal by immutable mission ID. The existing
+journal ranges, deletion reserve and activation index own execution history.
+
+Configuration generations advance separately from temporal generations. Per-calendar
+high-water, exact pending/preparing wake references, the monotone task-created mark,
+and first-Play/budget counters survive the 30-receipt window. Checkpoint payloads are
+bounded JSON snapshots; successful settlement consumes the pending snapshot.
+Deletion retains the full stopped document through reconciliation, then reserves a
+per-project tombstone entry before compacting it; the registry holds at most 4096
+entries and 1 MiB and refuses further compaction at capacity.
+
+The store requires transactional revision compare-and-set and a synchronous fresh
+ownership guard. `opencode/missions/native-mission-document-storage.ts` acquires
+the private Database in the current RPC graph and performs revision/byte-checked
+publication inside an immediate transaction. One-time product creation and first
+Play use this adapter through `mission-document-one-time.ts`; their immutable
+creation receipt reserves the coordinator identity before native creation, and the
+first Play retains its original lifecycle request/message and admission count.
+Panel reads project bounded document metadata through the existing map RPCs.
+
+`documentCapabilities` qualifies new unified document creation. Journal-only
+one-time maps keep their existing execution controls, declarations, continuations
+and final reports through the journal path, with their stored representation
+preserved. Daily entries remain visible with the controls of their daily contract.
+The authenticated daily controls documented above use `NativeMissionRecurrenceStore`.
+
+The storage-only `documentActivation` RPC retains at most two exact configuration
+targets, a namespace authority digest, original request/revision, attempted barriers
+and acknowledged result digests. `missionScheduleActivationJournal` in the server
+routes adapts those phases to the settings executor. Ready follows that executor's
+positive effective read and keeps the Mission paused. Immediate Play leaves this
+field null. Keep credentials and raw configuration out of the document.
+
+Scheduled admission, source baselines/changes, native adoption/cleanup, complete
+fan-in coverage, terminal-turn correlation and family quiescence belong to their
+own qualified adapters. Keep unknown data intact and qualification fixtures isolated.
+
+- Missions autonomy target is explicitly native: the OpenCode service/plugin runs scheduled passages with both CodeNomad UI and intermediary backend closed; neither a persistent CodeNomad backend nor a window timer is a substitute. One process-local native Job per running daily schedule sleeps until min(nextDueAt, now + 1h), then rereads clock/document and admits only the latest due civil day newer than lastDaily. A native session-execution terminal event (Bus `listen`, 3 s debounce) also wakes the Job so archives follow family quiescence promptly; the event is a wake hint, never settlement evidence. Pause/Stop cancel the daily Job; desired running without it is Interrupted until explicit Resume. Resume observes native continuation under the original identities. Every remaining claim and missing terminal correlation keeps the pending uncertain; a correlated idle and full family/background-delivery quiescence are required for archive. Never infer interruption from claim age or inactivity, and never resend an admitted original prompt.
 - Core: `missions/recurrence-{contract,clock,store,runner}.ts` (native side `opencode/missions/native-recurrence-*.ts`); omitting a profile variant is valid. Every rule in the sections above binds.
 - Root and schedule admission read the family identity with `readFamilyAuthorityIdentity` (`workspaces/family-authority-claim.ts`) only for a directory WorkspaceManager already authorized: registered linked worktrees share their Git common directory's identity, and a Git-free conversation has none, so it can never infer a family.

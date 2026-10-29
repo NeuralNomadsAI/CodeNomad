@@ -13,11 +13,21 @@ import { readNativeRecurrenceCurrent, readNativeRecurrenceCurrentContent } from 
 import { readNativeRecurrencePage } from "./native-recurrence-reader"
 import { runNativeRecurrenceNow, readNativeRecurrenceRunNow } from "./native-recurrence-manual"
 import { nativeInvocation } from "./native-invocation"
+import { acquireNativeMissionDocumentStore } from "./native-mission-document-storage"
+import type { MissionDocumentAccess } from "../../missions/mission-document-one-time"
+import { applyMissionDocumentActivation } from "../../missions/mission-document-activation-rpc"
 
 export function withNativeRecurrenceRpc(ctx: Plugin.Context): Plugin.Context["rpc"] {
+  const documentInvocation = nativeInvocation()
   const register: typeof ctx.rpc.register = (definition, handlers) => ctx.rpc.register(definition,
     definition.id === CODENOMAD_MISSIONS_RPC_ID
-      ? { ...handlers, recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx),
+      ? { ...handlers, documentCapabilities: () => acquireNativeMissionDocumentStore(ctx).pipe(Effect.as({ version: 1 as const }), Effect.orDie),
+        documentActivation: (input: unknown) => documentInvocation.capture(Effect.tryPromise({
+          try: () => documentInvocation.check(run => run(Effect.gen(function* () {
+            const store = yield* acquireNativeMissionDocumentStore(ctx, run)
+            return yield* Effect.tryPromise({ try: () => applyMissionDocumentActivation(store, input, () => true, ctx.location.directory), catch: error => error })
+          }))), catch: error => error,
+        })).pipe(Effect.orDie), recurrenceSnapshot: () => readNativeRecurrenceSnapshot(ctx),
         ...nativeRecurrenceHandlers(ctx), recurrencePassageRead: (input: unknown) => readNativeRecurrencePage(ctx, input),
         recurrenceCurrent: (input: unknown) => readNativeRecurrenceCurrent(ctx, input),
         recurrenceCurrentContent: (input: unknown) => readNativeRecurrenceCurrentContent(ctx, input),
@@ -41,6 +51,10 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
     const scope = yield* Scope.make()
     const run = Effect.runPromiseWith(Context.add(graph, Scope.Scope, scope))
     const invocation = nativeInvocation()
+    const documents: MissionDocumentAccess = use => invocation.check(run => run(Effect.gen(function* () {
+      const store = yield* acquireNativeMissionDocumentStore(ctx, run)
+      return yield* Effect.tryPromise({ try: () => use(store), catch: error => error })
+    })))
     const humanGate = nativeHumanAnswerGate(use => invocation.check(run => run(Effect.gen(function* () {
       const answers = yield* acquireNativeHumanAnswers(ctx, run)
       return yield* Effect.tryPromise({ try: () => use(answers), catch: error => error })
@@ -80,7 +94,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[]) {
       verify: input => Effect.gen(function* () { const answers = yield* acquireNativeHumanAnswers(ctx); return yield* Effect.promise(() => answers.verify(input)) }).pipe(Effect.orDie),
     }).pipe(Effect.orDie)
     yield* Effect.acquireRelease(Effect.promise(async () => {
-        try { await run(fromPromise(promisePlugin(presenceDirectory, humanGate)).effect(nativeCtx)) }
+        try { await run(fromPromise(promisePlugin(presenceDirectory, humanGate, documents)).effect(nativeCtx)) }
         catch (error) { await Effect.runPromise(Scope.close(scope, Exit.void)); throw error }
         return scope
     }), owned => Scope.close(owned, Exit.void))

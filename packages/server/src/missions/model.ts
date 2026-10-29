@@ -176,6 +176,7 @@ export interface MissionPlanChange {
 }
 
 export interface MissionMap {
+  document?: import("./mission-document-one-time").MissionDocumentSummary
   version: typeof MISSION_SCHEMA_VERSION
   id: string
   projectID: string
@@ -229,6 +230,7 @@ export interface MissionCleanup {
   removed: number
   retained: number
   pending: number
+  documentPending?: boolean
   reasons: MissionCleanupReason[]
   createdAt: number
 }
@@ -336,6 +338,12 @@ export interface MissionDeletedEvent extends MissionEventBase {
   expectedRevision: number
   deleteManagedSessions?: boolean
   cleanupTargets?: Array<{ sessionID: string; location: MissionLocation }>
+  documentCleanup?: true
+}
+
+export interface MissionDocumentCleanedEvent extends MissionEventBase {
+  type: "mission.document-cleaned"
+  deletionID: string
 }
 
 export interface MissionSessionCleanedEvent extends MissionEventBase {
@@ -487,6 +495,7 @@ export type MissionEvent =
   | MissionUpdatedEvent
   | MissionDeletedEvent
   | MissionSessionCleanedEvent
+  | MissionDocumentCleanedEvent
   | MissionRevisedEvent
   | MissionTaskCreatedEvent
   | MissionTaskDispatchingEvent

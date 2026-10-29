@@ -22,18 +22,21 @@ import { stopFixtureChild } from "./native-fixture-guards.mjs"
 const source = process.argv[2], journeys = process.argv[3] ?? "ABCD"
 assert.ok(source && path.isAbsolute(source), "Explicit existing CLI required")
 assert.match(journeys, /^A?B?C?D?G?E?L?F?W?Q?N?$/, "Journeys: ordered subset of ABCDGELFWQN")
-const root = await realpath(await mkdtemp(path.join(process.env.LOCALAPPDATA, "Temp/opencode/recurring-simple-native-")))
+const parent = path.join(process.env.LOCALAPPDATA, "Temp/opencode")
+await mkdir(parent, { recursive: true })
+const root = await realpath(await mkdtemp(path.join(parent, "recurring-simple-native-")))
 const cli = path.join(root, "opencode.exe"), project = path.join(root, "project")
 await copyFile(source, cli)
 const clean = Object.fromEntries(Object.entries(process.env).filter(([key]) =>
   /^(SystemRoot|WINDIR|ComSpec|PATHEXT|OS|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|PATH)$/i.test(key)))
 const env = { ...clean, HOME: root, USERPROFILE: root, APPDATA: root, LOCALAPPDATA: root,
+  ProgramData: path.join(root, "ProgramData"),
   OPENCODE_TEST_HOME: root, OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
   OPENCODE_SERVER_PASSWORD: randomUUID(), OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1",
   OPENCODE_DISABLE_FFF: "1", DO_NOT_TRACK: "1", TEMP: path.join(root, "tmp"), TMP: path.join(root, "tmp") }
 for (const name of ["DATA", "CONFIG", "STATE", "CACHE", "RUNTIME"]) env[`XDG_${name}_HOME`] = path.join(root, `xdg-${name.toLowerCase()}`)
 env.XDG_RUNTIME_DIR = path.join(root, "runtime")
-for (const directory of [project, env.TEMP, env.OPENCODE_CONFIG_DIR, ...Object.entries(env).filter(([k]) => k.startsWith("XDG_")).map(([,v]) => v)]) await mkdir(directory, { recursive: true })
+for (const directory of [project, env.TEMP, env.ProgramData, env.OPENCODE_CONFIG_DIR, ...Object.entries(env).filter(([k]) => k.startsWith("XDG_")).map(([,v]) => v)]) await mkdir(directory, { recursive: true })
 // Imported backend modules must see the same private roots as the child service.
 for (const key of Object.keys(process.env)) if (/^(OPENCODE_|XDG_|CODENOMAD_|WSL_)/i.test(key)) delete process.env[key]
 Object.assign(process.env, env)
@@ -289,24 +292,29 @@ try {
     B.interrupted = await snapshot(id)
     assert.equal(B.interrupted.state, "interrupted"); assert.equal(B.interrupted.interruptionReason, "service-restart")
     assert.equal(B.interrupted.pending.passageID, B.before.pending.passageID)
-    // Record whether native resumes the cut turn by itself; Resume must not depend on it.
+    // This owned standalone serve leaves the cut claim parked. Resume observes
+    // it; age and an empty process-local active set cannot prove termination.
     await delay(20_000)
     B.nativeAfterRestart = { calls: evidence.providerCalls.filter(c => c.sessionID === sessionID).length, done: done(sessionID),
       active: Object.keys(await client.session.active()).includes(sessionID) }
     assert.equal(B.nativeAfterRestart.active, false)
     await openBackend()
     await control(id, "resume"); B.resumedAt = Date.now()
-    stage = "B interrupted settlement"
-    await until(async () => (B.after = await snapshot(id)).history.length === 1, SETTLE, SLOW)
-    B.settledObservedAt = Date.now(); B.archiveLatencyMs = B.settledObservedAt - B.resumedAt
-    assert.equal(B.after.latestResult.passageID, B.before.pending.passageID)
-    assert.equal(B.after.latestResult.outcome, "ended-without-report")
-    assert.equal(B.after.latestResult.reason, "interrupted")
-    assert.equal(B.after.state, "running"); assert.equal(B.after.pending, null)
+    stage = "B old claim remains uncertain"
+    await until(async () => (B.after = await snapshot(id)).pending?.status === "uncertain" && B.after.lastError?.code === "settlement-failed", SETTLE, SLOW)
+    for (let sample = 0; sample < 3; sample++) {
+      B.after = await snapshot(id)
+      assert.equal(B.after.pending.passageID, B.before.pending.passageID)
+      assert.equal(B.after.pending.status, "uncertain")
+      assert.equal(B.after.history.length, 0)
+      assert.equal(B.after.latestResult, null)
+      assert.equal(B.after.state, "running")
+      await delay(250)
+    }
     B.starts = await passageStarts(sessionID); assert.equal(B.starts.length, 1, "Resume never sends a second coordinator message")
     assert.deepEqual(B.starts.map(m => m.id), B.startsBefore.map(m => m.id))
     B.callsAfterResume = evidence.providerCalls.filter(c => c.sessionID === sessionID).length
-    assert.equal(B.callsAfterResume, B.nativeAfterRestart.calls, "no continuation turn after Resume")
+    assert.equal(B.callsAfterResume, B.nativeAfterRestart.calls, "Missions does not send a replacement or continuation prompt")
     await control(id, "stop")
     B.result = "passed"
   }
@@ -397,7 +405,9 @@ try {
   hold = false; for (const release of releases) release()
   await closeBackend().catch(error => { evidence.backendCleanupError = error.message })
   if (child && child.exitCode === null && child.signalCode === null) {
-    await stopFixtureChild(child, closed).catch(error => { evidence.serviceCleanupError = error.message; process.exitCode = 1 })
+    const pid = child.pid
+    await stopFixtureChild(child, closed).then(() => { evidence.stoppedPIDs.push(pid) })
+      .catch(error => { evidence.serviceCleanupError = error.message; process.exitCode = 1 })
   }
   provider.closeAllConnections(); await new Promise(resolve => provider.close(resolve))
   // Native log may contain credentials: retain bounded error labels, never raw logs.

@@ -12,7 +12,7 @@ const routes = [
   { method: "POST", url: "/api/workspaces/workspace-1/missions/msn_1/recover", rpc: "recover", payload: { expectedRevision: 1, target: "coordinator" } },
 ] as const
 
-function harness(hooks: { inventory?(state: State): void; dispatch?(state: State): Promise<void> } = {}) {
+function harness(hooks: { inventory?(state: State): void; dispatch?(state: State): Promise<void>; unsupportedDocuments?: boolean } = {}) {
   const state = { workspace: { id: "workspace-1" } as object | undefined, current: true, rpcs: [] as string[], entries: 0, fence: new WorktreeDeletionFence(50) }
   const enter = state.fence.enter.bind(state.fence)
   state.fence.enter = (directories: string[]) => { state.entries++; return enter(directories) }
@@ -20,6 +20,10 @@ function harness(hooks: { inventory?(state: State): void; dispatch?(state: State
     location: { get: async ({ location }: { location: { directory: string } }) => ({ directory: location.directory, project: { id: "project-1" } }) },
     plugin: { list: async () => { hooks.inventory?.(state); return { data: [{ id: "codenomad.missions", state: { status: "active" } }] } } },
     rpc: () => new Proxy({}, { get: (_target, name: string) => async () => {
+      if (name === "documentCapabilities") {
+        if (hooks.unsupportedDocuments) throw new Error("rpc.method_not_found")
+        return { version: 1 }
+      }
       state.rpcs.push(name)
       await hooks.dispatch?.(state)
       return name === "delete" ? { deleted: true } : { mission: { id: "msn_1" } }
@@ -51,6 +55,16 @@ test("every map mutation enters the worktree-deletion fence before its single na
     assert.equal(response.statusCode, 200, route.rpc)
     assert.deepEqual(h.state.rpcs, [route.rpc])
     assert.equal(h.state.entries, 1, route.rpc)
+  }
+})
+
+test("existing map mutations keep their native contract without requiring document-creation capabilities", async () => {
+  for (const route of routes) {
+    const h = harness({ unsupportedDocuments: true })
+    const response = await inject(h, route)
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual(h.state.rpcs, [route.rpc])
+    assert.equal(h.state.entries, 1)
   }
 })
 

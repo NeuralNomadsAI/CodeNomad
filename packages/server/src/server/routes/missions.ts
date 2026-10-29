@@ -29,8 +29,11 @@ import type { AuthManager } from "../../auth/manager"
 import type { RemoteControlManager } from "../../remote-control/manager"
 import { MISSION_PANEL_PAGE_BYTES, MISSION_PANEL_REQUEST_BYTES, isMissionPanelPageResult, missionPanelBytes,
   missionPanelPageRequestSchema } from "../../missions/mission-panel-page"
+import { registerMissionScheduleActivation } from "./mission-schedule-activation"
+import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
 
 interface MissionRouteDeps {
+  scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply">
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
     | "getSharedServiceConnection" | "getServiceDirectoryForPath" | "getWorktreeIdentityForPath"
     | "getHostPathForServicePath" | "getServiceWslDistro">
@@ -72,6 +75,7 @@ const UpdateSchema = z.object({
 const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), requestId: RequestID, deleteManagedSessions: z.boolean().optional() }).strict()
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
+  registerMissionScheduleActivation(app, deps)
   registerMissionRecurrenceSnapshot(app, deps)
   registerMissionRecurrenceCreate(app, deps)
   registerMissionRecurrenceCurrent(app, deps)

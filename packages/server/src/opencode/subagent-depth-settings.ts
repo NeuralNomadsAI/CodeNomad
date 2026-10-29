@@ -1,10 +1,10 @@
-import { createHash } from "node:crypto"
 import { isDeepStrictEqual } from "node:util"
 import type { PluginControlLocation, SubagentDepthCapability, SubagentDepthSnapshot } from "../api-types"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
 import type { PluginControlDocument } from "./plugin-control-document"
-import { editNativeSetting, readNativeSetting, removeEmptyNativeObject, withEditedText } from "./native-setting-document"
+import { readNativeSetting, removeEmptyNativeObject, withEditedText } from "./native-setting-document"
+import { editMissionExperimental, inheritedMissionExperimental, nativeSettingExpectation } from "./native-experimental-settings"
 import { readRuntimeContract } from "./compatibility/negotiate"
 import { imageSettingsCapability } from "./image-settings"
 import { maskedBy, samePath } from "./experimental-layers"
@@ -43,12 +43,6 @@ export function subagentDepthCapability(document: Record<string, any>): Subagent
     ...(value.default === undefined ? {} : { default: value.default }) }
 }
 
-function expectation(document: PluginControlDocument): string {
-  return createHash("sha256").update(JSON.stringify([
-    document.requestedPath, document.writePath, document.exists, document.mode, document.byteOrderMark, document.text,
-  ])).digest("hex")
-}
-
 /** General's resolved permission rules; `undefined` when unreadable or General is missing. */
 async function generalRules(connection: ServiceConnection, directory: string) {
   try {
@@ -68,7 +62,7 @@ export class SubagentDepthSettings {
     const connection = await this.manager.getSharedServiceConnection(workspaceId)
     if (!connection) throw new PluginControlsError("OpenCode is unavailable", "unavailable")
     // Document acquisition proves directory ownership before the schema request.
-    const snapshot = await this.documents.readConfigDocuments(workspaceId, location)
+    const snapshot = await this.documents.readConfigDocuments(workspaceId, location, undefined, true)
     connection.assertCurrent()
     const [contract, rules] = await Promise.all([
       readRuntimeContract(connection.endpoint, connection.fetch, AbortSignal.timeout(5_000)),
@@ -107,7 +101,7 @@ export class SubagentDepthSettings {
     return { location: context.location, capability: context.capability, effectiveDepth,
       nesting: effect ? { effect, ...(nestingToolHidden(context.rules!, ignoreCase) ? { hidden: true as const } : {}) } : null,
       project: project ? { path: project.path, depth: projectDepth,
-        expectation: expectation(project.document),
+        expectation: nativeSettingExpectation(project.document),
         ...(projectDepth !== null && nestingRuleSkipped(project.document) ? { nestingSkipped: true as const } : {}),
         ...(withoutRedundantExperimental(project.document, this.exposedMediaStorage(context, project.path)) === undefined
           ? {} : { emptyExperimental: true }) } : null }
@@ -124,20 +118,21 @@ export class SubagentDepthSettings {
     if (value !== null && (validated === null || validated < capability.minimum
       || capability.maximum !== undefined && validated > capability.maximum))
       throw new PluginControlsError("Subagent depth is outside the native contract", "invalid")
-    await this.documents.editConfigDocument(workspaceId, location, "project", document => {
+    await this.documents.editConfigDocument(workspaceId, location, "project", (document, current) => {
       context.connection.assertCurrent()
-      if (expectation(document) !== expected) throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
+      if (nativeSettingExpectation(document) !== expected) throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
       // An emptied project `experimental` object would still hide every inherited experimental setting,
       // so it goes in one edit that keeps the comments written inside it.
-      const text = value !== null ? editNativeSetting(document, keys, value)
-        : withoutRedundantExperimental(document, exposed, keys[1]) ?? editNativeSetting(document, keys, undefined)
+      const cleaned = value === null ? withoutRedundantExperimental(document, exposed, keys[1]) : undefined
+      const text = cleaned ?? editMissionExperimental(document, "subagent_depth", value ?? undefined,
+        inheritedMissionExperimental(current.entries, current.path, current.location.directory))
       // A project override is the user's consent to subagents nesting up to it, so the marked rule
       // follows the override: written with any depth, removed by Inherit only.
       const edited = withEditedText(document, text)
       if (value === null) return withoutNestingRule(edited) ?? text
       // Without a General block that can take it (see `withNestingRule`), only the depth is saved.
       return withNestingRule(edited) ?? text
-    })
+    }, undefined, true)
     context.connection.assertCurrent()
   }
 }

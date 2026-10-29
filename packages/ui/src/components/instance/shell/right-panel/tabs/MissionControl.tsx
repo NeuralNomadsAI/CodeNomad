@@ -25,6 +25,7 @@ import { missionActivityWorking } from "../../../../mission-native-execution-mod
 import { MISSION_ROW_TITLE_MAX, missionDisplayTitle, missionRelativeTime } from "../../../../../lib/mission-display"
 import { useI18n } from "../../../../../lib/i18n"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
+import { missionCleanupPending } from "../../../../../lib/mission-cleanup"
 import { openSettings } from "../../../../../stores/settings-screen"
 import { createMissionRecurrenceList } from "../../../../mission-recurrence-list"
 import { missionTaskConversation } from "../../../../mission-task-navigation"
@@ -254,7 +255,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   }
   // Pending cleanups need an explicit retry and stay in the panel; settled
   // history belongs to the overview reader.
-  const cleanupPending = () => (state().cleanups ?? []).some(item => item.pending > 0)
+  const cleanupPending = () => (state().cleanups ?? []).some(missionCleanupPending)
   const detailId = createUniqueId()
   const tracking = () => <>
     <Show when={selectedSchedule()}>

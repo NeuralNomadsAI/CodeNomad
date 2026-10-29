@@ -3,6 +3,7 @@ import Fastify from "fastify"
 import { OpenCode } from "@opencode/client"
 import { MissionControl, MissionControlError } from "../../../../server/src/missions/control"
 import { MissionJournal, type MissionStorage } from "../../../../server/src/missions/journal"
+import { NativeMissionDocumentStore, type MissionDocumentStorage } from "../../../../server/src/missions/mission-document-store"
 import type { MissionJsonValue, MissionMap } from "../../../../server/src/missions/model"
 import { registerMissionRoutes } from "../../../../server/src/server/routes/missions"
 import { admitMissionInput } from "../../../../server/src/server/routes/mission-input"
@@ -10,12 +11,18 @@ import { WorktreeDeletionFence } from "../../../../server/src/workspaces/worktre
 
 // Private in-memory state and generated-client fetch only. Never connect this
 // fixture to a native daemon, installed application, provider or user database.
-export function cleanupBackend() {
+export function cleanupBackend(unified = false) {
   const values = new Map<string, MissionJsonValue>(), native = new Map<string, any>()
   const removed: string[] = [], wire: string[] = [], failing = new Set<string>(), children = new Set<string>()
-  const state = { owned: true }
-  const storage: MissionStorage = {
+  const state = { owned: true, failCompaction: false }
+  const storage: MissionStorage & MissionDocumentStorage = {
     get: async key => values.get(key), set: async (key, value) => { values.set(key, structuredClone(value)) },
+    compareAndSet: async (key, value, expected, current) => {
+      current()
+      assert.equal((values.get(key) as { revision?: number } | undefined)?.revision ?? null, expected)
+      if (state.failCompaction && value && typeof value === "object" && "deletedAt" in value) throw new Error("Private compaction failure")
+      values.set(key, structuredClone(value))
+    },
     // Purge-capable like native storage: settled deletions can leave the journal.
     remove: async key => { values.delete(key) },
     scan: async ({ prefix, after, limit = 100 }) => {
@@ -59,7 +66,10 @@ export function cleanupBackend() {
   // The production server shares one deletion fence between the map-mutation
   // routes and the cleanup bridge; its permit is reentrant per directory.
   const fence = new WorktreeDeletionFence()
+  const documents = new NativeMissionDocumentStore(storage, "private-project", "/private-fixture")
+  const access = <T>(use: (store: NativeMissionDocumentStore) => Promise<T>) => use(documents)
   control = new MissionControl({ project: { id: "private-project", canonical: "/private-fixture", location: { directory: "/private-fixture" } }, storage,
+    ...(unified ? { documents: access, documentReads: access } : {}),
     createManagedRoot: async (_coordinator, input) => {
       // Creation admission itself has independent coverage. Seed only this
       // private fixture's already-persisted deterministic actor contract.
@@ -90,5 +100,5 @@ export function cleanupBackend() {
     })).mission
     return mission
   }
-  return { app, journal, control, create, native, removed, failing, children, state, wire }
+  return { app, journal, control, create, native, removed, failing, children, state, wire, documents }
 }

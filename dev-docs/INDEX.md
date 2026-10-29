@@ -44,6 +44,8 @@ Start with [README](../README.md) for installation and usage, then
 
 - [Missions](MISSIONS.md): one-time Mission maps, native admission, Wayfinder/Debugging/Product delivery playbooks and validation.
 - [Recurring Missions](MISSIONS_RECURRING.md): daily native schedule contract; the [qualification fixture](MISSIONS_RECURRING_QUALIFICATION.md) runs its journeys against an isolated runtime.
+- [Missions native contracts](MISSIONS_NATIVE_CONTRACTS.md): public/private boundaries, per-invocation lifetimes, bounded capabilities and experimental document authors.
+- [Native schedule transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md): exact read-only discovery, incarnation-fenced RPC and local carrier primitives.
 - [Autonomy requirement](MISSIONS_AUTONOMY.md): Missions run in the OpenCode service with the CodeNomad UI and backend closed.
 
 ## Desktop automation and validation

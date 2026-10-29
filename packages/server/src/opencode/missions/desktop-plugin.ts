@@ -9,10 +9,11 @@ import { MissionJournal } from "../../missions/journal"
 import { MissionJournalIndex } from "../../missions/journal-index"
 import { hintsShowWork, retainMissionWork } from "./lifetime"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
+import type { MissionDocumentAccess } from "../../missions/mission-document-one-time"
 
 /** One-time Missions only: the `codenomad-missions/v2` journal. Setup never
  * reads, creates or repairs the retired `authority-v2` namespace. */
-export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate): Plugin.Plugin {
+export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate, documents?: MissionDocumentAccess): Plugin.Plugin {
   return {
     id: "codenomad.missions",
     setup: async ctx => {
@@ -45,7 +46,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
             }, beforeTool: async () => {} }
             ordinary = selected
           }, beforeTool: async () => {}, beforeJournalWrite: async () => {} },
-          (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false, index)
+          (coordinatorID, input) => sendMissionInput(coordinatorID, "create-root", input) as Promise<NativeMissionSession>, humanGate, false, index, documents)
           return async () => { ordinary = undefined; await dispose() }
         } catch (error) { ordinary = undefined; throw error }
       }, console.error, () => retainMissionWork(() => journal.snapshot(), () => journal.readHints(hintsShowWork))) }

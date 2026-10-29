@@ -73,6 +73,9 @@ export async function passageFixture(business = true) {
       sends++
       messages.add(`${command.input.sessionID}\0${command.input.id}`)
       states.get(command.input.sessionID)!.messagePresent = true
+      // Scripted native turns complete immediately and expose their durable input/idle correlation.
+      states.get(command.input.sessionID)!.terminal ??= {
+        inputMessageID: command.input.id, messageID: `idle_${command.input.id}`, outcome: "succeeded" }
       if (crashAfterSend) { crashAfterSend = false; throw new Error("Crash after native admission") }
       return { id: command.input.id }
     },

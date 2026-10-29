@@ -68,8 +68,10 @@ export async function prepareMissionMapMutation(input: {
   const missions = client.rpc(CODENOMAD_MISSIONS_RPC)
   let claimed = false
   return {
-    /** Exactly one native call. The permit stays held until it settles; its
-     * outcome is never raced against request cancellation or retried. */
+    current: unchanged,
+    async refresh() { await admission.assertCurrent(); unchanged() },
+    /** One owned operation. Multi-phase callers refresh authority before each
+     * RPC; the permit stays held until completion and mutations are never raced. */
     async run<T>(call: (rpc: typeof missions, rpcOptions: typeof options) => Promise<T>): Promise<T> {
       if (claimed) throw new Error("Mission mutation already dispatched")
       claimed = true

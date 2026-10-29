@@ -28,7 +28,8 @@ import { parseMissionTitle } from "./mission-title"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
 import { parseNativeCallObservation } from "./native-call-observation"
 import { nativeCallObservationID } from "./native-call-reconciliation"
-import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, hasInvalidCleanupHistory, isCleanupReason, isCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
+import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, documentCleanupReceiptID, hasInvalidCleanupHistory,
+  isCleanupReason, isCleanupReceipt, isDocumentCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
 import { parseDeletionRecord, planDeletionPurge, type MissionDeletionRecord } from "./journal-purge"
 import { MissionJournalIndex, noteMissionJournalWrite, type MissionIndexHints, type MissionIndexRange, type SynchronousHint } from "./journal-index"
 
@@ -42,7 +43,8 @@ const RANGE = /^\/([A-Za-z0-9_-]{3,100})\//
 const MISSION_FULL = `Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit of this mission`
 const RANGE_OVER_BOUND = `Mission journal exceeds the ${MISSION_MAX_EVENTS}-event safety limit of one mission`
 type CapacityIntent = Extract<MissionEvent, { type: "mission.deleted" | "mission.control-requested" }>
-interface CapacitySlot { intent: CapacityIntent; sessionID: string }
+type CapacitySlot = { intent: CapacityIntent; sessionID: string }
+  | { intent: Extract<MissionEvent, { type: "mission.deleted" }>; document: true }
 /** `unreadable`: missions whose deletion record could not be read, kept as damage. */
 interface Observation { events: MissionEvent[]; discardedEvents: number; purged: MissionEvent[]; unreadable: string[] }
 
@@ -370,6 +372,7 @@ export class MissionJournal {
         && event.expectedRevision > intent.expectedRevision
         && compareEvents(event, intent) > 0).length : 0
     return 1 + (event.type === "mission.deleted" ? event.cleanupTargets?.length ?? 0 : 0)
+      + (event.type === "mission.deleted" && event.documentCleanup ? 1 : 0)
       + (event.type === "mission.control-requested" ? event.targets.length : 0) - superseded
   }
 
@@ -400,7 +403,8 @@ export class MissionJournal {
         if (event) for (const sessionID of eventActors(event)) actors.add(sessionID)
         if (event?.type === "mission.deleted") {
           for (const target of event.cleanupTargets ?? []) reserve(event, target.sessionID)
-        } else if (event?.type === "mission.session-cleaned") receipts.push(event)
+          if (event.documentCleanup) cleanupSlots.set(this.eventKey(event.missionID, documentCleanupReceiptID(event.id)), { intent: event, document: true })
+        } else if (event?.type === "mission.session-cleaned" || event?.type === "mission.document-cleaned") receipts.push(event)
         else if (event?.type === "mission.control-requested") {
           const previous = latestControls.get(event.missionID)
           if (!previous || compareEvents(event, previous) > 0) latestControls.set(event.missionID, event)
@@ -418,6 +422,7 @@ export class MissionJournal {
   private matchesCapacityReceipt(event: MissionEvent, slots: Map<string, CapacitySlot>): boolean {
     const slot = slots.get(this.eventKey(event.missionID, event.id))
     if (!slot) return false
+    if ("document" in slot) return isDocumentCleanupReceipt(event, slot.intent)
     const { intent, sessionID } = slot
     return intent.type === "mission.deleted" ? isCleanupReceipt(event, intent, sessionID)
       : isControlReceipt(event, intent, sessionID)
@@ -565,6 +570,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
     case "mission.deleted": {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1) return undefined
       if (input.deleteManagedSessions !== undefined && typeof input.deleteManagedSessions !== "boolean") return undefined
+      if (input.documentCleanup !== undefined && input.documentCleanup !== true) return undefined
       const cleanupTargets: Array<{ sessionID: string; location: MissionLocation }> = []
       if (input.cleanupTargets !== undefined) {
         // Each target needs a receipt within the mission's range.
@@ -581,6 +587,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         ...eventBase(input), type: "mission.deleted", requestID: input.requestID, expectedRevision: Number(input.expectedRevision),
         ...(input.deleteManagedSessions === undefined ? {} : { deleteManagedSessions: input.deleteManagedSessions }),
         ...(input.cleanupTargets === undefined ? {} : { cleanupTargets }),
+        ...(input.documentCleanup === true ? { documentCleanup: true as const } : {}),
       }
     }
     case "mission.session-cleaned":
@@ -588,6 +595,9 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         || (input.outcome !== "removed" && input.outcome !== "retained")) return undefined
       return { ...eventBase(input), type: "mission.session-cleaned", deletionID: input.deletionID, sessionID: input.sessionID, outcome: input.outcome,
         ...(input.outcome === "retained" && isCleanupReason(input.reason) ? { reason: input.reason } : {}) }
+    case "mission.document-cleaned":
+      if (!text(input.deletionID, MAX_SHORT_TEXT)) return undefined
+      return { ...eventBase(input), type: "mission.document-cleaned", deletionID: input.deletionID }
     case "mission.revised": {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
         || !text(input.actorSessionID, MAX_SHORT_TEXT) || !text(input.reason, 2_000)

@@ -132,6 +132,7 @@ export function missionPausedInstruction(missionID: string, descendant = false):
       : "Finish only the step already in progress, briefly state where you stopped, and end your turn. Wait for the user's Play action.")
 }
 
-export function missionIsRunning(mission: Pick<MissionMap, "status" | "runState" | "controlUnavailable">): boolean {
+export function missionIsRunning(mission: Pick<MissionMap, "status" | "runState" | "controlUnavailable" | "document">): boolean {
   return !mission.controlUnavailable && mission.status === "active" && (mission.runState === undefined || mission.runState === "running")
+    && (!mission.document || mission.document.state === "running")
 }

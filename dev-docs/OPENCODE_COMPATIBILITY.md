@@ -76,6 +76,22 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
 
 - Generated client URLs keep their `baseUrl` prefix and pass through unchanged;
   scheduling classifies API paths relative to the proxy prefix.
+- The generated `experimental.session` methods and their `session` aliases use
+  identical experimental wire routes for instructions, wait, log, import/export
+  and stats. Stateless `experimental.generate.text` uses
+  `/api/experimental/generate/text`; side questions use the separate session
+  generation API. New client domains retain the proxy's explicit allowlist.
+- The Solid reducer derives projected message IDs with
+  `Session.Message.ID.fromEvent`: event fixtures must use native `evt_` IDs,
+  producing `msg_` rows. Catalogue invalidations refresh only previously read
+  resources; an active-session snapshot also fetches missing running-session
+  metadata. Tool-file omission is opt-in; transcript and pruning reads preserve
+  their full native projection.
+- Service discovery/header construction, RPC envelopes, `SessionLegacy`, Form
+  and Permission read codecs keep their consumed contracts. The private loaded
+  Location map canonicalizes path flavor and trailing separators; pending
+  recovery retains its existing-only leases and identity checks. Plugin setup
+  remains activation-scoped; native services are acquired in the request graph.
 - The proxy allowlist stays closed to pairing (`/api/pair`, `/auth/connect/*`),
   credential export/creation (`/api/credential`) and experimental voice
   (`/api/experimental/voice/session`); a runtime update never widens it or
@@ -89,7 +105,9 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
   `session.environment` applies independently.
 - Plugin bundles externalize Effect and the plugin SDK because two Effect
   runtimes cannot share one native fiber and host Schema APIs differ across
-  releases. Test hosts that spread the Promise plugin context must declare the
+  releases. Local plugin directories with a package name and `exports` resolve
+  their entrypoints through that manifest (`session-pruning/package.test.ts`).
+  Test hosts that spread the Promise plugin context must declare the
   `credential` domain. `%ProgramData%\opencode` is discovered after the global
   plugin root that `config.get` consumers take first; native fixtures redirect
   `ProgramData`. Package-install fixtures pass `withProductRuntime`'s `registry`

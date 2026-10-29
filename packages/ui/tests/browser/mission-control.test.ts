@@ -1161,7 +1161,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     await page.getByRole("alert").getByText("Deletion could not be completed. Retry to finish the remaining cleanup.").waitFor()
     assert.equal(await cleanup.isDisabled(), true)
     await fixtureCall(page, "refresh")
-    await page.locator("form").getByRole("button", { name: "Delete mission", exact: true }).click()
+    await page.locator("form").getByRole("button", { name: "Try again", exact: true }).click()
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
     // Only the picker selects: deleting the selected Mission never falls back to
     // another one, even the current conversation's coordinator Mission.

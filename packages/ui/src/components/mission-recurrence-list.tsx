@@ -227,6 +227,7 @@ export function createMissionRecurrenceList(props: { instanceId: string; project
   const { date } = text
   /** One sentence; its action is the row's primary control (Check passage or Resume). */
   const notice = (schedule: RecurrenceSchedule) => {
+    if (schedule.pending?.status === "uncertain" && schedule.pending.conversationID) return "missions.recurrence.pending.terminalUnknown"
     if (schedule.pending?.status === "uncertain") return schedule.pending.reason === "admission-failing" ? "missions.recurrence.pending.retrying"
       : schedule.actions.includes("check") ? "missions.recurrence.pending.checkNeeded"
       : schedule.interruptionReason === "service-restart" ? "missions.simple.restart" : "missions.simple.resumeExplanation"
