@@ -8,6 +8,6 @@
     { "id": "customize", "pages": ["settings", "shortcuts", "voice"] },
     { "id": "extensions", "pages": ["extensions"] },
     { "id": "desktop", "pages": ["desktop", "browser-sidecars", "updates"] },
-    { "id": "help", "pages": ["troubleshooting", "support"] }
+    { "id": "help", "pages": ["troubleshooting", "support", "sponsor"] }
   ]
 }

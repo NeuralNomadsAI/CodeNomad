@@ -1,4 +1,4 @@
-# Assistance et compilation depuis les sources
+# Signalement de bugs et compilation depuis les sources
 
 Utilisez le dépôt pour les signalements de bugs, versions actuelles et contributions. Le [guide de dépannage](troubleshooting.md) couvre la récupération sûre avant de signaler un problème.
 

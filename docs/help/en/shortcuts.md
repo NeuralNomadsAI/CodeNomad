@@ -4,9 +4,9 @@
 
 1. Open **Command Palette** using `Ctrl+Shift+P` on Windows/Linux or `Cmd+Shift+P` on macOS, or use its visible button/menu item.
 2. Type an action name. The palette includes application actions and the current Location's custom commands; availability depends on the active view.
-3. Run **Open help** to open this guide in the current UI language in an external browser context. Native **Help → CodeNomad Help** opens the same guide.
+3. Run **Open help** to open this guide in the current UI language in an external browser context. Native **Help → CodeNomad Help** opens the same guide. **Support CodeNomad** (native **Help → Support CodeNomad**) opens the [Support CodeNomad](sponsor.md) page the same way.
 
-Help leaves the application view and draft untouched. If opening fails, visit [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) directly. A command being discoverable does not mean it has a customizable shortcut: the shortcut manager covers a fixed catalog of 74 renderer actions, not every palette or native-menu action. It includes palette commands such as **Compact Session**, **Undo Last Message** or **Open help** that start with **No shortcut**; project-folder, terminal and editor actions run only in local desktop windows.
+Help leaves the application view and draft untouched. If opening fails, visit [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) directly. A command being discoverable does not mean it has a customizable shortcut: the shortcut manager covers a fixed catalog of 75 renderer actions, not every palette or native-menu action. It includes palette commands such as **Compact Session**, **Undo Last Message** or **Open help** that start with **No shortcut**; project-folder, terminal and editor actions run only in local desktop windows.
 
 ## Record, disable and reset {#customize}
 

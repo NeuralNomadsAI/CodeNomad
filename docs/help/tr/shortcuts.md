@@ -4,9 +4,9 @@
 
 1. Windows/Linux'ta `Ctrl+Shift+P`'yi veya macOS'ta `Cmd+Shift+P`'yi kullanarak **Komut Paleti** öğesini açın veya görünür düğmesini/menü öğesini kullanın.
 2. Bir eylem adı yazın. Palet, uygulama eylemlerini ve mevcut Location bağlamının özel komutlarını içerir; Kullanılabilirlik aktif görünüme bağlıdır.
-3. Bu kılavuzu harici bir tarayıcı bağlamında mevcut kullanıcı arayüzü dilinde açmak için **Yardımı aç** komutunu çalıştırın. Yerel **Yardım → CodeNomad Yardımı** aynı kılavuzu açar.
+3. Bu kılavuzu harici bir tarayıcı bağlamında mevcut kullanıcı arayüzü dilinde açmak için **Yardımı aç** komutunu çalıştırın. Yerel **Yardım → CodeNomad Yardımı** aynı kılavuzu açar. **CodeNomad'i destekleyin** (yerel **Yardım → CodeNomad'i destekleyin**) aynı şekilde [CodeNomad'i destekleyin](sponsor.md) sayfasını açar.
 
-Yardım, uygulama görünümünü ve taslağını değiştirmez. Açılamazsa doğrudan [CodeNomad Yardımı](https://neuralnomadsai.github.io/CodeNomad/) adresini ziyaret edin. Komutun bulunabilir olması özelleştirilebilir kısayolu olduğu anlamına gelmez: kısayol yöneticisi her palet/native menü eylemini değil, 74 arayüz eyleminden oluşan sabit bir kataloğu kapsar. Bu katalog, **Kısayol yok** ile başlayan **Session'ı Sıkıştır**, **Son Mesajı Geri Al** veya **Yardımı aç** gibi palet komutlarını da içerir; proje klasörü, terminal ve düzenleyici eylemleri yalnızca yerel masaüstü pencerelerinde çalışır.
+Yardım, uygulama görünümünü ve taslağını değiştirmez. Açılamazsa doğrudan [CodeNomad Yardımı](https://neuralnomadsai.github.io/CodeNomad/) adresini ziyaret edin. Komutun bulunabilir olması özelleştirilebilir kısayolu olduğu anlamına gelmez: kısayol yöneticisi her palet/native menü eylemini değil, 75 arayüz eyleminden oluşan sabit bir kataloğu kapsar. Bu katalog, **Kısayol yok** ile başlayan **Session'ı Sıkıştır**, **Son Mesajı Geri Al** veya **Yardımı aç** gibi palet komutlarını da içerir; proje klasörü, terminal ve düzenleyici eylemleri yalnızca yerel masaüstü pencerelerinde çalışır.
 
 ## Kaydedin, devre dışı bırakın ve sıfırlayın {#customize}
 

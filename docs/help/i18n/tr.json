@@ -22,6 +22,7 @@
   "reportProblem": "Sorun bildir",
   "download": { "label": "İndir", "windows": "Windows için indir", "windowsDetail": "Yükleyici, x64", "macos": "macOS için indir", "macosDetail": "Apple Silicon", "intel": "Intel Mac mi? Intel sürümünü indirin", "linux": "Linux için indir", "linuxDetail": "AppImage, x64", "mobile": "CodeNomad'ı telefonunuzdan kullanın", "mobileDetail": "Telefonunuzu CodeNomad'ı çalıştıran bilgisayarla eşleştirin." },
   "tour": { "label": "Sessiz CodeNomad 1.0 önizlemesi: paralel alt ajanlarla bir görev, modellerin kör karşılaştırması, bir Git farkı, çalışma alanı geçmişinde arama, proje sekmeleri ve renk paletleri", "poster": "CodeNomad 1.0 pencereleri: görevler, soru formu, fark görünümü, Git değişiklikleri ve model karşılaştırması", "caption": "90 saniyelik turun tamamını YouTube'da izleyin" },
+  "funding": { "label": "Sponsor ol", "action": "{channel} ile sponsor ol", "recipient": "Alıcı: {recipient}" },
   "github": "GitHub",
   "languageLabel": "Dil",
   "projectLinks": "Proje bağlantıları",

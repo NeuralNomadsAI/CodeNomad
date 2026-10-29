@@ -8,7 +8,7 @@
 
 Projekt-Tabs, ausgewählte Unterhaltungen und Layout gehören zum Fenster. OpenCode-Sitzungen/-Nachrichten gehören zum gemeinsamen nativen OpenCode-Dienst: Andere Fenster können dieselbe Unterhaltung sehen. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad, nicht seine OpenCode-Sitzungen; öffnen Sie es erneut, um sie wiederzufinden. Ein anderes Fenster, das dieselbe Projektverbindung anzeigt, schließt seinen Tab ebenfalls und zeigt eine Benachrichtigung; separat geöffnete Tabs desselben Ordners sind nicht betroffen. Das Schließen eines ganzen Fensters, Beenden oder Neuladen bewahrt Projektverbindungen für die Wiederherstellung; siehe [Projekte](projects.md). Verwenden Sie geschlossene Fenster nicht als Beweis, dass Agent oder geplante Mission gestoppt wurde.
 
-Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald ein Fenster geladen ist; bis dahin erscheinen sie auf Englisch. **Hilfe → Über CodeNomad** (auch im macOS-Anwendungsmenü) öffnet **Einstellungen → Info** mit Version, Updates und Diagnose.
+Native Anwendungsmenüs verwenden die Oberflächensprache von CodeNomad, sobald ein Fenster geladen ist; bis dahin erscheinen sie auf Englisch. **Hilfe → Über CodeNomad** (auch im macOS-Anwendungsmenü) öffnet **Einstellungen → Info** mit Version, Updates und Diagnose. **Hilfe → CodeNomad unterstützen** öffnet die Seite [CodeNomad unterstützen](sponsor.md) im Browser.
 
 ## Einstellungen und Startwiederherstellung {#preferences-startup}
 

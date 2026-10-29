@@ -144,4 +144,4 @@ npx @neuralnomads/codenomad-dev --generate-token --launch
 
 `codenomad --upgrade` 使用检测到的 npm/pnpm/bun 管理器更新全局稳定 CLI 包（未检测到时使用 npm）。不会重启运行中的服务器，也不会更新 OpenCode。对于项目本地或预览安装，请显式更新对应 npm 软件包。更新后有意识地重启受管理 CodeNomad 进程；重新检查打印地址。
 
-桌面维护参阅[更新](updates.md)，源码构建命令参阅[支持](support.md)，提供商计划用量参阅[提供商](providers.md)。
+桌面维护参阅[更新](updates.md)，构建命令参阅[从源码构建](support.md#build-from-source)，提供商计划用量参阅[提供商](providers.md)。

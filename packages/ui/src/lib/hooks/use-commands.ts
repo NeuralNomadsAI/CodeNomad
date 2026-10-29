@@ -625,6 +625,20 @@ export function useCommands(options: UseCommandsOptions) {
       },
     })
 
+    commandRegistry.register({
+      id: "open-sponsor",
+      label: () => tGlobal("commands.openSponsor.label"),
+      description: () => tGlobal("commands.openSponsor.description"),
+      category: "System",
+      keywords: () => splitKeywords("commands.openSponsor.keywords"),
+      action: async () => {
+        const url = helpUrl(locale(), "sponsor")
+        if (!await openExternalUrl(url, "help")) showAlertDialog(tGlobal("commands.openSponsor.failed", { url }), {
+          title: tGlobal("commands.openSponsor.label"), variant: "error",
+        })
+      },
+    })
+
     // Also the native About menu item: Settings → Info, not the bare native panel.
     commandRegistry.register({
       id: "open-about",

@@ -144,4 +144,4 @@ npx @neuralnomads/codenomad-dev --generate-token --launch
 
 `codenomad --upgrade` ले पत्ता लागेको npm/pnpm/bun manager (नभेटिए npm) बाट global stable CLI package update गर्छ। चलिरहेको server restart वा OpenCode update गर्दैन। project-local वा preview installation मा ठ्याक्कै त्यो npm package explicit update गर्नुहोस्। update पछि managed CodeNomad process सचेत restart गरी छापिएका address फेरि जाँच्नुहोस्।
 
-desktop maintenance का लागि [अपडेट](updates.md), source-build command का लागि [सहयोग](support.md), provider plan usage का लागि [प्रदायक](providers.md) हेर्नुहोस्।
+desktop maintenance का लागि [अपडेट](updates.md), build command का लागि [source बाट build](support.md#build-from-source), provider plan usage का लागि [प्रदायक](providers.md) हेर्नुहोस्।

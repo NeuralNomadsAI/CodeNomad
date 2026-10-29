@@ -8,7 +8,7 @@ import { runInNewContext } from "node:vm"
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { parse as parseYaml } from "yaml"
-import { buildHelp, HELP_BASE_URL, languageRedirectScript, readDownloads, readSite, readChromeStrings, SECTION_IDS, TOUR_MEDIA, TOUR_URL, TRANSLATION_PROBLEMS, validateRelease } from "./build-help.mjs"
+import { buildHelp, HELP_BASE_URL, languageRedirectScript, readDownloads, readFunding, readSite, readChromeStrings, SECTION_IDS, TOUR_MEDIA, TOUR_URL, TRANSLATION_PROBLEMS, validateFunding, validateRelease } from "./build-help.mjs"
 import { fetchReleases, nextPage, run as resolveRelease, selectRelease } from "./resolve-help-release.mjs"
 import "./test-help-download.mjs"
 
@@ -61,6 +61,10 @@ async function fixture(ctx) {
 const unescape = (value) => value.replace(/&(?:amp|quot|#39|lt|gt);/g, (entity) => ({ "&amp;": "&", "&quot;": '"', "&#39;": "'", "&lt;": "<", "&gt;": ">" })[entity])
 const escapeHtml = (value) => value.replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char])
 const CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; media-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">`
+const funding = JSON.parse(await readFile(resolve(root, "docs/help/funding.json"), "utf8"))
+const SPONSORSHIP = /github\.com\/sponsors|opencollective\.com|liberapay\.com|polar\.sh|thanks\.dev|paypal\.|patreon\.com|buymeacoffee\.com|ko-fi\.com/i
+// The {{funding}} block: one link per channel, in funding.json order, naming its recipient.
+const fundingBlock = (chrome, channels) => `<ul class="funding">${channels.map((entry) => `<li><a href="${escapeHtml(entry.url)}">${escapeHtml(chrome.funding.action).replace("{channel}", `<bdi>${escapeHtml(entry.name)}</bdi>`)}</a><span>${escapeHtml(chrome.funding.recipient).replace("{recipient}", `<bdi>${escapeHtml(entry.recipient)}</bdi>`)}</span></li>`).join("")}</ul>`
 
 // The one media element of the site: the home page's silent tour, whose source applies only to
 // wide screens without reduced motion, with the poster as the image everywhere else.
@@ -80,9 +84,11 @@ async function checkSearch(output, locale) {
   }
 }
 
-async function checkHtml(output, locale, page, locales) {
+async function checkHtml(output, locale, page, locales, channels = funding) {
   const file = join(output, locale, `${page}.html`)
   const html = await readFile(file, "utf8")
+  const chromeFile = (name) => readFile(resolve(root, `docs/help/i18n/${name}.json`), "utf8").then(JSON.parse)
+  const chrome = await chromeFile(locale)
   assert.match(html, new RegExp(`<html lang="${locale}" dir="${locale === "he" ? "rtl" : "ltr"}">`))
   assert.equal((html.match(/<h1(?:\s|>)/g) ?? []).length, 1, file)
   assert.equal((html.match(/aria-current="page"/g) ?? []).length, 2, "one current link in each CSS-exclusive navigation")
@@ -104,7 +110,18 @@ async function checkHtml(output, locale, page, locales) {
   assert.ok(!/<[a-z][^>]*\sstyle\s*=/i.test(html), "no inline styles")
   assert.match(html, /<nav class="site-links" aria-label="[^"]*"><a href="download\.html">/, "the header Download link opens the download page")
   assert.match(html, /class="help-search" hidden/)
-  assert.ok(!/id="support-development"|github\.com\/sponsors|opencollective\.com|liberapay\.com|polar\.sh|thanks\.dev|paypal\.|buymeacoffee\.com|ko-fi\.com/i.test(html), "no sponsorship section or URL while funding.json does not exist")
+  // Funding URLs come only from funding.json, inside the {{funding}} block of the pages that allow it.
+  const blocks = html.match(/<ul class="funding">[\s\S]*?<\/ul>/g) ?? []
+  if (blocks.length) {
+    assert.ok(["sponsor", "download"].includes(page), `${locale}/${page}: funding channels only on the sponsor and download pages`)
+    // An English fallback article renders the block with English strings.
+    const article = html.includes('<article lang="en" dir="ltr">') ? await chromeFile("en") : chrome
+    assert.deepEqual(blocks, [fundingBlock(article, channels)], `${locale}/${page}: one block listing exactly the funding channels`)
+  }
+  assert.ok(!SPONSORSHIP.test(blocks.reduce((rest, block) => rest.replace(block, ""), html)), `${locale}/${page}: sponsorship URLs only inside the {{funding}} block`)
+  assert.ok(page === "download" || !html.includes('id="support-development"'), "the support-development section belongs to the download page")
+  const sponsorPage = await readFile(join(output, locale, "sponsor.html")).then(() => true, () => false)
+  assert.equal(html.includes(`<nav class="site-links" aria-label="${escapeHtml(chrome.projectLinks)}"><a href="download.html">${escapeHtml(chrome.download.label)}</a><a href="sponsor.html">${escapeHtml(chrome.funding.label)}</a><a href="https://github.com/NeuralNomadsAI/CodeNomad">`), channels.length > 0 && sponsorPage, "the header Sponsor link follows Download only with channels and a sponsor page")
   const ids = [...html.matchAll(/\bid="([^"]+)"/g)].map((match) => match[1])
   assert.equal(ids.length, new Set(ids).size, `duplicate anchors in ${file}`)
   for (const heading of html.matchAll(/<h[2-6]\b([^>]*)>/g)) assert.match(heading[1], /\bid="[a-z0-9]+(?:-[a-z0-9]+)*"/, file)
@@ -135,8 +152,9 @@ test("declared help pages have translations, stable heading ids, links, images a
   assert.deepEqual(site.sections.map((section) => section.pages), [
     ["index", "download", "install", "server"], ["projects", "conversations", "history", "files", "permissions", "missions"],
     ["opencode", "providers", "integrations"], ["remote-control", "remote-access", "security", "mobile"],
-    ["settings", "shortcuts", "voice"], ["extensions"], ["desktop", "browser-sidecars", "updates"], ["troubleshooting", "support"],
+    ["settings", "shortcuts", "voice"], ["extensions"], ["desktop", "browser-sidecars", "updates"], ["troubleshooting", "support", "sponsor"],
   ], "all approved pages must remain reachable in their eight groups")
+  assert.deepEqual(funding, [{ id: "github-sponsors", name: "GitHub Sponsors", url: "https://github.com/sponsors/pascalandr", recipient: "Pascal André" }], "the published funding channels")
   if (onlyLocale) assert.ok(site.locales.includes(onlyLocale), `unsupported locale: ${onlyLocale}`)
   const output = await temporary(ctx)
   const built = await buildHelp({ content, output })
@@ -157,6 +175,11 @@ test("declared help pages have translations, stable heading ids, links, images a
     for (const page of built.pages.filter((name) => name !== "index")) {
       assert.ok(!(await readFile(join(output, locale, `${page}.html`), "utf8")).includes('class="action"'), `${locale}/${page}: only the home page has a call to action`)
     }
+    const block = fundingBlock(JSON.parse(await readFile(resolve(root, `docs/help/i18n/${locale}.json`), "utf8")), funding)
+    assert.ok((await readFile(join(output, locale, "sponsor.html"), "utf8")).split('<h2 id="channels">')[1]?.split(/<h2\b/)[0].includes(block), `${locale}: the sponsor page lists the channels under #channels`)
+    const support = (await readFile(join(output, locale, "download.html"), "utf8")).split('<h2 id="support-development">')[1]?.split("</article>")[0]
+    assert.ok(support && !/<h2\b/.test(support), `${locale}: #support-development is the download page's last section`)
+    assert.ok(support.includes(block) && support.includes('href="sponsor.html"'), `${locale}: the download page offers the channels and links to the sponsor page`)
   }
   const chooser = await readFile(join(output, "index.html"), "utf8")
   assert.equal((chooser.match(/<script>/g) ?? []).length, 1, "only the root chooser needs JavaScript")
@@ -444,7 +467,7 @@ test("directive and release-link problems are fatal: unknown, misplaced, duplica
   const file = join(source, "en/install.md"), original = await readFile(file, "utf8")
   for (const [kind, markdown] of [
     ["unknown-release-asset", original.replace("(release:tauri-windows-x64)", "(release:tauri-windows-arm64)")],
-    ["unknown-directive", original.replace("Lead paragraph.", "{{funding}}")],
+    ["unknown-directive", original.replace("Lead paragraph.", "{{donate}}")],
     ["unknown-directive", original.replace("Lead paragraph.", "{{ release }}")],
     ["unknown-directive", original.replace("Lead paragraph.", "Before {{release}}")],
     ["unknown-directive", original.replace("Lead paragraph.", "{{release")],
@@ -454,6 +477,7 @@ test("directive and release-link problems are fatal: unknown, misplaced, duplica
     ["duplicate-directive", `${original}\n{{release}}\n`],
     ["misplaced-directive", original.replace("Lead paragraph.", "{{download-button}}")],
     ["misplaced-directive", original.replace("Lead paragraph.", "{{tour-video}}")],
+    ["misplaced-directive", original.replace("Lead paragraph.", "{{funding}}")],
   ]) {
     await writeFile(file, markdown)
     const { problems } = await buildHelp({ content: source, output })
@@ -529,6 +553,97 @@ test("downloads.json lists the stable assets in display order and rejects unsafe
   ]) {
     await writeFile(join(directory, "downloads.json"), JSON.stringify(manifest))
     await assert.rejects(readDownloads(directory), /downloads\.json/, JSON.stringify(manifest))
+  }
+})
+
+// The generic fixture's sponsor page gets a channel section, and its download page a support section.
+async function fundingFixturePages(ctx) {
+  const paths = await fixture(ctx)
+  for (const locale of LOCALES) {
+    await writeFile(join(paths.source, locale, "sponsor.md"), `# ${locale} sponsor\n\nLead paragraph.\n\n## Channels {#channels}\n\n{{funding}}\n`)
+    const download = join(paths.source, locale, "download.md")
+    await writeFile(download, `${await readFile(download, "utf8")}\n{{download-button}}\n\n## Support development {#support-development}\n\nRead the [sponsor page](sponsor.md).\n\n{{funding}}\n`)
+  }
+  return paths
+}
+
+test("funding channels render in order and escaped on the sponsor and download pages, with the header Sponsor link", async (ctx) => {
+  const { source, output } = await fundingFixturePages(ctx)
+  const channels = [...funding, { id: "second", name: `Fund <b>&</b> "x"`, url: "https://github.com/sponsors/Shantur-R", recipient: "R & D <team>" }]
+  assert.deepEqual((await buildHelp({ content: source, output, funding: channels })).problems, [])
+  for (const locale of LOCALES) {
+    for (const page of ["sponsor", "download", "index"]) await checkHtml(output, locale, page, LOCALES, channels)
+    const html = await readFile(join(output, locale, "sponsor.html"), "utf8")
+    assert.ok(html.includes(fundingBlock(await chromeFor(locale), channels)), `${locale}: both channels in order`)
+    assert.ok(html.includes("<bdi>Fund &lt;b&gt;&amp;&lt;/b&gt; &quot;x&quot;</bdi>") && !html.includes("<b>&</b>"), "channel names are escaped")
+    assert.ok(html.includes('<meta name="description" content="Lead paragraph.">'), "the block never becomes the description")
+  }
+
+  const { problems } = await buildHelp({ content: source, output, funding: [] })
+  assert.deepEqual([...new Set(problems.map((problem) => problem.kind))], ["missing-funding"], "{{funding}} without a channel is a build problem")
+  assert.deepEqual(problems.filter((problem) => problem.locale === "en").map((problem) => problem.page).sort(), ["download", "sponsor"])
+  assert.ok(!TRANSLATION_PROBLEMS.has("missing-funding"))
+  for (const page of ["sponsor", "download", "index"]) await checkHtml(output, "en", page, LOCALES, [])
+
+  const manifest = JSON.parse(await readFile(join(source, "site.json"), "utf8"))
+  manifest.sections.at(-1).pages = manifest.sections.at(-1).pages.filter((page) => page !== "sponsor")
+  await writeFile(join(source, "site.json"), JSON.stringify(manifest))
+  const download = join(source, "en/download.md")
+  await writeFile(download, (await readFile(download, "utf8")).replace("Read the [sponsor page](sponsor.md).", "Read on."))
+  for (const locale of LOCALES.slice(1)) await rm(join(source, locale, "download.md"))
+  assert.deepEqual((await buildHelp({ content: source, output, funding: channels })).problems.filter((problem) => !TRANSLATION_PROBLEMS.has(problem.kind)), [])
+  await assert.rejects(readFile(join(output, "en/sponsor.html")))
+  for (const page of ["download", "index"]) await checkHtml(output, "en", page, LOCALES, channels)
+  assert.ok(!(await readFile(join(output, "en/index.html"), "utf8")).includes('href="sponsor.html"'), "no Sponsor link without the sponsor page")
+})
+
+test("funding.json accepts only exact entries with allowlisted channel URLs", async (ctx) => {
+  assert.deepEqual(await readFunding(), funding)
+  const directory = await temporary(ctx)
+  const entry = funding[0]
+  const invalid = [
+    {}, null, "[]", [null], [[]], [{ ...entry, extra: 1 }], [{ id: entry.id, name: entry.name, url: entry.url }],
+    [entry, { ...entry }], [{ ...entry, id: "GitHub Sponsors" }], [{ ...entry, id: 1 }],
+    [{ ...entry, name: "" }], [{ ...entry, name: " " }], [{ ...entry, recipient: 1 }], [{ ...entry, recipient: null }],
+    ...[
+      "http://github.com/sponsors/pascalandr", "https://GitHub.com/sponsors/pascalandr", "https://github.com.evil.example/sponsors/pascalandr",
+      "https://evil.example/github.com/sponsors/pascalandr", "https://user:token@github.com/sponsors/pascalandr", "https://github.com:443/sponsors/pascalandr",
+      "https://github.com/sponsors/pascalandr?tier=1", "https://github.com/sponsors/pascalandr#tiers", "https://github.com/sponsors/pascalandr/",
+      "https://github.com/sponsors/pascalandr/dashboard", "https://github.com/sponsors/", "https://github.com/sponsors/-bad", "https://github.com/sponsors/bad-",
+      "https://github.com/sponsors/a--b", `https://github.com/sponsors/${"a".repeat(40)}`, "https://github.com/pascalandr", "https://github.com/sponsors/../pascalandr",
+      " https://github.com/sponsors/pascalandr", "https://opencollective.com/codenomad", "https://www.paypal.com/donate", "javascript:alert(1)", 42,
+    ].map((url) => [{ ...entry, url }]),
+  ]
+  for (const channels of invalid) {
+    await writeFile(join(directory, "funding.json"), JSON.stringify(channels))
+    await assert.rejects(readFunding(directory), /funding\.json/, JSON.stringify(channels))
+    assert.throws(() => validateFunding(channels), /funding\.json/)
+  }
+  await assert.rejects(buildHelp({ content, output: await temporary(ctx), funding: [{ ...entry, url: "https://example.com/" }] }), /funding\.json/, "injected channels are validated too")
+  assert.deepEqual(validateFunding([]), [], "an empty list is valid until a page asks for {{funding}}")
+  assert.deepEqual(validateFunding([{ ...entry, id: "second", url: `https://github.com/sponsors/${"a".repeat(39)}` }]).length, 1)
+})
+
+test("the page check rejects sponsorship URLs outside the funding block, blocks on other pages and a missing Sponsor link", async (ctx) => {
+  const output = await temporary(ctx)
+  await buildHelp({ content, output })
+  const read = (page) => readFile(join(output, "en", `${page}.html`), "utf8")
+  const sponsor = await read("sponsor"), install = await read("install")
+  const [block] = sponsor.match(/<ul class="funding">[\s\S]*?<\/ul>/)
+  for (const [page, original, changed, pattern] of [
+    ["install", install, install.replace("</article>", '<p><a href="https://github.com/sponsors/pascalandr">Sponsor</a></p></article>'), /sponsorship URLs only inside/],
+    ["install", install, install.replace("</article>", '<p><a href="https://opencollective.com/codenomad">Fund</a></p></article>'), /sponsorship URLs only inside/],
+    ["install", install, install.replace("</article>", `${block}</article>`), /only on the sponsor and download pages/],
+    ["sponsor", sponsor, sponsor.replace("</article>", '<p><a href="https://www.paypal.com/donate">Donate</a></p></article>'), /sponsorship URLs only inside/],
+    ["sponsor", sponsor, sponsor.replace("https://github.com/sponsors/pascalandr", "https://github.com/sponsors/someone"), /exactly the funding channels/],
+    ["sponsor", sponsor, sponsor.replace("</article>", `${block}</article>`), /exactly the funding channels/],
+    ["install", install, install.replace(/<a href="sponsor\.html">[^<]*<\/a>/, ""), /header Sponsor link/],
+    ["install", install, install.replace("</article>", '<h2 id="support-development">Support</h2></article>'), /belongs to the download page/],
+  ]) {
+    assert.notEqual(changed, original, `${page}: the mutation applies`)
+    await writeFile(join(output, "en", `${page}.html`), changed)
+    await assert.rejects(checkHtml(output, "en", page, LOCALES), pattern)
+    await writeFile(join(output, "en", `${page}.html`), original)
   }
 })
 

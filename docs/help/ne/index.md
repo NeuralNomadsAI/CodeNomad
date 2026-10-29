@@ -82,7 +82,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | अर्को उपकरण जोड्ने | [Remote Control](remote-control.md), [सुरक्षा](security.md), [मोबाइल](mobile.md) |
 | कार्यस्थान अनुकूल बनाउने | [सेटिङ](settings.md), [सर्टकट](shortcuts.md), [आवाज](voice.md), [विस्तार](extensions.md) |
 | नेटिभ एप व्यवस्थापन गर्ने | [डेस्कटप](desktop.md), [ब्राउजर पूर्वावलोकन र SideCars](browser-sidecars.md), [अपडेट](updates.md) |
-| समस्या पत्ता लगाउने वा योगदान गर्ने | [समस्या समाधान](troubleshooting.md), [सहयोग र स्रोत build](support.md) |
+| समस्या पत्ता लगाउने वा योगदान गर्ने | [समस्या समाधान](troubleshooting.md), [bug report र source build](support.md), [CodeNomad लाई आर्थिक सहयोग गर्नुहोस्](sponsor.md) |
 
 ## काम नबदली निगरानी गर्नुहोस् {#monitor-work}
 

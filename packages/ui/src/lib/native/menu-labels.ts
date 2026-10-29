@@ -9,6 +9,7 @@ export const NATIVE_MENU_LABEL_KEYS = {
   about: "commands.openAbout.label",
   getUpdates: "window.menu.native.getUpdates",
   codenomadHelp: "window.menu.native.codenomadHelp",
+  sponsor: "commands.openSponsor.label",
   hide: "window.menu.native.hide",
   hideOthers: "window.menu.native.hideOthers",
   showAll: "window.menu.native.showAll",

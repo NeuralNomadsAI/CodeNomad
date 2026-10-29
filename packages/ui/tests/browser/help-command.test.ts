@@ -5,7 +5,7 @@ import { mkdir } from "node:fs/promises"
 import { join } from "node:path"
 import { tmpdir } from "node:os"
 import { borrowFixture } from "./fixture-borrow"
-import { chromium, type Browser } from "playwright"
+import { chromium, type Browser, type Page } from "playwright"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 
 let cache: Awaited<ReturnType<typeof createFixtureCache>>, browser: Browser, url: string
@@ -22,11 +22,7 @@ before(async () => {
 })
 after(async () => { try { await browser?.close() } finally { try { } finally { await cache?.dispose() } } })
 
-for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri", "local"], ["electron", "remote"], ["tauri", "remote"]]) test(`${host}/${context}: native help command and palette open the live UI locale externally`, async () => {
-  const page = await browser.newPage()
-  const errors: string[] = []
-  page.on("pageerror", (error) => errors.push(error.message))
-  await page.addInitScript({ content: `
+const hostScript = (host: string, context: string) => `
     const host = ${JSON.stringify(host)}
     window.__CODENOMAD_RUNTIME_HOST__ = host
     window.__CODENOMAD_WINDOW_CONTEXT__ = ${JSON.stringify(context)}
@@ -49,7 +45,18 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
          },
        }
      }
-  ` })
+  `
+
+const readOpenedUrl = (page: Page) => page.evaluate(() => {
+  const opened = (window as any).opened.at(-1)
+  return opened[0] === "open_external_url" ? opened[1].url : opened[0]
+})
+
+for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri", "local"], ["electron", "remote"], ["tauri", "remote"]]) test(`${host}/${context}: native help command and palette open the live UI locale externally`, async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", (error) => errors.push(error.message))
+  await page.addInitScript({ content: hostScript(host, context) })
   await page.route("**/api/**", (route) => route.fulfill({ contentType: "application/json", body: "{}" }))
   try {
     await page.goto(url)
@@ -101,6 +108,39 @@ for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri
        await page.waitForFunction(() => (window as any).helpFixture.settings().open)
        assert.deepEqual(await page.evaluate(() => (window as any).helpFixture.settings()), { open: true, section: "info" })
      }
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+for (const [host, context] of [["web", "remote"], ["electron", "local"], ["tauri", "local"]]) test(`${host}/${context}: Support CodeNomad opens the localized sponsor page from the menu and palette`, async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", (error) => errors.push(error.message))
+  await page.addInitScript({ content: hostScript(host, context) })
+  await page.route("**/api/**", (route) => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Palette", exact: true }).waitFor()
+    await page.evaluate(() => (window as any).helpFixture.setLocale("fr"))
+    if (context === "remote") {
+      await page.getByRole("button", { name: "Palette" }).click()
+      await page.getByText("Soutenir CodeNomad", { exact: true }).click()
+    } else await page.evaluate(() => (window as any).deliverMenu("open-sponsor"))
+    await page.waitForFunction(() => (window as any).opened.length === 1)
+    assert.equal(await readOpenedUrl(page), "https://neuralnomadsai.github.io/CodeNomad/fr/sponsor.html")
+    await page.evaluate(() => (window as any).helpFixture.setLocale("he"))
+    await page.getByRole("button", { name: "Palette" }).click()
+    await page.getByText("תמכו ב־CodeNomad", { exact: true }).click()
+    await page.waitForFunction(() => (window as any).opened.length === 2)
+    assert.equal(await readOpenedUrl(page), "https://neuralnomadsai.github.io/CodeNomad/he/sponsor.html")
+    assert.equal(page.url(), url, "the sponsor page never replaces the renderer")
+    assert.equal(await page.getByRole("dialog").count(), 0)
+    await page.evaluate(() => { (window as any).failOpen = true })
+    await page.getByRole("button", { name: "Palette" }).click()
+    await page.getByText("תמכו ב־CodeNomad", { exact: true }).click()
+    await page.getByRole("dialog").waitFor()
+    assert.ok((await page.getByRole("dialog").innerText()).includes("https://neuralnomadsai.github.io/CodeNomad/he/sponsor.html"))
+    assert.equal(await page.evaluate(() => (window as any).opened.length), 2, "failed opening never replays")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

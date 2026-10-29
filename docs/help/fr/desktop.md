@@ -8,7 +8,7 @@
 
 Les onglets de projet, conversations sélectionnées et dispositions appartiennent à une fenêtre. Les sessions/messages OpenCode appartiennent au service natif OpenCode partagé : une autre fenêtre peut voir la même conversation. Fermer un onglet de projet ferme ce projet dans CodeNomad, pas ses sessions OpenCode ; rouvrez-le pour les retrouver. Une autre fenêtre qui affiche la même connexion de projet ferme aussi son onglet et affiche une notification ; les onglets ouverts séparément sur le même dossier ne sont pas concernés. Fermer une fenêtre entière, quitter ou recharger conserve les connexions de projet pour la restauration ; voir [Projets](projects.md). Ne considérez pas la fermeture des fenêtres comme une preuve qu’un agent ou une Mission planifiée s’est arrêté.
 
-Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics.
+Les menus natifs de l’application utilisent la langue de l’interface de CodeNomad dès qu’une fenêtre est chargée ; ils restent en anglais jusque-là. **Aide → À propos de CodeNomad** (aussi dans le menu de l’application sur macOS) ouvre **Paramètres → Info** avec la version, les mises à jour et les diagnostics. **Aide → Soutenir CodeNomad** ouvre la page [Soutenir CodeNomad](sponsor.md) dans votre navigateur.
 
 ## Préférences et restauration au démarrage {#preferences-startup}
 

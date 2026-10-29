@@ -39,3 +39,9 @@ npx @neuralnomads/codenomad --generate-token --launch
 - **Linux**：为 AppImage 添加可执行权限，或安装 Debian 软件包；参阅[在 Linux 上安装](install.md#linux-install)。
 - **macOS**：如果 macOS 阻止首次启动，请参阅 [macOS 隔离](troubleshooting.md#macos-quarantine)。
 - **所有平台**：按[要求](install.md#requirements)中所列安装 Git 和兼容的 OpenCode CLI，然后[在首次启动时选择 OpenCode](install.md#first-launch)。其他启动问题请参阅[故障排查](troubleshooting.md#desktop-launch)。
+
+## 支持开发 {#support-development}
+
+CodeNomad 免费，由志愿者利用业余时间维护。如果它对你或你的团队有用，赞助有助于持续维护它，并保持与新版 OpenCode 的兼容。[赞助 CodeNomad](sponsor.md)页面说明了赞助的用途。
+
+{{funding}}

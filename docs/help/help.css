@@ -110,6 +110,12 @@ blockquote { border-inline-start: 3px solid var(--accent); margin: 1.5rem 0; pad
 .download-main, .action a { display: inline-flex; align-items: center; justify-content: center; min-block-size: 44px; padding: .5rem 1.5rem; background: var(--accent); color: var(--on-accent); font-weight: 600; text-decoration: none; border-radius: 0; }
 .download-main:hover, .action a:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
 .action { margin-block: 1.5rem; }
+.funding { list-style: none; padding: 0; margin-block: 1.5rem; display: flex; flex-wrap: wrap; gap: 1rem 1.5rem; }
+.funding li { margin: 0; display: grid; justify-items: start; gap: .35rem; }
+/* Block flow, not flex: flex items would drop the space before the channel's <bdi>. */
+.funding a { display: inline-block; text-align: center; min-block-size: 44px; padding: .5rem 1.5rem; border: 2px solid var(--accent); color: var(--accent); font-weight: 600; text-decoration: none; border-radius: 0; }
+.funding a:hover { background: var(--accent); color: var(--on-accent); }
+.funding span { color: var(--muted); font-size: .9rem; }
 .tour { margin: 1.5rem 0 2rem; }
 .tour video, article .tour img { display: block; inline-size: 100%; block-size: auto; aspect-ratio: 16 / 9; margin: 0; border: 1px solid var(--border); background: var(--code); object-fit: contain; }
 article .tour img { display: none; }
@@ -165,6 +171,9 @@ footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1r
   .chooser main { margin: 2vh auto; padding: 1rem; }
   .language-list { grid-template-columns: minmax(0, 1fr); }
   .download-main, .action a { display: flex; inline-size: 100%; }
+  .funding { display: grid; }
+  .funding li { justify-items: stretch; }
+  .funding a { display: block; }
 }
 @media print {
   .site-header, .sidebar, .outline, footer, .skip-link, .download-primary, .tour video { display: none; }

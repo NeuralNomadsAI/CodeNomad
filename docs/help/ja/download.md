@@ -39,3 +39,9 @@ npx @neuralnomads/codenomad --generate-token --launch
 - **Linux**：AppImage を実行可能にするか、Debian パッケージをインストールします。[Linux へのインストール](install.md#linux-install)を参照してください。
 - **macOS**：macOS が初回起動をブロックする場合は、[macOS の隔離属性](troubleshooting.md#macos-quarantine)を参照してください。
 - **すべてのプラットフォーム**：[要件](install.md#requirements)に記載された Git と互換性のある OpenCode CLI をインストールし、[初回起動時に OpenCode を選びます](install.md#first-launch)。その他の起動の問題は[トラブルシューティング](troubleshooting.md#desktop-launch)で説明しています。
+
+## 開発を支援する {#support-development}
+
+CodeNomad は無料で、ボランティアが自分の時間で保守しています。あなたやチームの役に立っているなら、支援は CodeNomad の保守と、新しい OpenCode リリースとの互換性の維持に役立ちます。支援金の使い道は[CodeNomad を支援する](sponsor.md)のページで説明しています。
+
+{{funding}}

@@ -10,6 +10,7 @@ import { requestDesktopUpdate } from "../../stores/desktop-updates"
 import { supportsDesktopUpdateChecks } from "../../lib/native/updates"
 import type { UpdateFeed } from "../../../../server/src/api-types"
 import { openExternalUrl } from "../../lib/external-url"
+import { helpUrl } from "../../lib/help-url"
 import { buildBugReportUrl, currentBugReportTemplateStatus, readBugReportTemplateStatus } from "../../lib/bug-report"
 import { openCodeSetupStatus, refreshOpenCodeSetup } from "../../stores/opencode-setup"
 import { describeClientOs, readClientOsHints, type ClientNavigator } from "./client-os"
@@ -44,7 +45,7 @@ function versionNewer(current: string, latest: string): boolean | null {
 }
 
 export const InfoSettingsSection: Component = () => {
-  const { t } = useI18n()
+  const { t, locale } = useI18n()
   const [metaLoadFailed, setMetaLoadFailed] = createSignal(false)
   const [meta, { mutate }] = createResource(async () => {
     setMetaLoadFailed(false)
@@ -180,6 +181,13 @@ export const InfoSettingsSection: Component = () => {
     void openExternalUrl(buildBugReportUrl(environment, currentBugReportTemplateStatus()), "bug-report")
   }
 
+  const sponsorUrl = () => helpUrl(locale(), "sponsor")
+  const [sponsorOpenFailed, setSponsorOpenFailed] = createSignal(false)
+  const handleOpenSponsor = async () => {
+    setSponsorOpenFailed(false)
+    setSponsorOpenFailed(!await openExternalUrl(sponsorUrl(), "help"))
+  }
+
   const handleDownload = () => {
     const report = buildDiagnosticReport(meta() ?? null, osDisplay(), runtimeEnv, diagnosticLabels(), new Date(), opencodeVersions())
     const ts = new Date().toISOString().replace(/[:.]/g, "-")
@@ -304,6 +312,24 @@ export const InfoSettingsSection: Component = () => {
         <p id="settings-update-feed-help" class="settings-help-text">{t("settings.info.updates.feed.help")}</p>
         <Show when={feedSaveFailed()}>
           <div class="settings-error-message" role="alert">{t("settings.info.updates.feed.saveFailed")}</div>
+        </Show>
+      </div>
+
+      <div class="settings-card">
+        <div class="settings-card-header">
+          <div>
+            <h3 class="settings-card-title">{t("settings.info.support.title")}</h3>
+            <p class="settings-card-subtitle">{t("settings.info.support.subtitle")}</p>
+          </div>
+        </div>
+
+        <div class="settings-info-actions">
+          <button type="button" class="selector-button selector-button-secondary w-auto" onClick={() => void handleOpenSponsor()}>
+            {t("settings.info.support.open")}
+          </button>
+        </div>
+        <Show when={sponsorOpenFailed()}>
+          <div class="settings-error-message" role="alert">{t("commands.openSponsor.failed", { url: sponsorUrl() })}</div>
         </Show>
       </div>
 

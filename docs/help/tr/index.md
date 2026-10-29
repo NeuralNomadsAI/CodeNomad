@@ -82,7 +82,7 @@ Kesin sınırlar için, bkz. [tarayıcı önizlemeleri ve SideCars](browser-side
 | Başka bir cihaz bağlayın | [Uzaktan Kontrol](remote-control.md), [Güvenlik](security.md), [Mobil](mobile.md) |
 | Çalışma alanını uyarlayın | [Ayarlar](settings.md), [Kısayollar](shortcuts.md), [Ses](voice.md), [Uzantılar](extensions.md) |
 | Yerel uygulamayı yönetin | [Masaüstü](desktop.md), [Tarayıcı önizlemeleri ve SideCars](browser-sidecars.md), [Güncellemeler](updates.md) |
-| Teşhis edin veya katkıda bulunun | [Sorun giderme](troubleshooting.md), [Destek ve kaynak derlemeleri](support.md) |
+| Teşhis edin veya katkıda bulunun | [Sorun giderme](troubleshooting.md), [Hata raporları ve kaynaktan derleme](support.md), [CodeNomad'i destekleyin](sponsor.md) |
 
 ## Çalışmayı değiştirmeden izleyin {#monitor-work}
 

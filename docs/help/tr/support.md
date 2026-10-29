@@ -1,4 +1,4 @@
-# Destek ve kaynak derlemeleri
+# Hata raporları ve kaynaktan derleme
 
 Hata raporları, güncel sürümler ve katkılar için depoyu kullanın. [Sorun giderme kılavuzu](troubleshooting.md), bir sorunu bildirmeden önce güvenli kurtarmayı kapsar.
 

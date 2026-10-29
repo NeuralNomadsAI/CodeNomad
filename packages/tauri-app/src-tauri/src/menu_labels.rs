@@ -5,7 +5,7 @@ use tauri::{menu::MenuItemKind, Wry};
 /// English labels until a renderer reports its locale. Keys and texts mirror
 /// `NATIVE_MENU_LABEL_KEYS` and the English messages in the UI package
 /// (`packages/ui/src/lib/native/menu-labels.ts`); a UI test keeps them in sync.
-pub(crate) const DEFAULTS: [(&str, &str); 38] = [
+pub(crate) const DEFAULTS: [(&str, &str); 39] = [
     ("file", "File"),
     ("edit", "Edit"),
     ("view", "View"),
@@ -14,6 +14,7 @@ pub(crate) const DEFAULTS: [(&str, &str); 38] = [
     ("about", "About CodeNomad"),
     ("getUpdates", "Get Updates..."),
     ("codenomadHelp", "CodeNomad Help"),
+    ("sponsor", "Support CodeNomad"),
     ("hide", "Hide CodeNomad"),
     ("hideOthers", "Hide Others"),
     ("showAll", "Show All"),

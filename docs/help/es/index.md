@@ -82,7 +82,7 @@ La raíz del espacio de trabajo limita qué carpetas abre CodeNomad; no es un en
 | Conectar otro dispositivo | [Control remoto](remote-control.md), [Seguridad](security.md), [Móvil](mobile.md) |
 | Adaptar el espacio de trabajo | [Configuración](settings.md), [Atajos](shortcuts.md), [Voz](voice.md), [Extensiones](extensions.md) |
 | Gestionar la aplicación nativa | [Escritorio](desktop.md), [Vistas previas de navegador y SideCars](browser-sidecars.md), [Actualizaciones](updates.md) |
-| Diagnosticar o contribuir | [Solución de problemas](troubleshooting.md), [Soporte y compilaciones desde el código fuente](support.md) |
+| Diagnosticar o contribuir | [Solución de problemas](troubleshooting.md), [Informes de errores y compilaciones desde el código fuente](support.md), [Apoyar a CodeNomad](sponsor.md) |
 
 ## Supervisa el trabajo sin modificarlo {#monitor-work}
 

@@ -8,7 +8,7 @@
 
 Proje sekmeleri, seçilen konuşmalar ve düzen bir pencereye aittir. OpenCode oturumları/mesajları paylaşılan yerel OpenCode hizmetine aittir: aynı konuşmayı başka bir pencere görebilir. Proje sekmesini kapatmak projeyi CodeNomad'de kapatır, OpenCode oturumlarını kapatmaz; onları yeniden bulmak için projeyi tekrar açın. Aynı proje bağlantısını gösteren başka bir pencere de sekmesini kapatır ve bir bildirim gösterir; aynı klasörün ayrı açılmış sekmeleri etkilenmez. Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını geri yükleme için korur; bkz. [Projeler](projects.md). Kapanan pencereleri bir temsilcinin veya planlanmış Görevin durduğunun kanıtı olarak kullanmayın.
 
-Yerel uygulama menüleri, bir pencere yüklendikten sonra CodeNomad'ın arayüz dilini kullanır; o zamana kadar İngilizce görünür. **Yardım → CodeNomad hakkında** (macOS uygulama menüsünde de bulunur), sürüm, güncellemeler ve tanılamayla birlikte **Ayarlar → Bilgi** bölümünü açar.
+Yerel uygulama menüleri, bir pencere yüklendikten sonra CodeNomad'ın arayüz dilini kullanır; o zamana kadar İngilizce görünür. **Yardım → CodeNomad hakkında** (macOS uygulama menüsünde de bulunur), sürüm, güncellemeler ve tanılamayla birlikte **Ayarlar → Bilgi** bölümünü açar. **Yardım → CodeNomad'i destekleyin**, [CodeNomad'i destekleyin](sponsor.md) sayfasını tarayıcınızda açar.
 
 ## Tercihler ve başlangıç geri yüklemesi {#preferences-startup}
 

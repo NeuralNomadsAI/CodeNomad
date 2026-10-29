@@ -82,7 +82,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | חיבור מכשיר נוסף | [שליטה מרחוק](remote-control.md), [אבטחה](security.md), [נייד](mobile.md) |
 | התאמת סביבת העבודה | [הגדרות](settings.md), [קיצורים](shortcuts.md), [קול](voice.md), [הרחבות](extensions.md) |
 | ניהול היישום המקורי | [שולחן עבודה](desktop.md), [תצוגות דפדפן ו־SideCars](browser-sidecars.md), [עדכונים](updates.md) |
-| אבחון או תרומה | [פתרון בעיות](troubleshooting.md), [תמיכה ובנייה מקוד מקור](support.md) |
+| אבחון או תרומה | [פתרון בעיות](troubleshooting.md), [דיווחי באגים ובנייה מקוד מקור](support.md), [תמכו ב־CodeNomad](sponsor.md) |
 
 ## ניטור עבודה בלי לשנותה {#monitor-work}
 

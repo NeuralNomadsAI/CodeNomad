@@ -39,3 +39,9 @@ Téléchargez uniquement depuis cette page ou les [versions officielles](https:/
 - **Linux** : rendez l’AppImage exécutable ou installez le paquet Debian ; voir [Installer sous Linux](install.md#linux-install).
 - **macOS** : si macOS bloque le premier lancement, voir [Quarantaine macOS](troubleshooting.md#macos-quarantine).
 - **Toutes les plateformes** : installez Git et une CLI OpenCode compatible comme indiqué dans les [prérequis](install.md#requirements), puis [sélectionnez OpenCode au premier lancement](install.md#first-launch). Les autres problèmes de lancement sont traités dans le [dépannage](troubleshooting.md#desktop-launch).
+
+## Soutenir le développement {#support-development}
+
+CodeNomad est gratuit et maintenu par des bénévoles sur leur temps libre. S’il vous est utile, à vous ou à votre équipe, le parrainage aide à le maintenir et à le garder compatible avec les nouvelles versions d’OpenCode. La page [Soutenir CodeNomad](sponsor.md) explique ce que finance le parrainage.
+
+{{funding}}

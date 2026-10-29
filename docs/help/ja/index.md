@@ -82,7 +82,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | 別の端末からの接続 | [リモートコントロール](remote-control.md)、[セキュリティ](security.md)、[モバイル](mobile.md) |
 | ワークスペースのカスタマイズ | [設定](settings.md)、[ショートカット](shortcuts.md)、[音声](voice.md)、[拡張機能](extensions.md) |
 | ネイティブアプリの管理 | [デスクトップ](desktop.md)、[ブラウザープレビューと SideCar](browser-sidecars.md)、[更新](updates.md) |
-| 問題の診断や貢献 | [トラブルシューティング](troubleshooting.md)、[サポートとソースビルド](support.md) |
+| 問題の診断や貢献 | [トラブルシューティング](troubleshooting.md)、[不具合報告とソースビルド](support.md)、[CodeNomad を支援する](sponsor.md) |
 
 ## 作業を変更せずに監視する {#monitor-work}
 

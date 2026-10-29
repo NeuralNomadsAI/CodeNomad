@@ -82,6 +82,8 @@ const REMOTE_PROXY_CLEANUP_TIMEOUT: Duration = Duration::from_secs(10);
 const RELEASES_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases/latest";
 const RELEASES_LIST_URL: &str = "https://github.com/NeuralNomadsAI/CodeNomad/releases";
 const HELP_URL: &str = "https://neuralnomadsai.github.io/CodeNomad/";
+/// English page opened when no renderer can choose the UI locale (`helpUrl("en", "sponsor")`).
+const SPONSOR_URL: &str = "https://neuralnomadsai.github.io/CodeNomad/en/sponsor.html";
 const REMOTE_WINDOW_CONTEXT_SCRIPT: &str =
     "window.__CODENOMAD_RUNTIME_HOST__ = 'tauri'; window.__CODENOMAD_WINDOW_CONTEXT__ = 'remote';";
 
@@ -2109,6 +2111,18 @@ fn main() {
                         }
                     }
                 }
+                "open-sponsor" => {
+                    if !emit_menu_action(app_handle, "open-sponsor") {
+                        if let Err(err) = external_open::open_url(app_handle, SPONSOR_URL) {
+                            eprintln!("[tauri] failed to open the Support CodeNomad page: {err}");
+                            rfd::MessageDialog::new()
+                                .set_title("Support CodeNomad")
+                                .set_description(format!("Could not open the Support CodeNomad page in your browser. Visit {SPONSOR_URL} manually."))
+                                .set_level(rfd::MessageLevel::Error)
+                                .show();
+                        }
+                    }
+                }
                 "open-about" | "help_open_about" => {
                     // About opens Settings → Info → About from the most recently used
                     // application window, which brings the Preferences window forward.
@@ -2488,11 +2502,13 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     };
 
     let help_item = item("open-help", "codenomadHelp", None)?;
+    let sponsor_item = item("open-sponsor", "sponsor", None)?;
     let help_menu = if is_mac {
         let help_updates_item = item("help_get_updates", "getUpdates", None)?;
         let help_about_item = item("help_open_about", "about", None)?;
         let menu = SubmenuBuilder::with_id(app, "menu-help", label("help"))
             .item(&help_item)
+            .item(&sponsor_item)
             .item(&help_updates_item)
             .separator()
             .item(&help_about_item)
@@ -2503,6 +2519,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
     } else {
         SubmenuBuilder::with_id(app, "menu-help", label("help"))
             .item(&help_item)
+            .item(&sponsor_item)
             .item(&get_updates_item)
             .separator()
             .item(&about_item)
@@ -2525,6 +2542,7 @@ fn build_menu(app: &AppHandle) -> tauri::Result<()> {
         ("fullScreen", toggle_fullscreen_item),
         ("commandPalette", command_palette_item),
         ("codenomadHelp", help_item),
+        ("sponsor", sponsor_item),
     ] {
         labelled.push((key, MenuItemKind::MenuItem(entry)));
     }
@@ -2603,7 +2621,7 @@ mod menu_tests {
         should_allow_registered_origin, should_open_external_url, should_recreate_remote_window,
         titlebar_menu_id, LocalCloseEventAction,
         RemoteProfileIdentity, RemoteWindowMetadata, RemoteWindowOperationLocks, WakeLockState,
-        HELP_URL, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT,
+        HELP_URL, RELEASES_URL, REMOTE_WINDOW_CONTEXT_SCRIPT, SPONSOR_URL,
     };
     use serde_json::json;
     use url::Url;
@@ -2611,11 +2629,11 @@ mod menu_tests {
     #[test]
     fn remote_help_policy_opens_only_allowlisted_https_in_system_browser() {
         let mut opened = Vec::new();
-        for value in [HELP_URL, "https://neuralnomadsai.github.io/CodeNomad/fr/history.html#delete"] {
+        for value in [HELP_URL, SPONSOR_URL, "https://neuralnomadsai.github.io/CodeNomad/fr/history.html#delete"] {
             let url = Url::parse(value).unwrap();
             assert!(open_remote_external_url(&url, |url| opened.push(url.to_string())));
         }
-        assert_eq!(opened.len(), 2);
+        assert_eq!(opened.len(), 3);
         for value in [
             "http://neuralnomadsai.github.io/CodeNomad/en/",
             "https://example.com/CodeNomad/",
@@ -2675,6 +2693,13 @@ mod menu_tests {
         let shared = include_str!("../../../ui/src/lib/help-url.ts");
         assert!(shared.contains(&format!("export const HELP_BASE_URL = \"{HELP_URL}\"")));
         assert_eq!(titlebar_menu_id("help"), Some("menu-help"));
+    }
+
+    #[test]
+    fn sponsor_fallback_is_the_english_help_page() {
+        // The renderer's helpUrl("en", "sponsor") builds `${HELP_BASE_URL}en/sponsor.html`.
+        assert_eq!(SPONSOR_URL, format!("{HELP_URL}en/sponsor.html"));
+        assert_eq!(super::menu_labels::label("sponsor"), "Support CodeNomad");
     }
 
     #[test]

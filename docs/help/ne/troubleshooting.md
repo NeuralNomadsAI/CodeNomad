@@ -99,4 +99,4 @@ cancelled वा partial cleanup मा अर्को deletion अघि progr
 2. **प्राथमिकताहरू → OpenCode** मा थप विवरण चाहिँदा मात्र अभिप्रेत **पूर्वनिर्धारित लग स्तर** रोज्नुहोस्। standalone logging मा [server CLI logging विकल्प](server.md) प्रयोग गर्नुहोस्।
 3. **सेटिङहरू → जानकारी → निदान (Diagnostics)** खोली **बग रिपोर्ट गर्नुहोस्**, **क्लिपबोर्डमा प्रतिलिपि गर्नुहोस्** वा **.txt डाउनलोड गर्नुहोस्** प्रयोग गर्नुहोस्।
 
-logging विवरणले path, output र application data देखाउन सक्छ। log/capture साझा अघि credential, pairing link, network address, private path र conversation content redact गर्नुहोस्। पूर्ण diagnostic report मा path/address हुन्छन्; prefilled bug form ले जानाजानी समावेश गर्दैन। [सहयोग](support.md#report-a-bug) हेर्नुहोस्।
+logging विवरणले path, output र application data देखाउन सक्छ। log/capture साझा अघि credential, pairing link, network address, private path र conversation content redact गर्नुहोस्। पूर्ण diagnostic report मा path/address हुन्छन्; prefilled bug form ले जानाजानी समावेश गर्दैन। [bug report गर्नुहोस्](support.md#report-a-bug) हेर्नुहोस्।

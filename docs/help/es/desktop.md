@@ -8,7 +8,7 @@
 
 Las pestañas de proyectos, conversaciones seleccionadas y disposición pertenecen a una ventana. Las sesiones/mensajes OpenCode pertenecen al servicio nativo compartido de OpenCode: otra ventana puede ver la misma conversación. Cerrar una pestaña de proyecto cierra ese proyecto en CodeNomad, no sus sesiones OpenCode; vuelve a abrirlo para encontrarlas. Otra ventana que muestre la misma conexión de proyecto también cierra su pestaña y muestra una notificación; las pestañas de la misma carpeta abiertas por separado no se ven afectadas. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas; consulta [Proyectos](projects.md). No uses el cierre de ventanas como prueba de que se ha detenido un agente o una Misión programada.
 
-Los menús nativos de la aplicación usan el idioma de la interfaz de CodeNomad en cuanto se ha cargado una ventana; hasta entonces se muestran en inglés. **Ayuda → Acerca de CodeNomad** (también en el menú de la aplicación en macOS) abre **Configuración → Info** con la versión, las actualizaciones y los diagnósticos.
+Los menús nativos de la aplicación usan el idioma de la interfaz de CodeNomad en cuanto se ha cargado una ventana; hasta entonces se muestran en inglés. **Ayuda → Acerca de CodeNomad** (también en el menú de la aplicación en macOS) abre **Configuración → Info** con la versión, las actualizaciones y los diagnósticos. **Ayuda → Apoyar a CodeNomad** abre la página [Apoyar a CodeNomad](sponsor.md) en el navegador.
 
 ## Preferencias y restauración al iniciar {#preferences-startup}
 

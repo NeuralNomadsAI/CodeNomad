@@ -144,4 +144,4 @@ Utilisez une configuration délibérément distincte si vous souhaitez isoler le
 
 `codenomad --upgrade` met à jour le paquet CLI stable global avec le gestionnaire npm/pnpm/bun détecté (npm si aucun n’est détecté). Il ne redémarre pas un serveur actif et ne met pas à jour OpenCode. Pour une installation locale à un projet ou une préversion, mettez à jour explicitement ce paquet npm précis. Redémarrez volontairement votre processus CodeNomad géré après la mise à jour ; vérifiez à nouveau les adresses affichées.
 
-Consultez [Mises à jour](updates.md) pour la maintenance du bureau, [Assistance](support.md) pour les commandes de compilation depuis les sources, et [Fournisseurs](providers.md) pour l’utilisation des forfaits fournisseurs.
+Consultez [Mises à jour](updates.md) pour la maintenance du bureau, [Compiler depuis les sources](support.md#build-from-source) pour les commandes de compilation, et [Fournisseurs](providers.md) pour l’utilisation des forfaits fournisseurs.

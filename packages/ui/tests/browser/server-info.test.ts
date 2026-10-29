@@ -222,7 +222,7 @@ test("About carries the single version, Updates ends with its feed, and the netw
     await page.goto(url)
     await rowValue(page, "Version").waitFor()
     const titles = await page.locator(".settings-section-stack > .settings-card h3.settings-card-title").allInnerTexts()
-    assert.deepEqual(titles, ["About", "Updates", "Diagnostics", "CodeNomad server connectivity"])
+    assert.deepEqual(titles, ["About", "Updates", "Support CodeNomad", "Diagnostics", "CodeNomad server connectivity"])
     const cards = page.locator(".settings-section-stack > .settings-card")
     assert.equal(await cards.first().getByLabel("Update feed", { exact: true }).count(), 0)
     // The feed is the Updates card's setting, after its release and actions.
@@ -243,6 +243,34 @@ test("About carries the single version, Updates ends with its feed, and the netw
     assert.equal(await rowValue(page, "UI version").innerText(), "0.20.1-dev")
     assert.equal(await rowValue(page, "Version").innerText(), "0.20.0")
     if (process.env.CODENOMAD_INFO_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_INFO_CAPTURE, fullPage: true })
+  } finally { await page.close() }
+})
+
+test("Support CodeNomad opens the sponsor page of the UI locale and reports a failed opening", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  await setup(page, "web")
+  await page.addInitScript({ content: `{
+    const open = window.open
+    window.open = (url) => { if (window.failOpen) throw new Error("opener failure"); return open(url) }
+  }` })
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json",
+    body: JSON.stringify(new URL(route.request().url()).pathname === "/api/meta" ? baseMeta : {}) }))
+  try {
+    await page.goto(url)
+    const card = page.locator(".settings-section-stack > .settings-card", { has: page.getByRole("heading", { name: "Support CodeNomad", exact: true }) })
+    assert.equal(await card.getByText("CodeNomad is free and maintained by volunteers.", { exact: true }).count(), 1)
+    const button = card.getByRole("button", { name: "Sponsor or contribute", exact: true })
+    assert.match(await button.getAttribute("class") ?? "", /\bselector-button-secondary\b/)
+    await button.click()
+    await page.waitForFunction(() => (window as any).openedUrls?.length === 1)
+    assert.deepEqual(await page.evaluate(() => (window as any).openedUrls), ["https://neuralnomadsai.github.io/CodeNomad/en/sponsor.html"])
+    assert.equal(await card.getByRole("alert").count(), 0)
+    await page.evaluate(() => { (window as any).failOpen = true })
+    await button.click()
+    await card.getByRole("alert").waitFor()
+    assert.equal(await card.getByRole("alert").innerText(),
+      "Could not open the Support CodeNomad page in your browser. Visit https://neuralnomadsai.github.io/CodeNomad/en/sponsor.html manually.")
+    assert.equal(await page.evaluate(() => (window as any).openedUrls.length), 1, "a failed opening is never replayed")
   } finally { await page.close() }
 })
 

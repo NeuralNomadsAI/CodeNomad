@@ -6,7 +6,7 @@
 2. Sélectionnez une section. Les fenêtres locales Electron et Tauri ouvrent ou focalisent une unique fenêtre native Preferences ; les vues navigateur et distantes utilisent l’écran de paramètres intégré.
 3. Vérifiez la portée du réglage et toute action **Enregistrer** avant de quitter.
 
-La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. La voix, les couleurs de palette personnalisées et les fichiers de configuration gardent un **Enregistrer** explicite. Un échec d’enregistrement ne confirme pas que le changement a pris effet ; rouvrez ou actualisez la section concernée avant de réessayer. Les explications se trouvent derrière le **i** à côté du titre d’un réglage : survolez-le ou focalisez-le, ou touchez-le sur un écran tactile.
+La plupart des choix s’appliquent immédiatement, y compris les préférences de Missions, qui enregistrent chaque changement au fur et à mesure. La voix, les couleurs de palette personnalisées et les fichiers de configuration gardent un **Enregistrer** explicite. Un échec d’enregistrement ne confirme pas que le changement a pris effet ; rouvrez ou actualisez la section concernée avant de réessayer. Les explications se trouvent derrière le **i** à côté du titre d’un réglage : survolez-le ou focalisez-le, ou touchez-le sur un écran tactile. **Paramètres → Info** contient aussi la carte **Soutenir CodeNomad** : **Parrainer ou contribuer** ouvre la page [Soutenir CodeNomad](sponsor.md).
 
 | État | Ce qu’il contrôle |
 | --- | --- |

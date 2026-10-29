@@ -82,7 +82,7 @@ La racine de l’espace de travail limite les dossiers que CodeNomad ouvre ; ce 
 | Connecter un autre appareil | [Contrôle à distance](remote-control.md), [Sécurité](security.md), [Mobile](mobile.md) |
 | Adapter l’espace de travail | [Paramètres](settings.md), [Raccourcis](shortcuts.md), [Voix](voice.md), [Extensions](extensions.md) |
 | Gérer l’application native | [Bureau](desktop.md), [Aperçus navigateur et SideCars](browser-sidecars.md), [Mises à jour](updates.md) |
-| Diagnostiquer ou contribuer | [Dépannage](troubleshooting.md), [Assistance et compilation depuis les sources](support.md) |
+| Diagnostiquer ou contribuer | [Dépannage](troubleshooting.md), [Signalement de bugs et compilation depuis les sources](support.md), [Soutenir CodeNomad](sponsor.md) |
 
 ## Surveiller le travail sans le modifier {#monitor-work}
 

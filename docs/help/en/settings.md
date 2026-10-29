@@ -6,7 +6,7 @@
 2. Select a section. Local Electron and Tauri windows open or focus one native Preferences window; browser and remote views use the embedded settings screen.
 3. Check the setting's scope and any **Save** action before leaving.
 
-Most choices apply immediately, including Mission preferences, which save each change as you make it. Speech, custom palette colors and Config Files keep an explicit **Save**. A failed save is not confirmation that the change took effect; reopen or refresh the relevant section before retrying. Explanations sit behind the **i** beside a setting's title: hover or focus it, or tap it on a touch screen.
+Most choices apply immediately, including Mission preferences, which save each change as you make it. Speech, custom palette colors and Config Files keep an explicit **Save**. A failed save is not confirmation that the change took effect; reopen or refresh the relevant section before retrying. Explanations sit behind the **i** beside a setting's title: hover or focus it, or tap it on a touch screen. **Settings → Info** also holds the **Support CodeNomad** card: **Sponsor or contribute** opens the [Support CodeNomad](sponsor.md) page.
 
 | State | What it controls |
 | --- | --- |

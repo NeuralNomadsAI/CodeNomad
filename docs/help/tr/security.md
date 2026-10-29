@@ -70,4 +70,4 @@ Sağlayıcı bağlantıları ve genel konuşma deposu OpenCode'a aittir. CodeNom
 | Sağlayıcı anahtarları ve ses hizmeti kimlik bilgileri | Yalnızca amaçlanan ayarlara/kimlik bilgisi sahibine girin; hangi sağlayıcının verileri aldığını kontrol edin. Bkz. [Ses](voice.md). |
 | Hata ayıklama/izleme günlükleri ve ağ yakalamaları | Yalnızca gerekeni toplayın, yerel olarak inceleyin ve bildirmeden önce hassas bilgileri gizleyin. Diğer araçların çıktısının sır içermediğini varsaymayın. |
 
-**Ayarlar → Bilgi → Hata bildir**, dinleyicileri, adresleri, yolları, kimlik bilgilerini veya konuşma içeriğini önceden doldurmadan sınırlı tanılamalar hazırlar. Göndermeden önce kendiniz eklediğiniz her şeyi inceleyin. Bkz. [Destek](support.md).
+**Ayarlar → Bilgi → Hata bildir**, dinleyicileri, adresleri, yolları, kimlik bilgilerini veya konuşma içeriğini önceden doldurmadan sınırlı tanılamalar hazırlar. Göndermeden önce kendiniz eklediğiniz her şeyi inceleyin. Bkz. [Hata raporları ve kaynaktan derleme](support.md#report-a-bug).

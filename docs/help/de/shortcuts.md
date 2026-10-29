@@ -4,9 +4,9 @@
 
 1. Öffnen Sie die **Befehlspalette** mit `Ctrl+Shift+P` unter Windows/Linux oder `Cmd+Shift+P` unter macOS oder über deren sichtbare Schaltfläche/Menüpunkt.
 2. Geben Sie einen Aktionsnamen ein. Die Palette enthält Anwendungsaktionen und benutzerdefinierte Befehle der aktuellen Location; Verfügbarkeit hängt von der aktiven Ansicht ab.
-3. Führen Sie **Hilfe öffnen** aus, um diese Anleitung in der aktuellen Oberflächensprache in einem externen Browserkontext zu öffnen. Natives **Hilfe → CodeNomad-Hilfe** öffnet dieselbe Anleitung.
+3. Führen Sie **Hilfe öffnen** aus, um diese Anleitung in der aktuellen Oberflächensprache in einem externen Browserkontext zu öffnen. Natives **Hilfe → CodeNomad-Hilfe** öffnet dieselbe Anleitung. **CodeNomad unterstützen** (natives **Hilfe → CodeNomad unterstützen**) öffnet ebenso die Seite [CodeNomad unterstützen](sponsor.md).
 
-Hilfe lässt Anwendungsansicht und Entwurf unangetastet. Scheitert das Öffnen, besuchen Sie [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) direkt. Ein auffindbarer Befehl hat nicht zwangsläufig ein anpassbares Tastenkürzel: Die Verwaltung umfasst einen festen Katalog von 74 Renderer-Aktionen, nicht jede Palette- oder native Menüaktion. Er enthält Palettenbefehle wie **Sitzung komprimieren**, **Letzte Nachricht rückgängig machen** oder **Hilfe öffnen**, die mit **Kein Tastenkürzel** beginnen; Aktionen für Projektordner, Terminal und Editor laufen nur in lokalen Desktop-Fenstern.
+Hilfe lässt Anwendungsansicht und Entwurf unangetastet. Scheitert das Öffnen, besuchen Sie [CodeNomad Help](https://neuralnomadsai.github.io/CodeNomad/) direkt. Ein auffindbarer Befehl hat nicht zwangsläufig ein anpassbares Tastenkürzel: Die Verwaltung umfasst einen festen Katalog von 75 Renderer-Aktionen, nicht jede Palette- oder native Menüaktion. Er enthält Palettenbefehle wie **Sitzung komprimieren**, **Letzte Nachricht rückgängig machen** oder **Hilfe öffnen**, die mit **Kein Tastenkürzel** beginnen; Aktionen für Projektordner, Terminal und Editor laufen nur in lokalen Desktop-Fenstern.
 
 ## Aufzeichnen, deaktivieren und zurücksetzen {#customize}
 

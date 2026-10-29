@@ -82,7 +82,7 @@ npx @neuralnomads/codenomad --generate-token --launch
 | 连接另一台设备 | [远程控制](remote-control.md)、[安全](security.md)、[移动设备](mobile.md) |
 | 调整工作区 | [设置](settings.md)、[快捷键](shortcuts.md)、[语音](voice.md)、[扩展](extensions.md) |
 | 管理原生应用 | [桌面](desktop.md)、[浏览器预览与 SideCar](browser-sidecars.md)、[更新](updates.md) |
-| 诊断或贡献 | [故障排查](troubleshooting.md)、[支持与源码构建](support.md) |
+| 诊断或贡献 | [故障排查](troubleshooting.md)、[错误报告与源码构建](support.md)、[赞助 CodeNomad](sponsor.md) |
 
 ## 监控工作而不更改它 {#monitor-work}
 

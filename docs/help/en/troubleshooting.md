@@ -99,4 +99,4 @@ For cancelled or partial cleanup, read its progress/receipts before starting ano
 2. In **Preferences → OpenCode**, choose the intended **Default log level** only when more detail is needed. For standalone CodeNomad logging, use the [server CLI logging options](server.md).
 3. Open **Settings → Info → Diagnostics** and use **Report a bug**, **Copy to clipboard** or **Download .txt**.
 
-Logging detail can expose paths, output and application data. Redact credentials, pairing links, network addresses, private paths and conversation content before sharing logs/captures. The full diagnostic report includes paths/addresses; the prefilled bug form deliberately excludes them. See [Support](support.md#report-a-bug).
+Logging detail can expose paths, output and application data. Redact credentials, pairing links, network addresses, private paths and conversation content before sharing logs/captures. The full diagnostic report includes paths/addresses; the prefilled bug form deliberately excludes them. See [Report a bug](support.md#report-a-bug).

@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, shell, dialog, type MenuItemConstructorOption
 import { NEW_WINDOW_ACCELERATOR } from "./menu-target"
 import { setWindowZoomLevel } from "./window-state"
 import { nativeMenuLabels, setViewMenuState, updateViewMenu, viewMenuItems } from "./view-menu"
-import { HELP_BASE_URL } from "../../../ui/src/lib/help-url"
+import { HELP_BASE_URL, helpUrl } from "../../../ui/src/lib/help-url"
 import { openExternalWithFeedback } from "./open-external"
 
 interface ApplicationMenuActions {
@@ -143,6 +143,9 @@ function buildApplicationMenu() {
     { id: "menu-help", label: l.help, submenu: [
       { id: "open-help", label: l.codenomadHelp, click: () => {
         if (!sendCommand("open-help")()) void openExternalWithFeedback(HELP_BASE_URL)
+      } },
+      { id: "open-sponsor", label: l.sponsor, click: () => {
+        if (!sendCommand("open-sponsor")()) void openExternalWithFeedback(helpUrl("en", "sponsor"))
       } },
       { label: l.getUpdates, click: () => { void shell.openExternal("https://github.com/NeuralNomadsAI/CodeNomad/releases").catch(() => {}) } },
       { type: "separator" },

@@ -70,4 +70,4 @@ OpenCode owns provider connections and its global conversation storage. CodeNoma
 | Provider keys and speech credentials | Enter only in the intended settings/credential owner; check which provider receives data. See [Voice](voice.md). |
 | Debug/trace logs and network captures | Collect only what is needed, inspect locally and redact before reporting. Do not assume every downstream tool's output is secret-free. |
 
-**Settings → Info → Report a bug** prepares bounded diagnostics without prefilling listeners, addresses, paths, credentials or conversation content. Review anything you add yourself before submitting. See [Support](support.md).
+**Settings → Info → Report a bug** prepares bounded diagnostics without prefilling listeners, addresses, paths, credentials or conversation content. Review anything you add yourself before submitting. See [Bug reports and source builds](support.md#report-a-bug).

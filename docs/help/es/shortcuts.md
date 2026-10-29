@@ -4,9 +4,9 @@
 
 1. Abre **Paleta de comandos** con `Ctrl+Shift+P` en Windows/Linux o `Cmd+Shift+P` en macOS, o usa su botón/opción de menú visible.
 2. Escribe el nombre de una acción. La paleta incluye acciones de la aplicación y los comandos personalizados de la Location actual; la disponibilidad depende de la vista activa.
-3. Ejecuta **Abrir ayuda** para abrir esta guía en el idioma actual de la interfaz en un contexto de navegador externo. **Ayuda → Ayuda de CodeNomad** nativo abre la misma guía.
+3. Ejecuta **Abrir ayuda** para abrir esta guía en el idioma actual de la interfaz en un contexto de navegador externo. **Ayuda → Ayuda de CodeNomad** nativo abre la misma guía. **Apoyar a CodeNomad** (**Ayuda → Apoyar a CodeNomad** nativo) abre del mismo modo la página [Apoyar a CodeNomad](sponsor.md).
 
-La ayuda deja intactos la vista de la aplicación y el borrador. Si no se abre, visita directamente [Ayuda de CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Que un comando se pueda descubrir no significa que tenga un atajo personalizable: el gestor de atajos cubre un catálogo fijo de 74 acciones del renderer, no todas las acciones de la paleta o del menú nativo. Incluye comandos de la paleta como **Compactar sesión**, **Deshacer último mensaje** o **Abrir ayuda**, que empiezan con **Sin atajo**; las acciones de carpeta del proyecto, terminal y editor solo se ejecutan en ventanas locales de escritorio.
+La ayuda deja intactos la vista de la aplicación y el borrador. Si no se abre, visita directamente [Ayuda de CodeNomad](https://neuralnomadsai.github.io/CodeNomad/). Que un comando se pueda descubrir no significa que tenga un atajo personalizable: el gestor de atajos cubre un catálogo fijo de 75 acciones del renderer, no todas las acciones de la paleta o del menú nativo. Incluye comandos de la paleta como **Compactar sesión**, **Deshacer último mensaje** o **Abrir ayuda**, que empiezan con **Sin atajo**; las acciones de carpeta del proyecto, terminal y editor solo se ejecutan en ventanas locales de escritorio.
 
 ## Grabar, desactivar y restablecer {#customize}
 
