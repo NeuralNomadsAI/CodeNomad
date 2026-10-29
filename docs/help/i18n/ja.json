@@ -1,6 +1,7 @@
 {
   "language": "日本語",
   "search": { "label": "ヘルプを検索", "clear": "クリア", "empty": "記事と見出しを検索します。", "noResults": "「{query}」の結果はありません。別の語句をお試しください。", "failure": "検索を読み込めませんでした。ページを再読み込みするか、ヘルプのトピックをご利用ください。", "loading": "検索を読み込み中…", "count": "{count} 件の結果" },
+  "release": { "published": "バージョン {version}（{date} 公開）", "unavailable": "バージョンの詳細は最新リリースのページにあります。" },
   "siteTitle": "CodeNomad ヘルプ",
   "brand": "ヘルプ",
   "tagline": "プロジェクト、セッション、ワークツリーをつなぐ OpenCode ワークスペース。",
@@ -19,7 +20,8 @@
   "editPage": "このページを編集",
   "translatePage": "このページを翻訳",
   "reportProblem": "問題を報告",
-  "download": "ダウンロード",
+  "download": { "label": "ダウンロード", "windows": "Windows 版をダウンロード", "windowsDetail": "インストーラー、x64", "macos": "macOS 版をダウンロード", "macosDetail": "Apple Silicon", "intel": "Intel Mac の場合は Intel 版をダウンロード", "linux": "Linux 版をダウンロード", "linuxDetail": "AppImage、x64", "mobile": "スマートフォンから CodeNomad を使う", "mobileDetail": "CodeNomad を実行しているコンピューターとスマートフォンをペアリングします。" },
+  "tour": { "label": "CodeNomad 1.0 の無音プレビュー：並列サブエージェントによるミッション、モデルのブラインド比較、Git の差分、ワークスペース履歴の検索、プロジェクトタブ、カラーパレット", "poster": "CodeNomad 1.0 のウィンドウ：ミッション、質問フォーム、差分、Git の変更、モデル比較", "caption": "90 秒のツアー全編を YouTube で見る" },
   "github": "GitHub",
   "languageLabel": "言語",
   "projectLinks": "プロジェクトのリンク",

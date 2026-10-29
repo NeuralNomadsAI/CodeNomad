@@ -4,7 +4,7 @@ Choose a local desktop host or run the [standalone server](server.md). In both c
 
 ## Desktop downloads {#desktop-downloads}
 
-1. Open [the latest release](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
+1. Open [the download page](download.md).
 2. Choose the build matching your operating system and processor.
 3. Extract the ZIP or install/run the platform package, then launch CodeNomad.
 

@@ -21,6 +21,7 @@ Si le formulaire GitHub contient des champs incompatibles, CodeNomad ouvre un ti
 | [Dépôt CodeNomad](https://github.com/NeuralNomadsAI/CodeNomad) | Sources, activité du projet et documentation. |
 | [Tickets](https://github.com/NeuralNomadsAI/CodeNomad/issues) | Rechercher les signalements existants avant un bug reproductible ou une demande de fonctionnalité. |
 | [Pull requests](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | Examiner les changements proposés ou coordonner une contribution. |
+| [Page de téléchargement](download.md) | Les dernières distributions de bureau stables pour votre plateforme. |
 | [Dernière version](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | Téléchargements stables. |
 | [Toutes les versions](https://github.com/NeuralNomadsAI/CodeNomad/releases) | Préversions publiées et notes de version. |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | Organisation du projet. |

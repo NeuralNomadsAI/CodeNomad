@@ -1,0 +1,255 @@
+[
+  {
+    "id": 402535360,
+    "tag_name": "v0.20.1",
+    "name": "v0.20.1",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2026-10-03T13:56:05Z",
+    "published_at": "2026-10-03T13:56:24Z",
+    "html_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/tag/v0.20.1",
+    "assets": [
+      {
+        "id": 607912910,
+        "name": "CodeNomad-Electron-linux-x64-0.20.1.tar.gz",
+        "state": "uploaded",
+        "size": 196679763,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.1/CodeNomad-Electron-linux-x64-0.20.1.tar.gz"
+      },
+      {
+        "id": 607923416,
+        "name": "CodeNomad-Electron-macos-arm64-0.20.1.zip",
+        "state": "uploaded",
+        "size": 207497747,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.1/CodeNomad-Electron-macos-arm64-0.20.1.zip"
+      },
+      {
+        "id": 607924084,
+        "name": "CodeNomad-Electron-macos-x64-0.20.1.zip",
+        "state": "uploaded",
+        "size": 215501878,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.1/CodeNomad-Electron-macos-x64-0.20.1.zip"
+      },
+      {
+        "id": 607908056,
+        "name": "CodeNomad-Electron-windows-x64-0.20.1.zip",
+        "state": "uploaded",
+        "size": 217253713,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.1/CodeNomad-Electron-windows-x64-0.20.1.zip"
+      },
+      {
+        "id": 607911178,
+        "name": "CodeNomad-Tauri-linux-x64-0.20.1.deb",
+        "state": "uploaded",
+        "size": 114509882,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.1/CodeNomad-Tauri-linux-x64-0.20.1.deb"
+      },
+      {
+        "id": 607915406,
+        "name": "CodeNomad-Tauri-macos-arm64-0.20.1.zip",
+        "state": "uploaded",
+        "size": 113227167,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.1/CodeNomad-Tauri-macos-arm64-0.20.1.zip"
+      },
+      {
+        "id": 607925384,
+        "name": "CodeNomad-Tauri-macos-x64-0.20.1.zip",
+        "state": "uploaded",
+        "size": 114689492,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.1/CodeNomad-Tauri-macos-x64-0.20.1.zip"
+      },
+      {
+        "id": 607926826,
+        "name": "CodeNomad-Tauri-windows-x64-0.20.1.zip",
+        "state": "uploaded",
+        "size": 59564425,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.1/CodeNomad-Tauri-windows-x64-0.20.1.zip"
+      }
+    ]
+  },
+  {
+    "id": 396679909,
+    "tag_name": "v0.20.0",
+    "name": "v0.20.0",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2026-09-25T14:30:28Z",
+    "published_at": "2026-09-25T14:30:46Z",
+    "html_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/tag/v0.20.0",
+    "assets": [
+      {
+        "id": 589351549,
+        "name": "CodeNomad-Electron-linux-x64-0.20.0.tar.gz",
+        "state": "uploaded",
+        "size": 196086170,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.0/CodeNomad-Electron-linux-x64-0.20.0.tar.gz"
+      },
+      {
+        "id": 589351547,
+        "name": "CodeNomad-Electron-macos-arm64-0.20.0.zip",
+        "state": "uploaded",
+        "size": 206697988,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.0/CodeNomad-Electron-macos-arm64-0.20.0.zip"
+      },
+      {
+        "id": 589351548,
+        "name": "CodeNomad-Electron-macos-x64-0.20.0.zip",
+        "state": "uploaded",
+        "size": 214702096,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.0/CodeNomad-Electron-macos-x64-0.20.0.zip"
+      },
+      {
+        "id": 589351546,
+        "name": "CodeNomad-Electron-windows-x64-0.20.0.zip",
+        "state": "uploaded",
+        "size": 216513891,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.0/CodeNomad-Electron-windows-x64-0.20.0.zip"
+      },
+      {
+        "id": 589351551,
+        "name": "CodeNomad-Tauri-linux-x64-0.20.0.deb",
+        "state": "uploaded",
+        "size": 113717252,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.0/CodeNomad-Tauri-linux-x64-0.20.0.deb"
+      },
+      {
+        "id": 589351706,
+        "name": "CodeNomad-Tauri-macos-arm64-0.20.0.zip",
+        "state": "uploaded",
+        "size": 112279518,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.0/CodeNomad-Tauri-macos-arm64-0.20.0.zip"
+      },
+      {
+        "id": 589351801,
+        "name": "CodeNomad-Tauri-macos-x64-0.20.0.zip",
+        "state": "uploaded",
+        "size": 113726665,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.0/CodeNomad-Tauri-macos-x64-0.20.0.zip"
+      },
+      {
+        "id": 589351874,
+        "name": "CodeNomad-Tauri-windows-x64-0.20.0.zip",
+        "state": "uploaded",
+        "size": 59064886,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.0/CodeNomad-Tauri-windows-x64-0.20.0.zip"
+      },
+      {
+        "id": 590419014,
+        "name": "palettes-0.20.jpg",
+        "state": "uploaded",
+        "size": 2167545,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.20.0/palettes-0.20.jpg"
+      }
+    ]
+  },
+  {
+    "id": 268124553,
+    "tag_name": "v0.2.8-dev",
+    "name": "v0.2.8-dev",
+    "draft": false,
+    "prerelease": false,
+    "created_at": "2025-12-07T16:22:29Z",
+    "published_at": "2025-12-07T16:36:19Z",
+    "html_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/tag/v0.2.8-dev",
+    "assets": [
+      {
+        "id": 325526432,
+        "name": "CodeNomad-0.2.8-dev-linux-aarch64.rpm",
+        "state": "uploaded",
+        "size": 85208841,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-0.2.8-dev-linux-aarch64.rpm"
+      },
+      {
+        "id": 325526235,
+        "name": "CodeNomad-0.2.8-dev-linux-arm64.zip",
+        "state": "uploaded",
+        "size": 135862692,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-0.2.8-dev-linux-arm64.zip"
+      },
+      {
+        "id": 325526254,
+        "name": "CodeNomad-0.2.8-dev-linux-x64.zip",
+        "state": "uploaded",
+        "size": 135563529,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-0.2.8-dev-linux-x64.zip"
+      },
+      {
+        "id": 325526441,
+        "name": "CodeNomad-0.2.8-dev-linux-x86_64.rpm",
+        "state": "uploaded",
+        "size": 89958741,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-0.2.8-dev-linux-x86_64.rpm"
+      },
+      {
+        "id": 325527169,
+        "name": "CodeNomad-0.2.8-dev-mac-arm64.zip",
+        "state": "uploaded",
+        "size": 134981436,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-0.2.8-dev-mac-arm64.zip"
+      },
+      {
+        "id": 325527253,
+        "name": "CodeNomad-0.2.8-dev-mac-x64.zip",
+        "state": "uploaded",
+        "size": 140067659,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-0.2.8-dev-mac-x64.zip"
+      },
+      {
+        "id": 325526562,
+        "name": "CodeNomad-0.2.8-dev-win-arm64.zip",
+        "state": "uploaded",
+        "size": 157368260,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-0.2.8-dev-win-arm64.zip"
+      },
+      {
+        "id": 325526582,
+        "name": "CodeNomad-0.2.8-dev-win-x64.zip",
+        "state": "uploaded",
+        "size": 158090757,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-0.2.8-dev-win-x64.zip"
+      },
+      {
+        "id": 325527155,
+        "name": "CodeNomad-Tauri-0.2.8-dev-linux-x64.AppImage",
+        "state": "uploaded",
+        "size": 90356216,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-Tauri-0.2.8-dev-linux-x64.AppImage"
+      },
+      {
+        "id": 325527171,
+        "name": "CodeNomad-Tauri-0.2.8-dev-linux-x64.deb",
+        "state": "uploaded",
+        "size": 22740416,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-Tauri-0.2.8-dev-linux-x64.deb"
+      },
+      {
+        "id": 325527175,
+        "name": "CodeNomad-Tauri-0.2.8-dev-linux-x64.rpm",
+        "state": "uploaded",
+        "size": 22928748,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-Tauri-0.2.8-dev-linux-x64.rpm"
+      },
+      {
+        "id": 325526483,
+        "name": "CodeNomad-Tauri-0.2.8-dev-macos-arm64.zip",
+        "state": "uploaded",
+        "size": 24899255,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-Tauri-0.2.8-dev-macos-arm64.zip"
+      },
+      {
+        "id": 325528789,
+        "name": "CodeNomad-Tauri-0.2.8-dev-macos-x64.zip",
+        "state": "uploaded",
+        "size": 24991288,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-Tauri-0.2.8-dev-macos-x64.zip"
+      },
+      {
+        "id": 325528031,
+        "name": "CodeNomad-Tauri-0.2.8-dev-windows-x64.zip",
+        "state": "uploaded",
+        "size": 11211059,
+        "browser_download_url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v0.2.8-dev/CodeNomad-Tauri-0.2.8-dev-windows-x64.zip"
+      }
+    ]
+  }
+]

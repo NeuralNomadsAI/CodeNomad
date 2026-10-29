@@ -4,7 +4,7 @@ Choisissez un hôte de bureau local ou lancez le [serveur autonome](server.md). 
 
 ## Téléchargements pour ordinateur {#desktop-downloads}
 
-1. Ouvrez [la dernière version](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
+1. Ouvrez [la page de téléchargement](download.md).
 2. Choisissez la distribution correspondant à votre système d’exploitation et à votre processeur.
 3. Extrayez le ZIP ou installez/exécutez le paquet de la plateforme, puis lancez CodeNomad.
 

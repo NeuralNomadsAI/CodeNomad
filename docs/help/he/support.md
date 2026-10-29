@@ -21,6 +21,7 @@
 | [מאגר CodeNomad](https://github.com/NeuralNomadsAI/CodeNomad) | קוד מקור, פעילות הפרויקט ותיעוד. |
 | [דיווחים](https://github.com/NeuralNomadsAI/CodeNomad/issues) | חפשו דיווחים קיימים לפני פתיחת באג שניתן לשחזור או בקשת תכונה. |
 | [בקשות משיכה](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | סקירת שינויים מוצעים או תיאום תרומה. |
+| [עמוד ההורדה](download.md) | גרסאות שולחן העבודה היציבות האחרונות לפלטפורמה שלכם. |
 | [הגרסה האחרונה](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | קובצי הורדה יציבים. |
 | [כל הגרסאות](https://github.com/NeuralNomadsAI/CodeNomad/releases) | תצוגות מקדימות שפורסמו והערות גרסה. |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | ארגון הפרויקט. |

@@ -4,7 +4,7 @@
 
 ## הורדות לשולחן העבודה {#desktop-downloads}
 
-1. פתחו את [הגרסה האחרונה](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
+1. פתחו את [עמוד ההורדה](download.md).
 2. בחרו חבילה התואמת למערכת ההפעלה ולמעבד שלכם.
 3. חלצו את קובץ ה־ZIP או התקינו/הריצו את חבילת הפלטפורמה, ואז הפעילו את CodeNomad.
 

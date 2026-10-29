@@ -4,7 +4,7 @@ Wählen Sie einen lokalen Desktop-Host oder betreiben Sie den [eigenständigen S
 
 ## Desktop-Downloads {#desktop-downloads}
 
-1. Öffnen Sie [das neueste Release](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest).
+1. Öffnen Sie [die Download-Seite](download.md).
 2. Wählen Sie den Build für Ihr Betriebssystem und Ihren Prozessor.
 3. Entpacken Sie die ZIP-Datei oder installieren/starten Sie das Plattformpaket und starten Sie anschließend CodeNomad.
 

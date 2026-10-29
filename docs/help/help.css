@@ -102,6 +102,23 @@ table { border-collapse: collapse; width: 100%; font-size: .95rem; margin: 1.5re
 th, td { border-bottom: 1px solid var(--border); padding: .65rem .5rem; text-align: start; overflow-wrap: anywhere; }
 th { font-weight: 600; }
 blockquote { border-inline-start: 3px solid var(--accent); margin: 1.5rem 0; padding-inline-start: 1rem; color: var(--muted); }
+.release-line, .download-size, .download-primary p { color: var(--muted); }
+.release-line { font-size: .9rem; }
+.download-size { white-space: nowrap; }
+.download-primary { margin: 1.5rem 0 1rem; }
+.download-primary p { margin: .4rem 0 0; font-size: .9rem; }
+.download-main, .action a { display: inline-flex; align-items: center; justify-content: center; min-block-size: 44px; padding: .5rem 1.5rem; background: var(--accent); color: var(--on-accent); font-weight: 600; text-decoration: none; border-radius: 0; }
+.download-main:hover, .action a:hover { background: color-mix(in srgb, var(--accent) 85%, var(--text)); }
+.action { margin-block: 1.5rem; }
+.tour { margin: 1.5rem 0 2rem; }
+.tour video, article .tour img { display: block; inline-size: 100%; block-size: auto; aspect-ratio: 16 / 9; margin: 0; border: 1px solid var(--border); background: var(--code); object-fit: contain; }
+article .tour img { display: none; }
+/* Exactly where the tour's <source> media condition fails, the poster image replaces the player. */
+@media not all and (prefers-reduced-motion: no-preference) and (min-width: 721px) {
+  .tour video { display: none; }
+  article .tour img { display: block; }
+}
+.tour figcaption { margin-block-start: .5rem; font-size: .9rem; color: var(--muted); }
 .outline { color: var(--muted); font-size: .8rem; }
 .outline [dir="ltr"] { display: inline-block; white-space: nowrap; unicode-bidi: isolate; }
 summary { cursor: pointer; color: var(--text); font-weight: 600; }
@@ -147,9 +164,11 @@ footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 1r
   main, .outline { grid-column: 1; }
   .chooser main { margin: 2vh auto; padding: 1rem; }
   .language-list { grid-template-columns: minmax(0, 1fr); }
+  .download-main, .action a { display: flex; inline-size: 100%; }
 }
 @media print {
-  .site-header, .sidebar, .outline, footer, .skip-link { display: none; }
+  .site-header, .sidebar, .outline, footer, .skip-link, .download-primary, .tour video { display: none; }
+  article .tour img { display: block; }
   .layout { display: block; padding: 0; }
   :root { --canvas: white; --text: black; --muted: #333; --accent: #222; --code: #eee; }
 }

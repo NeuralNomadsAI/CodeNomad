@@ -1,0 +1,10 @@
+[
+  { "id": "tauri-windows-x64", "platform": "windows", "host": "tauri", "arch": "x64", "template": "CodeNomad-Tauri-windows-x64-{version}.exe" },
+  { "id": "tauri-macos-arm64", "platform": "macos", "host": "tauri", "arch": "arm64", "template": "CodeNomad-Tauri-macos-arm64-{version}.zip" },
+  { "id": "tauri-macos-x64", "platform": "macos", "host": "tauri", "arch": "x64", "template": "CodeNomad-Tauri-macos-x64-{version}.zip" },
+  { "id": "tauri-linux-x64", "platform": "linux", "host": "tauri", "arch": "x64", "template": "CodeNomad-Tauri-linux-x64-{version}.AppImage" },
+  { "id": "electron-windows-x64", "platform": "windows", "host": "electron", "arch": "x64", "template": "CodeNomad-Electron-windows-x64-{version}.zip" },
+  { "id": "electron-macos-arm64", "platform": "macos", "host": "electron", "arch": "arm64", "template": "CodeNomad-Electron-macos-arm64-{version}.zip" },
+  { "id": "electron-macos-x64", "platform": "macos", "host": "electron", "arch": "x64", "template": "CodeNomad-Electron-macos-x64-{version}.zip" },
+  { "id": "electron-linux-x64", "platform": "linux", "host": "electron", "arch": "x64", "template": "CodeNomad-Electron-linux-x64-{version}.deb" }
+]

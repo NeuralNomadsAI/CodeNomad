@@ -21,6 +21,7 @@ GitHub formunun alanları uyumsuzsa CodeNomad aynı rapor bilgileriyle düz bir 
 | [CodeNomad deposu](https://github.com/NeuralNomadsAI/CodeNomad) | Kaynak, proje etkinliği ve belgeler. |
 | [Sorunlar](https://github.com/NeuralNomadsAI/CodeNomad/issues) | Tekrarlanabilir bir hatayı veya özellik isteğini açmadan önce mevcut raporları arayın. |
 | [Çekme istekleri](https://github.com/NeuralNomadsAI/CodeNomad/pulls) | Önerilen değişiklikleri inceleyin veya bir katkıyı koordine edin. |
+| [İndirme sayfası](download.md) | Platformunuz için en son kararlı masaüstü sürümleri. |
 | [Son sürüm](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest) | Kararlı indirme paketleri. |
 | [Tüm sürümler](https://github.com/NeuralNomadsAI/CodeNomad/releases) | Yayınlanan önizlemeler ve sürüm notları. |
 | [Neural Nomads](https://github.com/NeuralNomadsAI) | Proje kuruluşu. |

@@ -1,8 +1,28 @@
-# CodeNomad-Hilfe
+# CodeNomad
 
-Diese Anleitung beschreibt die Bedienung des aktuellen CodeNomad-Desktop- oder Browser-Arbeitsbereichs mit Ihrem OpenCode-Dienst. Im Mittelpunkt stehen die Bedienelemente, Ausführungsgrenzen und Wiederherstellung von CodeNomad – keine Einführung in die OpenCode-Konfiguration und kein Versionsarchiv.
+Das KI-Coding-Cockpit für OpenCode: ein Desktop- und Browser-Arbeitsbereich für Entwickler, die viele Agenten über Projekte, lange Unterhaltungen und Git-Worktrees hinweg betreiben.
+
+OpenCode liefert den Motor. CodeNomad liefert das Cockpit. Es verbindet sich mit dem gemeinsam genutzten Hintergrunddienst von OpenCode: Ihre Sitzungen gehören zu OpenCode, andere Clients dieses Dienstes können sie verwenden, und das Schließen von CodeNomad beendet sie nicht.
+
+[CodeNomad herunterladen](download.md)
+
+{{tour-video}}
+
+## Lange Arbeit an Missionen übergeben {#missions}
+
+Beschreiben Sie die Arbeit einmal. Der Koordinator der Mission plant sie als Aufgabenbaum, delegiert begrenzte Aufgaben an native OpenCode-Unterhaltungen und meldet Ergebnisse mit ihren Belegen. Führen Sie eine Mission einmal oder täglich aus; eine Mission zu erstellen startet keine Arbeit, bevor Sie sich dafür entscheiden. Playbooks decken Fehlerbehebung, Produktauslieferung und den Vergleich zweier Modelle mit einem blinden Gutachter ab. Siehe [Missionen](missions.md).
+
+## Vom Smartphone aus weiterarbeiten {#phone-access}
+
+Fernsteuerung koppelt ein Smartphone, ein Tablet oder einen anderen Computer über einen Einmallink oder QR-Code mit Ihrem laufenden CodeNomad-Backend, ohne einen eingehenden Netzwerkport zu öffnen. Vom Smartphone aus können Sie Unterhaltungen verfolgen sowie Fragen und Berechtigungsanfragen beantworten; Projekte, Zugangsdaten und Agentenausführung bleiben auf dem Host. Siehe [Fernsteuerung](remote-control.md) und [Mobil und PWA](mobile.md).
+
+## Sich in langen Verläufen zurechtfinden {#large-histories}
+
+Durchsuchen Sie den gesamten gespeicherten Verlauf einer Unterhaltung oder lassen Sie Ergebnisse aus dem geöffneten Projekt und seinen Worktrees nach Relevanz ordnen, bei Bedarf einschließlich Werkzeugausgaben und Denkprozessen. Die Nachrichten-Timeline springt durch lange Sitzungen, ohne jede Nachricht dazwischen zu laden. Siehe [Verlauf, Suche und Bereinigung](history.md).
 
 ## Zuerst lesen {#read-this-first}
+
+Diese Anleitung behandelt den aktuellen CodeNomad-Desktop- oder Browser-Arbeitsbereich mit Ihrem OpenCode-Dienst: die Bedienelemente, Ausführungsgrenzen und Wiederherstellung von CodeNomad, keine Einführung in die OpenCode-Konfiguration und kein Versionsarchiv.
 
 CodeNomad verbindet Ihren Arbeitsbereich mit einem gemeinsam genutzten OpenCode-Hintergrunddienst. Sitzungen und Nachrichten gehören zu OpenCode; Tabs, Eingabeentwürfe und Layout zum CodeNomad-Client. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad; Sitzungen laufen in OpenCode weiter und sind nach erneutem Öffnen des Projekts wieder verfügbar. CodeNomad zu schließen beendet nicht OpenCode.
 

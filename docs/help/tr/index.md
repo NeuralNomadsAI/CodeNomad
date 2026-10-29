@@ -1,8 +1,28 @@
-# CodeNomad yardımı
+# CodeNomad
 
-Mevcut CodeNomad masaüstü veya tarayıcı çalışma alanını OpenCode hizmetinizle çalıştırmak için bu kılavuzu kullanın. OpenCode yapılandırma eğitimlerine veya sürüm arşivine değil, CodeNomad'in kontrollerine, yürütme sınırlarına ve kurtarmaya odaklanır.
+OpenCode için yapay zekâ kodlama kokpiti: projeler, uzun konuşmalar ve Git çalışma ağaçları genelinde çok sayıda ajan çalıştıran geliştiriciler için bir masaüstü ve tarayıcı çalışma alanı.
+
+OpenCode size motoru verir. CodeNomad size kokpiti verir. OpenCode'un paylaşılan arka plan hizmetine bağlanır: oturumlarınız OpenCode'a aittir, bu hizmetin diğer istemcileri onları kullanabilir ve CodeNomad'i kapatmak onları durdurmaz.
+
+[CodeNomad'i indirin](download.md)
+
+{{tour-video}}
+
+## Uzun işleri Görevlere devredin {#missions}
+
+İşi bir kez tanımlayın. Görevin koordinatörü onu bir görev ağacı olarak planlar, sınırlı işleri yerel OpenCode konuşmalarına devreder ve sonuçları kanıtlarıyla birlikte raporlar. Bir görevi bir kez veya her gün çalıştırın; bir görev oluşturmak, siz seçene kadar hiçbir işi başlatmaz. İş akışı rehberleri hata ayıklamayı, ürün teslimini ve iki modelin kör bir hakemle karşılaştırılmasını kapsar. Bkz. [Görevler](missions.md).
+
+## Telefonunuzdan çalışmaya devam edin {#phone-access}
+
+Uzaktan Kontrol, bir telefonu, tableti veya başka bir bilgisayarı tek kullanımlık bir bağlantı ya da QR kodu aracılığıyla, gelen bir ağ bağlantı noktası açmadan çalışan CodeNomad arka ucunuzla eşleştirir. Telefondan konuşmaları takip edebilir, soruları ve izinleri yanıtlayabilirsiniz; projeler, kimlik bilgileri ve ajan yürütmesi ana bilgisayarda kalır. Bkz. [Uzaktan Kontrol](remote-control.md) ve [Mobil ve PWA](mobile.md).
+
+## Uzun geçmişlerde yolunuzu bulun {#large-histories}
+
+Bir konuşmanın saklanan tüm geçmişinde arayın veya gerektiğinde araç çıktısı ve düşünceler de dahil olmak üzere açık projedeki ve çalışma ağaçlarındaki sonuçları sıralayın. Mesaj zaman çizelgesi, aradaki her mesajı yüklemeden uzun oturumlar arasında atlamanızı sağlar. Bkz. [Geçmiş, arama ve temizleme](history.md).
 
 ## Önce bunu okuyun {#read-this-first}
+
+Bu kılavuz, OpenCode hizmetinizle kullanılan mevcut CodeNomad masaüstü veya tarayıcı çalışma alanını kapsar: OpenCode yapılandırma eğitimlerini veya bir sürüm arşivini değil, CodeNomad'in kontrollerini, yürütme sınırlarını ve kurtarmayı.
 
 CodeNomad çalışma alanınızı tek, paylaşılan OpenCode arka plan hizmetine bağlar. Oturumlar ve mesajlar OpenCode'a; sekmeler, ileti taslakları ve yerleşim CodeNomad istemcisine aittir. Sekmeyi kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda bulunur. CodeNomad'i kapatmak OpenCode'u durdurmaz.
 

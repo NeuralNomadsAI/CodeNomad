@@ -1,6 +1,7 @@
 {
   "language": "Türkçe",
   "search": { "label": "Yardımda ara", "clear": "Temizle", "empty": "Makalelerde ve başlıklarda arayın.", "noResults": "'{query}' için sonuç bulunamadı. Başka bir terim deneyin.", "failure": "Arama yüklenemedi. Bu sayfayı yeniden yükleyin veya yardım konularını kullanın.", "loading": "Arama yükleniyor…", "count": "{count} sonuç" },
+  "release": { "published": "Sürüm {version}, {date} tarihinde yayımlandı", "unavailable": "Sürüm ayrıntıları en son sürüm sayfasındadır." },
   "siteTitle": "CodeNomad yardımı",
   "brand": "Yardım",
   "tagline": "Projeler, oturumlar ve worktree'ler için bir OpenCode çalışma alanı.",
@@ -19,7 +20,8 @@
   "editPage": "Bu sayfayı düzenle",
   "translatePage": "Bu sayfayı çevir",
   "reportProblem": "Sorun bildir",
-  "download": "İndir",
+  "download": { "label": "İndir", "windows": "Windows için indir", "windowsDetail": "Yükleyici, x64", "macos": "macOS için indir", "macosDetail": "Apple Silicon", "intel": "Intel Mac mi? Intel sürümünü indirin", "linux": "Linux için indir", "linuxDetail": "AppImage, x64", "mobile": "CodeNomad'ı telefonunuzdan kullanın", "mobileDetail": "Telefonunuzu CodeNomad'ı çalıştıran bilgisayarla eşleştirin." },
+  "tour": { "label": "Sessiz CodeNomad 1.0 önizlemesi: paralel alt ajanlarla bir görev, modellerin kör karşılaştırması, bir Git farkı, çalışma alanı geçmişinde arama, proje sekmeleri ve renk paletleri", "poster": "CodeNomad 1.0 pencereleri: görevler, soru formu, fark görünümü, Git değişiklikleri ve model karşılaştırması", "caption": "90 saniyelik turun tamamını YouTube'da izleyin" },
   "github": "GitHub",
   "languageLabel": "Dil",
   "projectLinks": "Proje bağlantıları",

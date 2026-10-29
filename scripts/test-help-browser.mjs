@@ -26,7 +26,7 @@ before(async () => {
   const built = await buildHelp({ content, output })
   assert.deepEqual(built.problems.filter((problem) => !TRANSLATION_PROBLEMS.has(problem.kind)), [])
   site = built.site
-  const types = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".webp": "image/webp" }
+  const types = { ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".json": "application/json", ".png": "image/png", ".svg": "image/svg+xml", ".jpg": "image/jpeg", ".webp": "image/webp", ".mp4": "video/mp4" }
   server = createServer(async (req, res) => {
     try {
       const url = new URL(req.url, "http://localhost")
@@ -200,6 +200,81 @@ test("root language links and page navigation work without JavaScript", async (c
     await page.locator('.language-menu a[hreflang="en"]').click()
     assert.equal(page.url(), `${base}en/index.html`)
   } finally { await context.close() }
+})
+
+test("the download button reveals one platform, fits narrow screens, and stays hidden without JavaScript", async (ctx) => {
+  const linux = `for (const [key, value] of Object.entries({ userAgentData: { platform: "Linux", mobile: false }, platform: "Linux x86_64", maxTouchPoints: 0 })) Object.defineProperty(Navigator.prototype, key, { get: () => value })`
+  for (const width of [1440, 390]) {
+    const context = await browser.newContext({ viewport: { width, height: 900 } })
+    await context.addInitScript(linux)
+    try {
+      const page = await context.newPage()
+      const errors = []
+      page.on("pageerror", (error) => errors.push(error.message))
+      await page.goto(`${base}en/download.html`)
+      await page.locator('[data-download-os="linux"] .download-main').waitFor()
+      assert.equal(await page.locator(".download-primary [data-download-os]:visible").count(), 1)
+      const button = await page.locator('[data-download-os="linux"] .download-main').boundingBox()
+      assert.ok(button.height >= 44, "the button keeps a 44px target")
+      if (width === 390) assert.ok(button.width >= (await page.locator("article").boundingBox()).width - 1, "the button spans narrow screens")
+      assert.equal(await page.locator(".download-main").first().evaluate((element) => getComputedStyle(element).borderRadius), "0px")
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
+      assert.deepEqual(errors, [])
+      const path = join(screenshots, `download-${width}.png`)
+      await page.screenshot({ path, fullPage: true })
+      ctx.diagnostic(path)
+    } finally { await context.close() }
+  }
+  const context = await browser.newContext({ javaScriptEnabled: false })
+  try {
+    const page = await context.newPage()
+    await page.goto(`${base}en/download.html`)
+    assert.equal(await page.locator(".download-primary").isVisible(), false)
+    assert.ok(await page.locator("article table").isVisible(), "the full table is the download path without JavaScript")
+  } finally { await context.close() }
+})
+
+test("the home tour plays muted on wide screens, and narrow screens or reduced motion get only the poster", async (ctx) => {
+  for (const [name, viewport, reducedMotion, plays] of [
+    ["wide", { width: 1440, height: 900 }, "no-preference", true],
+    ["wide-reduced-motion", { width: 1440, height: 900 }, "reduce", false],
+    ["narrow", { width: 720, height: 900 }, "no-preference", false],
+    ["mobile", { width: 390, height: 844 }, "no-preference", false],
+  ]) {
+    const context = await browser.newContext({ viewport, reducedMotion })
+    try {
+      const page = await context.newPage()
+      const errors = [], videoRequests = []
+      page.on("pageerror", (error) => errors.push(error.message))
+      page.on("request", (request) => { if (request.url().endsWith(".mp4")) videoRequests.push(request.url()) })
+      await page.goto(`${base}en/`)
+      const video = page.locator(".tour video"), poster = page.locator(".tour img"), caption = page.locator(".tour figcaption a")
+      assert.equal(await caption.getAttribute("href"), "https://youtu.be/IGuOApJ6-Kc")
+      assert.ok(await caption.isVisible(), `${name}: the full tour stays one link away`)
+      if (plays) {
+        await page.waitForFunction(() => { const element = document.querySelector(".tour video"); return element.currentTime > 0.5 && !element.paused }, null, { timeout: 10000 })
+        assert.equal(await video.evaluate((element) => element.muted && element.loop), true)
+        assert.equal(await video.evaluate((element) => new URL(element.currentSrc).pathname), "/CodeNomad/assets/media/codenomad-tour.mp4")
+        assert.ok(await video.isVisible())
+        assert.equal(await poster.isVisible(), false)
+      } else {
+        assert.equal(await video.evaluate((element) => element.currentSrc), "", `${name}: no source applies`)
+        assert.equal(await video.isVisible(), false, `${name}: no player without a video`)
+        assert.ok(await poster.isVisible(), `${name}: the poster takes its place`)
+        assert.deepEqual(videoRequests, [], `${name}: the clip is never downloaded`)
+      }
+      const box = await (plays ? video : poster).boundingBox()
+      assert.ok(Math.abs(box.width / box.height - 16 / 9) < 0.02, `${name}: 16:9 without distortion`)
+      assert.ok(box.width <= (await page.locator("article").boundingBox()).width + 1)
+      assert.equal(await page.locator(".action a").evaluate((element) => getComputedStyle(element).borderRadius), "0px")
+      assert.ok((await page.locator(".action a").boundingBox()).height >= 44)
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${name}: no horizontal overflow`)
+      assert.deepEqual(errors, [])
+      const path = join(screenshots, `home-tour-${name}.png`)
+      await page.screenshot({ path })
+      ctx.diagnostic(path)
+    } finally { await context.close() }
+  }
 })
 
 test('search failure is actionable and navigation remains usable', async () => {

@@ -4,7 +4,7 @@ Yerel bir masaüstü ana bilgisayarı seçin veya [bağımsız sunucu](server.md
 
 ## Masaüstü indirmeleri {#desktop-downloads}
 
-1. [En son sürümü](https://github.com/NeuralNomadsAI/CodeNomad/releases/latest)'yi açın.
+1. [İndirme sayfasını](download.md) açın.
 2. İşletim sisteminize ve işlemcinize uygun yapıyı seçin.
 3. ZIP'i çıkarın veya platform paketini kurun/çalıştırın, ardından CodeNomad'i başlatın.
 

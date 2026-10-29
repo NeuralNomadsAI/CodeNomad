@@ -1,6 +1,7 @@
 {
   "language": "עברית",
   "search": { "label": "חיפוש בעזרה", "clear": "ניקוי", "empty": "חיפוש במאמרים ובכותרות.", "noResults": "לא נמצאו תוצאות עבור '{query}'. נסו מונח אחר.", "failure": "לא ניתן לטעון את החיפוש. טענו מחדש את העמוד או השתמשו בנושאי העזרה.", "loading": "טעינת החיפוש…", "count": "{count} תוצאות" },
+  "release": { "published": "גרסה {version}, פורסמה ב-{date}", "unavailable": "פרטי הגרסה מופיעים בדף הגרסה האחרונה." },
   "siteTitle": "עזרה עבור CodeNomad",
   "brand": "עזרה",
   "tagline": "סביבת עבודה של OpenCode לפרויקטים, שיחות ועצי עבודה.",
@@ -19,7 +20,8 @@
   "editPage": "עריכת העמוד הזה",
   "translatePage": "תרגום העמוד הזה",
   "reportProblem": "דיווח על בעיה",
-  "download": "הורדה",
+  "download": { "label": "הורדה", "windows": "הורדה ל־Windows", "windowsDetail": "מתקין, x64", "macos": "הורדה ל־macOS", "macosDetail": "Apple Silicon", "intel": "Mac עם Intel? הורידו את גרסת Intel", "linux": "הורדה ל־Linux", "linuxDetail": "AppImage, x64", "mobile": "השתמשו ב־CodeNomad מהטלפון", "mobileDetail": "צמדו את הטלפון למחשב שמריץ את CodeNomad." },
+  "tour": { "label": "תצוגה מקדימה שקטה של CodeNomad 1.0: משימה עם תת־סוכנים במקביל, השוואה עיוורת בין מודלים, השוואת שינויים ב־Git, חיפוש בהיסטוריה של סביבת העבודה, לשוניות פרויקטים וערכות צבעים", "poster": "חלונות CodeNomad 1.0: משימות, טופס שאלות, השוואת שינויים, שינויי Git והשוואת מודלים", "caption": "צפו בסיור המלא בן 90 השניות ב־YouTube" },
   "github": "GitHub",
   "languageLabel": "שפה",
   "projectLinks": "קישורי הפרויקט",

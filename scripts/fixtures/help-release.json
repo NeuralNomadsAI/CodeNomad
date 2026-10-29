@@ -1,0 +1,15 @@
+{
+  "tag": "v1.0.0",
+  "version": "1.0.0",
+  "publishedAt": "2026-10-24T13:58:04Z",
+  "assets": {
+    "tauri-windows-x64": { "url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v1.0.0/CodeNomad-Tauri-windows-x64-1.0.0.exe", "size": 60272894 },
+    "tauri-macos-arm64": { "url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v1.0.0/CodeNomad-Tauri-macos-arm64-1.0.0.zip", "size": 110747985 },
+    "tauri-macos-x64": { "url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v1.0.0/CodeNomad-Tauri-macos-x64-1.0.0.zip", "size": 112252717 },
+    "tauri-linux-x64": { "url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v1.0.0/CodeNomad-Tauri-linux-x64-1.0.0.AppImage", "size": 165702136 },
+    "electron-windows-x64": { "url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v1.0.0/CodeNomad-Electron-windows-x64-1.0.0.zip", "size": 216025903 },
+    "electron-macos-arm64": { "url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v1.0.0/CodeNomad-Electron-macos-arm64-1.0.0.zip", "size": 204637290 },
+    "electron-macos-x64": { "url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v1.0.0/CodeNomad-Electron-macos-x64-1.0.0.zip", "size": 212641823 },
+    "electron-linux-x64": { "url": "https://github.com/NeuralNomadsAI/CodeNomad/releases/download/v1.0.0/CodeNomad-Electron-linux-x64-1.0.0.deb", "size": 133958416 }
+  }
+}

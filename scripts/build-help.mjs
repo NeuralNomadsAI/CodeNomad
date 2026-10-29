@@ -18,6 +18,23 @@ const RTL_LOCALES = new Set(["he"])
 const ID_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const RESERVED_IDS = new Set(["content", "help-query", "help-results"])
 const SCHEME = /^[a-z][a-z0-9+.-]*:/i
+// Generated blocks, each written as a top-level paragraph of its own: `{{release}}`.
+export const DIRECTIVES = new Set(["release", "download-button", "tour-video"])
+// Directives restricted to one page; download-button also makes its page load help-download.js.
+const DIRECTIVE_PAGES = new Map([["download-button", "download"], ["tour-video", "index"]])
+// The home tour: a silent loop that plays only on wide screens without reduced motion; elsewhere
+// the poster image replaces it (help.css) and no video is downloaded.
+const TOUR_VIDEO = resolve(root, "docs/screenshots/codenomad-tour.mp4")
+const TOUR_POSTER = resolve(root, "docs/screenshots/codenomad-tour-poster.jpg")
+export const TOUR_MEDIA = "(prefers-reduced-motion: no-preference) and (min-width: 721px)"
+export const TOUR_URL = "https://youtu.be/IGuOApJ6-Kc"
+// A paragraph holding nothing but one link to another help page is a call to action.
+const ACTION = /^<a href="[a-z0-9-]+\.html(?:#[a-z0-9-]+)?">[^<]+<\/a>$/
+const DIRECTIVE = /^\{\{([a-z0-9-]+)\}\}$/
+const RELEASE_TAG = /^v(\d+\.\d+\.\d+)$/
+const RELEASE_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/
+const ASSET_NAME = /^[A-Za-z0-9._-]+$/
+const LATEST_RELEASE = `${repo}/releases/latest`
 
 const escape = (value) => String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char])
 const stripTags = (html) => html.replace(/<\/(?:p|div|h[1-6]|li|ul|ol|td|th|tr|table|blockquote|pre)\b[^>]*>|<(?:br|hr)\b[^>]*>/gi, " ").replace(/<[^>]*>/g, "").replace(/&(?:amp|lt|gt|quot|#39|#\d+|#x[\da-f]+);/gi, (entity) => {
@@ -32,6 +49,11 @@ const isFile = (path) => { try { return statSync(path).isFile() } catch { return
 const pathExists = (path) => { try { return statSync(path) } catch { return null } }
 const pageUrl = (locale, page) => `${HELP_BASE_URL}${locale}/${page === "index" ? "" : `${page}.html`}`
 const insideRepo = (path) => { const name = relative(realpathSync(root), realpathSync(path)); return !name.startsWith(`..${sep}`) && name !== ".." && !isAbsolute(name) }
+const plainObject = (value) => value !== null && typeof value === "object" && !Array.isArray(value)
+const exactKeys = (value, keys) => plainObject(value) && Object.keys(value).sort().join() === keys
+// Decimal megabytes and UTC calendar dates, formatted for the page locale at build time.
+const formatSize = (locale, bytes) => new Intl.NumberFormat(locale, { style: "unit", unit: "megabyte", maximumFractionDigits: 0 }).format(Math.round(bytes / 1e6))
+const formatDate = (locale, date) => new Intl.DateTimeFormat(locale, { dateStyle: "long", timeZone: "UTC" }).format(date)
 
 async function readJson(path) {
   return JSON.parse(await readFile(path, "utf8"))
@@ -63,10 +85,12 @@ function flatKeys(value, prefix = "") {
   }).sort()
 }
 
+const DOWNLOAD_KEYS = ["label", "windows", "windowsDetail", "macos", "macosDetail", "intel", "linux", "linuxDetail", "mobile", "mobileDetail"]
+
 export async function readChromeStrings(locales, directory = chrome) {
   const strings = {}
   for (const locale of locales) strings[locale] = await readJson(resolve(directory, `i18n/${locale}.json`))
-  const expected = ["language", "siteTitle", "brand", "tagline", "onThisPage", "skipToContent", "editPage", "translatePage", "reportProblem", "download", "github", "languageLabel", "projectLinks", "helpTopics", "scope", "findHint", "untranslated", ...SECTION_IDS.map((id) => `sections.${id}`), ...["label", "clear", "empty", "noResults", "failure", "loading", "count"].map((key) => `search.${key}`)].sort().join()
+  const expected = ["language", "siteTitle", "brand", "tagline", "onThisPage", "skipToContent", "editPage", "translatePage", "reportProblem", "github", ...DOWNLOAD_KEYS.map((key) => `download.${key}`), "languageLabel", "projectLinks", "helpTopics", "scope", "findHint", "untranslated", ...SECTION_IDS.map((id) => `sections.${id}`), ...["label", "clear", "empty", "noResults", "failure", "loading", "count"].map((key) => `search.${key}`), ...["published", "unavailable"].map((key) => `release.${key}`), ...["label", "poster", "caption"].map((key) => `tour.${key}`)].sort().join()
   for (const locale of locales) {
     if (flatKeys(strings[locale]).join() !== expected) throw new Error(`docs/help/i18n/${locale}.json: keys differ from en.json`)
     if (Object.keys(strings[locale].sections).join() !== SECTION_IDS.join()) throw new Error(`docs/help/i18n/${locale}.json: section labels must follow site.json order`)
@@ -74,9 +98,52 @@ export async function readChromeStrings(locales, directory = chrome) {
   return strings
 }
 
-function renderMarkdown(markdown, file, media, report) {
+/** Expected stable release assets in display order; `{version}` is the release tag without its leading v. */
+export async function readDownloads(directory = chrome) {
+  const downloads = await readJson(resolve(directory, "downloads.json"))
+  if (!Array.isArray(downloads) || !downloads.length) throw new Error("downloads.json: expected a non-empty list")
+  const ids = new Set()
+  const templates = new Set()
+  for (const entry of downloads) {
+    if (!exactKeys(entry, "arch,host,id,platform,template")) throw new Error("downloads.json: each entry needs exactly id, platform, host, arch and template")
+    if (!ID_PATTERN.test(entry.id) || ids.has(entry.id)) throw new Error(`downloads.json: invalid or duplicate id ${entry.id}`)
+    if (!["windows", "macos", "linux"].includes(entry.platform) || !["tauri", "electron"].includes(entry.host) || !["x64", "arm64"].includes(entry.arch)) throw new Error(`downloads.json: unsupported platform, host or arch for ${entry.id}`)
+    if (typeof entry.template !== "string" || entry.template.split("{version}").length !== 2 || !ASSET_NAME.test(entry.template.replace("{version}", "0")) || templates.has(entry.template)) throw new Error(`downloads.json: ${entry.id} needs a unique asset name with one {version}`)
+    ids.add(entry.id)
+    templates.add(entry.template)
+  }
+  return downloads
+}
+
+/**
+ * Revalidates resolved release data before anything reaches a page: every downloads.json asset
+ * must be the exact NeuralNomadsAI/CodeNomad download URL for this tag with a positive size.
+ */
+export function validateRelease(release, downloads) {
+  const fail = (message) => { throw new Error(`release data: ${message}`) }
+  if (!exactKeys(release, "assets,publishedAt,tag,version")) fail("expected exactly tag, version, publishedAt and assets")
+  const version = typeof release.tag === "string" ? RELEASE_TAG.exec(release.tag)?.[1] : undefined
+  if (!version || release.version !== version) fail("tag must be vMAJOR.MINOR.PATCH and version the tag without its v")
+  const published = typeof release.publishedAt === "string" && RELEASE_DATE.test(release.publishedAt) ? new Date(release.publishedAt) : null
+  if (!published || Number.isNaN(published.getTime()) || published.toISOString().slice(0, 19) !== release.publishedAt.slice(0, 19)) fail("publishedAt must be a valid UTC timestamp")
+  if (!exactKeys(release.assets, downloads.map((entry) => entry.id).sort().join())) fail("assets must list exactly the downloads.json ids")
+  const assets = new Map()
+  for (const entry of downloads) {
+    const asset = release.assets[entry.id]
+    const url = `${repo}/releases/download/${encodeURIComponent(release.tag)}/${encodeURIComponent(entry.template.replace("{version}", version))}`
+    if (!exactKeys(asset, "size,url")) fail(`${entry.id} needs exactly url and size`)
+    if (asset.url !== url) fail(`${entry.id} must be ${url}`)
+    if (!Number.isSafeInteger(asset.size) || asset.size <= 0) fail(`${entry.id} size must be a positive integer`)
+    assets.set(entry.id, { url, size: asset.size })
+  }
+  return { version, published, assets }
+}
+
+function renderMarkdown(markdown, file, media, report, { locale, page, strings, release, downloads }) {
+  const downloadIds = new Set(downloads.map((entry) => entry.id))
   const headings = []
   const links = []
+  const directives = []
   let title = null
   let description = ""
   const repoLink = (path, fragment) => {
@@ -111,11 +178,19 @@ function renderMarkdown(markdown, file, media, report) {
     },
     paragraph(text) {
       description ||= stripTags(text)
-      return `<p>${text}</p>\n`
+      return `<p${ACTION.test(text) ? ' class="action"' : ""}>${text}</p>\n`
     },
     link(href, linkTitle, text) {
       let target = href
-      if (!SCHEME.test(href) && !href.startsWith("//")) {
+      let suffix = ""
+      if (href.startsWith("release:")) {
+        // Without resolved release data (local and pull-request builds) every asset opens the latest release.
+        const id = href.slice("release:".length)
+        const asset = release?.assets.get(id)
+        if (!downloadIds.has(id)) report("unknown-release-asset", `${href} is not listed in docs/help/downloads.json`)
+        target = asset?.url ?? LATEST_RELEASE
+        if (asset) suffix = ` <span class="download-size">${escape(formatSize(locale, asset.size))}</span>`
+      } else if (!SCHEME.test(href) && !href.startsWith("//")) {
         const [path, fragment] = href.split("#", 2)
         if (!path) links.push({ page: null, fragment })
         else if (/^(?:\.\/)?[a-z0-9-]+\.md$/.test(path)) {
@@ -125,7 +200,7 @@ function renderMarkdown(markdown, file, media, report) {
         } else if (path.startsWith("/")) report("broken-link", `absolute paths do not work on a project site: ${href}`)
         else target = repoLink(path, fragment)
       }
-      return `<a href="${escape(target)}"${/^https?:\/\//i.test(stripTags(text)) ? ' dir="ltr"' : ""}${linkTitle ? ` title="${escape(linkTitle)}"` : ""}>${text}</a>`
+      return `<a href="${escape(target)}"${/^https?:\/\//i.test(stripTags(text)) ? ' dir="ltr"' : ""}${linkTitle ? ` title="${escape(linkTitle)}"` : ""}>${text}</a>${suffix}`
     },
     image(href, imageTitle, text) {
       let src = href
@@ -138,9 +213,65 @@ function renderMarkdown(markdown, file, media, report) {
       return `<img src="${escape(src)}" alt="${escape(text)}"${imageTitle ? ` title="${escape(imageTitle)}"` : ""}>`
     },
   } })
-  const html = marked.parse(markdown)
+  // One hidden block per detected platform, each with its final label and target; help-download.js
+  // reveals at most one. Without release data every desktop target is the latest release page.
+  const downloadButton = () => {
+    const t = strings.download
+    const tauri = (platform, arch) => {
+      const entry = downloads.find((candidate) => candidate.host === "tauri" && candidate.platform === platform && candidate.arch === arch)
+      if (!entry) report("unknown-release-asset", `{{download-button}} needs a Tauri ${platform} ${arch} entry in docs/help/downloads.json`)
+      return release?.assets.get(entry?.id)
+    }
+    const detail = (text, asset) => `<p>${escape(text)}${asset ? ` · <span class="download-size">${escape(formatSize(locale, asset.size))}</span>` : ""}</p>`
+    const block = (os, href, label, lines) => `<div data-download-os="${os}" hidden><a class="download-main" href="${escape(href)}">${escape(label)}</a>${lines.join("")}</div>`
+    const desktop = (os, platform, arch, label, text, extra = "") => {
+      const asset = tauri(platform, arch)
+      return block(os, asset?.url ?? LATEST_RELEASE, label, [detail(text, asset), extra])
+    }
+    const intel = tauri("macos", "x64")
+    return `<div class="download-primary" hidden>${[
+      desktop("windows", "windows", "x64", t.windows, t.windowsDetail),
+      desktop("macos", "macos", "arm64", t.macos, t.macosDetail, `<p><a href="${escape(intel?.url ?? LATEST_RELEASE)}">${escape(t.intel)}</a></p>`),
+      desktop("linux", "linux", "x64", t.linux, t.linuxDetail),
+      block("mobile", "mobile.html", t.mobile, [detail(t.mobileDetail)]),
+    ].join("")}</div>\n`
+  }
+  // The poster doubles as an image for narrow screens, reduced motion and print, where the
+  // source's media condition fails, so no player without a video is ever shown.
+  const tourVideo = () => {
+    const asset = (path) => {
+      if (isFile(path)) return `../assets/media/${mediaName(media, realpathSync(path))}`
+      report("missing-image", `tour media not found: ${relative(root, path)}`)
+      return ""
+    }
+    const video = asset(TOUR_VIDEO), poster = asset(TOUR_POSTER)
+    const t = strings.tour
+    return `<figure class="tour"><video autoplay muted loop playsinline controls preload="metadata" width="1280" height="720" poster="${poster}" aria-label="${escape(t.label)}"><source src="${video}" type="video/mp4" media="${TOUR_MEDIA}"></video><img src="${poster}" alt="${escape(t.poster)}" width="1280" height="720"><figcaption><a href="${TOUR_URL}">${escape(t.caption)}</a></figcaption></figure>\n`
+  }
+  const generate = {
+    release: () => release
+      ? `<p class="release-line">${format(strings.release.published, { version: escape(release.version), date: escape(formatDate(locale, release.published)) })}</p>\n`
+      : `<p class="release-line"><a href="${LATEST_RELEASE}">${escape(strings.release.unavailable)}</a></p>\n`,
+    "download-button": downloadButton,
+    "tour-video": tourVideo,
+  }
+  // Directives are replaced at token level so list items, cells and quotes never qualify and the
+  // generated block never becomes the meta description; any remaining {{ in rendered text is a problem.
+  const tokens = marked.lexer(markdown)
+  for (const [index, token] of tokens.entries()) {
+    const name = token.type === "paragraph" ? DIRECTIVE.exec(token.text.trim())?.[1] : undefined
+    if (!DIRECTIVES.has(name)) continue
+    if (directives.includes(name)) report("duplicate-directive", `{{${name}}} appears more than once`)
+    if (DIRECTIVE_PAGES.has(name) && DIRECTIVE_PAGES.get(name) !== page) report("misplaced-directive", `{{${name}}} belongs only on ${DIRECTIVE_PAGES.get(name)}.md`)
+    directives.push(name)
+    tokens[index] = { type: "html", block: true, pre: false, raw: token.raw, text: generate[name]() }
+  }
+  const html = marked.parser(tokens)
+  for (const [match] of html.replace(/<pre\b[\s\S]*?<\/pre>|<code\b[\s\S]*?<\/code>/gi, "").matchAll(/\{\{[^{}<]*(?:\}\})?/g)) {
+    report("unknown-directive", `${match} is not a known directive on a paragraph of its own`)
+  }
   if (title === null) report("missing-h1", "page has no H1 title")
-  return { html: html.replace(/<table>/g, '<div class="table-scroll" tabindex="0"><table>').replace(/<\/table>/g, '</table></div>'), title: title ?? "", description, headings, links }
+  return { html: html.replace(/<table>/g, '<div class="table-scroll" tabindex="0"><table>').replace(/<\/table>/g, '</table></div>'), title: title ?? "", description, headings, links, directives }
 }
 
 // Shared screenshots are copied once; distinct files with the same name get a suffix.
@@ -182,7 +313,7 @@ function pageDocument({ site, strings, locale, page, rendered, fallback, availab
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; media-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
   <meta name="description" content="${escape(description)}">
   <meta name="color-scheme" content="light dark">
   <title>${pageTitle}</title>
@@ -190,7 +321,7 @@ function pageDocument({ site, strings, locale, page, rendered, fallback, availab
   ${alternates}
   <link rel="icon" href="../assets/logo.png">
   <link rel="stylesheet" href="../assets/help.css">
-  <script src="../assets/help-search.js" defer></script>
+  <script src="../assets/help-search.js" defer></script>${rendered.directives.includes("download-button") ? `\n  <script src="../assets/help-download.js" defer></script>` : ""}
 </head>
 <body>
   <a class="skip-link" href="#content">${escape(t.skipToContent)}</a>
@@ -201,7 +332,7 @@ function pageDocument({ site, strings, locale, page, rendered, fallback, availab
       <div class="search-controls"><input id="help-query" type="search" autocomplete="off" aria-controls="help-results"><button type="button">${escape(t.search.clear)}</button></div>
       <div class="search-results" hidden><p class="search-status" role="status" aria-live="polite"></p><ul id="help-results"></ul></div>
     </div>
-    <nav class="site-links" aria-label="${escape(t.projectLinks)}"><a href="${repo}/releases/latest">${escape(t.download)}</a><a href="${repo}">${escape(t.github)}</a>${languageMenu(site, strings, locale, (other) => `../${other}/${page}.html`)}</nav>
+    <nav class="site-links" aria-label="${escape(t.projectLinks)}"><a href="download.html">${escape(t.download.label)}</a><a href="${repo}">${escape(t.github)}</a>${languageMenu(site, strings, locale, (other) => `../${other}/${page}.html`)}</nav>
   </header>
   <div class="layout">
     <aside class="sidebar">
@@ -263,9 +394,11 @@ function chooserDocument(site, strings) {
  * Builds every locale listed in site.json. Pages missing from a locale fall back to English.
  * Returns problems instead of throwing so callers decide which kinds are fatal.
  */
-export async function buildHelp({ content = chrome, output = resolve(root, "dist/help") } = {}) {
+export async function buildHelp({ content = chrome, output = resolve(root, "dist/help"), release } = {}) {
   const site = await readSite(content)
   const strings = await readChromeStrings(site.locales)
+  const downloads = await readDownloads()
+  const releaseData = release == null ? null : validateRelease(release, downloads)
   const problems = []
   const media = new Map()
   const rendered = new Map()
@@ -274,7 +407,7 @@ export async function buildHelp({ content = chrome, output = resolve(root, "dist
     const file = resolve(content, locale, `${page}.md`)
     if (!isFile(file)) return null
     const report = (kind, message) => problems.push({ kind, locale, page, message })
-    return renderMarkdown(await readFile(file, "utf8"), file, media, report)
+    return renderMarkdown(await readFile(file, "utf8"), file, media, report, { locale, page, strings: strings[locale], release: releaseData, downloads })
   }
 
   for (const page of pages) {
@@ -294,6 +427,10 @@ export async function buildHelp({ content = chrome, output = resolve(root, "dist
       const ids = (result) => result.headings.map((heading) => `${heading.level}:${heading.id}`).join(" ")
       if (ids(translated) !== ids(english)) {
         problems.push({ kind: "heading-mismatch", locale, page, message: `heading ids differ from English\n  en: ${ids(english)}\n  ${locale}: ${ids(translated)}` })
+      }
+      const names = (result) => [...result.directives].sort().join(" ")
+      if (names(translated) !== names(english)) {
+        problems.push({ kind: "directive-mismatch", locale, page, message: `directives differ from English\n  en: ${names(english)}\n  ${locale}: ${names(translated)}` })
       }
       rendered.set(`${locale}/${page}`, { ...translated, fallback: false })
     }
@@ -319,7 +456,7 @@ export async function buildHelp({ content = chrome, output = resolve(root, "dist
   const ownership = resolve(output, ".help-output.json")
   if (isFile(ownership)) {
     for (const name of await readJson(ownership)) {
-      if (!/^(?:[a-zA-Z-]+\/[a-z0-9-]+\.html|assets\/(?:media\/[^/\\]+|help\.css|help-search\.js|logo\.png)|[a-zA-Z-]+\/search-index\.json|index\.html|\.nojekyll)$/.test(name)) throw new Error("invalid help output ownership record")
+      if (!/^(?:[a-zA-Z-]+\/[a-z0-9-]+\.html|assets\/(?:media\/[^/\\]+|help\.css|help-(?:search|download)\.js|logo\.png)|[a-zA-Z-]+\/search-index\.json|index\.html|\.nojekyll)$/.test(name)) throw new Error("invalid help output ownership record")
       const target = resolve(output, name)
       if (isFile(target) && relative(realpathSync(output), realpathSync(target)).startsWith("..")) throw new Error("help output symlink escape")
       await rm(target, { force: true })
@@ -329,6 +466,7 @@ export async function buildHelp({ content = chrome, output = resolve(root, "dist
   await Promise.all([
     copyFile(resolve(chrome, "help.css"), resolve(output, "assets/help.css")),
     copyFile(resolve(chrome, "help-search.js"), resolve(output, "assets/help-search.js")),
+    copyFile(resolve(chrome, "help-download.js"), resolve(output, "assets/help-download.js")),
     copyFile(resolve(root, "images/CodeNomad-Icon.png"), resolve(output, "assets/logo.png")),
     ...[...media].map(([path, name]) => copyFile(path, resolve(output, "assets/media", name))),
     writeFile(resolve(output, ".nojekyll"), ""),
@@ -339,7 +477,8 @@ export async function buildHelp({ content = chrome, output = resolve(root, "dist
     const index = [...available.keys()].flatMap((page) => {
       const result = rendered.get(`${locale}/${page}`)
       return result.headings.map((heading) => {
-        const section = result.html.split(`id="${heading.id}"`)[1]?.split(/<h[1-6]\b/)[0] ?? ""
+        // Hidden per-platform download blocks would repeat every label in the excerpt.
+        const section = result.html.split(`id="${heading.id}"`)[1]?.split(/<h[1-6]\b/)[0].replace(/<div class="download-primary" hidden>[\s\S]*?<\/div><\/div>/, "") ?? ""
         return { title: result.title, heading: heading.text, excerpt: stripTags(section.slice(section.indexOf("</h") + 5)).slice(0, 240), href: `${page}.html#${heading.id}` }
       })
     })
@@ -351,7 +490,7 @@ export async function buildHelp({ content = chrome, output = resolve(root, "dist
       await writeFile(resolve(output, locale, `${page}.html`), html)
     }
   }
-  await writeFile(ownership, JSON.stringify(["index.html", ".nojekyll", "assets/help.css", "assets/help-search.js", "assets/logo.png", ...[...media.values()].map((name) => `assets/media/${name}`), ...site.locales.flatMap((locale) => [`${locale}/search-index.json`, ...[...available.keys()].map((page) => `${locale}/${page}.html`)])]))
+  await writeFile(ownership, JSON.stringify(["index.html", ".nojekyll", "assets/help.css", "assets/help-search.js", "assets/help-download.js", "assets/logo.png", ...[...media.values()].map((name) => `assets/media/${name}`), ...site.locales.flatMap((locale) => [`${locale}/search-index.json`, ...[...available.keys()].map((page) => `${locale}/${page}.html`)])]))
   return { site, problems, pages: [...available.keys()] }
 }
 
@@ -366,8 +505,10 @@ function option(args, name) {
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   const args = process.argv.slice(2)
   const content = option(args, "--content")
+  const releaseFile = option(args, "--release")
   const output = resolve(args[0] ?? resolve(root, "dist/help"))
-  const { site, problems, pages } = await buildHelp({ content: content && resolve(content), output })
+  const release = releaseFile ? await readJson(resolve(releaseFile)) : undefined
+  const { site, problems, pages } = await buildHelp({ content: content && resolve(content), output, release })
   for (const problem of problems) {
     const level = TRANSLATION_PROBLEMS.has(problem.kind) ? "warning" : "error"
     console.log(`${level}: ${problem.locale}/${problem.page}: ${problem.message}`)
