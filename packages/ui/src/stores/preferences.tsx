@@ -1114,9 +1114,10 @@ function lastCloneParent(): string | undefined {
 function rememberCloneParent(folderPath: string): void {
   if (!folderPath) return
   setLatestCloneParent(folderPath)
-  cloneParentSaves = cloneParentSaves
+  // Tracked from the start, so native shutdown also waits for saves still queued.
+  cloneParentSaves = storage.trackWrite(cloneParentSaves
     .then(() => patchStateOwner("ui", { lastCloneParent: folderPath }))
-    .catch((error) => log.error("Failed to remember clone folder", error))
+    .catch((error) => log.error("Failed to remember clone folder", error)))
 }
 
 function removeRecentFolder(folderPath: string): void {
