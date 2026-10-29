@@ -11,5 +11,8 @@ export const recentFolders = [
 serverApi.fetchConfigOwner = async () => ({ settings: { locale: "en" } }) as any
 const state = { recentFolders, remoteServers: [{ id: "saved-server", name: "Saved remote", baseUrl: "https://remote.example.test", skipTlsVerify: false, createdAt: now, updatedAt: now }] }
 serverApi.fetchStateOwner = async () => state as any
-// Like the server, a patch merges into the owner's state.
-serverApi.patchStateOwner = async (_owner: string, patch: unknown) => ({ ...Object.assign(state, patch) }) as any
+// Like the server, a patch merges into the owner's state; `holdStatePatches` leaves them pending.
+serverApi.patchStateOwner = async (_owner: string, patch: unknown) => {
+  if ((window as any).holdStatePatches) await new Promise(() => {})
+  return { ...Object.assign(state, patch) } as any
+}

@@ -3,13 +3,17 @@
 
 /** The folder `git clone` creates for a repository: its last path segment without `.git`. */
 export function repositoryFolderName(repositoryUrl: string): string {
-  const path = repositoryUrl.trim().replace(/[?#].*$/, "").replace(/[\\/]+$/, "")
+  // Like git: a source ending in `/.git` (a repository's Git folder) is named after the folder holding it.
+  const path = repositoryUrl.trim().replace(/[?#].*$/, "").replace(/[\\/]+$/, "").replace(/[\\/]\.git$/i, "").replace(/[\\/]+$/, "")
   const name = path.split(/[\\/:]/).pop()?.replace(/\.git$/i, "") ?? ""
   return name === "." || name === ".." ? "" : name
 }
 
-/** The folder containing `path`, keeping a root's trailing separator (`D:\`, `/`). */
+const UNC_SHARE_ROOT = /^[\\/]{2}[^\\/]+[\\/][^\\/]+[\\/]?$/
+
+/** The folder containing `path`, keeping a root's trailing separator (`D:\`, `/`, `\\server\share\`). */
 export function parentDirectory(path: string): string {
+  if (UNC_SHARE_ROOT.test(path)) return /[\\/]$/.test(path) ? path : `${path}${path[0]}`
   const trimmed = path.replace(/(?<=[^\\/:])[\\/]+$/, "")
   const index = Math.max(trimmed.lastIndexOf("/"), trimmed.lastIndexOf("\\"))
   if (index < 0) return ""

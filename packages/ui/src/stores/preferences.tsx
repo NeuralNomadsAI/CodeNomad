@@ -1103,6 +1103,8 @@ function addRecentFolder(folderPath: string): void {
 
 function rememberCloneParent(folderPath: string): void {
   if (!folderPath || folderPath === uiState().lastCloneParent) return
+  // Shown at once: the next clone may be suggested before the server answers.
+  setUiStateBucket((previous) => ({ ...previous, lastCloneParent: folderPath }))
   void patchStateOwner("ui", { lastCloneParent: folderPath }).catch((error) => log.error("Failed to remember clone folder", error))
 }
 

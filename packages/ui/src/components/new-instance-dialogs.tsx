@@ -66,7 +66,8 @@ export function createNewInstanceDialogs(options: NewInstanceDialogsOptions) {
   function chooseCloneParent(path: string) {
     setCloneParent(path)
     setCloneDestinationEdited(false)
-    setCloneDestinationPath(suggestCloneDestination(path, cloneRepositoryUrl()) || path)
+    // Before a URL names the folder, show the browsed one; the URL then completes it.
+    setCloneDestinationPath(cloneRepositoryUrl().trim() ? suggestCloneDestination(path, cloneRepositoryUrl()) : path)
   }
 
   function clone() {

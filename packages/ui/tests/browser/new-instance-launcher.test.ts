@@ -169,6 +169,8 @@ test("a clone is suggested as the repository's folder beside the last clone, a b
     await destination.fill("C:\\GITHUB\\design-fork")
     await url.fill("https://github.com/pascalandr/open-design.git")
     assert.equal(await destination.inputValue(), "C:\\GITHUB\\design-fork", "a typed path is kept")
+    // The next clone is suggested before the server confirms what to remember.
+    await page.evaluate(`window.holdStatePatches = true`)
     await dialog.getByRole("button", { name: "Clone", exact: true }).click()
     await dialog.waitFor({ state: "detached" })
     assert.deepEqual(clones.map(clone => clone.destinationPath), ["C:\\GITHUB\\design-fork"])
