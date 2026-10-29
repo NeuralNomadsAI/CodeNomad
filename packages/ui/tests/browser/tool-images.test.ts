@@ -59,6 +59,26 @@ test("MCP images render with text on native live completion and historical reloa
   if (process.env.CODENOMAD_IMAGE_CAPTURE) await page.screenshot({ path: process.env.CODENOMAD_IMAGE_CAPTURE, fullPage: true })
 }))
 
+test("a Markdown image of a local file shows the transcript's image of that path, never a broken image", async () => withPage(async page => {
+  const answer = page.locator(".fixture-answer")
+  await page.evaluate(() => (window as any).fixture.localImageAnswer(false))
+  await answer.getByText("Un petit mouton", { exact: true }).waitFor()
+  assert.equal(await answer.locator("img").count(), 0, "without a transcript image the alt text stays")
+  assert.equal(await answer.locator('span.markdown-local-image[title="C:/Users/me/missing.png"]').innerText(), "Absent")
+
+  // The read tool's image of that path arrives: the same rendered answer resolves it.
+  await page.evaluate(() => (window as any).fixture.localImageAnswer(true))
+  await page.waitForFunction(() => {
+    const image = document.querySelector<HTMLImageElement>(".fixture-answer img.markdown-local-image")
+    return Boolean(image?.complete && image.naturalWidth === 800 && image.alt === "Un petit mouton")
+  })
+  assert.match(await answer.locator("img.markdown-local-image").getAttribute("src") ?? "", /^data:image\/png;base64,/)
+  assert.equal(await answer.locator("span.markdown-local-image").innerText(), "Absent", "an unmatched path keeps its alt text")
+  await page.setViewportSize({ width: 380, height: 1000 })
+  assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
+  if (process.env.CODENOMAD_LOCAL_IMAGE_CAPTURE) await answer.screenshot({ path: process.env.CODENOMAD_LOCAL_IMAGE_CAPTURE })
+}))
+
 test("image-only output works for generic and specialized tools and obeys collapse", async () => withPage(async page => {
   for (const name of ["forge-painter_txt2img", "read"]) {
     await page.evaluate(name => (window as any).fixture.history("only", name), name)

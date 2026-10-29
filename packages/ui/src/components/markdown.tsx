@@ -14,6 +14,8 @@ import {
 import type { RecordTextRevealTarget } from "../stores/message-v2/record-display-cache"
 import { HiddenTextNotice, createTextWindow } from "./hidden-text"
 import { isLoopbackHttpUrl } from "./browser-frame-security"
+import { resolveLocalImages, sessionImageCandidates } from "../lib/markdown-local-images"
+import { messageStoreBus } from "../stores/message-v2/bus"
 import { openSessionPreview } from "../stores/session-previews"
 import { instances } from "../stores/instances"
 import { showAlertDialog } from "../stores/alerts"
@@ -426,6 +428,18 @@ export function Markdown(props: MarkdownProps) {
           anchor.removeAttribute("data-preview-link-title")
         }
       }
+    })
+  })
+
+  createEffect(() => {
+    // Only a block that rendered a local-image label reads (and tracks) the session's tool images.
+    const instanceId = props.instanceId, sessionId = props.sessionId
+    if (!instanceId || !sessionId || !html().includes("data-local-image")) return
+    const store = messageStoreBus.getOrCreate(instanceId)
+    const messages = [...store.getSessionMessageIds(sessionId)].reverse().flatMap(id => store.getMessage(id) ?? [])
+    const candidates = [...sessionImageCandidates(messages)]
+    Promise.resolve().then(() => {
+      if (!disposed && containerRef) resolveLocalImages(containerRef, candidates)
     })
   })
 
