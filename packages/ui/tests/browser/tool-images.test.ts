@@ -61,19 +61,33 @@ test("MCP images render with text on native live completion and historical reloa
 
 test("a Markdown image of a local file shows the transcript's image of that path, never a broken image", async () => withPage(async page => {
   const answer = page.locator(".fixture-answer")
-  await page.evaluate(() => (window as any).fixture.localImageAnswer(false))
+  const label = answer.locator('span.markdown-local-image[title="C:/Users/me/Temp/images/sheep.png"]')
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("none"))
   await answer.getByText("Un petit mouton", { exact: true }).waitFor()
   assert.equal(await answer.locator("img").count(), 0, "without a transcript image the alt text stays")
   assert.equal(await answer.locator('span.markdown-local-image[title="C:/Users/me/missing.png"]').innerText(), "Absent")
 
+  // A matching image that fails to load returns to the alt text, never a broken icon.
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("broken"))
+  await answer.locator('span.markdown-local-image[data-failed-source="data:image/png;base64,broken"]').waitFor()
+  assert.equal(await answer.locator("img").count(), 0)
+  assert.equal(await label.innerText(), "Un petit mouton")
+
   // The read tool's image of that path arrives: the same rendered answer resolves it.
-  await page.evaluate(() => (window as any).fixture.localImageAnswer(true))
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("valid"))
   await page.waitForFunction(() => {
     const image = document.querySelector<HTMLImageElement>(".fixture-answer img.markdown-local-image")
     return Boolean(image?.complete && image.naturalWidth === 800 && image.alt === "Un petit mouton")
   })
   assert.match(await answer.locator("img.markdown-local-image").getAttribute("src") ?? "", /^data:image\/png;base64,/)
   assert.equal(await answer.locator("span.markdown-local-image").innerText(), "Absent", "an unmatched path keeps its alt text")
+  // Removing the read result removes its image from the answer too.
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("none"))
+  await label.waitFor()
+  assert.equal(await answer.locator("img").count(), 0)
+  assert.equal(await label.innerText(), "Un petit mouton")
+  await page.evaluate(() => (window as any).fixture.localImageAnswer("valid"))
+  await answer.locator("img.markdown-local-image").waitFor()
   await page.setViewportSize({ width: 380, height: 1000 })
   assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
   if (process.env.CODENOMAD_LOCAL_IMAGE_CAPTURE) await answer.screenshot({ path: process.env.CODENOMAD_LOCAL_IMAGE_CAPTURE })

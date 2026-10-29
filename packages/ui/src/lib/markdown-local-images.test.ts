@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 
 import { renderMarkdown } from "./markdown"
-import { localImagePath, matchLocalImage, sessionImageCandidates } from "./markdown-local-images"
+import { localImagePath, matchLocalImage, messageImageCandidates } from "./markdown-local-images"
 
 const png = "data:image/png;base64,iVBORw0KGgo="
 
@@ -11,10 +11,14 @@ describe("Markdown images of local files", () => {
     assert.equal(localImagePath("C:/Users/me/image.png"), "C:/Users/me/image.png")
     assert.equal(localImagePath("C:\\Users\\me\\image.png"), "C:/Users/me/image.png")
     assert.equal(localImagePath("file:///C:/Users/me/My%20image.png"), "C:/Users/me/My image.png")
+    assert.equal(localImagePath("file:///C:/Users/me/a%23b.png"), "C:/Users/me/a#b.png")
+    assert.equal(localImagePath("file://localhost/C:/x.png"), "C:/x.png")
+    assert.equal(localImagePath("file://server/share/x.png"), "//server/share/x.png")
+    assert.equal(localImagePath("\\\\server\\share\\x.png"), "//server/share/x.png")
     assert.equal(localImagePath("file:///tmp/out.png"), "/tmp/out.png")
     assert.equal(localImagePath("/tmp/opencode/images/x.png"), "/tmp/opencode/images/x.png")
     assert.equal(localImagePath("./assets/logo.png"), "./assets/logo.png")
-    for (const source of ["https://example.com/a.png", "http://localhost/a.png", png, "blob:x", "#a", "javascript:alert(1)", "vbscript:x"])
+    for (const source of ["//cdn.example.com/a.png", "https://example.com/a.png", "http://localhost/a.png", png, "blob:x", "#a", "javascript:alert(1)", "vbscript:x"])
       assert.equal(localImagePath(source), undefined, source)
   })
 
@@ -32,21 +36,28 @@ describe("Markdown images of local files", () => {
     assert.equal(matchLocalImage(candidates, "assets/logo.png"), undefined, "an ambiguous relative path matches nothing")
     assert.equal(matchLocalImage(candidates, "../docs/cover.png"), undefined)
     assert.equal(matchLocalImage(candidates, "/elsewhere/sheep.png"), undefined)
+    // A file read twice is one path: its relative reference resolves to the newest image.
+    const reread = [{ paths: ["/project/output.png"], source: "new" }, { paths: ["/project/output.png"], source: "old" }]
+    assert.equal(matchLocalImage(reread, "output.png"), "new")
   })
 
-  it("collects completed tool images by file name and the tool's single-image file path, newest first", () => {
-    const message = (parts: unknown[]) => ({ partIds: parts.map((_, index) => `p${index}`),
-      parts: Object.fromEntries(parts.map((data, index) => [`p${index}`, { data }])) })
+  it("collects completed tool images by file name and the tool's single-image file path, once per message revision", () => {
     const read = (filePath: string, uri: string, name = "") => ({ type: "tool", tool: "read",
       state: { status: "completed", input: { filePath }, content: [{ type: "file", mime: "image/png", uri, name }] } })
-    const candidates = [...sessionImageCandidates([
-      message([read("C:/new.png", png, "C:\\new.png")]),
-      message([read("C:/old.png", png), { type: "text", text: "x" },
-        { type: "tool", state: { status: "running", input: { filePath: "C:/running.png" }, content: [] } },
-        { type: "tool", state: { status: "completed", input: { filePath: "C:/broken.png" },
-          content: [{ type: "file", mime: "image/png", uri: "data:text/html;base64,PHNjcmlwdD4=", name: "x" }] } }]),
-    ])]
-    assert.deepEqual(candidates, [{ paths: ["C:\\new.png", "C:/new.png"], source: png }, { paths: ["C:/old.png"], source: png }])
+    const parts: unknown[] = [read("C:/old.png", png), { type: "text", text: "x" },
+      { type: "tool", state: { status: "running", input: { filePath: "C:/running.png" }, content: [] } },
+      { type: "tool", state: { status: "completed", input: { filePath: "C:/broken.png" },
+        content: [{ type: "file", mime: "image/png", uri: "data:text/html;base64,PHNjcmlwdD4=", name: "x" }] } },
+      read("C:/new.png", png, "C:\\new.png")]
+    const message = { revision: 1, partIds: parts.map((_, index) => `p${index}`),
+      parts: Object.fromEntries(parts.map((data, index) => [`p${index}`, { data }])) }
+    const first = messageImageCandidates(message)
+    assert.deepEqual(first, [{ paths: ["C:\\new.png", "C:/new.png"], source: png }, { paths: ["C:/old.png"], source: png }])
+    // An unchanged revision reuses the scan; a new one rescans the (in-place) parts.
+    message.parts.p0 = { data: { type: "text", text: "replaced" } }
+    assert.equal(messageImageCandidates(message), first)
+    message.revision = 2
+    assert.deepEqual(messageImageCandidates(message), [{ paths: ["C:\\new.png", "C:/new.png"], source: png }])
   })
 
   it("renders a local image as its alt text, never as a broken image", async () => {
@@ -57,6 +68,8 @@ describe("Markdown images of local files", () => {
     assert.match(unnamed, />out\.png<\/span>/)
     const remote = await renderMarkdown("![remote](https://example.com/a.png)", { suppressHighlight: true })
     assert.match(remote, /<img src="https:\/\/example.com\/a.png" alt="remote">/)
+    const schemeRelative = await renderMarkdown("![cdn](//cdn.example.com/a.png)", { suppressHighlight: true })
+    assert.match(schemeRelative, /<img src="\/\/cdn.example.com\/a.png" alt="cdn">/)
     const hostile = await renderMarkdown('![x"><script>alert(1)</script>](C:/a"onerror="alert(1).png)', { suppressHighlight: true })
     assert.doesNotMatch(hostile, /<script|onerror="alert/)
   })

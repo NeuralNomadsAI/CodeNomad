@@ -67,9 +67,9 @@ function completed(kind: string, name: string) {
 /** An agent answer whose Markdown image names a local file, beside the read tool that holds its bytes. */
 const answer = (text: string) => ({ id: "answer-message", type: "assistant", agent: "build", model, time: { created: 2, completed: ++time },
   content: [{ id: "answer", type: "text", text }] })
-const readSheep = () => ({ ...completed("only", "read"), content: [{ id: "tool", type: "tool", name: "read", time: { created: 1, completed: time },
+const readSheep = (uri = png.uri) => ({ ...completed("only", "read"), content: [{ id: "tool", type: "tool", name: "read", time: { created: 1, completed: time },
   state: { status: "completed", input: { filePath: "C:\\Users\\me\\Temp\\images\\sheep.png" },
-    content: [{ ...png, name: "C:\\Users\\me\\Temp\\images\\sheep.png" }] } }] })
+    content: [{ ...png, uri, name: "C:\\Users\\me\\Temp\\images\\sheep.png" }] } }] })
 const answerRecord = () => store.getMessage("answer-message")?.parts["answer-message-text-0"]
 await applyUiSettings({ toolInputsVisibility: "hidden", toolOutputExpansion: "expanded",
   toolCallExpansionDefaults: { preset: "custom", thinking: "collapsed", tools: { other: "expanded", read: "expanded" } } })
@@ -97,8 +97,8 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
     emit("session.tool.success", { id: "tool", content: content("mixed"), executed: true })
   },
   reload: () => loadMessages(instanceId, sessionId, { force: true }),
-  localImageAnswer: async (withRead: boolean) => {
-    messages = [...(withRead ? [readSheep()] : []), answer("Voici ton mouton !\n\n![Un petit mouton](C:/Users/me/Temp/images/sheep.png)\n\n![Absent](C:/Users/me/missing.png)")]
+  localImageAnswer: async (read: "none" | "valid" | "broken") => {
+    messages = [...(read === "none" ? [] : [readSheep(read === "broken" ? "data:image/png;base64,broken" : png.uri)]), answer("Voici ton mouton !\n\n![Un petit mouton](C:/Users/me/Temp/images/sheep.png)\n\n![Absent](C:/Users/me/missing.png)")]
     await loadMessages(instanceId, sessionId, { force: true })
   },
   deferred: () => ({ path: deferredUri(), base64: png.uri.slice(png.uri.indexOf(",") + 1) }),
