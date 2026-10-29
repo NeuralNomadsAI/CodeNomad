@@ -41,7 +41,7 @@ try {
     writeFileSync(path.join(directory, workspace, "package.json"), JSON.stringify(target))
   }
 
-  for (const version of ["1.0.0", "1.0.0-dev-20261020-4d4bf149"]) {
+  for (const version of ["1.0.1", "1.0.1-dev-20261029-ca514ed2"]) {
     npm(["version", version, "--workspaces", "--include-workspace-root", "--no-git-tag-version", "--allow-same-version", "--offline"])
     const lock = readJson(path.join(directory, "package-lock.json"))
     for (const workspace of ["", ...workspaces]) {
