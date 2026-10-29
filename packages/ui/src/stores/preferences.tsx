@@ -1102,8 +1102,10 @@ function addRecentFolder(folderPath: string): void {
 }
 
 // This window's latest clone parent wins over the saved one, whatever the
-// order or outcome of saves; the saved one carries it to other windows and restarts.
+// outcome of saves; the saved one carries it to other windows and restarts.
+// Every clone saves its parent, one save after another, so the last clone's is kept.
 const [latestCloneParent, setLatestCloneParent] = createSignal<string>()
+let cloneParentSaves = Promise.resolve()
 
 function lastCloneParent(): string | undefined {
   return latestCloneParent() ?? uiState().lastCloneParent
@@ -1112,8 +1114,9 @@ function lastCloneParent(): string | undefined {
 function rememberCloneParent(folderPath: string): void {
   if (!folderPath) return
   setLatestCloneParent(folderPath)
-  if (folderPath === uiState().lastCloneParent) return
-  void patchStateOwner("ui", { lastCloneParent: folderPath }).catch((error) => log.error("Failed to remember clone folder", error))
+  cloneParentSaves = cloneParentSaves
+    .then(() => patchStateOwner("ui", { lastCloneParent: folderPath }))
+    .catch((error) => log.error("Failed to remember clone folder", error))
 }
 
 function removeRecentFolder(folderPath: string): void {
