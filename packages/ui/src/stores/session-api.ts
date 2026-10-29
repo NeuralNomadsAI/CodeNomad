@@ -98,7 +98,7 @@ import { fetchCommands } from "./commands"
 import { locationAuthorityKey, requestLocationOptions, toRequestLocation } from "./request-locations"
 import {
   captureOpenCodeRowSnapshot, getOpenCodeInstanceGeneration, getOpenCodeMessageRevision, getOpenCodeMutationRevision,
-  mergeOpenCodeLoadedPage, seedOpenCodeSessionMessages,
+  mergeOpenCodeLoadedPage, observeNonEventSettlement, seedOpenCodeSessionMessages,
 } from "./opencode-data"
 
 const log = getLogger("api")
@@ -463,6 +463,13 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
   // including without a delivered SSE event; the later activity read wins.
   if (outcomes.size) active = await getRootClient(instanceId).session.active(signal ? { signal } : undefined)
   if (signal?.aborted || !generationCurrent() || instances().get(instanceId)?.client !== client) return
+  // A run the UI still believed working that the final activity read does not
+  // list settled during an SSE gap; its terminal event may never be delivered.
+  // The observation owes the transcript's settlement read.
+  const settledWithoutEvent: string[] = []
+  for (const [id, baseline] of captured) {
+    if (baseline.status === "working" && !Object.prototype.hasOwnProperty.call(active, id)) settledWithoutEvent.push(id)
+  }
   setSessions(previous => {
     const next = new Map(previous)
     const current = new Map(next.get(instanceId) ?? [])
@@ -481,6 +488,7 @@ async function refreshSessionRuntimeStatus(instanceId: string, signal?: AbortSig
     return next
   })
   reconcilePendingSessionIndicators(instanceId)
+  for (const sessionId of settledWithoutEvent) observeNonEventSettlement(instanceId, sessionId)
   return active
 }
 
