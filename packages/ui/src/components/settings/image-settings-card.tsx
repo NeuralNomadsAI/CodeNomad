@@ -20,6 +20,8 @@ export function ImageSettingsCard(props: { instanceId: string; location?: Locati
       <Show when={!data().generation && !data().mediaStorage}>
         <p class="settings-toggle-caption">{t("settings.images.unsupported")}</p>
       </Show>
+      <Show when={data().blockedBy}>{blocked =>
+        <p class="settings-toggle-caption" title={blocked().path}>{t("settings.images.blocked")}</p>}</Show>
       <Show when={data().generation}>{generation => {
         const models = () => generation().models ?? []
         const label = (value: ImageGenerationSelection) => value === false ? t("settings.images.generation.off")
@@ -30,7 +32,7 @@ export function ImageSettingsCard(props: { instanceId: string; location?: Locati
             <span class="settings-toggle-title">
               {t("settings.images.generation.title")}<SettingsInfoTip text={t("settings.images.generation.info")} />
             </span>
-            <select class="selector-trigger" aria-label={t("settings.images.generation.title")} disabled={settings.busy()}
+            <select class="selector-trigger" aria-label={t("settings.images.generation.title")} disabled={settings.busy() || Boolean(data().blockedBy)}
               value={encode(generation().global)} onChange={event => void settings.save({ generation: decode(event.currentTarget.value) })}>
               <option value="off" selected={generation().global === false}>{t("settings.images.generation.off")}</option>
               <option value="auto" selected={generation().global === true}>{t("settings.images.generation.auto")}</option>
@@ -55,7 +57,7 @@ export function ImageSettingsCard(props: { instanceId: string; location?: Locati
       }}</Show>
       <Show when={data().mediaStorage}>{storage => <>
         <SettingsChoiceRow checked={storage().global} title={t("settings.images.storage.title")}
-          info={t("settings.images.storage.info")} disabled={settings.busy()}
+          info={t("settings.images.storage.info")} disabled={settings.busy() || Boolean(data().blockedBy)}
           onChange={checked => void settings.save({ mediaStorage: checked })} />
         <Show when={storage().override}>{override =>
           <p class="settings-toggle-caption" title={override().path}>

@@ -455,6 +455,8 @@ export interface ImageSettingsSnapshot {
     effective: boolean
     override?: ImageSettingOverride
   } | null
+  /** The lower-priority document whose whole `experimental` object a new Global one would hide; writes are refused. */
+  blockedBy?: ImageSettingOverride
 }
 export interface ImageSettingsMutation {
   location: PluginControlLocation

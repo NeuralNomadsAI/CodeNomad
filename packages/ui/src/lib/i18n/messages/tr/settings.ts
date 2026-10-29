@@ -57,6 +57,7 @@ export const settingsMessages = {
   "settings.images.title": "Görseller",
   "settings.images.error": "Görsel ayarları okunamadı veya güncellenemedi.",
   "settings.images.unsupported": "Bağlı OpenCode sürümünde görsel ayarları yok.",
+  "settings.images.blocked": "Buraya kaydetmek başka bir OpenCode yapılandırmasının deneysel ayarlarını gizler. Bu seçenekleri bunun yerine o dosyada değiştirin.",
   "settings.images.generation.title": "Görsel oluşturma",
   "settings.images.generation.info": "Ajanların, bağlı bir sağlayıcının görsel modeliyle görsel oluşturmasına ve düzenlemesine izin verir. Her görsel ücretli bir istektir ve ajan önce izninizi ister. Tüm projelere uygulanır.",
   "settings.images.generation.off": "Kapalı",

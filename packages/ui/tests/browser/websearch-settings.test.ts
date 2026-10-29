@@ -150,7 +150,13 @@ test("Images reads only while open, writes one Global setting at a time and hide
       assert.equal(await page.locator("main").evaluate(el => el.scrollWidth <= el.clientWidth), true)
     }
 
-    await page.evaluate(() => { (window as any).fixture.images.supported = false; (window as any).fixture.setDirectory("/b") })
+    await page.evaluate(() => { (window as any).fixture.images.blocked = true; (window as any).fixture.setDirectory("/c") })
+    await group.getByText("Saving here would hide the experimental settings of another OpenCode configuration. Change these options in that file instead.", { exact: true }).waitFor()
+    assert.equal(await group.locator('p[title="/global/opencode.json"]').count(), 1)
+    assert.equal(await group.getByLabel("Image generation", { exact: true }).isDisabled(), true)
+    assert.equal(await group.getByLabel("Store images once", { exact: true }).isDisabled(), true)
+
+    await page.evaluate(() => { (window as any).fixture.images.blocked = false; (window as any).fixture.images.supported = false; (window as any).fixture.setDirectory("/b") })
     await group.getByText("The connected OpenCode version has no image settings.", { exact: true }).waitFor()
     assert.equal(await group.getByLabel("Image generation", { exact: true }).count(), 0)
     assert.equal(await group.getByLabel("Store images once", { exact: true }).count(), 0)

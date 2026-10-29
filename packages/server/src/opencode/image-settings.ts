@@ -38,16 +38,32 @@ type Entry = { type: string; path?: string; info?: { experimental?: Record<strin
 const documents = (entries: readonly unknown[]) =>
   entries.filter((entry): entry is Entry & { type: "document" } => Boolean(entry) && (entry as Entry).type === "document").reverse()
 
+const pathsFor = (value: string) => /^(?:[A-Za-z]:[\\/]|\\\\)/.test(value) ? path.win32 : path.posix
 function samePath(left: string, right: string) {
-  const paths = /^(?:[A-Za-z]:[\\/]|\\\\)/.test(left) ? path.win32 : path.posix
+  const paths = pathsFor(left)
   const normalize = (value: string) => paths.normalize(value).replace(/[\\/]$/, "")
   return paths === path.win32 ? normalize(left).toLowerCase() === normalize(right).toLowerCase() : normalize(left) === normalize(right)
 }
 
+const located = (entry: Entry | undefined) => !entry ? undefined : entry.path === undefined ? {} : { path: entry.path }
+
 /** The native document that decides a value, when it is not the Global document this group writes. */
 function override(winner: Entry | undefined, target: string): { path?: string } | undefined {
-  if (!winner || winner.path !== undefined && samePath(winner.path, target)) return undefined
-  return winner.path === undefined ? {} : { path: winner.path }
+  return winner?.path !== undefined && samePath(winner.path, target) ? undefined : located(winner)
+}
+
+/** The lower-priority document whose whole `experimental` object a new one in `target` would hide
+ * (`entries` lowest priority first; a missing target sits just before its directory, as natively). */
+function maskedBy(entries: readonly unknown[], target: string, targetHasExperimental: boolean): Entry | undefined {
+  if (targetHasExperimental) return undefined
+  const list = entries as Array<Entry | undefined>
+  const own = list.findIndex(entry => entry?.type === "document" && entry.path !== undefined && samePath(entry.path, target))
+  const directory = list.findIndex(entry => entry?.type === "directory" && entry.path !== undefined
+    && samePath(entry.path, pathsFor(target).dirname(target)))
+  const order = own >= 0 ? own : directory >= 0 ? directory - 0.5 : list.length
+  let winner = -1
+  list.forEach((entry, index) => { if (entry?.type === "document" && entry.info?.experimental !== undefined) winner = index })
+  return winner >= 0 && winner < order ? list[winner] : undefined
 }
 
 /** Global scope only: OpenCode reads `media_blob` from the whole `experimental` object of the
@@ -77,9 +93,10 @@ export class ImageSettings {
       const response = await context.connection.fetch(url, {
         headers: Service.headers(context.connection.endpoint), redirect: "error", signal: AbortSignal.timeout(5_000),
       })
-      if (!response.ok) { await response.body?.cancel(); return null }
-      data = (await response.json() as { data?: unknown }).data
-    } catch { return null }
+      if (response.ok) data = (await response.json() as { data?: unknown }).data
+      else await response.body?.cancel()
+    } catch { data = undefined }
+    // Every catalog outcome, failures included, still belongs to the connection that produced the rest of the snapshot.
     context.connection.assertCurrent()
     if (!Array.isArray(data)) return null
     return data.flatMap((model: any) => typeof model?.providerID === "string" && typeof model?.id === "string"
@@ -115,7 +132,9 @@ export class ImageSettings {
         ...(overridden ? { override: overridden } : {}),
       }
     }
-    return { location: context.location, generation, mediaStorage }
+    const blocked = global && (generation || mediaStorage)
+      ? located(maskedBy(context.entries, global.path, readNativeSetting(global.document, ["experimental"]) !== undefined)) : undefined
+    return { location: context.location, generation, mediaStorage, ...(blocked ? { blockedBy: blocked } : {}) }
   }
 
   async update(workspaceId: string, location: PluginControlLocation,
@@ -131,8 +150,12 @@ export class ImageSettings {
     const value = generation
       ? typeof change.generation === "string" ? { model: change.generation } : change.generation
       : change.mediaStorage
+    const target = context.documents.find(item => item.scope === "global")?.path
     await this.configuration.editConfigDocument(workspaceId, location, "global", document => {
       context.connection.assertCurrent()
+      // A new Global `experimental` object would hide a lower-priority one from every whole-object reader.
+      if (target && maskedBy(context.entries, target, readNativeSetting(document, ["experimental"]) !== undefined))
+        throw new PluginControlsError("Saving would hide inherited experimental OpenCode settings", "conflict")
       return editNativeSetting(document, keys, value)
     })
     context.connection.assertCurrent()

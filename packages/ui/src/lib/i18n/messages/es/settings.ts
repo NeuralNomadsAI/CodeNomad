@@ -57,6 +57,7 @@ export const settingsMessages = {
   "settings.images.title": "Imágenes",
   "settings.images.error": "No se pudieron leer o actualizar los ajustes de imágenes.",
   "settings.images.unsupported": "La versión de OpenCode conectada no tiene ajustes de imágenes.",
+  "settings.images.blocked": "Guardar aquí ocultaría los ajustes experimentales de otra configuración de OpenCode. Cambia estas opciones en ese archivo.",
   "settings.images.generation.title": "Generación de imágenes",
   "settings.images.generation.info": "Permite a los agentes crear y editar imágenes con un modelo de imagen de un proveedor conectado. Cada imagen es una solicitud de pago, y los agentes piden permiso primero. Se aplica a todos los proyectos.",
   "settings.images.generation.off": "Desactivada",

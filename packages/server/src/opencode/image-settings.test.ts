@@ -39,9 +39,11 @@ test("global image settings edit JSONC in place and report project overrides", a
     await writeFile(globalFile, '{\n  // preserved\n  "experimental": { "subagent_depth": 2 },\n  "shell": "keep"\n}\n')
     await writeFile(projectFile, "{}")
     const ancestorFile = path.join(root, "opencode.json")
-    let schema: Record<string, unknown> = both, modelReads = 0, catalogStatus = 200, ancestor: unknown
+    const lowerFile = path.join(global, "opencode.json")
+    let schema: Record<string, unknown> = both, modelReads = 0, catalogStatus = 200, ancestor: unknown, lower: unknown
+    let current = true, catalogFailure: "status" | "throw" | undefined
     const connection: any = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "private" } },
-      assertCurrent: () => {},
+      assertCurrent: () => { if (!current) throw new Error("replaced connection") },
       fetch: async (url: URL, options: RequestInit) => {
         assert.equal(options.redirect, "error")
         if (url.pathname === "/openapi.json") return Response.json(contract(schema))
@@ -49,12 +51,14 @@ test("global image settings edit JSONC in place and report project overrides", a
         assert.equal(url.pathname, "/api/model")
         assert.equal(url.searchParams.get("types"), "image")
         assert.equal(url.searchParams.get("location[directory]"), project)
-        if (catalogStatus !== 200) return new Response("unavailable", { status: catalogStatus })
+        if (catalogFailure) { current = false; if (catalogFailure === "throw") throw new Error("transport") }
+        if (catalogStatus !== 200 || catalogFailure) return new Response("unavailable", { status: catalogFailure ? 503 : catalogStatus })
         return Response.json({ location: { directory: project }, data: [
           { providerID: "openai", id: "gpt-image-2", name: "GPT Image 2" }, { providerID: "google", id: "imagen" }, { bad: true },
         ] })
       },
       client: { config: { get: async () => [ { type: "directory", path: global },
+        ...(lower ? [{ type: "document", path: lowerFile, info: lower }] : []),
         { type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
         ...(ancestor ? [{ type: "document", path: ancestorFile, info: ancestor }] : []),
         { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) } ] },
@@ -122,6 +126,29 @@ test("global image settings edit JSONC in place and report project overrides", a
     assert.equal(snapshot.generation?.global, false)
     assert.deepEqual(snapshot.mediaStorage, { global: false, effective: false })
     catalogStatus = 200
+    // A connection replaced while the catalog fails still fences the whole snapshot.
+    for (const failure of ["status", "throw"] as const) {
+      catalogFailure = failure
+      await assert.rejects(settings.read("w", location), /replaced connection/)
+      catalogFailure = undefined; current = true
+    }
+
+    // A new Global `experimental` object would hide a lower-priority one: reads say so and writes are refused.
+    await writeFile(globalFile, '{ "shell": "keep" }')
+    lower = { experimental: { subagent_depth: 7, todo: true } }
+    snapshot = await settings.read("w", location)
+    assert.deepEqual(snapshot.blockedBy, { path: lowerFile })
+    assert.equal(snapshot.mediaStorage?.effective, false)
+    for (const change of [{ generation: true }, { mediaStorage: true }] as const)
+      await assert.rejects(settings.update("w", location, change), /hide inherited experimental/)
+    assert.equal(await readFile(globalFile, "utf8"), '{ "shell": "keep" }')
+    // Once the Global document has its own object, writes edit it without changing what it already hides.
+    await writeFile(globalFile, '{ "experimental": {} }')
+    snapshot = await settings.read("w", location)
+    assert.equal(snapshot.blockedBy, undefined)
+    await settings.update("w", location, { mediaStorage: true })
+    assert.deepEqual(parse(await readFile(globalFile, "utf8")).experimental, { media_blob: true })
+    lower = undefined
 
     // Without the contract, nothing is read from the model catalog and nothing is written.
     schema = {}

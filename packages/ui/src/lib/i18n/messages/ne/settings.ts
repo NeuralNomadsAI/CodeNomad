@@ -57,6 +57,7 @@ export const settingsMessages = {
   "settings.images.title": "छविहरू",
   "settings.images.error": "छवि सेटिङहरू पढ्न वा अद्यावधिक गर्न सकिएन।",
   "settings.images.unsupported": "जडान भएको OpenCode संस्करणमा छवि सेटिङहरू छैनन्।",
+  "settings.images.blocked": "यहाँ सुरक्षित गर्दा अर्को OpenCode कन्फिगरेसनका प्रयोगात्मक सेटिङहरू लुक्नेछन्। बरु ती विकल्पहरू त्यही फाइलमा परिवर्तन गर्नुहोस्।",
   "settings.images.generation.title": "छवि सिर्जना",
   "settings.images.generation.info": "जडान भएको प्रदायकको छवि मोडेलबाट एजेन्टहरूलाई छवि बनाउन र सम्पादन गर्न दिन्छ। प्रत्येक छवि सशुल्क अनुरोध हो, र एजेन्टले पहिले तपाईंको अनुमति माग्छ। सबै प्रोजेक्टहरूमा लागू हुन्छ।",
   "settings.images.generation.off": "बन्द",

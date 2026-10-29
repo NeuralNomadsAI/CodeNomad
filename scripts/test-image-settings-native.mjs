@@ -69,6 +69,19 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
     subagent_depth: 2, ...(initial.generation ? { image_generate: false } : {}), ...(initial.mediaStorage ? { media_blob: false } : {}),
   }, "Off is written as an explicit false the native schema accepts")
   await assert.rejects(settings.update("fixture", { directory: path.dirname(root) }, { mediaStorage: false }))
+
+  // Layered Global documents: a new `experimental` object in the written opencode.jsonc would hide
+  // opencode.json's whole object (subagent depth, todos), so the group is read-only and refuses writes.
+  if (initial.generation || initial.mediaStorage) {
+    const lowerFile = path.join(path.dirname(globalFile), "opencode.json")
+    await writeFile(lowerFile, '{"experimental":{"subagent_depth":7,"todo":true}}\n')
+    await writeFile(globalFile, "{}\n")
+    const blocked = await until(snapshot => snapshot.blockedBy?.path !== undefined, "the native layering is reported")
+    assert.equal(path.resolve(blocked.blockedBy.path).toLowerCase(), path.resolve(lowerFile).toLowerCase())
+    for (const change of [initial.generation && { generation: true }, initial.mediaStorage && { mediaStorage: true }].filter(Boolean))
+      await assert.rejects(settings.update("fixture", location, change), /hide inherited experimental/)
+    assert.equal(await readFile(globalFile, "utf8"), "{}\n", "the masking write is refused")
+  }
   console.log(`PASS native image settings (generation: ${Boolean(initial.generation)}, media storage: ${Boolean(initial.mediaStorage)}): `
-    + "contract detection, JSONC save, hot reload, reset, unsupported-key refusal and foreign-location rejection")
+    + "contract detection, JSONC save, hot reload, reset, layered-Global refusal, unsupported-key refusal and foreign-location rejection")
 })
