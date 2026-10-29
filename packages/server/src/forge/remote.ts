@@ -1,3 +1,4 @@
+import { isIP } from "node:net"
 import { runGitProcess } from "../workspaces/git-process"
 
 export interface ForgeRemote {
@@ -37,7 +38,9 @@ export function parseRemoteUrl(url: string): ForgeRemote | undefined {
     host = scp[1]!.toLowerCase()
     rawPath = scp[2]
   }
-  if (!host || !HOST_NAME.test(host) || (port && !/^\d{1,5}$/.test(port)) || !rawPath) return undefined
+  // A bracketed IPv6 literal is valid as such; it is never a public forge, so only a signed-in CLI reads it.
+  const ipv6 = /^\[(.+)\]$/.exec(host ?? "")
+  if (!host || !(ipv6 ? isIP(ipv6[1]!) === 6 : HOST_NAME.test(host)) || (port && !/^\d{1,5}$/.test(port)) || !rawPath) return undefined
   const path = rawPath.replace(/^\/+|\/+$/g, "").replace(/\.git$/i, "")
   const segments = path.split("/")
   if (segments.length < 2 || segments.some(segment => !PATH_SEGMENT.test(segment) || /^\.+$/.test(segment))) return undefined

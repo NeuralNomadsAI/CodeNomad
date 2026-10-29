@@ -7,6 +7,7 @@ import { after, describe, it } from "node:test"
 
 import { forgeWebUrl, literalSearchTerms } from "./providers"
 import { parseRemoteUrl, readForgeRemote } from "./remote"
+import { SharedLoads } from "./shared-loads"
 import { parseIncludedResponse, readBoundedText, teaTransport, type ProcessRunner } from "./transport"
 import { ForgeWorkItems } from "./work-items"
 
@@ -63,6 +64,12 @@ describe("forge remotes", () => {
       "git@localhost#ignored:team/app", "git@host?x:team/app", "git@host\\evil:team/app", "https://host/team/app%3Fq", "https://ho_st/team/app"]) {
       assert.equal(parseRemoteUrl(url), undefined, url)
     }
+  })
+
+  it("accepts bracketed IPv6 forges, validated as such", () => {
+    assert.deepEqual(parseRemoteUrl("https://[::1]:8443/team/app.git"), { host: "[::1]:8443", path: "team/app" })
+    assert.deepEqual(parseRemoteUrl("ssh://git@[2001:db8::1]:2222/team/app"), { host: "[2001:db8::1]", path: "team/app" })
+    assert.equal(parseRemoteUrl("https://[nothing]/team/app"), undefined)
   })
 
   it("keeps an HTTPS forge's port, which an SSH transport port is not", () => {
@@ -247,6 +254,42 @@ describe("forge work items", () => {
     while (release.length) release.shift()!()
     await Promise.all(distinct)
     assert.equal(peak, 4, "at most four forge requests run at once")
+  })
+
+  it("starts nothing for a caller already gone, and cancels a self-hosted forge's discovery once its callers leave", async () => {
+    const calls: string[] = []
+    const discovery: AbortSignal[] = []
+    const run: ProcessRunner = async (command, args, signal) => {
+      calls.push(`${command} ${args.join(" ")}`)
+      if (args[0] === "auth" && signal) {
+        discovery.push(signal)
+        await new Promise<void>(resolve => signal.addEventListener("abort", () => resolve(), { once: true }))
+        return { stdout: "", stderr: "", code: "ABORT_ERR" }
+      }
+      return { stdout: "", stderr: "", code: 1 }
+    }
+    const forge = new ForgeWorkItems({ run })
+    const gone = new AbortController()
+    gone.abort()
+    await assert.rejects(forge.list(checkout({ origin: "https://github.com/o/r" }), { kind: "issue", query: "", page: 1 }, gone.signal))
+    await assert.rejects(forge.itemUrl(checkout({ origin: "https://github.com/o/r" }), "issue", 1, gone.signal))
+    assert.deepEqual(calls, [])
+    const caller = new AbortController()
+    const read = forge.list(checkout({ origin: "https://git.example.com/team/app" }), { kind: "issue", query: "", page: 1 }, caller.signal).catch(error => error)
+    await until(() => discovery.length === 1, "discovery asks the CLIs")
+    caller.abort()
+    await read
+    assert.equal(discovery[0]!.aborted, true, "discovery is cancelled with its last caller")
+  })
+
+  it("never evicts a running shared load, so identical callers keep sharing it", async () => {
+    const loads = new SharedLoads<string>(30_000, 2, () => 0)
+    let held!: (value: string) => void, started = 0
+    const first = loads.get("held", false, () => { started++; return new Promise(resolve => { held = resolve }) })
+    for (const key of ["a", "b", "c", "d"]) await loads.get(key, false, async () => key)
+    const again = loads.get("held", false, async () => { started++; return "second" })
+    held("first")
+    assert.deepEqual([await first, await again, started], ["first", "first", 1])
   })
 
   it("follows the forge's own continuation and never advertises a page past the 50th", async () => {

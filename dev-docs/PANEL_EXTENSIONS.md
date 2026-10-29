@@ -202,9 +202,12 @@ checks and telemetry disabled, a 15-second limit and a 4 MiB output budget;
 anonymous bodies are bounded to 4 MiB while streaming. CodeNomad stores no token.
 Private repositories without a sign-in report `sign_in`.
 
-Identical reads share one request, which is cancelled (CLI process or fetch)
-once every caller has gone; a cancelled read is never joined. At most four forge
-requests run host-wide, sixteen more wait, and further reads are refused. The
+Repository discovery and page reads are shared loads (`forge/shared-loads.ts`):
+identical callers join one load, which is cancelled (CLI process or fetch) once
+every caller has gone; a caller already gone starts nothing, a cancelled load is
+never joined and cache eviction never drops a running one. Every CLI process or
+fetch, discovery included, runs within one host-wide budget: four at once,
+sixteen waiting, further reads refused. The
 routes cancel a read whose caller disconnects, recheck consent before and after
 each read and drop the result when the project closed meanwhile. `open` asks the
 server for the item's page on the repository's own forge (`forgeWebUrl`), never

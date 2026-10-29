@@ -46,8 +46,8 @@ export function registerPanelExtensionWorkItemRoutes(app: FastifyInstance, deps:
     })
   }
   route("workItems", listSchema, (directory, { kind, query, page, fresh }, signal) => deps.forge.list(directory, { kind, query, page, fresh }, signal))
-  route("workItemUrl", urlSchema, async (directory, input) => {
-    const url = await deps.forge.itemUrl(directory, input.kind, input.number)
+  route("workItemUrl", urlSchema, async (directory, input, signal) => {
+    const url = await deps.forge.itemUrl(directory, input.kind, input.number, signal)
     if (!url) throw new PanelExtensionError("unavailable")
     return { url }
   })
