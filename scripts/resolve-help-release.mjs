@@ -7,8 +7,8 @@ import { readDownloads, validateRelease } from "./build-help.mjs"
 // help-pages workflow only. Local and pull-request builds never call it (see dev-docs/USER_HELP.md).
 const repo = "https://github.com/NeuralNomadsAI/CodeNomad"
 const FIRST_PAGE = "https://api.github.com/repos/NeuralNomadsAI/CodeNomad/releases?per_page=100"
-// GitHub paginates this listing through its numeric repository path.
-const PAGE_PATH = /^\/(?:repos\/NeuralNomadsAI\/CodeNomad|repositories\/\d+)\/releases$/
+// GitHub paginates this listing through the numeric path of NeuralNomadsAI/CodeNomad (id 1087925615).
+const PAGE_PATH = /^\/(?:repos\/NeuralNomadsAI\/CodeNomad|repositories\/1087925615)\/releases$/
 const STABLE_TAG = /^v\d+\.\d+\.\d+$/
 const UTC_DATE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
 

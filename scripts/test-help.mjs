@@ -89,7 +89,8 @@ async function checkHtml(output, locale, page, locales) {
   assert.match(html, new RegExp(`href="${page}\.html" aria-current="page"`))
   assert.ok(!/\{#[^}]*\}/.test(html), "heading suffixes must not be visible")
   const scripts = ["help-search", ...(page === "download" ? ["help-download"] : [])].map((name) => `<script src="../assets/${name}.js" defer></script>`)
-  assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>|<script\b/g) ?? [], scripts, "only the owned search script, plus the download script on the download page")
+  // HTML tag names are case-insensitive: every script start counts, and only the exact owned tags pass.
+  assert.deepEqual(html.match(/<script\b[^>]*>[\s\S]*?<\/script>|<script\b/gi) ?? [], scripts, "only the owned search script, plus the download script on the download page")
   assert.ok(!/<(?:iframe|audio|embed|object|track)\b|\bon\w+\s*=/i.test(html), "page content must be static")
   const media = html.match(/<(?:video|source)\b[^>]*>/gi) ?? []
   if (media.length) {
@@ -164,6 +165,29 @@ test("declared help pages have translations, stable heading ids, links, images a
   assert.ok(!/@import|https?:\/\//.test(css), "no remote styles or fonts")
   for (const locale of locales) await checkSearch(output, locale)
   ctx.diagnostic(`Validated ${built.pages.length} pages × ${locales.length} locale(s)`)
+})
+
+test("the page check rejects extra, duplicate and inline scripts in any letter case or quoting", async (ctx) => {
+  const output = await temporary(ctx)
+  await buildHelp({ content, output })
+  for (const page of ["install", "download"]) {
+    const file = join(output, "en", `${page}.html`)
+    const original = await readFile(file, "utf8")
+    await checkHtml(output, "en", page, LOCALES)
+    for (const extra of [
+      '<SCRIPT src="../assets/help-download.js"></SCRIPT>',
+      '<Script src="../assets/help-download.js" defer></Script>',
+      '<SCRIPT SRC="../assets/help-search.js" DEFER></SCRIPT>',
+      '<script src="../assets/help-search.js" defer></script>',
+      "<script src='../assets/help-download.js' defer></script>",
+      '<script\nsrc="../assets/help-download.js" defer></script >',
+      "<sCrIpT>alert(1)</sCrIpT>",
+    ]) {
+      await writeFile(file, original.replace("</head>", `${extra}\n</head>`))
+      await assert.rejects(checkHtml(output, "en", page, LOCALES), /only the owned search script/, `${page}: ${extra}`)
+    }
+    await writeFile(file, original)
+  }
 })
 
 test("generic media is shared, H1 titles label translated navigation, and Markdown links keep anchors", async (ctx) => {
@@ -623,6 +647,8 @@ test("the release resolver follows only this repository's pagination links withi
     "https://token@api.github.com/repositories/1087925615/releases?per_page=100&page=2",
     "https://api.github.com:8443/repositories/1087925615/releases?per_page=100&page=2",
     "https://api.github.com/repos/Other/CodeNomad/releases?per_page=100&page=2",
+    "https://api.github.com/repositories/1/releases?per_page=100&page=2",
+    "https://api.github.com/repositories/10879256150/releases?per_page=100&page=2",
     "https://api.github.com/repositories/1087925615/releases/assets?per_page=100&page=2",
     "https://api.github.com/repositories/1087925615/releases?per_page=100&page=2&redirect=https://evil.example",
     "https://api.github.com/repositories/1087925615/releases?per_page=100&page=2#next",
