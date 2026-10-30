@@ -50,13 +50,18 @@ function gitPatternLine(line: string): string {
   return lastSpace < 0 ? value : value.slice(0, lastSpace)
 }
 
+/** The patterns of an exclude file's bytes, each line read as Git reads it. */
+export function gitExcludePatterns(existing: Buffer): Set<string> {
+  return new Set(existing.toString("utf-8").split("\n").map(gitPatternLine).filter(Boolean))
+}
+
 /**
  * Appends the `entries` missing from `existing` (the file's current bytes) under
  * the `# codenomad` header. The existing bytes are never rewritten.
  */
 export async function appendCodenomadGitExclude(excludePath: string, existing: Buffer, entries: readonly string[]): Promise<boolean> {
   const text = existing.toString("utf-8")
-  const lines = new Set(text.split("\n").map(gitPatternLine).filter(Boolean))
+  const lines = gitExcludePatterns(existing)
   const missing = entries.filter((e) => !lines.has(e))
   if (missing.length === 0) {
     return false

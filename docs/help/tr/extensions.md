@@ -39,7 +39,7 @@ Etkinleştirilmiş bir panel seçildiğinde monte edilebilir; onu gizlemek geçi
 3. Yalnızca yeni sürüme güvenmeye karar verdikten sonra normal onay kutusunu kullanarak yeniden etkinleştirin.
 4. Kaldırmak için hedefi inceledikten sonra **Kaldır…** ve **Kaldırmayı onayla** öğesini kullanın.
 
-Paketin her değiştirilmesi, izin listesi değişmese bile tüm projelerde etkinleştirmeyi iptal eder. Doğrulama/çatışma/depolama hatası yüklü paketi korur. Sessiz uzantı güncellemesi yok. Kaldırma işlemi, OpenCode oturumlarını veya proje dosyalarını değil, paketi ve etkinleştirme ayarlarını siler. İstenmeyen koddan kurtulmak için önce onu devre dışı bırakın; yalnızca doğrulanmış güvenilir bir paketi yeniden yükleyin.
+Paketin her değiştirilmesi, izin listesi değişmese bile tüm projelerde etkinleştirmeyi iptal eder ve panelin kaydedilmiş kendi ayarlarını temizler. Doğrulama/çatışma/depolama hatası yüklü paketi korur. Sessiz uzantı güncellemesi yok. Kaldırma işlemi, OpenCode oturumlarını veya proje dosyalarını değil, paketi, etkinleştirme ayarlarını ve kaydedilmiş panel ayarlarını siler. İstenmeyen koddan kurtulmak için önce onu devre dışı bırakın; yalnızca doğrulanmış güvenilir bir paketi yeniden yükleyin.
 
 ## Bağlam, varlık izni ve korumalı alan sınırları {#permissions-sandbox}
 
@@ -48,8 +48,17 @@ Paketin her değiştirilmesi, izin listesi değişmese bile tüm projelerde etki
 | API 1 / `session.context` | Geçerli oturum tanımlayıcısı (veya hiçbiri), arayüz dili ve görünümü. Konuşma dökümü metni veya dosya sistemi erişimi yok. |
 | API 2 / `session.assets.read` artı bağlam | Sınırlı geçerli oturum aracı-sonuç resmini/ek meta verilerini listelemek ve desteklenen gömülü baytları okumak için açıkça gözden geçirilmiş izin. Genel konuşma dökümü, dosya veya URL erişimi değildir. |
 | API 3 / `repository.workItems.read` ve bağlam | GitHub, GitLab veya Gitea/Forgejo üzerindeki proje deposunun issue ve pull request'lerini sınırlı sayfalar halinde listelemek ve birini tarayıcıda açmak için açıkça incelenmiş izin. Dosya, kimlik bilgisi veya genel ağ erişimi değildir. |
+| API 4 / bağlam artı aşağıdaki izinlerden bir veya daha fazlası | İnceleme, bildirilen her izin için bir cümle listeler; etkinleştirme hepsini birlikte verir ve bir değiştirme hepsini iptal eder. |
+| `session.images.read` | Görüntülenen konuşmada read aracının döndürdüğü görselleri, doğrulanabildiğinde oluşturma durumu ve kökeniyle birlikte okumak. |
+| `session.images.prompts` (`session.images.read` gerektirir) | Projenin Görseller konuşmasında oluşturulan her görselin istemini ve modelini okumak. |
+| `composer.prefill` | Görüntülenen konuşmanın ileti düzenleyicisine metin eklemek. Asla mesaj göndermez. |
+| `images.conversation` | Bu projenin Görseller konuşmasını açmak veya başlatmak. |
+| `opencode.designAgent` | Bu uzantı etkinken CodeNomad'in Design ajanını ve görsel becerilerini OpenCode'a ekler. |
+| `panel.preferences` | Bu panelin kendi ayarlarını hatırlamak. |
 
 Varlık erişimi, yazarın seçtiği bir oturumu değil, halihazırda bağlı olan ana bilgisayarı/oturumu takip eder. Yerel/uzak referanslar mevcut değil olarak listelenebilir; API varlığı rastgele uzak URL'ler getirmez veya yerel dosyaları açmaz. Oturumları değiştirmek, bağlantıyı kesmek veya izni iptal etmek eski erişimi geçersiz kılar.
+
+API 4 ile görsel okuma da aynı şekilde görüntülenen konuşmayı takip eder ve yalnızca ajanın konuşmaya geri okuduğu görselleri gösterir. `session.images.prompts` iznine sahip bir uzantı, sizin veya ajanın bir Görseller konuşmasında görseller için yazdığı istemleri okuyabilir ve korumalı alana rağmen bunları başkasına aktarabilir; bu nedenle bu izni yalnızca onları emanet ettiğiniz yazarlara verin. `composer.prefill` ile eklenen metin, siz onu düzenleyene veya **Mesaj gönder** öğesini seçene kadar ileti düzenleyicisinde kalır; asla bir komutla başlamaz, asla açık bir `@` bahsiyle bitmez ve görsel yollarını düz metin olarak belirtir. İleti düzenleyicisinde Ctrl+Z (macOS'ta Cmd+Z) ile geri almak onu kaldırmaz. Kaydedilmiş panel ayarları bu CodeNomad profiline aittir, uzantı başına en fazla 4 KiB; bir uzantıyı devre dışı bırakmak onları korur.
 
 Öğeler proje klasörünün `upstream` uzak deposundan, yoksa `origin`'den gelir. CodeNomad bunları oturum açtığınız GitHub, GitLab veya Gitea CLI'si (`gh`, `glab`, `tea`) ile ya da herkese açık depolarda anonim olarak okur ve hiçbir belirteç saklamaz; eklenti yalnızca depo adını ve öğeleri görür. Anonim okuma github.com, gitlab.com, codeberg.org ve gitea.com içindir; kendi barındırdığınız bir platform yalnızca orada oturum açılmış CLI'si üzerinden okunur. Bir öğeyi açmak, CodeNomad'den o öğenin aynı platformdaki sayfasını tarayıcınızda açmasını ister (saniyede en fazla bir kez); eklenti başka adresler açamaz.
 

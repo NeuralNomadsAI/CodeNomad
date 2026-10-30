@@ -237,11 +237,15 @@ const RightPanel: Component<RightPanelProps> = (props) => {
   })
 
   const extensionForTab = (id: string) => extensions.entries().find(entry => id === `extension:${entry.manifest.id}`)
+  // API 4 host actions: the displayed conversation's composer, and closing the phone's floating panel.
+  const extensionHost = { promptInputApi: props.promptInputApi, activeSessionId: props.activeSessionId,
+    isPhoneLayout: props.isPhoneLayout, closePanel: () => props.onCloseRightDrawer() }
   const externalModules = createMemo<RightPanelModule[]>(() => extensions.entries().map(entry => {
     const id = `extension:${entry.manifest.id}`
     return { id, displayNameKey: "", origin: "external", tabs: [{ id, labelKey: "", label: entry.manifest.name, order: 1000,
       render: () => <ExtensionPanel entry={entry} instanceId={props.instanceId} active={entry.enabled && extensions.verified() && props.isActive() && rightPanelTab() === id}
-        context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }} />,
+        context={{ apiVersion: 1, sessionId: props.activeSessionId(), locale: locale(), appearance: theme.isDark() ? "dark" : "light" }}
+        host={extensionHost} />,
     }] }
   }))
   const rightPanelModules = createMemo(() => [coreModule, missionsModule, ...externalModules()])

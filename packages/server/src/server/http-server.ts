@@ -50,6 +50,7 @@ import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 import { registerPanelExtensionRoutes } from "./routes/panel-extensions"
 import { registerPanelExtensionAssetRoutes } from "./routes/panel-extension-assets"
 import { registerPanelExtensionWorkItemRoutes } from "./routes/panel-extension-work-items"
+import { registerPanelExtensionApi4Routes } from "./routes/panel-extension-api4"
 import { ForgeWorkItems } from "../forge/work-items"
 import type { PanelExtensionStore } from "../panel-extensions/store"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
@@ -339,7 +340,8 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPluginControlRoutes(app, { controls: configurationControls })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
-  registerImageSettingsRoutes(app, new ImageSettings(configurationControls, deps.workspaceManager))
+  const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)
+  registerImageSettingsRoutes(app, imageSettings)
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
   registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
   const accounts = new ProviderAccountsService(deps.settings)
@@ -398,6 +400,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.panelExtensions) registerPanelExtensionRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionAssetRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager })
   if (deps.panelExtensions) registerPanelExtensionWorkItemRoutes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, forge: new ForgeWorkItems() })
+  if (deps.panelExtensions) registerPanelExtensionApi4Routes(app, { store: deps.panelExtensions, workspaceManager: deps.workspaceManager, worktreeDeletionFence, imageSettings })
   registerSideCarProxyRoutes(app, { sidecarManager: deps.sidecarManager, logger: proxyLogger, authManager: deps.authManager })
   registerPreviewProxyRoutes(app, { previewManager: deps.previewManager, logger: proxyLogger })
   setupSideCarWebSocketProxy(app, {
