@@ -259,7 +259,7 @@ await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" |
 
 - **Status** reads the session's Location (without a displayed conversation, the
   instance's current Location): generation from `experimental.image_generate` in the
-  daemon schema and its effective value (`opencode/image-settings.ts`), image models
+  daemon schema and its effective value, on unless `false` (`opencode/image-settings.ts`), image models
   from the Location's image catalog, the Design agent's content mark
   (`opencode/design/status.ts`), and whether the effective chat model (session,
   else its agent's when available, else the native default) lists an `image*`

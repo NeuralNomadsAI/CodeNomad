@@ -10,7 +10,7 @@ import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { MINIMUM_OPENCODE_VERSION as minimum } from "../opencode/runtime-support"
 
-const validV2 = () => ({ valid: true, version: "2.1.2" })
+const validV2 = () => ({ valid: true, version: "2.2.3" })
 
 async function npmFixture(prefix: string, version: string) {
   const binary = npmExecutable(prefix)
@@ -31,10 +31,10 @@ test("private copies and their receipts are ignored; PATH wins over the user npm
   const host = { home, env }
   try {
     const root = path.join(home, ".local/share/codenomad/opencode")
-    const legacy = path.join(root, "2.1.99/node_modules/@opencode/cli/bin/opencode.exe")
+    const legacy = path.join(root, "2.2.99/node_modules/@opencode/cli/bin/opencode.exe")
     await mkdir(path.dirname(legacy), { recursive: true }); await writeFile(legacy, "legacy")
-    await mkdir(path.join(root, "selected")); await writeFile(path.join(root, "selected/2.1.99"), "")
-    await writeFile(path.join(root, "current"), "2.1.99")
+    await mkdir(path.join(root, "selected")); await writeFile(path.join(root, "selected/2.2.99"), "")
+    await writeFile(path.join(root, "current"), "2.2.99")
     assert.deepEqual(resolveDefaultInstallation(host), { path: "opencode2" })
     assert.equal(sharedInstallPrefix(host), userNpmPrefix(host))
     const prefix = userNpmPrefix(host)
@@ -58,7 +58,7 @@ test("normal global-user npm install publishes terminal command and retries PATH
     execute: async (_file: string, args: string[]) => {
       installs++
       if (args[0] === "upgrade") {
-        assert.deepEqual(args, ["upgrade", "2.1.3", "--method", "npm"])
+        assert.deepEqual(args, ["upgrade", "2.2.4", "--method", "npm"])
         await npmFixture(prefix, args[1]!)
         return
       }
@@ -82,15 +82,15 @@ test("normal global-user npm install publishes terminal command and retries PATH
     assert.equal(installs, 1)
     assert.equal(resolveDefaultInstallation(options).path, findPathOpenCode(options))
     assert.equal(resolveDefaultInstallation(options).source, "path")
-    await installSharedOpenCode("2.1.3", options)
+    await installSharedOpenCode("2.2.4", options)
     assert.equal(installs, 2)
     await installSharedOpenCode(minimum, options)
     assert.equal(installs, 2, "never downgrade a newer common installation")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.3")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.2.4")
     await rm(findPathOpenCode(options)!)
     await installSharedOpenCode(minimum, options)
     assert.equal(installs, 3, "missing command is repaired at the newer installed version")
-    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.1.3")
+    assert.equal((await options.probe(npmExecutable(prefix))).version, "2.2.4")
   } finally { await rm(home, { recursive: true, force: true }) }
 })
 

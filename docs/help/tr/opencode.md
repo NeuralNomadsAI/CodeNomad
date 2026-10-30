@@ -19,8 +19,8 @@ Yüklü yürütülebilir dosya ve çalışan hizmetin farklı sürümleri olabil
 
 | Sınıflandırma | Mevcut gereksinim | Anlamı |
 | --- | --- | --- |
-| Asgari | OpenCode **2.1.2** | Code Mode içindeki JavaScript görevlerinin doğru yürütme sırası ve 2.1'in yerel yeniden oynatma ve sıkıştırma biçimi; önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. |
-| Önerilen | OpenCode **2.2.1** | Teknik alt sınırdan farklı, doğrulanan hedef. |
+| Asgari | OpenCode **2.2.3** | **Görseller** ayarlarının ve Design uzantısının kullandığı görsel oluşturma aracı, Code Mode içindeki JavaScript görevlerinin doğru yürütme sırası ve yerel yeniden oynatma ve sıkıştırma biçimi; önceki sürümlerle kaydedilen konuşmalar güncellemeden sonra da okunabilir. |
+| Önerilen | OpenCode **2.2.3** | Doğrulanan hedef; teknik alt sınırla aynı sürüm. |
 | Doğrulanmamış | Tam olarak doğrulanmamış daha yeni veya özel bir sürüm | Yalnızca denenmemiş olduğu için reddedilmez; bağlı hizmetin gerçek API sözleşmeleri kontrol edilir. |
 
 Gerekli oturum, izin, Form, gelen kutusu ve oturum-ortam sözleşmelerinin de mevcut olması gerekir. Yürütülebilir bir sürüm tek başına bağlı hizmetin bunları desteklediğini kanıtlamaz. Kurulum, desteklenmeyen bir çalışan hizmet bildirirse desteklenen bir CLI seçin/yükleyin ve hazır olduğunuzda açık paylaşılan hizmet yeniden başlatmayı kullanın.

@@ -121,7 +121,7 @@ export const settingsMessages = {
   "settings.opencode.setup.untested": "OpenCode {version} no se ha validado completamente con esta versión de CodeNomad. Esto por sí solo no impide conectarse.",
   "settings.opencode.setup.error": "No se pudo verificar el ejecutable seleccionado.",
   "settings.opencode.setup.minimum": "Versión mínima",
-  "settings.opencode.setup.minimumReason": "Esta versión de CodeNomad requiere OpenCode {version} o posterior para el orden correcto de las tareas JavaScript en Code Mode, además del formato nativo de reproducción y compactación de 2.1. Las conversaciones guardadas con versiones anteriores siguen siendo legibles tras actualizar OpenCode.",
+  "settings.opencode.setup.minimumReason": "Esta versión de CodeNomad requiere OpenCode {version} o posterior para la herramienta de generación de imágenes que usan los ajustes de Imágenes y la extensión Design, además del orden correcto de las tareas JavaScript en Code Mode y el formato nativo de reproducción y compactación. Las conversaciones guardadas con versiones anteriores siguen siendo legibles tras actualizar OpenCode.",
   "settings.opencode.setup.canonical_api": "El servicio actual no ofrece la API de sesiones, permisos, formularios y cola de entrada necesaria para esta versión de CodeNomad.",
   "settings.opencode.setup.session_environment": "El servicio actual no permite reemplazar el entorno de la sesión, una operación necesaria antes de enviar mensajes o comandos.",
   "settings.opencode.setup.daemon": "Servicio en ejecución",

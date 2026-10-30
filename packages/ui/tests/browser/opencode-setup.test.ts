@@ -132,8 +132,8 @@ test("missing installation and incompatible daemon expose different actions; res
 
 test("closing required-update screen leaves recovery clickable above a pending folder overlay", async () => {
   const page = await browser.newPage()
-  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.0.32",
-    latestVersion: "2.1.2", minimumVersion: "2.1.2", recommendedVersion: "2.1.2", incompatibilityReason: "native_contract", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "2.2.2",
+    latestVersion: "2.2.3", minimumVersion: "2.2.3", recommendedVersion: "2.2.3", incompatibilityReason: "native_contract", binaryPath: "opencode2", target: "host", canUpgrade: true, canRestart: false } }))
   try {
     await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 })
     await page.getByRole("dialog").waitFor()
@@ -146,10 +146,10 @@ test("closing required-update screen leaves recovery clickable above a pending f
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await page.getByRole("button", { name: "OpenCode setup required" }).click()
     await page.getByRole("dialog").waitFor()
-    assert.equal(await page.getByText("2.0.32", { exact: true }).count(), 1)
+    assert.equal(await page.getByText("2.2.2", { exact: true }).count(), 1)
     assert.equal(await page.locator("details[open]").count(), 0)
     await page.getByText("Version details", { exact: true }).click()
-    await page.getByText(/requires OpenCode 2\.1\.2 or later for correct JavaScript job ordering in Code Mode/).waitFor()
+    await page.getByText(/requires OpenCode 2\.2\.3 or later for the image generation tool used by the Images settings/).waitFor()
     assert.equal(await page.getByText("settings.opencode.setup.native_contract", { exact: true }).count(), 0)
   } catch (error) { console.error(await page.locator("body").innerText()); throw error }
   finally { await page.close() }
@@ -1042,8 +1042,8 @@ test("an outdated foreign OpenCode 2 is described by the minimum version, not as
 test("an older OpenCode occupying the user npm folder explains why OpenCode 2 cannot be installed beside it", async () => {
   const page = await browser.newPage()
   const occupying = "/home/fixture/.local/bin/opencode"
-  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "1.17.18", latestVersion: "2.1.2",
-    updateAvailable: true, canUpgrade: false, minimumVersion: "2.1.2", recommendedVersion: "2.1.2", binaryPath: occupying, installationSource: "path",
+  await page.route("**/api/**", route => route.fulfill({ json: { state: "update_required", currentVersion: "1.17.18", latestVersion: "2.2.3",
+    updateAvailable: true, canUpgrade: false, minimumVersion: "2.2.3", recommendedVersion: "2.2.3", binaryPath: occupying, installationSource: "path",
     foreignInstallation: { path: occupying, version: "1.17.18", source: "other", blocked: { reason: "occupied", path: occupying } },
     versionAssessment: "incompatible", target: "host", canRestart: false } }))
   try {

@@ -44,7 +44,7 @@ serverApi.setWebSearchSettings = async (_id, payload) => {
   if (hold) { hold = false; await new Promise<void>(resolve => { release = resolve }) }
   selections[payload.location.directory][payload.scope] = payload.provider
 }
-const images = { generation: false as boolean | string, mediaStorage: false, supported: true, blocked: false, reads: 0, writes: [] as any[],
+const images = { generation: true as boolean | string, mediaStorage: false, supported: true, blocked: false, reads: 0, writes: [] as any[],
   project: false, projectStorage: false }
 serverApi.getImageSettings = async (_id, directory) => {
   images.reads++

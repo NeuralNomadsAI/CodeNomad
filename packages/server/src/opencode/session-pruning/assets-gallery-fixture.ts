@@ -7,7 +7,7 @@ import { listGalleryImages, readGalleryImage, galleryImageReference } from "./as
 import type { GalleryEntry } from "./assets-gallery-contract"
 import type { AssetTarget } from "./assets-contract"
 
-// Test copies of two OpenCode 2.2.1 Images transcripts, with and without `experimental.media_blob`.
+// Test copies of two OpenCode 2.2.3 Images transcripts, with and without `experimental.media_blob`.
 // Paths are stored under `<ROOT>` with `/` separators and rewritten to the platform's daemon style.
 const P = process.platform === "win32" ? path.win32 : path.posix
 export const ROOT = process.platform === "win32" ? "C:\\cn-gallery-fixture" : "/cn-gallery-fixture"
@@ -60,7 +60,7 @@ export function openFixture(kind: "plain" | "blob") {
   const readPart = (value: any) => value.content.findIndex((part: any) => part.name === "read")
   const fileOf = (value: any) => value.content[readPart(value)].state.content[1]
   const readTarget = (seq = A_READ): AssetTarget => { const value = json(seq); return { messageID: row(seq).id, part: readPart(value), index: 1, digest: sha(fileOf(value).uri) } }
-  const call = (seq = A_CALL) => json(seq).content.find((part: any) => part.name === "image_generate")
+  const call = (seq = A_CALL) => json(seq).content.find((part: any) => part.name === "experimental_image_generate")
   /** A copy of icon-a's notice for another job, optionally padded past the 64 KiB decode limit. */
   const noticeFor = (seq: number, job: string, time: number, padding = 0) => {
     const notice = json(A_NOTICE); notice.metadata.jobID = job

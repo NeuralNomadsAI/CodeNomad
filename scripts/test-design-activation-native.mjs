@@ -73,7 +73,7 @@ const USER_SKILL = "USER-DESIGN-CORE"
 const files = {
   [path.join(configDirectory, "opencode.json")]: "{}\n",
   [path.join(configDirectory, "skills", "fixture-visible", "SKILL.md")]: "---\nname: fixture-visible\ndescription: Announced fixture skill\n---\nFixture.\n",
-  [path.join(project("p2-ask"), "opencode.json")]: JSON.stringify({ permissions: ["image_generate", "webfetch"].map(action => ({ action, resource: "*", effect: "ask" })) }),
+  [path.join(project("p2-ask"), "opencode.json")]: JSON.stringify({ permissions: [{ action: "experimental_image_generate", resource: "*", effect: "ask" }] }),
   [path.join(project("p3-user"), ".opencode", "agents", "design.md")]: `---\ndescription: The user's design agent\nmode: primary\n---\n${USER_AGENT}\n`,
   [path.join(project("p3-user"), ".opencode", "skills", "design-core", "SKILL.md")]: `---\nname: design-core\ndescription: The user's skill\n---\n${USER_SKILL}\n`,
 }
@@ -122,11 +122,12 @@ await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
 const settings = { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }
 
 const password = randomUUID()
-// Only the fixture providers load, and the fake image model is named, so automatic selection can never pick another provider.
+// Only the fixture providers load, so the image tool, on by default without `experimental.image_generate`,
+// can only select the fake image model.
 const env = await fixtureEnvironment(root, {
   OPENCODE_CONFIG_DIR: configDirectory, OPENCODE_DB: path.join(root, "fixture.db"), OPENCODE_SERVER_PASSWORD: password,
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
-  OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: "fixture/vision", small_model: "fixture/vision", enabled_providers: ["fixture", "fiximg"], experimental: { image_generate: { model: "fiximg/image" } }, providers: {
+  OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: "fixture/vision", small_model: "fixture/vision", enabled_providers: ["fixture", "fiximg"], providers: {
     fixture: { package: "@opencode/ai/providers/openai-compatible", settings, models: { vision: { name: "Fixture", capabilities: { tools: true, input: ["text", "image/png"], output: ["text"] } } } },
     fiximg: { package: "@opencode/ai/providers/openai-compatible/images", settings, models: { image: { name: "Fixture image", type: "image", capabilities: { tools: false, input: ["text"], output: ["image"] } } } },
   } }),
@@ -302,12 +303,11 @@ try {
   assert(JSON.stringify((await api("GET", `/api/session/${images}/message`)).json).includes(JSON.stringify(core.content.trim()).slice(1, -1)),
     "design-core loads by identifier")
 
-  // AC-4: the user's ask rule applies to Design exactly as to Build. Capability, not version:
-  // a runtime without image_generate proves the same rule propagation with webfetch.
-  results.askTool = buildRequests[0].tools.includes("image_generate") ? "image_generate" : "webfetch"
-  const generate = JSON.stringify([results.askTool === "image_generate"
-    ? { tool: "image_generate", args: { prompt: "Flat blue app icon", path: ".codenomad/design/icon/app-icon-minimal-a.png" } }
-    : { tool: "webfetch", args: { url: "https://example.invalid/", format: "text" } }])
+  // AC-4: the user's ask rule on the image tool applies to Design exactly as to Build.
+  for (const entry of [...designRequests, ...buildRequests])
+    assert(entry.tools.includes("experimental_image_generate"), `The image tool is offered by default: ${entry.tools}`)
+  const generate = JSON.stringify([{ tool: "experimental_image_generate",
+    args: { prompt: "Flat blue app icon", path: ".codenomad/design/icon/app-icon-minimal-a.png" } }])
   const askedFor = async () => ({
     design: await permissionRequests(await imagesSession(project("p2-ask")), `RUN ${generate}`),
     build: await permissionRequests(await session(project("p2-ask")), `RUN ${generate}`),

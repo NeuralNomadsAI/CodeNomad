@@ -4,7 +4,7 @@
 # "imagegen-frontend-mobile" skills distributed with Open Design
 # (https://github.com/nexu-io/open-design), originally from
 # https://github.com/Leonxlnx/taste-skill. Rewritten for exploration mockups
-# with image_generate, within the Design image count.
+# with experimental_image_generate, within the Design image count.
 #
 # MIT License
 #

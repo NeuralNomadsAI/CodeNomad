@@ -34,7 +34,7 @@ each("more than 64 entries in one message continue on the next page without loss
 })
 
 each("parents on another page and references written as absolute or relative give the same parent key", async fixture => {
-  const row = fixture.row(A2_CALL), value = JSON.parse(row.data), call = value.content.find((part: any) => part.name === "image_generate")
+  const row = fixture.row(A2_CALL), value = JSON.parse(row.data), call = value.content.find((part: any) => part.name === "experimental_image_generate")
   const parentKey = galleryKey(fixture.sessionID, fixture.call().state.metadata.jobID)
   call.state.input.images = [path.join(DIRECTORY, ".codenomad", "design", "icon", "icon-a.png"), ".codenomad/design/icon/icon-a.png", "https://example.test/x.png"]
   fixture.update(row.id, value)
@@ -57,11 +57,11 @@ each("a parent generated more than 32 assistant messages before its child is not
 })
 
 each("private values never leave the whitelist; user prompts stay intact and appear only when granted for a marked root", async fixture => {
-  const row = fixture.row(A_CALL), value = JSON.parse(row.data), call = value.content.find((part: any) => part.name === "image_generate")
+  const row = fixture.row(A_CALL), value = JSON.parse(row.data), call = value.content.find((part: any) => part.name === "experimental_image_generate")
   call.id = "call_SENTINEL_CALL"; call.state.metadata.notificationID = "SENTINEL_NOTIFY"; call.state.input.prompt = "Use D:\\art and image_ref literally"
   fixture.update(row.id, value)
   // After every read, so icon-a stays proven: an errored call may write any file.
-  fixture.insert("msg_zz_error", "assistant", 400, Date.now(), { ...value, content: [{ type: "tool", id: "call_SENTINEL_ERR", name: "image_generate",
+  fixture.insert("msg_zz_error", "assistant", 400, Date.now(), { ...value, content: [{ type: "tool", id: "call_SENTINEL_ERR", name: "experimental_image_generate",
     time: { created: Date.now(), ran: Date.now() }, state: { status: "error", input: { prompt: "p" }, error: "SENTINEL_ERROR" } }] })
   const noticeRow = fixture.row(A_NOTICE), notice = JSON.parse(noticeRow.data); notice.text = notice.text.replace("Use the read tool", "SENTINEL_NOTICE"); fixture.update(noticeRow.id, notice)
   const notices = fixture.raw.prepare("SELECT data FROM session_message WHERE type='synthetic'").all().map(entry => JSON.parse(String(entry.data)).metadata)
@@ -76,7 +76,7 @@ each("private values never leave the whitelist; user prompts stay intact and app
 })
 
 each("prompts and models: granted, marked root, generation or proven image; 8 KiB truncation", async fixture => {
-  const row = fixture.row(A_CALL), value = JSON.parse(row.data), call = value.content.find((part: any) => part.name === "image_generate")
+  const row = fixture.row(A_CALL), value = JSON.parse(row.data), call = value.content.find((part: any) => part.name === "experimental_image_generate")
   call.state.input.prompt = "é".repeat(5000); fixture.update(row.id, value)
   fixture.fillers(40); fixture.reread("msg_zz_late", 300)
   const { all } = await fixture.walk(true)
@@ -112,8 +112,8 @@ for (const writer of [false, true]) {
   })
 }
 
-// Only a completed `image_generate` with `metadata.path` names its file; any other call may write any file.
-const generator = (id: string, ran: number, state: Record<string, unknown>, completed = true) => ({ type: "tool", name: "image_generate", id,
+// Only a completed `experimental_image_generate` with `metadata.path` names its file; any other call may write any file.
+const generator = (id: string, ran: number, state: Record<string, unknown>, completed = true) => ({ type: "tool", name: "experimental_image_generate", id,
   time: { created: ran, ran, ...(completed ? { completed: ran + 1 } : {}) }, state })
 const other = ".codenomad/design/icon/icon-zz.png"
 const unknownWriters = [
@@ -154,8 +154,8 @@ each("witness: a completed call naming another file leaves icon-a proven and bot
 })
 function iconB(fixture: Fixture) {
   const rows = fixture.raw.prepare("SELECT id,data FROM session_message WHERE type='assistant'").all()
-  const row = rows.find(entry => String(entry.data).includes("icon-b.png") && String(entry.data).includes("image_generate"))!
-  const value = JSON.parse(String(row.data)), own = value.content.find((part: any) => part.name === "image_generate")
+  const row = rows.find(entry => String(entry.data).includes("icon-b.png") && String(entry.data).includes("experimental_image_generate"))!
+  const value = JSON.parse(String(row.data)), own = value.content.find((part: any) => part.name === "experimental_image_generate")
   return { row, value, own, target: { messageID: String(row.id), part: value.content.indexOf(own), digest: sha(`${own.id}\u0000${own.state.metadata.jobID}`) } }
 }
 
@@ -228,8 +228,8 @@ each("references: generation targets, outside files, uncovered ranges and unknow
 
 each("a generation reference with a parallel call to the same file still pending is refused", async fixture => {
   const rows = fixture.raw.prepare("SELECT id,seq,data FROM session_message WHERE type='assistant'").all()
-  const row = rows.find(entry => String(entry.data).includes("icon-b.png") && String(entry.data).includes("image_generate"))!
-  const value = JSON.parse(String(row.data)), own = value.content.find((part: any) => part.name === "image_generate")
+  const row = rows.find(entry => String(entry.data).includes("icon-b.png") && String(entry.data).includes("experimental_image_generate"))!
+  const value = JSON.parse(String(row.data)), own = value.content.find((part: any) => part.name === "experimental_image_generate")
   const job = own.state.metadata.jobID, notice = fixture.raw.prepare("SELECT time_created AS t FROM session_message WHERE data LIKE ?").get(`%${job}%`)!.t as number
   const target = { messageID: String(row.id), part: value.content.indexOf(own), digest: sha(`${own.id}\u0000${job}`) }
   assert.deepEqual(await fixture.reference(target), { status: "path", path: ".codenomad/design/icon/icon-b.png" })

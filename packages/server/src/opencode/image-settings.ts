@@ -20,10 +20,10 @@ export function imageSettingsCapability(document: Record<string, any>) {
   return { generation: has("image_generate"), mediaStorage: has("media_blob") }
 }
 
-/** Reads `experimental.image_generate` as OpenCode does: `true` or an object enables it, an object may name a model. */
+/** Reads `experimental.image_generate` as OpenCode does: only `false` disables it, unset means on, an object may name a model. */
 export function imageGenerationSelection(value: unknown): ImageGenerationSelection {
-  if (value === true) return true
-  if (!value || typeof value !== "object" || Array.isArray(value)) return false
+  if (value === false) return false
+  if (!value || typeof value !== "object" || Array.isArray(value)) return true
   const model = (value as { model?: unknown }).model
   if (typeof model === "string") return IMAGE_MODEL_REF.test(model) ? model : true
   if (model && typeof model === "object") {

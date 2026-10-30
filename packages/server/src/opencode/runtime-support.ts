@@ -1,18 +1,18 @@
 /**
- * CodeNomad consumes OpenCode 2.1's native replay contract through the pinned
- * 2.1 client reducer and codecs: provider replay data is `native` on events and
- * messages, summary compactions reference `metadata.keepID` (older kept text in
- * `metadata.recent`) and provider windows live in `native.messages`. 2.0.x
- * daemons emit the retired `state`/`providerState`/`resultState`/`recent` shapes.
- * OpenCode 2.1.2 also fixes Code Mode jobs violating JavaScript run-to-completion:
- * 2.1.0/2.1.1 lose shared updates and resume async callers before the first await.
- * Reproduced by scripts/test-codemode-jobs-native.mjs against isolated daemons.
- * OpenCode 2.1 reads data stored by older releases. See
+ * CodeNomad's Images gallery, Design agent and Images settings consume the image
+ * tool contract of upstream anomalyco/opencode#60258: one name,
+ * `experimental_image_generate`, for the tool, its permission action, its job type
+ * and its completion notice's `metadata.source`, and the tool on unless
+ * `experimental.image_generate` is `false`. The minimum also provides the native
+ * replay contract read by the pinned client reducer and codecs (`native` provider
+ * data, `metadata.keepID` compactions, `native.messages` windows) and Code Mode
+ * jobs that keep JavaScript run-to-completion (scripts/test-codemode-jobs-native.mjs).
+ * OpenCode reads data stored by older releases. See
  * dev-docs/OPENCODE_COMPATIBILITY.md for the demonstrated boundary.
  */
-export const MINIMUM_OPENCODE_VERSION = "2.1.2"
+export const MINIMUM_OPENCODE_VERSION = "2.2.3"
 /** Qualification target, independent of the technically required minimum. */
-export const RECOMMENDED_OPENCODE_VERSION = "2.2.1"
+export const RECOMMENDED_OPENCODE_VERSION = "2.2.3"
 export const OPENCODE_UPDATE_REQUIRED = "opencode_update_required"
 
 export function isBelowOpenCodeMinimum(version: string): boolean {
@@ -36,7 +36,7 @@ export class UnsupportedOpenCodeError extends Error {
   readonly minimumVersion = MINIMUM_OPENCODE_VERSION
   constructor(readonly actualVersion: string, readonly reason: OpenCodeIncompatibility = "native_contract") {
     super(`${OPENCODE_UPDATE_REQUIRED}: OpenCode ${actualVersion}; ${reason === "native_contract"
-      ? `requires the 2.1 native replay and compaction contract (native, metadata.keepID) and Code Mode job ordering fixed in ${MINIMUM_OPENCODE_VERSION}`
+      ? `requires the experimental_image_generate tool contract, native replay and compaction contract (native, metadata.keepID) and Code Mode job ordering of ${MINIMUM_OPENCODE_VERSION}`
       : reason === "session_environment" ? "requires PUT /api/session/{sessionID}/environment with variables"
         : "does not expose the canonical session, permission, Form and inbox API contract"}`)
     this.name = "UnsupportedOpenCodeError"

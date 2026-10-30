@@ -125,7 +125,7 @@ test("Images reads only while open, writes one Global setting at a time and hide
     await generation.waitFor()
     assert.equal((await images()).reads, 1)
     assert.deepEqual(await generation.locator("option").allInnerTexts(), ["Off", "On, automatic model", "GPT Image 2"])
-    assert.equal(await generation.inputValue(), "off")
+    assert.equal(await generation.inputValue(), "auto", "an unset image setting reads as on, as OpenCode reads it")
 
     await generation.selectOption("model:openai/gpt-image-2")
     await page.waitForFunction(() => (document.querySelector('select[aria-label="Image generation"]') as HTMLSelectElement)?.value === "model:openai/gpt-image-2")

@@ -3,7 +3,7 @@
 # Adapted and condensed by CodeNomad from the "brandkit" skill distributed with
 # Open Design (https://github.com/nexu-io/open-design), originally from
 # https://github.com/Leonxlnx/taste-skill. Rewritten for one logo per image
-# with image_generate.
+# with experimental_image_generate.
 #
 # MIT License
 #

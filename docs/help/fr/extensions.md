@@ -70,7 +70,7 @@ Le bac à sable n’est pas une isolation de processus/CPU ni une promesse d’i
 
 L’extension **Design** est une table lumineuse pour les images que vous créez avec l’agent Design de CodeNomad dans la **conversation Images** d’un projet. Elle affiche les images, prépare des demandes dans la zone de message et laisse chaque génération aux messages que vous envoyez.
 
-1. Activez la génération d’images dans **Paramètres → Fournisseurs → Images** et connectez un fournisseur qui propose un modèle d’image ([Génération et stockage d'images](providers.md#images)).
+1. Connectez un fournisseur qui propose un modèle d’image. La génération d’images est activée, sauf si elle a été désactivée dans **Paramètres → Fournisseurs → Images** ([Génération et stockage d'images](providers.md#images)).
 2. Dans **Personnaliser le panneau droit → Extensions**, installez **Design** depuis le catalogue ([Examiner et installer sans activer](#install)) après avoir examiné ses permissions ([Contexte, consentement aux ressources et limites du bac à sable](#permissions-sandbox)), puis cochez sa case ([Activer et comprendre la portée](#activate-scope)).
 3. Ouvrez le panneau **Design** et choisissez **Ouvrir la conversation Images**.
 
