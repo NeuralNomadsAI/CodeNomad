@@ -14,6 +14,7 @@ import { nativeDatabaseStorageID } from "./native-database-identity"
 import { verifyHumanAnswerBridge } from "../automation-plugin"
 import { isLocalNativeTool } from "../../missions/native-call-observation"
 import { decisionQuestionTag, fieldDecisionTag } from "../../missions/decision-question-tag"
+import { nativeMessageDataSQL } from "./native-message-data"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -83,7 +84,7 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
   }))
   const question = (sessionID: string, messageID: string, toolCallID: string, name = "question") => Effect.gen(function* () {
     yield* session(sessionID)
-    const message = (yield* query("SELECT id,session_id,type,data FROM session_message WHERE id=?", [messageID]))[0]
+    const message = (yield* query(`SELECT m.id,m.session_id,m.type,${nativeMessageDataSQL} AS data FROM session_message m WHERE m.id=?`, [messageID]))[0]
     const data = message && parse(message.data), content = object(data) && data.content
     const parts = Array.isArray(content) ? content.filter(part => object(part) && part.type === "tool" && part.id === toolCallID) : []
     const part = parts[0]
@@ -240,7 +241,8 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
         [request.parentSessionID, location.project.id, MAX_DISCOVERED_CHILDREN + 1])), MAX_DISCOVERED_CHILDREN)
       for (const child of children) {
         if (typeof child.id !== "string") { complete = false; continue }
-        const messages = bounded(await run(query("SELECT id,data FROM session_message WHERE session_id=? AND type='assistant' AND instr(data,?)>0 LIMIT ?",
+        const messages = bounded(await run(query(`SELECT m.id,${nativeMessageDataSQL} AS data FROM session_message m
+          WHERE m.session_id=? AND m.type='assistant' AND instr(${nativeMessageDataSQL},?)>0 LIMIT ?`,
           [request.parentSessionID, JSON.stringify(child.id), MAX_DELEGATION_MESSAGES + 1])), MAX_DELEGATION_MESSAGES)
         let call: { parentMessageID: string; toolCallID: string } | undefined
         for (const message of messages) {

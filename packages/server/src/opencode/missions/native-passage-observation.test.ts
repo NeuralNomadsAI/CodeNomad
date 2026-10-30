@@ -11,13 +11,14 @@ import { stableToken } from "../../missions/journal"
 test("terminal storage capability checks real columns and JSON projections without rows or effects", async () => {
   const db = new DatabaseSync(":memory:")
   try {
-    db.exec("CREATE TABLE session_message(id TEXT,seq INTEGER,type TEXT,data TEXT); CREATE TABLE kv(key TEXT,value TEXT)")
+    db.exec(`CREATE TABLE session_message(id TEXT,seq INTEGER,type TEXT,data TEXT); CREATE TABLE kv(key TEXT,value TEXT);
+      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT)`)
     const sql: string[] = []
     const graph = Context.make(Context.Service<never, unknown>("@opencode/storage/Database"), { db: { $client: {
       unsafe: (query: string) => { sql.push(query); return { withoutTransform: Effect.sync(() => db.prepare(query).all()) } },
     } } })
     await Effect.runPromise(qualifyNativePassageStorage().pipe(Effect.provide(graph)))
-    assert.equal(sql.length, 2); assert.ok(sql.every(query => query.endsWith("WHERE 0")))
+    assert.equal(sql.length, 3); assert.ok(sql.every(query => query.endsWith("WHERE 0")))
     db.exec("DROP TABLE session_message; CREATE TABLE session_message(id TEXT,type TEXT,data TEXT)")
     await assert.rejects(Effect.runPromise(qualifyNativePassageStorage().pipe(Effect.provide(graph))), /seq/)
   } finally { db.close() }
@@ -29,6 +30,7 @@ test("an old inactive claim remains uncertain across wakes until a correlated na
     await f.start() // admitted, no report: the hard kill cut the coordinator mid-turn
     db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
       CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT,seq INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_inbox(id TEXT,session_id TEXT);
       CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);
       CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
@@ -76,6 +78,7 @@ async function idleFamily(finish?: "completed") {
   if (finish) await f.finish(finish)
   db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
     CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT,seq INTEGER PRIMARY KEY AUTOINCREMENT);
+    CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
     CREATE TABLE session_inbox(id TEXT,session_id TEXT);
     CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);
     CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
@@ -170,6 +173,7 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     await f.finish()
     db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
       CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT,seq INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_inbox(id TEXT,session_id TEXT);
       CREATE TABLE event(aggregate_id TEXT,type TEXT,seq INTEGER);
       CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
@@ -218,6 +222,13 @@ test("read/grep/edit/webfetch/shell completed calls do not block real passage se
     assert.equal(await observe(), undefined)
     content[4].state.status = "completed"
     db.prepare("UPDATE session_message SET data=? WHERE id='msg_tools'").run(JSON.stringify({ content }))
+    assert.equal((await observe())?.result.outcome, "completed")
+    // Split parts override even a stale inline completed copy.
+    content[4].state.status = "running"
+    db.prepare("INSERT INTO session_part VALUES('msg_tools',?,0,'tool',?)").run(f.passage.coordinatorSessionID, JSON.stringify(content[4]))
+    assert.equal(await observe(), undefined, "split running tool blocks settlement")
+    content[4].state.status = "completed"
+    db.prepare("UPDATE session_part SET data=?").run(JSON.stringify(content[4]))
     assert.equal((await observe())?.result.outcome, "completed")
     db.prepare("INSERT INTO session_inbox VALUES('msg_pending',?)").run(f.passage.coordinatorSessionID)
     assert.equal(await observe(), undefined, "an inbox item blocks quiescence")

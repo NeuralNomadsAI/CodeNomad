@@ -9,6 +9,7 @@ import { RECURRENCE_STORAGE_PREFIX, parseRecurrenceDocument, recurrenceDispatchA
 import { stableToken } from "../../missions/journal"
 import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
 import type { MissionNativeRunner } from "./native-service-adapter"
+import { nativeMessageDataSQL } from "./native-message-data"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
@@ -18,8 +19,8 @@ const sessionTag = tag("@opencode/Session"), formTag = tag("@opencode/Form")
 const permissionTag = tag("@opencode/Permission"), shellTag = tag("@opencode/Shell")
 type NativeEffect = Effect.Effect<unknown, unknown>
 const rows = Schema.Array(Schema.Record(Schema.String, Schema.Unknown))
-const runningToolsSQL = `SELECT count(*) AS count FROM session_message, json_each(session_message.data,'$.content') AS part
-  WHERE session_id=? AND session_message.type='assistant' AND json_extract(part.value,'$.type')='tool'
+const runningToolsSQL = `SELECT count(*) AS count FROM session_message m, json_each(${nativeMessageDataSQL},'$.content') AS part
+  WHERE m.session_id=? AND m.type='assistant' AND json_extract(part.value,'$.type')='tool'
   AND json_extract(part.value,'$.state.status') IN ('running','streaming')`
 // Native projects settled busy periods into a durable `idle` message
 // (`outcome: succeeded | failed | interrupted`); the `event` log is only written
@@ -55,6 +56,7 @@ export const qualifyNativePassageStorage = Effect.fn("missions.qualifyPassageSto
   if (!Predicate.isFunction(database?.db?.$client?.unsafe)) throw new Error("Native passage storage unavailable")
   for (const sql of [
     "SELECT id,seq,type,json_extract(data,'$.outcome') AS outcome FROM session_message WHERE 0",
+    "SELECT message_id,session_id,ordinal,type,data FROM session_part WHERE 0",
     "SELECT json_extract(value,'$.recovery.kind') AS kind FROM kv WHERE 0",
   ]) {
     const read = database.db!.$client!.unsafe(sql, []).withoutTransform

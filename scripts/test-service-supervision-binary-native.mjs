@@ -78,7 +78,7 @@ const status = async () => {
 const recorded = name => { result.checks.push(name); console.log(name) }
 try {
   await run(node, [npm, "install", "--global", "--prefix", env.npm_config_prefix, "--no-audit", "--no-fund",
-    "--registry=https://registry.npmjs.org", "@opencode/cli@2.2.1"], 300000)
+    "--registry=https://registry.npmjs.org", "@opencode/cli@2.2.3"], 300000)
   await copyFile(binary, bootstrap)
   const socket = createServer(); await new Promise(resolve => socket.listen(0, "127.0.0.1", resolve))
   const port = socket.address().port; await new Promise(resolve => socket.close(resolve)); assert.notEqual(port, 28894)
@@ -87,8 +87,8 @@ try {
   assert.equal(scope.selectedTarget.binary, binary, "published npm shim resolves to the owned native image")
   serviceMayExist = true
   await settings.control({ serviceKey: key, requestID: randomUUID(), expectedRevision: 0, action: "on" }, () => {})
-  let live = await until(health, value => value.state === "healthy", "initial 2.2.1")
-  assert.equal(readNativeScheduleIncarnation(registration).version, "2.2.1")
+  let live = await until(health, value => value.state === "healthy", "initial 2.2.3")
+  assert.equal(readNativeScheduleIncarnation(registration).version, "2.2.3")
   result.initial = live
   const alternate = path.join(root, "other executable with spaces.exe")
   await copyFile(binary, alternate); selected = alternate
@@ -137,12 +137,12 @@ try {
     probe: async file => ({ valid: true, version: (await run(file, ["--version"])).stdout.trim().replace(/^opencode2? v?/, "") }) })
   assert.deepEqual(await health(), beforeUpgrade)
   assert.deepEqual(readNativeScheduleIncarnation(registration), beforeIdentity)
-  recorded("real native npm upgrade 2.2.1 to 2.2.3 preserves healthy PID/id")
+  recorded("same-version native npm install preserves healthy PID/id")
   await run(bootstrap, ["service", "stop"])
   const externalRecovery = await until(health, value => value.state === "healthy" && value.id !== beforeUpgrade.id,
     "external native upgrade recovery without publication")
   assert.equal(readNativeScheduleIncarnation(registration).version, "2.2.3")
-  recorded("complete same-package native upgrade recovers automatically with CodeNomad closed")
+  recorded("complete same-package native installation recovers automatically with CodeNomad closed")
   await settings.selectBinary()
   assert.deepEqual(await health(), externalRecovery)
   const installed = (await run(binary, ["--version"])).stdout.trim()

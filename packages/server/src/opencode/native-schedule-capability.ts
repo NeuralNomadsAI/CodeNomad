@@ -44,7 +44,7 @@ export function nativeScheduleCapability(document: ObjectValue): { available: tr
   }
   const inputs = (schema: unknown) => {
     const properties = fields(schema)
-    return type(schema, "object") && required(schema, ["sessionID", "when", "prompt"]) && type(properties.sessionID, "string") && type(properties.prompt, "string")
+    return type(schema, "object") && required(schema, ["sessionID", "prompt"]) && type(properties.sessionID, "string") && type(properties.prompt, "string")
       && type(properties.ends, "object") && type(fields(properties.ends).at, "string") && when(properties.when, false)
   }
   let valid = type(fields(fields(document.components?.schemas?.["Config.InfoEncoded"]).experimental).schedules, "boolean")

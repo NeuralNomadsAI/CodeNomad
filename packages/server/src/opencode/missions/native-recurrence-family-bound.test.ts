@@ -110,6 +110,7 @@ test("real native SQL observation walks a 41-session family and bounds one paren
     await f.start(); await f.finish()
     db.exec(`CREATE TABLE session_v2(id TEXT,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,time_suspended INTEGER);
       CREATE TABLE session_message(id TEXT,session_id TEXT,type TEXT,data TEXT,seq INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_inbox(id TEXT,session_id TEXT);
       CREATE TABLE kv(key TEXT PRIMARY KEY,value TEXT);`)
     const coordinator = f.passage.coordinatorSessionID, insert = db.prepare("INSERT INTO session_v2 VALUES(?,?,'project',?,NULL,NULL)")

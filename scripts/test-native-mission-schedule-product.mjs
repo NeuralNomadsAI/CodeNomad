@@ -26,7 +26,7 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
 } })
 assert(values["parent-ready"], "Wait for the parent's explicit final-ready message, then pass --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
-const approved = ["impl/core/product-native", "impl/fix-core/native", "impl/fix-core-2/native"].map(part => path.resolve(process.env.LOCALAPPDATA, `codenomad-agent-scratch/issue-926/${part}`))
+const approved = ["impl/core/product-native", "impl/fix-core/native", "impl/fix-core-2/native", "impl/adopt-223/native"].map(part => path.resolve(process.env.LOCALAPPDATA, `codenomad-agent-scratch/issue-926/${part}`))
 assert(approved.some(base => { const relative = path.relative(base, path.resolve(scratch)); return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) }), "Use an approved native scratch child")
 const kinds = values.kinds.split(","), delayMs = Number(values["delay-ms"]), graceMs = Number(values["grace-ms"])
 const controlsKinds = ["paused-manual", "stop-pending", "flag-off-pause", "stop-preparing", "delete-preparing"]
@@ -219,7 +219,7 @@ async function journey(kind) {
     assert(endpoint && endpoint.url === readNativeScheduleIncarnation(registrationFile).url)
     client = OpenCode.make({ baseUrl: endpoint.url, headers: Service.headers(endpoint) })
     if (endpoint.auth?.password) { secrets.add(endpoint.auth.password); secrets.add(Buffer.from(`${endpoint.auth.username}:${endpoint.auth.password}`).toString("base64")) }
-    const info = await client.server.info({ signal }); assert.equal(info.version, "2.2.1"); assert.equal(info.pid, child.pid)
+    const info = await client.server.info({ signal }); assert.equal(info.version, "2.2.3"); assert.equal(info.pid, child.pid)
     rememberRuntime(endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   }
   const stop = async () => {

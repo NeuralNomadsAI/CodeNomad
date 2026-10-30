@@ -81,6 +81,15 @@ Paths below are relative to `packages/server/src/opencode/missions/`.
 | Session/AISDK hooks | prompt/context/title/compaction/language | Context admission requires the exact durable user message and schedule correlation. Title/compaction/language carry only local technical work. Treat metadata as correlation within service privileges. |
 | Native context messages | `session.context` → native `SessionMessage.Info[]`; synthetic `metadata.notice:"restart"` | Bounded native IDs classify restart notices before model-facing wake extraction. Schedule-bearing or deterministic wake IDs retain strict validation; notice prose supplies no authority. |
 
+The HTTP create payload accepts optional `when` and condition keys `if`/`until`.
+Missions supplies its validated timing and fixed prompt; source conditions stay in
+the business reader. The generated Promise client unwraps the HTTP `{data:Info}`
+envelope for create/get/pause/resume and `{data:Info[]}` for list. Callers consume
+those decoded values directly. Capability recognition validates the complete
+`when` shape independently of its required/optional marker; the read-only
+`scripts/test-native-schedule-openapi.mjs` check exercises versioned native OpenAPI
+documents without imposing a runtime version list.
+
 ## Private service inventory
 
 | Context key / state | Consumed contract | Callers and required checks |
@@ -99,6 +108,13 @@ Paths below are relative to `packages/server/src/opencode/missions/`.
 | `@opencode/example/LocationServiceMap` and Effect RcMap | contextEffect/contextEffectOption, rcMap state tag/map | Same clock: scoped leases, current loaded entry/placement checks. Required cross-Location family coverage stays blocking when an entry or contract is unavailable. |
 | `@opencode/Bus` | listen → unsubscribe Effect; publish(definition,data,{location}) | `native-service-clock.ts`, `native-recurrence-events.ts`: acquire/release listener lifetime, event as wake hint, post-commit invalidation. |
 | `@opencode/Global`, `@opencode/server/ServerInfo` | state/config roots; urls() → string array | `native-managed-owner.ts`: bounded ownership reads, exact executable/database/process namespace, ambiguous identity refusal. `native-schedule-installation.ts` acquires the own-process registration during arming: ≤256 state entries, ≤64 service records of ≤32 KiB, ≤16 advertised URLs, exact public discovery with a four-second deadline. Its guard rechecks native graph values, own PID/incarnation and immutable artifact bytes within the current scoped RPC. Discovery transport uses the public service facade. |
+
+Assistant content follows the native storage projection: ordinal `session_part`
+rows take precedence when present, otherwise the message's inline content applies.
+`native-message-data.ts` supplies that SQL projection to tool quiescence, human
+answer verification/discovery and source digest fencing. Source proofs reread the
+rehydrated bytes inside their existing transaction graph. Storage qualification
+checks the consumed part columns before passage admission.
 
 ## Schedule integration qualification
 

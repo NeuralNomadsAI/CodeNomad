@@ -131,6 +131,7 @@ export class RecurringDayFixture {
       CREATE TABLE event_sequence(aggregate_id TEXT PRIMARY KEY,seq INTEGER,owner_id TEXT);
       CREATE TABLE event(id TEXT PRIMARY KEY,aggregate_id TEXT,seq INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_message(id TEXT PRIMARY KEY,session_id TEXT,type TEXT,data TEXT,seq INTEGER);
+      CREATE TABLE session_part(message_id TEXT,session_id TEXT,ordinal INTEGER,type TEXT,data TEXT);
       CREATE TABLE session_inbox(session_id TEXT,id TEXT,payload TEXT);`)
     const configYamlPath = path.join(this.root, "profile.yaml")
     await writeFile(configYamlPath, "server:\n  environmentVariables: {}\n")

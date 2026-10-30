@@ -48,7 +48,7 @@ try {
   // Only this explicitly acquired distro is started. docker-desktop is untouched.
   assert.equal(await runSupervisionWsl(bridge, ["/usr/bin/id", "-u"]), "1000")
   await runSupervisionWsl(bridge, ["/bin/sh", "-c",
-    'set -eu; test ! -e "$1"; umask 077; mkdir -p "$1/bin" "$1/home" "$1/config/opencode" "$1/state/opencode" "$1/data/opencode" "$1/cache/opencode"; curl -fsSL --max-time 90 -o "$1/bin/archive.tgz" https://github.com/anomalyco/opencode/releases/download/v2.2.1/opencode-linux-x64.tar.gz; tar -xzf "$1/bin/archive.tgz" -C "$1/bin"; rm "$1/bin/archive.tgz"', "fixture-setup", linux], 100000)
+    'set -eu; test ! -e "$1"; umask 077; mkdir -p "$1/bin" "$1/home" "$1/config/opencode" "$1/state/opencode" "$1/data/opencode" "$1/cache/opencode"; curl -fsSL --max-time 90 -o "$1/bin/archive.tgz" https://github.com/anomalyco/opencode/releases/download/v2.2.3/opencode-linux-x64.tar.gz; tar -xzf "$1/bin/archive.tgz" -C "$1/bin"; rm "$1/bin/archive.tgz"', "fixture-setup", linux], 100000)
   const nativeEnvironment = { HOME: `${linux}/home`, XDG_CONFIG_HOME: `${linux}/config`, XDG_STATE_HOME: `${linux}/state`,
     XDG_DATA_HOME: `${linux}/data`, XDG_CACHE_HOME: `${linux}/cache` }
   const service = args => runSupervisionWsl(bridge, ["/usr/bin/env", "-i", ...Object.entries(nativeEnvironment).map(([k, v]) => `${k}=${v}`),

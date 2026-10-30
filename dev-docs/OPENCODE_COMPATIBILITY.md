@@ -12,7 +12,7 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 per-version sections here.
 
 Minimum runtime **2.2.3**, recommended **2.2.5** (`runtime-support.ts`), with
-**2.1.0** client/plugin pins. The minimum carries the image tool contract of
+**2.2.3** client/schema/plugin pins. The minimum carries the image tool contract of
 upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
 the Images gallery, the Design agent and skills and the Images settings: one
 name, `experimental_image_generate`, for the tool, its permission action, its job
@@ -21,7 +21,7 @@ type and its completion notices' `metadata.source` (`IMAGE_TOOL` in
 model is available unless `experimental.image_generate` is `false`
 (`image-settings.ts` reads it that way). Notices wrap their text in
 `<image id="…" state="…">`; the gallery reads the `Saved image: <path> (` line.
-The minimum also provides the replay contract (below) consumed by the pinned 2.1
+The minimum also provides the replay contract (below) consumed by the pinned
 reducer and Code Mode JavaScript run-to-completion, whose regression
 `scripts/test-codemode-jobs-native.mjs` runs in CI against minimum and latest.
 Daemons below the minimum are refused with `native_contract`. Plugins share the

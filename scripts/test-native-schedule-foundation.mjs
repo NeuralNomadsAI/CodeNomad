@@ -78,7 +78,7 @@ const launch = async label => {
     if (!existsSync(registrationFile)) return false
     const registration = JSON.parse(readFileSync(registrationFile))
     if (registration.pid !== child.pid) return false
-    endpoint = await Service.discover({ file: registrationFile, version: "2.2.1" })
+    endpoint = await Service.discover({ file: registrationFile, version: "2.2.3" })
     return !!endpoint
   })
   assert.equal(endpoint.url, `http://127.0.0.1:${port}`)
@@ -312,7 +312,7 @@ try {
   assert(observed.filter(event => event.kind === "language-cache").every(event => event.same))
   assert.equal(observed.filter(event => ["provider-http-hook", "forbidden-lifecycle", "forbidden-child", "forbidden-signal"].includes(event.kind)).length, 0)
   assert.equal(providerRequests.length, 0)
-  save("result", { completed: true, nativeVersion: "2.2.1", casCount: 3, highWater: 3, launchedCount: 0,
+  save("result", { completed: true, nativeVersion: "2.2.3", casCount: 3, highWater: 3, launchedCount: 0,
     coldWakeWithoutProjectClient: true, lostACKNoAutomaticResend: true, forcedCompaction: true,
     remoteTitleAndCompactionLocal: true, providerHTTP: providerRequests.length, forbiddenWakeOperations: 0,
     productInstalledRegistration: false, coreBusinessAdmissionQualified: false })

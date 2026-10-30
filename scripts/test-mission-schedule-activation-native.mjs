@@ -30,7 +30,7 @@ await withProductRuntime(process.argv[2], async ({ root, configDirectory }) => {
   return { update: "disable", snapshots: false, permissions: [{ action: "*", resource: "*", effect: "allow" }] }
 }, async ({ client, root, requests, connection }) => {
   const info = await client.server.info()
-  assert.equal(info.version, "2.2.1")
+  assert.equal(info.version, "2.2.3")
   rememberRuntime(connection.endpoint, { version: info.version, pid: info.pid, discovery: "info" })
   const manager = new WorkspaceManager({ rootDir: root, logger: pino({ level: "silent" }), eventBus: new EventBus(),
     settings: { getOwner: () => ({ environmentVariables: {} }), readEnvironmentForAdmission: async () => ({}) },

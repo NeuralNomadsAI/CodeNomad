@@ -5,6 +5,7 @@ import type { SqlClient } from "effect/sql"
 import { canonicalAuthority } from "../../missions/authority-protocol"
 import { stableToken } from "../../missions/receipt-identity"
 import { nativePassageMessageDigest } from "./native-service-adapter"
+import { nativeMessageDataSQL } from "./native-message-data"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const transactionGraph = new AsyncLocalStorage<Context.Context<never>>()
@@ -49,7 +50,8 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
         pin("SELECT id,seq FROM session_message WHERE session_id=? ORDER BY seq DESC LIMIT 1", [id])
       },
       message: (sessionID: string, id: string, digest: string) => {
-        const result = pin("SELECT id,seq,type,data FROM session_message WHERE session_id=? AND id=? AND length(data)<=262144", [sessionID, id])
+        const result = pin(`SELECT m.id,m.seq,m.type,${nativeMessageDataSQL} AS data FROM session_message m
+          WHERE m.session_id=? AND m.id=? AND length(CAST(${nativeMessageDataSQL} AS BLOB))<=262144`, [sessionID, id])
         const row = result[0]
         if (result.length !== 1 || typeof row.data !== "string" || nativePassageMessageDigest(Schema.decodeUnknownSync(SessionMessage.Info)(
           { ...JSON.parse(row.data), id: row.id, type: row.type })) !== digest) throw new Error("Mission source message changed")

@@ -9,6 +9,13 @@ exclusion. The daily document runtime keeps its own admission and control path.
 transport/local-language primitives. `registerNativeScheduleCarrierFoundation`
 provides a separate no-business-effect qualification composition.
 
+The launch policy, document CAS and passage engine describe business scheduling
+independently of native transport. Only the adapter owns the fixed carrier prompt,
+private calendar facade and own-process HTTP hop. UI configuration projects the
+Missions policy rather than native scripts. The observation port separately
+requires original-input/terminal correlation and whole-family quiescence; a native
+idle or inactive process-local session alone leaves that business proof incomplete.
+
 ## Transport contract
 
 The caller supplies the owned absolute registration path resolved at arming in

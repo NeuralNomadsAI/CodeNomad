@@ -109,7 +109,7 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
   await until(async () => (await schedules.read("fixture", location)).enabled, "schedule activation preserving existing depth default")
   assert.equal((await depths.read("fixture", location)).effectiveDepth, depthBefore)
   assert.equal(requests.length, 0)
-  console.log("PASS native 2.2.1 capability, whole-block precedence, both writer orders, depth 0/removal, effective watcher read, explicit OFF, BOM/EOL/comments, ambiguous JSON/JSONC; zero provider HTTP")
+  console.log("PASS native 2.2.3 capability, whole-block precedence, both writer orders, depth 0/removal, effective watcher read, explicit OFF, BOM/EOL/comments, ambiguous JSON/JSONC; zero provider HTTP")
   console.log("PASS two-document prepared activation, durable fixture-port intent/attempts, lost global ACK adoption before project write and positive effective native acknowledgement")
   console.log("PASS schedule activation preserves the effective native depth of an existing project experimental block")
 }, { projectConfig: true })

@@ -5,6 +5,9 @@ import { nativeScheduleContractFixture as contract } from "./native-schedule-cap
 
 test("native schedule availability recognizes consumed shapes independently of versions and flag values", () => {
   assert.deepEqual(nativeScheduleCapability(contract()), { available: true })
+  const optionalWhen = contract()
+  optionalWhen.components.schemas["Schedule.CreatePayload"].required = ["sessionID", "prompt"]
+  assert.deepEqual(nativeScheduleCapability(optionalWhen), { available: true })
   const future = { ...contract(), info: { version: "99.0.0-future" } }
   assert.deepEqual(nativeScheduleCapability(future), { available: true })
   assert.deepEqual(nativeScheduleCapability({}), { available: false, reason: "missing-api" })
@@ -21,6 +24,7 @@ test("native schedule availability recognizes consumed shapes independently of v
     (value: any) => { value.components.schemas["Schedule.Info"].required = 3 },
     (value: any) => { value.components.schemas["Schedule.When"].anyOf.pop() },
     (value: any) => { value.components.schemas["Schedule.CreatePayload"].properties.when.anyOf.pop() },
+    (value: any) => { delete value.components.schemas["Schedule.CreatePayload"].properties.when },
     (value: any) => { delete value.components.schemas["Config.InfoEncoded"].properties.experimental.properties.schedules },
     (value: any) => { delete value.paths["/api/experimental/schedule/{scheduleID}"].delete.responses["204"] },
   ]) {

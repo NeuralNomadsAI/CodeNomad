@@ -90,7 +90,7 @@ async function start() {
   await until(async () => { try { return (await client.server.info()).pid === child.pid } catch { return false } }, "private ready")
   const info = await client.server.info()
   evidence.incarnations.push({ pid: info.pid, version: info.version })
-  assert.equal(info.version, "2.2.1", "This fixture records the requested exact runtime")
+  assert.equal(info.version, "2.2.3", "This fixture records the requested exact runtime")
 }
 const rpc = () => client.rpc(definition)
 const read = (sessionID, messageID) => rpc().read({ sessionID, ...(messageID ? { messageID } : {}) }, { location: { directory: root } })

@@ -17,7 +17,7 @@
     "@git-diff-view/solid": "^0.0.8",
     "@kobalte/core": "0.13.11",
     "@noble/hashes": "2.4.0",
-    "@opencode/client": "2.2.1",
+    "@opencode/client": "2.2.3",
     "@solidjs/router": "^0.13.0",
     "@suid/material": "^0.19.0",
     "@suid/system": "^0.14.0",
