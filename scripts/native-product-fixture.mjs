@@ -16,10 +16,12 @@ import { stopFixtureChild } from "./native-fixture-guards.mjs"
 // (`CODENOMAD_NATIVE_FIXTURE_PARENT`), or it would read the user's own agents and skills.
 export async function withProductRuntime(cli, prepare, run, { projectConfig = false } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
-  const parent = path.join(projectConfig && process.env.CODENOMAD_NATIVE_FIXTURE_PARENT || os.tmpdir(), "opencode")
-  await mkdir(parent, { recursive: true })
+  const requested = path.join(projectConfig && process.env.CODENOMAD_NATIVE_FIXTURE_PARENT || os.tmpdir(), "opencode")
+  await mkdir(requested, { recursive: true })
+  // The resolved path is both checked and used, so a link out of the home cannot reintroduce its ancestors.
+  const parent = await realpath(requested)
   if (projectConfig && !process.env.CI) {
-    const relative = path.relative(await realpath(os.homedir()), await realpath(parent))
+    const relative = path.relative(await realpath(os.homedir()), parent)
     assert(path.isAbsolute(relative) || relative.split(path.sep)[0] === "..",
       "Project-config fixtures read every ancestor directory: set CODENOMAD_NATIVE_FIXTURE_PARENT outside your home")
   }

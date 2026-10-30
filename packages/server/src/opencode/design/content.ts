@@ -145,12 +145,13 @@ function parseNativeFile(file: string, source: string, keys: readonly string[]):
   return { data, metadata, body: match[2].trim() }
 }
 
-// Plain scalars YAML would read as another type, a comment or a structure are refused.
-const AMBIGUOUS_PLAIN = /(^[-?:,[\]{}#&*!|>'%@`"])|(\s#)|(^(~|null|true|false|yes|no|on|off|[-+]?(\d|\.\d)[\d._]*|\.(inf|nan))$)/i
+// Unquoted values are limited to words YAML always reads as the same text; anything else is quoted.
+const PLAIN_TEXT = /^[A-Za-z][A-Za-z0-9 ._/-]*[A-Za-z0-9]$|^[A-Za-z]$/
+const YAML_KEYWORD = /^(?:null|true|false|yes|no|on|off|y|n)$/i
 
 function scalar(file: string, raw: string): string {
   if (raw.startsWith('"')) return JSON.parse(raw) as string
-  if (AMBIGUOUS_PLAIN.test(raw) || raw !== raw.trim()) throw new Error(`${file}: ambiguous scalar ${JSON.stringify(raw)}`)
+  if (!PLAIN_TEXT.test(raw) || YAML_KEYWORD.test(raw)) throw new Error(`${file}: ambiguous scalar ${JSON.stringify(raw)}`)
   return raw
 }
 

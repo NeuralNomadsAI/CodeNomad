@@ -82,7 +82,8 @@ describe("Design content: native files (AC-14)", () => {
     const skillWith = (from: string, to: string) => () => parseDesignContent({ ...sources, skills: { ...sources.skills,
       "design-free": sources.skills["design-free"].replace(from, to) } })
     assert.throws(skillWith("name: Design Free", "name: Design Free # note"), /ambiguous scalar/)
-    assert.throws(skillWith("name: Design Free", "name: null"), /ambiguous scalar/)
+    for (const value of ["null", "0xAB", "1e3", ".inf", "~", "Design: Free", "Yes"])
+      assert.throws(skillWith("name: Design Free", `name: ${value}`), /ambiguous scalar/, value)
     assert.throws(skillWith("name: Design Free", "name: Design Free\nname: Design Other"), /duplicate name/)
     assert.throws(skillWith("  opencode/autoinvoke: false", "   opencode/autoinvoke: false"), /unexpected nested/)
   })
