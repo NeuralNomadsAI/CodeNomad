@@ -23,6 +23,8 @@
 .mission-create-options > summary { font-weight: 500; }
 .mission-create-options[open] { border-top: 1px solid var(--border-base); padding-top: var(--space-xs); }
 .mission-create-option { margin-block: var(--space-sm); }
+/* The playbook description (the editor's own paragraph style) sits tight under its selector. */
+.mission-editor .mission-create-template > label { margin-block-end: var(--space-xs); }
 .mission-create-option-actions { display: flex; flex-wrap: wrap; gap: var(--space-sm); }
 /* The project's native nesting depth, shared with Preferences (mission-subagent-depth.tsx). */
 .mission-create-options .mission-depth { margin-block: var(--space-sm); }

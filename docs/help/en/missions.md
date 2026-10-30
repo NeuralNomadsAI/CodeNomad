@@ -14,6 +14,8 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 ### Playbooks {#playbooks}
 
+The **Playbook** selector shows the selected playbook's one-sentence description directly below it.
+
 | Playbook | Intended work |
 | --- | --- |
 | Flexible mission | Coordinator chooses a dependency-aware plan for the objective. |

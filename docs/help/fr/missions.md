@@ -14,6 +14,8 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 
 ### Scénarios {#playbooks}
 
+Le sélecteur **Scénario** affiche juste en dessous une description en une phrase du scénario sélectionné.
+
 | Scénario | Travail prévu |
 | --- | --- |
 | Mission flexible | Le coordinateur choisit un plan tenant compte des dépendances pour l’objectif. |

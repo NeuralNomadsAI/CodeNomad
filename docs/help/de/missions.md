@@ -14,6 +14,8 @@ Missionen verbinden einen dauerhaften Projektplan mit nativen OpenCode-Unterhalt
 
 ### Playbooks {#playbooks}
 
+Direkt unter dem Auswahlfeld **Playbook** steht eine einsätzige Beschreibung des ausgewählten Playbooks.
+
 | Playbook | Vorgesehene Arbeit |
 | --- | --- |
 | Flexible Mission | Koordinator wählt einen abhängigkeitsbewussten Plan für das Ziel. |

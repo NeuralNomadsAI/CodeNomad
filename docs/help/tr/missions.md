@@ -14,6 +14,8 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 ### İş akışı rehberleri {#playbooks}
 
+**Rehber** seçicisinin hemen altında seçili rehberin tek cümlelik açıklaması gösterilir.
+
 | Rehber | Amaçlanan çalışma |
 | --- | --- |
 | Esnek görev | Koordinatör, hedef için bağımlılıkları gözeten bir plan seçer. |

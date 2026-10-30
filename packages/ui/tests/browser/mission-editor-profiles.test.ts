@@ -340,3 +340,40 @@ test("recurring creation shares the draft, prefills its title and picks named co
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
+
+test("the Playbook selector describes the selected playbook directly under it and follows the selection", async () => {
+  const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
+    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+  await page.route("**/api/**", route => route.fulfill({ json: {} }))
+  await page.route("**/api/workspaces/fixture/missions**", route => route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/missions/recurrence")
+    ? recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] })
+    : { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } }))
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    await openOptions(page)
+    const playbook = page.locator("form.mission-editor").getByLabel("Playbook", { exact: true })
+    // The real accessible description: the select's aria-describedby target, rendered under it.
+    const described = () => playbook.evaluate(select => {
+      const target = document.getElementById(select.getAttribute("aria-describedby") ?? "")
+      if (!target) return undefined
+      const control = select.getBoundingClientRect(), text = target.getBoundingClientRect(), form = select.closest("form")!.getBoundingClientRect()
+      return { text: target.textContent, below: text.top >= control.bottom && text.top - control.bottom <= 12, visible: text.height > 0,
+        fits: text.left >= form.left && text.right <= form.right && target.scrollWidth <= target.clientWidth }
+    })
+    assert.equal(await playbook.inputValue(), "custom")
+    assert.deepEqual(await described(), { text: "The coordinator chooses a dependency-aware plan for the objective.", below: true, visible: true, fits: true })
+    await playbook.selectOption("wayfinder")
+    assert.deepEqual(await described(), { text: "Maps uncertainties and works through bounded decisions with human questions.", below: true, visible: true, fits: true })
+    const captureDirectory = process.env.CODENOMAD_MISSION_CAPTURE_DIR
+    if (captureDirectory) {
+      await mkdir(captureDirectory, { recursive: true })
+      await page.locator("form.mission-editor .mission-create-options").screenshot({ path: path.join(captureDirectory, "creation-playbook-description.png") })
+    }
+    await playbook.selectOption("compare")
+    assert.match((await described())!.text ?? "", /^Runs the same task with identical briefs on Model A and Model B/)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

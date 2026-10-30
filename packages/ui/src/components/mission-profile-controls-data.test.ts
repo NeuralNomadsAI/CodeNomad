@@ -64,3 +64,16 @@ test("all ten locale bundles own every profile label without English fallback", 
   assert.match(en["missions.control.profiles.debug"], /separate standards and specification axes/)
   assert.match(en["missions.control.profiles.debug"], /exact implementer child/)
 })
+
+test("all ten locale bundles describe every playbook offered by the editor without English fallback", () => {
+  const keys = (["custom", "debug", "wayfinder", "delivery", "compare"] as const).map(id => `missions.control.template.${id}.description`)
+  const locales = { en, de, es, fr, he, ja, ne, ru, tr, "zh-Hans": zhHans }
+  for (const [locale, bundle] of Object.entries(locales)) {
+    const values = keys.map(key => (bundle as Record<string, string>)[key])
+    keys.forEach((key, index) => {
+      assert.ok(values[index]?.trim(), `${locale} describes ${key}`)
+      if (locale !== "en") assert.notEqual(values[index], (en as Record<string, string>)[key], `${locale} translates ${key}`)
+    })
+    assert.equal(new Set(values).size, keys.length, `${locale} gives each playbook its own description`)
+  }
+})

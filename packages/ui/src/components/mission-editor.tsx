@@ -46,7 +46,7 @@ export function MissionEditor(props: {
 }) {
   const { t } = useI18n()
   const ids = { zoneError: createUniqueId(), zoneList: createUniqueId(), objective: createUniqueId(), objectiveError: createUniqueId(),
-    whenError: createUniqueId(), profilesError: createUniqueId(), followedError: createUniqueId() }
+    whenError: createUniqueId(), profilesError: createUniqueId(), followedError: createUniqueId(), templateDescription: createUniqueId() }
   // The system zone stays the default; the native list only offers suggestions when the runtime has it.
   const timeZones = (Intl as { supportedValuesOf?: (key: "timeZone") => string[] }).supportedValuesOf?.("timeZone") ?? []
   const zones = () => timeZones
@@ -386,15 +386,19 @@ export function MissionEditor(props: {
           setCustomTaskMode(model.taskMode !== undefined); setTaskMode(model.taskMode ?? missionTaskModeFor(defaults(), model.template))
           setProfiles(model.profiles === undefined ? missionDefaultsFor(defaults(), model.template) : copyMissionProfiles(model.profiles))
         }} />
-      <label>{t("missions.control.template")}
-        <select aria-label={t("missions.control.template")} value={template()} disabled={locked()} onChange={e => {
-          const next = e.currentTarget.value as MissionMap["template"]
-          setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
-          if (!customTaskMode()) setTaskMode(missionTaskModeFor(defaults(), next))
-        }}>
-          <For each={["custom", "debug", "wayfinder", "delivery", "compare"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
-        </select>
-      </label>
+      {/* The selected playbook's one-sentence description stays visible under its selector. */}
+      <div class="mission-create-template">
+        <label>{t("missions.control.template")}
+          <select aria-label={t("missions.control.template")} aria-describedby={ids.templateDescription} value={template()} disabled={locked()} onChange={e => {
+            const next = e.currentTarget.value as MissionMap["template"]
+            setTemplate(next); setProfiles(customProfiles() ? profilesForTemplate(profiles(), next) : missionDefaultsFor(defaults(), next))
+            if (!customTaskMode()) setTaskMode(missionTaskModeFor(defaults(), next))
+          }}>
+            <For each={["custom", "debug", "wayfinder", "delivery", "compare"] as const}>{id => <option value={id}>{t(`missions.control.template.${id}`)}</option>}</For>
+          </select>
+        </label>
+        <p id={ids.templateDescription}>{t(`missions.control.template.${template()}.description`)}</p>
+      </div>
       <MissionTaskModeControls value={taskMode() ?? "native"} disabled={locked()}
         onChange={value => { setTaskMode(value); setCustomTaskMode(true) }} />
       {/* Native nesting depth is project configuration, shared with every conversation there. */}
