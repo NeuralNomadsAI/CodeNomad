@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
-import { mkdtemp, mkdir, writeFile } from "node:fs/promises"
+import { mkdtemp, mkdir, realpath, writeFile } from "node:fs/promises"
 import { createServer } from "node:http"
 import os from "node:os"
 import path from "node:path"
@@ -17,10 +17,12 @@ import { stopFixtureChild } from "./native-fixture-guards.mjs"
 export async function withProductRuntime(cli, prepare, run, { projectConfig = false } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
   const parent = path.join(projectConfig && process.env.CODENOMAD_NATIVE_FIXTURE_PARENT || os.tmpdir(), "opencode")
-  const relative = path.relative(os.homedir(), parent)
-  assert(!projectConfig || process.env.CI || relative.startsWith("..") || path.isAbsolute(relative),
-    "Project-config fixtures read every ancestor directory: set CODENOMAD_NATIVE_FIXTURE_PARENT outside your home")
   await mkdir(parent, { recursive: true })
+  if (projectConfig && !process.env.CI) {
+    const relative = path.relative(await realpath(os.homedir()), await realpath(parent))
+    assert(path.isAbsolute(relative) || relative.split(path.sep)[0] === "..",
+      "Project-config fixtures read every ancestor directory: set CODENOMAD_NATIVE_FIXTURE_PARENT outside your home")
+  }
   const root = await mkdtemp(path.join(parent, "product-native-"))
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_|npm_config_)/i.test(key)))
   for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)

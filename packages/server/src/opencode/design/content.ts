@@ -118,30 +118,40 @@ function parseNativeFile(file: string, source: string, keys: readonly string[]):
   const data: Record<string, string> = {}
   const metadata: Record<string, string> = {}
   let nested: Record<string, string> | undefined
+  let seenMetadata = false
   for (const line of match[1].split("\n")) {
     if (!line.trim() || line.trimStart().startsWith("#")) continue
     const entry = /^( *)([\w/-]+):(?: (.+))?$/.exec(line)
     if (!entry) throw new Error(`${file}: unsupported frontmatter line ${JSON.stringify(line)}`)
     const [, indent, key, raw] = entry
     if (indent) {
-      if (!nested || raw === undefined) throw new Error(`${file}: unexpected nested ${key}`)
-      nested[key] = scalar(raw)
+      if (indent !== "  " || !nested || raw === undefined) throw new Error(`${file}: unexpected nested ${key}`)
+      if (key in nested) throw new Error(`${file}: duplicate ${key}`)
+      // `metadata` holds YAML booleans such as `opencode/autoinvoke: false`, kept as their text.
+      nested[key] = raw === "true" || raw === "false" ? raw : scalar(file, raw)
       continue
     }
+    if (key in data || key === "metadata" && seenMetadata) throw new Error(`${file}: duplicate ${key}`)
     if (raw === undefined) {
       if (key !== "metadata") throw new Error(`${file}: unsupported map ${key}`)
       nested = metadata
+      seenMetadata = true
       continue
     }
     if (!keys.includes(key)) throw new Error(`${file}: unsupported field ${key}`)
     nested = undefined
-    data[key] = scalar(raw)
+    data[key] = scalar(file, raw)
   }
   return { data, metadata, body: match[2].trim() }
 }
 
-function scalar(raw: string): string {
-  return raw.startsWith('"') ? (JSON.parse(raw) as string) : raw
+// Plain scalars YAML would read as another type, a comment or a structure are refused.
+const AMBIGUOUS_PLAIN = /(^[-?:,[\]{}#&*!|>'%@`"])|(\s#)|(^(~|null|true|false|yes|no|on|off|[-+]?(\d|\.\d)[\d._]*|\.(inf|nan))$)/i
+
+function scalar(file: string, raw: string): string {
+  if (raw.startsWith('"')) return JSON.parse(raw) as string
+  if (AMBIGUOUS_PLAIN.test(raw) || raw !== raw.trim()) throw new Error(`${file}: ambiguous scalar ${JSON.stringify(raw)}`)
+  return raw
 }
 
 function required(file: string, data: Record<string, string>, key: string): string {

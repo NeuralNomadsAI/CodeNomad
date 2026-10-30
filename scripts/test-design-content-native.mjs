@@ -2,7 +2,7 @@
 // are discovered by OpenCode, keep their notices out of the model text, and stay unlisted but loadable.
 // Usage: node --import tsx scripts/test-design-content-native.mjs <absolute-cli>
 import assert from "node:assert/strict"
-import { cp, mkdir, readdir, readFile } from "node:fs/promises"
+import { cp, mkdir, readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
@@ -24,6 +24,11 @@ await withProductRuntime(process.argv[2], async ({ root }) => {
   await mkdir(project)
   await cp(path.join(design, "opencode"), path.join(project, ".opencode"), { recursive: true })
   assert.ok((await readdir(path.join(project, ".opencode"))).includes("NOTICE.md"), "the notices are copied with the files")
+  // A Windows checkout may carry CRLF line endings: the copy always does, so both checkouts are covered.
+  for (const file of [DESIGN_SOURCE_FILES.agent, ...DESIGN_SKILL_IDS.map(DESIGN_SOURCE_FILES.skill)]) {
+    const target = path.join(project, ".opencode", path.relative("opencode", file))
+    await writeFile(target, (await readFile(target, "utf8")).replace(/\r?\n/g, "\r\n"))
+  }
   return {}
 }, async ({ client, requests }) => {
   const location = { directory: project }
@@ -39,15 +44,17 @@ await withProductRuntime(process.argv[2], async ({ root }) => {
   assert.ok(agent, "OpenCode discovers the Design agent")
   assert.equal(agent.mode, "primary")
   assert.equal(agent.description, content.agent.description)
-  assert.equal(agent.system, content.agent.system, "the system prompt is the file body, without the notice")
-  assert.ok(agent.system.startsWith(`${DESIGN_CONTENT_MARK}\n`))
+  // OpenCode keeps a Windows checkout's CRLF line endings; the parser normalizes them.
+  const lf = text => text.replace(/\r\n?/g, "\n")
+  assert.equal(lf(agent.system).trim(), content.agent.system, "the system prompt is the file body, without the notice")
+  assert.ok(lf(agent.system).startsWith(`${DESIGN_CONTENT_MARK}\n`))
   for (const expected of content.skills) {
     const skill = skills.find(item => item.id === expected.id)
     assert.ok(skill, `OpenCode discovers ${expected.id}`)
     assert.equal(skill.name, expected.name)
     assert.equal(skill.description, expected.description)
     assert.equal(skill.autoinvoke, false, `${expected.id} is never listed automatically`)
-    assert.equal(skill.content.trim(), expected.content, `${expected.id} content is the file body, without the notice`)
+    assert.equal(lf(skill.content).trim(), expected.content, `${expected.id} content is the file body, without the notice`)
   }
 
   const session = await client.session.create({ location, agent: "design" })

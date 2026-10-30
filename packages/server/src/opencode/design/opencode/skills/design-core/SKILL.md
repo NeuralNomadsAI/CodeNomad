@@ -33,7 +33,7 @@ This skill holds the method every Design recipe follows. Apply it together with 
 
 - Announce how many images you will generate before calling `image_generate`, for example "I will generate 3 images: one per direction."
 - The number stated in the user's message is the maximum, in any language ("3 image(s):", "Images: 2"). Never generate more, and never more than 4 in one round.
-- Without a stated number, the default is 3 directions × 1 image: three different directions, one image each.
+- Without a stated number, the default is 3 directions × 1 image: three different directions, one image each. With the direction `none`, the default is one image.
 - Each `image_generate` call makes one image. Never generate again unless the user asks for it, even when an image disappoints you: say what you would change and let the user decide.
 
 ## 3. Directions
@@ -46,7 +46,7 @@ A direction is a visual posture added to the prompt. Use the identifier, never a
 - **`editorial`**: print-magazine feel. Paper-white ground with ink-dark tones, a serif display letterform, one restrained deep-red accent used at most twice, generous white space, one decisive crop, no shadows and no rounded cards.
 - **`bold`**: loud and experimental. Oversized letterforms, a visible grid, full-strength black outlines, a hot red accent, an asymmetric 70/30 composition, flat colour with no gradient, deliberate rawness that still reads clearly.
 
-When the user asks for one direction, use it for every image of the round. Otherwise pick the three directions that best fit the brief and say which ones you chose.
+When the user asks for one direction, use it for every image of the round. The `free` recipe uses the direction `none`, the user's prompt as written, unless the user chooses directions. Otherwise pick the three directions that best fit the brief and say which ones you chose.
 
 ## 4. Prompt structure
 

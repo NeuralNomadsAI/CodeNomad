@@ -78,6 +78,20 @@ describe("Design content: native files (AC-14)", () => {
     assert.throws(broken(sources.agent.replace(DESIGN_CONTENT_MARK, "codenomad-design-content: 2")), /must start with/)
     assert.throws(() => parseDesignContent({ ...sources, skills: { ...sources.skills,
       "design-free": sources.skills["design-free"].replace("opencode/autoinvoke: false", "opencode/autoinvoke: true") } }), /autoinvoke must be false/)
+    // YAML would read these differently: refused instead of read as text.
+    const skillWith = (from: string, to: string) => () => parseDesignContent({ ...sources, skills: { ...sources.skills,
+      "design-free": sources.skills["design-free"].replace(from, to) } })
+    assert.throws(skillWith("name: Design Free", "name: Design Free # note"), /ambiguous scalar/)
+    assert.throws(skillWith("name: Design Free", "name: null"), /ambiguous scalar/)
+    assert.throws(skillWith("name: Design Free", "name: Design Free\nname: Design Other"), /duplicate name/)
+    assert.throws(skillWith("  opencode/autoinvoke: false", "   opencode/autoinvoke: false"), /unexpected nested/)
+  })
+
+  it("parses CRLF files as their LF form", () => {
+    const crlf = (text: string) => lf(text).replace(/\n/g, "\r\n")
+    assert.deepEqual(parseDesignContent({ ...sources, agent: crlf(sources.agent),
+      skills: Object.fromEntries(DESIGN_SKILL_IDS.map(id => [id, crlf(sources.skills[id])])) as typeof sources.skills }).skills,
+    content.skills)
   })
 
   it("contains no Open Design CLI, form, artifact or todo protocol, script, foreign URL, template, design system or brand name", () => {
@@ -144,6 +158,9 @@ describe("Design content: rules stated by the text (AC-15)", () => {
     both(/announce how many images you will generate/i, "announcing the count")
     both(/never more than 4/, "the maximum of 4")
     both(/default is 3 directions × 1 image/, "the default of 3 directions × 1 image")
+    both(/direction `none`, the default is one image|one image with the direction `none`/, "one image by default without a direction")
+    assert.match(skill("design-core"), /The `free` recipe uses the direction `none`/, "the free recipe's direction fallback")
+    assert.match(skill("design-free"), /direction `none`/, "the free recipe defaults to no direction")
     both(/Never generate again unless the user asks/, "no regeneration without a request")
     both(/about 1K/, "the 1K size request")
     both(/request written in the prompt, not a control/, "1K as a request, not a guarantee")
