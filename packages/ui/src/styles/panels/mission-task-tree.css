@@ -16,7 +16,7 @@
 .mission-control > .mission-detail > .mission-tree:has(> div[hidden]) { min-height: 0; }
 .mission-control .mission-tree > div:not([hidden]) { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; }
 .mission-control .mission-tree .mission-flow { flex: 1 1 auto; min-height: 0; }
-/* Short layouts (mission-task-scroll.ts): when the rest of the panel leaves no room
+/* Short layouts (mission-panel-scroll.ts): when the rest of the panel leaves no room
    for the group's minimum, the panel scrolls everything and the flow keeps its
    natural height, so nothing is clipped and scrollers never nest. */
 .mission-control:has(> .mission-detail > .mission-tree[data-scroller="panel"]) > .mission-detail { flex-shrink: 0; }

@@ -216,30 +216,43 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
   } finally { await run.close() }
 })
 
-// The controller aims once, then dispatches: Options' first depth result may land in between.
-const DEPTH_OUTCOMES = {
-  supported: "OpenCode effective depth: 1",
-  unsupported: "This OpenCode connection does not expose an editable depth contract.",
-  failed: "Depth could not be verified. Your value is kept; refresh before changing it.",
-} as const
-for (const [outcome, shown] of Object.entries(DEPTH_OUTCOMES)) test(`Create keeps its place when the first depth read (${outcome}) lands between an agent's aim and click`, async () => {
+// The controller aims once, then dispatches: Options' first depth result, or a mission map
+// refresh adding a panel banner while the form is open, may land in between.
+const existing = { ...createdMission({ title: "Existing mission", objective: "Existing mission", template: "custom" }), id: "msn_existing" }
+const map = (extra: Record<string, unknown> = {}) => ({ json: { available: true, projectID: "project", missions: [existing], generatedAt: 1, discardedEvents: 0, ...extra } })
+const depth = (supported: boolean) => ({ json: { location: { directory: "/fixture" }, capability: supported ? { minimum: 0 } : null,
+  effectiveDepth: supported ? 1 : null, project: supported ? { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } : null } })
+const HELD_OUTCOMES = [
+  { name: "a supported first depth read", held: "depth", response: depth(true), shown: "OpenCode effective depth: 1" },
+  { name: "an unsupported first depth read", held: "depth", response: depth(false), shown: "This OpenCode connection does not expose an editable depth contract." },
+  { name: "a failed first depth read", held: "depth", response: { status: 503, json: { error: "unavailable" } },
+    shown: "Depth could not be verified. Your value is kept; refresh before changing it." },
+  { name: "a failed map refresh (stale banner)", held: "map", response: { status: 503, json: { error: "unavailable" } },
+    shown: "Showing the last durable map while reconnection is pending." },
+  { name: "a cleanup-unavailable map", held: "map", response: map({ cleanupUnavailable: true }),
+    shown: "Deletion could not be confirmed. Refresh before trying again." },
+] as const
+for (const outcome of HELD_OUTCOMES) test(`Create keeps its place when ${outcome.name} lands between an agent's aim and click`, async () => {
   const creates: unknown[] = [], requested = Promise.withResolvers<void>(), response = Promise.withResolvers<void>()
+  let holdMap = false
   const run = await open("/automation-editor", async page => {
     await page.setViewportSize({ width: 1100, height: 1500 })
     await page.addInitScript(desktopWindow)
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/storage/config/ui", route => route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "all", profiles }] } } }))
     await page.route("**/subagent-depth*", async route => {
+      if (outcome.held !== "depth") return route.fulfill(depth(true))
       requested.resolve(); await response.promise
-      const supported = outcome === "supported"
-      return route.fulfill(outcome === "failed" ? { status: 503, json: { error: "unavailable" } } : { json: { location: { directory: "/fixture" },
-        capability: supported ? { minimum: 0 } : null, effectiveDepth: supported ? 1 : null,
-        project: supported ? { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } : null } })
+      return route.fulfill(outcome.response)
     })
-    await page.route("**/api/workspaces/fixture/missions**", route => {
+    await page.route("**/api/workspaces/fixture/missions**", async route => {
       const request = route.request()
-      if (request.method() === "GET") return route.fulfill({ json: new URL(request.url()).pathname.endsWith("/missions/recurrence") ? emptyRecurrence()
-        : { available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+      if (request.method() === "GET") {
+        if (new URL(request.url()).pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: emptyRecurrence() })
+        if (!holdMap) return route.fulfill(map())
+        requested.resolve(); await response.promise
+        return route.fulfill(outcome.response)
+      }
       creates.push(request.postDataJSON())
       return route.fulfill({ json: { mission: createdMission(request.postDataJSON()) } })
     })
@@ -251,8 +264,9 @@ for (const [outcome, shown] of Object.entries(DEPTH_OUTCOMES)) test(`Create keep
   try {
     const { page, act, refFor } = run
     await act({ action: "click", ref: await refFor(/button "Create mission"/, "Create mission") })
-    await act({ action: "type", ref: await refFor(/textbox "What should the mission do\?"/, "What should the mission do?"), text: "Hold the depth read" })
-    await act({ action: "click", ref: await refFor(/DisclosureTriangle "Options"/, "Options") })
+    await act({ action: "type", ref: await refFor(/textbox "What should the mission do\?"/, "What should the mission do?"), text: "Hold a read" })
+    if (outcome.held === "depth") await act({ action: "click", ref: await refFor(/DisclosureTriangle "Options"/, "Options") })
+    else { holdMap = true; await page.evaluate(() => window.missionEditorLifetime.invalidate()) }
     await requested.promise
     await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
     const create = page.locator('form.mission-editor button[type="submit"]'), before = await create.boundingBox()
@@ -261,7 +275,7 @@ for (const [outcome, shown] of Object.entries(DEPTH_OUTCOMES)) test(`Create keep
     cdp.command = async (state, method, params) => {
       if (!after && method === "Input.dispatchMouseEvent" && params?.type === "mouseMoved") {
         response.resolve()
-        await page.locator(".mission-depth").getByText(shown, { exact: true }).waitFor()
+        await page.locator(".mission-control").getByText(outcome.shown, { exact: true }).waitFor()
         await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
         after = await create.boundingBox()
       }
@@ -269,8 +283,8 @@ for (const [outcome, shown] of Object.entries(DEPTH_OUTCOMES)) test(`Create keep
     }
     await act({ action: "click", ref })
     cdp.command = command
-    assert.ok(before && after, "Create was measured before and after the depth result")
-    assert.deepEqual(after, before, "the depth result never moves Create")
+    assert.ok(before && after, "Create was measured before and after the read's result")
+    assert.deepEqual(after, before, "the read's result never moves Create")
     await page.locator("form.mission-editor").waitFor({ state: "detached" })
     assert.equal(creates.length, 1, "the aimed click submitted exactly once")
   } finally { cdp.command = command; response.resolve(); await run.close() }

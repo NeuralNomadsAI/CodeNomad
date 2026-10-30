@@ -9,7 +9,7 @@ import { sessions } from "../stores/session-state"
 import { missionProjectView, updateMissionProjectView } from "../stores/mission-view-state"
 import { MissionGraph, orderMissionTasks } from "./mission-graph"
 import { createMissionRecoveryAction } from "./mission-recovery-button"
-import { missionTaskPanelScroll } from "./mission-task-scroll"
+import { missionPanelScroll } from "./mission-panel-scroll"
 
 export type MissionTaskState = "done" | "active" | "input" | "assigned" | "ready" | "waiting" | "blocked" | "failed" | "retired"
 
@@ -61,7 +61,7 @@ export function MissionTaskTree(props: {
   const scope = () => instances().get(props.instanceId)?.folder ?? props.instanceId
   const open = () => missionProjectView(scope()).tasksCollapsed !== true
   let root!: HTMLElement
-  const panelScrolls = missionTaskPanelScroll(() => root)
+  const panelScrolls = missionPanelScroll(() => root)
   return <section ref={root} class="mission-tree mission-disclosure" data-scroller={panelScrolls() ? "panel" : undefined}>
     <h3><button type="button" class="mission-disclosure-trigger" aria-expanded={open()} aria-controls={id}
       onClick={() => updateMissionProjectView(scope(), { tasksCollapsed: open() || undefined })}>
