@@ -20,8 +20,10 @@ async function fixture(t: TestContext, permissions: string[], options: {
   session?: Record<string, unknown>
   /** Runs inside every `session.get`, before its answer (`reads` counts calls per session). */
   onSessionGet?: (sessionID: string, reads: number, signal?: AbortSignal) => unknown
-  onSettingsRead?: () => unknown
+  onSettingsRead?: (signal?: AbortSignal) => unknown
+  onLocationGet?: (signal?: AbortSignal) => unknown
   routeBudgetMs?: number
+  fence?: WorktreeDeletionFence
 } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-route-"))
   const store = new PanelExtensionStore(directory)
@@ -40,7 +42,10 @@ async function fixture(t: TestContext, permissions: string[], options: {
       await options.onSessionGet?.(sessionID, reads[sessionID]!, request?.signal)
       return sessions[sessionID] ?? Promise.reject(new Error("missing"))
     } },
-    location: { get: async ({ location }: any) => ({ directory: location.directory, project: { id: "p" } }) },
+    location: { get: async ({ location }: any, request?: { signal?: AbortSignal }) => {
+      await options.onLocationGet?.(request?.signal)
+      return { directory: location.directory, project: { id: "p" } }
+    } },
     agent: { list: async () => ({ data: [{ id: "build", model: { providerID: "p", id: "agent-model" } },
       { id: "design", system: "codenomad-design-content: 1\nRules" }] }) },
     model: { list: async () => ({ data: [model("text-only", ["text"]), model("agent-model", ["text", "image"]), model("vision", ["text", "image/png"])] }),
@@ -58,12 +63,12 @@ async function fixture(t: TestContext, permissions: string[], options: {
     imagesConversation: { status: "found", sessionID: "ses_images", created: false },
   } as Record<string, unknown>)[method]
   const app = Fastify()
-  registerPanelExtensionApi4Routes(app, { store, worktreeDeletionFence: new WorktreeDeletionFence(),
+  registerPanelExtensionApi4Routes(app, { store, worktreeDeletionFence: options.fence ?? new WorktreeDeletionFence(),
     excludeDesignFolder: async value => { excluded.push(value.directory); return "excluded" },
     checkDesignFolderExclusion: async value => { checked.push(value.directory); return excluded.includes(value.directory) ? "excluded" : "missing" },
     ...(options.routeBudgetMs ? { routeBudgetMs: options.routeBudgetMs } : {}),
-    imageSettings: { read: async () => {
-      await options.onSettingsRead?.()
+    imageSettings: { read: async (_workspace: string, _location: unknown, signal?: AbortSignal) => {
+      await options.onSettingsRead?.(signal)
       return { location: { directory: "/repo" }, mediaStorage: null,
         generation: options.generation === undefined ? { global: true, effective: true, models: [{ ref: "p/img", name: "Img" }] } : options.generation as any }
     } },
@@ -236,8 +241,11 @@ test("routes settle at the deadline and on caller abort, even when a dependency 
     assert.equal((answer as Exclude<typeof answer, "hung">).statusCode, 503)
     assert.equal(readSignal?.aborted, true, `${method}: the session read was cancelled`)
   }
-  const settings = await fixture(t, ["session.context", "session.images.read"], { routeBudgetMs: 30, onSettingsRead: never })
-  assert.notEqual(await within(settings.post("imagesStatus", { directory: "/repo" }), 2000), "hung", "a dependency without a signal")
+  let settingsSignal: AbortSignal | undefined
+  const settings = await fixture(t, ["session.context", "session.images.read"], { routeBudgetMs: 30,
+    onSettingsRead: signal => { settingsSignal = signal; return never() } })
+  assert.notEqual(await within(settings.post("imagesStatus", { directory: "/repo" }), 2000), "hung", "a held image settings read")
+  assert.equal(settingsSignal?.aborted, true, "the image settings read was cancelled")
 
   // Caller abort, with a dependency that ignores signals: the route stops awaiting and settles.
   let entered!: () => void
@@ -252,6 +260,21 @@ test("routes settle at the deadline and on caller abort, even when a dependency 
   caller.abort()
   await assert.rejects(response)
   assert.notEqual(await within(settled, 2000), "hung", "the abandoned route settled")
+})
+
+test("a conversation route stopped at its deadline releases the worktree-deletion fence; its Location read gets the signal", async t => {
+  for (const method of ["conversationStatus", "conversationOpen", "conversationNew"] as const) {
+    const fence = new WorktreeDeletionFence(300)
+    let readSignal: AbortSignal | undefined, entered = false
+    const held = await fixture(t, ["session.context", "images.conversation"], { fence, routeBudgetMs: 200,
+      onLocationGet: signal => { entered = true; readSignal = signal; return never() } })
+    const answer = await within(held.post(method, method === "conversationStatus" ? { directory: "/repo" } : { directory: "/repo", title: "Images" }), 2000)
+    assert.notEqual(answer, "hung", `${method} answered`)
+    assert.equal(entered, true, `${method}: the held Location read was reached inside the fence`)
+    assert.equal(await within(fence.run("/repo", ["/repo"], async () => "deleted").catch(error => String(error)), 2000), "deleted",
+      `${method}: a following deletion proceeds`)
+    assert.equal(readSignal?.aborted, true, `${method}: location.get was cancelled`)
+  }
 })
 
 test("preferences routes: get/set through the store; a corrupt store answers unavailable without rewriting", async t => {

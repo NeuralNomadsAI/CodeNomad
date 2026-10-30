@@ -307,7 +307,10 @@ await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" |
   store, another digest or a missing package answers `unavailable`, never rewriting the
   file. An invalid stored entry alone reads `{}`. Panels keep only their own display
   settings there; never treat preferences as a security boundary.
-- **Channel** (`api4-channel.ts`): one dispatcher per mounting. The bridge refuses a
+- **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
+  and method names select only own entries of `Map`s; never index an object with frame
+  data (inherited names such as `constructor` would run). Inputs are validated per
+  method, and deferred host actions are host functions only (`typeof after === "function"`). The bridge refuses a
   fifth pending request and the host refuses one too, so the cap holds for any sender on
   the port. Each request is answered or failed within 19.5 s (the bridge's own limit is
   20 s), its fetch aborted so the route cancels the plugin call. Results after unmount, a
@@ -318,7 +321,9 @@ await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" |
   conversation the user picks meanwhile wins; the phone panel still closes).
 - **Server routes** settle on their 19 s deadline or the caller's departure even while a
   read still waits: the answer races the abort, and the signal reaches every daemon read
-  the route makes (each also bounded to 8 s). Each read registers a fence; after the last
+  the route makes (each also bounded to 8 s), image settings included. The conversation
+  helper (`resolveImagesConversationAt`) unwinds on abort too, so its worktree-deletion
+  fence is released at once. Each read registers a fence; after the last
   read the route re-reads the session (same Location, still owned) or the Location's
   ownership, then the extension's consent, then asserts every connection it read through
   as current, synchronously, before answering. Any change fails the request.

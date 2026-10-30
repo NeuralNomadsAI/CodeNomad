@@ -372,6 +372,50 @@ test("a conversation selected while the opened one hydrates stays selected", asy
   } finally { await page.close() }
 })
 
+// An author who takes the one-use port itself, bypassing the bridge.
+const rawPanel = `<p id="ctx"></p><script>
+  let port; const answers = [];
+  window.addEventListener('message', event => { if (event.data?.type === 'codenomad:init') { port = event.ports[0];
+    port.addEventListener('message', message => { if (message.data?.id >= 900) answers.push(message.data) }); port.start(); } });
+  window.raw = messages => { for (const message of messages) port.postMessage(message); };
+  window.answers = () => answers.slice();
+  codenomad.onContext(context => { document.querySelector('#ctx').textContent = String(context.sessionId) + ':' + context.apiVersion; });
+</script>`
+const hostile = (type: string, capabilities: string[]) => {
+  const names = ["constructor", "__proto__", "toString", "hasOwnProperty", "valueOf", "__defineGetter__"]
+  let id = 900
+  return capabilities.flatMap(capability => names.map(method => ({ type, id: id++, ...(capability ? { capability } : {}), method,
+    input: { result: { pwned: true }, after: "window.top.__pwned = (window.top.__pwned || 0) + 1", thumbnail: false } })))
+}
+
+test("raw port: inherited method names never dispatch and frame data never becomes a host action", async () => {
+  for (const [apiVersion, permissions, type, capabilities] of [
+    [4, ALL, "api4:request", ["images", "composer", "conversation", "preferences"]],
+    [2, ["session.context", "session.assets.read"], "assets:request", [""]],
+    [3, ["session.context", "repository.workItems.read"], "workItems:request", [""]],
+  ] as const) {
+    installed = await readPanelExtensionArchive(fixtureArchive(rawPanel, { apiVersion, permissions }))
+    await store.install(installed); await store.activate(installed.manifest.id, installed.digest, true)
+    const { page, errors } = await open()
+    try {
+      await page.getByRole("tab", { name: "Session example", exact: true }).click()
+      await frameOf(page).locator("#ctx").filter({ hasText: `ses_work:${apiVersion}` }).waitFor()
+      const messages = hostile(type, [...capabilities])
+      await frameOf(page).locator("body").evaluate((_body, value) => (window as any).raw(value), messages)
+      await page.waitForTimeout(400)
+      assert.equal(await page.evaluate(() => (window as any).__pwned), undefined, `API ${apiVersion}: nothing executed in the host`)
+      const answers = await frameOf(page).locator("body").evaluate(() => (window as any).answers())
+      for (const answer of answers) assert.equal(answer.error, true, `API ${apiVersion}: ${JSON.stringify(answer)}`)
+      if (apiVersion === 4) assert.equal(answers.length, messages.length, "every API 4 request is refused")
+      assert.deepEqual(errors, [])
+    } finally {
+      await page.close()
+      await store.remove(installed.manifest.id, installed.digest)
+      installed = undefined
+    }
+  }
+})
+
 test("p95 under one second for status, gallery, reads up to 3 MiB, conversation status/open and prefill", async () => {
   await install()
   const { page } = await open()

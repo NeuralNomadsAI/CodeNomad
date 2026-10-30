@@ -12,6 +12,7 @@ const MEDIA_STORAGE = ["experimental", "media_blob"]
 export const IMAGE_MODEL_REF = /^[^/#]+\/[^#]+(?:#[^#]+)?$/
 
 type ExperimentalProperties = Record<string, unknown> | undefined
+const bounded = (ms: number, signal?: AbortSignal) => signal ? AbortSignal.any([AbortSignal.timeout(ms), signal]) : AbortSignal.timeout(ms)
 
 export function imageSettingsCapability(document: Record<string, any>) {
   const properties: ExperimentalProperties = document.components?.schemas?.["Config.InfoEncoded"]?.properties?.experimental?.properties
@@ -59,15 +60,16 @@ export class ImageSettings {
   constructor(private readonly configuration: Pick<PluginControls, "readConfigDocuments" | "editConfigDocument">,
     private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection">) {}
 
-  private async context(workspaceId: string, location: PluginControlLocation) {
+  private async context(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal) {
     const connection = await this.manager.getSharedServiceConnection(workspaceId)
     if (!connection) throw new PluginControlsError("OpenCode is unavailable", "unavailable")
     // Document acquisition proves directory ownership before any native request.
     const snapshot = await this.configuration.readConfigDocuments(workspaceId, location)
+    signal?.throwIfAborted()
     connection.assertCurrent()
-    const contract = await readRuntimeContract(connection.endpoint, connection.fetch, AbortSignal.timeout(5_000))
+    const contract = await readRuntimeContract(connection.endpoint, connection.fetch, bounded(5_000, signal))
     connection.assertCurrent()
-    return { ...snapshot, connection, capability: imageSettingsCapability(contract) }
+    return { ...snapshot, connection, signal, capability: imageSettingsCapability(contract) }
   }
 
   /** `null` when the native catalog cannot be read; the configured choice stays readable without it. */
@@ -78,11 +80,12 @@ export class ImageSettings {
     let data: unknown
     try {
       const response = await context.connection.fetch(url, {
-        headers: Service.headers(context.connection.endpoint), redirect: "error", signal: AbortSignal.timeout(5_000),
+        headers: Service.headers(context.connection.endpoint), redirect: "error", signal: bounded(5_000, context.signal),
       })
       if (response.ok) data = (await response.json() as { data?: unknown }).data
       else await response.body?.cancel()
     } catch { data = undefined }
+    context.signal?.throwIfAborted()
     // Every catalog outcome, failures included, still belongs to the connection that produced the rest of the snapshot.
     context.connection.assertCurrent()
     if (!Array.isArray(data)) return null
@@ -90,8 +93,9 @@ export class ImageSettings {
       ? [{ ref: `${model.providerID}/${model.id}`, name: typeof model.name === "string" && model.name ? model.name : model.id }] : [])
   }
 
-  async read(workspaceId: string, location: PluginControlLocation): Promise<ImageSettingsSnapshot> {
-    const context = await this.context(workspaceId, location)
+  /** `signal` cancels the native reads (each also bounded to 5 s). */
+  async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<ImageSettingsSnapshot> {
+    const context = await this.context(workspaceId, location, signal)
     const global = context.documents.find(item => item.scope === "global")
     const settings = documents(context.entries)
 

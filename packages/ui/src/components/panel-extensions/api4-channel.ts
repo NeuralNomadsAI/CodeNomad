@@ -20,6 +20,7 @@ const MAX_PENDING = 4, PREFILL_INTERVAL_MS = 1_000, CHANGE_DELAY_MS = 300
 const requestSchema = z.object({ type: z.literal("api4:request"), id: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
   capability: z.enum(["images", "composer", "conversation", "preferences"]), method: z.string().max(32), input: z.unknown() }).strict()
 const grants = { images: "session.images.read", composer: "composer.prefill", conversation: "images.conversation", preferences: "panel.preferences" } as const
+const empty = z.object({}).strict()
 const listSchema = z.object({ cursor: z.string().max(4096).optional() }).strict()
 const readSchema = z.object({ target: assetTargetSchema, thumbnail: z.boolean() }).strict()
 const prefillSchema = z.object({ text: z.string().max(64 * 1024), refs: z.array(z.union([assetTargetSchema, generationTargetSchema])).max(PREFILL_LIMITS.refs).optional() }).strict()
@@ -96,10 +97,14 @@ export function useApi4Channel(props: {
   onCleanup(() => { disposed = true; clearTimeout(timer); abort(); pending.clear() })
 
   const location = () => getActiveCatalogLocation(props.instanceId).directory
-  const methods: Record<keyof typeof grants, Record<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>> = {
-    images: {
-      status: async (_input, signal) => ({ result: await panelExtensionsApi4.imagesStatus(authority,
-        session ? { sessionID: session } : { directory: location() }, signal) }),
+  // Frame-supplied names select only these own entries (Maps, never property lookups on objects).
+  const table = (entries: Record<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>) => new Map(Object.entries(entries))
+  const methods = new Map<keyof typeof grants, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>>(Object.entries({
+    images: table({
+      status: async (input, signal) => {
+        empty.parse(input)
+        return { result: await panelExtensionsApi4.imagesStatus(authority, session ? { sessionID: session } : { directory: location() }, signal) }
+      },
       list: async (input, signal) => {
         const { cursor } = listSchema.parse(input)
         // Without a displayed conversation the gallery is empty.
@@ -118,15 +123,19 @@ export function useApi4Channel(props: {
         } catch { return { result: { status: "not-previewable" } } }
         return { result: request.thumbnail ? { status: "asset", ...await thumbnail(image) } : image }
       },
-    },
-    composer: { prefill: (input, signal) => prefill(input, signal) },
-    conversation: {
-      status: async (_input, signal) => ({ result: await panelExtensionsApi4.conversationStatus(authority, location(), session ?? undefined, signal) }),
-      open: (_input, signal) => conversation("open", signal),
-      startNew: (_input, signal) => conversation("new", signal),
-    },
-    preferences: {
-      get: async (_input, signal) => {
+    }),
+    composer: table({ prefill: (input, signal) => prefill(input, signal) }),
+    conversation: table({
+      status: async (input, signal) => {
+        empty.parse(input)
+        return { result: await panelExtensionsApi4.conversationStatus(authority, location(), session ?? undefined, signal) }
+      },
+      open: (input, signal) => { empty.parse(input); return conversation("open", signal) },
+      startNew: (input, signal) => { empty.parse(input); return conversation("new", signal) },
+    }),
+    preferences: table({
+      get: async (input, signal) => {
+        empty.parse(input)
         const answer = await panelExtensionsApi4.preferencesGet(authority, signal)
         return { result: answer.status === "ok" ? answer.value : "unavailable" }
       },
@@ -138,8 +147,8 @@ export function useApi4Channel(props: {
         if (text !== undefined && new TextEncoder().encode(text).length > PANEL_EXTENSION_LIMITS.preferencesBytes) return { result: "too-large" }
         return { result: (await panelExtensionsApi4.preferencesSet(authority, value, signal)).status }
       },
-    },
-  }
+    }),
+  }) as Array<[keyof typeof grants, Map<string, (input: unknown, signal: AbortSignal) => Promise<Answer>>]>)
 
   async function conversation(mode: "open" | "new", signal: AbortSignal): Promise<Answer> {
     const result = await resolveImagesConversation(props.instanceId, mode,
@@ -195,14 +204,14 @@ export function useApi4Channel(props: {
     }
     const deadline = setTimeout(() => { controller.abort(new Error("Deadline")); answer({ error: true }) }, API4_HOST_DEADLINE_MS)
     try {
-      const run = methods[capability][method]
-      if (!granted(grants[capability]) || !run || !connected || !nativeConnected || pending.size >= MAX_PENDING) throw new Error("Unavailable")
+      const run = methods.get(capability)?.get(method)
+      if (!granted(grants[capability]) || typeof run !== "function" || !connected || !nativeConnected || pending.size >= MAX_PENDING) throw new Error("Unavailable")
       pending.add(controller)
       const { result, after } = await run(input, controller.signal)
       if (!current() || controller.signal.aborted) throw new Error("Stale")
       // Host actions that remove the frame (navigation, closing the phone panel) wait one
-      // task, so the frame handles its answer first.
-      if (answer({ result }) && after) setTimeout(after, 0)
+      // task, so the frame handles its answer first. Only host functions, never a string.
+      if (answer({ result }) && typeof after === "function") setTimeout(() => after(), 0)
     } catch {
       answer({ error: true })
     }

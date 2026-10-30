@@ -22,7 +22,7 @@ export async function readPanelImagesStatus(deps: { imageSettings: Pick<ImageSet
   workspaceId: string, location: LocationRef, session?: { agent?: unknown; model?: unknown }, signal?: AbortSignal): Promise<PanelImagesStatus> {
   const request = { location: { directory: location.directory } }, options = { ...locationRequestOptions(location), ...(signal ? { signal } : {}) }
   const [settings, agents, models, fallback] = await Promise.all([
-    deps.imageSettings.read(workspaceId, { directory: location.directory }),
+    deps.imageSettings.read(workspaceId, { directory: location.directory }, signal),
     deps.client.agent.list(request, options),
     session ? deps.client.model.list(request, options) : undefined,
     session ? deps.client.model.default(request, options).catch(() => undefined) : undefined,

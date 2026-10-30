@@ -17,6 +17,7 @@ export interface ImagesConversationRouteDeps {
 
 const requestSchema = imagesConversationInputSchema.extend({ directory: z.string().min(1).max(4096) }).strict()
 const unavailable = { status: "blocked", reason: "unavailable" } as const
+const READ_TIMEOUT_MS = 8_000
 
 /** Why a conversation request was refused before reaching OpenCode's answer. */
 export type ImagesConversationRefusal = "denied" | "deleting"
@@ -35,18 +36,24 @@ export async function resolveImagesConversationAt(deps: ImagesConversationRouteD
   const manager = deps.workspaceManager
   // Authorize the caller's directory before any OpenCode request: reading a
   // Location boots its services (configuration discovery, plugins).
-  if (!await manager.ownsLocation(workspaceId, { directory })) return "denied"
+  if (!await manager.ownsLocation(workspaceId, { directory }, undefined, options.signal)) return "denied"
   const identity = await manager.getWorktreeIdentityForPath(workspaceId, directory)
   if (!identity) return "denied"
   const release = deps.worktreeDeletionFence.enter([identity])
   if (!release) return "deleting"
-  try {
+  // An aborted caller unwinds at once, releasing the deletion fence even while a read still waits.
+  try { return await untilAborted(options.signal, admitted()) } finally { release() }
+
+  async function admitted(): Promise<ImagesConversationResponse | ImagesConversationRefusal> {
     const client = await manager.getSharedServiceClient()
     // Await plugin registration before reading the authorized Location.
     await manager.desktopPluginsReady()
     options.signal?.throwIfAborted()
-    const location = await client.location.get({ location: { directory } }).then(readLocationRef, () => undefined)
-    if (!location || location.directory !== directory || !await manager.ownsLocation(workspaceId, location, client)) return "denied"
+    const read = AbortSignal.timeout(READ_TIMEOUT_MS)
+    const location = await client.location.get({ location: { directory } }, { signal: options.signal ? AbortSignal.any([read, options.signal]) : read })
+      .then(readLocationRef, () => undefined)
+    options.signal?.throwIfAborted()
+    if (!location || location.directory !== directory || !await manager.ownsLocation(workspaceId, location, client, options.signal)) return "denied"
     let result: ImagesConversationResponse
     try {
       const timeout = AbortSignal.timeout(options.rpcTimeoutMs ?? 15_000)
@@ -67,7 +74,19 @@ export async function resolveImagesConversationAt(deps: ImagesConversationRouteD
       toHost: servicePath => manager.getHostPathForServicePath(workspaceId, servicePath),
     })
     return { ...result, gitExclusion }
-  } finally { release() }
+  }
+}
+
+/** `work`, or a rejection as soon as `signal` aborts (without a signal, `work` itself). */
+function untilAborted<T>(signal: AbortSignal | undefined, work: Promise<T>): Promise<T> {
+  if (!signal) return work
+  work.catch(() => {})
+  if (signal.aborted) return Promise.reject(signal.reason)
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener("abort", abort, { once: true })
+    work.then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
+  })
 }
 
 export function registerImagesConversationRoute(app: FastifyInstance, deps: ImagesConversationRouteDeps): void {
