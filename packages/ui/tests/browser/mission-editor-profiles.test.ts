@@ -112,11 +112,13 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
   })
   await page.route("**/workspaces/fixture/instance/api/model**", route => {
     catalogReads.push(route.request().url())
+    const model = { status: "active", cost: [], limit: { context: 1, output: 1 } }
     return route.fulfill({ json: { data: [
-      { providerID: "p", id: "m", enabled: true, capabilities: { tools: true }, variants: [{ id: "high" }, { id: "low" }] },
-      { providerID: "p", id: "disabled", enabled: false, capabilities: { tools: true }, variants: [] },
+      { ...model, providerID: "p", id: "m", name: "Model M", enabled: true, capabilities: { tools: true }, variants: [{ id: "high" }, { id: "low" }] },
+      { ...model, providerID: "p", id: "disabled", name: "Disabled", enabled: false, capabilities: { tools: true }, variants: [] },
     ] } })
   })
+  await page.route("**/workspaces/fixture/instance/api/provider**", route => route.fulfill({ json: { data: [{ id: "p", name: "Provider P" }] } }))
   try {
     await page.goto(url)
     // Reuse the fixture's real owned-instance store and generated Promise client.

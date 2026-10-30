@@ -108,6 +108,8 @@ Tant que CodeNomad fonctionne, chaque conversation d’agent du projet, coordina
 
 **Valeur native par défaut** et **Global** diffèrent : le premier demande les valeurs par défaut propres à OpenCode, le second hérite du choix global ; choisir les valeurs natives par défaut dans la portée d’un scénario reste une exception explicite. La disponibilité du catalogue est vérifiée ; un profil demandé ne prouve pas celui qu’utilise actuellement une conversation. Les autorisations natives et la profondeur configurée régissent toujours les appels d’assistants internes dans les deux modes de tâches.
 
+Chaque liste **Modèle** affiche ce qu’affiche le sélecteur **Modèle** de la conversation, sous les mêmes noms et groupé par fournisseur : les modèles masqués en sont exclus et, tant que le filtrage limité aux favoris est actif, les autres modèles aussi (voir [Visibilité des modèles, favoris et Réflexion](providers.md#models)). Les modèles sans prise en charge des outils sont également exclus. Un modèle enregistré absent de la liste reste sélectionné ; **Indisponible** signale celui que le projet ne propose plus.
+
 Un choix refusé ou non confirmé n’est jamais renvoyé : les valeurs enregistrées sont réaffichées, et **Recharger** n’apparaît que lorsqu’elles ne peuvent pas être lues. Si un changement de profondeur n’est pas confirmé, votre valeur est conservée ; utilisez **Actualiser la profondeur du projet** avant un autre changement. N’interprétez pas **Profondeur OpenCode effective inconnue** comme zéro ou désactivée.
 
 ## Réutiliser une consigne enregistrée {#saved-briefs}

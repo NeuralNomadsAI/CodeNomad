@@ -404,7 +404,7 @@ export function MissionEditor(props: {
       {/* Native nesting depth is project configuration, shared with every conversation there. */}
       <MissionSubagentDepth instanceId={props.instanceId} directory={props.directory ?? props.viewDirectory} active={() => optionsOpen() && isActive()} />
       <section class="mission-create-option" aria-label={t("missions.create.agents")} aria-describedby={errorFor("profiles") ? ids.profilesError : undefined}>
-        <MissionProfileSummary template={template()} profiles={profiles()} />
+        <MissionProfileSummary instanceId={props.instanceId} template={template()} profiles={profiles()} />
         {/* Catalog-backed selectors mount (and read the native catalog) only on demand. */}
         <details class="mission-profile-optional" open={profileDetailsOpen()} onToggle={event => setProfileDetailsOpen(event.currentTarget.open)}>
           <summary>{t("missions.create.agents")}</summary>

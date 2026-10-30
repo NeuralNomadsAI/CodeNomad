@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { changeMissionProfile, changeProfileModel, legalProfileAgents, modelSelectionKey, profilesForTemplate, setMissionProfileRole } from "./mission-profile-controls-data"
+import { changeMissionProfile, changeProfileModel, legalProfileAgents, modelSelectionKey, profileModelGroups, profileModelKey, profilesForTemplate, setMissionProfileRole } from "./mission-profile-controls-data"
 import { missionMessages as en } from "../lib/i18n/messages/en/missions"
 import { missionMessages as de } from "../lib/i18n/messages/de/missions"
 import { missionMessages as es } from "../lib/i18n/messages/es/missions"
@@ -22,13 +22,26 @@ test("root/child/independent agent legality is explicit and never assumes a prim
   assert.deepEqual(legalProfileAgents(agents, "independent").map(agent => agent.id), ["root", "both"])
 })
 
+const model = (providerId: string, id: string, name: string, providerName = providerId) => ({ providerId, id, name, providerName })
+
 test("changing model clears variant and ambiguous native IDs remain distinct", () => {
-  const models = [{ providerID: "a:b", id: "c", variants: [{ id: "high" }] }, { providerID: "a", id: "b:c", variants: [] }]
-  assert.notEqual(modelSelectionKey(models[0]), modelSelectionKey(models[1]))
-  assert.deepEqual(changeProfileModel({ agent: "child", model: { providerID: "a:b", id: "c", variant: "high" } }, modelSelectionKey(models[1]), models), {
+  const models = [{ ...model("a:b", "c", "C"), variantKeys: ["high"] }, model("a", "b:c", "B C")]
+  assert.notEqual(profileModelKey(models[0]), profileModelKey(models[1]))
+  assert.equal(profileModelKey(models[1]), modelSelectionKey({ providerID: "a", id: "b:c" }), "catalog and saved models share one key")
+  assert.deepEqual(changeProfileModel({ agent: "child", model: { providerID: "a:b", id: "c", variant: "high" } }, profileModelKey(models[1]), models), {
     agent: "child", model: { providerID: "a", id: "b:c" },
   })
   assert.deepEqual(changeProfileModel({ agent: "child" }, "", models), { agent: "child" })
+})
+
+test("model groups follow the shown list by provider and keep a saved model it leaves out in its place", () => {
+  const shown = [model("anthropic", "opus", "Opus", "Anthropic"), model("openai", "gpt", "GPT", "OpenAI")]
+  const groups = (saved?: ReturnType<typeof model>) => profileModelGroups(shown, saved)
+    .map(group => [group.providerName, group.models.map(item => item.name)])
+  assert.deepEqual(groups(), [["Anthropic", ["Opus"]], ["OpenAI", ["GPT"]]])
+  assert.deepEqual(groups(shown[1]), groups(), "a shown choice is not repeated")
+  assert.deepEqual(groups(model("anthropic", "haiku", "Haiku", "Anthropic")), [["Anthropic", ["Haiku", "Opus"]], ["OpenAI", ["GPT"]]])
+  assert.deepEqual(groups(model("zen", "free", "Free", "OpenCode Zen")), [["Anthropic", ["Opus"]], ["OpenAI", ["GPT"]], ["OpenCode Zen", ["Free"]]])
 })
 
 test("profile edits preserve other roles and explicit template switch preserves only legal presets", () => {

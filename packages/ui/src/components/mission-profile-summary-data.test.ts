@@ -1,7 +1,15 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { missionProfileRoles } from "../../../server/src/missions/playbook-profiles"
-import { groupMissionProfileSummary } from "./mission-profile-summary-data"
+import { groupMissionProfileSummary, missionExecutionLabel } from "./mission-profile-summary-data"
+
+test("labels name known models and keep exact IDs for the others", () => {
+  const execution = { agent: "build", model: { providerID: "claude-code", id: "claude-opus-5-5[1m]", variant: "high" } }
+  assert.equal(missionExecutionLabel(execution), "build / claude-code/claude-opus-5-5[1m] / high")
+  assert.equal(missionExecutionLabel(execution, model => model.id === "claude-opus-5-5[1m]" ? "Opus 5.5 Fast" : undefined), "build / Opus 5.5 Fast / high")
+  assert.equal(missionExecutionLabel({ model: { providerID: "p", id: "m" } }, () => undefined), "p/m")
+  assert.equal(missionExecutionLabel({}, () => "never"), undefined)
+})
 
 test("all omitted/explicit native default roles form a single choice", () => {
   for (const template of ["custom", "wayfinder", "debug", "delivery", "compare"] as const) {
