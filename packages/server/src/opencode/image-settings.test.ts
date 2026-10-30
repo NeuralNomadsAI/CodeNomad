@@ -225,3 +225,35 @@ test("global image settings edit JSONC in place and report project overrides", a
     assert.equal(response.json().mediaStorage.global, true)
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
 })
+
+test("a caller's signal cancels the native configuration reads behind image settings", { timeout: 10_000 }, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "image-settings-signal-"))
+  try {
+    const project = path.join(root, "project")
+    await mkdir(project)
+    const seen: Array<AbortSignal | undefined> = []
+    const held = (options?: { signal?: AbortSignal }) => new Promise<never>((_resolve, reject) => {
+      seen.push(options?.signal)
+      options?.signal?.addEventListener("abort", () => reject(options.signal!.reason), { once: true })
+    })
+    const connection: any = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "private" } },
+      assertCurrent: () => {}, fetch: async () => Response.json(contract(both)),
+      client: { config: { get: (_input: unknown, options?: { signal?: AbortSignal }) => held(options) },
+        plugin: { list: (_input: unknown, options?: { signal?: AbortSignal }) => held(options) } } }
+    const manager: any = {
+      get: () => ({}), getSharedServiceConnection: async () => connection,
+      getServiceDirectoryForPath: async (_id: string, directory: string) => directory,
+      ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",
+      getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
+      getServiceWslDistro: () => undefined, getHostPathForServicePath: async (_id: string, value: string) => value,
+    }
+    const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} }, logger: {} as any })
+    const settings = new ImageSettings(controls, manager)
+    const caller = new AbortController()
+    const pending = settings.read("w", { directory: project }, caller.signal)
+    setTimeout(() => caller.abort(new Error("caller left")), 20)
+    await assert.rejects(pending)
+    assert.equal(seen.length, 2, "configuration and plugin reads both started")
+    assert.ok(seen.every(signal => signal?.aborted), "both native reads received the caller's signal and were cancelled")
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

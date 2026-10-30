@@ -64,7 +64,7 @@ export class ImageSettings {
     const connection = await this.manager.getSharedServiceConnection(workspaceId)
     if (!connection) throw new PluginControlsError("OpenCode is unavailable", "unavailable")
     // Document acquisition proves directory ownership before any native request.
-    const snapshot = await this.configuration.readConfigDocuments(workspaceId, location)
+    const snapshot = await this.configuration.readConfigDocuments(workspaceId, location, signal)
     signal?.throwIfAborted()
     connection.assertCurrent()
     const contract = await readRuntimeContract(connection.endpoint, connection.fetch, bounded(5_000, signal))
