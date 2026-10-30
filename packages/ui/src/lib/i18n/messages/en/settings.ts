@@ -59,7 +59,7 @@ export const settingsMessages = {
   "settings.images.unsupported": "The connected OpenCode version has no image settings.",
   "settings.images.blocked": "Saving here would hide the experimental settings of another OpenCode configuration. Change these options in that file instead.",
   "settings.images.generation.title": "Image generation",
-  "settings.images.generation.info": "Lets agents create and edit images with an image model from a connected provider. Each image is a paid request, and agents ask your permission first. Applies to every project.",
+  "settings.images.generation.info": "Lets agents create and edit images with an image model from a connected provider. Each image is a paid request. Applies to every project.",
   "settings.images.generation.off": "Off",
   "settings.images.generation.auto": "On, automatic model",
   "settings.images.generation.override": "Another OpenCode configuration takes precedence here: {value}.",

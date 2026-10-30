@@ -59,7 +59,7 @@ export const settingsMessages = {
   "settings.images.unsupported": "לגרסת OpenCode המחוברת אין הגדרות תמונות.",
   "settings.images.blocked": "שמירה כאן תסתיר את ההגדרות הניסיוניות של תצורת OpenCode אחרת. שנו אפשרויות אלה בקובץ ההוא במקום.",
   "settings.images.generation.title": "יצירת תמונות",
-  "settings.images.generation.info": "מאפשרת לסוכנים ליצור ולערוך תמונות בעזרת מודל תמונות של ספק מחובר. כל תמונה היא בקשה בתשלום, והסוכן מבקש קודם את רשותכם. חל על כל הפרויקטים.",
+  "settings.images.generation.info": "מאפשרת לסוכנים ליצור ולערוך תמונות בעזרת מודל תמונות של ספק מחובר. כל תמונה היא בקשה בתשלום. חל על כל הפרויקטים.",
   "settings.images.generation.off": "כבויה",
   "settings.images.generation.auto": "פעילה, מודל אוטומטי",
   "settings.images.generation.override": "תצורת OpenCode אחרת גוברת כאן: {value}.",
