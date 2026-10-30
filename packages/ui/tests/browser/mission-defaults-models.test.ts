@@ -636,8 +636,10 @@ test("Creation and Settings summaries group requested tuples once and collapse a
     await ensureOptions(page)
     await page.getByLabel("Playbook", { exact: true }).selectOption("debug")
     const creationSummary = (await page.getByLabel(label).textContent())!
-    assert.equal(creationSummary, settingsSummary)
-    assert.equal(creationSummary.match(/Model M \/ high/g)?.length, 1)
+    // The same groups; Settings read the "/fixture" catalog, while this editor uses the native
+    // default Location, which nothing has read, so it shows exact IDs.
+    assert.equal(creationSummary, settingsSummary.replace("Model M", "p/m"))
+    assert.equal(creationSummary.match(/p\/m \/ high/g)?.length, 1)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })

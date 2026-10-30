@@ -48,13 +48,13 @@ export function MissionProfileControls(props: {
 
   createEffect(() => {
     refresh()
-    const key = identity(), instanceId = props.instanceId
+    const key = identity(), instanceId = props.instanceId, directory = props.directory
     const client = instanceClient()
     const generation = getOpenCodeInstanceGeneration(instanceId)
     // The separate Preferences window has no instance store; it reads through
     // the same root proxy as its Providers section.
     if (!demanded() || !instanceId || (!client && runtimeEnv.windowContext !== "preferences")) return
-    const location = createRequestLocation(props.directory), controller = new AbortController()
+    const location = createRequestLocation(directory), controller = new AbortController()
     let alive = true
     const current = () => alive && demanded() && identity() === key && instances().get(instanceId)?.client === client
       && getOpenCodeInstanceGeneration(instanceId) === generation
@@ -74,7 +74,7 @@ export function MissionProfileControls(props: {
         if (agents.data.length > 512 || usable.size > 4096) throw new Error("Oversized mission catalog")
         // The conversation's model selector builds its catalog and names the same way.
         const named = catalogModels(buildProviderCatalog(providers.data, listed))
-        rememberModelNames(instanceId, named)
+        rememberModelNames(instanceId, directory, named)
         setCatalog({ key, agents: agents.data.map(({ id, mode, hidden }) => ({ id, mode, hidden })),
           models: named.filter(model => usable.has(catalogModelKey(model.providerId, model.id))) })
       } catch (error) {
@@ -110,7 +110,7 @@ export function MissionProfileControls(props: {
     const modelGroups = () => profileModelGroups(shownModels(), selectedModel())
     const unavailableModel = () => {
       const model = selected()?.model
-      return model ? knownModelName(props.instanceId, model) ?? `${model.providerID}/${model.id}` : ""
+      return model ? knownModelName(props.instanceId, props.directory, model) ?? `${model.providerID}/${model.id}` : ""
     }
     const label = () => t(`missions.control.profiles.role.${role}`)
     const inherit = () => {
