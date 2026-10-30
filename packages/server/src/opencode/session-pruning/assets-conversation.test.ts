@@ -2,6 +2,9 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { DatabaseSync } from "node:sqlite"
 import { setTimeout as delay } from "node:timers/promises"
+import os from "node:os"
+import path from "node:path"
+import plugin from "./plugin"
 import { CONVERSATION_SCAN, imagesConversation, lookupImagesConversation } from "./assets-conversation"
 import { storageDirectory } from "./storage-path"
 
@@ -24,6 +27,29 @@ function database() {
   return { db, add, create, created }
 }
 const signal = () => new AbortController().signal
+
+test("the RPC handler answers unknown when storage cannot be read, creates nothing, and still propagates cancellation", async () => {
+  const created: unknown[] = []
+  let handlers: any
+  for (const databasePath of ["relative.db", path.join(os.tmpdir(), "codenomad-missing-images", "absent.db")]) {
+    const ctx = {
+      app: {}, options: { databasePath }, location: { directory, project: { id: "p" } },
+      session: { create: async (input: unknown) => { created.push(input); return { id: "ses_new" } },
+        get: async () => ({ id: "s", location: { directory }, projectID: "p" }) },
+      storage: { set: async () => {}, remove: async () => {} },
+      rpc: { register: async (_: unknown, implementation: unknown) => { handlers = implementation; return { dispose: async () => {} } } },
+      tool: { transform: async () => ({ dispose: async () => {} }) },
+    }
+    const cleanup = await plugin.setup(ctx as any)
+    try {
+      for (const mode of ["lookup", "open", "new"]) assert.deepEqual(await handlers.imagesConversation({ mode }, { signal: signal() }), { status: "unknown" }, `${databasePath} ${mode}`)
+      const cancelled = new AbortController(); cancelled.abort()
+      await assert.rejects(handlers.imagesConversation({ mode: "open" }, { signal: cancelled.signal }))
+      assert.deepEqual(await handlers.images({ sessionID: "s" }, { signal: signal() }), { status: "blocked", reason: "unsupported_storage" }, "other methods keep their blocked state")
+    } finally { await (cleanup as any)?.() }
+  }
+  assert.equal(created.length, 0)
+})
 
 test("lookup: newest unarchived marked root of this location, never a marked child, beyond any native page", () => {
   const { db, add } = database()

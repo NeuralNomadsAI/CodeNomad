@@ -1,4 +1,6 @@
 import type { DatabaseSync } from "node:sqlite"
+import type { Plugin } from "@opencode/plugin"
+import { withHistoryDatabase } from "./history-database"
 import { storageDirectory } from "./storage-path"
 import type { HistoryScope } from "./history-store"
 import type { ImagesConversationInput, ImagesConversationResult } from "./assets-gallery-contract"
@@ -36,6 +38,16 @@ async function exclusive<T>(key: string, run: () => Promise<T>) {
     release()
     if (locks.get(key) === queued) locks.delete(key)
   }
+}
+
+/** The RPC handler: storage that cannot be read leaves the conversation `unknown`, and nothing is created. */
+export async function imagesConversationRpc(ctx: Plugin.Context, input: ImagesConversationInput, signal: AbortSignal): Promise<ImagesConversationResult> {
+  signal.throwIfAborted()
+  const result = await withHistoryDatabase(ctx, undefined, signal,
+    (db, scope) => imagesConversation(db, scope, input, session => ctx.session.create(session as never) as Promise<{ id: string }>, signal))
+  if (result.status !== "blocked") return result
+  signal.throwIfAborted()
+  return { status: "unknown" }
 }
 
 /** `lookup` reads; `open` creates under the lock only when the lookup is complete and absent; `new` always creates. */

@@ -51,8 +51,22 @@ export function interval(part: Part | undefined): Span | undefined {
   const start = part?.time?.ran, end = part?.time?.completed
   return Number.isFinite(start) && Number.isFinite(end) && start <= end ? { start, end } : undefined
 }
-/** Whether an `image_generate` part targets `file` (`metadata.path` is the stem, without extension). */
-export const writes = (part: Part, file: string) => typeof part.state?.metadata?.path === "string" && norm(part.state.metadata.path) === stemOf(file)
+/**
+ * Whether an `image_generate` part may write `file`: its `metadata.path` stem, else (native
+ * running parts carry `metadata: {}`) the stem of `input.path` resolved like the tool does.
+ * An input not yet parsed, or a path this lexical resolution cannot place, may target any file;
+ * an input without `path` writes a fresh temporary file, and an errored call without a stem started no job.
+ */
+export function writes(part: Part, file: string, directory: string) {
+  const state = part.state
+  if (typeof state?.metadata?.path === "string") return norm(state.metadata.path) === stemOf(file)
+  if (state?.status === "error") return false
+  const input = state?.input
+  if (!input || typeof input !== "object" || Array.isArray(input)) return true
+  if (input.path === undefined || input.path === "") return false
+  if (typeof input.path !== "string" || input.path.startsWith("~")) return true
+  return stemOf(resolveName(directory, input.path)!) === stemOf(file)
+}
 export const sameFile = (a: string | undefined, b: string) => a !== undefined && norm(a) === norm(b)
 
 /** `input.prompt` up to 8 KiB of UTF-8 and `metadata.model`, for callers granted prompts. */
@@ -102,15 +116,17 @@ export function coverage(db: DatabaseSync, sessionID: string, boundary: string |
   const reachedStart = !stopped && rows.length < windowRows + LOOKBACK_MESSAGES
   const floor = reachedStart ? 0 : scanned.at(-1)?.seq ?? Infinity
   // An item's range: its own message and the 31 assistant messages before it, within 32 MiB.
+  // A range the stopped scan cut short gives no floor: nothing below the stop is known.
   const floorFor = (seq: number) => {
     const start = scanned.findIndex(row => row.seq === seq)
     if (start < 0) return Infinity
     let bytes = 0, last = seq
-    for (let index = start; index < scanned.length && index < start + LOOKBACK_MESSAGES; index++) {
+    for (let index = start; index < start + LOOKBACK_MESSAGES; index++) {
+      if (index === scanned.length) return reachedStart ? 0 : Infinity
       if (bytes + scanned[index].bytes > LOOKBACK_BYTES) return last
       bytes += scanned[index].bytes; last = scanned[index].seq
     }
-    return reachedStart && scanned.length - start <= LOOKBACK_MESSAGES ? 0 : last
+    return last
   }
   const decoded = (field: string) => `CASE WHEN ok THEN json_extract(data,'${field}') END`
   const synthetic = db.prepare(`SELECT seq,time_created AS time,ok,${decoded("$.metadata.source")} AS source,${decoded("$.metadata.jobID")} AS job,
@@ -130,12 +146,12 @@ export function coverage(db: DatabaseSync, sessionID: string, boundary: string |
 }
 
 /** The single write of `file` provably finished before `span.start`, with no other possible write until `span.end`. */
-function proveWriter(cov: Coverage, file: string, span: Span | undefined, uptoSeq: number, floor: number) {
+function proveWriter(cov: Coverage, directory: string, file: string, span: Span | undefined, uptoSeq: number, floor: number) {
   if (!span || !(floor <= uptoSeq) || cov.capped) return undefined
   // Any undecodable notice row of the coverage that may precede the end of the interval is relevant, whatever its seq.
   if (cov.undecoded.some(row => row.seq >= floor && !(row.time > span.end))) return undefined
-  // Every call to this file started before the interval ended, or at an unknown time, is a possible writer.
-  const writers = cov.calls.filter(call => call.seq >= floor && call.seq <= uptoSeq && writes(call.part, file)
+  // Every call that may write this file started before the interval ended, or at an unknown time, is a possible writer.
+  const writers = cov.calls.filter(call => call.seq >= floor && call.seq <= uptoSeq && writes(call.part, file, directory)
     && !(Number(call.part.time?.ran) > span.end))
   if (writers.length !== 1) return undefined
   const writer = writers[0], job = writer.part.state?.metadata?.jobID, ran = writer.part.time?.ran
@@ -153,13 +169,13 @@ export type Annotation = { origin: "unverifiable" }
 /** §10.5: a read image's generation, its parents proven by the same rule over the generation's own interval. */
 export function annotate(cov: Coverage, directory: string, sessionID: string, seq: number, tool: Part, file: string | undefined): Annotation {
   const floor = cov.floorFor(seq)
-  const proof = file && proveWriter(cov, file, interval(tool), seq, floor)
+  const proof = file && proveWriter(cov, directory, file, interval(tool), seq, floor)
   if (!proof) return { origin: "unverifiable" }
   const parentKeys: string[] = [], input = proof.part.state?.input
   let otherRefs = 0
   for (const ref of Array.isArray(input?.images) ? input.images : []) {
     const parent = typeof ref === "string" && !/^(https?|data):/i.test(ref) ? resolveName(directory, ref) : undefined
-    const writer = parent && proveWriter(cov, parent, interval(proof.part), proof.seq, floor)
+    const writer = parent && proveWriter(cov, directory, parent, interval(proof.part), proof.seq, floor)
     if (writer) parentKeys.push(key(sessionID, writer.job)); else otherRefs++
   }
   return { origin: "proven", generationKey: key(sessionID, proof.job), parentKeys, otherRefs, call: proof.part }

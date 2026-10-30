@@ -17,7 +17,7 @@ import { listSessionAssets, readSessionAsset } from "./assets-store"
 import { imageReadInputSchema, imageReadResultSchema, imageReferenceInputSchema, imageReferenceResultSchema, imagesConversationInputSchema,
   imagesConversationResultSchema, imagesInputSchema, imagesResultSchema } from "./assets-gallery-contract"
 import { galleryImageReference, listGalleryImages, readGalleryImage } from "./assets-gallery"
-import { imagesConversation } from "./assets-conversation"
+import { imagesConversationRpc } from "./assets-conversation"
 import { historyRankedInputSchema, historyRankedResultSchema } from "./history-ranked-contract"
 import { queryBoundRankedHistory, registerSessionSearch } from "./history-ranked-service"
 
@@ -54,8 +54,7 @@ export default Plugin.define({
         (db, scope) => readGalleryImage(db, scope, input.target, call.signal)),
       imageReference: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => galleryImageReference(db, scope, input.target, call.signal)),
-      imagesConversation: (input, call) => withHistoryDatabase(ctx, undefined, call.signal,
-        (db, scope) => imagesConversation(db, scope, input, session => ctx.session.create(session as never) as Promise<{ id: string }>, call.signal)),
+      imagesConversation: (input, call) => imagesConversationRpc(ctx, input, call.signal),
       window: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,
         (db, scope) => readNavigationWindow(db, scope, input.target, call.signal)),
       outline: (input, call) => withHistoryDatabase(ctx, input.sessionID, call.signal,

@@ -88,18 +88,56 @@ each("prompts and models: granted, marked root, generation or proven image; 8 Ki
   }
 })
 
-each("an oversized row below the window stops the coverage; inside the window it blocks with limit; neither is loaded", async fixture => {
-  fixture.insert("msg_zz_huge", "assistant", 3, 1, { content: [{ type: "text", text: "h".repeat(17 * 1024 * 1024) }] })
-  fixture.loads.length = 0
-  const seen: GalleryEntry[] = []
-  let cursor: string | undefined, page
-  do {
-    page = await listGalleryImages(fixture.db, fixture.scope, cursor, false, signal(), 1)
-    if (page.status === "page") { seen.push(...page.entries); cursor = page.cursor ?? undefined }
-  } while (page.status === "page" && cursor)
-  assert.deepEqual(page, { status: "blocked", reason: "limit" })
-  assert.equal(images(seen).find(entry => entry.label === "icon-a")?.origin, "proven")
-  assert(fixture.loads.length > 0 && fixture.loads.every(load => load.bytes < 16 * 1024 * 1024))
+for (const writer of [false, true]) {
+  each(`an oversized row${writer ? " hiding a second writer" : ""} below the window stops the coverage: the cut range proves nothing; inside the window it blocks with limit; neither loads`, async fixture => {
+    const content: any[] = [{ type: "text", text: "h".repeat(17 * 1024 * 1024) }]
+    if (writer) {
+      const dup = structuredClone(fixture.call()); dup.id = "call_zz_hidden"; dup.state.metadata.jobID = "image_zz_hidden"
+      dup.time = { created: dup.time.ran - 10, ran: dup.time.ran - 9, completed: dup.time.ran - 8 }; content.unshift(dup)
+    }
+    fixture.insert("msg_zz_huge", "assistant", 3, 1, { content })
+    fixture.loads.length = 0
+    const seen: GalleryEntry[] = []
+    let cursor: string | undefined, page
+    do {
+      page = await listGalleryImages(fixture.db, fixture.scope, cursor, false, signal(), 1)
+      if (page.status === "page") { seen.push(...page.entries); cursor = page.cursor ?? undefined }
+    } while (page.status === "page" && cursor)
+    assert.deepEqual(page, { status: "blocked", reason: "limit" })
+    assert.equal(images(seen).find(entry => entry.label === "icon-a")?.origin, "unverifiable")
+    assert.deepEqual(await fixture.reference(fixture.readTarget()), { status: "refused", reason: "unverifiable" })
+    assert(fixture.loads.length > 0 && fixture.loads.every(load => load.bytes < 16 * 1024 * 1024))
+  })
+}
+
+// The native shape of an `image_generate` call still running: `metadata: {}`, its destination only in `input.path`.
+const running = (id: string, ran: number, input: unknown) => ({ type: "tool", name: "image_generate", id, time: { created: ran, ran },
+  state: { status: "running", input, metadata: {} } })
+for (const [name, input, origin] of [
+  ["same relative path", { prompt: "p", path: ".codenomad/design/icon/icon-a.png" }, "unverifiable"],
+  ["same stem, another extension", { prompt: "p", path: ".codenomad/design/icon/icon-a.webp" }, "unverifiable"],
+  ["unparsed input", "{\"prompt\":\"p\",\"pa", "unverifiable"],
+  ["home-relative path", { prompt: "p", path: "~/icon-a.png" }, "unverifiable"],
+  ["another file", { prompt: "p", path: ".codenomad/design/icon/icon-zz.png" }, "proven"],
+  ["no path (temporary file)", { prompt: "p" }, "proven"],
+] as const) {
+  each(`a running generator (${name}) before the read: icon-a ${origin}`, async fixture => {
+    const message = fixture.json(A_CALL)
+    fixture.insert("msg_zz_running", "assistant", 8, 1, { ...message, content: [running("call_zz_running", fixture.call().time.ran + 1, input)] })
+    assert(has(image(await fixture.lines(), "icon-a")[0], `origin:${origin}`, "read:asset"))
+    assert.equal((await fixture.reference(fixture.readTarget())).status, origin === "proven" ? "path" : "refused")
+  })
+}
+
+each("a generation reference with a parallel running generator of the same file (native running shape) is refused", async fixture => {
+  const rows = fixture.raw.prepare("SELECT id,data FROM session_message WHERE type='assistant'").all()
+  const row = rows.find(entry => String(entry.data).includes("icon-b.png") && String(entry.data).includes("image_generate"))!
+  const value = JSON.parse(String(row.data)), own = value.content.find((part: any) => part.name === "image_generate")
+  const target = { messageID: String(row.id), part: value.content.indexOf(own), digest: sha(`${own.id}\u0000${own.state.metadata.jobID}`) }
+  assert.equal((await fixture.reference(target)).status, "path")
+  value.content.push(running("call_zz_parallel_b", own.time.ran + 1, { prompt: "p", path: ".codenomad/design/icon/icon-b.png" }))
+  fixture.update(String(row.id), value)
+  assert.deepEqual(await fixture.reference(target), { status: "refused", reason: "unverifiable" })
 })
 
 each("the notice cap proves nothing and leaves outcomes unknown", async fixture => {

@@ -102,12 +102,19 @@ The proof covers the window rows, up to 32 older assistant rows within 32 MiB, a
 one scan of at most 4,096 synthetic rows from the lowest covered `seq` to `through`,
 decoded by SQLite only for rows of at most 64 KiB. A read of file `F` over
 `[time.ran, time.completed]` is proven when the notice scan is complete, no
-undecoded row is dated at or before the read's end, exactly one `image_generate`
-call to `F`'s stem in the item's range (its message and the 31 before it) started
-before that end, it completed with a `jobID` before the read began, its single
+undecoded row is dated at or before the read's end, the scan covers the item's whole
+range (its message and the 31 before it, within 32 MiB, unless the session starts
+sooner; a range an oversized row or the scan budget cuts proves nothing), exactly one
+`image_generate` call that may write `F` in that range started before that end, it
+completed with a `jobID` before the read began, its single
 decoded notice names `F` between the call's start and the read's start, and no
 other completed notice names `F` from then until the read's end. Parents of a proven
-call follow the same rule over the generation's own interval. Relative read names
+call follow the same rule over the generation's own interval. A call may write `F`
+when its `metadata.path` is `F`'s stem or, without one (native running parts carry
+`metadata: {}`), when its `input.path` resolves to that stem whatever the extension;
+an unparsed input or a `~` path may write any file, an input without `path` writes
+a new temporary file, and an errored call without `metadata.path` started no job.
+Relative read names
 and references resolve lexically against the session directory in the daemon's
 path style (Windows without case); one outside the location has no label and no
 reference. Generation states are the native part status and, when established, the
@@ -121,11 +128,12 @@ References also require no later write: the newest 32 assistant rows within 32 M
 must reach the item, with a complete notice scan, no undecoded row dated from the
 read's start (a generation's notice time), and no call to the same stem started from
 then or other notice naming the file after it. A generation target is also refused as
-`unverifiable` while another call to its file, started before its notice in the
-item's range or later, lacks a completion time or a decoded notice of its own.
+`unverifiable` when the scan cuts its range, or while another call that may write
+its file, started before its notice (or at an unknown time) in the item's range or
+later, lacks a completion time or a decoded notice of its own.
 
 Consumed contracts: `read` tool `state.content` files, `image_generate` parts
-(`state.input.prompt|images`, `state.metadata.path` as the stem, `jobID`, `model`,
+(`state.input.prompt|images|path`, `state.metadata.path` as the stem, `jobID`, `model`,
 `time.ran|completed`) and its synthetic notices (`metadata.source|jobID|state|path`,
 text `Saved image: <file> (`). A change leaves generations `unknown` and images
 unverifiable.
@@ -136,7 +144,8 @@ unverifiable.
 The lookup reads `session_v2` with `ownedSession`'s location predicate, root and
 unarchived sessions whose `metadata."codenomad.companion"` is `images`, newest by
 `time_created DESC, id DESC`, over at most 20,000 roots: `found`, `absent` only after
-a complete scan, else `unknown`. `open` repeats the lookup under a process-wide lock
+a complete scan, else `unknown`, as is every mode when the database cannot be read
+(nothing is created; cancellation still rejects). `open` repeats the lookup under a process-wide lock
 (global symbol, keyed by database file, project, storage directory and workspace)
 and creates through `ctx.session.create` only when `absent`; `new` always creates.
 The lock serializes the callers of one OpenCode process; two processes sharing a

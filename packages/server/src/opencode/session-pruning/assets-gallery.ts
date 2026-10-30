@@ -143,8 +143,9 @@ export async function galleryImageReference(db: DatabaseSync, scope: HistoryScop
       file = state.notice.file; start = state.notice.time
       // Another call to the same file started before our notice, still without its own notice or completion time, may write it later.
       const floor = cov.floorFor(seq), own = part, written = file
+      if (floor === Infinity) return refused("unverifiable")
       pending = later => [...cov.calls.filter(call => call.seq >= floor && call.seq < seq), ...later.calls.filter(call => call.seq >= seq)]
-        .some(call => !(call.seq === seq && call.part.id === own.id) && writes(call.part, written) && Number(call.part.time?.ran) < start
+        .some(call => !(call.seq === seq && call.part.id === own.id) && writes(call.part, written, scope.directory) && !(Number(call.part.time?.ran) >= start)
           && (!Number.isFinite(call.part.time?.completed)
             || ![...cov.notices, ...later.notices].some(notice => notice.job === call.part.state?.metadata?.jobID)))
     }
@@ -153,7 +154,7 @@ export async function galleryImageReference(db: DatabaseSync, scope: HistoryScop
     // No later write: the newest assistant rows down to the item (32 messages, 32 MiB) and the notices of that range.
     const later = coverage(db, sessionID, boundary, through, through, new Map(), 0)
     if (!(later.floor <= seq) || later.capped || later.undecoded.some(row => !(row.time < start)) || pending(later)) return refused("unverifiable")
-    if (later.calls.some(call => call.seq >= seq && writes(call.part, file!) && !(Number(call.part.time?.ran) < start))
+    if (later.calls.some(call => call.seq >= seq && writes(call.part, file!, scope.directory) && !(Number(call.part.time?.ran) < start))
       || later.notices.some(notice => sameFile(notice.file, file!) && notice.time > start)) return refused("changed")
     return { status: "path", path: process.platform === "win32" ? relative.replaceAll("\\", "/") : relative }
   } finally { db.exec("ROLLBACK") }
