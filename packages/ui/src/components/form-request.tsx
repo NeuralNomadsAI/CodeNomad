@@ -4,6 +4,7 @@ import { useI18n } from "../lib/i18n"
 import { getFormAnswer, isFormFieldVisible, isHttpFormUrl } from "../lib/form-schema"
 import { isWebSearchProviderForm } from "../lib/websearch-form"
 import { createFormAnswerInteraction, type FormAnswerInteraction } from "../lib/form-answer-interaction"
+import { toggleSweepGroup } from "../lib/toggle-sweep"
 
 interface FormRequestProps {
   form: FormInfo
@@ -268,6 +269,7 @@ const FormRequest: Component<FormRequestProps> = (props) => {
                         type="checkbox"
                         class="form-request-choice-control"
                         checked={Array.isArray(values()[field.key]) && (values()[field.key] as string[]).includes(option.value)}
+                        data-toggle-sweep={toggleSweepGroup(`form-${props.form.id}-${field.key}`)}
                         onChange={(event) => {
                           const current = Array.isArray(values()[field.key]) ? values()[field.key] as string[] : []
                           update(field.key, event.currentTarget.checked

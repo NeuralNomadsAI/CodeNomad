@@ -33,7 +33,7 @@ Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégr
 ## Panneaux et sections Statut {#panels-status}
 
 1. Utilisez **Volet gauche** et **Volet droit** aux coins extérieurs de l’en-tête, ou leurs entrées du menu **Affichage**, pour afficher ou masquer chaque panneau.
-2. Ouvrez **Personnaliser le panneau droit** dans le panneau droit. Utilisez les cases pour choisir les onglets intégrés et sections Statut ; au moins une section Statut reste visible.
+2. Ouvrez **Personnaliser le panneau droit** dans le panneau droit. Utilisez les cases pour choisir les onglets intégrés et sections Statut ; au moins une section Statut reste visible. Faites glisser le pointeur sur ces cases pour en régler plusieurs d'un coup.
 3. Faites glisser les onglets du panneau droit pour les réordonner. Utilisez **Réinitialiser** pour restaurer les choix de disposition intégrée.
 
 Statut inclut les informations de tokens, le mode Yolo, l’utilisation fournisseur, les shells en arrière-plan, MCP et Plugins. Masquer une section ne désactive pas son service et ne révoque pas de permissions. Les dispositions étroites ferment les panneaux qui ne tiennent plus au lieu de comprimer la conversation ; un panneau ouvert alors flotte au-dessus d’elle, et ouvrir un panneau flottant ferme l’autre.
@@ -53,7 +53,7 @@ La hauteur de saisie suit la conversation visible, y compris le clavier logiciel
 
 ## Notifications et badges {#notifications}
 
-1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation).
+1. Ouvrez **Notifications**. Pour chaque type de notification, cochez où elle apparaît : **À l'écran** (une bulle temporaire), **Historique** (conservée dans l’historique des notifications de la cloche de la barre d’onglets, ou de la barre de titre dans l’application de bureau macOS) et **Système** (une notification du système d’exploitation). Faites glisser le pointeur sur une ligne ou une colonne de cases pour en régler plusieurs d'un coup.
 2. Cocher une case **Système** demande l’autorisation si nécessaire. Sous **Notifications système**, **Demander** relance la demande tant que l’autorisation manque.
 3. Activez **Notifier lorsque l'application est au premier plan** pour garder les notifications système pendant que cette fenêtre est au premier plan. Sinon, elles s’affichent dès qu’elle ne l’est pas, même si elle reste ouverte à l’écran.
 

@@ -40,7 +40,7 @@ This is **not in-flight failover**. It neither retries failed requests nor repla
 ## Model visibility, favorites and Thinking {#models}
 
 1. Choose **Manage models** beside a model provider.
-2. Search by name/ID and change visibility; **Show all** and **Hide all** affect that provider's selector list.
+2. Search by name/ID and change visibility; **Show all** and **Hide all** affect that provider's selector list. Drag across the checkboxes to change several models at once.
 3. In a conversation's **Model** selector, use **Add to favorites** or **Remove from favorites**; **Show all models** leaves favorites-only filtering.
 4. Use **Thinking** in the composer for variants the selected model exposes.
 

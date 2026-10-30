@@ -10,7 +10,7 @@ Les en-têtes de raisonnement et d’outils indiquent la durée de chaque étape
 
 1. Sélectionnez une ligne sous **Sessions**, ou utilisez **Nouvelle session** pour démarrer une conversation parente.
 2. Dépliez le chevron d’un parent pour voir ses sous-sessions. Un chevron replié affiche l’état le plus urgent de ses descendants : en attente de saisie, actif ou récemment terminé (inactif) ; son infobulle les compte.
-3. Utilisez **Rechercher des sessions…**, **Sessions principales** / **Sous-sessions**, le filtre de worktree et le tri **Activité**, **Nom** ou **Worktree** pour réduire la liste.
+3. Utilisez **Rechercher des sessions…**, **Sessions principales** / **Sous-sessions**, le filtre de worktree et le tri **Activité**, **Nom** ou **Worktree** pour réduire la liste. Dans les résultats de recherche, faites glisser le pointeur sur les cases des lignes pour sélectionner ou désélectionner plusieurs conversations d'un coup.
 4. Utilisez **Retour** et **Avancer** dans la barre latérale pour revisiter les conversations affichées.
 
 La navigation normale est hiérarchique ; les résultats de recherche/filtre sont des entrées à plat avec l’identité et le worktree propres à chaque conversation. Une sous-session qui commence à travailler n’est révélée automatiquement que sous la famille de la conversation active. Replier cette branche annule cette révélation automatique pour les descendants actuellement en cours.

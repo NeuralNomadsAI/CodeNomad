@@ -5,6 +5,7 @@ import { For, Show, createMemo, createSignal } from "solid-js"
 import { ChevronDown, ChevronRight, Eye, EyeOff, ListFilter } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { showToastNotification } from "../lib/notifications"
+import { afterSweep, toggleSweepGroup } from "../lib/toggle-sweep"
 import { useConfig, type Preferences, type ToolCallExpansionPreset, type VisibilityPreference } from "../stores/preferences"
 import { getMessageContentIcon } from "./message-content-icons"
 import {
@@ -14,6 +15,7 @@ import {
   transcriptVisibility,
   transcriptVisibilityPatch,
   transcriptVisibilityRows,
+  type TranscriptVisibilityRow,
 } from "./transcript-visibility"
 
 interface TranscriptFiltersProps {
@@ -31,18 +33,54 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
   const { t } = useI18n()
   const { preferences, updatePreferences } = useConfig()
   const rows = createMemo(() => transcriptVisibilityRows(t))
-  const [saving, setSaving] = createSignal(false)
+  const [pending, setPending] = createSignal(0)
+  const saving = () => pending() > 0
+  // Row changes show at once and stay here until the save carrying them settles.
+  type RowRequest = { mode: VisibilityPreference }
+  const [requested, setRequested] = createSignal<ReadonlyMap<string, RowRequest>>(new Map())
   const preset = createMemo(() => transcriptPreset(preferences()))
   const presetLabel = (value: string) => t(`settings.behavior.expansionPreset.${value}.title`)
-  const save = async (patch: () => Partial<Preferences>) => {
-    if (saving()) return
-    setSaving(true)
-    try {
-      const saved = await updatePreferences(patch())
-      if (!saved) showToastNotification({ category: "settings", message: t("settings.speech.save.error"), variant: "error" })
-    } finally {
-      setSaving(false)
-    }
+  // Changes save in order, each built from the preferences the previous one saved, so
+  // quick successive toggles (a drag sweep across rows) all apply.
+  let queue = Promise.resolve()
+  const save = (patch: () => Partial<Preferences>, settled?: () => void) => {
+    setPending((count) => count + 1)
+    queue = queue.then(async () => {
+      try {
+        const saved = await updatePreferences(patch())
+        if (!saved) showToastNotification({ category: "settings", message: t("settings.speech.save.error"), variant: "error" })
+      } finally {
+        setPending((count) => count - 1)
+        settled?.()
+      }
+    })
+    return queue
+  }
+  // Each saved change re-renders the transcript, so a sweep saves its rows once, on release.
+  // A batch is sealed as it joins the queue: it never carries a later click past a preset
+  // change, nor a sweep that has not ended.
+  let batch = new Map<string, RowRequest>()
+  const requestMode = (row: TranscriptVisibilityRow, mode: VisibilityPreference) => {
+    const request = { mode }
+    batch.set(row.key, request)
+    setRequested((current) => new Map(current).set(row.key, request))
+    afterSweep(saveBatch)
+  }
+  const saveBatch = () => {
+    if (batch.size === 0) return
+    const sealed = batch
+    batch = new Map()
+    void save(() => {
+      let merged = preferences(), patch: Partial<Preferences> = {}
+      for (const target of rows()) {
+        const request = sealed.get(target.key)
+        if (!request) continue
+        const next = transcriptVisibilityPatch(merged, target, request.mode)
+        merged = { ...merged, ...next }
+        patch = { ...patch, ...next }
+      }
+      return patch
+    }, () => setRequested((current) => new Map([...current].filter(([key, request]) => sealed.get(key) !== request))))
   }
   return (
     <Popover placement="bottom-end" gutter={6} open={props.open} onOpenChange={props.onOpenChange}
@@ -77,24 +115,25 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
           </div>
           <div class="window-body transcript-filters-list">
             <For each={rows()}>{(row) => {
-              const mode = () => transcriptVisibility(preferences(), row)
+              const mode = () => requested().get(row.key)?.mode ?? transcriptVisibility(preferences(), row)
               let previousVisible: VisibilityPreference = "collapsed"
-              const setMode = (value: VisibilityPreference) => save(() => transcriptVisibilityPatch(preferences(), row, value))
+              const setMode = (value: VisibilityPreference) => requestMode(row, value)
               const visibilityLabel = () => t(mode() === "hidden" ? "transcriptFilters.show" : "transcriptFilters.hide", { name: row.label })
               const expansionLabel = () => t(mode() === "expanded" ? "transcriptFilters.collapse" : "transcriptFilters.expand", { name: row.label })
               return (
                 <div class="transcript-filter-row" role="group" aria-label={row.label}>
                   <Dynamic component={getMessageContentIcon(row.key)} class="w-4 h-4" aria-hidden="true" />
                   <span class="transcript-filter-label" title={row.label}>{row.label}</span>
-                  <button type="button" class="window-icon-button" aria-label={visibilityLabel()} title={visibilityLabel()} aria-pressed={mode() !== "hidden"} aria-disabled={saving()}
+                  <button type="button" class="window-icon-button" aria-label={visibilityLabel()} title={visibilityLabel()} aria-pressed={mode() !== "hidden"}
+                    data-toggle-sweep={toggleSweepGroup("transcript-visibility")}
                     onClick={() => {
-                      if (saving()) return
                       if (mode() === "hidden") setMode(previousVisible)
                       else { previousVisible = mode(); setMode("hidden") }
                     }}>
                     <Show when={mode() !== "hidden"} fallback={<EyeOff class="w-4 h-4" aria-hidden="true" />}><Eye class="w-4 h-4" aria-hidden="true" /></Show>
                   </button>
-                  <button type="button" class="window-icon-button" disabled={mode() === "hidden"} aria-disabled={saving() || mode() === "hidden"} aria-label={expansionLabel()} title={expansionLabel()} aria-pressed={mode() === "expanded"}
+                  <button type="button" class="window-icon-button" disabled={mode() === "hidden"} aria-label={expansionLabel()} title={expansionLabel()} aria-pressed={mode() === "expanded"}
+                    data-toggle-sweep={toggleSweepGroup("transcript-expansion")}
                     onClick={() => setMode(mode() === "expanded" ? "collapsed" : "expanded")}>
                     <Show when={mode() === "expanded"} fallback={<ChevronRight class="w-4 h-4" aria-hidden="true" />}><ChevronDown class="w-4 h-4" aria-hidden="true" /></Show>
                   </button>

@@ -10,7 +10,7 @@ Reasoning and tool headers show how long each step took, counting live while it 
 
 1. Select a row under **Sessions**, or use **New session** to start a parent conversation.
 2. Expand a parent's chevron to see its subsessions. A collapsed chevron shows its descendants' most urgent state: needing input, working, or recently finished (idle); its tooltip counts them.
-3. Use **Search sessions…**, **Main sessions** / **Subsessions**, the worktree filter and **Activity**, **Name** or **Worktree** sorting to narrow the list.
+3. Use **Search sessions…**, **Main sessions** / **Subsessions**, the worktree filter and **Activity**, **Name** or **Worktree** sorting to narrow the list. In search results, drag across the rows' checkboxes to select or clear several conversations at once.
 4. Use the sidebar's **Back** and **Forward** to revisit conversations you displayed.
 
 Normal browsing is hierarchical; search/filter results are flat entries with each conversation's own identity and worktree. A newly working subsession is automatically revealed only beneath the active conversation's family. Collapsing that branch dismisses that automatic reveal for the currently running descendants.

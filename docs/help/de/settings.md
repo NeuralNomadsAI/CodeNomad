@@ -33,7 +33,7 @@ Werden Farben schwer lesbar, wählen Sie eine integrierte Palette oder setzen di
 ## Panels und Statusabschnitte {#panels-status}
 
 1. Verwenden Sie **Linke Seitenleiste** und **Rechte Seitenleiste** an den äußeren Kopfecken oder deren Menüpunkte unter **Ansicht** zum Ein-/Ausblenden.
-2. Öffnen Sie **Rechtes Panel anpassen** im rechten Panel. Wählen Sie integrierte Tabs und Statusabschnitte per Kontrollkästchen; mindestens ein Statusabschnitt bleibt sichtbar.
+2. Öffnen Sie **Rechtes Panel anpassen** im rechten Panel. Wählen Sie integrierte Tabs und Statusabschnitte per Kontrollkästchen; mindestens ein Statusabschnitt bleibt sichtbar. Ziehen Sie über diese Kontrollkästchen, um mehrere auf einmal einzustellen.
 3. Ziehen Sie rechte Panel-Tabs zum Umordnen. **Zurücksetzen** stellt integrierte Layoutauswahlen wieder her.
 
 Status enthält Tokeninformationen, Yolo-Modus, Anbieternutzung, Hintergrund-Shells, MCP und Plugins. Ausblenden deaktiviert keinen Dienst und widerruft keine Rechte. Schmale Layouts schließen Panels, die nicht mehr passen, statt die Unterhaltung einzuengen; ein dort geöffnetes Panel schwebt über ihr, und ein schwebendes Panel zu öffnen schließt das andere.
@@ -53,7 +53,7 @@ Die Eingabehöhe folgt der sichtbaren Unterhaltung einschließlich Bildschirmtas
 
 ## Benachrichtigungen und Abzeichen {#notifications}
 
-1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste, in der macOS-Desktop-App in der Titelleiste, aufbewahrt) und **System** (eine Betriebssystembenachrichtigung).
+1. Öffnen Sie **Benachrichtigungen**. Markieren Sie für jede Art von Benachrichtigung, wo sie erscheint: **Auf dem Bildschirm** (eine vorübergehende Blase), **Verlauf** (im Benachrichtigungsverlauf der Glocke in der Tab-Leiste, in der macOS-Desktop-App in der Titelleiste, aufbewahrt) und **System** (eine Betriebssystembenachrichtigung). Ziehen Sie über eine Zeile oder Spalte von Kästchen, um mehrere auf einmal einzustellen.
 2. Das Markieren eines **System**-Kästchens fragt bei Bedarf nach der Berechtigung. Unter **Systembenachrichtigungen** fragt **Anfordern** erneut, solange die Berechtigung fehlt.
 3. Aktivieren Sie **Benachrichtigen, wenn die App im Fokus ist**, um Systembenachrichtigungen auch zu erhalten, während dieses Fenster im Fokus ist. Sonst erscheinen sie, sobald es nicht im Fokus ist, auch wenn es geöffnet auf dem Bildschirm bleibt.
 

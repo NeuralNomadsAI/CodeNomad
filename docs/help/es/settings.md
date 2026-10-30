@@ -33,7 +33,7 @@ Si los colores se vuelven difíciles de leer, selecciona una paleta integrada o 
 ## Paneles y secciones de Estado {#panels-status}
 
 1. Usa **Panel izquierdo** y **Panel derecho** en las esquinas de la cabecera exterior, o sus opciones del menú **Ver**, para mostrar u ocultar cada panel.
-2. Abre **Personalizar panel derecho** en el panel derecho. Usa las casillas para elegir pestañas integradas y secciones de Estado; al menos una sección de Estado permanece visible.
+2. Abre **Personalizar panel derecho** en el panel derecho. Usa las casillas para elegir pestañas integradas y secciones de Estado; al menos una sección de Estado permanece visible. Arrastra sobre estas casillas para ajustar varias a la vez.
 3. Arrastra las pestañas del panel derecho para reordenarlas. Usa **Restablecer** para restaurar las elecciones de disposición integradas.
 
 Estado incluye información de tokens, modo Yolo, Uso del proveedor, shells en segundo plano, MCP y Plugins. Ocultar una sección no desactiva su servicio ni revoca permisos. Las disposiciones estrechas cierran los paneles que ya no caben en lugar de estrechar la conversación; un panel abierto en ellas flota sobre la conversación, y abrir un panel flotante cierra el otro.
@@ -53,7 +53,7 @@ La altura del editor sigue la conversación visible, incluido el teclado en pant
 
 ## Notificaciones e indicadores {#notifications}
 
-1. Abre **Notificaciones**. Para cada tipo de notificación, marca dónde aparece: **En pantalla** (una burbuja temporal), **Historial** (se conserva en el historial de notificaciones de la campana de la barra de pestañas, o de la barra de título en la aplicación de escritorio de macOS) y **Sistema** (una notificación del sistema operativo).
+1. Abre **Notificaciones**. Para cada tipo de notificación, marca dónde aparece: **En pantalla** (una burbuja temporal), **Historial** (se conserva en el historial de notificaciones de la campana de la barra de pestañas, o de la barra de título en la aplicación de escritorio de macOS) y **Sistema** (una notificación del sistema operativo). Arrastra sobre una fila o columna de casillas para ajustar varias a la vez.
 2. Marcar una casilla **Sistema** pide permiso si hace falta. En **Notificaciones del sistema**, **Solicitar** vuelve a pedirlo mientras falte el permiso.
 3. Activa **Notificar cuando la app tenga el foco** para conservar las notificaciones del sistema mientras esta ventana tiene el foco. Si no, aparecen en cuanto no lo tiene, aunque siga abierta en pantalla.
 

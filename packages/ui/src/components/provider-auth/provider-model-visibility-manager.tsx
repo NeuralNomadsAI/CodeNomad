@@ -1,6 +1,7 @@
 import { ArrowLeft } from "lucide-solid"
 import { createEffect, createMemo, createSignal, For, on, onMount, Show, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
+import { toggleSweepGroup } from "../../lib/toggle-sweep"
 import { useConfig } from "../../stores/preferences"
 
 export interface ProviderVisibilityModel {
@@ -119,6 +120,7 @@ export const ProviderModelVisibilityManager: Component<ProviderModelVisibilityMa
               <input
                 type="checkbox"
                 checked={!hiddenIds().has(`${model.providerId}\0${model.id}`)}
+                data-toggle-sweep={toggleSweepGroup("model-visibility")}
                 onChange={(event) => toggleModel(model, event.currentTarget.checked)}
               />
               <span><strong>{model.name || model.id}</strong><small dir="ltr">{model.id}</small></span>

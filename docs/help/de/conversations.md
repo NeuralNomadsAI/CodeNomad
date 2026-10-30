@@ -10,7 +10,7 @@ Kopfzeilen von Denkprozessen und Werkzeugen zeigen, wie lange jeder Schritt geda
 
 1. Wählen Sie eine Zeile unter **Sitzungen** oder verwenden Sie **Neue Sitzung**, um eine übergeordnete Unterhaltung zu beginnen.
 2. Klappen Sie den Pfeil einer übergeordneten Sitzung auf, um deren Untersitzungen zu sehen. Ein eingeklappter Pfeil zeigt den dringendsten Zustand seiner Nachfahren: wartet auf Eingabe, arbeitet oder kürzlich beendet (untätig); sein Tooltip zählt sie.
-3. Grenzen Sie die Liste mit **Sitzungen suchen...**, **Hauptsitzungen** / **Untersitzungen**, dem Worktree-Filter und der Sortierung nach **Aktivität**, **Name** oder **Worktree** ein.
+3. Grenzen Sie die Liste mit **Sitzungen suchen...**, **Hauptsitzungen** / **Untersitzungen**, dem Worktree-Filter und der Sortierung nach **Aktivität**, **Name** oder **Worktree** ein. Ziehen Sie in Suchergebnissen über die Kontrollkästchen der Zeilen, um mehrere Unterhaltungen auf einmal aus- oder abzuwählen.
 4. Verwenden Sie **Zurück** und **Vorwärts** in der Seitenleiste, um zuvor angezeigte Unterhaltungen erneut aufzurufen.
 
 Normales Durchsuchen ist hierarchisch; Such-/Filterergebnisse sind flache Einträge mit eigener Identität und eigenem Worktree jeder Unterhaltung. Eine neu arbeitende Untersitzung wird nur unter der Familie der aktiven Unterhaltung automatisch eingeblendet. Das Einklappen dieses Zweigs beendet diese automatische Einblendung für die derzeit laufenden Nachfahren.

@@ -40,7 +40,7 @@ Bu, **devam eden istek için otomatik geçiş değildir**. Başarısız istekler
 ## Model görünürlüğü, favoriler ve Düşünme {#models}
 
 1. Model sağlayıcının yanında **Modelleri yönet** öğesini seçin.
-2. Ada/kimliğe göre arama yapın ve görünürlüğü değiştirin; **Tümünü göster** ve **Tümünü gizle**, söz konusu sağlayıcının seçici listesini etkiler.
+2. Ada/kimliğe göre arama yapın ve görünürlüğü değiştirin; **Tümünü göster** ve **Tümünü gizle**, söz konusu sağlayıcının seçici listesini etkiler. Birden fazla modeli tek seferde değiştirmek için onay kutularının üzerinde sürükleyin.
 3. Bir konuşmanın **Model** seçicisinde **Favorilere ekle** veya **Favorilerden kaldır** öğesini kullanın; **Tüm modelleri göster** yalnızca favorilere yönelik filtrelemeyi bırakır.
 4. Seçilen modelin sunduğu varyantlar için ileti düzenleyicisinde **Düşünme** öğesini kullanın.
 

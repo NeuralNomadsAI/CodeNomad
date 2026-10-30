@@ -33,7 +33,7 @@ If colors become hard to read, select a built-in palette or reset the edited one
 ## Panels and Status sections {#panels-status}
 
 1. Use **Left panel** and **Right panel** at the outer header corners, or their **View** menu items, to show or hide each panel.
-2. Open **Customize right panel** in the right panel. Use checkboxes to choose built-in tabs and Status sections; at least one Status section remains visible.
+2. Open **Customize right panel** in the right panel. Use checkboxes to choose built-in tabs and Status sections; at least one Status section remains visible. Drag across these checkboxes to set several at once.
 3. Drag right-panel tabs to reorder them. Use **Reset** to restore built-in layout choices.
 
 Status includes token information, Yolo mode, provider Usage, background shells, MCP and Plugins. Hiding a section does not disable its service or revoke permissions. Narrow layouts close panels that no longer fit instead of squeezing the conversation; a panel opened there floats over it, and opening one floating panel closes the other.
@@ -53,7 +53,7 @@ Composer height follows the visible conversation, including the software keyboar
 
 ## Notifications and badges {#notifications}
 
-1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar, or the title bar in the macOS desktop app) and **System** (an operating-system notification).
+1. Open **Notifications**. For each kind of notification, check where it appears: **On screen** (a temporary bubble), **History** (kept in the notification history of the bell in the tab bar, or the title bar in the macOS desktop app) and **System** (an operating-system notification). Drag across a row or column of boxes to set several at once.
 2. Checking a **System** box asks for permission if needed. Under **System notifications**, **Request** asks again while permission is missing.
 3. Enable **Notify when the app is focused** to keep system notifications while this window is focused. Otherwise they appear whenever it is not, even if it stays open on screen.
 

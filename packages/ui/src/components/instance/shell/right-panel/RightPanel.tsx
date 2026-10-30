@@ -34,6 +34,7 @@ import { FILES_PANEL_MIGRATION_KEY, mergeFilesPanelCustomization } from "./files
 import { CORE_STATUS_SECTION_ITEMS } from "./tabs/status-sections"
 import { useI18n } from "../../../../lib/i18n"
 import { useTheme } from "../../../../lib/theme"
+import { toggleSweepGroup } from "../../../../lib/toggle-sweep"
 import { ExtensionPanel } from "../../../panel-extensions/extension-panel"
 import { ExtensionManager } from "../../../panel-extensions/extension-manager"
 import { usePanelExtensions } from "../../../panel-extensions/use-panel-extensions"
@@ -340,6 +341,8 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                           type="checkbox"
                           checked={visible()}
                           disabled={tab.alwaysVisible || (Boolean(extension()) && (!extensions.verified() || extensions.activating() || !props.isActive()))}
+                          // Activating an extension is a trust decision, never swept along.
+                          data-toggle-sweep={extension() ? undefined : toggleSweepGroup("right-panel-customization")}
                           onChange={(event) => {
                             const entry = extension()
                             if (entry) {
@@ -370,6 +373,7 @@ const RightPanel: Component<RightPanelProps> = (props) => {
                                   type="checkbox"
                                   checked={sectionVisible()}
                                   disabled={disableHide()}
+                                  data-toggle-sweep={toggleSweepGroup("right-panel-customization")}
                                   onChange={(event) =>
                                     updateRightPanelCustomization((current) => ({
                                       ...current,

@@ -12,6 +12,7 @@ import ActionOverflowMenu, { type ActionOverflowMenuItem } from "./action-overfl
 import { useSessionRowOverflow } from "./session-row-overflow"
 import { showToastNotification } from "../lib/notifications"
 import { useI18n } from "../lib/i18n"
+import { toggleSweepGroup } from "../lib/toggle-sweep"
 import { showConfirmDialog } from "../stores/alerts"
 import {
   deleteSession,
@@ -721,6 +722,7 @@ const SessionList: Component<SessionListProps> = (props) => {
               }}
               type="checkbox"
               checked={parentGroupState().checked}
+              data-toggle-sweep={toggleSweepGroup("session-selection")}
               onChange={(event) => setSelectedMany(parentGroupState().ids, event.currentTarget.checked)}
               aria-label={t("sessionList.selection.checkboxAriaLabel")}
             />
