@@ -1,4 +1,16 @@
-import { createComputed, onCleanup } from "solid-js"
+import { createComputed, createMemo, onCleanup } from "solid-js"
+
+/** Counts replacements of a value a view learns from a read, for its fence identity. The first
+ * report reveals what the view already showed, and an unknown value (an unavailable or cleared
+ * read) keeps the last one: only a different reported value is another view. */
+export function createReportedChanges(value: () => string | undefined): () => number {
+  const reported = createMemo<{ value?: string; changes: number }>(previous => {
+    const next = value()
+    return next === undefined || next === previous.value ? previous
+      : { value: next, changes: previous.changes + (previous.value === undefined ? 0 : 1) }
+  }, { changes: 0 })
+  return () => reported().changes
+}
 
 // A transition away and back is still a different view lifetime (including ABA).
 // Capture before mutation/preparation, not when its response happens to arrive.

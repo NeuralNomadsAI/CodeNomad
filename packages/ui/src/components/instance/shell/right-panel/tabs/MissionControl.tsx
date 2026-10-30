@@ -30,7 +30,7 @@ import { createMissionRecurrenceList } from "../../../../mission-recurrence-list
 import { missionTaskConversation } from "../../../../mission-task-navigation"
 import { missionDerivedSessionIncludes, missionDerivedTaskSession } from "../../../../../stores/mission-task-sessions"
 import { useMissionCurrentPassage } from "../../../../../stores/mission-recurrence"
-import { createMissionViewFence } from "../../../../../lib/mission-view-fence"
+import { createMissionViewFence, createReportedChanges } from "../../../../../lib/mission-view-fence"
 import { sessionListRestored } from "../../../../../stores/session-list-restoration"
 
 interface MissionControlProps {
@@ -78,7 +78,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     || missionIncludesSession(value.actors, id, family(value.id)) || missionDerivedSessionIncludes(props.instanceId, value, id)
   const directory = () => instances().get(props.instanceId)?.folder
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? state().projectID ?? missions()[0]?.projectID
-  const captureView = createMissionViewFence(() => JSON.stringify([props.instanceId, directory(), projectID(), state().projectID]), () => props.isActive?.() ?? true)
+  // The first list read reports the project this view already shows: an operation captured before
+  // it landed (a creation an agent submits right after opening the panel) still completes here.
+  const listProjectChanges = createReportedChanges(() => state().projectID)
+  const captureView = createMissionViewFence(() => JSON.stringify([props.instanceId, directory(), projectID(), listProjectChanges()]), () => props.isActive?.() ?? true)
   let intent = 0
   const selectMission = (id: string) => { intent++; updateMissionProjectView(scope(), { selected: id, selectedRecurrence: undefined }) }
   const openEditor = (action: MissionEditorAction) => {

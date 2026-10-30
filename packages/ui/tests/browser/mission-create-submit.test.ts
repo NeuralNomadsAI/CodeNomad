@@ -179,6 +179,37 @@ test("a newer editor cannot submit while a creation reply is pending and keeps i
   } finally { release(); await page.close() }
 })
 
+// An agent can submit within a second of the panel mounting, before the panel's first list read
+// reports the project: that report is the project the creation was made in, not another view.
+test("a creation submitted before the panel's first list read lands still closes the editor and selects the mission", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  const fixture = await setup(page)
+  const firstRead = Promise.withResolvers<void>(), posted = Promise.withResolvers<void>(), reply = Promise.withResolvers<void>()
+  let reads = 0
+  await page.route("**/api/workspaces/fixture/missions", async route => {
+    if (route.request().method() === "GET" && reads++ === 0) await firstRead.promise
+    else if (route.request().method() === "POST") { posted.resolve(); await reply.promise }
+    return route.fallback()
+  })
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    const form = page.locator("form.mission-editor")
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Created before the first list read")
+    await submitReady(page)
+    await form.getByRole("button", { name: "Create", exact: true }).click()
+    await posted.promise
+    firstRead.resolve()
+    await page.waitForFunction(() => window.missionEditorLifetime.state("fixture").projectID === "project")
+    reply.resolve()
+    await form.waitFor({ state: "detached" })
+    await page.waitForFunction(() => window.missionEditorLifetime.selectedHistory().at(-1) === "msn_created")
+    assert.equal(fixture.creates.length, 1)
+    assert.deepEqual(fixture.controls, [])
+    assert.deepEqual(fixture.errors, [])
+  } finally { firstRead.resolve(); reply.resolve(); await page.close() }
+})
+
 test("a definitive creation rejection releases the request, keeps the draft editable and admits a corrected creation", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
   const fixture = await setup(page)
