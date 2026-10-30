@@ -27,16 +27,25 @@ const infos: Record<string, any> = {
   ses_work: { agent: "build", title: "Work" },
   ses_other: { agent: "build", title: "Other" },
   ses_images: { agent: "design", title: "Images", metadata: mark },
+  // Created by an `open`: absent from the list, so showing it hydrates it first.
+  ses_fresh: { agent: "design", title: "Images", metadata: mark },
 }
+const listed = ["ses_work", "ses_other", "ses_images"]
+// `holdHydration()` keeps the next reads of a session waiting until `releaseHydration()`.
+let held: string | undefined, waiting: Array<() => void> = []
 const info = (id: string) => ({ id, projectID: "fixture", location: { directory: "/fixture" }, cost: 0, model: { providerID: "fixture", id: "chosen" },
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 }, ...infos[id] })
 const agent = (id: string) => ({ id, name: id[0]!.toUpperCase() + id.slice(1), mode: "primary", description: "" })
 const client: any = {
   session: {
     active: async () => ({}), inbox: { list: async () => ({ data: [] }) },
-    list: async () => ({ data: Object.keys(infos).map(info), cursor: {} }),
+    list: async () => ({ data: listed.map(info), cursor: {} }),
     // Hydrating a conversation takes a network round trip.
-    get: async ({ sessionID }: any) => { await new Promise(resolve => setTimeout(resolve, 50)); return info(sessionID) },
+    get: async ({ sessionID }: any) => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      if (sessionID === held) await new Promise<void>(resolve => waiting.push(resolve))
+      return info(sessionID)
+    },
     update: async ({ sessionID }: any) => info(sessionID),
     instructions: { entry: { remove: async () => {}, put: async () => {} } },
     switchAgent: async () => {}, switchModel: async () => {},
@@ -92,11 +101,14 @@ window.addEventListener("message", event => { if (event.data?.fixtureAnswer) fra
   frameMessages: () => frameMessages.splice(0),
   show: async (id: string) => { await hydrateRestoredSessionChain(instanceId, [id]); setActiveParentSession(instanceId, id) },
   clear: () => clearActiveParentSession(instanceId),
+  holdHydration: (id: string) => { held = id },
+  hydrationWaiting: () => waiting.length,
+  releaseHydration: () => { held = undefined; for (const resolve of waiting.splice(0)) resolve() },
   openPanel: () => setPanelOpen(true),
   changed: () => (serverEvents as any).dispatchBatch([{ type: "storage.stateChanged", owner: "panelExtensions", value: {} }]),
   event: (event: unknown) => (serverEvents as any).dispatchBatch([event]),
   snapshot: () => ({ ...state, active: active(), panelOpen: panelOpen(),
-    attachments: Object.keys(infos).reduce((count, id) => count + getAttachments(instanceId, id).length, 0),
+    attachments: listed.reduce((count, id) => count + getAttachments(instanceId, id).length, 0),
     draft: (document.querySelector("textarea.prompt-input") as HTMLTextAreaElement | null)?.value ?? null,
     focused: document.activeElement?.classList.contains("prompt-input") === true }),
 }

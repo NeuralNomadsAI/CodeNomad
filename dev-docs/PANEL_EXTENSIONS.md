@@ -310,11 +310,18 @@ await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" |
 - **Channel** (`api4-channel.ts`): one dispatcher per mounting. The bridge refuses a
   fifth pending request and the host refuses one too, so the cap holds for any sender on
   the port. Each request is answered or failed within 19.5 s (the bridge's own limit is
-  20 s), its fetch aborted so the route cancels the plugin call; server routes stop
-  within 19 s and give each daemon read 8 s. Results after unmount, a session change or
-  the deadline are dropped. Host actions that remove the frame (showing the
-  conversation, closing the phone panel) run one task after the answer is posted, so the
-  frame handles its answer first.
+  20 s), its fetch aborted so the route cancels the plugin call. Results after unmount, a
+  session change or the deadline are dropped. Host actions that remove the frame
+  (showing the conversation, closing the phone panel) run one task after the answer is
+  posted, so the frame handles its answer first; showing the conversation then selects
+  it only if the mount's conversation is still the selected one after hydration (a
+  conversation the user picks meanwhile wins; the phone panel still closes).
+- **Server routes** settle on their 19 s deadline or the caller's departure even while a
+  read still waits: the answer races the abort, and the signal reaches every daemon read
+  the route makes (each also bounded to 8 s). Each read registers a fence; after the last
+  read the route re-reads the session (same Location, still owned) or the Location's
+  ownership, then the extension's consent, then asserts every connection it read through
+  as current, synchronously, before answering. Any change fails the request.
 
 Prompts reach the frame only with their separate permission; an approved author can
 exfiltrate them like API 2 bytes, which the install sentence and the help state.

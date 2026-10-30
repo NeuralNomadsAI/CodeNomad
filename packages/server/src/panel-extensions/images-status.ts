@@ -19,8 +19,8 @@ const same = (model: unknown, ref: ModelRef) => (model as ModelRef).providerID =
  * provider names or keys leave this function.
  */
 export async function readPanelImagesStatus(deps: { imageSettings: Pick<ImageSettings, "read">; client: OpenCodeClient },
-  workspaceId: string, location: LocationRef, session?: { agent?: unknown; model?: unknown }): Promise<PanelImagesStatus> {
-  const request = { location: { directory: location.directory } }, options = locationRequestOptions(location)
+  workspaceId: string, location: LocationRef, session?: { agent?: unknown; model?: unknown }, signal?: AbortSignal): Promise<PanelImagesStatus> {
+  const request = { location: { directory: location.directory } }, options = { ...locationRequestOptions(location), ...(signal ? { signal } : {}) }
   const [settings, agents, models, fallback] = await Promise.all([
     deps.imageSettings.read(workspaceId, { directory: location.directory }),
     deps.client.agent.list(request, options),

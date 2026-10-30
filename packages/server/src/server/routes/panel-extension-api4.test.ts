@@ -18,6 +18,10 @@ async function fixture(t: TestContext, permissions: string[], options: {
   rpc?: (method: string, input: any, signal: AbortSignal) => unknown
   generation?: { effective: unknown; models: unknown[] | null } | null
   session?: Record<string, unknown>
+  /** Runs inside every `session.get`, before its answer (`reads` counts calls per session). */
+  onSessionGet?: (sessionID: string, reads: number, signal?: AbortSignal) => unknown
+  onSettingsRead?: () => unknown
+  routeBudgetMs?: number
 } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codenomad-api4-route-"))
   const store = new PanelExtensionStore(directory)
@@ -29,8 +33,13 @@ async function fixture(t: TestContext, permissions: string[], options: {
     ses_work: { id: "ses_work", location: { directory: "/repo" }, agent: "build", ...options.session },
     ses_foreign: { id: "ses_foreign", location: { directory: "/elsewhere" } },
   }
+  const connection = { current: true }, owned = new Set(["/repo"]), reads: Record<string, number> = {}
   const client: any = {
-    session: { get: async ({ sessionID }: any) => sessions[sessionID] ?? Promise.reject(new Error("missing")) },
+    session: { get: async ({ sessionID }: any, request?: { signal?: AbortSignal }) => {
+      reads[sessionID] = (reads[sessionID] ?? 0) + 1
+      await options.onSessionGet?.(sessionID, reads[sessionID]!, request?.signal)
+      return sessions[sessionID] ?? Promise.reject(new Error("missing"))
+    } },
     location: { get: async ({ location }: any) => ({ directory: location.directory, project: { id: "p" } }) },
     agent: { list: async () => ({ data: [{ id: "build", model: { providerID: "p", id: "agent-model" } },
       { id: "design", system: "codenomad-design-content: 1\nRules" }] }) },
@@ -52,13 +61,18 @@ async function fixture(t: TestContext, permissions: string[], options: {
   registerPanelExtensionApi4Routes(app, { store, worktreeDeletionFence: new WorktreeDeletionFence(),
     excludeDesignFolder: async value => { excluded.push(value.directory); return "excluded" },
     checkDesignFolderExclusion: async value => { checked.push(value.directory); return excluded.includes(value.directory) ? "excluded" : "missing" },
-    imageSettings: { read: async () => ({ location: { directory: "/repo" }, mediaStorage: null,
-      generation: options.generation === undefined ? { global: true, effective: true, models: [{ ref: "p/img", name: "Img" }] } : options.generation as any }) },
+    ...(options.routeBudgetMs ? { routeBudgetMs: options.routeBudgetMs } : {}),
+    imageSettings: { read: async () => {
+      await options.onSettingsRead?.()
+      return { location: { directory: "/repo" }, mediaStorage: null,
+        generation: options.generation === undefined ? { global: true, effective: true, models: [{ ref: "p/img", name: "Img" }] } : options.generation as any }
+    } },
     workspaceManager: {
       get: (id: string) => id === "i" ? { id, path: "/repo" } as any : undefined,
-      getSharedServiceConnection: async (id: string) => id === "i" ? { client, assertCurrent() {} } as any : undefined,
+      getSharedServiceConnection: async (id: string) => id === "i" ? { client,
+        assertCurrent() { if (!connection.current) throw new Error("Superseded connection") } } as any : undefined,
       getSharedServiceClient: async () => client,
-      ownsLocation: async (id: string, location: { directory: string }) => id === "i" && location.directory === "/repo",
+      ownsLocation: async (id: string, location: { directory: string }) => id === "i" && owned.has(location.directory),
       desktopPluginsReady: async () => {},
       getWorktreeIdentityForPath: async () => "/repo",
       getServiceWslDistro: () => undefined,
@@ -67,7 +81,7 @@ async function fixture(t: TestContext, permissions: string[], options: {
   t.after(async () => { await app.close(); await rm(directory, { recursive: true, force: true }) })
   const post = (method: string, body: Record<string, unknown> = {}) => app.inject({ method: "POST", url: `/api/panel-extensions/${pkg.manifest.id}/${method}`,
     payload: { instanceId: "i", digest: pkg.digest, ...body } })
-  return { app, store, pkg, calls, excluded, checked, post, file: path.join(directory, "installed.json") }
+  return { app, store, pkg, calls, excluded, checked, post, file: path.join(directory, "installed.json"), connection, owned, sessions }
 }
 
 test("each method requires its own declared permission on the enabled exact package", async t => {
@@ -175,6 +189,69 @@ test("a caller that leaves cancels the plugin call", async t => {
   caller.abort()
   await assert.rejects(response)
   await aborted
+})
+
+type Fixture = Awaited<ReturnType<typeof fixture>>
+const never = () => new Promise<never>(() => {})
+const within = <T>(work: Promise<T>, ms: number) => Promise.race([work, new Promise<"hung">(resolve => setTimeout(() => resolve("hung"), ms))])
+
+test("the final reads are fenced: a superseded connection, a session moved or a Location disowned during them never answer 200", async t => {
+  // The connection is superseded during imageRead's final session read.
+  let f: Fixture = await fixture(t, ["session.context", "session.images.read"], { onSessionGet: (_id, reads) => { if (reads === 2) f.connection.current = false } })
+  assert.notEqual((await f.post("imageRead", { sessionID: "ses_images", target })).statusCode, 200, "imageRead, superseded connection")
+  // The displayed session moves outside the workspace while the status is read.
+  let g: Fixture = await fixture(t, ["session.context", "session.images.read"], { onSettingsRead: () => { g.sessions.ses_work.location = { directory: "/elsewhere" } } })
+  assert.notEqual((await g.post("imagesStatus", { sessionID: "ses_work" })).statusCode, 200, "imagesStatus, moved session")
+  let h: Fixture = await fixture(t, ["session.context", "session.images.read"], { onSettingsRead: () => { h.owned.delete("/repo") } })
+  assert.notEqual((await h.post("imagesStatus", { directory: "/repo" })).statusCode, 200, "imagesStatus, disowned Location")
+  let i: Fixture = await fixture(t, ["session.context", "session.images.read"], { onSettingsRead: () => { i.connection.current = false } })
+  assert.notEqual((await i.post("imagesStatus", { directory: "/repo" })).statusCode, 200, "imagesStatus, superseded connection")
+  // The conversation routes, Location disowned during the plugin call.
+  for (const [method, body] of [["conversationStatus", { directory: "/repo" }], ["conversationOpen", { directory: "/repo", title: "Images" }],
+    ["conversationNew", { directory: "/repo", title: "Images" }]] as const) {
+    let c: Fixture = await fixture(t, ["session.context", "images.conversation"], { rpc: method => {
+      if (method === "imagesConversation") c.owned.delete("/repo")
+      return undefined
+    } })
+    assert.notEqual((await c.post(method, body)).statusCode, 200, `${method}, disowned Location`)
+    let d: Fixture = await fixture(t, ["session.context", "images.conversation"], { rpc: method => {
+      if (method === "imagesConversation") d.connection.current = false
+      return undefined
+    } })
+    assert.notEqual((await d.post(method, body)).statusCode, 200, `${method}, superseded connection`)
+  }
+  // Unchanged authority still answers.
+  const ok = await fixture(t, ["session.context", "session.images.read"])
+  assert.equal((await ok.post("imagesStatus", { sessionID: "ses_work" })).statusCode, 200)
+})
+
+test("routes settle at the deadline and on caller abort, even when a dependency never answers", async t => {
+  // A held prerequisite read: the deadline answers, and its signal reaches the read.
+  let readSignal: AbortSignal | undefined
+  const held = await fixture(t, ["session.context", "session.images.read"], { routeBudgetMs: 30,
+    onSessionGet: (_id, _reads, signal) => { readSignal = signal; return never() } })
+  for (const [method, body] of [["imagesStatus", { sessionID: "ses_work" }], ["images", { sessionID: "ses_images" }]] as const) {
+    const answer = await within(held.post(method, body), 2000)
+    assert.notEqual(answer, "hung", `${method} settled at the deadline`)
+    assert.equal((answer as Exclude<typeof answer, "hung">).statusCode, 503)
+    assert.equal(readSignal?.aborted, true, `${method}: the session read was cancelled`)
+  }
+  const settings = await fixture(t, ["session.context", "session.images.read"], { routeBudgetMs: 30, onSettingsRead: never })
+  assert.notEqual(await within(settings.post("imagesStatus", { directory: "/repo" }), 2000), "hung", "a dependency without a signal")
+
+  // Caller abort, with a dependency that ignores signals: the route stops awaiting and settles.
+  let entered!: () => void
+  const started = new Promise<void>(resolve => { entered = resolve })
+  const abandoned = await fixture(t, ["session.context", "session.images.read"], { onSettingsRead: () => { entered(); return never() } })
+  const settled = new Promise<number>(resolve => abandoned.app.addHook("onSend", async (_request, reply, payload) => { resolve(reply.statusCode); return payload }))
+  const address = await abandoned.app.listen({ host: "127.0.0.1", port: 0 })
+  const caller = new AbortController()
+  const response = fetch(`${address}/api/panel-extensions/${abandoned.pkg.manifest.id}/imagesStatus`, { method: "POST", signal: caller.signal,
+    headers: { "content-type": "application/json" }, body: JSON.stringify({ instanceId: "i", digest: abandoned.pkg.digest, directory: "/repo" }) })
+  await started
+  caller.abort()
+  await assert.rejects(response)
+  assert.notEqual(await within(settled, 2000), "hung", "the abandoned route settled")
 })
 
 test("preferences routes: get/set through the store; a corrupt store answers unavailable without rewriting", async t => {

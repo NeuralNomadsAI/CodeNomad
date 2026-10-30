@@ -1,6 +1,6 @@
 import { z } from "zod"
 import type { FastifyInstance } from "fastify"
-import type { OpenCodeClient } from "@opencode/client"
+import type { LocationRef, OpenCodeClient } from "@opencode/client"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import type { PanelExtensionStore } from "../../panel-extensions/store"
 import type { PanelExtensionPermission, PanelConversationStatus } from "../../panel-extensions/contract"
@@ -27,9 +27,31 @@ export interface PanelExtensionApi4Deps extends ImagesConversationRouteDeps {
   workspaceManager: ImagesConversationRouteDeps["workspaceManager"] & Pick<WorkspaceManager, "getSharedServiceConnection" | "get">
   imageSettings: Pick<ImageSettings, "read">
   checkDesignFolderExclusion?: typeof checkDesignFolderExclusion
+  /** Tests only: the whole-route deadline. */
+  routeBudgetMs?: number
 }
 
 class Refused extends Error { constructor(readonly status: number) { super("refused") } }
+
+interface RouteContext {
+  id: string
+  signal: AbortSignal
+  prompts: boolean
+  /** A check run once, after every read, before the answer (keyed so repeated reads of one session check once). */
+  fence(key: string, check: () => Promise<void>): void
+  /** A connection the answer was read through, asserted current right before it is sent. */
+  pin(connection: { assertCurrent(): void }): void
+}
+
+/** `work`, or a rejection as soon as `signal` aborts; a late outcome is dropped. */
+function settle<T>(signal: AbortSignal, work: () => Promise<T>): Promise<T> {
+  signal.throwIfAborted()
+  return new Promise<T>((resolve, reject) => {
+    const abort = () => reject(signal.reason)
+    signal.addEventListener("abort", abort, { once: true })
+    work().then(resolve, reject).finally(() => signal.removeEventListener("abort", abort))
+  })
+}
 
 /**
  * API 4 capabilities (dev-docs/PANEL_EXTENSIONS.md#api-4): one fixed route per
@@ -41,24 +63,32 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   const manager = deps.workspaceManager
   const checkExclusion = deps.checkDesignFolderExclusion ?? checkDesignFolderExclusion
   const route = <T extends z.ZodRawShape>(method: string, permission: PanelExtensionPermission | null, shape: T, bodyLimit: number,
-    run: (input: z.infer<z.ZodObject<T & typeof authority>>, context: { id: string; signal: AbortSignal; prompts: boolean }) => Promise<unknown>) => {
+    run: (input: z.infer<z.ZodObject<T & typeof authority>>, context: RouteContext) => Promise<unknown>) => {
     const schema = z.object({ ...authority, ...shape }).strict()
     app.post(`/api/panel-extensions/:id/${method}`, { bodyLimit }, async (request, reply) => {
       reply.header("Cache-Control", "no-store")
       // A caller that goes away (unmounted panel, frame deadline) cancels the server work.
       const abandoned = new AbortController()
       reply.raw.once("close", () => { if (!reply.raw.writableFinished) abandoned.abort(new Error("Request abandoned")) })
-      const signal = AbortSignal.any([abandoned.signal, AbortSignal.timeout(ROUTE_BUDGET_MS)])
+      const signal = AbortSignal.any([abandoned.signal, AbortSignal.timeout(deps.routeBudgetMs ?? ROUTE_BUDGET_MS)])
       try {
         const { id } = idSchema.parse(request.params)
         const input = schema.parse(request.body) as z.infer<z.ZodObject<T & typeof authority>> & { instanceId: string; digest: string }
-        const entry = permission ? await deps.store.authorize(id, input.digest, permission) : undefined
-        const prompts = Boolean(entry && (entry.manifest.permissions as readonly string[]).includes("session.images.prompts"))
-        const result = await run(input, { id, signal, prompts })
-        // Revocation or replacement during IO fences the result.
-        if (permission) await deps.store.authorize(id, input.digest, permission)
-        signal.throwIfAborted()
-        return result
+        // The route settles on the deadline or the caller's departure, whatever its reads still await.
+        return await settle(signal, async () => {
+          const entry = permission ? await deps.store.authorize(id, input.digest, permission) : undefined
+          const prompts = Boolean(entry && (entry.manifest.permissions as readonly string[]).includes("session.images.prompts"))
+          const fences = new Map<string, () => Promise<void>>(), pinned = new Set<{ assertCurrent(): void }>()
+          const result = await run(input, { id, signal, prompts, fence: (key, check) => { if (!fences.has(key)) fences.set(key, check) },
+            pin: connection => { pinned.add(connection) } })
+          // After the last read: Location and session ownership, then consent, then (synchronously,
+          // with nothing awaited before the answer) every connection the answer was read through.
+          for (const check of fences.values()) { signal.throwIfAborted(); await check() }
+          if (permission) await deps.store.authorize(id, input.digest, permission)
+          signal.throwIfAborted()
+          for (const connection of pinned) connection.assertCurrent()
+          return result
+        })
       } catch (error) {
         const code = error instanceof Refused ? error.status : error instanceof z.ZodError ? 400 : error instanceof PanelExtensionError
           ? { missing: 404, disabled: 403, conflict: 409, invalid: 400, limit: 413, unavailable: 503 }[error.code] : 503
@@ -73,24 +103,35 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     connection.assertCurrent()
     return connection
   }
-  /** The owned session's Location, read again after IO by `fenced`. */
-  const ownedSession = async (instanceId: string, client: OpenCodeClient, sessionID: string) => {
-    const session = await client.session.get({ sessionID })
-    if (!await manager.ownsLocation(instanceId, session.location, client)) throw new Refused(403)
+  const bounded = (signal: AbortSignal) => AbortSignal.any([signal, AbortSignal.timeout(RPC_TIMEOUT_MS)])
+  /** The session, when its Location belongs to the workspace. */
+  const ownedSession = async (instanceId: string, client: OpenCodeClient, sessionID: string, signal: AbortSignal) => {
+    const session = await client.session.get({ sessionID }, { signal: bounded(signal) })
+    if (!await manager.ownsLocation(instanceId, session.location, client, signal)) throw new Refused(403)
     return session
   }
-  const sessionRpc = async (instanceId: string, sessionID: string, method: string, input: Record<string, any>, signal: AbortSignal) => {
+  /** Fences the answer on the session still being owned at the same Location after every read. */
+  const fenceSession = (context: RouteContext, instanceId: string, client: OpenCodeClient, sessionID: string, location: LocationRef) =>
+    context.fence(`session:${sessionID}`, async () => {
+      const current = readLocationRef((await ownedSession(instanceId, client, sessionID, context.signal)).location)
+      if (JSON.stringify(current) !== JSON.stringify(readLocationRef(location))) throw new Refused(409)
+    })
+  const fenceLocation = (context: RouteContext, instanceId: string, client: OpenCodeClient, directory: string) =>
+    context.fence(`location:${directory}`, async () => {
+      if (!await manager.ownsLocation(instanceId, { directory }, client, context.signal)) throw new Refused(403)
+    })
+  const sessionRpc = async (context: RouteContext, instanceId: string, sessionID: string, method: string, input: Record<string, any>) => {
     const connection = await connect(instanceId)
     const client = connection.client
-    const location = readLocationRef((await ownedSession(instanceId, client, sessionID)).location)
+    context.pin(connection)
+    const location = readLocationRef((await ownedSession(instanceId, client, sessionID, context.signal)).location)
     await manager.desktopPluginsReady()
     connection.assertCurrent()
     const result = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method, input, location: { directory: location.directory } },
-      { ...locationRequestOptions(location), signal: AbortSignal.any([signal, AbortSignal.timeout(RPC_TIMEOUT_MS)]) })
+      { ...locationRequestOptions(location), signal: bounded(context.signal) })
     connection.assertCurrent()
     // Moves during IO fence the response too.
-    const current = readLocationRef((await ownedSession(instanceId, client, sessionID)).location)
-    if (JSON.stringify(current) !== JSON.stringify(location)) throw new Refused(409)
+    fenceSession(context, instanceId, client, sessionID, location)
     return result.output
   }
   const parsed = <S extends z.ZodTypeAny>(schema: S, value: unknown): z.infer<S> => {
@@ -100,28 +141,30 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   }
 
   // session.images.read
-  route("images", "session.images.read", { sessionID: Id, cursor: z.string().max(4096).optional() }, 8192, async (input, { signal, prompts }) =>
-    parsed(imagesResultSchema, await sessionRpc(input.instanceId, input.sessionID, "images",
-      { sessionID: input.sessionID, ...(input.cursor ? { cursor: input.cursor } : {}), prompts }, signal)))
-  route("imageRead", "session.images.read", { sessionID: Id, target: assetTargetSchema }, 8192, async (input, { signal }) =>
-    parsed(imageReadResultSchema, await sessionRpc(input.instanceId, input.sessionID, "imageRead", { sessionID: input.sessionID, target: input.target }, signal)))
-  route("imagesStatus", "session.images.read", { sessionID: Id.optional(), directory: Directory.optional() }, 8192, async input => {
+  route("images", "session.images.read", { sessionID: Id, cursor: z.string().max(4096).optional() }, 8192, async (input, context) =>
+    parsed(imagesResultSchema, await sessionRpc(context, input.instanceId, input.sessionID, "images",
+      { sessionID: input.sessionID, ...(input.cursor ? { cursor: input.cursor } : {}), prompts: context.prompts })))
+  route("imageRead", "session.images.read", { sessionID: Id, target: assetTargetSchema }, 8192, async (input, context) =>
+    parsed(imageReadResultSchema, await sessionRpc(context, input.instanceId, input.sessionID, "imageRead", { sessionID: input.sessionID, target: input.target })))
+  route("imagesStatus", "session.images.read", { sessionID: Id.optional(), directory: Directory.optional() }, 8192, async (input, context) => {
     const connection = await connect(input.instanceId)
-    const session = input.sessionID ? await ownedSession(input.instanceId, connection.client, input.sessionID) : undefined
+    context.pin(connection)
+    const client = connection.client
+    const session = input.sessionID ? await ownedSession(input.instanceId, client, input.sessionID, context.signal) : undefined
     const location = session ? readLocationRef(session.location) : input.directory ? { directory: input.directory } : undefined
-    if (!location || !await manager.ownsLocation(input.instanceId, location, connection.client)) throw new Refused(403)
-    const status = await readPanelImagesStatus({ imageSettings: deps.imageSettings, client: connection.client }, input.instanceId, location, session)
-    connection.assertCurrent()
-    return status
+    if (!location || !await manager.ownsLocation(input.instanceId, location, client, context.signal)) throw new Refused(403)
+    if (input.sessionID) fenceSession(context, input.instanceId, client, input.sessionID, location)
+    else fenceLocation(context, input.instanceId, client, location.directory)
+    return readPanelImagesStatus({ imageSettings: deps.imageSettings, client }, input.instanceId, location, session, bounded(context.signal))
   })
 
   // composer.prefill: every reference is revalidated now, never substituted.
   route("prefillReferences", "composer.prefill", { sessionID: Id, targets: z.array(z.union([assetTargetSchema, generationTargetSchema])).min(1).max(16) }, 16384,
-    async (input, { signal }) => {
+    async (input, context) => {
       const paths: Array<string | null> = []
       for (const target of input.targets) {
-        const result = parsed(imageReferenceResultSchema, await sessionRpc(input.instanceId, input.sessionID, "imageReference",
-          { sessionID: input.sessionID, target }, signal))
+        const result = parsed(imageReferenceResultSchema, await sessionRpc(context, input.instanceId, input.sessionID, "imageReference",
+          { sessionID: input.sessionID, target }))
         if (result.status === "blocked") throw new PanelExtensionError("unavailable")
         paths.push(result.status === "path" ? result.path : null)
       }
@@ -129,9 +172,13 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     })
 
   // images.conversation: the host resolves the Location, title, agent and model.
-  route("conversationStatus", "images.conversation", { directory: Directory, sessionID: Id.optional() }, 8192, async (input, { signal }) => {
+  route("conversationStatus", "images.conversation", { directory: Directory, sessionID: Id.optional() }, 8192, async (input, context) => {
+    const { signal } = context
     const connection = await connect(input.instanceId)
-    const displayed = input.sessionID ? await ownedSession(input.instanceId, connection.client, input.sessionID) : undefined
+    context.pin(connection)
+    const displayed = input.sessionID ? await ownedSession(input.instanceId, connection.client, input.sessionID, signal) : undefined
+    if (displayed) fenceSession(context, input.instanceId, connection.client, input.sessionID!, displayed.location)
+    fenceLocation(context, input.instanceId, connection.client, input.directory)
     const found = await resolveImagesConversationAt(deps, input.instanceId, input.directory, { mode: "lookup" }, { rpcTimeoutMs: RPC_TIMEOUT_MS, signal })
     if (found === "denied") throw new Refused(403)
     if (found === "deleting") throw new PanelExtensionError("unavailable")
@@ -141,8 +188,8 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
     if (found.status !== "found") return status
     // Status never writes: the exclusion is only checked; open and startNew append it.
     const [session, page, gitExclusion] = await Promise.all([
-      connection.client.session.get({ sessionID: found.sessionID }).catch(() => undefined),
-      sessionRpc(input.instanceId, found.sessionID, "images", { sessionID: found.sessionID }, signal).catch(() => undefined),
+      connection.client.session.get({ sessionID: found.sessionID }, { signal: bounded(signal) }).catch(() => undefined),
+      sessionRpc(context, input.instanceId, found.sessionID, "images", { sessionID: found.sessionID }).catch(() => undefined),
       checkExclusion({ directory: input.directory, distro: manager.getServiceWslDistro(input.instanceId),
         toHost: servicePath => manager.getHostPathForServicePath(input.instanceId, servicePath) }),
     ])
@@ -157,9 +204,13 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
   const resolve = z.object({ directory: Directory, title: z.string().min(1).max(256), agent: z.string().min(1).max(256).optional(),
     model: imagesConversationInputSchema.shape.model })
   for (const [method, mode] of [["conversationOpen", "open"], ["conversationNew", "new"]] as const) {
-    route(method, "images.conversation", resolve.shape, 8192, async (input, { signal }) => {
+    route(method, "images.conversation", resolve.shape, 8192, async (input, context) => {
       const { instanceId: _instance, digest: _digest, directory, ...options } = input
-      const result = await resolveImagesConversationAt(deps, input.instanceId, directory, { mode, ...options }, { rpcTimeoutMs: RPC_TIMEOUT_MS, signal })
+      const connection = await connect(input.instanceId)
+      context.pin(connection)
+      fenceLocation(context, input.instanceId, connection.client, directory)
+      const result = await resolveImagesConversationAt(deps, input.instanceId, directory, { mode, ...options },
+        { rpcTimeoutMs: RPC_TIMEOUT_MS, signal: context.signal })
       if (result === "denied") throw new Refused(403)
       if (result === "deleting") throw new PanelExtensionError("unavailable")
       return result

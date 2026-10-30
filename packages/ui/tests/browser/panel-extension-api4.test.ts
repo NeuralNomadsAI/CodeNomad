@@ -21,8 +21,9 @@ const ALL = ["session.context", ...PANEL_EXTENSION_API4_PERMISSIONS]
 let fixture: Awaited<ReturnType<typeof startProductFixture>>, root: string, store: PanelExtensionStore
 const app = Fastify()
 const rpc = { calls: [] as Array<{ method: string; input: any }>, hold: undefined as undefined | ((method: string) => Promise<void>),
-  references: [] as unknown[], image: { status: "asset", mime: "image/png", uri: "" } as Record<string, unknown> }
+  references: [] as unknown[], conversation: "ses_images", image: { status: "asset", mime: "image/png", uri: "" } as Record<string, unknown> }
 let installed: PanelExtensionPackage | undefined, realPng = ""
+const transit = { hold: undefined as undefined | (() => Promise<void>) }
 
 const png = (width: number, height: number) => {
   const bytes = Buffer.alloc(33)
@@ -48,7 +49,7 @@ before(async () => {
         label: input.sessionID, mime: "image/png", origin: "proven" }] } }
       if (method === "imageRead") return { output: rpc.image }
       if (method === "imageReference") return { output: rpc.references.shift() ?? { status: "path", path: ".codenomad/design/icône/图标-a.png" } }
-      if (method === "imagesConversation") return { output: input.mode === "lookup" ? { status: "absent" } : { status: "found", sessionID: "ses_images", created: true } }
+      if (method === "imagesConversation") return { output: input.mode === "lookup" ? { status: "absent" } : { status: "found", sessionID: rpc.conversation, created: true } }
       throw new Error(method)
     } },
   }
@@ -67,7 +68,7 @@ before(async () => {
   rpc.image.uri = realPng
 })
 afterEach(async () => {
-  rpc.hold = undefined; rpc.calls = []; rpc.references = []; rpc.image = { status: "asset", mime: "image/png", uri: realPng }
+  rpc.hold = undefined; transit.hold = undefined; rpc.calls = []; rpc.references = []; rpc.conversation = "ses_images"; rpc.image = { status: "asset", mime: "image/png", uri: realPng }
   if (installed) await store.remove(installed.manifest.id, installed.digest).catch(() => {})
   installed = undefined
 })
@@ -102,6 +103,7 @@ async function open(options: { phone?: boolean } = {}) {
     const request = route.request(), url = new URL(request.url())
     if (!url.pathname.startsWith("/api/panel-extensions")) return route.fulfill({ json: { entries: [], files: [], records: [], messages: [], data: [] } })
     requests.push(url.pathname)
+    if (url.pathname.endsWith("/images")) await transit.hold?.()
     const response = await app.inject({ method: request.method() as any, url: url.pathname + url.search,
       payload: request.postData() ?? undefined, headers: { "content-type": "application/json" } })
     await route.fulfill({ status: response.statusCode, contentType: "application/json", body: response.body }).catch(() => {})
@@ -256,7 +258,8 @@ test("a held method fails at the host deadline and is cancelled; late answers ne
   try {
     await showPanel(page)
     let releases: Array<() => void> = []
-    rpc.hold = () => new Promise<void>(resolve => releases.push(resolve))
+    // Held in transit, after the server: only the host's own deadline can answer.
+    transit.hold = () => new Promise<void>(resolve => releases.push(resolve))
     const started = Date.now()
     const held = call(page, "images.list")
     const others = [call(page, "images.list"), call(page, "images.list"), call(page, "images.list")]
@@ -267,7 +270,9 @@ test("a held method fails at the host deadline and is cancelled; late answers ne
     await Promise.all(others)
     await page.waitForFunction(() => true)
     assert.ok(aborted.filter(value => value.endsWith("/images")).length >= 4, `server work cancelled: ${aborted.join()}`)
+    transit.hold = undefined
     for (const release of releases.splice(0)) release()
+    rpc.hold = () => new Promise<void>(resolve => releases.push(resolve))
 
     // A late answer to the first mounting never reaches the next one (both restart request ids at 1).
     const old = call(page, "images.list").catch(() => undefined)
@@ -344,6 +349,25 @@ test("conversation: status, then open answers the frame before showing the Image
     const opened = rpc.calls.find(entry => entry.method === "imagesConversation" && entry.input.mode === "open")
     assert.deepEqual(opened?.input, { mode: "open", title: "Images", agent: "design", model: { providerID: "fixture", id: "chosen" } })
     assert.equal((await snapshot(page)).prompts, 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
+test("a conversation selected while the opened one hydrates stays selected", async () => {
+  await install()
+  rpc.conversation = "ses_fresh"
+  const { page, errors } = await open()
+  try {
+    await showPanel(page)
+    await page.evaluate(() => (window as any).fixture.holdHydration("ses_fresh"))
+    await report(page, "conversation.open")
+    await page.waitForFunction(() => (window as any).fixture.hydrationWaiting() > 0)
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.frameMessages()), [{ ok: { opened: true, created: true } }])
+    await show(page, "ses_other")
+    await page.waitForFunction(() => (window as any).fixture.snapshot().active === "ses_other")
+    await page.evaluate(() => (window as any).fixture.releaseHydration())
+    await page.waitForTimeout(300)
+    assert.equal((await snapshot(page)).active, "ses_other", "the later selection wins")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })

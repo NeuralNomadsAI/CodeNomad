@@ -52,10 +52,16 @@ export async function resolveImagesConversation(instanceId: string, mode: "open"
   })
 }
 
-/** Shows a found conversation and focuses its composer; nothing is sent. */
-export async function showImagesConversation(instanceId: string, result: Extract<ImagesConversationResponse, { status: "found" }>): Promise<void> {
+/**
+ * Shows a found conversation and focuses its composer; nothing is sent. A created
+ * one is listed in any case; it is selected only while `stillWanted()` holds after
+ * hydration, so a conversation the user selected meanwhile stays selected.
+ */
+export async function showImagesConversation(instanceId: string, result: Extract<ImagesConversationResponse, { status: "found" }>,
+  stillWanted: () => boolean = () => true): Promise<void> {
   await hydrateRestoredSessionChain(instanceId, [result.sessionID])
   if (result.created) prependSessionListId(instanceId, result.sessionID)
+  if (!stillWanted()) return
   setActiveParentSession(instanceId, result.sessionID)
   requestComposerFocus(instanceId, result.sessionID)
 }

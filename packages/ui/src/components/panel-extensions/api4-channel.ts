@@ -145,9 +145,11 @@ export function useApi4Channel(props: {
     const result = await resolveImagesConversation(props.instanceId, mode,
       (_instance, request) => panelExtensionsApi4.conversation(authority, request, signal))
     if (result.status !== "found") return { result: mode === "new" ? { opened: false } : { opened: false, created: false } }
-    // Answer the frame first; showing the conversation then remounts the panel.
+    // Answer the frame first; showing the conversation then remounts the panel. A conversation
+    // the user selects during hydration wins: navigation needs the mount's selection unchanged.
+    const selected = props.sessionId
     return { result: mode === "new" ? { opened: true } : { opened: true, created: result.created }, after: () => {
-      void showImagesConversation(props.instanceId, result)
+      void showImagesConversation(props.instanceId, result, () => (props.host.activeSessionId() ?? null) === selected)
       if (props.host.isPhoneLayout()) props.host.closePanel()
     } }
   }
