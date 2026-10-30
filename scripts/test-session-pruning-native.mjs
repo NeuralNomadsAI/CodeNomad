@@ -374,14 +374,18 @@ try {
   assert.equal((await client.rpc.call({ rpcID: "codenomad.session-pruning", method: "prune", location, input: historical }, locationOptions)).output.status, "pruned")
   assert.deepEqual((await client.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
   assert.deepEqual(await client.session.context({ sessionID: fork.id }), contextBefore, "deleting pre-compaction content does not rewrite or re-expand a summary")
-  await testSessionMediaBlobNative({ client, location, locationOptions, db, revision, generate: async (sessionID) => {
+  const generateMedia = async (sessionID) => {
     primaryCount = 0
     probeName = "media_probe"
     try {
       await client.session.prompt({ sessionID, text: "Use media_probe, then conclude" })
       await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
     } finally { probeName = "prune_probe" }
-  } })
+  }
+  await testSessionMediaBlobNative({ client, location, locationOptions, db, revision, generate: generateMedia })
+  const { testSessionImagesNative } = await import("./test-session-images-native.mjs")
+  const imagesConversation = await testSessionImagesNative({ client, second: makeClient(), location, locationOptions, generate: generateMedia,
+    other: { location: historyLocation, locationOptions: locationRequestOptions(historyLocation) } })
   assert.equal(db.prepare("PRAGMA integrity_check").get().integrity_check, "ok")
   const enqueued = first.filter(event => event.type === "session.inbox.enqueued")
   assert(enqueued.length > 0)
@@ -399,6 +403,13 @@ try {
   assert.deepEqual((await restarted.session.message.get({ sessionID: session.id, messageID: target.id })).content, [])
   assert.deepEqual((await restarted.session.message.get({ sessionID: fork.id, messageID: forkTarget.id })).content, [])
   assert.deepEqual(await restarted.session.context({ sessionID: fork.id }), contextBefore)
+  await until(async () => {
+    try {
+      const found = (await restarted.rpc.call({ rpcID: "codenomad.session-pruning", method: "imagesConversation", location, input: { mode: "lookup" } }, locationOptions)).output
+      return found.status === "found" && found.sessionID === imagesConversation
+    } catch { return false }
+  })
+  console.log("PASS: the Images conversation is found again after a daemon restart")
   if (bundled) {
     const preview = () => restarted.rpc.call({ rpcID: "codenomad.session-pruning", method: "preview", location, input: { sessionID: session.id, messageID: target.id } }, locationOptions)
     await preview()

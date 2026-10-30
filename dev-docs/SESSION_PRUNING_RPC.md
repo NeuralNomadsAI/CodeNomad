@@ -28,6 +28,7 @@ methods, the integration OpenCode's maintainers recommend for plugins
 - `service.ts`: database connection and a fresh `ctx.storage` challenge.
 - `isolated-store.ts`: in-memory-only test adapter; never a live write bypass.
 - `plugin.ts`: native RPC registration and post-commit notifications.
+- `assets-store.ts`, `assets-gallery*.ts`, `assets-conversation.ts`: tool-file assets, the [image gallery](#image-gallery) and the [Images conversation](#images-conversation).
 - `history-ranked-service.ts`: the presence-owned Code Mode `codenomad.session_search` tool and versioned ranked-history RPC; ranking, scope and bounds are specified in [full-history queries](SESSION_HISTORY_QUERIES.md).
 - `desktop-plugin.ts` / `presence.ts`: register RPC while a CodeNomad backend is present; dispose on final close or lease expiry. At load, before following presence, the entry also registers the Design agent and skills that backend leases request (`../design/register.ts`, contract in [OpenCode compatibility](OPENCODE_COMPATIBILITY.md#agent-conventions)).
 - `tui.ts` / `tui-reload.ts`: companion cache invalidation via the public TUI API.
@@ -69,6 +70,87 @@ receipt and re-emits the event. Receipts contain no deleted content. Event deliv
 is best-effort: failure cannot roll back a committed prune. A timed-out caller must
 re-read or retry the **same** request, never assume no mutation occurred.
 
+## Image gallery
+
+Fixed methods recompute every answer from one session's transcript inside a
+`BEGIN … ROLLBACK` read, through `withHistoryDatabase` and `ownedSession`: no cache,
+index, copy, file access or `kv` lookup beyond the storage challenge. Every query
+stops before the revert boundary (`id < revert.messageID`).
+
+- `images({ sessionID, cursor?, prompts? })` lists, newest first, one `image` entry
+  per image file (`image/png|jpeg|gif|webp|avif`) of a `read` tool part and one
+  `generation` entry per `image_generate` part, in part and file order. A page holds
+  at most 32 assistant messages, 32 MiB of stored JSON (each row size-checked
+  before it loads; a row over 16 MiB gives `blocked: limit`), 64 entries and 1 MiB
+  serialized. Every admitted row is emitted before the cursor advances: a row the
+  byte budget refuses becomes the cursor at offset 0; a full page points at the next
+  entry. Cursors bind the scope and boundary (`blocked: conflict` otherwise) and
+  carry `through`, the highest assistant or synthetic `seq` of the first page.
+  Media refs list from blob sizes only, as `assets` does.
+- `imageRead({ sessionID, target })` is `assetRead`'s byte read behind a membership
+  check in the same bounded read: anything but an image file of a `read` part gives
+  `blocked: not-gallery`; a row over 16 MiB gives `blocked: limit`. Decode bounds
+  belong to the caller's channel.
+- `imageReference({ sessionID, target })` takes an image target or a generation
+  target `{ messageID, part, digest: SHA-256(part id, NUL, jobID) }` and returns
+  `{ path }` relative to the location, or `refused` with `unverifiable`, `outside`,
+  `changed`, `not-gallery` or `missing`. A target is never substituted.
+
+Generation annotations (`generationKey`, `parentKeys`, `otherRefs`) appear only on
+proven images; other images are `origin: "unverifiable"` and keep their pixels.
+The proof covers the window rows, up to 32 older assistant rows within 32 MiB, and
+one scan of at most 4,096 synthetic rows from the lowest covered `seq` to `through`,
+decoded by SQLite only for rows of at most 64 KiB. A read of file `F` over
+`[time.ran, time.completed]` is proven when the notice scan is complete, no
+undecoded row is dated at or before the read's end, the scan covers the item's whole
+range (its message and the 31 before it, within 32 MiB, unless the session starts
+sooner; a range an oversized row or the scan budget cuts proves nothing), exactly one
+`image_generate` call that may write `F` in that range started before that end, it
+completed with a `jobID` before the read began, its single
+decoded notice names `F` between the call's start and the read's start, and no
+other completed notice names `F` from then until the read's end. Parents of a proven
+call follow the same rule over the generation's own interval. Only a `completed`
+`image_generate` part with `metadata.path` names the file it writes (that stem);
+every other `image_generate` part (streaming, running, errored or completed without
+`metadata.path`) may write any file, so it leaves every proof and reference it could
+affect unverifiable. Relative read names and parent references resolve lexically against the session directory in the daemon's
+path style (Windows without case); one outside the location has no label and no
+reference. Generation states are the native part status and, when established, the
+outcome of its unique decoded notice (`completed`, `error`, `cancelled`), else
+`unknown`. `prompts: true` adds `prompt` (8 KiB of UTF-8, then `promptTruncated`)
+and `model` to generations and proven images only in a root session marked
+`codenomad.companion: images`; the host grants it. Entries never carry paths,
+directories, job, notification or call IDs, or notice and error text.
+
+References also require no later write: the newest 32 assistant rows within 32 MiB
+must reach the item, with a complete notice scan, no undecoded row dated from the
+read's start (a generation's notice time), no call that may write any file started
+from then (`unverifiable`), and no call to the same stem started from then or other
+notice naming the file after it (`changed`). A generation target is also refused as
+`unverifiable` when the scan cuts its range, or while another call that may write
+its file, started before its notice (or at an unknown time) in the item's range or
+later, lacks a completion time or a decoded notice of its own.
+
+Consumed contracts: `read` tool `state.content` files, `image_generate` parts
+(`state.status`, `state.input.prompt|images`, `state.metadata.path` as the stem, `jobID`, `model`,
+`time.ran|completed`) and its synthetic notices (`metadata.source|jobID|state|path`,
+text `Saved image: <file> (`). A change leaves generations `unknown` and images
+unverifiable.
+
+## Images conversation
+
+`imagesConversation({ mode, title?, agent?, model? })` runs for the calling location.
+The lookup reads `session_v2` with `ownedSession`'s location predicate, root and
+unarchived sessions whose `metadata."codenomad.companion"` is `images`, newest by
+`time_created DESC, id DESC`, over at most 20,000 roots: `found`, `absent` only after
+a complete scan, else `unknown`. Every mode also answers `unknown` when the database
+or its storage challenge cannot be read or fails, and creates nothing; cancellation
+still rejects. `open` repeats the lookup under a process-wide lock
+(global symbol, keyed by database file, project, storage directory and workspace)
+and creates through `ctx.session.create` only when `absent`; `new` always creates.
+The lock serializes the callers of one OpenCode process; two processes sharing a
+database can each create one, and the lookup then picks the newest.
+
 ## Version and loading notes
 
 `history` and `pruneBatch` extend this plugin; see
@@ -94,7 +176,12 @@ prompt/transaction orderings, retry receipts, two event subscribers, next primar
 request payload, fork isolation, pre-compaction deletion without summary changes,
 server restart, and a tool file result read through navigation, assets and pruning
 in whichever form the runtime stores it (with `experimental.media_blob`, a blob ref
-whose ref and blob the prune releases). Unit tests cover rollback and client projection/read races.
+whose ref and blob the prune releases), the Images conversation (one creation for
+concurrent opens from two clients, a newer marked child, deletion, another location,
+restart) and gallery membership on that stored tool file. Unit tests cover rollback
+and client projection/read races; the gallery tests replay their proof mutations on
+copies of two OpenCode 2.2.1 Images transcripts, with and without media blobs
+(`assets-gallery-fixture.json`).
 The mock's usage numbers are synthetic; never cite them as provider token savings.
 
 Unvalidated: native WSL runs, interactive TUI, two desktop windows/scroll,
