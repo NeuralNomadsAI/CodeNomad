@@ -118,7 +118,7 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
 })
 
-test("a new project depth block keeps the inherited image storage and Inherit removes it again", async () => {
+test("Inherit removes a block left with only the Global image storage, only when that is certain", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "subagent-depth-media-"))
   try {
     const global = path.join(root, "global"), project = path.join(root, "project")
@@ -150,15 +150,17 @@ test("a new project depth block keeps the inherited image storage and Inherit re
     const save = async (value: number | null) => settings.update("w", location, value, (await settings.read("w", location)).project!.expectation)
     const experimental = async () => parse((await readFile(projectFile, "utf8")).replace(/^﻿/, "")).experimental
 
+    // A depth is written as it is; Images, not the depth editor, writes storage into the block.
     await save(3)
     assert.match(await readFile(projectFile, "utf8"), /\/\/ kept/)
-    assert.deepEqual(await experimental(), { subagent_depth: 3, media_blob: true })
+    assert.deepEqual(await experimental(), { subagent_depth: 3 })
+    await writeFile(projectFile, '{ "experimental": { "subagent_depth": 3, "media_blob": true } }')
     assert.equal((await settings.read("w", location)).project?.emptyExperimental, undefined)
     await save(null)
-    assert.equal(await experimental(), undefined, "Inherit removes a block left with only the inherited storage")
+    assert.equal(await experimental(), undefined, "Inherit removes a block left with only the Global storage")
     assert.equal((await settings.read("w", location)).effectiveDepth, 2)
 
-    // A block holding only the inherited storage still hides the Global depth: flagged so Inherit repairs it.
+    // A block holding only the Global storage still hides the Global depth: flagged so Inherit repairs it.
     await writeFile(projectFile, '﻿{\r\n  "experimental": {\r\n    // keep me\r\n    "media_blob": true\r\n  },\r\n  "shell": "keep"\r\n}\r\n')
     assert.equal((await settings.read("w", location)).project?.emptyExperimental, true)
     await save(null)
@@ -170,33 +172,22 @@ test("a new project depth block keeps the inherited image storage and Inherit re
     assert.equal((await settings.read("w", location)).project?.emptyExperimental, undefined)
     await save(null)
     assert.deepEqual(await experimental(), { media_blob: false })
-    // An existing block is edited as it is.
-    await writeFile(projectFile, '{ "experimental": { "todo": true } }')
-    await save(4)
-    assert.deepEqual(await experimental(), { todo: true, subagent_depth: 4 })
-
-    // Native entries lag behind a fresh Global write in either direction: the fresh document decides.
-    await writeFile(projectFile, "{}")
+    // Uncertain exposure keeps the block, which hides nothing new: lagging or normalized native
+    // entries, another deciding document, or a runtime without the setting.
+    const kept = async (message: string) => {
+      await writeFile(projectFile, '{ "experimental": { "subagent_depth": 3, "media_blob": true } }')
+      await save(null)
+      assert.deepEqual(await experimental(), { media_blob: true }, message)
+    }
     staleGlobal = { experimental: { subagent_depth: 2, media_blob: false } }
-    await save(5)
-    assert.deepEqual(await experimental(), { subagent_depth: 5, media_blob: true })
-    await writeFile(globalFile, '{"experimental":{"subagent_depth":2,"media_blob":false}}')
-    await writeFile(projectFile, "{}")
-    staleGlobal = { experimental: { subagent_depth: 2, media_blob: true } }
-    await save(5)
-    assert.deepEqual(await experimental(), { subagent_depth: 5 })
+    await kept("native entries lagging behind the Global document")
+    staleGlobal = { experimental: { subagent_depth: 2 } }
+    await kept("native entries that differ from the Global document in any way")
     staleGlobal = undefined
+    await writeFile(globalFile, "{}")
+    await kept("no Global experimental object below")
     await writeFile(globalFile, '{"experimental":{"subagent_depth":2,"media_blob":true}}')
-
-    // Nothing is copied when storage is not inherited on, or when the runtime lacks the setting.
-    await writeFile(globalFile, '{"experimental":{"subagent_depth":2,"media_blob":false}}')
-    await writeFile(projectFile, "{}")
-    await save(1)
-    assert.deepEqual(await experimental(), { subagent_depth: 1 })
-    await writeFile(globalFile, '{"experimental":{"subagent_depth":2,"media_blob":true}}')
-    await writeFile(projectFile, "{}")
     media = false
-    await save(1)
-    assert.deepEqual(await experimental(), { subagent_depth: 1 })
+    await kept("a runtime without the setting")
   } finally { await rm(root, { recursive: true, force: true }) }
 })

@@ -308,23 +308,19 @@ JSONC layer. The effective depth follows OpenCode's own read: the whole
 one, unmerged, so a project `experimental` block without the depth hides the
 global depth (native normalization drops a block holding only unknown keys). Saving
 compares the original full file/target expectation and preserves comments, sibling
-fields and WSL atomic-write protections. When saving a depth creates the project
-`experimental` object and the inherited one has `media_blob: true` (declared by the
-runtime contract), the new object also gets `media_blob: true`, so Settings → Images
-storage stays on there. The inherited object comes from `opencode/experimental-layers.ts`:
-native entries with the Global entry replaced by the fresh Global document (entries lag
-behind writes until the watcher reloads); a target without a native entry or listed
-directory ranks at the end of the project walk after the Global directory (files of the
-Location and its ancestors and their `.opencode` directories), and any other entry ends
-that walk, so content, managed or unrecognized layers never count as inherited. Removing the override restores
-inheritance and also removes a project `experimental` object left without
-properties, or holding only a `media_blob` equal to the inherited value, moving its
-comments to the property's place; the snapshot flags an existing one
-(`emptyExperimental`) so Inherit can repair it.
+fields and WSL atomic-write protections. Removing the override restores
+inheritance and also removes, in one edit that moves its comments to the property's
+place, a project `experimental` object left without properties or holding only a
+`media_blob` (which Settings → Images writes there) equal to the one removal exposes.
+That value counts only when certain: the runtime contract declares `media_blob`, and
+the next native `experimental` object (`opencode/experimental-layers.ts`) belongs to
+the Global write target and equals its fresh document, since native entries lag
+behind writes and normalize what they load; otherwise the object stays. The snapshot
+flags such an object (`emptyExperimental`) so Inherit can repair it.
 `node --import tsx scripts/test-subagent-depth-settings-native.mjs <absolute-isolated-opencode-cli>`
 (also in the latest-runtime CI job) qualifies this against a private runtime: depth
-capability, JSONC save/reset preserving comments and siblings, inherited image
-storage, stale-expectation conflicts and foreign-location rejection.
+capability, JSONC save/reset preserving comments and siblings, Global image storage
+cleanup, stale-expectation conflicts and foreign-location rejection.
 
 Activity and targeted recovery share `missions/native-session-family.ts`: a root's
 bounded native descendant inventory (32 maximum) must have consistent parent,
