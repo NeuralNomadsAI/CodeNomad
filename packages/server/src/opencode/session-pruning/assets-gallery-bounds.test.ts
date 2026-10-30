@@ -49,6 +49,38 @@ each("a reused parent path and a parent outside the range count in otherRefs", a
   assert(has(image(await fixture.lines(), "icon-a2")[0], "origin:proven", "parents:0 other:1"))
 })
 
+// A failed attempt at the same file (e.g. a rejected provider key), then the retry that saved it.
+const failedAttempt = (fixture: Fixture, outcome: "error" | "cancelled", noticeAt: (ran: number) => number, notices = 1) => {
+  const retry = fixture.call(), ran = retry.time.ran, failed = structuredClone(retry)
+  failed.id = "call_zz_failed"; failed.state.metadata.jobID = "image_zz_failed"
+  failed.time = { created: ran - 30, ran: ran - 29, completed: ran - 28 }
+  fixture.insert("msg_zz_failed", "assistant", 3, ran - 30, { ...fixture.json(A_CALL), content: [failed] })
+  for (let n = 0; n < notices; n++) {
+    const notice = fixture.json(A_NOTICE)
+    notice.metadata = { ...notice.metadata, jobID: "image_zz_failed", state: outcome }
+    notice.text = `Image request failed for ${notice.metadata.path}: API key not valid.`
+    fixture.insert(`msg_zz_failed_notice_${n}`, "synthetic", 4, noticeAt(ran) + n, notice)
+  }
+}
+each("an errored attempt at the same file whose notice came before the retry started leaves the retry proven", async fixture => {
+  failedAttempt(fixture, "error", ran => ran - 10)
+  assert(has(image(await fixture.lines(), "icon-a")[0], "origin:proven", "read:asset"))
+  assert.equal((await fixture.reference(fixture.readTarget())).status, "path")
+})
+// A cancelled job's notice can come before its interrupted write settles.
+for (const [name, outcome, noticeAt, notices] of [
+  ["cancelled before the retry started", "cancelled", (ran: number) => ran - 10, 1],
+  ["failed, notified once the retry had started", "error", (ran: number) => ran, 1],
+  ["failed, never notified", "error", (ran: number) => ran - 10, 0],
+  ["failed, notified twice", "error", (ran: number) => ran - 10, 2],
+] as const) {
+  each(`an attempt at the same file ${name} keeps the retry unverifiable`, async fixture => {
+    failedAttempt(fixture, outcome, noticeAt, notices)
+    assert(has(image(await fixture.lines(), "icon-a")[0], "origin:unverifiable", "read:asset"))
+    assert.deepEqual(await fixture.reference(fixture.readTarget()), { status: "refused", reason: "unverifiable" })
+  })
+}
+
 each("a parent generated more than 32 assistant messages before its child is not proven", async fixture => {
   fixture.raw.prepare("UPDATE session_message SET seq=seq+100 WHERE seq>=47").run()
   for (let n = 0; n < 40; n++) fixture.insert(`msg_zz_gap_${String(n).padStart(3, "0")}`, "assistant", 60 + n, Date.now(), { ...fixture.json(A_READ), content: [{ type: "text", text: `gap ${n}` }] })
