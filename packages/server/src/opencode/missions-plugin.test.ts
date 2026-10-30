@@ -262,6 +262,8 @@ test("a graceful Pause reaches the coordinator and every ordinary native descend
   // Ordinary native sub-agents are never Mission actors: only their ancestry links them.
   const parents: Record<string, string> = { ses_child: "ses_coordinator", ses_grandchild: "ses_child", ses_great: "ses_grandchild", ses_stranger_child: "ses_stranger" }
   const reads: string[] = []
+  // Native moves keep the parent edge and change project or Location.
+  const moved: Record<string, { projectID?: string; directory?: string }> = {}
   const registration = () => ({ dispose: async () => {} })
   const cleanup = await setupMissionsPlugin({
     location: { directory: "/repo", project: { id: "project-1", canonical: "/repo" } },
@@ -274,7 +276,7 @@ test("a graceful Pause reaches the coordinator and every ordinary native descend
     session: {
       get: async ({ sessionID }: { sessionID: string }) => {
         reads.push(sessionID)
-        return { id: sessionID, projectID: "project-1", title: sessionID, location: { directory: "/repo" }, ...(parents[sessionID] ? { parentID: parents[sessionID] } : {}) }
+        return { id: sessionID, projectID: moved[sessionID]?.projectID ?? "project-1", title: sessionID, location: { directory: moved[sessionID]?.directory ?? "/repo" }, ...(parents[sessionID] ? { parentID: parents[sessionID] } : {}) }
       },
       create: async () => { throw new Error("not used") }, prompt: async () => {}, synthetic: async () => {},
       hook: async (_name: "context", callback: typeof contextHook) => { contextHook = callback; return registration() },
@@ -294,6 +296,11 @@ test("a graceful Pause reaches the coordinator and every ordinary native descend
       return event.system.map(part => part.text).join("\n")
     }
     for (const id of ["ses_child", "ses_great"]) assert.doesNotMatch(await context(id), /paused/, "a running mission adds nothing to ordinary sub-agents")
+    // Once warm, a running Mission's sub-agents and unrelated families need no native read.
+    const warm = reads.length
+    for (const id of ["ses_great", "ses_stranger_child"]) await context(id)
+    await context("ses_stranger_child")
+    assert.deepEqual(reads.slice(warm).filter(id => id !== "ses_stranger_child" && id !== "ses_stranger"), [], "cached parents serve later requests")
 
     const mission = JSON.parse((await tools.find(tool => tool.name === "inspect")!.execute({}, {
       sessionID: "ses_coordinator", messageID: "msg_2", id: "call_2", progress: async () => {} })).content).mission as MissionMap
@@ -306,9 +313,15 @@ test("a graceful Pause reaches the coordinator and every ordinary native descend
       assert.match(await context(id), new RegExp(`Mission ${mission.id} is paused by the user[\\s\\S]*return what you have to your parent`), id)
     }
     assert.doesNotMatch(await context("ses_stranger_child"), /paused/, "another conversation's sub-agent is untouched")
-    // A wake-up or the next step of the same sub-agent reads its ancestry from the cache.
-    const before = reads.length
+    // A wake-up or the next step of the same sub-agent still receives it.
     assert.match(await context("ses_great"), /paused by the user/)
-    assert.equal(reads.length, before, "parents are remembered across model requests")
+    // A moved family member no longer belongs to the admitted family, even with warm parents.
+    moved.ses_child = { directory: "/other-worktree" }
+    for (const id of ["ses_child", "ses_grandchild", "ses_great"]) assert.doesNotMatch(await context(id), /paused/, `${id} below a moved child`)
+    delete moved.ses_child
+    moved.ses_grandchild = { projectID: "foreign-project" }
+    assert.doesNotMatch(await context("ses_great"), /paused/, "an ancestor moved to another project breaks the family")
+    delete moved.ses_grandchild
+    assert.match(await context("ses_great"), /paused by the user/)
   } finally { await cleanup() }
 })

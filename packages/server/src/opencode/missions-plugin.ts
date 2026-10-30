@@ -25,7 +25,7 @@ import { executionSchema, parseExecution } from "../missions/execution"
 import { readMissionCatalog, validateNativeExecution, type MissionCatalogClient } from "../missions/native-catalog"
 import { MissionNotificationOutbox } from "../missions/notification-outbox"
 import { MISSION_RPC_REJECTION, missionMutationStatus } from "../missions/rpc-errors"
-import { readLocationRef } from "./compatibility/location"
+import { readLocationRef, sameLocation } from "./compatibility/location"
 import { taskExecutionModeSchema, taskContractReferenceWireSchema } from "../missions/native-wire-schema"
 import { parseExecutionMode, parseMissionTaskMode, missionTaskModeSchema } from "../missions/task-execution-mode"
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
@@ -463,26 +463,39 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
 
     // Ordinary native sub-agents of a one-time Mission are not actors and read no
     // Mission context; a paused Mission still reaches them through their ancestry.
-    // Parents never change, so the bounded cache serves each step after the first.
+    // Cached parent IDs only find the candidate actor cheaply (running Missions and
+    // unrelated families need no native read once warm). Placement can change with
+    // a native move, so a paused candidate's whole chain is re-read: every session
+    // must still link to its parent and share the actor's admitted project and Location.
     const parents = new Map<string, string | null>()
-    const pausedAncestorMission = async (control: MissionBusinessRoute["control"], sessionID: string): Promise<string | undefined> => {
-      const seen = new Set<string>()
-      let id = sessionID
-      for (let depth = 0; depth < MAX_PAUSE_ANCESTRY; depth++) {
-        seen.add(id)
-        let parent = parents.get(id)
-        if (parent === undefined) {
-          const session = await context.session.get({ sessionID: id })
-          parent = session.id === id ? session.parentID ?? null : null
-          if (parents.size >= MAX_PAUSE_ANCESTRY_CACHE) parents.delete(parents.keys().next().value!)
-          parents.set(id, parent)
-        }
-        if (!parent || seen.has(parent)) return undefined
-        const mission = await control.contextFor(parent)
-        if (mission) return mission.paused ? mission.missionID : undefined
-        id = parent
+    const parentOf = async (sessionID: string) => {
+      let parent = parents.get(sessionID)
+      if (parent === undefined) {
+        const session = await context.session.get({ sessionID })
+        parent = session.id === sessionID ? session.parentID ?? null : null
+        if (parents.size >= MAX_PAUSE_ANCESTRY_CACHE) parents.delete(parents.keys().next().value!)
+        parents.set(sessionID, parent)
       }
-      return undefined
+      return parent
+    }
+    const pausedAncestorMission = async (control: MissionBusinessRoute["control"], sessionID: string): Promise<string | undefined> => {
+      const chain = [sessionID]
+      let mission: Awaited<ReturnType<typeof control.contextFor>>
+      while (!mission) {
+        if (chain.length > MAX_PAUSE_ANCESTRY) return undefined
+        const parent = await parentOf(chain.at(-1)!)
+        if (!parent || chain.includes(parent)) return undefined
+        chain.push(parent)
+        mission = await control.contextFor(parent)
+      }
+      if (!mission.paused) return undefined
+      const { projectID, location } = mission.placement
+      for (const [index, id] of chain.entries()) {
+        const session = await context.session.get({ sessionID: id })
+        if (session.id !== id || session.projectID !== projectID || !sameLocation(session.location, location)
+          || (index < chain.length - 1 && session.parentID !== chain[index + 1])) return undefined
+      }
+      return mission.missionID
     }
 
     const contextHook = await context.session.hook("context", (event) => {
