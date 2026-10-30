@@ -402,9 +402,11 @@ only future online installation; installed copies and local ZIP installation rem
 node --import tsx --test packages/server/src/panel-extensions/extension.test.ts
 node --import tsx --test packages/server/src/panel-extensions/catalog.test.ts
 node --import tsx --test packages/server/src/opencode/session-pruning/assets.test.ts packages/server/src/server/routes/panel-extension-assets.test.ts
-node scripts/test-panel-extension-native.mjs # Windows, isolated Tauri/WebView2
+node scripts/test-panel-extension-native.mjs # isolated Tauri: WebView2, WKWebView or WebKitGTK
 node scripts/test-panel-extension-native.mjs --api2
 node scripts/test-panel-extension-native.mjs --api3
+node scripts/test-panel-extension-native.mjs --api4
+node scripts/test-panel-extension-electron.mjs # real preload, createWindow webPreferences; Linux may add --no-sandbox
 node --import tsx --test packages/server/src/forge/forge.test.ts packages/server/src/server/routes/panel-extension-work-items.test.ts
 node --conditions=browser --import tsx --test packages/ui/src/components/panel-extensions/work-items-channel.test.ts
 node --import tsx --test packages/ui/src/components/panel-extensions/image-bounds.test.ts
@@ -422,6 +424,15 @@ concurrent changes and corrupt-state preservation. Catalogue checks cover SSRF/r
 verification, metadata-only discovery and withdrawn selections after warm reads.
 Rendered tests use the real right panel, installer, routes and event dispatcher
 for online browse/search/consent, offline fallback, incompatibility and lifecycle.
+The native runners share `scripts/panel-extension-native-probe.mjs`: the frame is
+built from `PANEL_EXTENSION_SANDBOX` and `panelExtensionDocument` (the real panel
+must use that constant as its only sandbox), and must report `self.origin === "null"`,
+an unreachable `parent.document`, no native line besides the host's positive
+control, no request to the loopback leak counter (fetch, XHR, beacons, sockets,
+event streams, workers, images, scripts, styles, fonts, media, frames, objects,
+forms, popups) and exactly one port answer per declared method. Each run also hosts
+the same frame with `allow-same-origin` added and with the CSP meta removed, and
+fails unless the probe detects both.
 
 ## Agent conventions
 
