@@ -21,6 +21,9 @@ before(async () => {
 after(async () => { await browser?.close() })
 
 const profiles = { coordinator: { agent: "root", model: { providerID: "p", id: "m", variant: "high" } }, roles: { specialist: { agent: "child" } } }
+/** A native catalog entry; its display name is "Model <ID>". */
+const nativeModel = (id: string, variants: { id: string }[] = []) => ({ providerID: "p", id, name: `Model ${id.toUpperCase()}`, status: "active",
+  enabled: true, capabilities: { tools: true }, cost: [], limit: { context: 1, output: 1 }, variants })
 const modelID = "70d47119-e4c3-4b18-814b-3e72ff93a1b2"
 const text = (page: Page, key: string) => page.evaluate(key => window.missionDefaultsModels.text(key), key)
 const ensureOptions = async (page: Page) => { const summary = page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }); if (!await summary.evaluate(item => (item.parentElement as HTMLDetailsElement).open)) await summary.click() }
@@ -87,7 +90,11 @@ async function setup(page: Page, initial: Record<string, unknown> = {}, delay?: 
   })
   await page.route("**/workspaces/fixture/instance/api/model**", route => {
     if (!new URL(route.request().url()).search) reads.push(route.request().url())
-    return route.fulfill({ json: { data: [{ providerID: "p", id: "m", enabled: true, capabilities: { tools: true }, variants: [{ id: "high" }] }] } })
+    return route.fulfill({ json: { data: [nativeModel("m", [{ id: "high" }])] } })
+  })
+  await page.route("**/workspaces/fixture/instance/api/provider**", route => {
+    if (!new URL(route.request().url()).search) reads.push(route.request().url())
+    return route.fulfill({ json: { data: [{ id: "p", name: "Provider P" }] } })
   })
   return { writes, creates, reads, errors, bucket: () => bucket, replace: (value: Record<string, any>) => { bucket = value } }
 }
@@ -360,7 +367,8 @@ test("explicit defaults reload locks every profile-affecting control until its f
     assert.equal(await page.getByRole("button", { name: await text(page, "missions.create.brief.saveAs"), exact: true }).isDisabled(), true)
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
     release()
-    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
+    // The open selectors read the catalog, so the summary names the model.
+    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "Model M / high" }).waitFor()
     assert.equal(await page.getByLabel("Playbook", { exact: true }).inputValue(), "custom")
     assert.equal(fixture.creates.length, 0); assert.deepEqual(fixture.errors, [])
   } finally { release(); await page.close() }
@@ -451,7 +459,7 @@ test("a mission type's rows show the inherited global values, customize from the
     assert.equal(await page.evaluate(wayfinder), undefined, "reverting inherits the global values again")
     assert.equal(await agent.inputValue(), "root")
     assert.equal(await agent.evaluate(element => element === document.activeElement), true, "focus stays in the row after its revert button leaves")
-    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "p/m / high" }).waitFor()
+    await page.getByLabel(await text(page, "missions.defaults.summary")).filter({ hasText: "Model M / high" }).waitFor()
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
@@ -619,15 +627,18 @@ test("Creation and Settings summaries group requested tuples once and collapse a
       window.missionDefaultsModels.view("settings")
     })
     await page.locator('.mission-preferences-scope select').selectOption("debug")
+    // Settings reads the catalog for its selectors; the summary then names the model.
+    await page.getByLabel(label).filter({ hasText: "Model M / high" }).waitFor()
     const settingsSummary = (await page.getByLabel(label).textContent())!
-    assert.equal(settingsSummary.match(/p\/m \/ high/g)?.length, 1)
+    assert.equal(settingsSummary.match(/Model M \/ high/g)?.length, 1)
     assert.equal(settingsSummary.match(/\bchild\b/g)?.length, 1)
     await page.evaluate(() => window.missionDefaultsModels.view("create"))
     await ensureOptions(page)
     await page.getByLabel("Playbook", { exact: true }).selectOption("debug")
     const creationSummary = (await page.getByLabel(label).textContent())!
+    // The editor's omitted Location is the "/fixture" root Settings read, so it names the model too.
     assert.equal(creationSummary, settingsSummary)
-    assert.equal(creationSummary.match(/p\/m \/ high/g)?.length, 1)
+    assert.equal(creationSummary.match(/Model M \/ high/g)?.length, 1)
     assert.deepEqual(fixture.errors, [])
   } finally { await page.close() }
 })
@@ -795,8 +806,8 @@ test("Compare exposes two main model selectors, refuses identical models and war
     fixture.creates.push(route.request().postDataJSON())
     return route.fulfill({ json: { mission: { id: "prepared-comparison", template: "compare", runState: "prepared" } } })
   })
-  await page.route("**/workspaces/fixture/instance/api/model**", route => route.fulfill({ json: { data: ["m", "n", "j"].map(id => ({
-    providerID: "p", id, enabled: true, capabilities: { tools: true }, variants: id === "m" ? [{ id: "high" }] : [] })) } }))
+  await page.route("**/workspaces/fixture/instance/api/model**", route => route.fulfill({ json: { data: ["m", "n", "j"].map(id =>
+    nativeModel(id, id === "m" ? [{ id: "high" }] : [])) } }))
   try {
     await page.goto(url); await page.waitForFunction(() => window.missionDefaultsModels?.loaded())
     await ensureOptions(page)
@@ -816,10 +827,10 @@ test("Compare exposes two main model selectors, refuses identical models and war
     await ensureOptions(page); await openProfiles(page)
     await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "n"]))
     assert.equal(await page.getByLabel("Blind judge · Model", { exact: true }).inputValue(), JSON.stringify(["p", "n"]))
-    assert((await page.locator("form.mission-editor .mission-profile-summary").innerText()).includes("Blind judge: p/n"))
+    assert((await page.locator("form.mission-editor .mission-profile-summary").innerText()).includes("Blind judge: Model N"))
     await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "j"]))
     assert.equal(await page.getByRole("status").filter({ hasText: "The judge uses the same model" }).count(), 0)
-    assert((await page.locator("form.mission-editor .mission-profile-summary").innerText()).includes("Blind judge: p/j"))
+    assert((await page.locator("form.mission-editor .mission-profile-summary").innerText()).includes("Blind judge: Model J"))
     await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "n"]))
     await page.getByLabel("Blind judge · Model", { exact: true }).selectOption(JSON.stringify(["p", "j"]))
     await page.getByLabel("Coordinator · Model", { exact: true }).selectOption(JSON.stringify(["p", "m"]))

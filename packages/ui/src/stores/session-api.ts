@@ -73,6 +73,7 @@ import { MESSAGE_STREAM_SCROLL_SCOPE, messageStoreBus } from "./message-v2/bus"
 import { clearCacheForSession } from "../lib/global-cache"
 import { getLogger } from "../lib/logger"
 import { getOpencodeErrorMessage } from "../lib/opencode-api"
+import { buildProviderCatalog } from "../lib/model-catalog"
 import { getRootClient } from "./opencode-client"
 import { tGlobal } from "../lib/i18n"
 import {
@@ -1500,23 +1501,7 @@ async function loadProviders(instanceId: string, location: LocationRef): Promise
       rootClient.model.list(request, requestLocationOptions(location)),
       rootClient.model.default(request, requestLocationOptions(location)),
     ])
-    const providersById = new Map(response.data.map((provider) => [provider.id, provider]))
-    const modelsById = new Map(models.data.map((model) => [`${model.providerID}:${model.id}`, model]))
-    if (defaultModel.data) modelsById.set(`${defaultModel.data.providerID}:${defaultModel.data.id}`, defaultModel.data)
-    const providerIds = new Set([...providersById.keys(), ...Array.from(modelsById.values(), (model) => model.providerID)])
-    const providerList = Array.from(providerIds).sort().map((providerId) => ({
-      id: providerId,
-      name: providersById.get(providerId)?.name ?? providerId,
-      defaultModelId: defaultModel.data?.providerID === providerId ? defaultModel.data.id : undefined,
-      models: Array.from(modelsById.values()).filter((model) => model.providerID === providerId && model.status !== "deprecated").sort((a, b) => a.id.localeCompare(b.id)).map((model) => ({
-        id: model.id,
-        name: model.name,
-        providerId,
-        limit: model.limit,
-        cost: model.cost[0],
-        variantKeys: model.variants.map((variant) => variant.id),
-      })),
-    }))
+    const providerList = buildProviderCatalog(response.data, models.data, defaultModel.data)
 
     if (!generationCurrent() || providerRequestIds.get(requestKey) !== requestId || catalogLocationKey(getActiveCatalogLocation(instanceId)) !== catalogLocationKey(location)) return false
     setProviders((prev) => {

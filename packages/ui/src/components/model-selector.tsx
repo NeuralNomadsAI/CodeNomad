@@ -10,6 +10,8 @@ import { getLogger } from "../lib/logger"
 import { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, setFavoritesOnlyPreference, uiState, toggleFavoriteModelPreference } from "../stores/preferences"
 import { openSettings } from "../stores/settings-screen"
 import { isModelVisible, resolvePickerValue } from "../lib/model-visibility"
+import { catalogModels as listedModels, compareCatalogModels, favoriteModelKeys } from "../lib/model-catalog"
+import { preferredModelList } from "../stores/model-picker"
 const log = getLogger("session")
 
 interface ModelSelectorProps {
@@ -42,16 +44,6 @@ interface ProviderHeaderOption {
 
 type PickerOption = FlatModel | ProviderHeaderOption
 
-const compareIds = (left: string, right: string) => left.localeCompare(right, undefined, { sensitivity: "base" })
-
-const compareModels = (left: FlatModel, right: FlatModel) => {
-  const providerComparison = compareIds(left.providerId, right.providerId)
-  if (providerComparison !== 0) return providerComparison
-  const nameComparison = compareIds(left.name, right.name)
-  if (nameComparison !== 0) return nameComparison
-  return compareIds(left.id, right.id)
-}
-
 const isProviderHeaderOption = (option: PickerOption): option is ProviderHeaderOption => "type" in option && option.type === "header"
 
 function ComboboxInputValue(props: { value: string }) {
@@ -79,42 +71,19 @@ export default function ModelSelector(props: ModelSelectorProps) {
   })
 
   const catalogModels = createMemo<FlatModel[]>(() =>
-    instanceProviders().flatMap((p) =>
-      p.models.map((m) => ({
-        ...m,
-        providerName: p.name,
-        key: `${m.providerId}/${m.id}`,
-        searchText: `${m.name} ${p.name} ${m.providerId} ${m.id} ${m.providerId}/${m.id}`,
-      })),
-    ),
+    listedModels(instanceProviders()).map((m) => ({
+      ...m,
+      key: `${m.providerId}/${m.id}`,
+      searchText: `${m.name} ${m.providerName} ${m.providerId} ${m.id} ${m.providerId}/${m.id}`,
+    })),
   )
 
-  const allModels = createMemo(() => catalogModels().filter((model) =>
-    isModelVisible(
-      getProviderModelVisibilityPreference(model.providerId),
-      model.id,
-    ),
-  ))
+  // Missions' model selectors list the same models (`preferredModelList`).
+  const modelList = createMemo(() => preferredModelList(catalogModels()))
 
-  const sortedModels = createMemo<FlatModel[]>(() => [...allModels()].sort(compareModels))
+  const favoriteKeySet = createMemo(() => favoriteModelKeys(uiState().models.favorites ?? []))
 
-  const favoriteKeySet = createMemo(() => {
-    const result = new Set<string>()
-    for (const item of uiState().models.favorites ?? []) {
-      if (item.providerId && item.modelId) {
-        result.add(`${item.providerId}/${item.modelId}`)
-      }
-    }
-    return result
-  })
-
-  const favoriteModels = createMemo<FlatModel[]>(() => {
-    const keys = favoriteKeySet()
-    if (keys.size === 0) return []
-    return sortedModels().filter((m) => keys.has(m.key))
-  })
-
-  const hasFavorites = createMemo(() => favoriteModels().length > 0)
+  const hasFavorites = createMemo(() => modelList().favorites.length > 0)
 
   const currentModelValue = createMemo<FlatModel | undefined>(() => {
     const current = props.currentModel
@@ -149,14 +118,12 @@ export default function ModelSelector(props: ModelSelectorProps) {
   const favoritesOnlyPreference = () => getFavoritesOnlyPreference()
 
   // Without any favorite left there is nothing to restrict the list to, but the
-  // stored choice is kept so it applies again as soon as one is added.
-  const favoritesOnlyEnabled = createMemo(() => hasFavorites() && favoritesOnlyPreference())
-
-  // The active model stays reachable whichever mode is chosen, so a non-favorite
-  // selection never silently vanishes from its own picker. A model the provider
-  // visibility preference hides stays hidden and unselectable.
+  // stored choice is kept so it applies again as soon as one is added. The active
+  // model stays reachable whichever mode is chosen, so a non-favorite selection
+  // never silently vanishes from its own picker. A model the provider visibility
+  // preference hides stays hidden and unselectable.
   const visibleOptions = createMemo<FlatModel[]>(() => {
-    const modeModels = favoritesOnlyEnabled() ? favoriteModels() : sortedModels()
+    const modeModels = modelList().shown
     const current = currentModelValue()
     if (!current || modeModels.some((model) => model.key === current.key)) return modeModels
     const hiddenByPreference = !current.unavailable && !isModelVisible(
@@ -164,7 +131,7 @@ export default function ModelSelector(props: ModelSelectorProps) {
       current.id,
     )
     if (hiddenByPreference) return modeModels
-    return [...modeModels, current].sort(compareModels)
+    return [...modeModels, current].sort(compareCatalogModels)
   })
 
   const groupedVisibleOptions = createMemo<ModelGroup[]>(() => {

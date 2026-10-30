@@ -122,7 +122,7 @@ export function MissionPreferences(props: { instanceId: string; directory?: stri
     {/* Every agent/model choice in one fold; its summary keeps the current choice visible. */}
     <details ref={profilesFold} class="settings-disclosure mission-profiles-disclosure" open={profilesOpen()} onToggle={event => setProfilesOpen(event.currentTarget.open)}>
       <summary>{t("missions.create.agents")}
-        <MissionProfileSummary inline template={exception() ?? "custom"} profiles={exception() ? missionDefaultsFor(shown(), exception()!) : entry()?.profiles} /></summary>
+        <MissionProfileSummary inline instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"} profiles={exception() ? missionDefaultsFor(shown(), exception()!) : entry()?.profiles} /></summary>
       {/* A mission type shows the global choices its roles inherit until one is customized. */}
       <MissionProfileControls instanceId={props.instanceId} directory={props.directory} template={exception() ?? "custom"}
         inherited={exception() ? missionDefaultsFor(shown(), exception()!, false) ?? {} : undefined}

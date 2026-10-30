@@ -134,8 +134,10 @@ test("Missions preferences open in Settings from the panel gear, save each choic
     })
     await page.route("**/workspaces/fixture/instance/api/model**", route => {
       catalogReads.push(route.request().url())
-      return route.fulfill({ json: { data: [{ providerID: "native", id: "long-context", enabled: true, capabilities: { tools: true }, variants: [{ id: "high" }] }] } })
+      return route.fulfill({ json: { data: [{ providerID: "native", id: "long-context", name: "Long context", status: "active", enabled: true,
+        capabilities: { tools: true }, cost: [], limit: { context: 1, output: 1 }, variants: [{ id: "high" }] }] } })
     })
+    await page.route("**/workspaces/fixture/instance/api/provider**", route => route.fulfill({ json: { data: [{ id: "native", name: "Native" }] } }))
     await page.goto(url)
     await fixtureCall(page, "connectCatalog")
     await page.waitForFunction(() => (window as any).missionFixture.loaded())
