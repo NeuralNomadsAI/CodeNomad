@@ -73,7 +73,7 @@ Die Missionskarte ist das gemeinsame, dauerhafte Gedächtnis der Mission. Sie en
 
 | Beteiligter | Was er erhält |
 | --- | --- |
-| Koordinator | Bei jedem Turn das Ziel, die Notizen und die Playbook-Anweisungen. Er liest die ganze Karte, wann immer er sie braucht, und seine Unterhaltung behält jedes Ergebnis, das er gelesen hat. |
+| Koordinator | Bei jedem Turn das Ziel, die Notizen und die Playbook-Anweisungen. Er liest die ganze Karte, wann immer er sie braucht; seine gespeicherte Unterhaltung behält jedes Ergebnis, das er gelesen hat, während OpenCode seinen Modellkontext [komprimieren](history.md#compact-session) kann. |
 | Aufgabe (**Native Unteragenten**) | Ihre Zuweisung, die der Koordinator in einem gewöhnlichen OpenCode-Subagentenaufruf übergibt: das Ziel, Titel und Brief der Aufgabe, ihre Rollenanweisungen und die Aufgaben, von denen sie abhängt. Der Koordinator kann Kontext hinzufügen, etwa frühere Ergebnisse. |
 | Aufgabe (**Unabhängige Sitzungen**) | Dieselbe Zuweisung als Nachricht in ihrer eigenen Unterhaltung. Bei jedem Turn erhält sie außerdem das Ziel, die Notizen und ihre offenen Zuweisungen, und sie kann die ganze Karte lesen. |
 | Von einer Aufgabe gestartete Helfer | Was ihr Elternteil in den Aufruf schreibt. Die Playbooks weisen jedes Elternteil an, Umfang, Vorgaben und Sicherheitsregeln weiterzugeben, die seine Helfer brauchen. |

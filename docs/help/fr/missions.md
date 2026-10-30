@@ -73,7 +73,7 @@ Le plan de mission est la mémoire partagée et durable de la mission. Il contie
 
 | Participant | Ce qu’il reçoit |
 | --- | --- |
-| Coordinateur | L’objectif, les notes et les instructions du scénario à chaque tour. Il lit le plan entier chaque fois qu’il en a besoin, et sa conversation conserve chaque résultat qu’il a lu. |
+| Coordinateur | L’objectif, les notes et les instructions du scénario à chaque tour. Il lit le plan entier chaque fois qu’il en a besoin ; sa conversation enregistrée conserve chaque résultat qu’il a lu, tandis qu’OpenCode peut [compacter](history.md#compact-session) son contexte de modèle. |
 | Tâche (**Sous-agents natifs**) | Son affectation, transmise par le coordinateur dans un appel de sous-agent OpenCode ordinaire : l’objectif, le titre et la consigne de la tâche, les instructions de son rôle et les tâches dont elle dépend. Le coordinateur peut y ajouter du contexte, comme des résultats antérieurs. |
 | Tâche (**Sessions indépendantes**) | La même affectation, sous forme de message dans sa propre conversation. À chaque tour, elle reçoit aussi l’objectif, les notes et ses affectations ouvertes, et elle peut lire le plan entier. |
 | Assistants lancés par une tâche | Ce que leur parent écrit dans l’appel. Les scénarios demandent à chaque parent de transmettre le périmètre, les contraintes et les règles de sécurité dont ses assistants ont besoin. |

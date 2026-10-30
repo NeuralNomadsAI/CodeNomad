@@ -73,7 +73,7 @@ El mapa de misión es la memoria compartida y duradera de la misión. Contiene e
 
 | Participante | Qué recibe |
 | --- | --- |
-| Coordinador | El objetivo, las notas y las instrucciones del guion en cada turno. Lee el mapa completo siempre que lo necesita, y su conversación conserva cada resultado que ha leído. |
+| Coordinador | El objetivo, las notas y las instrucciones del guion en cada turno. Lee el mapa completo siempre que lo necesita; su conversación guardada conserva cada resultado que ha leído, mientras OpenCode puede [compactar](history.md#compact-session) su contexto de modelo. |
 | Tarea (**Subagentes nativos**) | Su asignación, que el coordinador pasa en una llamada normal a un subagente de OpenCode: el objetivo, el título y el encargo de la tarea, las instrucciones de su rol y las tareas de las que depende. El coordinador puede añadir contexto, como resultados anteriores. |
 | Tarea (**Sesiones independientes**) | La misma asignación, como mensaje en su propia conversación. En cada turno recibe también el objetivo, las notas y sus asignaciones abiertas, y puede leer el mapa completo. |
 | Ayudantes lanzados por una tarea | Lo que su padre escribe en la llamada. Los guiones indican a cada padre que pase el alcance, las restricciones y las reglas de seguridad que necesitan sus ayudantes. |

@@ -73,7 +73,7 @@ mission map मिसनको साझा, टिकाउ स्मृति 
 
 | सहभागी | के पाउँछ |
 | --- | --- |
-| Coordinator | हरेक turn मा objective, टिप्पणी र playbook निर्देशन। चाहिँदा जुनसुकै बेला पूरै map पढ्छ, र यसको कुराकानीमा यसले पढेका सबै नतिजा रहन्छन्। |
+| Coordinator | हरेक turn मा objective, टिप्पणी र playbook निर्देशन। चाहिँदा जुनसुकै बेला पूरै map पढ्छ; यसको सुरक्षित कुराकानीमा यसले पढेका सबै नतिजा रहन्छन्, तर OpenCode ले यसको model context [संक्षिप्त](history.md#compact-session) गर्न सक्छ। |
 | Task (**नेटिभ उपएजेन्टहरू**) | coordinator ले सामान्य OpenCode subagent call मा पठाउने assignment: objective, task को शीर्षक र brief, भूमिकाका निर्देशन र यो निर्भर रहेका task हरू। coordinator ले यसको साथमा अघिल्ला नतिजाजस्ता context थप्न सक्छ। |
 | Task (**स्वतन्त्र सत्रहरू**) | उही assignment, आफ्नै कुराकानीमा सन्देशका रूपमा। हरेक turn मा यसले objective, टिप्पणी र आफ्ना खुला assignment पनि पाउँछ, र पूरै map पढ्न सक्छ। |
 | Task ले सुरु गरेका helper | तिनका parent ले call मा लेखेको कुरा। playbook ले हरेक parent लाई आफ्ना helper लाई चाहिने दायरा, सीमा र सुरक्षा नियम पठाउन निर्देशन दिन्छ। |

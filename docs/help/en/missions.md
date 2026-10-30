@@ -73,7 +73,7 @@ The mission map is the mission's shared, durable memory. It holds the objective 
 
 | Participant | What it receives |
 | --- | --- |
-| Coordinator | The objective, notes and playbook instructions on every turn. It reads the whole map whenever it needs to, and its conversation keeps every result it has read. |
+| Coordinator | The objective, notes and playbook instructions on every turn. It reads the whole map whenever it needs to; its stored conversation keeps every result it has read, while OpenCode may [compact](history.md#compact-session) its model context. |
 | Task (**Native subagents**) | Its assignment, passed by the coordinator in an ordinary OpenCode subagent call: the objective, the task's title and brief, its role instructions and the tasks it depends on. The coordinator can add context around it, such as earlier results. |
 | Task (**Independent sessions**) | The same assignment, as a message in its own conversation. On every turn it also receives the objective, notes and its open assignments, and it can read the whole map. |
 | Helpers launched by a task | What their parent writes in the call. The playbooks instruct every parent to pass the scope, constraints and safety rules its helpers need. |

@@ -73,7 +73,7 @@ Görev haritası, görevin ortak ve kalıcı belleğidir. Hedefi ve **Notlar** b
 
 | Katılımcı | Ne alır |
 | --- | --- |
-| Koordinatör | Her turda hedefi, notları ve rehber talimatlarını. Gerektiğinde haritanın tamamını okur ve konuşması okuduğu her sonucu saklar. |
+| Koordinatör | Her turda hedefi, notları ve rehber talimatlarını. Gerektiğinde haritanın tamamını okur; saklanan konuşması okuduğu her sonucu tutar, ancak OpenCode model bağlamını [sıkıştırabilir](history.md#compact-session). |
 | İş (**Yerel alt ajanlar**) | Koordinatörün sıradan bir OpenCode alt ajan çağrısında ilettiği atamasını: hedef, işin başlığı ve özeti, rolünün talimatları ve bağlı olduğu işler. Koordinatör yanına önceki sonuçlar gibi bağlam ekleyebilir. |
 | İş (**Bağımsız oturumlar**) | Aynı atamayı kendi konuşmasında bir mesaj olarak. Her turda ayrıca hedefi, notları ve açık atamalarını alır ve haritanın tamamını okuyabilir. |
 | Bir işin başlattığı yardımcılar | Üst konuşmalarının çağrıya yazdıklarını. Rehberler her üst konuşmaya, yardımcılarının ihtiyaç duyduğu kapsamı, kısıtları ve güvenlik kurallarını iletmesini söyler. |
