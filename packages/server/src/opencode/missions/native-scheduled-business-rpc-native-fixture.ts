@@ -90,7 +90,8 @@ export default Plugin.define({ id: "codenomad.missions", effect: ctx => Effect.g
             executionMode: { kind: "native", parentTaskKey: null } }))
           const context = await selected.execute!(control => control.contextFor(selected.readSessionID))
           const snapshot = await invocation.check(run => run(ctx.storage.get(nativeScheduleDocumentKey(ctx, "business_native")))) as unknown as MissionDocument
-          return { partialGraph: missing, receivers: [...receivers], taskKeys: result.mission.tasks.map(task => task.key), context: !!context?.instruction,
+          if (!("toolResult" in result)) throw new Error("Missing fitted business result")
+          return { partialGraph: missing, receivers: [...receivers], taskKeys: [(result.toolResult.task as { key: string }).key], context: !!context?.instruction,
             backendActions: selected.control.backendActions, launchedCount: snapshot.launchedCount }
         })
       }).pipe(Effect.provide(partial)))

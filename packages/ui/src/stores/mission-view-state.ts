@@ -17,7 +17,7 @@ export interface MissionReaderTarget {
 }
 /** `listExpanded`: the picker's inline list, opened and closed only by its chevron.
  * `tasksCollapsed`: the selected Mission's task tree, expanded unless collapsed. */
-interface ProjectView { selected?: string; selectedRecurrence?: string; reader?: MissionReaderTarget; listExpanded?: boolean; tasksCollapsed?: boolean }
+interface ProjectView { selected?: string; selectedRecurrence?: string; selectedScheduled?: string; reader?: MissionReaderTarget; listExpanded?: boolean; tasksCollapsed?: boolean }
 const [version, setVersion] = createSignal(0)
 const projects = new Map<string, ProjectView>()
 const disclosures = new Map<string, Map<string, boolean>>()
@@ -45,6 +45,7 @@ export function missionProjectView(scope: string): ProjectView {
       const stored = JSON.parse(readClientLayoutValue(storageKey) ?? "{}")
       if (typeof stored.selected === "string") value.selected = stored.selected
       if (typeof stored.selectedRecurrence === "string") value.selectedRecurrence = stored.selectedRecurrence
+      if (typeof stored.selectedScheduled === "string") value.selectedScheduled = stored.selectedScheduled
       if (stored.listExpanded === true) value.listExpanded = true
       if (stored.tasksCollapsed === true) value.tasksCollapsed = true
       const r = stored.reader
@@ -63,7 +64,7 @@ export function updateMissionProjectView(scope: string, patch: Partial<ProjectVi
   const previous = missionProjectView(scope)
   const value = { ...previous, ...patch }
   if (previous.selected === value.selected && previous.selectedRecurrence === value.selectedRecurrence && previous.reader === value.reader
-    && previous.listExpanded === value.listExpanded && previous.tasksCollapsed === value.tasksCollapsed) return
+    && previous.selectedScheduled === value.selectedScheduled && previous.listExpanded === value.listExpanded && previous.tasksCollapsed === value.tasksCollapsed) return
   projects.set(projectKey(scope), value)
   writeClientLayoutValue(projectKey(scope), JSON.stringify(value))
   setVersion(v => v + 1)

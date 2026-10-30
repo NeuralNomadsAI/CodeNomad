@@ -19,6 +19,7 @@ import { applyMissionDocumentActivation } from "../../missions/mission-document-
 import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import { nativeMissionScheduleHandlers } from "./native-mission-schedule-rpc"
 import { registerNativeMissionScheduleRuntime } from "./native-mission-schedule-runtime"
+import { useNativeMissionDocuments } from "./native-mission-document-access"
 
 export function withNativeRecurrenceRpc(ctx: Plugin.Context, artifacts?: NativeScheduleArtifacts): Plugin.Context["rpc"] {
   const documentInvocation = nativeInvocation()
@@ -55,10 +56,7 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], art
     const scope = yield* Scope.make()
     const run = Effect.runPromiseWith(Context.add(graph, Scope.Scope, scope))
     const invocation = nativeInvocation()
-    const documents: MissionDocumentAccess = use => invocation.check(run => run(Effect.gen(function* () {
-      const store = yield* acquireNativeMissionDocumentStore(ctx, run)
-      return yield* Effect.tryPromise({ try: () => use(store), catch: error => error })
-    })))
+    const documents: MissionDocumentAccess = use => invocation.check(run => run(useNativeMissionDocuments(ctx, run, use)))
     const humanGate = nativeHumanAnswerGate(use => invocation.check(run => run(Effect.gen(function* () {
       const answers = yield* acquireNativeHumanAnswers(ctx, run)
       return yield* Effect.tryPromise({ try: () => use(answers), catch: error => error })

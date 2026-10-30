@@ -58,6 +58,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
+    if (path.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (path === "/api/events") return route.continue()
     if (path === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: "en" } } })
     if (route.request().method() !== "GET") writes.push(path)

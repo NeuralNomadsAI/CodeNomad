@@ -3,7 +3,7 @@ import { removeCleanupTarget, type MissionCleanupTarget } from "./native-session
 import { MissionControlError } from "./control-error"
 import { MissionJournal, stableToken } from "./journal"
 import { isMissionTaskSession } from "./session-identity"
-import { MISSION_SCHEMA_VERSION, type MissionDeletedEvent, type MissionEvent, type MissionMap, type MissionSnapshot } from "./model"
+import { MISSION_SCHEMA_VERSION, compareEvents, type MissionDeletedEvent, type MissionEvent, type MissionMap, type MissionSnapshot } from "./model"
 import { cleanupReceiptID, cleanupReference, documentCleanupReceiptID, hasInvalidCleanupHistory, isCleanupReceipt,
   isCleanupReason, isDocumentCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
 import { deletionRecordCleanup } from "./journal-purge"
@@ -168,8 +168,8 @@ async function cleanup(deletion: MissionDeletedEvent, options: {
       let outcome: "removed" | "retained" = "retained"
       let reason: import("./model").MissionCleanupReason | undefined = "shared"
       if (!referencedElsewhere(history, deletion.missionID, target.sessionID)) {
-        const created = history.find(event => event.type === "mission.created" && event.missionID === deletion.missionID)
-        if (options.transport?.cleanup && created?.type === "mission.created") {
+        const created = history.filter(event => ["mission.created", "mission.prepared"].includes(event.type) && event.missionID === deletion.missionID).sort(compareEvents).at(-1)
+        if (options.transport?.cleanup && (created?.type === "mission.created" || created?.type === "mission.prepared")) {
           const result = await options.transport.cleanup(created.coordinator.sessionID, {
             missionID: deletion.missionID, deletionID: deletion.id, sessionID: target.sessionID,
           })
@@ -178,7 +178,7 @@ async function cleanup(deletion: MissionDeletedEvent, options: {
         } else {
           outcome = await removeCleanupTarget(sessions, {
             ...target, projectID: deletion.projectID, missionID: deletion.missionID,
-            coordinatorSessionID: created?.type === "mission.created" ? created.coordinator.sessionID : "",
+            coordinatorSessionID: created?.type === "mission.created" || created?.type === "mission.prepared" ? created.coordinator.sessionID : "",
           }, options.isActive, value => { reason = value })
         }
       }
@@ -204,8 +204,8 @@ export async function missionCleanupTarget(journal: MissionJournal, input: {
   const history = await journal.events()
   if (history.discardedEvents || hasInvalidCleanupHistory(history.events)) throw new Error("Cannot establish cleanup ownership from a damaged journal")
   const deletion = history.events.find(event => event.id === input.deletionID && event.missionID === input.missionID)
-  const created = history.events.find(event => event.type === "mission.created" && event.missionID === input.missionID)
-  if (deletion?.type !== "mission.deleted" || !deletion.deleteManagedSessions || created?.type !== "mission.created") return {}
+  const created = history.events.filter(event => ["mission.created", "mission.prepared"].includes(event.type) && event.missionID === input.missionID).sort(compareEvents).at(-1)
+  if (deletion?.type !== "mission.deleted" || !deletion.deleteManagedSessions || created?.type !== "mission.created" && created?.type !== "mission.prepared") return {}
   if (history.events.some(event => isCleanupReceipt(event, deletion, input.sessionID))) return {}
   const target = deletion.cleanupTargets?.find(target => target.sessionID === input.sessionID)
   if (!target || target.sessionID === created.coordinator.sessionID || referencedElsewhere(history.events, input.missionID, input.sessionID)) return {}

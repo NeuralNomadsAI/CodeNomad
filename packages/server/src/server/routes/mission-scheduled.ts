@@ -33,7 +33,7 @@ type Rpc = ReturnType<typeof rpcFor>
 type Options = { location: { directory: string }; signal?: AbortSignal; headers?: Record<string, string> }
 const id = z.string().regex(/^[A-Za-z0-9_-]{3,100}$/)
 const directory = z.string().min(1).max(4096).refine(value => !value.includes("\0"))
-const params = z.object({ id: z.string().min(1).max(200), missionID: id.optional() }).strict()
+const params = z.object({ id: z.string().min(1).max(200), missionID: id.optional(), requestID: id.optional() }).strict()
 const userConfiguration = missionConfigurationSchema.innerType().omit({ roots: true, profileID: true, executionHost: true })
 const body = z.object({ requestID: id, expectedRevision: z.number().int().nonnegative().safe(), action: z.enum(missionScheduleActions),
   configuration: userConfiguration.optional(), deleteManagedSessions: z.boolean().optional(), retry: z.boolean().optional(), directory: directory.optional(),
@@ -47,8 +47,9 @@ const resultSchema = z.object({ pending: z.boolean(), deleted: z.boolean().optio
 /** Physical permits survive unknown native outcomes. Reads can settle only an
  * exact positive original receipt; they never retry a mutation or arm work. */
 export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
-  for (const method of ["GET", "POST"] as const) for (const creating of method === "POST" ? [false, true] : [false]) {
-    app.route({ method, url: creating ? "/api/workspaces/:id/missions/scheduled" : "/api/workspaces/:id/missions/:missionID/schedule",
+  for (const method of ["GET", "POST"] as const) for (const creating of [false, true]) {
+    app.route({ method, url: creating ? method === "POST" ? "/api/workspaces/:id/missions/scheduled"
+      : "/api/workspaces/:id/missions/scheduled/requests/:requestID" : "/api/workspaces/:id/missions/:missionID/schedule",
       handler: async (request, reply) => {
         const selected = params.safeParse(request.params), input = method === "POST" ? body.safeParse(request.body) : undefined
         const query = z.object({ directory: directory.optional(), requestID: id.optional() }).strict().safeParse(request.query)
@@ -71,7 +72,10 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
               roots: [{ mode: "directory-only", directory: base.directory }] }).success)
               return reply.code(400).send({ error: "Invalid Mission schedule configuration", code: "schedule-input-invalid" })
           }
-          const existing = creating ? scheduledMissionCreationHold(deps.worktreeDeletionFence, selected.data.id, value!.requestID)
+          const creationRequestID = creating ? value?.requestID ?? selected.data.requestID! : undefined
+          if (creating && query.data.requestID && query.data.requestID !== creationRequestID)
+            throw new ScheduledHoldError(409, "Exact creation request required")
+          const existing = creating ? scheduledMissionCreationHold(deps.worktreeDeletionFence, selected.data.id, creationRequestID!)
             : scheduledMissionHold(deps.worktreeDeletionFence, missionID!)
           const check = (owned: Scope) => {
             owned.current(); lifetime.signal.throwIfAborted()
@@ -182,8 +186,16 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
             directory: value?.directory ?? query.data.directory, signal: lifetime.signal, wait: lifetime.wait })
           return await owned.run(async (rpc, options) => {
             if (method === "POST") return effect(owned, rpc, options, owned.retain)
+            if (creating) {
+              // A lost HTTP response may hide even the document ID. Derive it
+              // from the acquired native owner, never a browser-local path.
+              const owner = await readRecurrenceHoldOwner(manager, selected.data.id, owned.workspace, owned.location.directory, owned.client, lifetime.signal)
+              check(owned)
+              if (!owner) throw new Error("Mission schedule owner unavailable")
+              missionID = missionScheduleID(owner.projectID, owner.projectCanonical, creationRequestID!)
+            }
             const result = resultSchema.parse(await lifetime.wait(rpc.scheduleRead({ missionID: missionID!,
-              ...(query.data.requestID ? { requestID: query.data.requestID } : {}) }, { ...options, signal: lifetime.signal })))
+              ...((creationRequestID ?? query.data.requestID) ? { requestID: creationRequestID ?? query.data.requestID } : {}) }, { ...options, signal: lifetime.signal })))
             await owned.refresh(); check(owned)
             return result.pending ? pending(result) : result
           })

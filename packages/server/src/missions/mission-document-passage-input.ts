@@ -46,10 +46,15 @@ export function documentPassageStartInput(doc: MissionDocument) {
   const pending = doc.pending
   if (!pending) throw new Error("Document passage unavailable")
   const sources = documentPassageSources(doc)
-  const text = pending.configuration.objective + (sources.length ? RECURRENCE_SOURCE_CONTEXT_HEADER + canonicalAuthority(sources, 48 * 1024) : "")
-  if (!text.length || text.length > MISSION_LIFECYCLE_TEXT_LIMIT) throw new Error("Document passage input capacity")
+  const text = documentSourceStartText(pending.configuration.objective, sources)
   return { sessionID: pending.coordinatorSessionID, id: pending.messageID, text, description: "CodeNomad scheduled mission start",
     delivery: "queue" as const, resume: true as const,
     metadata: { "codenomad.mission": { version: 1, missionID: pending.missionID, kind: "lifecycle", taskMode: pending.configuration.taskMode,
       operationID: controlOperationID(pending.missionID, pending.id), document: { missionID: doc.id, passageID: pending.id } } } }
+}
+
+export function documentSourceStartText(objective: string, sources: PassageSource[]) {
+  const text = objective + (sources.length ? RECURRENCE_SOURCE_CONTEXT_HEADER + canonicalAuthority(sources, 48 * 1024) : "")
+  if (!text.length || text.length > MISSION_LIFECYCLE_TEXT_LIMIT) throw new Error("Document passage input capacity")
+  return text
 }

@@ -10,6 +10,8 @@ import { stableToken } from "../../missions/journal"
 import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { nativeMessageDataSQL } from "./native-message-data"
+import type { NativeMissionSession } from "../../missions/control-types"
+import { acquireNativeSourceFence } from "./native-source-fence"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
@@ -44,6 +46,7 @@ export interface NativePassageObservation {
   session(sessionID: string, messageID?: string): Promise<PassageSessionObservation>
   children(sessionID: string): Promise<string[]>
   requests(sessionIDs: readonly string[]): Promise<boolean>
+  empty?(session: NativeMissionSession): Promise<() => true>
 }
 
 const serviceStartedAt = Date.now() - process.uptime() * 1000
@@ -97,8 +100,22 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
       throw new Error("Native passage Location changed")
     return true
   }
-  return {
+  const sourceFences = yield* acquireNativeSourceFence(assertCurrent)
+  const observation = {
     assertCurrent,
+    empty: async (session: NativeMissionSession) => {
+      if (await observation.requests([session.id])) throw new Error("Prepared coordinator has pending requests")
+      const proof = sourceFences()
+      proof.preparedSession(session)
+      const guard = (): true => {
+        assertCurrent()
+        proof.current()
+        if (activeSet(Effect.runSync(running.pipe(Effect.provide(graph)))).has(session.id)) throw new Error("Prepared coordinator is active")
+        return true
+      }
+      guard()
+      return guard
+    },
     assertScheduleCurrent: (document: RecurrenceDocument, dispatch: boolean): true => {
       assertCurrent()
       const key = `${RECURRENCE_STORAGE_PREFIX}/project/${stableToken(`${document.projectID}\0${document.projectCanonical}`, 24)}/${document.id}`
@@ -194,6 +211,7 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
         || background.some(item => [item.sessionID, item.parentSessionID, item.childSessionID].some(id => typeof id === "string" && family.has(id)))
     },
   } satisfies NativePassageObservation
+  return observation
 })
 
 export const samePassageObservation = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)

@@ -73,3 +73,26 @@ test("source projections use the document transaction graph and reject changed m
   db.exec("UPDATE session_v2 SET revert='{}' WHERE id='source'")
   assert.throws(() => factory().conversation("source"), /placement unavailable/)
 })
+
+test("prepared selection accepts native default materialization, rejects other variants and pins the raw row through CAS", async t => {
+  const db = new DatabaseSync(":memory:"); t.after(() => db.close())
+  db.exec(`CREATE TABLE session_v2(id TEXT PRIMARY KEY,parent_id TEXT,project_id TEXT,directory TEXT,workspace_id TEXT,
+    metadata TEXT,revert TEXT,time_suspended INTEGER,agent TEXT,model TEXT,title TEXT);
+    CREATE TABLE session_message(session_id TEXT); CREATE TABLE session_inbox(session_id TEXT)`)
+  const model = { providerID: "fixture", id: "fixture" }
+  db.prepare("INSERT INTO session_v2(id,project_id,directory,agent,model,title) VALUES(?,?,?,?,?,?)")
+    .run("ses_prepared", "project", "/project", "worker", JSON.stringify(model), "Prepared")
+  const database = Context.Service<never, unknown>("@opencode/storage/Database")
+  const client = { unsafe: (sql: string, args: readonly unknown[]) => ({ withoutTransform: Effect.sync(() => db.prepare(sql).all(...args as []).map(row => ({ ...row }))) }) }
+  const factory = await Effect.runPromise(acquireNativeSourceFence(() => true).pipe(Effect.provideService(database, { db: { $client: client } })))
+  const session = { id: "ses_prepared", projectID: "project", location: { directory: "/project" }, title: "Prepared", agent: "worker", model: { ...model, variant: "default" } }
+  const proof = factory(); proof.preparedSession(session); assert.equal(proof.current(), true)
+  assert.throws(() => factory().preparedSession({ ...session, model: { ...model, variant: "high" } }), /selection changed/)
+  db.prepare("UPDATE session_v2 SET model=?").run(JSON.stringify({ ...model, variant: "high" }))
+  assert.throws(proof.current, /changed during preparation/)
+  assert.throws(() => factory().preparedSession(session), /selection changed/)
+  db.prepare("UPDATE session_v2 SET model=?").run(JSON.stringify({ ...model, variant: "default" }))
+  factory().preparedSession({ ...session, model })
+  db.prepare("INSERT INTO session_inbox VALUES(?)").run(session.id)
+  assert.throws(() => factory().preparedSession(session), /not empty/)
+})

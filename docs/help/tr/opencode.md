@@ -31,6 +31,18 @@ Windows'ta seçilen bir WSL yürütülebilir dosyası, seçilen dağıtımın i�
 
 OpenCode, küresel hizmet kaydına, oturumlarına, mesajlarına ve veritabanına sahiptir. CodeNomad, pencere veya proje başına özel bir OpenCode veritabanı oluşturmaz. Proje sekmesini kapatmak projeyi CodeNomad'de kapatır; oturumlar OpenCode'da devam eder ve projeyi yeniden açtığınızda yeniden görünür. CodeNomad yerel Location bağlamlarını hiçbir zaman kaldırmaz. Bir pencerenin tamamını kapatmak, uygulamadan çıkmak veya yeniden yüklemek proje bağlantılarını geri yükleme için korur; ne bu eylemler ne de arka ucun kapanması paylaşılan arka plan programını durdurur. Bkz. [Projeler](projects.md).
 
+## OpenCode'u çalışır tut {#service-supervision}
+
+İlk Mission başlatılmadan önce **İlk Mission başlatılırken kapalı tut**, önce gözetim kurmadan açık bir KAPALI tercihi kaydeder.
+
+**Ayarlar → OpenCode** içindeki **OpenCode'u çalışır tut**, yürütme sunucusuna işletim sistemi gözetimi kurar; bu hizmeti kullanan tüm CodeNomad profillerinde paylaşılır. Missions'tan bağımsızdır ve CodeNomad kapalıyken de çalışır. Önceden açıkça kapatmadıysanız ilk Mission başlatma işlemi etkinleştirir; duraklatılmış Mission oluşturmak seçimi korur. Mission duraklatmak, durdurmak veya silmek bu tercihi değiştirmez.
+
+Kapatmak gözetimi kaldırır; OpenCode çalışmaya devam eder ancak yeniden başlatılmaz. Kalıcı durdurma için önce bunu kapatın, sonra OpenCode'u açıkça durdurun. Gözetim açıkken `opencode service stop` sonrasında yeniden başlatılır.
+
+**Çalışıyor · gözetim etkin**, etkin bir sistem gözetmeni ve sağlıklı OpenCode hizmeti gerektirir. **Kurulu · hizmet başlatılıyor**, **Gözetim kuruluyor veya kaldırılıyor…** ve **Gözetim başarısız** farklı durumları belirtir. Yalnızca hizmetin yanıt vermesi gözetimi doğrulamaz. Biliniyorsa neden, son deneme, gözetmen yeniden denemesi ve sistem kurtarma güvenlik denetimi gösterilir. **Gözetim durumunu denetle** yalnızca okur; **Gözetimi yeniden dene** istenen kurulumu açıkça onarır. Onaylanmamış işlem özgün isteği korur; **Özgün işlemi yeniden dene** yalnızca aynı işlemi yeniden gönderir. Değişen ayar sürümü üzerine yazılmak yerine inceleme için yenilenir.
+
+Windows, macOS ve WSL oturum açıldıktan sonra başlar. WSL seçili dağıtım için localhost yönlendirmesi gerektirir. Yerel Linux'ta linger, **etkin tüm kullanıcı hizmetlerini** oturum açılmadan başlatır ve oturum kapandıktan sonra çalışır tutar. Kapatılırken linger yalnızca CodeNomad etkinleştirmişse ve başka gözetim gerektirmiyorsa geri alınır; kişisel ayarlar korunur. Ertelenen geri alma **Gözetimi yeniden dene** ile görünür kalır. Linux izin isterse yürütme sunucusunda izin verip yeniden deneyin; istenen tercih kayıtlı kalır. Uyku ve hazırda bekletmeyi işletim sistemi yönetir. Kullanılamayan veya desteklenmeyen sunucularda açıklamalı devre dışı kontrol gösterilir.
+
 ## Güncelleme, yeniden başlatma veya yeniden yükleme {#maintenance}
 
 1. **Ayarlar → OpenCode** bölümünde **Durumu ve güncellemeleri denetle** öğesini seçin.

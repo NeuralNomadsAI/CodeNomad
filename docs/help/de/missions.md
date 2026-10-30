@@ -196,7 +196,19 @@ Ist **Erstellen** unbestätigt, behält das Fenster die übermittelte Anfrage un
 
 ## Unterhaltungen bearbeiten, löschen und bereinigen {#cleanup}
 
-Verwenden Sie **Ausgewählte Mission bearbeiten** für eine bearbeitbare einmalige Mission; schließen/öffnen Sie bei Konflikten den Editor, um die aktuelle Revision zu laden, statt sie zu überschreiben. Ändern sich Ziel oder Notizen, während das Formular noch lädt, meldet es, dass sich die Mission seit dem Öffnen geändert hat, statt sie einzutragen; wählen Sie **Erneut öffnen**, um die aktuelle Fassung zu bearbeiten. Tägliche Zeitpläne bieten keine Bearbeiten-/Löschen-Steuerung.
+Ändern sich Ziel oder Notizen, während das Formular noch lädt, meldet es, dass sich die Mission seit dem Öffnen geändert hat, statt sie einzutragen; wählen Sie **Erneut öffnen**, um die aktuelle Fassung zu bearbeiten.
+
+Während eines zugelassenen geplanten Durchlaufs werden Änderungen an Anweisungen und Notizen in dessen Verlauf und für künftige Durchläufe gespeichert. Aufgabenbeschreibungen, Profile und Ausführungsidentitäten bleiben erhalten. Erstellen und Bearbeiten prüfen denselben Kalender; die Vorschau berücksichtigt das geänderte letzte erlaubte Zeitfenster auch beim gespeicherten nächsten, eventuell verspäteten Aufwachen.
+
+Die Branchquelle enthält auch lokale Branches ohne Worktree und liest ausschließlich lokale Referenzen. Die Auswahl unterstützt bis zu 200 lokale Branches; bei größeren Beständen wird die Quelle als nicht verfügbar angezeigt. **Starten** und **Fortsetzen** fragen bei verfügbarer Aktivierung nach Zustimmung mit den genauen Konfigurationspfaden. **Jetzt ausführen** bleibt mit Erklärung deaktiviert, solange die native Zeitplanung inaktiv ist; aktivieren Sie `experimental.schedules` in der OpenCode-Konfiguration und aktualisieren Sie anschließend. Bei verlorener Aktivierungsantwort bleibt die ursprüngliche Anfrage zur Belegprüfung erhalten.
+
+Vor dem ersten Play können Sie zum sofortigen, bedingungslosen Start zurückkehren und die verfolgten Unterhaltungen unter **Optionen** behalten. Play liest und fixiert deren vollständiges, stabiles Nachrichtenpräfix (höchstens 32 Nachrichten je Quelle, innerhalb von 16.384 Zeichen für die Starteingabe). Fehlende, verschobene oder zu große Quellen blockieren den Start mit einer Erklärung. Ein erneuter Versuch behält den fixierten Kontext und die ursprüngliche Startidentität.
+
+Bestätigt das Lesen des Belegs eine teilweise Vorbereitung, erscheint **Erneut versuchen**. Der Klick prüft denselben Beleg erneut und setzt ausschließlich die ursprünglich gespeicherte Änderung fort; die Mission bleibt pausiert.
+
+Vor dem ersten Start einer neu vorbereiteten Mission können Sie Titel, Anweisungen, Notizen, Playbook, gewünschte Agenten/Modelle/Denkeinstellungen, Aufgabensitzungsmodus und **Zeitplanung** bearbeiten. Sie können zwischen sofortigem, verzögertem, wiederkehrendem und bedingtem Start wechseln und dabei dieselbe Mission behalten. Speichern hält sie pausiert und bereitet einen neuen, leeren Koordinator vor; die ursprüngliche Unterhaltung bleibt erhalten. Erst Play startet Arbeit oder aktiviert einen Zeitplan. Nach dem Start gelten die Bearbeitungsregeln der aktiven Mission für Anweisungen und Notizen. Bei unbestätigtem Speichern liest **Gespeicherte Anfrage aktualisieren** das ursprüngliche Ergebnis; behalten Sie diese Anfrage, während eine teilweise Vorbereitung Start, Textänderungen und Löschen blockiert.
+
+Verwenden Sie **Ausgewählte Mission bearbeiten** für eine bearbeitbare einmalige Mission. Beachten Sie die Erklärungen neben gesperrten Vorbereitungsfeldern. Wählen Sie bei einem Revisionskonflikt **Aktuelle Konfiguration neu laden** und öffnen Sie anschließend **Vorheriger Entwurf zum Vergleich**, um Ihren erhaltenen Entwurf vor dem erneuten Speichern zu prüfen. Gespeicherte tägliche Zeitpläne verwenden die Steuerelemente ihrer eigenen Symbolleiste.
 
 1. Wählen Sie für eine nicht mehr benötigte einmalige Mission **Ausgewählte Mission löschen…** und prüfen Sie die Bestätigung.
 2. Wählen Sie optional vor dem Bestätigen **Auch die für diese Mission erstellten Fachunterhaltungen löschen**.

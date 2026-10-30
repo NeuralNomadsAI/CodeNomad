@@ -26,6 +26,52 @@ New scheduled CREATE rejects a pure immediate policy before physical admission;
 standard one-time creation owns that policy. Configure retains same-object
 conversion to immediate with its native armless-owner contract.
 
+Calendar controls require a calendar-owned document. A journal-bound preparation
+keeps its one-time binding and immutable creation receipt. Its immediate structural
+edits use `MissionControl.configurePreparation`: ordinary project writer, then
+non-waiting document exclusion. Contention refuses before effects, preserving the
+existing lock order while calendar business calls can hold document exclusion.
+The document saves the exact request, both revisions, configuration and deterministic
+replacement coordinator before native creation. An attempted missing replacement
+retains uncertainty; an existing exact empty replacement is adopted. Public session
+creation resolves omitted selections to native defaults. The original empty conversation
+is retained; `mission.prepared` publishes the new coordinator and preparation fields.
+Final document CAS rebinds that coordinator and completes the exact receipt. Native
+execution admits its exact pending request immediately after durable publication,
+retaining the invocation budget across native creation and readback. Attached external
+coordinators keep the journal structural lock and its existing text-edit contract.
+Native
+message/inbox/child/claim absence, placement, title, metadata and selection are pinned
+and reread inside the document transaction through `native-source-fence.ts`; activity
+and pending requests are checked in the current invocation. Play, text edits and
+deletion refuse an unresolved preparation. Completed replay stays observation-only.
+Before first Play, configuration can transfer execution ownership to the calendar
+with followed context retained for scheduled passages. Returning a journal-bound
+object to pure immediate retains followed conversations. First Play reads their
+stable complete prefix through `prepareNativeDocumentSources` in initial-context
+mode, with the shared source exclusions, native byte/placement fence and launch
+envelope. Document exclusion covers source I/O through the original first-Play CAS.
+The scoped native adapter lives through publication/readback. The saved first-Play
+text is immutable; transport carries those exact bytes and the backend verifies its
+digest against the authoritative snapshot before native admission. Unknown source
+coverage blocks with an explanation before intent. Replay uses the frozen text,
+original operation/message identity and existing saved native ACK recovery.
+Configuration transfers ownership
+while retaining `oneTime` and its immutable receipt. `dormantJournal` pins the exact
+prepared journal revision. A return to immediate uses the same preparation owner and
+restores ordinary journal controls. Calendar admission uses separate passage roots;
+the dormant creation coordinator remains unprompted. Partial preparation fences both
+owners, settings activation, text edits and deletion. Panel rows and point reads hide
+the dormant map while full authority snapshots retain its membership evidence.
+Calendar deletion holds document exclusion then the project writer, retires only the
+exact empty prepared journal, rereads its original tombstone or permanent deletion
+record after journal retention, and records that receipt
+before document compaction. Both conversations are retained. Lost journal/CAS replies
+keep the original deletion for replay; compaction requires the confirmed retirement.
+Native qualification: `scripts/test-native-mission-preparation.mjs`; the product
+schedule driver accepts `--convert-preparation` for conversion before native first Play.
+Never clear a journal binding from a calendar-only configuration request.
+
 Public plugin/client contracts and private Core services have separate authority
 and lifetime. Acquire private services inside the current RPC/Location Effect
 graph; `native-invocation.ts` joins child reads and finalizers before releasing
@@ -71,6 +117,14 @@ available independently.
 Paths below are relative to `packages/server/src/opencode/missions/`.
 
 ## Public surfaces
+
+`scheduleList` uses the public plugin storage scan over the exact project document
+prefix, with at most eight entries and one page per request. Cursor IDs are bounded,
+keys strictly increase, and the returned continuation must match the last scanned
+key. Tombstones retain their identity checks and advance pagination. Full documents
+are parsed under the per-document byte ceiling before projection. The display route
+rechecks its acquired owner after the RPC and validates the returned native project.
+Exact request receipts remain point reads through `scheduleRead`.
 
 | Surface | Consumed shape | Boundary |
 | --- | --- | --- |

@@ -9,6 +9,8 @@ import { nativeScheduleCarrierLookupKey } from "./native-schedule-carrier-bindin
 import type { NativeScheduleArtifacts } from "./native-schedule-installation"
 import { acquireNativeMissionScheduleAuthority, NATIVE_MISSION_SCHEDULE_CONTROL_TIMEOUT_MS } from "./native-mission-schedule-authority"
 import { controlNativeMissionSchedule } from "./native-mission-schedule-control"
+import { readMissionSchedulePage } from "../../missions/mission-schedule-list"
+import { nativeMissionScheduleObservation } from "./native-mission-schedule-display"
 
 const readInput = z.object({ missionID: documentID, requestID: z.string().min(1).max(128).optional() }).strict()
 const carrierInput = z.object({ sessionID: nativeDocumentID }).strict()
@@ -18,6 +20,9 @@ const carrierInput = z.object({ sessionID: nativeDocumentID }).strict()
 export function nativeMissionScheduleHandlers(ctx: Plugin.Context, artifacts?: NativeScheduleArtifacts) {
   const invocation = nativeInvocation(NATIVE_MISSION_SCHEDULE_CONTROL_TIMEOUT_MS)
   return {
+    scheduleList: (raw: unknown) => invocation.capture(Effect.tryPromise(() => invocation.check(run =>
+      readMissionSchedulePage({ scan: input => run(ctx.storage.scan(input)) }, ctx.location.project, raw,
+        doc => nativeMissionScheduleObservation(ctx, doc, run)))).pipe(Effect.orDie)),
     scheduleRead: (raw: unknown) => invocation.capture(Effect.gen(function* () {
       const { missionID, requestID } = readInput.parse(raw)
       const doc = yield* Effect.tryPromise({ try: () => invocation.check(run => {

@@ -196,7 +196,19 @@ Si **Créer** n’est pas confirmé, la fenêtre conserve la demande soumise et 
 
 ## Modifier, supprimer et nettoyer les conversations {#cleanup}
 
-Utilisez **Modifier la mission sélectionnée** sur une mission ponctuelle modifiable ; en cas de conflit, fermez/rouvrez l’éditeur pour charger la révision actuelle plutôt que l'écraser. Si l'objectif ou les notes changent pendant le chargement du formulaire, il indique que la mission a changé depuis son ouverture au lieu de les remplir ; choisissez **Rouvrir** pour modifier la version actuelle. Les programmes quotidiens ne proposent pas de modification/suppression.
+Si l'objectif ou les notes changent pendant le chargement du formulaire, il indique que la mission a changé depuis son ouverture au lieu de les remplir ; choisissez **Rouvrir** pour modifier la version actuelle.
+
+Pendant un passage programmé admis, les modifications des instructions et des notes sont inscrites dans son historique et enregistrées pour les futurs passages. Les briefs des tâches, profils et identités d’exécution restent intacts. Créer et Modifier partagent la validation du calendrier ; l’aperçu applique la dernière échéance autorisée modifiée au prochain réveil enregistré, même tardif.
+
+La source de branche locale comprend les branches sans worktree et lit uniquement les références locales. Le sélecteur accepte jusqu’à 200 branches locales ; un inventaire plus grand affiche la source comme indisponible. **Démarrer** et **Reprendre** demandent votre accord avec les chemins exacts quand l’activation est disponible. **Lancer maintenant** reste désactivé avec une explication tant que la programmation native est inactive ; activez `experimental.schedules` dans la configuration OpenCode, puis actualisez. Une réponse d’activation perdue conserve la requête d’origine pour actualiser son reçu.
+
+Avant le premier Play, vous pouvez revenir à un lancement immédiat sans condition en gardant les conversations suivies dans **Options**. Play lit et fige leur préfixe de messages complets et stables (32 messages par source au plus, dans une enveloppe de lancement de 16 384 caractères). Une source absente, déplacée ou dépassant la capacité bloque le lancement avec une explication. Une reprise conserve le contexte figé et l’identité du lancement d’origine.
+
+Lorsqu’une lecture du reçu confirme une préparation partielle, **Réessayer** apparaît. Ce clic vérifie de nouveau le même reçu et reprend uniquement la modification enregistrée d’origine, en gardant la mission en pause.
+
+Avant le premier lancement d’une nouvelle mission préparée, vous pouvez modifier son titre, ses instructions, ses notes, son playbook, ses agents/modèles/réflexion demandés, le mode des sessions de tâches et sa **Programmation**. Vous pouvez passer d’un lancement immédiat à un lancement différé, récurrent ou conditionnel, et revenir en arrière, en conservant la même Mission. Enregistrer la garde en pause et prépare un nouveau coordinateur vide ; la conversation initiale est conservée. Seul Play démarre le travail ou arme une programmation. Après lancement, les instructions et notes suivent les règles d’édition de la mission active. Si l’enregistrement reste incertain, **Actualiser la requête enregistrée** lit son résultat d’origine ; conservez cette requête tant qu’une préparation partielle bloque Play, l’édition des textes et la suppression.
+
+Utilisez **Modifier la mission sélectionnée** sur une mission ponctuelle modifiable. Lisez les explications près des champs de préparation verrouillés. En cas de conflit de révision, choisissez **Recharger la configuration actuelle**, puis ouvrez **Ancien brouillon pour comparaison** pour examiner votre brouillon conservé avant d’enregistrer à nouveau. Les programmations quotidiennes enregistrées utilisent les commandes de leur propre barre d’outils.
 
 1. Pour une mission ponctuelle devenue inutile, choisissez **Supprimer la mission sélectionnée…** et examinez la confirmation.
 2. Sélectionnez éventuellement **Supprimer aussi les conversations spécialistes créées pour cette mission** avant de confirmer.

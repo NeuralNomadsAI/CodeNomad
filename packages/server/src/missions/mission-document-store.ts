@@ -1,6 +1,6 @@
 import { canonicalAuthority } from "./authority-protocol"
 import { assertSynchronousAuthorityGuard } from "./authority-synchronous"
-import { runMissionExclusive } from "./exclusive"
+import { runMissionExclusive, runAvailableMissionExclusive } from "./exclusive"
 import type { MissionStorage } from "./journal"
 import { documentID, missionConfigurationSchema, MISSION_DOCUMENT_MAX_BYTES, type MissionConfiguration } from "./launch-policy"
 import { MISSION_DOCUMENT_PREFIX, MISSION_TOMBSTONE_MAX_BYTES, missionTombstoneRegistrySchema, missionTombstoneSchema,
@@ -48,7 +48,7 @@ export class NativeMissionDocumentStore {
       const doc: MissionDocument = { version: 1, id, projectID: this.projectID, projectCanonical: this.projectCanonical,
         revision: 0, configurationGeneration: 1, timeGeneration: 1, createdAt: now,
         configuration: missionConfigurationSchema.parse(configuration), state: "paused", firstPlayedAt: null,
-        oneShotAt: null, slotEndsAt: null, launchedCount: 0, settledCount: 0, successfulCount: 0, lastSuccessfulPassageID: null, everCreatedTask: false, blocked: null,
+        oneShotAt: null, slotEndsAt: null, launchedCount: 0, settledCount: 0, successfulCount: 0, checks: { count: 0, since: now }, lastSuccessfulPassageID: null, everCreatedTask: false, blocked: null,
         calendars: [], synchronization: null, deletion: null, checkpoints: [], pending: null, history: [], oneTime, scheduleActivation: null, calendarOwner: null, fanIn: null,
         ...(creation === undefined ? {} : { creation }) }
       return this.publish(doc, null, current)
@@ -62,13 +62,13 @@ export class NativeMissionDocumentStore {
 
   /** Hold only the project mutation exclusion across native I/O. Each change
    * keeps its own short SQL CAS. Always use the supplied view inside this scope. */
-  withExclusion<T>(operation: (locked: NativeMissionDocumentStore) => Promise<T>): Promise<T> {
+  withExclusion<T>(operation: (locked: NativeMissionDocumentStore) => Promise<T>, options?: { wait: false }): Promise<T> {
     return this.exclusive(async () => {
       let active = true
       const locked = new NativeMissionDocumentStore(this.storage, this.projectID, this.projectCanonical)
       locked.borrowed = (): true => { this.borrowed?.(); if (!active) throw new Error("Mission document exclusion ended"); return true }
       try { return await operation(locked) } finally { active = false }
-    })
+    }, options?.wait === false)
   }
   assertActive(): true {
     if (!this.borrowed) throw new Error("Mission document exclusion is not owned")
@@ -89,17 +89,43 @@ export class NativeMissionDocumentStore {
         assertSynchronousAuthorityGuard(current, "policy-unqualified")
         return previous
       }
+      if (previous.preparation?.pending) {
+        const { attempted, pending: _pending, ...intent } = previous.preparation
+        const { attempted: nextAttempted, pending: _nextPending, ...nextIntent } = doc.preparation ?? {}
+        if (attempted && !nextAttempted || canonicalAuthority(intent) !== canonicalAuthority(nextIntent))
+          throw new Error("Original Mission preparation is immutable")
+      }
+      if (previous.calendarOwner?.operation.textEdit) {
+        const original = previous.calendarOwner.operation, next = doc.calendarOwner?.operation
+        if (!next || original.requestID !== next.requestID || original.expectedRevision !== next.expectedRevision
+          || original.fingerprint !== next.fingerprint || original.action !== next.action || original.startedAt !== next.startedAt
+          || next.textEdit && canonicalAuthority(original.textEdit) !== canonicalAuthority(next.textEdit))
+          throw new Error("Original Mission passage text intent is immutable")
+      }
+      if (previous.oneTime && doc.oneTime?.coordinatorSessionID !== previous.oneTime.coordinatorSessionID
+        && !(previous.preparation?.pending && doc.preparation?.pending === false
+          && doc.oneTime?.coordinatorSessionID === previous.preparation.coordinatorSessionID))
+        throw new Error("Mission coordinator rebinding requires its original preparation")
+      if (canonicalAuthority(previous.dormantJournal ?? null) !== canonicalAuthority(doc.dormantJournal ?? null)
+        && !(previous.preparation?.pending && doc.preparation?.pending === false && previous.firstPlayedAt === null
+          || previous.dormantJournal && doc.dormantJournal?.revision === previous.dormantJournal.revision
+            && !previous.dormantJournal.deleted && doc.dormantJournal.deleted && doc.deletion))
+        throw new Error("Mission journal ownership requires its original preparation or deletion")
       if (doc.id !== previous.id || doc.projectID !== previous.projectID || doc.projectCanonical !== previous.projectCanonical
         || canonicalAuthority(doc.creation ?? null) !== canonicalAuthority(previous.creation ?? null)
         || doc.createdAt !== previous.createdAt || previous.firstPlayedAt !== null && doc.firstPlayedAt !== previous.firstPlayedAt
         || doc.launchedCount < previous.launchedCount || doc.settledCount < previous.settledCount || doc.successfulCount < previous.successfulCount
-        || doc.successfulCount === previous.successfulCount && doc.lastSuccessfulPassageID !== previous.lastSuccessfulPassageID
+         || doc.successfulCount === previous.successfulCount && doc.lastSuccessfulPassageID !== previous.lastSuccessfulPassageID
+         || previous.checks && (!doc.checks || doc.checks.since !== previous.checks.since || doc.checks.count < previous.checks.count)
          || previous.pending?.admissionAttempted && doc.pending?.id === previous.pending.id && doc.pending.admissionAttempted !== true
          || previous.pending && doc.pending?.id === previous.pending.id && doc.pending.manualExpectedRevision !== previous.pending.manualExpectedRevision
         || doc.configurationGeneration < previous.configurationGeneration || doc.timeGeneration < previous.timeGeneration
         || previous.everCreatedTask && !doc.everCreatedTask || previous.deletion && canonicalAuthority(doc.deletion) !== canonicalAuthority(previous.deletion)
-        || previous.oneTime?.firstPlay?.acknowledgement && canonicalAuthority(previous.oneTime.firstPlay.acknowledgement, MISSION_DOCUMENT_MAX_BYTES)
+         || previous.oneTime && (!doc.oneTime || doc.oneTime.creationRequestID !== previous.oneTime.creationRequestID
+           || doc.oneTime.creationDigest !== previous.oneTime.creationDigest || canonicalAuthority(doc.oneTime.location) !== canonicalAuthority(previous.oneTime.location))
+         || previous.oneTime?.firstPlay?.acknowledgement && canonicalAuthority(previous.oneTime.firstPlay.acknowledgement, MISSION_DOCUMENT_MAX_BYTES)
           !== canonicalAuthority(doc.oneTime?.firstPlay?.acknowledgement ?? null, MISSION_DOCUMENT_MAX_BYTES)
+         || previous.oneTime?.firstPlay && previous.oneTime.firstPlay.inputText !== doc.oneTime?.firstPlay?.inputText
         || previous.state === "stopped" && doc.state !== "stopped"
         || previous.everCreatedTask && previous.configuration.template !== doc.configuration.template
         || previous.calendars.some(old => doc.calendars.some(item => item.scheduleID === old.scheduleID
@@ -130,7 +156,8 @@ export class NativeMissionDocumentStore {
       if (existing && "deletedAt" in existing && existing.revision === expectedRevision + 1) return existing
       const doc = await this.required(id)
       if (doc.revision !== expectedRevision || !doc.deletion || doc.state !== "stopped"
-        || doc.pending || doc.synchronization || doc.calendars.length || doc.blocked === "unknown"
+        || doc.pending || doc.synchronization || doc.calendars.length || doc.blocked === "unknown" || doc.preparation?.pending || doc.calendarOwner?.operation.textEdit
+        || doc.dormantJournal && !doc.dormantJournal.deleted
         || doc.oneTime?.firstPlay && doc.oneTime.firstPlay.admittedAt === null
         || doc.scheduleActivation?.targets.some(target => target.attempted && !target.acknowledged)) throw new Error("Mission deletion reconciliation pending")
       const reservation = await this.reserveDeletionSlot(doc, current)
@@ -167,12 +194,12 @@ export class NativeMissionDocumentStore {
     return parseMissionTombstoneRegistry(input ?? { version: 1, revision: 0, entries: [] })
   }
   private key(id: string) { return `${this.prefix}/missions/${documentID.parse(id)}` }
-  private exclusive<T>(work: () => Promise<T>): Promise<T> {
+   private exclusive<T>(work: () => Promise<T>, available = false): Promise<T> {
     if (this.borrowed) {
       try { this.borrowed(); return work().then(value => { this.borrowed!(); return value }) }
       catch (error) { return Promise.reject(error) }
     }
-    return runMissionExclusive(`document-mutation:${this.projectToken}`, work)
+    return (available ? runAvailableMissionExclusive : runMissionExclusive)(`document-mutation:${this.projectToken}`, work)
   }
   private async publish(doc: MissionDocument, expected: number | null, current: () => true, prepare?: () => Promise<void>) {
     const parsed = parseMissionDocument(doc, { id: doc.id, projectID: this.projectID, projectCanonical: this.projectCanonical })

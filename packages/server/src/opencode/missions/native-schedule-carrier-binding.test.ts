@@ -169,7 +169,9 @@ test("pending preparation denies replacement and closure without replacing the c
   await f.store.change(doc.id, doc.revision, current, value => missionDocumentChanges.prepareWake(value,
     { scheduleID: f.wake.scheduleID, run: 1, messageID: f.wake.messageID, dueAt: 3 }))
   assert.equal(await closeNativeScheduleCarrierClaim(f.ctx, f.wake.missionID, Effect.runPromise, current), false)
-  await assert.rejects(configureReplacement(f), /wake unresolved/)
+  const prepared = await document(f)
+  await assert.rejects(configureReplacement(f), /Mission configuration locked/)
+  assert.deepEqual(await document(f), prepared)
   assert.equal(await claimNativeScheduleCarrierWake(f.ctx, f.wake, f.incarnation, Effect.runPromise, current), false)
 })
 

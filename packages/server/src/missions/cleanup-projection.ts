@@ -8,7 +8,7 @@ export const MAX_PROJECTED_CLEANUPS = 2_000
 
 /** The session a mission event makes that mission's member for shared-session cleanup checks. */
 export function cleanupReference(event: MissionEvent): string | undefined {
-  return event.type === "mission.created" ? event.coordinator.sessionID
+  return event.type === "mission.created" || event.type === "mission.prepared" ? event.coordinator.sessionID
     : event.type === "task.dispatching" ? event.actor.sessionID : undefined
 }
 
@@ -92,7 +92,7 @@ export function projectMissionCleanups(events: readonly MissionEvent[]): Mission
     if (created?.type !== "mission.created") continue
     let objective = created.objective
     for (const event of group) {
-      if ((event.type === "mission.updated" || event.type === "mission.revised") && event.objective !== undefined) objective = event.objective
+      if ((event.type === "mission.updated" || event.type === "mission.prepared" || event.type === "mission.revised") && event.objective !== undefined) objective = event.objective
       if (event.type !== "mission.deleted" || event.projectID !== created.projectID) continue
       results.push(projectDeletion(event, group, objective))
     }

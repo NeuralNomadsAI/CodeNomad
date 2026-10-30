@@ -8,10 +8,21 @@ import { mkdir } from "node:fs/promises"
 import path from "node:path"
 import type {} from "./fixtures/mission-editor-lifetime"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
+import { observeHeaderFixture } from "./header-fixture-diagnostics"
 
 let browser: Browser, url: string
 const OBJECTIVE = "What should the mission do?", CREATE_ONLY = "Create"
 const openOptions = (page: Page) => page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
+async function connect(page: Page) {
+  // Module scripts with top-level await do not hold the document load event.
+  // addInstance runs after client-state restoration and would overwrite an early connection.
+  await page.waitForFunction(() => !!window.missionEditorLifetime)
+  await page.evaluate(async () => {
+    const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
+    const [{ updateInstance }, { getRootClient }] = await Promise.all([import(instancesPath), import(clientPath)])
+    updateInstance("fixture", { client: getRootClient("fixture") })
+  })
+}
 const openAgents = async (page: Page) => {
   const agents = page.locator("form.mission-editor summary").filter({ hasText: /^Agents and models$/ })
   const options = page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ })
@@ -39,7 +50,8 @@ test("inactivation cancels visible catalog demand and late responses cannot popu
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
-  await page.route("**/api/workspaces/fixture/missions**", route => route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/missions/recurrence")
+  await page.route("**/api/workspaces/fixture/missions**", route => new URL(route.request().url()).pathname.endsWith("/missions/scheduled")
+    ? route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } }) : route.fulfill({ json: new URL(route.request().url()).pathname.endsWith("/missions/recurrence")
     ? recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }) : {
     available: true, projectID: "project", missions: [], generatedAt: 1, discardedEvents: 0,
   } }))
@@ -86,10 +98,12 @@ after(async () => { await browser?.close(); })
 
 test("real editor sends exact coordinator/reviewer model variants and deep-held unknown creation keeps them across remount", async () => {
   const page = await browser.newPage({ locale: "en-US" }), errors: string[] = []
+  const observer = observeHeaderFixture(page, "missionEditorLifetime")
+  await observer.install()
   const writes: Array<Record<string, unknown>> = [], catalogReads: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
-    claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
+    claimClientStateAccess:async()=>true,loadClientState:async()=>{await new Promise(resolve=>window.releaseProfileState=resolve);return {isPrimary:true,restoreEnabled:true,snapshot:null}},saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => route.fulfill({ json: {} }))
   await page.route("**/api/storage/config/ui**", route => {
     if (route.request().method() !== "PATCH") return route.fulfill({ json: {} })
@@ -121,12 +135,11 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
   await page.route("**/workspaces/fixture/instance/api/provider**", route => route.fulfill({ json: { data: [{ id: "p", name: "Provider P" }] } }))
   try {
     await page.goto(url)
-    // Reuse the fixture's real owned-instance store and generated Promise client.
-    await page.evaluate(async () => {
-      const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
-      const [{ updateInstance }, { getRootClient }] = await Promise.all([import(instancesPath), import(clientPath)])
-      updateInstance("fixture", { client: getRootClient("fixture") })
-    })
+    await page.waitForFunction(() => typeof (window as any).releaseProfileState === "function")
+    assert.equal(await page.evaluate(() => typeof window.missionEditorLifetime), "undefined", "load precedes asynchronous instance registration")
+    const connecting = connect(page)
+    await page.evaluate(() => (window as any).releaseProfileState())
+    await connecting
     assert.equal(catalogReads.length, 0, "a closed editor has no catalog demand")
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Profile fixture")
@@ -188,7 +201,10 @@ test("real editor sends exact coordinator/reviewer model variants and deep-held 
     assert.equal(writes.length, 1)
     assert.equal(catalogReads.length, 2, "uncertain draft does not refresh or replace its original profile")
     assert.deepEqual(errors, [])
-  } finally { await page.close() }
+  } catch (error) {
+    await observer.diagnose(message => console.error(message)).catch(() => undefined)
+    throw error
+  } finally { observer.detach(); await page.close() }
 })
 
 test("creation waits for owned defaults and sends their exact snapshot without opening catalog controls", async () => {
@@ -205,6 +221,8 @@ test("creation waits for owned defaults and sends their exact snapshot without o
     return route.fulfill({ json: { settings: { missionProfileDefaults: [{ template: "custom", profiles }] } } })
   })
   await page.route("**/api/workspaces/fixture/missions**", route => {
+    if (route.request().method() === "GET" && new URL(route.request().url()).pathname.endsWith("/missions/scheduled"))
+      return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
     if (route.request().method() === "GET" && new URL(route.request().url()).pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({
       version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [],
     }) })
@@ -217,11 +235,7 @@ test("creation waits for owned defaults and sends their exact snapshot without o
   await page.route("**/workspaces/fixture/instance/api/{agent,model}**", route => { catalogs.push(route.request().url()); return route.fulfill({ json: { data: [] } }) })
   try {
     await page.goto(url)
-    await page.evaluate(async () => {
-      const instancesPath = "/src/stores/instances.ts", clientPath = "/src/stores/opencode-client.ts"
-      const [{ updateInstance }, { getRootClient }] = await Promise.all([import(instancesPath), import(clientPath)])
-      updateInstance("fixture", { client: getRootClient("fixture") })
-    })
+    await connect(page)
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.getByLabel(OBJECTIVE, { exact: true }).fill("Saved default snapshot")
     assert.equal(await page.getByRole("button", { name: CREATE_ONLY, exact: true }).isDisabled(), true)
@@ -260,6 +274,10 @@ test("recurring creation shares the draft, prefills its title and picks named co
     missionProfileDefaults: [{ template: "custom", profiles, taskMode: "independent" }],
   } } }))
   await page.route("**/api/workspaces/fixture/missions**", route => {
+    if (route.request().method() === "GET" && new URL(route.request().url()).pathname.endsWith("/missions/scheduled"))
+      return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
+    if (new URL(route.request().url()).pathname.endsWith("/capabilities")) return route.fulfill({ json: {
+      location: { directory: "/fixture" }, api: { available: true }, enabled: true } })
     if (route.request().method() === "POST") {
       writes.push(route.request().postDataJSON())
       return route.fulfill({ status: 503, json: { error: "Recurrence creation unavailable or uncertain" } })
@@ -285,11 +303,10 @@ test("recurring creation shares the draft, prefills its title and picks named co
     assert.equal(await page.locator(".mission-picker-control").isVisible(), false, "the creation form replaces the current-mission line")
     assert.equal(await form.getByRole("button", { name: /start/i }).count(), 0, "creation never offers a start action; Play stays separate")
     await form.getByLabel(OBJECTIVE, { exact: true }).fill("Daily review\nReview the latest work and report changes.")
-    await form.getByLabel("Every day at", { exact: true }).check()
-    assert.match(await form.locator(".mission-create-zone").innerText(), /America\/New_York/, "the resolved zone is shown beside the schedule")
-    await form.locator(".mission-create-zone").getByRole("button", { name: "Change", exact: true }).click()
-    const zone = form.getByLabel("Time zone (IANA)", { exact: true })
-    await page.waitForFunction(() => document.activeElement?.getAttribute("aria-invalid") === "false")
+    await form.locator(".mission-scheduling > summary").click()
+    await form.getByLabel("Frequency", { exact: true }).selectOption("daily")
+    await openOptions(page)
+    const zone = form.getByLabel("Saved time zone (IANA)", { exact: true })
     assert.equal(await zone.inputValue(), "America/New_York", "the system zone stays the default")
     // Suggestions come from the runtime's own IANA list, when it has one.
     const suggestions = await zone.evaluate(input => [...((input as HTMLInputElement).list?.options ?? [])].map(option => option.value))
@@ -304,8 +321,8 @@ test("recurring creation shares the draft, prefills its title and picks named co
     assert.equal(await title.getAttribute("maxlength"), "60")
     assert.equal(await title.inputValue(), "Daily review")
     assert.equal(await form.locator("textarea").first().inputValue(), "Daily review\nReview the latest work and report changes.")
-    assert.equal(await form.locator('input[type="number"]').count(), await form.locator('.mission-depth input[type="number"]').count(),
-      "the only number field is the project's native nesting depth")
+    assert.equal(await form.locator('input[type="number"]').count(), await form.locator('.mission-depth input[type="number"]').count() + 2,
+      "scheduling exposes an optional duration end and shared launch quota")
     assert.doesNotMatch(await form.innerText(), /Publications|Native calls|Effect budget/)
     assert.equal(await form.getByLabel("Coordinator · Agent", { exact: true }).count(), 0)
     const overrides = form.locator("summary").filter({ hasText: /^Agents and models$/ })
@@ -313,9 +330,9 @@ test("recurring creation shares the draft, prefills its title and picks named co
     await form.locator("textarea").first().fill("Updated daily review\nKeep the reference conversation in context.")
     assert.equal(await title.inputValue(), "Updated daily review")
     await title.fill("My daily schedule")
-    await form.getByLabel("Once", { exact: true }).check()
+    await form.getByLabel("Frequency", { exact: true }).selectOption("immediate")
     assert.equal(await form.getByLabel(OBJECTIVE, { exact: true }).inputValue(), "Updated daily review\nKeep the reference conversation in context.")
-    await form.getByLabel("Every day at", { exact: true }).check()
+    await form.getByLabel("Frequency", { exact: true }).selectOption("daily")
     assert.equal(await title.inputValue(), "My daily schedule")
     await form.locator(".mission-conversation-picker summary").click()
     await form.getByLabel("Search sessions", { exact: true }).fill("Daily")
@@ -333,11 +350,12 @@ test("recurring creation shares the draft, prefills its title and picks named co
     await form.getByRole("button", { name: CREATE_ONLY, exact: true }).click()
     await form.getByRole("alert").filter({ hasText: /unconfirmed/ }).waitFor()
     assert.equal(writes.length, 1)
-    assert.equal(writes[0].title, "My daily schedule")
-    assert.equal(writes[0].instructions, "Updated daily review\nKeep the reference conversation in context.")
-    assert.deepEqual(writes[0].watchedConversationIDs, ["ses_reference"])
-    assert.deepEqual(writes[0].profiles, profiles)
-    assert.equal(writes[0].taskMode, "independent")
+    const configuration = writes[0].configuration as Record<string, unknown>
+    assert.equal(configuration.title, "My daily schedule")
+    assert.equal(configuration.objective, "Updated daily review\nKeep the reference conversation in context.")
+    assert.deepEqual(configuration.watchedConversationIDs, ["ses_reference"])
+    assert.deepEqual(configuration.profiles, profiles)
+    assert.equal(configuration.taskMode, "independent")
     assert.equal("budgets" in writes[0], false)
     assert.deepEqual(errors, [])
   } finally { await page.close() }

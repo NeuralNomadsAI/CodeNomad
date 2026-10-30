@@ -34,8 +34,11 @@ import { registerMissionScheduled } from "./mission-scheduled"
 import type { NativeScheduleSettingsActivation } from "../../opencode/native-schedule-settings-activation"
 import type { ServiceSupervisionSettings } from "../../host-lifetime/service-supervision-service"
 import { recurrenceHumanSession } from "./mission-recurrence-proof"
+import { registerMissionScheduleList } from "./mission-schedule-list"
+import type { NativeScheduleCapabilityReader } from "../../opencode/native-schedule-capability"
 
 interface MissionRouteDeps {
+  scheduleCapability?: Pick<NativeScheduleCapabilityReader, "read">
   supervision?: Pick<ServiceSupervisionSettings, "missionPlay">
   scheduleSettingsActivation?: Pick<NativeScheduleSettingsActivation, "prepare" | "apply">
   workspaceManager: Pick<WorkspaceManager, "get" | "getServiceLocation" | "getSharedServiceClient" | "ownsLocation"
@@ -80,6 +83,7 @@ const UpdateSchema = z.object({
 const DeleteSchema = z.object({ expectedRevision: z.number().int().positive(), requestId: RequestID, deleteManagedSessions: z.boolean().optional() }).strict()
 
 export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDeps): void {
+  registerMissionScheduleList(app, deps)
   registerMissionScheduleActivation(app, deps)
   registerMissionScheduled(app, deps)
   registerMissionRecurrenceSnapshot(app, deps)

@@ -6,6 +6,9 @@ import { canonicalAuthority } from "../../missions/authority-protocol"
 import { stableToken } from "../../missions/receipt-identity"
 import { nativePassageMessageDigest } from "./native-service-adapter"
 import { nativeMessageDataSQL } from "./native-message-data"
+import path from "node:path"
+import type { NativeMissionSession } from "../../missions/control-types"
+import { matchesExecution, parseExecution } from "../../missions/execution"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const transactionGraph = new AsyncLocalStorage<Context.Context<never>>()
@@ -36,6 +39,21 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
       return result
     }
     return {
+      preparedSession: (session: NativeMissionSession) => {
+        const rows = pin(`SELECT id,parent_id,project_id,directory,workspace_id,metadata,revert,time_suspended,agent,model,title,
+          EXISTS(SELECT 1 FROM session_message WHERE session_id=s.id) AS messages,
+          EXISTS(SELECT 1 FROM session_inbox WHERE session_id=s.id) AS inbox,
+          EXISTS(SELECT 1 FROM session_v2 WHERE parent_id=s.id) AS children FROM session_v2 s WHERE id=?`, [session.id])
+        const row = rows[0]
+        if (rows.length !== 1 || row.id !== session.id || row.parent_id != null || row.project_id !== session.projectID
+          || typeof row.directory !== "string" || path.normalize(row.directory) !== path.normalize(session.location.directory)
+          || (row.workspace_id ?? undefined) !== session.location.workspaceID || row.time_suspended != null || row.revert != null
+          || row.messages !== 0 || row.inbox !== 0 || row.children !== 0 || row.title !== session.title
+          || (row.agent ?? undefined) !== session.agent
+          || canonicalAuthority(row.metadata == null ? null : JSON.parse(String(row.metadata))) !== canonicalAuthority(session.metadata ?? null)
+          || (row.model == null ? !!session.model : !session.model || !matchesExecution(parseExecution({ model: JSON.parse(String(row.model)) }), session)))
+          throw new Error("Prepared coordinator is not empty or its selection changed")
+      },
       document: (key: string) => { pin("SELECT value FROM kv WHERE key=? AND length(value)<=262144", [nativeKey(key)]) },
       journal: (prefix: string) => {
         const start = nativeKey(prefix), end = `${start}\uffff`
@@ -83,4 +101,4 @@ export const acquireNativeSourceFence = Effect.fn("missions.acquireSourceFence")
     }
   }
 })
-export type NativeSourceFence = ReturnType<Effect.Success<ReturnType<typeof acquireNativeSourceFence>>>
+export type NativeSourceFence = Omit<ReturnType<Effect.Success<ReturnType<typeof acquireNativeSourceFence>>>, "preparedSession">

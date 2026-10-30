@@ -32,6 +32,7 @@ import { SETTLED_CLEANUP_HISTORY, cleanupReceiptID, documentCleanupReceiptID, ha
   isCleanupReason, isCleanupReceipt, isDocumentCleanupReceipt, projectMissionCleanups } from "./cleanup-projection"
 import { parseDeletionRecord, planDeletionPurge, type MissionDeletionRecord } from "./journal-purge"
 import { MissionJournalIndex, noteMissionJournalWrite, type MissionIndexHints, type MissionIndexRange, type SynchronousHint } from "./journal-index"
+import { MISSION_DOCUMENT_PREFIX } from "./mission-document"
 
 // Storage generation, independent of the event wire/schema version. No legacy reads.
 export const MISSION_JOURNAL_STORAGE_PREFIX = "codenomad-missions/v2"
@@ -337,10 +338,10 @@ export class MissionJournal {
   private async fits(missionID: string, request: MissionEvent | number): Promise<boolean> {
     const capacity = await this.storedCapacity(missionID)
     const slots = capacity.cleanupSlots, used = capacity.count + slots.size
-    if (typeof request === "number") return used + request + missionLifecycleReserve(capacity.actors.size) <= MISSION_MAX_EVENTS
+    if (typeof request === "number") return used + request + missionLifecycleReserve(capacity.actors.size, capacity.document) <= MISSION_MAX_EVENTS
     const kept = request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots) ? 0
-      : request.type === "mission.control-requested" && request.action === "stop" ? missionTerminalShare(capacity.actors.size)
-        : missionLifecycleReserve(new Set([...capacity.actors, ...eventActors(request)]).size)
+      : request.type === "mission.control-requested" && request.action === "stop" ? missionTerminalShare(capacity.actors.size, capacity.document)
+        : missionLifecycleReserve(new Set([...capacity.actors, ...eventActors(request)]).size, capacity.document)
     return used + this.requiredCapacity(request, slots) + kept <= MISSION_MAX_EVENTS
   }
 
@@ -376,7 +377,7 @@ export class MissionJournal {
       + (event.type === "mission.control-requested" ? event.targets.length : 0) - superseded
   }
 
-  private async storedCapacity(missionID: string): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot>; actors: Set<string> }> {
+  private async storedCapacity(missionID: string): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot>; actors: Set<string>; document: boolean }> {
     const prefix = `${this.prefix()}/${safeKey(missionID)}/`
     let count = 0
     // Every session a valid entry admits as an actor: a superset of the map's actors.
@@ -416,7 +417,10 @@ export class MissionJournal {
       for (const target of operation.targets) reserve(operation, target.sessionID)
     }
     for (const receipt of receipts) if (this.matchesCapacityReceipt(receipt, cleanupSlots)) cleanupSlots.delete(this.eventKey(receipt.missionID, receipt.id))
-    return { count, cleanupSlots, actors }
+    // Presence only reserves capacity; it grants no document authority. An unreadable
+    // sidecar refuses the append. Isolated passage adapters accept only journal keys.
+    const document = !this.storage.isolated && await this.storage.get(`${MISSION_DOCUMENT_PREFIX}/project/${this.projectToken}/missions/${safeKey(missionID)}`) !== undefined
+    return { count, cleanupSlots, actors, document }
   }
 
   private matchesCapacityReceipt(event: MissionEvent, slots: Map<string, CapacitySlot>): boolean {
@@ -467,7 +471,7 @@ function parseFinishCounter(value: MissionJsonValue, projectID: string): number 
 
 /** Sessions an event admits as mission actors (`reduceMission`), which the lifecycle reserve covers. */
 function eventActors(event: MissionEvent): string[] {
-  return event.type === "mission.created" ? [event.coordinator.sessionID]
+  return event.type === "mission.created" || event.type === "mission.prepared" ? [event.coordinator.sessionID]
     : event.type === "task.dispatching" || event.type === "task.native-bound" ? [event.actor.sessionID] : []
 }
 
@@ -483,6 +487,15 @@ function isSafeKey(value: string): boolean {
 export function parseMissionEvent(input: unknown): MissionEvent | undefined {
   if (!record(input) || input.version !== MISSION_SCHEMA_VERSION || !baseEvent(input)) return undefined
   switch (input.type) {
+    case "mission.prepared": {
+      if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
+        || typeof input.fingerprint !== "string" || !/^[a-f0-9]{64}$/.test(input.fingerprint)) return undefined
+      const creation = parseMissionEvent({ ...input, type: "mission.created", prepared: true })
+      if (creation?.type !== "mission.created") return undefined
+      const { type: _type, prepared: _prepared, preparedBy: _author, ...fields } = creation
+      return { ...fields, type: "mission.prepared", requestID: input.requestID,
+        expectedRevision: Number(input.expectedRevision), fingerprint: input.fingerprint }
+    }
     case "mission.briefed": {
       const briefing = parseMissionBriefing(input.briefing)
       if (!briefing || !text(input.actorSessionID, MAX_SHORT_TEXT) || briefing.id !== input.id || briefing.createdAt !== input.createdAt) return undefined

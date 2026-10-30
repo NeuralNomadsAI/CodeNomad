@@ -9,7 +9,7 @@ import { missionDocumentDeletionIdentitySchema } from "./mission-document"
 
 const same = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)
 function available(doc: MissionDocument) {
-  if (doc.deletion || doc.synchronization || doc.calendarOwner?.operation.pending || doc.blocked || doc.state !== "running") throw new Error("Mission admission blocked")
+  if (doc.deletion || doc.preparation?.pending || doc.synchronization || doc.calendarOwner?.operation.pending || doc.blocked || doc.state !== "running") throw new Error("Mission admission blocked")
   const limit = missionLaunchLimit(doc.configuration.launch)
   if (limit !== null && doc.launchedCount >= limit) throw new Error("Mission launch budget exhausted")
 }
@@ -67,7 +67,7 @@ export const missionDocumentChanges = {
   },
   play(doc: MissionDocument, requestID: string, now: number, checkpoints: MissionSourceCheckpoint[]) {
     documentID.parse(requestID)
-    if (doc.firstPlayedAt !== null || doc.state !== "paused" || doc.pending || doc.synchronization || doc.deletion) throw new Error("Mission cannot first Play")
+    if (doc.firstPlayedAt !== null || doc.state !== "paused" || doc.pending || doc.preparation?.pending || doc.synchronization || doc.deletion) throw new Error("Mission cannot first Play")
     doc.checkpoints = missionCheckpointsSchema.parse(checkpoints)
     baseline(doc.configuration, doc.checkpoints)
     doc.oneShotAt = oneShotAt(doc.configuration, now)

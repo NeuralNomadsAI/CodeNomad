@@ -16,6 +16,8 @@ import { immediateMissionControlReceipts, prepareNativeImmediateMissionControl }
 import { nativeScheduleOwnerControlReceipt } from "./native-schedule-owner"
 import { finishMissionDocumentDeletion } from "../../missions/mission-document-deletion"
 import type { MissionNativeRunner } from "./native-service-adapter"
+import { configureNativeMissionPreparation } from "./native-mission-preparation"
+import { deleteDormantMissionJournal } from "../../missions/mission-dormant-journal"
 
 type Authority = Effect.Success<ReturnType<typeof acquireNativeMissionScheduleAuthority>>
 
@@ -44,6 +46,13 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   if ("deletedAt" in doc) {
     if (action !== "delete" || doc.requestID !== requestID || doc.expectedRevision !== expectedRevision
       || doc.deleteManagedSessions !== (request.deleteManagedSessions ?? false)) throw new Error("Mission deletion request conflict")
+    return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))
+  }
+  // The prepared journal and its coordinator share this object's identity.
+  // Calendar-only configuration cannot publish their preparation atomically.
+  if (action === "configure" && doc.oneTime && (doc.firstPlayedAt === null || doc.preparation?.requestID === requestID)) {
+    doc = yield* configureNativeMissionPreparation(ctx, store, { missionID, requestID, expectedRevision, configuration: request.configuration! }, current, run, admitControl)
+    admitControl(doc)
     return yield* Effect.promise(() => nativeMissionScheduleResult(ctx, doc, run, false, requestID))
   }
   if (action === "run-now" && doc.firstPlayedAt === null) throw new Error("Mission requires first Play")
@@ -79,7 +88,7 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
   }
   if (!requiresMissionCalendar(doc.configuration.launch) && action !== "configure") {
     // The ordinary immediate path owns documents with a one-time journal binding.
-    if (doc.oneTime || !doc.calendarOwner) throw new Error("Use immediate Mission control")
+    if (doc.oneTime && !doc.dormantJournal || !doc.calendarOwner) throw new Error("Use immediate Mission control")
     doc = yield* Effect.tryPromise(() => prepareNativeImmediateMissionControl(store, request, current))
     admitControl(doc)
     const immediate = doc
@@ -156,8 +165,12 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
       if (managedCleanup) actorPending = true
       else if (!actorPending && !deleting.pending && !deleting.calendarOwner?.operation.pending
         && !deleting.calendarOwner?.slots.length && !deleting.calendarOwner?.retired.length) {
-        yield* Effect.tryPromise(() => finishMissionDocumentDeletion(use => use(store), use => use(store),
-          { missionID, ...deletion }, Date.now(), current, true))
+        yield* Effect.tryPromise(() => store.withExclusion(async locked => {
+          await deleteDormantMissionJournal(locked, { get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
+            set: async (key, value, guard) => { current(); guard?.(); await run(ctx.storage.set(key, value)) } }, deleting, current)
+          await finishMissionDocumentDeletion(use => use(locked), use => use(locked),
+            { missionID, ...deletion }, Date.now(), current, true)
+        }))
       }
     }
   }

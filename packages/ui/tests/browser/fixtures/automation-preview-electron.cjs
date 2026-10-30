@@ -7,6 +7,8 @@ app.whenReady().then(async () => {
   const window = new BrowserWindow({ show: false, width: 900, height: 700,
     webPreferences: { webviewTag: true, contextIsolation: true, nodeIntegration: false, sandbox: true } })
   let visible = true, guest
+  let loaded
+  const guestLoaded = new Promise(resolve => { loaded = resolve })
   const controller = new BrowserController(() => {}, {
     fromId: id => guest && guest.id === id ? guest : null,
     fromWebContents: owner => owner === window.webContents ? {
@@ -15,6 +17,9 @@ app.whenReady().then(async () => {
   })
   window.webContents.on("did-attach-webview", (_event, contents) => {
     guest = contents
+    guest.on("did-stop-loading", () => {
+      if (guest.getURL() === process.env.CODENOMAD_TEST_GUEST_URL && !guest.isLoading()) loaded()
+    })
     controller.observeGuest(window.webContents, guest)
     controller.register(window.webContents, { sessionId: "fixture-session", registrationId: "fixture-guest", guestWebContentsId: guest.id })
   })
@@ -24,7 +29,7 @@ app.whenReady().then(async () => {
     execute: action => browser.execute("fixture-session", action),
     navigate: url => controller.execute("fixture-session", { action: "navigate", url }),
     visible: value => { visible = value },
-    ready: () => Boolean(guest && !guest.isLoading()),
+    ready: async () => { await guestLoaded; return Boolean(guest && !guest.isLoading()) },
   }
   const html = `<html><body style="margin:0"><webview src="${process.env.CODENOMAD_TEST_GUEST_URL}" style="width:850px;height:650px;display:flex"></webview></body></html>`
   await window.loadURL(`data:text/html,${encodeURIComponent(html)}`)

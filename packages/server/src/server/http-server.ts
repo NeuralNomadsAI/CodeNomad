@@ -68,6 +68,7 @@ import { registerServiceUsageRoutes } from "./routes/service-usage"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
 import { NativeScheduleSettingsActivation } from "../opencode/native-schedule-settings-activation"
+import { NativeScheduleCapabilityReader } from "../opencode/native-schedule-capability"
 import { createServiceSupervisionSettings } from "../host-lifetime/service-supervision-resolver"
 import { registerServiceSupervisionRoutes } from "./routes/service-supervision"
 import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
@@ -408,6 +409,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
     supervision,
     scheduleSettingsActivation: new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager),
+    scheduleCapability: new NativeScheduleCapabilityReader(configurationControls, deps.workspaceManager),
     auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,
     missionsHost: deps.missionsHost })
   registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,

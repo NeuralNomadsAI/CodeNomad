@@ -196,7 +196,19 @@ If **Create** is unconfirmed, the window retains the submitted request and disab
 
 ## Edit, delete and clean up conversations {#cleanup}
 
-Use **Edit selected mission** on an editable one-time mission; on a conflict, close/reopen the editor to load the current revision rather than overwrite it. If the objective or notes change while the form is still loading, it says the mission changed since you opened it instead of filling them; choose **Reopen** to edit the current version. Daily schedules do not offer edit/delete controls.
+If the objective or notes change while the form is still loading, it says the mission changed since you opened it instead of filling them; choose **Reopen** to edit the current version.
+
+During an admitted scheduled passage, edits to instructions and notes are recorded in its history and saved for future passages. Existing task briefs, profiles and execution identities stay intact. Create and Edit share calendar validation; the preview applies the edited last allowed slot to the saved next wake, including a late wake.
+
+The local-branch source includes branches without a worktree, using local refs only. The picker supports up to 200 local branches; a larger inventory shows the source as unavailable. **Start** and **Resume** ask for consent with the exact configuration paths when activation is available. **Run now** stays disabled with an explanation while native scheduling is inactive; enable `experimental.schedules` in OpenCode configuration, then refresh. A lost activation reply keeps the original request for receipt refresh.
+
+Before first Play, you can return to an immediate, unconditional launch while keeping followed conversations under **Options**. Play reads and freezes their complete, stable message prefix (up to 32 messages per source, within the 16,384-character launch envelope). Missing, moved or over-capacity sources block the launch with an explanation. A retry keeps the original frozen context and launch identity.
+
+When a receipt read confirms partial preparation, **Try again** appears. Clicking it checks that same receipt again and resumes only the original saved change, keeping the mission paused.
+
+Before the first launch of a newly prepared mission, you can edit its title, instructions, notes, playbook, requested agents/models/thinking, task-session mode and **Scheduling**. You can switch between immediate, delayed, recurring and conditional launches, keeping the same Mission. Saving keeps it paused and prepares a fresh, empty coordinator; the initial conversation is kept. Only Play starts work or arms a schedule. After launch, instructions and notes follow the active mission's editing rules. If saving is unconfirmed, **Refresh saved request** reads the original outcome; keep that request while a partial preparation blocks Play, text edits and deletion.
+
+Use **Edit selected mission** on an editable one-time mission. Read the explanations beside locked preparation fields. On a revision conflict, choose **Reload current configuration**, then open **Previous draft for comparison** to review your retained draft before saving again. Saved daily schedules use their own toolbar controls.
 
 1. For a one-time mission you no longer need, choose **Delete selected mission…** and review the confirmation.
 2. Optionally select **Also delete specialist conversations created for this mission** before confirming.

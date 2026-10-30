@@ -5,6 +5,7 @@ import { missionDocumentSummaryWire } from "./mission-document-wire"
 import { missionProfilesSchema } from "./playbook-profiles"
 import { missionTaskModeSchema } from "./task-execution-mode"
 import { stableToken } from "./receipt-identity"
+import { MISSION_SCHEDULE_PAGE_MAX } from "./mission-schedule-list"
 
 export const missionScheduleActions = ["create", "play", "pause", "resume", "stop", "check", "run-now", "configure", "delete"] as const
 export type MissionScheduleAction = typeof missionScheduleActions[number]
@@ -58,14 +59,40 @@ const proof = { type: "object", properties: { sessionID: text, workspaceID: text
   profileSource: { type: "object", properties: { profileID: text, executionHost: text, configYamlPath: text },
     required: ["profileID", "executionHost", "configYamlPath"], additionalProperties: false },
 }, required: ["sessionID", "workspaceID", "requestID", "location", "scheduleID", "expectedRevision", "action", "digest", "issuedAt", "proof", "profileSource"], additionalProperties: false } as const
+const wake = { type: "object", properties: { scheduleID: text, run: counter, messageID: text, dueAt: counter },
+  required: ["scheduleID", "run", "messageID", "dueAt"], additionalProperties: false } as const
+const missionScheduleHistoryWire = { type: "object", properties: { id: text, missionID: text, coordinatorSessionID: text, messageID: text,
+  configurationGeneration: counter, timeGeneration: counter, createdAt: counter, dueAt: counter,
+  origin: { oneOf: [
+    { type: "object", properties: { kind: { const: "wake" }, wakes: { type: "array", minItems: 1, maxItems: 8, items: wake } }, required: ["kind", "wakes"], additionalProperties: false },
+    ...["manual", "immediate"].map(kind => ({ type: "object", properties: { kind: { const: kind }, requestID: text }, required: ["kind", "requestID"], additionalProperties: false })),
+  ] }, admittedAt: { type: ["integer", "null"], minimum: 0 }, manualAllowed: { type: "boolean" }, admissionAttempted: { type: "boolean" },
+  manualExpectedRevision: counter, configurationDigest: text, settledAt: counter,
+  outcome: { type: "string", enum: ["completed", "failed", "ended-without-report"] }, reason: { const: "not-started" },
+}, required: ["id", "missionID", "coordinatorSessionID", "messageID", "configurationGeneration", "timeGeneration", "createdAt", "dueAt", "origin", "admittedAt", "configurationDigest", "settledAt", "outcome"], additionalProperties: false } as const
 const summary = { ...missionDocumentSummaryWire, properties: { ...missionDocumentSummaryWire.properties,
+  kind: { type: "string", enum: ["one-time", "schedule"] },
+  observation: { type: "object", properties: { state: { type: "string", enum: ["unarmed", "known", "unknown"] },
+    nativeStatus: { type: ["string", "null"], enum: ["active", "paused", "done", "mixed", null] },
+    nextDueAt: { type: ["integer", "null"], minimum: 0 }, wakeCount: { type: ["integer", "null"], minimum: 0 },
+    timeGeneration: counter, kind: { type: "string", enum: ["check", "launch"] } },
+    required: ["state", "nativeStatus", "nextDueAt", "wakeCount", "timeGeneration", "kind"], additionalProperties: false },
+  availableActions: { type: "array", maxItems: 8, uniqueItems: true, items: { type: "string", enum: missionScheduleActions.filter(action => action !== "create") } },
+  blockReason: { type: ["string", "null"], enum: ["deleting", "synchronizing", "failed", "ended-without-report", "unknown", "native-uncertain", "ambiguous-create", "wake-unresolved", "claim-held", "cleanup-pending", null] },
+  oneShotAt: { type: ["integer", "null"], minimum: 0 }, slotEndsAt: { type: ["integer", "null"], minimum: 0 }, successfulCount: counter,
+  checks: { type: ["object", "null"], properties: { count: counter, since: counter }, required: ["count", "since"], additionalProperties: false },
+  pendingPassage: { type: ["object", "null"], properties: { id: text, missionID: text, coordinatorSessionID: text,
+    admittedAt: { type: ["integer", "null"], minimum: 0 } }, required: ["id", "missionID", "coordinatorSessionID", "admittedAt"], additionalProperties: false },
+  latestResult: { ...missionScheduleHistoryWire, type: ["object", "null"] },
+  history: { type: "array", maxItems: 30, items: missionScheduleHistoryWire },
   id: text, configuration: missionConfigurationWire, remaining: { type: ["integer", "null"], minimum: 0 },
   settledCount: counter, blocked: { type: ["string", "null"], enum: ["failed", "ended-without-report", "unknown", null] },
   edit: { type: "object", properties: { structural: { type: "boolean" }, template: { type: "boolean" }, reason: { type: ["string", "null"] },
     templateReason: { type: ["string", "null"] } }, required: ["structural", "template", "reason", "templateReason"], additionalProperties: false },
   control: { type: ["object", "null"], properties: { requestID: text, expectedRevision: counter, action: text, pending: { type: "boolean" } },
     required: ["requestID", "expectedRevision", "action", "pending"], additionalProperties: false },
-}, required: [...missionDocumentSummaryWire.required, "id", "configuration", "remaining", "settledCount", "blocked", "edit", "control"] } as const
+}, required: [...missionDocumentSummaryWire.required, "id", "configuration", "remaining", "settledCount", "blocked", "edit", "control",
+   "kind", "oneShotAt", "slotEndsAt", "successfulCount", "checks", "pendingPassage", "latestResult", "history", "observation", "availableActions", "blockReason"] } as const
 const result = { type: "object", properties: { document: { ...summary, type: ["object", "null"] },
   deleted: { type: "boolean" }, pending: { type: "boolean" },
   deletionReceipt: { type: "object", properties: { id: text, requestID: text, expectedRevision: counter, deleteManagedSessions: { type: "boolean" } },
@@ -75,6 +102,9 @@ const result = { type: "object", properties: { document: { ...summary, type: ["o
 /** Native RPC validates the wire first; the strict domain codec and signed action
  * are revalidated before any document or native effect. */
 export const missionScheduleRpcMethods = {
+  scheduleList: { input: { type: "object", properties: { after: text, limit: { type: "integer", minimum: 1, maximum: MISSION_SCHEDULE_PAGE_MAX } }, additionalProperties: false },
+    output: { type: "object", properties: { version: { const: 1 }, projectID: text, next: text,
+      schedules: { type: "array", maxItems: MISSION_SCHEDULE_PAGE_MAX, items: summary } }, required: ["version", "projectID", "schedules"], additionalProperties: false } },
   scheduleRead: { input: { type: "object", properties: { missionID: text, requestID: text }, required: ["missionID"], additionalProperties: false }, output: result },
   scheduleControl: { input: { type: "object", properties: { missionID: text, requestID: text, expectedRevision: counter,
     action: { type: "string", enum: missionScheduleActions }, configuration: missionConfigurationWire,

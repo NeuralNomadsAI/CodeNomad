@@ -31,6 +31,7 @@ export async function prepareMissionDocumentDeletion(read: MissionDocumentAccess
       let doc = await store.read(input.missionID)
       if (!doc) throw pending()
       if ("deletedAt" in doc) { exact(input, doc); return }
+      if (doc.preparation?.pending) throw pending()
       if (doc.deletion) exact(input, doc.deletion)
       await store.change(doc.id, doc.revision, current, next => {
         missionDocumentChanges.requestDeletion(next, input.requestID, now, {

@@ -12,9 +12,12 @@ import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-ev
 import { syncSessionGitContext } from "../../workspaces/session-git-context"
 import { prepareMissionAuthority, assertMissionAuthorityCurrent, missionInstructionClient, type MissionAuthorityCheckpoint } from "./mission-authority-checkpoint"
 import { interruptNativeMissionActor, interruptedMissionConversations, missionActorResumeInput } from "../../missions/native-actor-lifecycle"
+import { MISSION_LIFECYCLE_TEXT_LIMIT } from "../../missions/lifecycle-input"
+import { stableToken } from "../../missions/receipt-identity"
 
 const schema = z.object({ kind: z.literal("lifecycle"), input: z.object({
   missionID: z.string().min(1).max(100), operationID: z.string().min(1).max(100), sessionID: z.string().regex(/^ses_/).max(240),
+  startText: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT).optional(),
 }).strict() }).strict()
 type Manager = Pick<WorkspaceManager, "list" | "getSharedServiceConnection" | "ownsLocation" | "getWorktreeIdentityForPath" | "getSessionEnvironment">
 
@@ -41,6 +44,11 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
   if (!mission || snapshot.projectID !== coordinator.projectID || mission.projectID !== coordinator.projectID
     || mission.coordinatorSessionId !== coordinatorID || !operation || operation.id !== input.operationID || !target
     || !operation.pending.includes(target.sessionID)) throw new Error("No pending mission control authority")
+  const inputDigest = mission.document?.firstPlay?.operationID === operation.id ? mission.document.firstPlay.inputDigest : undefined
+  if (inputDigest !== undefined || input.startText !== undefined) {
+    if (operation.action !== "start" || target.sessionID !== coordinatorID || input.startText === undefined
+      || inputDigest !== stableToken(input.startText, 64)) throw new Error("Frozen Mission launch context differs")
+  }
   const targetActor = mission.actors.find(actor => actor.sessionId === target.sessionID)
   if (!targetActor || !sameLocation(targetActor.location, target.location)
     || !await manager.ownsLocation(workspace.id, target.location, client)) throw new Error("Foreign mission actor")
@@ -80,6 +88,7 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
         || latest.control.requestID !== operation.requestID || latest.control.expectedRevision !== operation.expectedRevision
         || !isDeepStrictEqual(latest.control.targets, operation.targets) || !latest.control.pending.includes(target.sessionID)
         || latest.runState !== expectedState || (operation.action !== "stop" && latest.status !== "active")
+        || latest.document?.firstPlay?.inputDigest !== mission.document?.firstPlay?.inputDigest
         || !latest.actors.some(actor => actor.sessionId === target.sessionID && sameLocation(actor.location, target.location))
         || !allowShared && sharedIn(fresh)) throw new Error("Mission control superseded")
       return fresh
@@ -139,7 +148,8 @@ export async function applyMissionLifecycle(manager: Manager, fence: WorktreeDel
       await checkCoordinator()
       await checkOperation()
       current()
-      const admitted = await client.session.synthetic(missionActorResumeInput(mission.id, operation.id, target.sessionID, coordinatorID, interrupted), { signal })
+      const route = missionActorResumeInput(mission.id, operation.id, target.sessionID, coordinatorID, interrupted)
+      const admitted = await client.session.synthetic({ ...route, ...(input.startText === undefined ? {} : { text: input.startText }) }, { signal })
       current()
       await checkTarget()
       await checkCoordinator()

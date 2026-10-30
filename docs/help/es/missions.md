@@ -196,7 +196,19 @@ Si **Crear** queda sin confirmar, la ventana conserva la solicitud enviada y des
 
 ## Editar, eliminar y limpiar conversaciones {#cleanup}
 
-Usa **Editar la misión seleccionada** en una misión puntual editable; ante un conflicto, cierra/reabre el editor para cargar la revisión actual en lugar de sobrescribirla. Si el objetivo o las notas cambian mientras el formulario aún carga, indica que la misión cambió desde que la abriste en lugar de rellenarlos; elige **Volver a abrir** para editar la versión actual. Las programaciones diarias no ofrecen controles de edición/eliminación.
+Si el objetivo o las notas cambian mientras el formulario aún carga, indica que la misión cambió desde que la abriste en lugar de rellenarlos; elige **Volver a abrir** para editar la versión actual.
+
+Durante una pasada programada admitida, los cambios de instrucciones y notas quedan en su historial y se guardan para futuras pasadas. Se conservan los briefs de tareas, perfiles e identidades de ejecución. Crear y Editar comparten la validación del calendario; la vista previa aplica el último horario permitido modificado a la próxima activación guardada, incluso si llega tarde.
+
+La fuente de ramas locales incluye ramas sin worktree y lee solo referencias locales. El selector admite hasta 200 ramas locales; un inventario mayor muestra la fuente como no disponible. **Iniciar** y **Reanudar** solicitan consentimiento con las rutas exactas cuando la activación está disponible. **Ejecutar ahora** permanece desactivado con una explicación mientras la programación nativa esté inactiva; activa `experimental.schedules` en la configuración de OpenCode y actualiza. Si se pierde la respuesta de activación, se conserva la solicitud original para consultar su recibo.
+
+Antes del primer Play puede volver al inicio inmediato sin condición conservando las conversaciones seguidas en **Opciones**. Play lee y fija su prefijo de mensajes completos y estables (hasta 32 mensajes por fuente, dentro de una entrada de 16 384 caracteres). Una fuente ausente, movida o demasiado grande bloquea el inicio con una explicación. Un reintento conserva el contexto fijado y la identidad del inicio original.
+
+Cuando la lectura del recibo confirma una preparación parcial, aparece **Intentar de nuevo**. El clic vuelve a comprobar ese mismo recibo y reanuda únicamente el cambio guardado original, manteniendo la misión en pausa.
+
+Antes del primer inicio de una nueva misión preparada, puede editar título, instrucciones, notas, playbook, agentes/modelos/razonamiento solicitados, modo de sesiones de tareas y **Programación**. Puede cambiar entre inicios inmediatos, diferidos, recurrentes y condicionales conservando la misma Misión. Guardar la mantiene en pausa y prepara un coordinador nuevo y vacío; se conserva la conversación inicial. Solo Play inicia el trabajo o activa una programación. Tras el inicio, instrucciones y notas siguen las reglas de edición de la misión activa. Si guardar queda sin confirmar, **Actualizar la solicitud guardada** lee el resultado original; conserve esa solicitud mientras una preparación parcial bloquea el inicio, la edición de textos y la eliminación.
+
+Usa **Editar la misión seleccionada** en una misión puntual editable. Lee las explicaciones junto a los campos de preparación bloqueados. Ante un conflicto de revisión, elige **Recargar la configuración actual** y abre **Borrador anterior para comparar** para revisar el borrador conservado antes de volver a guardar. Las programaciones diarias guardadas utilizan los controles de su propia barra de herramientas.
 
 1. Para una misión puntual que ya no necesites, elige **Eliminar la misión seleccionada…** y revisa la confirmación.
 2. Opcionalmente, selecciona **Eliminar también las conversaciones de especialistas creadas para esta misión** antes de confirmar.

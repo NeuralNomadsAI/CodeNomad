@@ -7,18 +7,21 @@ import test from "node:test"
 import type { Plugin } from "@opencode/plugin/effect"
 import { Service } from "@opencode/client/service"
 import { Context, Effect, Scope, Option } from "effect"
-import type { MissionControl } from "../../missions/control"
+import { MissionControl } from "../../missions/control"
 import { NativeMissionDocumentStore } from "../../missions/mission-document-store"
 import { missionDocumentChanges as changes } from "../../missions/mission-document-state"
 import { missionCalendarOwnerSchema } from "../../missions/mission-calendar-owner-state"
 import type { MissionDocument } from "../../missions/mission-document"
-import { missionBusinessCall, missionBusinessResult } from "../../missions/business-control"
+import { missionBusinessCall } from "../../missions/business-control"
+import { missionMutationToolResult } from "../../missions/tool-result"
+import { missionToolInspection } from "../../missions/tool-inspection"
+import { MISSION_INSPECT_OUTPUT_LIMIT } from "../../missions/inspect-view"
 import { nativeInvocation } from "./native-invocation"
 import { NativeScheduledBusinessRpc, executeNativeScheduledBusiness, registerNativeScheduledBusinessRpc } from "./native-scheduled-business-rpc"
 
 const current = () => true as const, at = Date.parse("2026-10-01T00:00:00Z")
 const tag = (name: string) => Context.Service<never, unknown>(name)
-async function fixture(t: test.TestContext, lostACK = false, originalPresent = true, upgradedRuntime = false, scheduled = false) {
+async function fixture(t: test.TestContext, lostACK = false, originalPresent = true, upgradedRuntime = false, scheduled = false, realBusiness = false) {
   const directory = mkdtempSync(path.join(os.tmpdir(), "business-rpc-")), registrationFile = path.join(directory, "owned.json")
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   const identity = { id: "business-own", pid: process.pid, url: "http://127.0.0.1:1", version: "future-compatible" }
@@ -58,7 +61,8 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   ["ses_ordinary", { id: "ses_ordinary", location: { directory }, projectID: "project" }]])
   const handlers: Record<string, (raw: unknown) => Effect.Effect<unknown, unknown>> = {}
   const calls = { http: 0, discover: 0, acquired: 0, reconcile: 0, environment: 0, method: [] as string[], privateSource: [] as boolean[], originalPrompts: 0 }
-  const state = { originalPresent, active: true, promptLock: false, afterDiscover: async () => {}, response: undefined as Response | undefined }
+  const state = { originalPresent, active: true, promptLock: false, afterDiscover: async () => {}, response: undefined as Response | undefined,
+    loseReply: false, responseBytes: [] as number[], writes: 0 }
   const read = async () => await documents.read(doc.id) as MissionDocument
   const ctx = { location, storage: { get: (key: string) => Effect.sync(() => structuredClone(values.get(key))) },
     session: { get: ({ sessionID }: { sessionID: string }) => Effect.gen(function* () {
@@ -76,13 +80,25 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
   const invocation = nativeInvocation(), scope = await Effect.runPromise(Scope.make())
   t.after(() => Effect.runPromise(Scope.close(scope, { _tag: "Success", value: undefined } as never)))
   const mission = { id: pending.missionID, title: "Mission", objective: "Work", template: "custom", revision: 2, status: "active", runState: "running",
-    frontier: [], tasks: [{ key: "owned", brief: "Owned", status: "ready" }, { key: "unrelated", brief: "x".repeat(1024 * 1024) }], reports: [{ summary: "must not cross mutation wire" }] }
-  const control = { backendActions: false,
+    frontier: [], tasks: [{ key: "owned", title: "Owned", role: "specialist", blockedBy: [], brief: "Owned", status: "ready",
+      executionMode: { kind: "native", parentTaskKey: null }, contractGeneration: 1 },
+    { key: "unrelated", brief: "x".repeat(1024 * 1024) }], reports: [{ summary: "must not cross mutation wire" }] }
+  const control = realBusiness ? new MissionControl({ project: { id: "project", canonical: directory, location: { directory } },
+    storage: { get: async key => structuredClone(values.get(key)), set: async (key, value) => { state.writes++; values.set(key, structuredClone(value)) },
+      scan: async ({ prefix, after, limit = 100 }) => {
+        const keys = [...values.keys()].filter(key => key.startsWith(prefix) && (!after || key > after)).sort()
+        return { entries: keys.slice(0, limit).map(key => ({ key, value: structuredClone(values.get(key)) })),
+          ...(keys.length > limit ? { next: keys[limit - 1] } : {}) }
+      } }, sessions: { get: async ({ sessionID }) => structuredClone(sessions.get(sessionID)),
+      create: async () => { throw new Error("Unexpected create") }, prompt: async () => {}, synthetic: async () => {} }, now: () => at }) : { backendActions: false,
     declare: async () => { calls.method.push("declare"); return { disposition: "declared", mission, contract: { taskKey: "owned", generation: 1 } } },
     inspect: async () => { calls.method.push("inspect"); return { mission, actor: null } },
+    inspectTool: (...args: Parameters<MissionControl["inspectTool"]>) => missionToolInspection(control, ...args),
+    ownedRoot: async () => ({ id: rootID, metadata: { unused: "x".repeat(1024 * 1024) } }),
     contextFor: async () => { calls.method.push("contextFor"); return { instruction: "Owned context", coordinator: true } },
     report: async () => { calls.method.push("report"); return { disposition: "reported", taskKey: "owned", mission } },
   } as unknown as MissionControl
+  if (realBusiness) await control.create({ requestID: pending.id, coordinatorSessionID: rootID, objective: "Work", template: "custom" })
   const runtime = {
     reconcile: async () => {
       calls.reconcile++
@@ -124,12 +140,14 @@ async function fixture(t: test.TestContext, lostACK = false, originalPresent = t
     assert.ok(url.pathname.startsWith(prefix)); assert.equal(request.method, "POST")
     const method = url.pathname.slice(prefix.length), raw = await request.json() as { input: unknown }
     const result = await Effect.runPromiseWith(full)(handlers[method](raw.input))
+    state.responseBytes.push(Buffer.byteLength(JSON.stringify({ output: result })))
+    if (state.loseReply) { state.loseReply = false; throw new Error("Lost committed response") }
     return Response.json({ output: result })
   })
   const invoke = <T>(use: () => Promise<T>) => Effect.runPromiseWith(partial)(invocation.capture(Effect.promise(use)))
   const receive = (method: string, raw: unknown) => Effect.runPromiseWith(full)(handlers[method](raw))
   const binding = { documentID: doc.id, passageID: pending.id, missionID: pending.missionID, rootID }
-  return { bridge, calls, state, invoke, receive, rootID, childID, binding, identity, registrationFile, read, documents, mission, artifacts, savedRuntime }
+  return { bridge, calls, state, invoke, receive, rootID, childID, binding, identity, registrationFile, read, documents, mission, artifacts, savedRuntime, control }
 }
 
 test("ordinary callbacks use only public ancestry: zero discovery, HTTP or private acquisition", async t => {
@@ -149,7 +167,8 @@ test("pure immediate context prepares ENV and reports without technical files, c
     assert.ok(route, "immediate remains selected business, never ordinary fallback")
     assert.equal(f.calls.acquired, 1); assert.equal(f.calls.environment, 1)
     const report = await route.control.report(f.rootID, { outcome: "completed", summary: "Done", evidence: [], next: [], final: false })
-    assert.equal(report.disposition, "reported")
+    assert.ok("toolResult" in report)
+    assert.equal(report.toolResult.disposition, "reported")
     assert.equal(f.calls.acquired, 2, "one fresh qualified acquisition per RPC")
   })
   assert.deepEqual(f.calls.method, ["report"])
@@ -206,8 +225,9 @@ test("partial client graphs cross HTTP into a fresh full receiver; mutation proj
     assert.ok(route); assert.equal(route.control.backendActions, false)
     const result = await route.execute!(control => control.declare(f.rootID, { taskKey: "owned", title: "Owned", role: "specialist", brief: "Work", blockedBy: [],
       executionMode: { kind: "native", parentTaskKey: null } }))
-    assert.deepEqual(result.mission.tasks.map(task => task.key), ["owned"])
-    assert.equal("reports" in result.mission, false)
+    assert.ok("toolResult" in result)
+    assert.equal((result.toolResult.task as { key: string }).key, "owned")
+    assert.equal("mission" in result.toolResult, false)
     const context = await route.execute!(control => control.contextFor(route.readSessionID))
     assert.equal(context!.instruction, "Owned context")
     await assert.rejects(route.control.interruptTask(f.rootID, { taskKey: "owned" }))
@@ -276,7 +296,61 @@ test("read and mutation identities are bound separately; delegate targets must b
   await assert.rejects(executeNativeScheduledBusiness(runtime, { current, signal: new AbortController().signal }, input, input.binding,
     async () => ({ ...input.binding, documentID: "foreign", rootID: "ses_other" })))
   assert.equal(invoked, false)
-  const mission = { id: "msn_owned", tasks: [{ key: "owned" }, { key: "other" }], reports: ["private map"] }
-  const result = missionBusinessResult("inspect", ["ses_root", { taskKey: "owned" }], { mission }) as { mission: { tasks: unknown[]; reports?: unknown } }
-  assert.equal(result.mission.tasks.length, 1); assert.equal(result.mission.reports, undefined)
+  for (const method of ["inspect", "observeTask", "decisionCandidates", "listMissions"] as const) {
+    assert.throws(() => missionBusinessCall(method, ["ses_root", { taskKey: "owned" }, "read"], "ses_root", "ses_root", "msn_owned"), /inspectTool/)
+  }
+})
+
+test("catalog ownership transports only acknowledgement, independent of native session metadata size", async t => {
+  const f = await fixture(t)
+  const route = await f.invoke(() => f.bridge.select(f.rootID))
+  assert.ok(route)
+  assert.equal(await f.invoke(() => route.control.ownedRoot(f.rootID)), null)
+  assert.ok(Math.max(...f.state.responseBytes) < 1_024)
+})
+
+test("scheduled inspection fits before RPC, and exact content continuations cross the same bounded bridge", async t => {
+  const f = await fixture(t)
+  const route = await f.invoke(() => f.bridge.select(f.rootID))
+  assert.ok(route)
+  const inspect = (input: Record<string, unknown>) => f.invoke(() => route.control.inspectTool(f.rootID, input, "read", undefined)) as Promise<any>
+  const header = await inspect({})
+  assert.ok(JSON.stringify(header, null, 2).length <= MISSION_INSPECT_OUTPUT_LIMIT)
+  assert.equal(header.taskPage.total, 2)
+  const page = await inspect({ taskOffset: header.taskPage.nextTaskOffset })
+  const marker = page.mission.tasks[0].brief
+  assert.ok(marker.read)
+  let read = marker.read, joined = ""
+  do {
+    const slice = await inspect(read)
+    assert.ok(JSON.stringify(slice, null, 2).length <= MISSION_INSPECT_OUTPUT_LIMIT)
+    joined += slice.content.text
+    read = slice.content.next
+  } while (read)
+  assert.equal(joined, "x".repeat(1024 * 1024))
+  await assert.rejects(inspect({ missionID: "msn_foreign" }))
+})
+
+for (const unicode of [false, true]) test(`real control through authenticated RPC: 60 huge tasks commit and replay after reply loss (${unicode ? "three-byte BMP" : "ASCII"})`, async t => {
+  const f = await fixture(t, false, true, false, false, true)
+  const keys = Array.from({ length: 60 }, (_, i) => `task-${String(i).padStart(2, "0")}`)
+  for (let batch = 0; batch < 3; batch++) await f.control.revise(f.rootID, { expectedRevision: batch + 1, requestID: `seed-${batch}`, reason: "Seed",
+    addTasks: keys.slice(batch * 20, batch * 20 + 20).map(taskKey => ({ taskKey, title: unicode ? "\u0800".repeat(240) : taskKey,
+      role: "specialist", brief: (unicode ? "\u0800" : "x").repeat(20_000),
+      blockedBy: [], executionMode: { kind: "native", parentTaskKey: null } })), dependencyUpdates: [], retireTasks: [] })
+  const input = { expectedRevision: 4, requestID: "small-revision", reason: "Rewire", addTasks: [], retireTasks: [],
+    dependencyUpdates: keys.map(taskKey => ({ taskKey, blockedBy: [] })) }
+  const route = await f.invoke(() => f.bridge.select(f.rootID))
+  assert.ok(route)
+  f.state.loseReply = true
+  await assert.rejects(f.invoke(() => route.control.revise(f.rootID, input)), /unavailable/)
+  assert.equal((await f.control.mission(f.binding.missionID)).mission!.revision, 5)
+  const writes = f.state.writes
+  const reply = await f.invoke(() => route.control.revise(f.rootID, input))
+  assert.ok("toolResult" in reply)
+  assert.equal(f.state.writes, writes)
+  assert.deepEqual(reply.toolResult, missionMutationToolResult("revise", input, await f.control.revise(f.rootID, input)))
+  assert.equal((reply.toolResult.tasks as unknown[]).length, 60)
+  assert.ok(Math.max(...f.state.responseBytes) < 300_100)
+  t.diagnostic(`request=${Buffer.byteLength(JSON.stringify(input))}; response=${f.state.responseBytes.at(-1)} bytes; revision=5; writes-on-replay=0`)
 })

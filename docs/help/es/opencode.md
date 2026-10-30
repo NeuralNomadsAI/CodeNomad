@@ -31,6 +31,18 @@ En Windows, un ejecutable WSL seleccionado se ejecuta dentro de su distribución
 
 OpenCode es propietario de su registro global de servicio, sesiones, mensajes y base de datos. CodeNomad no crea una base de datos privada de OpenCode por ventana o proyecto. Cerrar una pestaña de proyecto cierra ese proyecto en CodeNomad; las sesiones siguen ejecutándose en OpenCode y vuelven a aparecer al reabrir el proyecto. CodeNomad nunca descarga las Locations nativas. Cerrar una ventana entera, salir o recargar conserva las conexiones de proyecto para restaurarlas; ni esas acciones ni el apagado del backend detienen el daemon compartido. Consulta [Proyectos](projects.md).
 
+## Mantener OpenCode iniciado {#service-supervision}
+
+Antes del primer inicio de Mission, **Mantener desactivado al iniciar la primera Mission** guarda un OFF explícito sin instalar antes la supervisión.
+
+En **Ajustes → OpenCode**, **Mantener OpenCode iniciado** instala supervisión del sistema en el host de ejecución, compartida por todos los perfiles CodeNomad que usan el servicio. Funciona independientemente de Missions, incluso con CodeNomad cerrado. El primer inicio de Mission la activa, salvo desactivación explícita previa; crear una Mission pausada conserva la elección. Pausar, detener o eliminar una Mission conserva esta preferencia.
+
+Desactivar retira la supervisión mientras OpenCode sigue funcionando y ya no se reiniciará. Para detenerlo de forma duradera, desactiva primero y luego detén OpenCode explícitamente. Con supervisión activa, `opencode service stop` provoca un reinicio.
+
+**En marcha · supervisión activa** exige un supervisor activo y un servicio OpenCode saludable. **Instalado · servicio iniciándose**, **Instalando o retirando la supervisión…** y **Fallo de supervisión** distinguen los estados. Un servicio que responde por sí solo deja la supervisión sin confirmar. Los detalles muestran la causa, último intento, reintento del supervisor y comprobación de recuperación del sistema cuando se conocen. **Comprobar supervisión** solo lee; **Reintentar supervisión** repara explícitamente la instalación solicitada. Una acción no confirmada conserva la solicitud original; **Reintentar acción original** reenvía solo esa acción exacta. Una revisión cambiada se actualiza para revisión en lugar de sobrescribirse.
+
+Windows, macOS y WSL arrancan tras iniciar sesión. WSL necesita reenvío localhost para la distribución elegida. En Linux nativo, linger inicia **todos los servicios de usuario habilitados** antes de iniciar sesión y los mantiene tras cerrarla. Al desactivar, se restaura linger solo si CodeNomad lo activó y ninguna otra supervisión lo necesita; se conservan los ajustes personales. La restauración aplazada sigue visible con **Reintentar supervisión**. Si Linux exige permiso, autoriza en el host de ejecución y reintenta; la preferencia solicitada permanece guardada. El sistema controla suspensión e hibernación. Un host indisponible o no compatible muestra un control desactivado con explicación.
+
 ## Actualizar, reiniciar o recargar {#maintenance}
 
 1. En **Configuración → OpenCode**, elige **Comprobar estado y actualizaciones**.

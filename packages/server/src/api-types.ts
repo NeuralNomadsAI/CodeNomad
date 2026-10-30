@@ -11,6 +11,16 @@ export type { PanelExtensionManifest, PanelExtensionSummary, PanelExtensionConte
 export type { ForgeRepository, ForgeWorkItem, ForgeWorkItemKind, ForgeWorkItemsResult } from "./panel-extensions/contract"
 export type { GitHistoryCommit, GitHistoryPage, GitCommitFile, GitCommitDetails, GitCommitDiff } from "./git-history-types"
 export type { MissionRecurrenceReadPage } from "./missions/recurrence-reader-contract"
+export type { MissionScheduleList } from "./missions/mission-schedule-list"
+export type { MissionScheduleRead } from "./missions/mission-schedule-view"
+export interface MissionScheduleCapability {
+  location: PluginControlLocation
+  api: { available: true } | { available: false; reason: "missing-api" | "incompatible-contract" }
+  enabled: boolean
+  origin: string | null
+  activation: { available: true; targets: Array<{ path: string; scope: "global" | "project" }> }
+    | { available: false; reason: string; targets: [] }
+}
 
 export type {
   MissionActor,

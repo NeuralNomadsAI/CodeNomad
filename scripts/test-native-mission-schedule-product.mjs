@@ -23,10 +23,11 @@ const { positionals: [cli, scratch], values } = parseArgs({ allowPositionals: tr
   live: { type: "boolean" },
   "diagnose-stop": { type: "boolean" },
   "diagnose-product-stop": { type: "boolean" },
+  "convert-preparation": { type: "boolean" },
 } })
 assert(values["parent-ready"], "Wait for the parent's explicit final-ready message, then pass --parent-ready")
 assert(cli && scratch && path.isAbsolute(cli) && path.isAbsolute(scratch) && !existsSync(scratch), "Absolute CLI and fresh approved scratch child required")
-const approved = ["impl/core/product-native", "impl/fix-core/native", "impl/fix-core-2/native", "impl/adopt-223/native"].map(part => path.resolve(process.env.LOCALAPPDATA, `codenomad-agent-scratch/issue-926/${part}`))
+const approved = ["impl/core/product-native", "impl/fix-core/native", "impl/fix-core-2/native", "impl/adopt-223/native", "impl/ui-convert/native"].map(part => path.resolve(process.env.LOCALAPPDATA, `codenomad-agent-scratch/issue-926/${part}`))
 assert(approved.some(base => { const relative = path.relative(base, path.resolve(scratch)); return relative && relative !== ".." && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative) }), "Use an approved native scratch child")
 const kinds = values.kinds.split(","), delayMs = Number(values["delay-ms"]), graceMs = Number(values["grace-ms"])
 const controlsKinds = ["paused-manual", "stop-pending", "flag-off-pause", "stop-preparing", "delete-preparing"]
@@ -89,6 +90,7 @@ async function journey(kind) {
   receipt.cases.push(result)
   const prefix = `plugin:${Array.from("codenomad.missions").map(char => char.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const registrationFile = path.join(env.XDG_STATE_HOME, "opencode/service.json"), children = [], releases = new Set()
+  let nativeErrorTail = ""
   const maintenanceLog = path.join(root, "maintenance-events.jsonl")
   let ownedTechnical = []
   let controlTrace
@@ -142,7 +144,7 @@ async function journey(kind) {
   })
   const save = (name, value) => writeFile(path.join(root, `${name}.json`), JSON.stringify(value, null, 2))
   const readSQL = use => {
-    const db = new DatabaseSync(databaseFile, { readOnly: true })
+    const db = new DatabaseSync(databaseFile, { readOnly: true, timeout: 5000 })
     try { db.exec("BEGIN"); const value = use(db); db.exec("COMMIT"); return value } finally { db.close() }
   }
   const readOnlyStorage = { get: async key => readSQL(db => { const row = db.prepare("SELECT value FROM kv WHERE key=?").get(`${prefix}${key}`); return row && JSON.parse(row.value) }),
@@ -203,7 +205,7 @@ async function journey(kind) {
     assert(!child || child.exitCode !== null || child.signalCode !== null, "Never run two service incarnations against this DB")
     child = spawn(cli, ["serve", "--service", "--hostname", "127.0.0.1", "--port", "0"], { cwd: project, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] })
     const current = { child, closed: new Promise(resolve => child.once("close", resolve)) }; children.push(current)
-    child.stdout.resume(); child.stderr.resume()
+    child.stdout.resume(); child.stderr.on("data", bytes => { nativeErrorTail = (nativeErrorTail + bytes.toString()).slice(-32000) })
     const publicInfo = await until(async () => {
       try { const info = readNativeScheduleIncarnation(registrationFile); return info.pid === child.pid ? info : false } catch { return false }
     }, 40000)
@@ -258,11 +260,27 @@ async function journey(kind) {
   }
   const create = async (label, timing, maxLaunches = 1) => {
     const selected = { agent: "fixture-worker", model: { providerID: "fixture", id: "fixture" } }
-    const response = await http("/scheduled", { requestID: `create_${label}_${randomUUID().replaceAll("-", "")}`, expectedRevision: 0, action: "create", configuration: {
+    const configuration = {
       title: `Native ${label}`, objective: "Use the actual mission_report tool to finalize this owned fixture passage. No helpers or other effects.",
       template: "custom", taskMode: "native", profiles: { coordinator: selected, roles: { specialist: selected } }, watchedConversationIDs: [],
       launch: { timing, condition: null, ends: { at: null, afterMs: null, maxLaunches } },
-    } })
+    }
+    let response
+    if (values["convert-preparation"]) {
+      const { launch: _launch, watchedConversationIDs: _watched, ...fields } = configuration
+      const original = await http("", { ...fields, requestId: `create_${label}_${randomUUID().replaceAll("-", "")}`, directory: project })
+      const before = snapshot(original.mission.id)
+      assert(before.document.oneTime && before.document.firstPlayedAt === null && before.schedules.length === 0)
+      response = await http(`/${original.mission.id}/schedule`, { requestID: `convert_${label}_${randomUUID().replaceAll("-", "")}`,
+        expectedRevision: before.document.revision, action: "configure", configuration })
+      const converted = snapshot(original.mission.id)
+      assert.equal(response.document.id, original.mission.id)
+      assert.equal(converted.document.oneTime.creationDigest, before.document.oneTime.creationDigest)
+      assert.equal(converted.document.oneTime.creationRequestID, before.document.oneTime.creationRequestID)
+      assert(converted.document.dormantJournal && converted.document.firstPlayedAt === null && converted.schedules.length === 0)
+      assert.equal(calls.length, 0)
+      result.conversions ??= []; result.conversions.push({ id: original.mission.id, before, converted })
+    } else response = await http("/scheduled", { requestID: `create_${label}_${randomUUID().replaceAll("-", "")}`, expectedRevision: 0, action: "create", configuration })
     assert.equal(response.document.state, "paused"); assert.equal(response.document.launchedCount, 0)
     return response.document.id
   }
@@ -406,6 +424,15 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     }
     const pausedID = await create("paused", { kind: "in", delayMs }), stoppedID = await create("stopped", { kind: "in", delayMs })
     await activate(stoppedID); await control(stoppedID, "play"); await control(stoppedID, "stop")
+    if (values["convert-preparation"]) {
+      const deletedID = await create("delete", { kind: "in", delayMs })
+      assert.equal((await control(deletedID, "delete")).deleted, true)
+      const response = await fetch(`${baseURL}/api/workspaces/${workspace.id}/missions`, { headers: { cookie }, signal: AbortSignal.timeout(15000) })
+      assert.equal(response.status, 200)
+      const panel = await response.json()
+      assert(!panel.missions.some(mission => mission.id === deletedID) && !panel.summaries.some(mission => mission.id === deletedID))
+      result.deletedConvertedID = deletedID
+    }
     const timing = kind === "every" ? { kind, intervalMs: 900000 } : kind === "at" ? { kind, at: Date.now() + delayMs, zone: "UTC" } : { kind, delayMs }
     const id = await create(kind, timing); await activate(id); await control(id, "play")
     const armed = snapshot(id), principal = armed.schedules.find(item => item.role === "principal"), auxiliary = armed.schedules.find(item => item.role === "reconciliation")
@@ -481,6 +508,13 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     })
     assert.equal(positive.sessions.length, 1); assert.equal(positive.sessions[0].id, positive.document.pending.coordinatorSessionID)
     assert.equal(positive.start[0].id, positive.document.pending.messageID)
+    if (values["convert-preparation"]) {
+      assert.deepEqual(positive.document.pending.configuration.launch.timing, timing)
+      assert.equal(positive.document.pending.configurationGeneration, armed.document.configurationGeneration)
+      assert.equal(positive.document.pending.timeGeneration, armed.document.timeGeneration)
+      assert.notEqual(positive.document.pending.coordinatorSessionID, armed.document.oneTime.coordinatorSessionID)
+      result.firstAdmissionUsesConvertedPolicy = true
+    }
     await until(() => calls.some(call => call.sessionID === positive.document.pending.coordinatorSessionID))
     assert(positive.schedules.some(item => item.role === "reconciliation" && item.status === "active"), "Last pending passage requires its live auxiliary")
     for (const guardID of [pausedID, stoppedID]) { const guard = snapshot(guardID); assert.equal(guard.document.launchedCount, 0); assert.equal(guard.sessions.length, 0) }
@@ -584,7 +618,7 @@ export default Plugin.define({id:"codenomad.product-provider-observer",effect:ct
     const redact = input => { let text = String(input ?? ""); for (const secret of secrets) text = text.replaceAll(secret, "<redacted>"); return text.slice(0, 64000) }
     const detail = item => item && { name: redact(item.name), type: redact(item.type ?? item._tag), message: redact(item.message), stack: redact(item.stack) }
     result.status = "failed"; result.error = redact(error?.message ?? "qualification-failed")
-    await save("failure-diagnostic", { stage: result.stage, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause) })
+    await save("failure-diagnostic", { stage: result.stage, error: detail(error), reason: detail(error?.reason), cause: detail(error?.cause), nativeErrorTail: redact(nativeErrorTail) })
     if (result.documentID) try { await save("failure-sql", snapshot(result.documentID)) } catch { /* Preserve the original failure. */ }
     throw Error(`Native product qualification failed at ${result.stage ?? "setup"}; private redacted diagnostic saved`)
   }

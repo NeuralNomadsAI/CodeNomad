@@ -3,6 +3,7 @@ import { isDeepStrictEqual } from "node:util"
 import type { JsonValue, SessionMetadata } from "@opencode/client"
 
 import { MissionJournal, stableToken, type MissionStorage, type MissionView } from "./journal"
+import { missionToolInspection, type MissionToolInspectInput } from "./tool-inspection"
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
@@ -56,9 +57,10 @@ import { missionCoordinatorTitle, parseMissionTitle } from "./mission-title"
 import { AUTOMATIC_BRIEFING_REQUEST, invalidBriefingSources, isAutomaticBriefing, parseMissionBriefingRequest,
   type MissionBriefingInput, type MissionBriefingRequest } from "./briefing"
 import { prepareMissionOneTimeDocument, prepareMissionOneTimeControl, acknowledgeMissionOneTimeControl, projectMissionDocuments, synchronizeMissionDocumentText, markMissionDocumentTaskCreation, requireMissionOneTimeDocument, recordedMissionOneTimeAcknowledgement,
-  type MissionDocumentAccess } from "./mission-document-one-time"
+  missionOneTimeStartText, type MissionDocumentAccess } from "./mission-document-one-time"
 import { isCoordinatorNotificationReport, parseNativeCall, sameNativeCall } from "./native-report-provenance"
 import { finishMissionDocumentDeletion, prepareMissionDocumentDeletion } from "./mission-document-deletion"
+import { configureMissionPreparation, type MissionPreparationNative, type MissionPreparationRequest } from "./mission-preparation"
 export { MissionControlError } from "./control-error"
 import type {
   MissionDelegateInput,
@@ -122,6 +124,10 @@ export class MissionControl {
     return snapshot
   }
 
+  inspectTool(sessionID: string, input: MissionToolInspectInput, operationID: string, catalog?: unknown): Promise<unknown> {
+    return missionToolInspection(this, sessionID, input, operationID, catalog)
+  }
+
   /**
    * Read-mostly views only (tool reads, the per-turn context, outbox enumeration):
    * the missions `pick` names, each re-read from its own range after the hints
@@ -178,11 +184,13 @@ export class MissionControl {
     // Compact copies: every map this control reads keeps its bodies.
     const missions = hinted.ids.flatMap(missionID => fresh(missionID) ? [stampDamage(fresh(missionID)!, damage)] : [])
       .sort((left, right) => order.get(left.id)! - order.get(right.id)!)
-    const summariesVersion = stableToken(JSON.stringify(rows), 32)
     if (this.options.documentReads && missions.length) await projectMissionDocuments(this.options.documentReads, missions)
+    const dormant = new Set(missions.filter(mission => mission.document?.dormant).map(mission => mission.id))
+    const visibleRows = rows.filter(row => !dormant.has(row.id))
+    const summariesVersion = stableToken(JSON.stringify(visibleRows), 32)
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
-      missions: missions.map(compactMissionMap), discardedEvents: hinted.aggregate.discardedEvents, cleanups: hinted.cleanups, ...damage,
-      ...(summariesVersion === input.summariesVersion ? {} : { summaries: rows }), summariesVersion }
+      missions: missions.filter(mission => !dormant.has(mission.id)).map(compactMissionMap), discardedEvents: hinted.aggregate.discardedEvents, cleanups: hinted.cleanups, ...damage,
+      ...(summariesVersion === input.summariesVersion ? {} : { summaries: visibleRows }), summariesVersion }
   }
 
   /** Opt-in byte-bounded display reads. Directory reads use only index hints, never
@@ -240,7 +248,7 @@ export class MissionControl {
     const damage = projectDamage(aggregate, [view])
     if (this.options.documentReads && view.mission) await projectMissionDocuments(this.options.documentReads, [view.mission])
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
-      ...(view.mission ? { mission: compactMissionMap(stampDamage(view.mission, damage)) } : {}), cleanups: view.cleanups ?? [], ...damage }
+      ...(view.mission && !view.mission.document?.dormant ? { mission: compactMissionMap(stampDamage(view.mission, damage)) } : {}), cleanups: view.cleanups ?? [], ...damage }
   }
 
   /** More of one mission's tasks for display (`missionTaskPage`): a window of its display
@@ -427,7 +435,7 @@ export class MissionControl {
     const existingEvent = await this.journal.event(missionID, eventID)
     let snapshot = await this.snapshot()
     const existing = snapshot.missions.find((mission) => mission.id === missionID)
-    if (this.options.documents && (!existingEvent || existing?.document)) input.prepared = true
+    if (this.options.documents && (!existingEvent || existing?.document || existingEvent.type === "mission.created" && existingEvent.prepared)) input.prepared = true
     if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.cleanupUnavailable) {
       throw new MissionControlError("Damaged Mission journal cannot authorize creation", "invalid-journal")
     }
@@ -537,6 +545,15 @@ export class MissionControl {
     })
   }
 
+  configurePreparation(input: MissionPreparationRequest, native: MissionPreparationNative, current: () => true,
+    admitted?: (document: import("./mission-document").MissionDocument) => void) {
+    return this.mutate(() => {
+      if (!this.options.documents) throw new Error("Mission preparation document unavailable")
+      return this.options.documents(store => configureMissionPreparation(this.journal, store, this.options.sessions, native,
+        structuredClone(input), () => { this.assertActive(); return current() }, this.options.now?.() ?? Date.now(), admitted))
+    })
+  }
+
   lifecycle(input: MissionLifecycleInput): Promise<{ mission: MissionMap }> {
     return this.mutate(async () => {
       let documents: MissionDocumentAccess | undefined
@@ -557,6 +574,7 @@ export class MissionControl {
         acknowledged: (mission: MissionMap, ack: import("./lifecycle-model").MissionNativeAcknowledgement) => acknowledgeMissionOneTimeControl(documents!, mission, ack,
           () => { this.assertActive(); return true }),
         recordedAcknowledgement: (mission: MissionMap, sessionID: string, operationID: string) => recordedMissionOneTimeAcknowledgement(documents!, mission, sessionID, operationID),
+        startText: (mission: MissionMap, operationID: string) => missionOneTimeStartText(documents!, mission, operationID),
       } : {}),
       })
       return { mission: this.requireMission(await this.snapshot(), input.missionID) }
@@ -639,6 +657,10 @@ export class MissionControl {
 
   delete(input: MissionDeleteInput): Promise<{ deleted: true; cleanup?: import("./model").MissionCleanup }> {
     return this.mutate(async () => {
+      if (this.options.documentReads) await this.options.documentReads(async store => {
+        const doc = await store.read(input.missionID)
+        if (doc && !("deletedAt" in doc) && doc.dormantJournal) throw new MissionControlError("Use Mission calendar deletion", "control-pending")
+      })
       const current = () => { this.assertActive(); return true as const }
       const result = await deleteMission(input, {
       journal: this.journal, sessions: this.options.sessions, transport: this.options.transport, isActive: this.options.isActive,

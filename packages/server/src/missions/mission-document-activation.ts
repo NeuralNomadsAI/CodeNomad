@@ -4,7 +4,7 @@ import { missionScheduleActivationSchema, type MissionDocument, type MissionSche
 
 export function prepareMissionScheduleActivation(doc: MissionDocument, input: MissionScheduleActivation) {
   const intent = missionScheduleActivationSchema.parse(input)
-  if (doc.state !== "paused" || doc.pending || doc.oneTime || doc.deletion || doc.synchronization || doc.blocked
+  if (doc.state !== "paused" || doc.pending || doc.preparation?.pending || doc.oneTime && !doc.dormantJournal || doc.deletion || doc.synchronization || doc.blocked
     || !requiresMissionCalendar(doc.configuration.launch)) throw new Error("Mission activation unavailable")
   if (doc.scheduleActivation) {
     // A failed preparation with no attempted write has no config effect in

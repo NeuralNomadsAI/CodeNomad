@@ -20,6 +20,7 @@ export interface MissionLifecycleOptions {
   beforeIntent?(mission: MissionMap, input: MissionLifecycleInput, at: number): Promise<void>
   acknowledged?(mission: MissionMap, acknowledgement: MissionNativeAcknowledgement): Promise<void>
   recordedAcknowledgement?(mission: MissionMap, sessionID: string, operationID: string): Promise<MissionNativeAcknowledgement | undefined>
+  startText?(mission: MissionMap, operationID: string): Promise<string | undefined>
 }
 
 // Explicit user actions only. Report recovery never calls this module.
@@ -101,7 +102,9 @@ export async function controlMission(input: MissionLifecycleInput, options: Miss
     if (recorded !== undefined) nativeAcknowledgement = parseMissionNativeAcknowledgement(recorded, expected)
     else {
       if (options.isActive?.() === false || !options.transport?.lifecycle) throw new Error("Mission controls unavailable")
+      const startText = operation.action === "start" ? await options.startText?.(fresh, operation.id) : undefined
       const reply = await options.transport.lifecycle(fresh.coordinatorSessionId, { missionID: fresh.id, operationID: operation.id, sessionID,
+        ...(startText === undefined ? {} : { startText }),
         ...(operation.recurrence ? { recurrence: operation.recurrence } : {}) })
       nativeAcknowledgement = parseMissionLifecycleReply(reply, expected)
     }

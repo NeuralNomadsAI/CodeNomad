@@ -277,7 +277,7 @@ test("prospective control credit cannot waive ordering, revision, scope or real 
 })
 
 test("Stop leaves cleanup reservations intact; other missions' reservations stay in their own ranges", async () => {
-  const f = fixture(); f.fillTo(1996)
+  const f = fixture(); f.fillTo(ORDINARY - 2)
   const pause = { ...f.control(), action: "pause" as const }
   await f.journal.append(pause)
   await f.journal.append(f.deletion())
@@ -338,6 +338,21 @@ for (const actorCount of [1, 9, 40]) {
     assert.deepEqual([events.length, discardedEvents], [f.values.size, 0])
   })
 }
+
+test("a preparation reserves both its new coordinator and the retained original coordinator", async () => {
+  const f = fixture(), location = { directory: "/owned/project" }
+  f.seed({ ...f.base, id: "evt_created", type: "mission.created", projectCanonical: "/owned/project", objective: "Prepared",
+    template: "custom", prepared: true, coordinator: { sessionID: "ses_original", title: "Coordinator", location } })
+  const replacement: MissionEvent = { ...f.base, id: "evt_prepared", type: "mission.prepared", createdAt: 2,
+    projectCanonical: "/owned/project", requestID: "replace", fingerprint: "a".repeat(64), expectedRevision: 1,
+    title: "Replacement", objective: "Updated", template: "custom", taskMode: "native",
+    coordinator: { sessionID: "ses_replacement", title: "Replacement", location } }
+  f.fillTo(MISSION_MAX_EVENTS - missionLifecycleReserve(2) - 1)
+  await f.journal.assertCanAppend(replacement)
+  await f.journal.append(replacement)
+  await assert.rejects(f.journal.assertCanAppend(f.ordinary()), /safety limit/)
+  await assert.rejects(f.journal.append(f.ordinary()), /safety limit/)
+})
 
 test("append rechecks prospective Stop capacity after an earlier preflight", async () => {
   const f = fixture(); f.fillTo(ORDINARY - 3)

@@ -64,6 +64,32 @@ can be contacted independently of the supervision preference. Effective
 `experimental.schedules`, service ownership and autonomous admission remain
 distinct receiver guards.
 
+## Business result bounds
+
+The business receiver fits mutations with the ordinary tools' shared
+`missionMutationToolResult` before serializing its reply. Only its `toolResult`
+crosses the wire: revision/frontier, compact affected tasks and a native declaration's
+canonical assignment, with the same omission reads and revision task pages. Reports
+and briefings keep their compact revision result. Exact original request IDs retain
+the journal's committed replay semantics after a lost reply.
+
+All map, task, list and content inspection uses `inspectTool` in the owning invocation.
+Its observed conversations and decision candidates are fitted with the rest of the
+task view. Direct `inspect`, `listMissions`, `observeTask` and `decisionCandidates`
+bridge calls are refused; internal observation stays inside the receiver. Each fitted
+result's two-space JSON holds at most 100,000 UTF-16 units, hence at most 300,000 UTF-8
+bytes (three bytes per unit; escaped controls and lone surrogates are already counted
+in the JSON text), plus fewer than 128 bytes of fixed RPC envelopes, below 1 MiB.
+Catalog ownership checks carry a null acknowledgement after validation. Replies use
+the byte-checked JSON codec so journal-valid artifact nesting fits inside its display
+and RPC envelopes; requests retain the authority codec's structural checks.
+
+`native-scheduled-business-results.test.ts` compares scheduled and ordinary registered
+tools with 60 large tasks, three-byte BMP text, prompt/content reads and paging.
+`native-scheduled-business-rpc.test.ts` also drives the authenticated bridge with real
+MissionControl writes and a lost committed reply, verifying an exact replay leaves
+the journal revision and write count unchanged.
+
 ## Local carrier primitives
 
 `nativeScheduleCarrierHooks` supplies public language/context/title/compaction and

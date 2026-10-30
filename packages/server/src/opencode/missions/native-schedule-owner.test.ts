@@ -341,21 +341,20 @@ test("physical directory retarget blocks native effects instead of recapturing a
   } finally { renameSync(moved, f.directory) }
 })
 
-test("H9 converts an unplayed oneTime binding to scheduled and back without native effects or deleting its conversation", async t => {
+test("H9 converts an unplayed calendar-owned preparation to immediate and back without native effects or deleting conversations", async t => {
   const f = await ownerFixture(t)
   const request = "one_time_creation", id = `msn_${stableToken(`project\0${request}`, 24)}`
   const immediate = { ...f.configuration, launch: { ...f.configuration.launch, timing: { kind: "immediate" as const } } }
-  const old = await f.store.create(id, immediate, f.now - 1, f.current, { creationRequestID: request,
-    creationDigest: "f".repeat(64), coordinatorSessionID: "ses_unprompted_existing", location: { directory: f.directory }, firstPlay: null })
+  const old = await f.store.create(id, f.configuration, f.now - 1, f.current)
   f.sessions.set("ses_unprompted_existing", { id: "ses_unprompted_existing" })
-  const scheduled = await f.owner.control({ missionID: id, requestID: "convert_scheduled", expectedRevision: old.revision,
-    action: "configure", configuration: f.configuration })
-  assert.equal(scheduled.id, id); assert.equal(scheduled.oneTime, null); assert.equal(scheduled.firstPlayedAt, null)
-  assert.equal(scheduled.state, "paused"); assert.equal(scheduled.calendars.length, 0); assert.equal(f.calls.length, 0)
-  const converted = await f.owner.control({ missionID: id, requestID: "convert_immediate", expectedRevision: scheduled.revision,
+  const converted = await f.owner.control({ missionID: id, requestID: "convert_immediate", expectedRevision: old.revision,
     action: "configure", configuration: immediate })
   assert.equal(converted.id, id); assert.equal(converted.state, "paused"); assert.equal(converted.calendars.length, 0)
   assert.equal(nativeScheduleOwnerControlReceipt(converted, "convert_immediate")?.pending, false)
+  const scheduled = await f.owner.control({ missionID: id, requestID: "convert_scheduled", expectedRevision: converted.revision,
+    action: "configure", configuration: f.configuration })
+  assert.equal(scheduled.id, id); assert.equal(scheduled.oneTime, null); assert.equal(scheduled.firstPlayedAt, null)
+  assert.equal(scheduled.state, "paused"); assert.equal(scheduled.calendars.length, 0); assert.equal(f.calls.length, 0)
   assert.equal(f.calls.length, 0); assert(f.sessions.has("ses_unprompted_existing"))
 })
 

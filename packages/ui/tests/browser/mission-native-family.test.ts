@@ -128,6 +128,8 @@ async function setup(label: string, narrow = false, independent = false) {
     requests.push({ method: request.method(), path: pathname, ...(request.postData() ? { body: request.postDataJSON() } : {}) })
     if (pathname === "/api/events") return route.continue()
     if (pathname === "/api/panel-extensions") return route.fulfill({ json: [] })
+    if (pathname.endsWith("/missions/scheduled")) return route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } })
+    if (pathname.endsWith("/schedule")) return route.fulfill({ json: { version: 1, projectID: "project" } })
     if (pathname === "/api/storage/config/ui") return route.fulfill({ json: { settings: { locale: narrow ? "he" : "en", showMessageTimeline: true } } })
     // CodeNomad's canonical bounded pruning routes, not guessed native URLs.
     if (pathname === "/api/workspaces/native-family/session-history/outline") {
@@ -509,7 +511,9 @@ test("390px RTL Attention selects the exact same-active-child permission before 
     await page.locator('.interruption-dock .interruption-navigation button').filter({ has: page.locator('svg.lucide-chevron-right') }).tap()
     await page.waitForFunction(() => document.querySelector(".interruption-dock")?.textContent?.includes("global-fixture.txt"))
     await page.locator(".shell-panel-toggle--right button:visible").tap()
+    const selectedSchedule = page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions/A/schedule"))
     await pickMission(page, "A")
+    await (await selectedSchedule).json()
     const attention = page.locator(".mission-attention-list")
     await attention.locator("li.mission-needs-item", { hasText: "safe-fixture.txt" }).waitFor()
     const permissionAnswer = answer(attention, "safe-fixture.txt")

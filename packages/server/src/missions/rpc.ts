@@ -152,6 +152,7 @@ const mission = {
           objective: { type: "object", properties: { before: { type: "string" }, after: { type: "string" } }, required: ["before", "after"], additionalProperties: false },
           notes: { type: "object", properties: { before: { type: "string" }, after: { type: "string" } }, additionalProperties: false },
           addedTaskKeys: stringArray,
+          requestID: { type: "string" },
           retiredTasks: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, replacementTaskKey: { type: "string" } }, required: ["taskKey"], additionalProperties: false } },
           dependencyUpdates: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, before: stringArray, after: stringArray }, required: ["taskKey", "before", "after"], additionalProperties: false } },
           createdAt: { type: "number" },

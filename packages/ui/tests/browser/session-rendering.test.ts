@@ -50,6 +50,7 @@ async function open(name: string, run: (page: Page) => Promise<void>) {
     if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) boundaryDiagnostics.push({ kind: "pageerror", message: error.message, stack: error.stack })
   })
   if (process.env.CODENOMAD_BROWSER_BOUNDARY_TRACE) {
+    await page.addInitScript(() => localStorage.setItem("opencode:logger:namespaces", JSON.stringify(["actions", "session"])))
     page.on("console", message => boundaryDiagnostics.push({ kind: "console", type: message.type(), text: message.text() }))
     page.on("requestfailed", request => boundaryDiagnostics.push({ kind: "requestfailed", url: request.url(), error: request.failure()?.errorText }))
   }

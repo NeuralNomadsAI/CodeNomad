@@ -6,6 +6,10 @@ import type { UserMissionModel } from "../lib/mission-model-library"
 
 /** What an idle editor left behind when its panel unmounted. */
 export interface MissionEditorDraft {
+  scheduling?: import("../components/mission-scheduling-data").MissionSchedulingDraft
+  scheduleDocument?: NonNullable<import("../../../server/src/api-types").MissionScheduleRead["document"]>
+  scheduleAnchorAt?: number; previousDraft?: string
+  journalMission?: MissionPanelMap
   mode: "once" | "recurring"; titleOverride?: string; time: string; zone: string; watched: string[]
   objective: string; notes: string; template: MissionPanelMap["template"]; profiles?: MissionProfiles; customProfiles: boolean
   taskMode?: MissionTaskMode; customTaskMode: boolean; defaults: MissionProfileDefault[]; defaultsReady: boolean
@@ -13,7 +17,7 @@ export interface MissionEditorDraft {
   requestId: string; lastPayload: string; deleteManagedSessions: boolean; deleteAttempted: boolean
 }
 
-export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; draft?: Readonly<MissionEditorDraft> }
+export interface MissionEditorAction { kind: "create" | "edit" | "delete"; mission?: MissionPanelMap; scheduleID?: string; draft?: Readonly<MissionEditorDraft> }
 
 // Window memory only, keyed by panel scope: the open editor outlives the panel
 // (another right-panel tab) and a hidden project, never a restart, and never

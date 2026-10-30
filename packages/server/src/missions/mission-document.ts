@@ -1,12 +1,13 @@
 import { z } from "zod"
 import { canonicalAuthority } from "./authority-protocol"
 import { stableToken, controlOperationID, controlResumeAdmissionID } from "./receipt-identity"
-import { missionCoordinatorSessionID } from "./session-identity"
+import { missionCoordinatorSessionID, isMissionCoordinatorSession } from "./session-identity"
 import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
 import { missionCalendarOwnerSchema } from "./mission-calendar-owner-state"
+import { MISSION_LIFECYCLE_TEXT_LIMIT } from "./lifecycle-input"
 import {
   documentCounter, documentID, documentTimestamp, nativeDocumentID, missionConfigurationSchema,
-  missionLaunchLimit, missionSlotEndsAt, MISSION_DOCUMENT_MAX_BYTES, type MissionConfiguration,
+  missionLaunchLimit, missionSlotEndsAt, requiresMissionCalendar, MISSION_DOCUMENT_MAX_BYTES, type MissionConfiguration,
 } from "./launch-policy"
 
 export const MISSION_DOCUMENT_PREFIX = "codenomad-missions/documents-v1"
@@ -38,7 +39,7 @@ const oneTime = z.object({ creationRequestID: requestID, creationDigest: digest,
   location: z.object({ directory: z.string().min(1).max(4096), workspaceID: nativeDocumentID.optional() }).strict(),
   firstPlay: z.object({ requestID, expectedRevision: documentCounter.positive(), operationID: nativeDocumentID,
     messageID: nativeDocumentID, requestedAt: documentTimestamp, admittedAt: documentTimestamp.nullable(),
-    acknowledgement: firstPlayAcknowledgement.nullable() }).strict().nullable(),
+    acknowledgement: firstPlayAcknowledgement.nullable(), inputText: z.string().min(1).max(MISSION_LIFECYCLE_TEXT_LIMIT).optional() }).strict().nullable(),
 }).strict()
 const checkpoint = z.object({ key: digest, kind: z.enum(["schedule-success", "mission-completed", "branch-commits", "conversation-message", "files-changed"]),
   placementDigest: digest, value: z.unknown().transform((value, context) => {
@@ -80,10 +81,16 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
   state: z.enum(["paused", "running", "stopped", "finished"]),
   firstPlayedAt: documentTimestamp.nullable(), oneShotAt: documentTimestamp.nullable(), slotEndsAt: documentTimestamp.nullable(),
   launchedCount: documentCounter, settledCount: documentCounter, successfulCount: documentCounter.default(0),
+  checks: z.object({ count: documentCounter, since: documentTimestamp }).strict().nullable().optional(),
   lastSuccessfulPassageID: documentID.nullable().default(null), everCreatedTask: z.boolean(),
   blocked: z.enum(["failed", "ended-without-report", "unknown"]).nullable(),
   creation: z.object({ requestID, digest }).strict().optional(),
   oneTime: oneTime.nullable(), scheduleActivation: missionScheduleActivationSchema.nullable(),
+  dormantJournal: z.object({ revision: documentCounter.positive(), deleted: z.boolean() }).strict().nullable().optional(),
+  preparation: z.object({ requestID, expectedRevision: documentCounter, expectedJournalRevision: documentCounter.positive(),
+    fingerprint: digest, configuration: missionConfigurationSchema, createdAt: documentTimestamp,
+    previousSessionID: nativeDocumentID, coordinatorSessionID: nativeDocumentID, attempted: z.boolean(), pending: z.boolean(),
+  }).strict().nullable().optional(),
   calendarOwner: missionCalendarOwnerSchema.nullable().default(null),
   fanIn: z.object({ incarnation: z.string().min(1).max(240), cutoff: documentTimestamp, timeGeneration: generation,
     principalIDs: z.array(nativeDocumentID).max(8).refine(ids => new Set(ids).size === ids.length), completed: z.boolean(), suppress: z.boolean() }).strict().nullable().default(null),
@@ -108,6 +115,7 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
     || (doc.successfulCount === 0) !== (doc.lastSuccessfulPassageID === null)
     || doc.history.some(item => item.id === doc.lastSuccessfulPassageID && item.outcome !== "completed")
     || doc.history.some(item => item.outcome === "completed") && doc.history.filter(item => item.outcome === "completed").at(-1)!.id !== doc.lastSuccessfulPassageID
+    || doc.checks && (doc.checks.since < doc.createdAt || doc.firstPlayedAt === null && doc.checks.count > 0)
     || doc.firstPlayedAt !== null && doc.firstPlayedAt < doc.createdAt
     || doc.firstPlayedAt === null && (doc.launchedCount || doc.pending || doc.settledCount || doc.calendars.length || doc.state === "running"
       || doc.oneShotAt !== null || doc.slotEndsAt !== null)
@@ -133,6 +141,17 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   if (doc.fanIn && (doc.fanIn.timeGeneration > doc.timeGeneration || !doc.fanIn.completed && doc.fanIn.timeGeneration !== doc.timeGeneration)) fail()
   const passages = [...doc.history, ...(doc.pending ? [doc.pending] : [])]
   if (new Set(passages.map(item => item.id)).size !== passages.length) fail()
+  const textEdit = doc.calendarOwner?.operation.textEdit
+  if (textEdit) {
+    const passage = passages.find(item => item.id === textEdit.passageID)
+    const { objective: _objective, notes: _notes, ...structure } = textEdit.configuration
+    const { objective: _oldObjective, notes: _oldNotes, ...oldStructure } = doc.configuration
+    if (!passage || passage.admittedAt === null || passage.missionID !== textEdit.missionID
+      || passage.coordinatorSessionID !== textEdit.coordinatorSessionID || textEdit.createdAt < passage.createdAt
+      || canonicalAuthority(structure) !== canonicalAuthority(oldStructure)
+      || doc.calendarOwner!.operation.fingerprint !== stableToken(canonicalAuthority({ action: "configure",
+        configuration: textEdit.configuration, deleteManagedSessions: false }), 64)) fail()
+  }
   let previousSettledAt = doc.createdAt
   for (const passage of passages) {
     if (passage.configurationGeneration > doc.configurationGeneration || passage.timeGeneration > doc.timeGeneration
@@ -162,17 +181,26 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   const retainedLaunches = passages.filter(item => item.admittedAt !== null).length
   if (doc.launchedCount < retainedLaunches || doc.launchedCount > doc.settledCount + (doc.pending?.admittedAt !== null && doc.pending ? 1 : 0)
     + (doc.oneTime?.firstPlay?.admittedAt != null ? 1 : 0)) fail()
-  if (doc.oneTime && (doc.configuration.launch.timing.kind !== "immediate" || doc.configuration.launch.condition !== null
+  if (doc.dormantJournal && (!doc.oneTime || doc.oneTime.firstPlay || !requiresMissionCalendar(doc.configuration.launch) || doc.dormantJournal.deleted && !doc.deletion
+    || !doc.preparation || doc.dormantJournal.revision !== doc.preparation.expectedJournalRevision + (doc.preparation.pending ? 0 : 1))) fail()
+  if (doc.oneTime && doc.id !== `msn_${stableToken(`${doc.projectID}\0${doc.oneTime.creationRequestID}`, 24)}`) fail()
+  if (doc.oneTime && !doc.dormantJournal && (doc.configuration.launch.timing.kind !== "immediate" || doc.configuration.launch.condition !== null
     || doc.scheduleActivation || doc.pending || doc.calendars.length
-    || doc.id !== `msn_${stableToken(`${doc.projectID}\0${doc.oneTime.creationRequestID}`, 24)}`
     || doc.oneTime.firstPlay && (doc.firstPlayedAt !== doc.oneTime.firstPlay.requestedAt
       || doc.oneTime.firstPlay.operationID !== controlOperationID(doc.id, doc.oneTime.firstPlay.requestID)
       || doc.oneTime.firstPlay.messageID !== controlResumeAdmissionID(doc.oneTime.firstPlay.operationID, doc.oneTime.coordinatorSessionID)
       || doc.oneTime.firstPlay.admittedAt !== null && (doc.launchedCount !== 1 || doc.oneTime.firstPlay.admittedAt < doc.firstPlayedAt!))
     || !doc.oneTime.firstPlay && doc.firstPlayedAt !== null)) fail()
   const play = doc.oneTime?.firstPlay
+  const preparation = doc.preparation
+  if (preparation && (!doc.oneTime || preparation.expectedRevision > doc.revision
+    || preparation.previousSessionID === preparation.coordinatorSessionID
+    || (preparation.pending ? doc.firstPlayedAt !== null || doc.state !== "paused" || !!doc.deletion || !!doc.calendarOwner
+      || !!doc.synchronization || !!doc.scheduleActivation && doc.scheduleActivation.state !== "ready" || doc.oneTime.coordinatorSessionID !== preparation.previousSessionID
+      : doc.oneTime.coordinatorSessionID !== preparation.coordinatorSessionID))) fail()
   if (play) {
     if ((play.admittedAt === null) !== (play.acknowledgement === null)) fail()
+    if (play.inputText !== undefined && play.acknowledgement && play.acknowledgement.admission.payload.text !== play.inputText) fail()
     if (play.acknowledgement && (!parseMissionNativeAcknowledgement(play.acknowledgement, {
       missionID: doc.id, operationID: play.operationID, sessionID: doc.oneTime!.coordinatorSessionID, action: "start",
     }) || play.admittedAt !== Math.max(play.requestedAt, play.acknowledgement.admission.time.created))) fail()
@@ -211,10 +239,12 @@ export function parseMissionTombstoneRegistry(input: unknown) {
 
 export function projectMissionDocument(doc: MissionDocument) {
   const limit = missionLaunchLimit(doc.configuration.launch)
-  const lock = doc.deletion ? "deleted" : doc.synchronization || doc.calendarOwner?.operation.pending || doc.fanIn && !doc.fanIn.completed || doc.blocked === "unknown"
+  const lock = doc.deletion ? "deleted" : doc.preparation?.pending || doc.synchronization || doc.calendarOwner?.operation.pending || doc.fanIn && !doc.fanIn.completed || doc.blocked === "unknown"
+    || doc.calendars.some(item => item.wakePreparing || item.pendingWake && !doc.pending)
     || doc.scheduleActivation && doc.scheduleActivation.state !== "ready" ? "uncertain"
     : doc.state === "stopped" ? "terminal" : doc.pending ? "passage" : doc.state === "finished" ? "terminal"
-      : (doc.oneTime?.firstPlay || doc.launchedCount > 0 && !["every", "cron", "multi"].includes(doc.configuration.launch.timing.kind)) ? "launched-once" : null
+       : (doc.oneTime?.firstPlay || doc.launchedCount > 0 && !["every", "cron", "multi"].includes(doc.configuration.launch.timing.kind)) ? "launched-once"
+          : doc.oneTime && !isMissionCoordinatorSession(doc.oneTime.coordinatorSessionID, doc.id) ? "journal" : null
   return { id: doc.id, revision: doc.revision, state: doc.state, launch: doc.configuration.launch,
     firstPlayedAt: doc.firstPlayedAt, slotEndsAt: doc.slotEndsAt, launchedCount: doc.launchedCount,
     remaining: limit === null ? null : Math.max(0, limit - doc.launchedCount), reserved: !!doc.pending && doc.pending.admittedAt === null,

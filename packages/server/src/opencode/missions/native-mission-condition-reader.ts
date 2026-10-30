@@ -112,7 +112,7 @@ export function createMissionConditionReader(input: {
       return proof && { passageID: receipt.id, missionID: receipt.missionID, ...proof }
     }
     if (condition.kind === "schedule-success") {
-      if (!document || document.oneTime || !requiresMissionCalendar(document.configuration.launch)) return unavailable()
+      if (!document || document.oneTime && !document.dormantJournal || !requiresMissionCalendar(document.configuration.launch)) return unavailable()
       const old = previous?.value as { count?: number; lastPassageID?: string | null } | undefined
       if (old && (!Number.isSafeInteger(old.count) || old.count! < 0 || old.count! > document.successfulCount
         || (old.count === 0) !== (old.lastPassageID === null) || old.count! > 0 && typeof old.lastPassageID !== "string")) return unavailable()
@@ -131,9 +131,9 @@ export function createMissionConditionReader(input: {
       current()
       return { checkpoint: result, changed: delta > 0, current }
     }
-    if (document && !document.oneTime && ["every", "cron", "multi"].includes(document.configuration.launch.timing.kind)) return unavailable()
+    if (document && (!document.oneTime || document.dormantJournal) && ["every", "cron", "multi"].includes(document.configuration.launch.timing.kind)) return unavailable()
     let completed = false, proof: unknown = null
-    if (document && !document.oneTime) {
+    if (document && (!document.oneTime || document.dormantJournal)) {
       const receipt = document.history.find(item => item.outcome === "completed")
       if (receipt) { proof = await passage(receipt) ?? null; completed = proof !== null }
     } else {

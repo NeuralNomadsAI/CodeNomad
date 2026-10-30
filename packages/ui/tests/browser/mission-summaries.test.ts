@@ -42,6 +42,7 @@ async function open() {
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local", electronAPI: {
     claimClientStateAccess: async () => true, loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: null }), saveClientState: async () => true } })`)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/missions/scheduled?*", route => route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } }))
   await page.route(target => target.pathname === "/api/workspaces/fixture/missions", route => {
     const query = new URL(route.request().url()).searchParams
     requests.push(query)
@@ -63,6 +64,7 @@ async function panel(maps: MissionMap[], answer: (include: string[], read: numbe
   await page.addInitScript(`Object.assign(window, { __CODENOMAD_RUNTIME_HOST__: "electron", __CODENOMAD_WINDOW_CONTEXT__: "local", electronAPI: {
     claimClientStateAccess: async () => true, loadClientState: async () => ({ isPrimary: true, restoreEnabled: true, snapshot: null }), saveClientState: async () => true } })`)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  await page.route("**/missions/scheduled?*", route => route.fulfill({ json: { version: 1, projectID: "project", schedules: [] } }))
   await page.route(target => target.pathname === "/api/workspaces/fixture/missions", async route => {
     const include = (new URL(route.request().url()).searchParams.get("include") ?? "").split(",").filter(Boolean)
     includes.push(include)

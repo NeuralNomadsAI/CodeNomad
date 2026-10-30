@@ -80,15 +80,16 @@ export async function ownerFixture(t: test.TestContext, timing: MissionConfigura
     return { file, sha256: createHash("sha256").update(bytes).digest("hex") }
   }
   const installation = { registrationFile: path.join(directory, "registration.json"), provider: artifact("provider.mjs"), runtime: artifact("runtime.mjs") }
-  const owner = new NativeScheduleCalendarOwner({ store, native, bindings: nativeScheduleOwnerBindings(ctx, Effect.runPromise),
-    installation, profileSource: { profileID: "profile", executionHost: "host", configYamlPath: path.join(directory, "config.yaml") }, current, now: () => clock, sources,
+  const makeOwner = (store: NativeMissionDocumentStore, textEdit: Pick<NativeScheduleOwnerOptions, "prepareTextEdit" | "recordTextEdit"> = {}) => new NativeScheduleCalendarOwner({ store, native, bindings: nativeScheduleOwnerBindings(ctx, Effect.runPromise),
+    installation, profileSource: { profileID: "profile", executionHost: "host", configYamlPath: path.join(directory, "config.yaml") }, current, now: () => clock, sources, ...textEdit,
     resumePending: async (_locked, document) => allowResume && document.pending ? { passageID: document.pending.id, messageID: document.pending.messageID,
       coordinatorSessionID: document.pending.coordinatorSessionID, current } : undefined })
+  const owner = makeOwner(store)
   const read = async () => { const result = await store.read(doc.id); if (!result || "deletedAt" in result) throw new Error("missing fixture doc"); return result }
   const control = async (action: Parameters<typeof owner.control>[0]["action"], requestID = `request_${action}`, configuration?: MissionConfiguration) => {
     const fresh = await read(); return owner.control({ missionID: fresh.id, requestID, expectedRevision: fresh.revision, action, configuration })
   }
-  return { owner, store, native, ctx, directory, values, sessions, calendars, calls, blocked, configuration, read, control, current, now,
+  return { owner, makeOwner, store, native, ctx, directory, values, sessions, calendars, calls, blocked, configuration, read, control, current, now,
     advance: (ms: number) => { clock += ms }, delayAuxiliary: (ms: number) => { auxiliaryDelay = ms },
     loseCreateACK: (role?: "principal" | "reconciliation") => { lost = role ?? true }, loseCreateWithoutCandidate: () => { absentCreate = true }, allowPendingResume: () => { allowResume = true } }
 }

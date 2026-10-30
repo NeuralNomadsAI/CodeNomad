@@ -4,6 +4,7 @@ import { MissionDocumentPassageEngine, type DocumentPassagePorts, type DocumentP
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "./mission-document-store"
 import { missionDocumentChanges as changes } from "./mission-document-state"
 import type { MissionCalendar, MissionDocument, MissionWake } from "./mission-document"
+import { missionSourceKey } from "./mission-document"
 import type { MissionConfiguration } from "./launch-policy"
 import type { MissionJsonValue } from "./model"
 
@@ -64,7 +65,7 @@ async function fixture(count = 1, maximum: number | null = null) {
     },
     observe: async () => { io(); return terminal ? { outcome: "completed", current } : undefined },
   }
-  return { store, read, mutate, wake, ports, engine: new MissionDocumentPassageEngine(store, ports),
+  return { store, values, read, mutate, wake, ports, engine: new MissionDocumentPassageEngine(store, ports),
     counts: () => admitted, mutations: () => mutations, tick: () => { now += 1000 }, set complete(value: boolean) { complete = value },
     set changed(value: boolean) { changed = value }, set terminal(value: boolean) { terminal = value }, set crash(value: boolean) { crash = value } }
 }
@@ -100,6 +101,44 @@ test("100 condition-false checks cost zero launches and advance high-water beyon
   }
   const doc = await f.read()
   assert.equal(doc.launchedCount, 0); assert.equal(doc.calendars[0].highWater, 100); assert.equal(doc.pending, null)
+})
+
+test("business checks count committed source observations once per fan-in, with durable tracking and honest legacy origin", async () => {
+  const f = await fixture(2), condition = { kind: "files-changed" as const, paths: ["input.txt"] }
+  const checkpoint = { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "b".repeat(64), value: { hash: "observed" } }
+  await f.mutate(doc => { doc.configuration.launch.condition = condition })
+  let changed = false
+  f.ports.snapshot = async () => ({ changed, checkpoints: [checkpoint], current })
+  const first = f.wake(0); f.wake(1)
+  await f.engine.wake({ missionID: "review", wake: first })
+  assert.deepEqual((await f.read()).checks, { count: 1, since: start })
+  await new MissionDocumentPassageEngine(f.store, f.ports).wake({ missionID: "review", wake: first })
+  assert.equal((await f.read()).checks!.count, 1, "replay never counts a second observation")
+  f.tick(); changed = true
+  const second = f.wake(0, 2); f.wake(1, 2)
+  f.crash = true
+  await f.engine.wake({ missionID: "review", wake: second })
+  assert.equal((await f.read()).checks!.count, 2, "verified reservation counts even when launch ACK is lost")
+  await f.engine.reconcile({ missionID: "review" })
+  assert.equal((await f.read()).checks!.count, 2)
+  f.tick(); const overlap = f.wake(0, 3); f.wake(1, 3)
+  await f.engine.wake({ missionID: "review", wake: overlap })
+  assert.equal((await f.read()).checks!.count, 2, "overlap has no source observation")
+  const doc = await f.read()
+  await assert.rejects(f.store.change(doc.id, doc.revision, current, next => { next.checks!.count-- }), /monotone/)
+
+  const legacy = await fixture()
+  await legacy.mutate(doc => { doc.configuration.launch.condition = condition })
+  for (const value of legacy.values.values()) delete (value as unknown as MissionDocument).checks
+  assert.equal((await legacy.read()).checks, undefined, "old totals are unknown rather than fabricated zero")
+  legacy.ports.snapshot = async () => ({ changed: false, checkpoints: [checkpoint], current,
+    revalidate: async () => { throw new Error("source moved") } })
+  const wake = legacy.wake()
+  await assert.rejects(legacy.engine.wake({ missionID: "review", wake }), /source moved/)
+  assert.equal((await legacy.read()).checks, undefined)
+  legacy.ports.snapshot = async () => ({ changed: false, checkpoints: [checkpoint], current })
+  await legacy.engine.wake({ missionID: "review", wake })
+  assert.deepEqual((await legacy.read()).checks, { count: 1, since: start + 1000 })
 })
 
 test("calendar reservation, false-condition consumption and manual reservation await source revalidation before publishing", async () => {

@@ -31,6 +31,18 @@ Unter Windows läuft eine ausgewählte WSL-Programmdatei in der gewählten Distr
 
 OpenCode verwaltet seine globale Dienstregistrierung, Sitzungen, Nachrichten und Datenbank. CodeNomad erstellt keine private OpenCode-Datenbank pro Fenster oder Projekt. Das Schließen eines Projekt-Tabs schließt das Projekt in CodeNomad; Sitzungen laufen in OpenCode weiter und erscheinen wieder, wenn Sie das Projekt erneut öffnen. CodeNomad entlädt niemals native Locations. Das Schließen eines ganzen Fensters, Beenden oder Neuladen bewahrt Projektverbindungen für die Wiederherstellung; weder diese Aktionen noch das Herunterfahren des Backends beenden den gemeinsamen Daemon. Siehe [Projekte](projects.md).
 
+## OpenCode gestartet halten {#service-supervision}
+
+Vor dem ersten Mission-Start speichert **Beim ersten Mission-Start ausgeschaltet lassen** ein ausdrückliches Aus, ohne zuvor die Überwachung zu installieren.
+
+Unter **Einstellungen → OpenCode** installiert **OpenCode gestartet halten** eine Systemüberwachung auf dem Ausführungshost, gemeinsam für alle CodeNomad-Profile dieses Dienstes. Sie arbeitet unabhängig von Missions, auch bei geschlossenem CodeNomad. Der erste Mission-Start aktiviert sie, sofern Sie sie nicht vorher ausdrücklich ausschalten; das Erstellen einer pausierten Mission behält Ihre Auswahl bei. Pause, Stopp und Löschen einer Mission lassen diese Einstellung bestehen.
+
+Beim Ausschalten wird die Überwachung entfernt; OpenCode läuft weiter und wird nicht mehr neu gestartet. Für einen dauerhaften Stopp zuerst ausschalten und dann OpenCode ausdrücklich stoppen. Bei aktiver Überwachung folgt auf `opencode service stop` ein Neustart.
+
+**Läuft · Überwachung aktiv** erfordert einen aktiven Systemwächter und einen gesunden OpenCode-Dienst. **Installiert · Dienst startet**, **Überwachung wird installiert oder entfernt…** und **Überwachung fehlgeschlagen** unterscheiden die Zustände. Ein antwortender Dienst allein bestätigt keine aktive Überwachung. Details zeigen Ursache, letzten Versuch, nächsten Wächterversuch und System-Sicherheitsprüfung, soweit bekannt. **Überwachungsstatus prüfen** liest nur; **Überwachung erneut versuchen** repariert ausdrücklich die angeforderte Einrichtung. Eine unbestätigte Aktion behält ihre ursprüngliche Anfrage; **Ursprüngliche Aktion erneut versuchen** sendet genau diese erneut. Eine geänderte Revision wird zur Prüfung aktualisiert statt überschrieben.
+
+Windows, macOS und WSL starten nach der Anmeldung. WSL benötigt Localhost-Weiterleitung für die gewählte Distribution. Unter nativem Linux startet Linger **alle aktivierten Benutzerdienste** vor der Anmeldung und hält sie nach der Abmeldung aktiv. Beim Ausschalten wird Linger nur zurückgesetzt, wenn CodeNomad es aktiviert hat und keine andere Überwachung es benötigt; persönliche Einstellungen bleiben erhalten. Ein aufgeschobenes Zurücksetzen bleibt mit **Überwachung erneut versuchen** sichtbar. Benötigt Linux eine Berechtigung, diese auf dem Ausführungshost erteilen und erneut versuchen; die angeforderte Einstellung bleibt gespeichert. Schlaf und Ruhezustand steuert das Betriebssystem. Nicht verfügbare oder nicht unterstützte Hosts zeigen eine deaktivierte Steuerung mit Erklärung.
+
 ## Aktualisieren, neu starten oder neu laden {#maintenance}
 
 1. Wählen Sie unter **Einstellungen → OpenCode** die Aktion **Status und Updates prüfen**.

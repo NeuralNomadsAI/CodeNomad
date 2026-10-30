@@ -14,7 +14,7 @@ export type DocumentConditionReader = (document: MissionDocument) => Promise<Mis
 /** Native stable prefixes and condition proofs share one frozen pending snapshot.
  * New sources baseline before Play; retained checkpoints survive remove/re-add. */
 export async function prepareNativeDocumentSources(doc: MissionDocument, native: MissionNativeService, signal: AbortSignal,
-  current: () => true, conditionReader?: DocumentConditionReader, fence?: NativeSourceFence): Promise<QualifiedDocumentSourceSnapshot> {
+  current: () => true, conditionReader?: DocumentConditionReader, fence?: NativeSourceFence, initialContext = false): Promise<QualifiedDocumentSourceSnapshot> {
   const config = doc.configuration, condition = config.launch.condition, guards: (() => true)[] = [current, native.assertCurrent]
   const observed = doc.firstPlayedAt === null ? { ...doc, checkpoints: [] } : doc
   if (fence) guards.push(fence.current)
@@ -41,12 +41,12 @@ export async function prepareNativeDocumentSources(doc: MissionDocument, native:
     let ancestor = source
     for (;;) {
       signal.throwIfAborted(); current()
-      const marker = ancestor.metadata?.["codenomad.mission"] as { document?: { missionID?: string } } | undefined
+      const marker = ancestor.metadata?.["codenomad.mission"] as { missionID?: string; document?: { missionID?: string } } | undefined
       if (seen.has(ancestor.id) || seen.size > 32 || ancestor.projectID !== doc.projectID
         || !config.roots.some(root => root.directory === ancestor.location.directory)
         || ancestor.location.directory !== source.location.directory || ancestor.location.workspaceID !== source.location.workspaceID
         || ancestor.id.startsWith(MISSION_SCHEDULE_CARRIER_SESSION_PREFIX) || ancestor.metadata?.["codenomad.schedule-carrier"]
-        || marker?.document?.missionID === doc.id || doc.oneTime?.coordinatorSessionID === ancestor.id
+        || marker?.missionID === doc.id || marker?.document?.missionID === doc.id || doc.oneTime?.coordinatorSessionID === ancestor.id
         || doc.pending?.coordinatorSessionID === ancestor.id || doc.history.some(item => item.coordinatorSessionID === ancestor.id))
         throw new Error("Document watched source moved or excluded")
       seen.add(ancestor.id)
@@ -57,7 +57,7 @@ export async function prepareNativeDocumentSources(doc: MissionDocument, native:
       if (ancestor.id !== parentID) throw new Error("Document watched ancestry differs")
     }
     if (old && old.placementDigest !== recurrenceSourceLocationDigest(source.location)) throw new Error("Document watched source moved or excluded")
-    if (!old) {
+    if (!old && !initialContext) {
       if (!native.sourceBaseline) throw new Error("Mission message baseline reader unavailable")
       const anchor = await native.sourceBaseline(conversationID, { signal })
       if (anchor) fence?.message(conversationID, anchor.id, nativePassageMessageDigest(anchor))
@@ -68,10 +68,11 @@ export async function prepareNativeDocumentSources(doc: MissionDocument, native:
       const anchor = await native.message({ sessionID: conversationID, messageID: cursor.messageID }, { signal })
       if (!anchor || !cursor.nativeDigest || nativePassageMessageDigest(anchor) !== cursor.nativeDigest) throw new Error("Document watched anchor changed")
     }
-    const messages = !old ? [] : await native.sourceMessages({ sessionID: conversationID, ...source.location,
+    const messages = !old && !initialContext ? [] : await native.sourceMessages({ sessionID: conversationID, ...source.location,
       afterMessageID: cursor?.messageID ?? null, ...(cursor?.nativeDigest ? { afterNativeDigest: cursor.nativeDigest } : {}),
       limit: 32, contextLimit: recurrenceSourceContextLimit(budget, sources.map(source => source.messages)), excludeTechnical: true }, { signal }, current, current)
     if (messages.some(message => message.needsDecision)) throw new Error("Document source input capacity")
+    if (initialContext && messages.length === 32 && messages.every(message => message.type === "technical")) throw new Error("Mission message prefix capacity")
     for (const message of messages) fence?.message(conversationID, message.id, message.nativeDigest)
     const frozen = { conversationID, ...source.location, afterMessageID: cursor?.messageID ?? null, messages }
     sources.push(frozen)

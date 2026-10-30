@@ -260,7 +260,7 @@ test("eligible late slot remains admissible after end; native preparations block
   let doc = await armed(f, config)
   const next = wake(doc, 0, now + 50_000)
   await f.mutate(value => changes.prepareWake(value, next))
-  await assert.rejects(f.mutate(value => changes.configure(value, { ...value.configuration, title: "New title" }, now + 70_000)), /wake unresolved/)
+  await assert.rejects(f.mutate(value => changes.configure(value, { ...value.configuration, title: "New title" }, now + 70_000)), /configuration locked/)
   doc = await f.mutate(value => changes.reserve(value, { kind: "wake", wakes: [next] }, now + 100_000, []))
   assert.equal(doc.pending!.dueAt, now + 50_000)
   assert.equal(doc.calendars.find(item => item.role === "reconciliation")!.highWater, 0)

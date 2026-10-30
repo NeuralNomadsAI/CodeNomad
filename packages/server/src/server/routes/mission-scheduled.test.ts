@@ -97,6 +97,29 @@ test("only authenticated Play calls service default-ON on the exact acquired con
   assert.deepEqual(f.state.plays, [])
 })
 
+test("creation status locates the original request after losing the HTTP document identity, without another write", async t => {
+  const f = await fixture(t), requestID = "lost_create_response"
+  f.state.write = async () => { throw new Error("Lost creation ACK") }
+  assert.equal((await f.post({ action: "create", requestID, expectedRevision: 0, configuration: config },
+    "/api/workspaces/owned/missions/scheduled")).statusCode, 503)
+  const original = f.state.writes[0], url = `/api/workspaces/owned/missions/scheduled/requests/${requestID}`
+  assert.ok(scheduledMissionHold(f.fence, original.missionID))
+  f.state.read = async () => ({ document: null, pending: true })
+  assert.equal((await f.app.inject({ method: "GET", url })).statusCode, 503)
+  assert.ok(scheduledMissionHold(f.fence, original.missionID))
+  f.state.read = async () => f.result(original)
+  const receipt = await f.app.inject({ method: "GET", url })
+  assert.equal(receipt.statusCode, 200)
+  assert.equal(receipt.json().document.control.requestID, requestID)
+  assert.equal(f.state.reads.at(-1)!.missionID, original.missionID)
+  assert.equal(scheduledMissionHold(f.fence, original.missionID), undefined)
+  // Once the in-memory permit is settled, the native owner derives the same ID.
+  assert.equal((await f.app.inject({ method: "GET", url })).statusCode, 200)
+  assert.equal(f.state.reads.at(-1)!.missionID, original.missionID)
+  assert.equal(f.state.writes.length, 1)
+  assert.deepEqual(f.state.plays, [])
+})
+
 test("exact original complete ACK releases; missing/null/partial receipts and negative reads keep deletion fenced", async t => {
   const f = await fixture(t)
   assert.equal((await f.post()).statusCode, 200)

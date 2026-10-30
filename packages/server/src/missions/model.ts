@@ -18,15 +18,15 @@ export const MISSION_SCHEMA_VERSION = 1 as const
 /** Stored entries of one mission's journal range, receipts and tombstone included,
  * and the read bound of that range; a project holds any number of missions. */
 export const MISSION_MAX_EVENTS = 2_000
-/** Entries a Stop or a deletion of a mission with `actors` actors can need: the
- * request or tombstone plus one receipt per target, targets being actors. */
-export function missionTerminalShare(actors: number): number {
-  return 1 + actors
+/** Deletion capacity: tombstone, one receipt per actor and, for unified documents,
+ * one document-cleanup receipt. */
+export function missionTerminalShare(actors: number, documentCleanup = false): number {
+  return 1 + actors + Number(documentCleanup)
 }
 /** Room ordinary writes leave in a mission's range so that one Stop and then
  * its deletion always fit, however many actors it has. */
-export function missionLifecycleReserve(actors: number): number {
-  return 2 * missionTerminalShare(actors)
+export function missionLifecycleReserve(actors: number, documentCleanup = false): number {
+  return 1 + actors + missionTerminalShare(actors, documentCleanup)
 }
 export const MISSION_MAX_HISTORY = 50
 
@@ -161,6 +161,8 @@ export interface MissionRetiredTask {
 }
 
 export interface MissionPlanChange {
+  /** Exact accepted human edit identity, retained with its bounded history. */
+  requestID?: string
   revision: number
   source?: "user" | "coordinator"
   actorSessionId?: string
@@ -332,6 +334,13 @@ export interface MissionUpdatedEvent extends MissionEventBase {
   notes?: string
 }
 
+export interface MissionPreparedEvent extends Omit<MissionCreatedEvent, "type" | "prepared" | "preparedBy" | "requestID"> {
+  type: "mission.prepared"
+  requestID: string
+  expectedRevision: number
+  fingerprint: string
+}
+
 export interface MissionDeletedEvent extends MissionEventBase {
   type: "mission.deleted"
   requestID: string
@@ -493,6 +502,7 @@ export type MissionEvent =
   | MissionControlAppliedEvent
   | MissionCreatedEvent
   | MissionUpdatedEvent
+  | MissionPreparedEvent
   | MissionDeletedEvent
   | MissionSessionCleanedEvent
   | MissionDocumentCleanedEvent
@@ -548,7 +558,7 @@ export function missionPlanChanges(events: readonly MissionEvent[], missionID: s
 
 /** `changes`, when given, receives every plan change, before the map keeps its last ones. */
 function reduceMission(events: readonly MissionEvent[], discarded: { count: number }, changes?: MissionPlanChange[]): MissionMap | undefined {
-  const created = events.find((event): event is MissionCreatedEvent => event.type === "mission.created")
+  let created = events.find((event): event is MissionCreatedEvent => event.type === "mission.created")
   if (!created) {
     discarded.count += events.length
     return undefined
@@ -590,7 +600,17 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       continue
     }
     if (event.type === "mission.control-requested" && event.action === "stop") stoppedForReports = true
-    if (event.type === "mission.updated") {
+    if (event.type === "mission.prepared") {
+      const prefix = events.slice(0, events.indexOf(event))
+      if (event.expectedRevision !== prefix.length || tasks.size || status !== "active"
+        || projectLifecycle(prefix).runState !== "prepared") { discarded.count++; continue }
+      created = { ...created, title: event.title, template: event.template, profiles: event.profiles,
+        taskMode: event.taskMode, coordinator: event.coordinator }
+      actors.clear()
+      actors.set(event.coordinator.sessionID, { sessionId: event.coordinator.sessionID, kind: "coordinator", managed: false,
+        title: event.coordinator.title, roles: ["coordinator"], location: event.coordinator.location, joinedAt: event.createdAt })
+    }
+    if (event.type === "mission.updated" || event.type === "mission.prepared") {
       const previousObjective = objective
       const previousNotes = notes
       objective = event.objective
@@ -598,8 +618,9 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       history.push({
         revision: event.expectedRevision + 1,
         source: "user",
+        requestID: event.requestID,
         objective: { before: previousObjective, after: objective },
-        ...(event.notesSpecified ? { notes: { before: previousNotes, after: notes } } : {}),
+        ...(event.type === "mission.prepared" || event.notesSpecified ? { notes: { before: previousNotes, after: notes } } : {}),
         addedTaskKeys: [],
         retiredTasks: [],
         dependencyUpdates: [],

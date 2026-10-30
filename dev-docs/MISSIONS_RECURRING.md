@@ -17,6 +17,76 @@ profile source, request ID and document revision through the existing signed bri
 `scheduleRead({missionID,requestID})` reads an exact retained control receipt;
 missing or evicted proof stays unknown. Passive reads send no controls.
 
+`GET /api/workspaces/:id/missions/scheduled/requests/:requestID` reads an exact
+creation receipt when the HTTP response containing the document ID was lost.
+It uses the retained physical permit, or derives the document ID from the acquired
+native project owner after permit settlement/restart. A negative or incomplete
+receipt retains uncertainty; the read performs exact observation only.
+
+`GET /api/workspaces/:id/missions/scheduled` brokers the read-only `scheduleList`
+RPC. It reads at most eight key-ordered unified documents per page, selected by an
+optional `after` Mission ID and `limit`. Tombstones consume page capacity and the
+cursor advances across them. Each page validates project identity and document
+bounds; malformed entries fail the page. Immediate unified documents carry
+`kind: one-time`, calendar-owned documents `kind: schedule`, allowing the panel
+to merge journal rows by Mission ID and retain their owning control path.
+List and detail projections include the full launch policy/configuration, frozen
+one-shot/end instants, admitted/settled/successful counts, structural/template locks,
+pending passage identity and the thirty retained passage receipts.
+
+List and detail also expose `observation`, `availableActions` and `blockReason`.
+The native display adapter reads at most eight exact principal rows, validates
+their adopted mapping and checks the document revision again after I/O. Missing,
+foreign, partial or retired reads project `unknown`. `nextDueAt` is the earliest
+active native principal's saved date; a condition labels it as a check. Paused
+rows contribute their counter but have no active next wake. `nativeStatus`
+separately exposes active/paused/done/mixed principals beside the document's
+desired state. `wakeCount` sums
+native principal prompt admissions in the current `timeGeneration`; auxiliary
+wakes, source-verification counts and lifetime business launch/success totals
+have separate meanings. Available actions are durable-state candidates; the
+authenticated mutation rechecks capabilities, source/actor proofs and CAS.
+Prepared wakes lock structural editing through the same H9 projection used by
+the document mutator.
+
+During an admitted passage, a text-only configure validates H9 and persists its
+original request, document/journal revisions, passage identity and payload in the
+calendar operation before publishing `mission.updated` in its isolated journal.
+An exact retained event confirms the future objective/notes under document exclusion,
+including after passage archive. Reconciliation only reads that event; explicit replay
+uses the saved original revision and payload. Missing proof retains the operation and
+the editor's original uncertain request. Frozen passage inputs, task contracts, profiles and
+session/message identities remain intact. Never send a prompt from this edit path.
+Create and Edit share empty-calendar validation; saved unknown interval phases and
+intentionally exhausted launch quotas retain their explicit display. Preview end
+bounds apply to both the persisted next slot and subsequent slots, including late slots.
+
+`checks: {count,since} | null` counts completed, revalidated source observations
+committed with a principal fan-in's consumed high-water or passage reservation,
+and explicit Run now reservations. A group of up to eight principal wakes counts
+once. True and false conditions both count; baseline reads at Play, auxiliary
+wakes, replays, overlaps, suppressed wakes, failed/incomplete source reads and
+unconditional policies contribute zero. Admission or settlement retries preserve
+the count. Configuration changes and temporal generations retain it. New documents
+track from creation; documents without tracking begin at their first committed
+check. The UI displays `since` alongside the count and treats `null` as unavailable
+history, preserving the unknown earlier total.
+
+`node scripts/test-native-mission-schedule-list.mjs <absolute-isolated-cli>`
+qualifies the production read handlers and public native `storage.scan` against
+fixture-owned documents: bounded pagination across a tombstone, cursor semantics,
+list/detail parity and unchanged revisions. One document has real adopted native
+calendars; its exact next date/counter is read through the invocation-scoped
+adapter, with zero model requests.
+
+`GET /api/workspaces/:id/missions/scheduled/capabilities` reads the acquired
+connection's consumed API contract, effective schedules flag and origin. Its
+read-only activation plan exposes the target scopes/paths or a refusal category.
+The native document preparation endpoint owns authenticated configuration writes.
+Both display routes revalidate workspace, connection, physical checkout and request
+lifetime after asynchronous work. Missing methods or capabilities return an
+explicit unavailable response. UI reads use the shared secondary HTTP budget.
+
 Five explicit source conditions share the native source preparation boundary:
 another schedule's successful passage, a completed one-time Mission, commits on
 a local branch, stable new messages in a followed conversation, and an explicit

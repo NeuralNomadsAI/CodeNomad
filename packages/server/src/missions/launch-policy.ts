@@ -4,15 +4,16 @@ import { authorityRootSchema, canonicalAuthority } from "./authority-protocol"
 import { MISSION_TITLE_MAX, MISSION_TITLE_PATTERN } from "./mission-title"
 import { compareModelError, missionProfileRoles, missionProfilesInputSchema, validateMissionProfiles } from "./playbook-profiles"
 import { missionTaskModeInputSchema } from "./task-execution-mode"
+import { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
+import { requiresMissionCalendar } from "./mission-launch-kind"
+export { requiresMissionCalendar, missionLaunchLimit } from "./mission-launch-kind"
+export { documentCounter, documentTimestamp, MISSION_MIN_INTERVAL_MS } from "./mission-time"
 
 export const MISSION_DOCUMENT_MAX_BYTES = 256 * 1024
 export const MISSION_CONFIGURATION_MAX_BYTES = 64 * 1024
 export const MISSION_CALENDAR_LIMIT = 8
-export const MISSION_MIN_INTERVAL_MS = 15 * 60_000
 export const documentID = z.string().regex(/^[A-Za-z0-9_-]{3,100}$/)
 export const nativeDocumentID = z.string().min(1).max(240).regex(/^[A-Za-z0-9_.:-]+$/)
-export const documentCounter = z.number().int().nonnegative().safe()
-export const documentTimestamp = documentCounter.max(Date.parse("9999-12-28T00:00:00Z"))
 const duration = z.number().int().positive().safe().max(documentTimestamp.maxValue!)
 const zone = z.string().min(1).max(100).refine(value => {
   try { new Intl.DateTimeFormat("en", { timeZone: value }); return true } catch { return false }
@@ -81,12 +82,6 @@ export const missionConfigurationSchema = z.object({
 }, "Invalid or over-capacity Mission configuration")
 export type MissionConfiguration = z.infer<typeof missionConfigurationSchema>
 
-export function requiresMissionCalendar(policy: MissionLaunchPolicy): boolean {
-  return policy.timing.kind !== "immediate" || policy.condition !== null
-}
-export function missionLaunchLimit(policy: MissionLaunchPolicy): number | null {
-  return ["every", "cron", "multi"].includes(policy.timing.kind) ? policy.ends.maxLaunches : 1
-}
 export function missionSlotEndsAt(policy: MissionLaunchPolicy, firstPlayedAt: number): number | null {
   const values = [policy.ends.at, policy.ends.afterMs === null ? null : documentTimestamp.parse(firstPlayedAt + policy.ends.afterMs)]
     .filter((value): value is number => value !== null)

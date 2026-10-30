@@ -35,7 +35,7 @@ export class MissionDocumentPassageEngine {
       const cutoff = doc?.fanIn && !doc.fanIn.completed ? doc.fanIn.cutoff : input.cutoff ?? this.ports.now()
       if (!Number.isSafeInteger(cutoff) || cutoff < 0) throw new Error("Invalid passage preflight cutoff")
       const reply = (messagePresent: boolean, ready = false) => ({ messagePresent, ready, cutoff })
-      if (!doc || doc.oneTime) return reply(false)
+      if (!doc || doc.oneTime && !doc.dormantJournal || doc.preparation?.pending) return reply(false)
       const wake = input.wake, calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)
       if (!calendar || calendar.sessionID !== wake.sessionID || calendar.timeGeneration !== wake.generation || wake.missionID !== doc.id)
         return reply(false)
@@ -62,7 +62,7 @@ export class MissionDocumentPassageEngine {
   wake(input: { missionID: string; wake?: DocumentPassageWake; cutoff?: number }): Promise<DocumentPassageResult> {
     return this.store.withExclusion(async locked => {
       let doc = await this.read(locked, input.missionID)
-      if (!doc || doc.oneTime) return "idle"
+      if (!doc || doc.oneTime && !doc.dormantJournal || doc.preparation?.pending) return "idle"
       const incoming = input.wake
       const calendar = incoming && doc.calendars.find(item => item.scheduleID === incoming.scheduleID)
       if (incoming && (!calendar || calendar.sessionID !== incoming.sessionID || calendar.timeGeneration !== incoming.generation
@@ -109,12 +109,13 @@ export class MissionDocumentPassageEngine {
         const snapshot = await this.ports.snapshot(doc)
         snapshot.current(); coverage.current()
         if (!snapshot.changed) {
-          await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate)
+          await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate, true)
           return "ignored"
         }
         // reserve accepts one next occurrence per principal. Older contiguous
         // occurrences are ignored in the SAME CAS, preserving the latest fan-in.
         await this.change(locked, doc, next => {
+          this.recordCheck(next)
           const selected: MissionWake[] = []
           for (const principal of next.calendars.filter(item => item.role === "principal")) {
             const group = wakes.filter(wake => wake.scheduleID === principal.scheduleID).sort((a, b) => a.run - b.run)
@@ -150,7 +151,7 @@ export class MissionDocumentPassageEngine {
   runNow(input: { missionID: string; requestID: string; expectedRevision: number }): Promise<DocumentPassageResult> {
     return this.store.withExclusion(async locked => {
       const doc = await this.read(locked, input.missionID)
-      if (!doc || doc.oneTime) throw new Error("Scheduled document unavailable")
+      if (!doc || doc.oneTime && !doc.dormantJournal || doc.preparation?.pending) throw new Error("Scheduled document unavailable")
       if (doc.firstPlayedAt === null) throw new Error("Scheduled Mission requires first Play before Run now")
       if (doc.pending?.origin.kind === "manual" && doc.pending.origin.requestID === input.requestID) {
         if (doc.pending.manualExpectedRevision === undefined) throw new Error("Manual passage request identity unknown")
@@ -170,6 +171,7 @@ export class MissionDocumentPassageEngine {
       const snapshot = await this.ports.snapshot(doc)
       snapshot.current()
       await this.change(locked, doc, next => {
+        this.recordCheck(next)
         // The owner validates/persists the paused manual control. The temporary
         // state exists only inside this atomic reservation, never arms a calendar.
         const state = next.state
@@ -234,11 +236,19 @@ export class MissionDocumentPassageEngine {
     return { incarnation: this.ports.incarnation, cutoff, timeGeneration: doc.timeGeneration,
       principalIDs: doc.calendars.filter(item => item.role === "principal").map(item => item.scheduleID).sort(), completed: false, suppress }
   }
-  private consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>) {
+  private consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>, checked = false) {
     return this.change(locked, doc, next => {
+      if (checked) this.recordCheck(next)
       for (const wake of [...wakes].sort((a, b) => a.run - b.run)) changes.processWake(next, wake)
       next.fanIn!.completed = true
     }, current, prepare)
+  }
+  private recordCheck(doc: MissionDocument) {
+    if (!doc.configuration.launch.condition) return
+    // Commit the verified observation together with its high-water/reservation.
+    // Records without tracking begin here; never invent their earlier total.
+    doc.checks ??= { count: 0, since: this.ports.now() }
+    doc.checks.count++
   }
   private contiguous(doc: MissionDocument, wakes: MissionWake[]) {
     if (wakes.length > 256 || new Set(wakes.map(wake => `${wake.scheduleID}:${wake.run}`)).size !== wakes.length) return false

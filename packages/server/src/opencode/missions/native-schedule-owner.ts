@@ -9,7 +9,7 @@ import { MISSION_SCHEDULE_CARRIER_SESSION_PREFIX } from "../../missions/mission-
 import type { MissionConfiguration } from "../../missions/launch-policy"
 import type { MissionCalendar, MissionDocument, MissionSourceCheckpoint } from "../../missions/mission-document"
 import type { NativeMissionDocumentStore } from "../../missions/mission-document-store"
-import type { MissionCalendarOwnerSlot, MissionCalendarOwnerState } from "../../missions/mission-calendar-owner-state"
+import type { MissionCalendarOwnerSlot, MissionCalendarOwnerState, MissionPassageTextIntent } from "../../missions/mission-calendar-owner-state"
 import type { NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
 import { assertNativeScheduleCarrierArtifacts } from "./native-schedule-carrier-binding"
 import type { NativeScheduleCalendarInfo, NativeScheduleCalendarService } from "./native-schedule-calendar-service"
@@ -24,6 +24,8 @@ export type NativeScheduleOwnerOptions = { store: NativeMissionDocumentStore; na
   bindings: NativeScheduleOwnerBindings; installation: NativeScheduleCarrierInstallation;
   profileSource: { profileID: string; executionHost: string; configYamlPath: string }; current(): true; now?: () => number;
   resumePending?: (locked: NativeMissionDocumentStore, document: MissionDocument) => Promise<NativeSchedulePendingResumeProof | undefined>;
+  prepareTextEdit?: (locked: NativeMissionDocumentStore, document: MissionDocument, configuration: MissionConfiguration) => Promise<MissionPassageTextIntent>;
+  recordTextEdit?: (locked: NativeMissionDocumentStore, document: MissionDocument, publish: boolean) => Promise<boolean>;
   sources?: (document: MissionDocument, locked: NativeMissionDocumentStore) => Promise<{ checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }> }
 export type NativeSchedulePendingResumeProof = { passageID: string; messageID: string; coordinatorSessionID: string; current(): true }
 const same = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)
@@ -56,6 +58,7 @@ export function missionCalendarOwnerReady(doc: MissionDocument): boolean {
     && owner.slots.filter(slot => slot.role === "principal").length === (doc.configuration.launch.timing.kind === "multi" ? doc.configuration.launch.timing.calendars.length : 1)
 }
 export function nativeScheduleOwnerControlReceipt(doc: MissionDocument, requestID: string) {
+  if (doc.preparation?.requestID === requestID) return { ...doc.preparation, action: "configure" as const, startedAt: doc.preparation.createdAt }
   const owner = doc.calendarOwner
   const direct = (id: string) => owner?.receipts.find(item => item.requestID === id)
     ?? (owner?.operation.requestID === id ? owner.operation : undefined)
@@ -101,14 +104,18 @@ export class NativeScheduleCalendarOwner {
   private applyControl(input: NativeScheduleOwnerControl, processAfterCommit: boolean): Promise<MissionDocument> {
     return this.options.store.withExclusion(async locked => {
       let doc = await this.required(locked, input.missionID)
+      if (doc.oneTime && !doc.dormantJournal || doc.preparation?.pending) throw new Error("Use immediate Mission preparation")
       const fingerprint = stableToken(canonicalAuthority({ action: input.action, configuration: input.configuration ?? null,
         deleteManagedSessions: input.deleteManagedSessions ?? false }), 64)
       const previous = doc.calendarOwner?.operation
       const replay = nativeScheduleOwnerControlReceipt(doc, input.requestID)
       if (replay) {
         if (replay.expectedRevision !== input.expectedRevision || replay.fingerprint !== fingerprint) throw new Error("Mission calendar request conflict")
+        if (doc.calendarOwner?.operation.requestID === input.requestID && doc.calendarOwner.operation.textEdit)
+          doc = await this.finishTextEdit(locked, doc, true)
         return replay.pending && processAfterCommit ? this.process(locked, doc) : doc
       }
+      if (previous?.textEdit && input.action !== "check") throw new Error("Original Mission passage text edit unresolved")
       if (doc.revision !== input.expectedRevision) throw new Error("Mission document revision conflict")
       if (input.action === "configure" && doc.firstPlayedAt === null && input.configuration && !requiresMissionCalendar(input.configuration.launch)) {
         const configuration = missionConfigurationSchema.parse(input.configuration), now = this.now()
@@ -121,10 +128,7 @@ export class NativeScheduleCalendarOwner {
             receipts: [...value.calendarOwner?.receipts ?? [], operation].slice(-16), checks: value.calendarOwner?.checks ?? [], slots: [], retired: [], auxiliaryReady: false, error: null }
         })
       }
-      const convertingOneTime = input.action === "configure" && !!input.configuration && requiresMissionCalendar(input.configuration.launch)
-        && !!doc.oneTime && doc.firstPlayedAt === null && !doc.everCreatedTask && !doc.pending && !doc.oneTime.firstPlay
-        && !doc.synchronization && !doc.blocked && !doc.deletion && !previous?.pending
-      if (!requiresMissionCalendar(input.configuration?.launch ?? doc.configuration.launch) || doc.oneTime && !convertingOneTime) throw new Error("Use immediate Mission control")
+      if (!requiresMissionCalendar(input.configuration?.launch ?? doc.configuration.launch)) throw new Error("Use immediate Mission control")
       if (previous?.pending && !["pause", "stop", "check", "delete"].includes(input.action)) throw new Error("Mission calendar control uncertain")
       if (input.action === "check" && previous?.pending) {
         doc = await locked.change(doc.id, doc.revision, this.options.current, value => {
@@ -175,6 +179,19 @@ export class NativeScheduleCalendarOwner {
           || !same(configuration.watchedConversationIDs, doc.configuration.watchedConversationIDs))
       const sources = needsSources ? await this.options.sources?.({ ...doc, configuration }, locked) : undefined
       if (needsSources && configuration.launch.condition && !sources) throw new Error("Mission condition baseline unavailable")
+      if (input.action === "configure" && doc.pending?.admittedAt != null
+        && (configuration.objective !== doc.configuration.objective || configuration.notes !== doc.configuration.notes)) {
+        // Validate H9, then reserve the original request before journal I/O.
+        missionDocumentChanges.configure(structuredClone(doc), configuration, now, sources?.checkpoints)
+        if (!this.options.prepareTextEdit || !this.options.recordTextEdit) throw new Error("Mission passage text journal unavailable")
+        const textEdit = await this.options.prepareTextEdit(locked, doc, configuration)
+        doc = await locked.change(doc.id, doc.revision, this.options.current, value => {
+          value.calendarOwner!.operation = { requestID: input.requestID, expectedRevision: input.expectedRevision,
+            fingerprint, action: "configure", pending: true, startedAt: now, textEdit }
+        })
+        doc = await this.finishTextEdit(locked, doc, true)
+        return processAfterCommit ? this.process(locked, doc) : doc
+      }
       doc = await locked.change(doc.id, doc.revision, () => { locked.assertActive(); sources?.current(); if (resumeProof) assertSynchronousAuthorityGuard(resumeProof.current, "policy-unqualified"); return this.options.current() }, value => {
         const old = value.calendarOwner
         if (input.action === "play" && value.firstPlayedAt === null) missionDocumentChanges.play(value, syncID, now, sources?.checkpoints ?? input.checkpoints ?? [])
@@ -188,7 +205,7 @@ export class NativeScheduleCalendarOwner {
         else if (input.action === "stop") value.state = "stopped"
         else if (input.action === "delete") missionDocumentChanges.requestDeletion(value, input.requestID, now,
           { expectedRevision: input.expectedRevision, deleteManagedSessions: input.deleteManagedSessions ?? false })
-        else if (input.action === "configure") { if (convertingOneTime) value.oneTime = null; missionDocumentChanges.configure(value, input.configuration!, now, sources?.checkpoints) }
+        else if (input.action === "configure") missionDocumentChanges.configure(value, input.configuration!, now, sources?.checkpoints)
         if (["pause", "stop", "delete"].includes(input.action) && value.pending) value.pending.manualAllowed = false
         if (value.state !== "running" && value.fanIn && !value.fanIn.completed) value.fanIn.suppress = true
         const replaced = old && old.slots.some(slot => slot.timeGeneration !== value.timeGeneration)
@@ -202,6 +219,18 @@ export class NativeScheduleCalendarOwner {
            slots: !old || replaced || !wasPlayed ? this.slots(value, now, principalAnchorAt) : old.slots, retired, auxiliaryReady: replaced ? false : old?.auxiliaryReady ?? false, error: null }
        }, sources?.revalidate)
       return processAfterCommit ? this.process(locked, doc) : doc
+    })
+  }
+  private async finishTextEdit(locked: NativeMissionDocumentStore, doc: MissionDocument, publish: boolean) {
+    const intent = doc.calendarOwner?.operation.textEdit
+    if (!intent) return doc
+    if (!this.options.recordTextEdit || !await this.options.recordTextEdit(locked, doc, publish)) return doc
+    return locked.change(doc.id, doc.revision, this.options.current, value => {
+      // The original H9-validated edit changes only future text, even after archive.
+      value.configuration.objective = intent.configuration.objective
+      if (intent.configuration.notes === undefined) delete value.configuration.notes
+      else value.configuration.notes = intent.configuration.notes
+      delete value.calendarOwner!.operation.textEdit
     })
   }
   reconcile(missionID: string): Promise<MissionDocument> {
@@ -238,7 +267,8 @@ export class NativeScheduleCalendarOwner {
     })
   }
   private async process(locked: NativeMissionDocumentStore, initial: MissionDocument): Promise<MissionDocument> {
-    let doc = initial
+    let doc = await this.finishTextEdit(locked, initial, false)
+    if (doc.calendarOwner?.operation.textEdit) return doc
     const native = this.options.native
     const guard = (): true => {
       locked.assertActive(); native.assertCurrent(); assertSynchronousAuthorityGuard(this.options.current, "policy-unqualified")

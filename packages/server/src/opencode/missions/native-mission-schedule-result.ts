@@ -5,6 +5,7 @@ import type { MissionStorage } from "../../missions/journal"
 import { missionScheduleView } from "../../missions/mission-schedule-view"
 import type { MissionNativeRunner } from "./native-service-adapter"
 import { nativeScheduleOwnerControlReceipt } from "./native-schedule-owner"
+import { nativeMissionScheduleObservation } from "./native-mission-schedule-display"
 
 export const nativeImmediatePlayPassage = (doc: MissionDocument, requestID: string) =>
   [doc.pending, ...doc.history].find(item => item?.origin.kind === "immediate" && item.origin.requestID === requestID)
@@ -13,7 +14,7 @@ export const nativeImmediatePlayPassage = (doc: MissionDocument, requestID: stri
  * releases an actor-family control whose receipt is still absent or partial. */
 export async function nativeMissionScheduleResult(ctx: Plugin.Context, doc: MissionDocument | MissionDocumentTombstone | undefined,
   run: MissionNativeRunner, forcePending = false, requestID?: string) {
-  const result = missionScheduleView(doc)
+  const result = missionScheduleView(doc, undefined, doc && !("deletedAt" in doc) ? await nativeMissionScheduleObservation(ctx, doc, run) : undefined)
   if (!doc || "deletedAt" in doc) return { ...result,
     pending: result.pending || forcePending || !!(requestID && (!doc || doc.requestID !== requestID)) }
   const owner = doc.calendarOwner

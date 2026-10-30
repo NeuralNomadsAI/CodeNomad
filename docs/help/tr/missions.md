@@ -196,7 +196,19 @@ Raporunu vermeden boşta kalan tek seferlik koordinatör için ana ▶ eylemi do
 
 ## Konuşmaları düzenleyin, silin ve temizleyin {#cleanup}
 
-Düzenlenebilir tek seferlik görevde **Seçili görevi düzenle** eylemini kullanın; çakışma olursa üzerine yazmak yerine güncel revizyonu yüklemek için düzenleyiciyi kapatıp açın. Form hâlâ yüklenirken amaç veya notlar değişirse, form bunları doldurmak yerine görevin siz açtıktan sonra değiştiğini belirtir; güncel sürümü düzenlemek için **Yeniden aç** seçeneğini kullanın. Günlük zamanlamalarda düzenleme/silme kontrolleri yoktur.
+Form hâlâ yüklenirken amaç veya notlar değişirse, form bunları doldurmak yerine görevin siz açtıktan sonra değiştiğini belirtir; güncel sürümü düzenlemek için **Yeniden aç** seçeneğini kullanın.
+
+Kabul edilmiş zamanlanmış geçiş sırasında talimat ve not düzenlemeleri geçişin geçmişine ve gelecek geçişlerin ayarlarına kaydedilir. İş açıklamaları, profiller ve yürütme kimlikleri korunur. Oluştur ve Düzenle aynı takvim doğrulamasını kullanır; önizleme, düzenlenen son izinli zamanı gecikmiş olsa bile kayıtlı sonraki uyanışa uygular.
+
+Yerel dal kaynağı worktree bulunmayan dalları da içerir ve yalnızca yerel referansları okur. Seçici en fazla 200 yerel dalı destekler; daha büyük listelerde kaynak kullanılamaz olarak gösterilir. Etkinleştirme mümkün olduğunda **Başlat** ve **Sürdür** tam yapılandırma yollarıyla onay ister. Yerel zamanlama etkin değilken **Şimdi çalıştır** bir açıklamayla devre dışı kalır; OpenCode yapılandırmasında `experimental.schedules` ayarını etkinleştirip yenileyin. Etkinleştirme yanıtı kaybolursa sonuç denetimi için özgün istek korunur.
+
+İlk Play öncesinde **Seçenekler** altındaki takip edilen konuşmaları koruyarak anlık ve koşulsuz başlatmaya dönebilirsiniz. Play, tamamlanmış ve kararlı mesaj önekini okuyup sabitler (kaynak başına en fazla 32 mesaj, toplam başlatma girdisi 16.384 karakter içinde). Eksik, taşınmış veya kapasiteyi aşan kaynaklar açıklamayla başlatmayı engeller. Yeniden deneme, özgün sabit bağlamı ve başlatma kimliğini korur.
+
+Makbuz okuması kısmi hazırlığı doğruladığında **Tekrar dene** görünür. Tıklama aynı makbuzu yeniden denetler ve yalnızca ilk kaydedilen değişikliği sürdürür; görev duraklatılmış kalır.
+
+Yeni hazırlanmış bir görevin ilk başlatılmasından önce başlık, talimatlar, notlar, çalışma kitabı, istenen ajan/model/düşünme, görev oturumu modu ve **Zamanlama** düzenlenebilir. Aynı Görevi koruyarak anlık, gecikmeli, yinelenen ve koşullu başlatmalar arasında geçiş yapabilirsiniz. Kaydetme görevi duraklatılmış tutar ve yeni, boş bir koordinatör hazırlar; ilk konuşma korunur. Yalnızca Play işi başlatır veya zamanlamayı etkinleştirir. Başlatmadan sonra talimatlar ve notlar etkin görevin düzenleme kurallarına uyar. Kaydetme onaylanmazsa **Kayıtlı isteği yenile** ilk sonucu okur; kısmi hazırlık başlatmayı, metin düzenlemeyi ve silmeyi engellediği sürece aynı isteği koruyun.
+
+Düzenlenebilir tek seferlik görevde **Seçili görevi düzenle** eylemini kullanın. Kilitli hazırlık alanlarının yanındaki açıklamaları okuyun. Revizyon çakışmasında **Güncel yapılandırmayı yeniden yükle** eylemini seçin, ardından yeniden kaydetmeden önce korunan taslağınızı incelemek için **Karşılaştırma için önceki taslak** bölümünü açın. Kaydedilmiş günlük zamanlamalar kendi araç çubuklarındaki kontrolleri kullanır.
 
 1. Artık gerek duymadığınız tek seferlik görev için **Seçili görevi sil…** eylemini seçip onayı inceleyin.
 2. Onaylamadan önce isteğe bağlı olarak **Bu görev için oluşturulan uzman konuşmalarını da sil** seçeneğini işaretleyin.

@@ -16,6 +16,8 @@ import type { AutonomousProfileSource } from "./autonomous-environment"
 import { acquireNativeMissionConditionReader, assertMissionSourceAcyclic } from "./native-mission-condition-reader"
 import { prepareNativeDocumentSources } from "./native-scheduled-passage-sources"
 import { acquireNativeSourceFence } from "./native-source-fence"
+import { prepareMissionPassageText, recordMissionPassageText } from "../../missions/mission-passage-text"
+import type { MissionStorage } from "../../missions/journal"
 
 /** Shared acquisition for authenticated controls and technical reconciliation.
  * Native services and their guards live only in this receiving RPC graph. */
@@ -38,8 +40,21 @@ export const acquireNativeMissionScheduleOwner = Effect.fn("missions.acquireSche
   const fence = yield* acquireNativeSourceFence(current)
   const signal = new AbortController().signal
   const reader = yield* acquireNativeMissionConditionReader(ctx, store, run, signal, current)
+  const textStorage = (guard: () => true): MissionStorage => ({ get: key => run(ctx.storage.get(key)), scan: input => run(ctx.storage.scan(input)),
+    set: async (key, value, supplied) => { guard(); supplied?.(); await run(ctx.storage.set(key, value)); guard() } })
+  const textGuard = (locked: typeof store, doc: MissionDocument) => (): true => {
+    locked.assertActive(); current(); return assertMissionCalendarPlacement(doc.calendarOwner!.placement, doc.configuration.roots)
+  }
   const owner = new NativeScheduleCalendarOwner({ store, native, bindings: nativeScheduleOwnerBindings(ctx, run),
     installation: selectedInstallation, profileSource: selectedProfile, current,
+    prepareTextEdit: (locked, doc, configuration) => {
+      const guard = textGuard(locked, doc)
+      return prepareMissionPassageText(textStorage(guard), doc, configuration, guard)
+    },
+    recordTextEdit: (locked, doc, publish) => {
+      const guard = textGuard(locked, doc)
+      return recordMissionPassageText(textStorage(guard), doc, guard, publish)
+    },
     sources: async (doc, locked) => {
       locked.assertActive(); current()
       await assertMissionSourceAcyclic(doc, locked)

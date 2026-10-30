@@ -232,7 +232,8 @@ function entryOf(view: MissionView): Entry | undefined {
     if (event.type === "mission.created") {
       add(event.coordinator.sessionID, "coordinator")
       if (event.preparedBy) add(event.preparedBy.coordinatorSessionID, "prepared-by")
-    } else if (event.type === "task.dispatching") add(event.actor.sessionID, "dispatching")
+    } else if (event.type === "mission.prepared") add(event.coordinator.sessionID, "coordinator")
+    else if (event.type === "task.dispatching") add(event.actor.sessionID, "dispatching")
     else if (event.type === "task.native-bound") add(event.actor.sessionID, "native-bound")
   }
   return {
