@@ -1,5 +1,5 @@
 // Settings → Providers → Images against the native configuration contract and watcher.
-// Usage: node --import tsx scripts/test-image-settings-native.mjs <absolute-cli> [--expect-supported]
+// Usage: node --import tsx scripts/test-image-settings-native.mjs <absolute-cli>
 import assert from "node:assert/strict"
 import { readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
@@ -9,7 +9,6 @@ import { withProductRuntime } from "./native-product-fixture.mjs"
 import { PluginControls } from "../packages/server/src/opencode/plugin-controls.ts"
 import { ImageSettings } from "../packages/server/src/opencode/image-settings.ts"
 
-const expectSupported = process.argv.includes("--expect-supported")
 let globalFile
 await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
   globalFile = path.join(configDirectory, "opencode.jsonc")
@@ -35,53 +34,38 @@ await withProductRuntime(process.argv[2], async ({ configDirectory }) => {
   }
 
   const initial = await settings.read("fixture", location)
-  if (expectSupported) assert.ok(initial.generation && initial.mediaStorage, "the latest runtime exposes both image settings")
-  const before = await readFile(globalFile, "utf8")
-  for (const [present, change] of [[initial.generation, { generation: true }], [initial.mediaStorage, { mediaStorage: true }]]) {
-    if (!present) await assert.rejects(settings.update("fixture", location, change), /no such image setting/)
-  }
-  assert.equal(await readFile(globalFile, "utf8"), before, "a setting the runtime lacks is never written")
-  const expected = { subagent_depth: 2 }
-
-  if (initial.generation) {
-    assert.equal(initial.generation.global, false)
-    assert.ok(Array.isArray(initial.generation.models), "the native image-model catalog answers")
-    await settings.update("fixture", location, { generation: true })
-    await until(snapshot => snapshot.generation.effective === true, "the native watcher applies image generation")
-    await settings.update("fixture", location, { generation: "fixture/image-model#hd" })
-    await until(snapshot => snapshot.generation.effective === "fixture/image-model#hd", "the native schema accepts a default model")
-    expected.image_generate = { model: "fixture/image-model#hd" }
-  }
-  if (initial.mediaStorage) {
-    assert.equal(initial.mediaStorage.effective, false)
-    await settings.update("fixture", location, { mediaStorage: true })
-    await until(snapshot => snapshot.mediaStorage.effective === true, "the native watcher applies media storage")
-    expected.media_blob = true
-  }
+  assert.ok(initial.generation && initial.mediaStorage, "the runtime exposes both image settings")
+  // OpenCode offers the image tool unless `experimental.image_generate` is `false`.
+  assert.equal(initial.generation.global, true, "an unset image setting reads as on")
+  assert.equal(initial.generation.effective, true)
+  assert.ok(Array.isArray(initial.generation.models), "the native image-model catalog answers")
+  await settings.update("fixture", location, { generation: "fixture/image-model#hd" })
+  await until(snapshot => snapshot.generation.effective === "fixture/image-model#hd", "the native schema accepts a default model")
+  assert.equal(initial.mediaStorage.effective, false)
+  await settings.update("fixture", location, { mediaStorage: true })
+  await until(snapshot => snapshot.mediaStorage.effective === true, "the native watcher applies media storage")
   const saved = await readFile(globalFile, "utf8")
   assert.match(saved, /retain fixture comment/)
-  assert.deepEqual(parse(saved).experimental, expected)
+  assert.deepEqual(parse(saved).experimental, { subagent_depth: 2, image_generate: { model: "fixture/image-model#hd" }, media_blob: true })
 
-  if (initial.generation) await settings.update("fixture", location, { generation: false })
-  if (initial.mediaStorage) await settings.update("fixture", location, { mediaStorage: false })
-  await until(snapshot => !snapshot.generation?.effective && !snapshot.mediaStorage?.effective, "turning settings off applies natively")
-  assert.deepEqual(parse(await readFile(globalFile, "utf8")).experimental, {
-    subagent_depth: 2, ...(initial.generation ? { image_generate: false } : {}), ...(initial.mediaStorage ? { media_blob: false } : {}),
-  }, "Off is written as an explicit false the native schema accepts")
+  await settings.update("fixture", location, { generation: false })
+  await settings.update("fixture", location, { mediaStorage: false })
+  await until(snapshot => snapshot.generation.effective === false && snapshot.mediaStorage.effective === false, "turning settings off applies natively")
+  assert.deepEqual(parse(await readFile(globalFile, "utf8")).experimental, { subagent_depth: 2, image_generate: false, media_blob: false },
+    "Off is written as an explicit false the native schema accepts")
+  await settings.update("fixture", location, { generation: true })
+  await until(snapshot => snapshot.generation.effective === true, "the native watcher applies image generation")
   await assert.rejects(settings.update("fixture", { directory: path.dirname(root) }, { mediaStorage: false }))
 
   // Layered Global documents: a new `experimental` object in the written opencode.jsonc would hide
   // opencode.json's whole object (subagent depth, todos), so the group is read-only and refuses writes.
-  if (initial.generation || initial.mediaStorage) {
-    const lowerFile = path.join(path.dirname(globalFile), "opencode.json")
-    await writeFile(lowerFile, '{"experimental":{"subagent_depth":7,"todo":true}}\n')
-    await writeFile(globalFile, "{}\n")
-    const blocked = await until(snapshot => snapshot.blockedBy?.path !== undefined, "the native layering is reported")
-    assert.equal(path.resolve(blocked.blockedBy.path).toLowerCase(), path.resolve(lowerFile).toLowerCase())
-    for (const change of [initial.generation && { generation: true }, initial.mediaStorage && { mediaStorage: true }].filter(Boolean))
-      await assert.rejects(settings.update("fixture", location, change), /hide inherited experimental/)
-    assert.equal(await readFile(globalFile, "utf8"), "{}\n", "the masking write is refused")
-  }
-  console.log(`PASS native image settings (generation: ${Boolean(initial.generation)}, media storage: ${Boolean(initial.mediaStorage)}): `
-    + "contract detection, JSONC save, hot reload, reset, layered-Global refusal, unsupported-key refusal and foreign-location rejection")
+  const lowerFile = path.join(path.dirname(globalFile), "opencode.json")
+  await writeFile(lowerFile, '{"experimental":{"subagent_depth":7,"todo":true}}\n')
+  await writeFile(globalFile, "{}\n")
+  const blocked = await until(snapshot => snapshot.blockedBy?.path !== undefined, "the native layering is reported")
+  assert.equal(path.resolve(blocked.blockedBy.path).toLowerCase(), path.resolve(lowerFile).toLowerCase())
+  for (const change of [{ generation: true }, { mediaStorage: true }])
+    await assert.rejects(settings.update("fixture", location, change), /hide inherited experimental/)
+  assert.equal(await readFile(globalFile, "utf8"), "{}\n", "the masking write is refused")
+  console.log("PASS native image settings: default-on generation, JSONC save, hot reload, reset, layered-Global refusal and foreign-location rejection")
 })

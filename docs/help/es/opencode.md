@@ -19,8 +19,8 @@ El ejecutable instalado y el servicio en ejecución pueden tener versiones disti
 
 | Clasificación | Requisito actual | Significado |
 | --- | --- | --- |
-| Mínima | OpenCode **2.1.2** | Orden correcto de las tareas JavaScript en Code Mode, además del formato nativo de reproducción y compactación de 2.1; las conversaciones guardadas con versiones anteriores siguen siendo legibles tras actualizar. |
-| Recomendada | OpenCode **2.2.1** | Objetivo verificado, distinto del mínimo técnico. |
+| Mínima | OpenCode **2.2.3** | La herramienta de generación de imágenes que usan los ajustes de **Imágenes** y la extensión Design, además del orden correcto de las tareas JavaScript en Code Mode y el formato nativo de reproducción y compactación; las conversaciones guardadas con versiones anteriores siguen siendo legibles tras actualizar. |
+| Recomendada | OpenCode **2.2.3** | Objetivo verificado; la misma versión que el mínimo técnico. |
 | No verificada | Una versión más nueva o personalizada no validada por completo | No se rechaza simplemente por no estar probada; se comprueban los contratos API reales del servicio conectado. |
 
 También deben estar disponibles los contratos requeridos de sesiones, permisos, formularios, bandeja de entrada y entorno de sesión. La versión de un ejecutable no demuestra por sí sola que el servicio conectado los admita. Si la configuración inicial informa de un servicio en ejecución no compatible, selecciona/instala una CLI compatible y usa el reinicio explícito del servicio compartido cuando estés listo.

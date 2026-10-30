@@ -70,7 +70,7 @@ El aislamiento no es aislamiento de proceso/CPU ni una promesa de que el código
 
 La extensión **Design** es una mesa de luz para las imágenes que creas con el agente Design de CodeNomad en la **conversación de imágenes** de un proyecto. Muestra las imágenes, prepara solicitudes en el cuadro de mensaje y deja cada generación a los mensajes que tú envías.
 
-1. Activa la generación de imágenes en **Configuración → Proveedores → Imágenes** y conecta un proveedor que ofrezca un modelo de imagen ([Generación y almacenamiento de imágenes](providers.md#images)).
+1. Conecta un proveedor que ofrezca un modelo de imagen. La generación de imágenes está activada salvo que se haya desactivado en **Configuración → Proveedores → Imágenes** ([Generación y almacenamiento de imágenes](providers.md#images)).
 2. En **Personalizar panel derecho → Extensiones**, instala **Design** desde el catálogo ([Revisar e instalar desactivada](#install)) después de revisar sus permisos ([Contexto, consentimiento de recursos y límites del aislamiento](#permissions-sandbox)) y marca su casilla ([Activar y comprender el ámbito](#activate-scope)).
 3. Abre el panel **Design** y elige **Abrir la conversación de imágenes**.
 

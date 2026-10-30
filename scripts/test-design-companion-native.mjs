@@ -122,7 +122,7 @@ function respond(res, body) {
     const saved = [...messages.filter(message => message.role === "user").map(message => text(message.content)).join("\n").matchAll(/Saved image: (.+?) \(/g)].map(match => match[1])
     const read = new Set(calls.filter(entry => entry.name === "read").map(entry => path.resolve(project, Object.values(entry.args)[0] ?? "")))
     const unread = [...new Set(saved)].filter(file => !read.has(path.resolve(project, file)))
-    const generations = calls.filter(entry => entry.name === "image_generate").length
+    const generations = calls.filter(entry => entry.name === "experimental_image_generate").length
     if (!state.readBack || saved.length < generations || !unread.length) return say(res, "Noted.")
     return call(res, unread.map(file => ({ tool: "read", args: { [pathKey("read")]: file } })))
   }
@@ -206,7 +206,7 @@ try {
     assert(data.length < 200, "the whole fixture conversation fits one native page")
     return data
   }
-  const notices = list => list.filter(message => message.type === "synthetic" && message.metadata?.source === "image_generate")
+  const notices = list => list.filter(message => message.type === "synthetic" && message.metadata?.source === "experimental_image_generate")
   const readParts = list => list.flatMap(message => message.type === "assistant"
     ? message.content.filter(part => part.type === "tool" && part.name === "read" && part.state?.status === "completed").map(part => ({ message: message.id, part })) : [])
   const idle = async () => { await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(60_000) }); await delay(300) }
@@ -235,7 +235,7 @@ try {
   }
   const design = path.join(project, ".codenomad", "design", "icon")
   const file = name => path.join(design, name)
-  const gen = (prompt, name, extra = {}) => ({ tool: "image_generate", args: { prompt, path: `.codenomad/design/icon/${name}`, ...extra } })
+  const gen = (prompt, name, extra = {}) => ({ tool: "experimental_image_generate", args: { prompt, path: `.codenomad/design/icon/${name}`, ...extra } })
 
   // AC-16, series 1: two generations, both read back in one answer once both are saved.
   await turn(`RUN ${JSON.stringify([gen("Flat blue app icon", "icon-minimal-a.png"), gen("Bold orange app icon", "icon-bold-a.png")])}`,
@@ -298,7 +298,7 @@ try {
   assert.equal(entries.filter(entry => entry.kind === "image").length, 3)
   const reference = await rpc("imageReference", { sessionID, target: unread.target })
   assert.deepEqual(reference, { status: "path", path: ".codenomad/design/icon/icon-mono-a.png" })
-  const generatedAt = (await messages()).findLastIndex(message => message.type === "assistant" && message.content.some(part => part.type === "tool" && part.name === "image_generate"))
+  const generatedAt = (await messages()).findLastIndex(message => message.type === "assistant" && message.content.some(part => part.type === "tool" && part.name === "experimental_image_generate"))
 
   if (companionUI) await companionUI.testDesignCompanionUI({ cli, client, url, password, root, location, sessionID, designZip, until, idle })
   else {

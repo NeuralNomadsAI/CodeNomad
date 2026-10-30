@@ -71,9 +71,9 @@ test("shared update delegates to native CLI, verifies publication, and never ret
     assert.equal(calls, 1, "no downgrade or same-version native invocation")
     assert.equal(registrations, 2)
     assert.equal(await readFile(binary, "utf8"), minimum)
-    await writeFile(binary, "2.1.3")
+    await writeFile(binary, "2.2.4")
     await installSharedOpenCode(minimum, options)
-    assert.equal(await readFile(binary, "utf8"), "2.1.3", "never downgrade a newer verified installation")
+    assert.equal(await readFile(binary, "utf8"), "2.2.4", "never downgrade a newer verified installation")
     assert.equal(calls, 1)
   } finally { await rm(home, { recursive: true, force: true }) }
 })

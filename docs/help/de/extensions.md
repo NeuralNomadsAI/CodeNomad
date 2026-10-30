@@ -70,7 +70,7 @@ Die Sandbox ist keine Prozess-/CPU-Isolation und kein Versprechen harmlosen gene
 
 Die Erweiterung **Design** ist ein Leuchttisch für die Bilder, die Sie mit dem Design-Agenten von CodeNomad in der **Bilder-Unterhaltung** eines Projekts erstellen. Sie zeigt die Bilder, bereitet Anfragen im Nachrichtenfeld vor und überlässt jede Generierung den Nachrichten, die Sie senden.
 
-1. Schalten Sie die Bildgenerierung unter **Einstellungen → Anbieter → Bilder** ein und verbinden Sie einen Anbieter, der ein Bildmodell bietet ([Bildgenerierung und -speicherung](providers.md#images)).
+1. Verbinden Sie einen Anbieter, der ein Bildmodell bietet. Die Bildgenerierung ist eingeschaltet, sofern sie nicht unter **Einstellungen → Anbieter → Bilder** abgeschaltet wurde ([Bildgenerierung und -speicherung](providers.md#images)).
 2. Installieren Sie unter **Rechtes Panel anpassen → Erweiterungen** **Design** aus dem Katalog ([Prüfen und deaktiviert installieren](#install)), nachdem Sie seine Berechtigungen geprüft haben ([Kontext, Asset-Zustimmung und Sandbox-Grenzen](#permissions-sandbox)), und aktivieren Sie dann sein Kontrollkästchen ([Aktivieren und Geltungsbereich verstehen](#activate-scope)).
 3. Öffnen Sie das Panel **Design** und wählen Sie **Bilder-Unterhaltung öffnen**.
 

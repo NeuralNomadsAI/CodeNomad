@@ -10,7 +10,7 @@
 # - the review dimensions and anti-cliche list of the discovery prompt,
 #   rewritten by CodeNomad in new text for image review;
 # - the five-part prompt order of the image-poster template, modified by
-#   CodeNomad for image_generate.
+#   CodeNomad for experimental_image_generate.
 # This file is a modified work. Unless required by applicable law or agreed
 # to in writing, the adapted material is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
@@ -31,10 +31,10 @@ This skill holds the method every Design recipe follows. Apply it together with 
 
 ## 2. Number of images
 
-- Announce how many images you will generate before calling `image_generate`, for example "I will generate 3 images: one per direction."
+- Announce how many images you will generate before calling `experimental_image_generate`, for example "I will generate 3 images: one per direction."
 - The number stated in the user's message is the maximum, in any language ("3 image(s):", "Images: 2"). Never generate more, and never more than 4 in one round.
 - Without a stated number, the default is 3 directions × 1 image: three different directions, one image each. With the direction `none`, the default is one image.
-- Each `image_generate` call makes one image. Never generate again unless the user asks for it, even when an image disappoints you: say what you would change and let the user decide.
+- Each `experimental_image_generate` call makes one image. Never generate again unless the user asks for it, even when an image disappoints you: say what you would change and let the user decide.
 
 ## 3. Directions
 
@@ -52,13 +52,13 @@ When the user asks for one direction, use it for every image of the round. The `
 
 Write every prompt in English, in this order:
 
-1. **Subject and composition**: what is in the frame, where, at what scale; the crop and the aspect ratio (for example "square 1:1" or "wide 2:1"). `image_generate` has no aspect parameter, so the ratio is a request in the prompt.
+1. **Subject and composition**: what is in the frame, where, at what scale; the crop and the aspect ratio (for example "square 1:1" or "wide 2:1"). `experimental_image_generate` has no aspect parameter, so the ratio is a request in the prompt.
 2. **Lighting and mood**: flat, studio or natural light; warm or cool; the feeling.
 3. **Palette and texture**: hex values from the project or the user when known, otherwise three words such as "ink, paper, deep red".
 4. **Camera and lens**: only for photographic realism, for example "85mm, shallow depth of field".
 5. **What to avoid**: the clichés of section 7 that apply, and "no watermark, no signature, no extra text".
 
-End every prompt with the size request: "Output about 1K, around 1024 pixels on the long side." This is a request written in the prompt, not a control: `image_generate` passes no size to the provider, so the result may differ.
+End every prompt with the size request: "Output about 1K, around 1024 pixels on the long side." This is a request written in the prompt, not a control: `experimental_image_generate` passes no size to the provider, so the result may differ.
 
 Add the direction's modifiers to part 3 and to the mood. Keep the prompt specific to this brief; never paste generic praise such as "stunning, award-winning, 8k".
 
@@ -70,12 +70,12 @@ Add the direction's modifiers to part 3 and to the mood. Keep the prompt specifi
   - `<letter>`: `a`, `b`, `c`… for the images of a round, continuing after the letters already used for this subject.
   - `[<n>]`: a refinement keeps its parent's letter and takes the next free number: refining `b` gives `b1`, then `b2`; refining `b1` again gives `b3`.
 - Before each call, run `glob` with the pattern `<name>.*` and `path` set to the subject folder, for example pattern `app-icon-friendly-b.*` with path `.codenomad/design/weather-app`. A `glob` from the project root never sees `.codenomad/`, so the explicit `path` is required.
-- Never reuse a name, whatever its extension. `image_generate` replaces the extension with the image's real format and overwrites an existing file silently; the old image cannot be recovered. If the name exists, take the next free letter or number.
+- Never reuse a name, whatever its extension. `experimental_image_generate` replaces the extension with the image's real format and overwrites an existing file silently; the old image cannot be recovered. If the name exists, take the next free letter or number.
 - Never write images outside `.codenomad/design/`. The folder is kept out of Git; never commit and never run Git commands.
 
 ## 6. Reading and review
 
-- `image_generate` runs in the background. Wait for its completion notice; never poll or check for the file.
+- `experimental_image_generate` runs in the background. Wait for its completion notice; never poll or check for the file.
 - After each completion notice, `read` the image file in your next response. Every generated image is read, even when several finish together.
 - Review each image briefly and honestly:
   - legibility at 16, 32 and 64 px: does the main shape survive at that size?

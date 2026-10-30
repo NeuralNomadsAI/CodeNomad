@@ -213,13 +213,9 @@ jobs:
             node --import tsx scripts/test-subagent-depth-settings-native.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
-          # Settings → Providers → Images: contract detection on both runtimes,
-          # native acceptance and hot reload of the written values on the latest.
-          if ('${{ matrix.runtime }}' -eq 'latest') {
-            node --import tsx scripts/test-image-settings-native.mjs $cli --expect-supported
-          } else {
-            node --import tsx scripts/test-image-settings-native.mjs $cli
-          }
+          # Settings → Providers → Images: default-on generation, native acceptance
+          # and hot reload of the written values.
+          node --import tsx scripts/test-image-settings-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Design agent and skills copied into a project's .opencode/: native
           # discovery, notices kept out of model text, skills unlisted but loadable.

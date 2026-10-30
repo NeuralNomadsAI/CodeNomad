@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { A2_CALL, A_CALL, A_NOTICE, A_READ, galleryKey, has, image, openFixture, pngUri, sha, type Fixture } from "./assets-gallery-fixture"
 
-// Product port of the gallery prototype's mutations: one throwaway copy of each OpenCode 2.2.1
+// Product port of the gallery prototype's mutations: one throwaway copy of each OpenCode 2.2.3
 // transcript (plain storage and `experimental.media_blob`) per case, no daemon, no file access.
 const BASELINE = ["GEN tool:completed outcome:unknown", "GEN tool:completed outcome:completed", "GEN tool:completed outcome:completed",
   "GEN tool:completed outcome:completed", "GEN tool:completed outcome:completed", "GEN tool:completed outcome:error",
@@ -189,7 +189,7 @@ for (const [name, offset, expected] of [["inside", 200, "origin:unverifiable"], 
 
 for (const [name, offset, parents] of [["inside", 200, "parents:0 other:1"], ["after", 1000, "parents:1 other:0"]] as const) {
   each(`a parent overwritten ${name} the generation's interval`, async fixture => {
-    const row = fixture.row(A2_CALL), value = JSON.parse(row.data), call = value.content.find((part: any) => part.name === "image_generate")
+    const row = fixture.row(A2_CALL), value = JSON.parse(row.data), call = value.content.find((part: any) => part.name === "experimental_image_generate")
     call.time.completed = call.time.ran + 400; fixture.update(row.id, value); fixture.noticeFor(49, `image_zz_parent_${name}`, call.time.ran + offset)
     assert(has(image(await fixture.lines(), "icon-a2")[0], "origin:proven", parents))
   })

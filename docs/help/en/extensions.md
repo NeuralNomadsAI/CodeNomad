@@ -70,7 +70,7 @@ The sandbox is not process/CPU isolation or a promise that approved code is harm
 
 The **Design** extension is a light table for the images you create with CodeNomad's Design agent in a project's **Images conversation**. It shows the images, prepares requests in the message box and leaves every generation to the messages you send.
 
-1. Turn on image generation in **Settings → Providers → Images** and connect a provider that offers an image model ([Image generation and storage](providers.md#images)).
+1. Connect a provider that offers an image model. Image generation is on unless it was turned off in **Settings → Providers → Images** ([Image generation and storage](providers.md#images)).
 2. In **Customize right panel → Extensions**, install **Design** from the catalogue ([Review and install disabled](#install)) after reviewing its permissions ([Context, asset consent and sandbox limits](#permissions-sandbox)), then select its checkbox ([Activate and understand the scope](#activate-scope)).
 3. Open the **Design** panel and choose **Open the Images conversation**.
 

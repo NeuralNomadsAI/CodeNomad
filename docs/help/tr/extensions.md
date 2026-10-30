@@ -70,7 +70,7 @@ Korumalı alan süreç/CPU yalıtımı veya onaylanan kodun zararsız olduğu ga
 
 **Design** uzantısı, bir projenin **Görseller sohbeti** içinde CodeNomad'in Design ajanıyla oluşturduğunuz görseller için bir ışık masasıdır. Görselleri gösterir, mesaj kutusunda istekler hazırlar ve her üretimi sizin gönderdiğiniz mesajlara bırakır.
 
-1. **Ayarlar → Provider'lar → Görseller** içinde görsel oluşturmayı açın ve görsel modeli sunan bir sağlayıcı bağlayın ([Görsel oluşturma ve saklama](providers.md#images)).
+1. Görsel modeli sunan bir sağlayıcı bağlayın. Görsel oluşturma, **Ayarlar → Provider'lar → Görseller** içinde kapatılmadıkça açıktır ([Görsel oluşturma ve saklama](providers.md#images)).
 2. **Sağ paneli özelleştir → Uzantılar** içinde, izinlerini inceledikten sonra ([Bağlam, varlık izni ve korumalı alan sınırları](#permissions-sandbox)) **Design** uzantısını katalogdan yükleyin ([İnceleyin ve devre dışı olarak yükleyin](#install)), ardından onay kutusunu seçin ([Etkinleştirin ve kapsamını anlayın](#activate-scope)).
 3. **Design** panelini açın ve **Görseller sohbetini aç** öğesini seçin.
 

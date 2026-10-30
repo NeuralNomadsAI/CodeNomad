@@ -9,6 +9,8 @@ export const LOOKBACK_MESSAGES = 32
 export const LOOKBACK_BYTES = 32 * 1024 * 1024
 export const NOTICE_CAP = 4096
 export const NOTICE_ROW_LIMIT = 64 * 1024
+/** OpenCode's image tool: its tool-part name and its completion notices' `metadata.source`. */
+export const IMAGE_TOOL = "experimental_image_generate"
 const PROMPT_BYTES = 8192
 const IMAGE_MIME = /^image\/(png|jpeg|gif|webp|avif)$/
 
@@ -51,12 +53,12 @@ export function interval(part: Part | undefined): Span | undefined {
   const start = part?.time?.ran, end = part?.time?.completed
   return Number.isFinite(start) && Number.isFinite(end) && start <= end ? { start, end } : undefined
 }
-/** The file stem a completed `image_generate` part names in `metadata.path`; any other call may write any file. */
+/** The file stem a completed image tool part names in `metadata.path`; any other call may write any file. */
 const knownStem = (part: Part) => part.state?.status === "completed" && typeof part.state.metadata?.path === "string"
   ? norm(part.state.metadata.path) : undefined
-/** Whether an `image_generate` part may write `file`. */
+/** Whether an image tool part may write `file`. */
 export const writes = (part: Part, file: string) => { const stem = knownStem(part); return stem === undefined || stem === stemOf(file) }
-/** Whether an `image_generate` part may write a file other than the one its `metadata.path` names. */
+/** Whether an image tool part may write a file other than the one its `metadata.path` names. */
 export const writesAnyFile = (part: Part) => knownStem(part) === undefined
 export const sameFile = (a: string | undefined, b: string) => a !== undefined && norm(a) === norm(b)
 
@@ -101,7 +103,7 @@ export function coverage(db: DatabaseSync, sessionID: string, boundary: string |
     }
     scanned.push({ seq, bytes })
     for (const part of Array.isArray(data?.content) ? data.content : []) {
-      if (part?.type === "tool" && part.name === "image_generate") calls.push({ seq, part })
+      if (part?.type === "tool" && part.name === IMAGE_TOOL) calls.push({ seq, part })
     }
   }
   const reachedStart = !stopped && rows.length < windowRows + LOOKBACK_MESSAGES
@@ -127,7 +129,7 @@ export function coverage(db: DatabaseSync, sessionID: string, boundary: string |
     .all(NOTICE_ROW_LIMIT, sessionID, floor === Infinity ? Number.MAX_SAFE_INTEGER : floor, through, ...after(boundary), NOTICE_CAP + 1)
   const capped = synthetic.length > NOTICE_CAP, kept = synthetic.slice(0, NOTICE_CAP)
   const undecoded = kept.filter(row => !row.ok).map(row => ({ seq: Number(row.seq), time: Number(row.time) }))
-  const notices = kept.filter(row => row.ok && row.source === "image_generate" && typeof row.job === "string").map(row => {
+  const notices = kept.filter(row => row.ok && row.source === IMAGE_TOOL && typeof row.job === "string").map(row => {
     const named = /Saved image: (.+) \(/.exec(typeof row.text === "string" ? row.text : "")?.[1]
     const file = row.state === "completed" && named && P.isAbsolute(named) && typeof row.stem === "string" && stemOf(named) === norm(row.stem)
       ? P.normalize(named) : undefined

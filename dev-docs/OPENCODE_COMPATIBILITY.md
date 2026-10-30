@@ -11,16 +11,24 @@ view; release notes are at [opencode.ai/changelog](https://opencode.ai/changelog
 (GitHub Releases cover V1 only). Keep results in the PR and CI logs, never as
 per-version sections here.
 
-Minimum runtime **2.1.2**, recommended **2.2.1** (`runtime-support.ts`), with
-**2.1.0** client/plugin pins. Earlier native Code Mode breaks JavaScript
-run-to-completion (lost shared updates, async caller resumed before its first await);
-`scripts/test-codemode-jobs-native.mjs` keeps the red/green regression, run in
-CI against minimum and latest. The pinned 2.1 reducer consumes the replay
-contract (below), so 2.0.x daemons are refused with `native_contract`. Plugins
-share the host Effect 4.0.1/Schema runtime. Unlisted/prerelease/custom/future
-labels undergo authenticated contract recognition; missing canonical APIs,
-session environment or the replay shape give a concrete reason. OpenCode 2.1
-reads older stored data.
+Minimum and recommended runtime **2.2.3** (`runtime-support.ts`), with
+**2.1.0** client/plugin pins. The minimum carries the image tool contract of
+upstream [#60258](https://github.com/anomalyco/opencode/pull/60258), consumed by
+the Images gallery, the Design agent and skills and the Images settings: one
+name, `experimental_image_generate`, for the tool, its permission action, its job
+type and its completion notices' `metadata.source` (`IMAGE_TOOL` in
+`session-pruning/assets-gallery-proof.ts`), and the tool offered while an image
+model is available unless `experimental.image_generate` is `false`
+(`image-settings.ts` reads it that way). Notices wrap their text in
+`<image id="…" state="…">`; the gallery reads the `Saved image: <path> (` line.
+The minimum also provides the replay contract (below) consumed by the pinned 2.1
+reducer and Code Mode JavaScript run-to-completion, whose regression
+`scripts/test-codemode-jobs-native.mjs` runs in CI against minimum and latest.
+Daemons below the minimum are refused with `native_contract`. Plugins share the
+host Effect 4.0.6/Schema runtime. Unlisted/prerelease/custom/future labels
+undergo authenticated contract recognition; missing canonical APIs, session
+environment or the replay shape give a concrete reason. OpenCode reads older
+stored data.
 
 ### Native Codex subscription usage
 

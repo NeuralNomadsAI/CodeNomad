@@ -21,8 +21,8 @@ test("image capabilities follow the configuration contract, never a version", ()
 })
 
 test("image generation values read as OpenCode reads them", () => {
-  for (const value of [undefined, false, null, "x", [], 1]) assert.equal(imageGenerationSelection(value), false)
-  assert.equal(imageGenerationSelection(true), true)
+  assert.equal(imageGenerationSelection(false), false, "only an explicit false turns the tool off")
+  for (const value of [undefined, true, null, "x", [], 1]) assert.equal(imageGenerationSelection(value), true, "unset means on")
   assert.equal(imageGenerationSelection({}), true)
   assert.equal(imageGenerationSelection({ model: "openai/gpt-image-2" }), "openai/gpt-image-2")
   assert.equal(imageGenerationSelection({ model: { providerID: "google", model: "imagen", variant: "hd" } }), "google/imagen#hd")
@@ -77,7 +77,7 @@ test("global image settings edit JSONC in place and report project overrides", a
     registerImageSettingsRoutes(app, settings)
 
     let snapshot = await settings.read("w", location)
-    assert.deepEqual(snapshot.generation, { global: false, effective: false,
+    assert.deepEqual(snapshot.generation, { global: true, effective: true,
       models: [{ ref: "openai/gpt-image-2", name: "GPT Image 2" }, { ref: "google/imagen", name: "imagen" }] })
     assert.deepEqual(snapshot.mediaStorage, { global: false, effective: false })
 
