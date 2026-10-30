@@ -59,7 +59,7 @@ export const settingsMessages = {
   "settings.images.unsupported": "Bağlı OpenCode sürümünde görsel ayarları yok.",
   "settings.images.blocked": "Buraya kaydetmek başka bir OpenCode yapılandırmasının deneysel ayarlarını gizler. Bu seçenekleri bunun yerine o dosyada değiştirin.",
   "settings.images.generation.title": "Görsel oluşturma",
-  "settings.images.generation.info": "Ajanların, bağlı bir sağlayıcının görsel modeliyle görsel oluşturmasına ve düzenlemesine izin verir. Her görsel ücretli bir istektir. Tüm projelere uygulanır.",
+  "settings.images.generation.info": "Ajanların, bağlı bir sağlayıcının görsel modeliyle görsel oluşturmasına ve düzenlemesine izin verir. Tüm projelere uygulanır.",
   "settings.images.generation.off": "Kapalı",
   "settings.images.generation.auto": "Açık, otomatik model",
   "settings.images.generation.override": "Burada başka bir OpenCode yapılandırması önceliklidir: {value}.",

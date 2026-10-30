@@ -59,7 +59,7 @@ export const settingsMessages = {
   "settings.images.unsupported": "接続中の OpenCode には画像設定がありません。",
   "settings.images.blocked": "ここに保存すると、別の OpenCode 設定の実験的設定が隠れてしまいます。代わりにそのファイルでこれらのオプションを変更してください。",
   "settings.images.generation.title": "画像生成",
-  "settings.images.generation.info": "接続済みプロバイダーの画像モデルで、エージェントが画像を作成・編集できるようにします。画像ごとに有料のリクエストになります。すべてのプロジェクトに適用されます。",
+  "settings.images.generation.info": "接続済みプロバイダーの画像モデルで、エージェントが画像を作成・編集できるようにします。すべてのプロジェクトに適用されます。",
   "settings.images.generation.off": "オフ",
   "settings.images.generation.auto": "オン（モデルは自動）",
   "settings.images.generation.override": "ここでは別の OpenCode 設定が優先されます: {value}。",
