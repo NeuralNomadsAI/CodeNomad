@@ -92,6 +92,17 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     const value = depth(), capability = state().snapshot?.capability
     return Boolean(!state().invalidInput && capability && (value === null || Number.isSafeInteger(value) && value >= capability.minimum && (capability.maximum === undefined || value <= capability.maximum)))
   }
+  /** Whether OpenCode's General subagent may launch subagents, shown only where the depth allows nesting. */
+  const nesting = () => {
+    const snapshot = state().snapshot, nesting = snapshot?.nesting
+    if (!nesting || (snapshot?.effectiveDepth ?? 0) < 2) return undefined
+    // CodeNomad's rule beside rules the user set later: it may override them.
+    if (nesting.added && nesting.configured) return t("missions.depth.nesting.conflict")
+    if (nesting.effect === "allow") return nesting.added ? t("missions.depth.nesting.added") : undefined
+    if (nesting.configured) return t(nesting.effect === "ask" ? "missions.depth.nesting.ask" : "missions.depth.nesting.denied")
+    // A save adds no rule while a policy source is not settled.
+    return t(nesting.unverified ? "missions.depth.nesting.unverified" : "missions.depth.nesting.default")
+  }
   // Reads and writes only lock the field (read-only keeps keyboard focus); it is disabled when unusable.
   const locked = () => busy() || refreshPending()
   const disabled = () => !props.active() || state().phase === "uncertain" || state().error || !state().snapshot?.capability || !state().snapshot?.project
@@ -131,6 +142,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     <header><h4>{t("missions.depth.title")}</h4><SettingsInfoTip text={t("missions.depth.hint")} /></header>
     <Show when={state().snapshot?.project}>{project => <code class="mission-depth-path" title={project().path}>{project().path}</code>}</Show>
     <p class="mission-depth-effective">{state().snapshot?.effectiveDepth == null ? t("missions.depth.unknown") : t("missions.depth.effective", { depth: state().snapshot!.effectiveDepth! })}</p>
+    <Show when={nesting()}>{text => <p class="mission-depth-nesting">{text()}</p>}</Show>
     <label>{t("missions.depth.label")}<input type="number" step="1" min={state().snapshot?.capability?.minimum} max={state().snapshot?.capability?.maximum}
       placeholder={t("missions.depth.inherit")} aria-describedby={description} value={state().draft} disabled={disabled()} readOnly={locked()}
       onInput={event => entry().state[1]({ ...state(), draft: event.currentTarget.value, invalidInput: event.currentTarget.validity.badInput, rejected: false, dirty: true, saved: false })}

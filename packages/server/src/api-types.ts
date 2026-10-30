@@ -468,10 +468,17 @@ export interface ImageSettingsMutation {
 }
 
 export interface SubagentDepthCapability { minimum: number; maximum?: number; default?: number }
+export type SubagentNestingEffect = "allow" | "ask" | "deny"
 export interface SubagentDepthSnapshot {
   location: PluginControlLocation
   capability: SubagentDepthCapability | null
   effectiveDepth: number | null
+  /** Whether OpenCode's built-in General subagent may launch General, which nesting needs: `null` when
+   * unknown. `configured`: General's resolved rules hold `subagent` rules besides OpenCode's built-in policy
+   * and CodeNomad's own, so CodeNomad changes nothing. `added`: the project holds the rule CodeNomad writes
+   * with a depth of 2 or more. `unverified`: a policy source OpenCode reports is not settled (a pending or
+   * unreadable document, or a General agent file that can set permissions), so a save adds no rule. */
+  nesting: { effect: SubagentNestingEffect; configured: boolean; added?: boolean; unverified?: boolean } | null
   /** `emptyExperimental`: the project holds an `experimental` object without properties, which
    * hides every inherited experimental setting; Inherit removes it. */
   project: { path: string; depth: number | null; expectation: string; emptyExperimental?: boolean } | null
