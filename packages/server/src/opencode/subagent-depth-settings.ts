@@ -5,7 +5,8 @@ import { PluginControlsError, type PluginControls } from "./plugin-controls"
 import type { PluginControlDocument } from "./plugin-control-document"
 import { editNativeSetting, readNativeSetting, removeEmptyNativeObject } from "./native-setting-document"
 import { readRuntimeContract } from "./compatibility/negotiate"
-import { imageSettingsCapability, maskedBy } from "./image-settings"
+import { imageSettingsCapability } from "./image-settings"
+import { projectMaskedBy } from "./experimental-layers"
 
 const keys = ["experimental", "subagent_depth"]
 const MEDIA_STORAGE = ["experimental", "media_blob"]
@@ -14,13 +15,11 @@ const MEDIA_STORAGE = ["experimental", "media_blob"]
  * properties left, or only a `media_blob` equal to the inherited one (`inherited` is `undefined` when
  * the runtime lacks the setting). */
 function withoutRedundantExperimental(document: PluginControlDocument, inherited: boolean | undefined): string | undefined {
-  const experimental = readNativeSetting(document, ["experimental"])
-  if (inherited !== undefined && experimental && typeof experimental === "object" && !Array.isArray(experimental)
-    && Object.keys(experimental).length === 1 && (experimental as { media_blob?: unknown }).media_blob === inherited) {
-    const removed = editNativeSetting(document, MEDIA_STORAGE, undefined)
-    document = { ...document, text: document.byteOrderMark ? removed.slice(1) : removed }
-  }
-  return removeEmptyNativeObject(document, ["experimental"])
+  return removeEmptyNativeObject(document, ["experimental"], value => {
+    const properties = Object.keys(value)
+    return properties.length === 0
+      || inherited !== undefined && properties.length === 1 && properties[0] === "media_blob" && value.media_blob === inherited
+  })
 }
 
 function depth(value: unknown): number | null {
@@ -64,7 +63,9 @@ export class SubagentDepthSettings {
 
   /** The `media_blob` a new project `experimental` object would hide, when the runtime declares it. */
   private inheritedMediaStorage(context: Awaited<ReturnType<SubagentDepthSettings["context"]>>, target: string) {
-    return context.mediaStorage ? maskedBy(context.entries, target, false)?.info?.experimental?.media_blob === true : undefined
+    if (!context.mediaStorage) return undefined
+    const global = context.documents.find(item => item.scope === "global")
+    return projectMaskedBy(context.entries, target, global)?.info?.experimental?.media_blob === true
   }
 
   async read(workspaceId: string, location: PluginControlLocation): Promise<SubagentDepthSnapshot> {

@@ -311,7 +311,12 @@ compares the original full file/target expectation and preserves comments, sibli
 fields and WSL atomic-write protections. When saving a depth creates the project
 `experimental` object and the inherited one has `media_blob: true` (declared by the
 runtime contract), the new object also gets `media_blob: true`, so Settings → Images
-storage stays on there. Removing the override restores
+storage stays on there. The inherited object comes from `opencode/experimental-layers.ts`:
+native entries with the Global entry replaced by the fresh Global document (entries lag
+behind writes until the watcher reloads); a target without a native entry or listed
+directory ranks at the end of the project walk after the Global directory (files of the
+Location and its ancestors and their `.opencode` directories), and any other entry ends
+that walk, so content, managed or unrecognized layers never count as inherited. Removing the override restores
 inheritance and also removes a project `experimental` object left without
 properties, or holding only a `media_blob` equal to the inherited value, moving its
 comments to the property's place; the snapshot flags an existing one

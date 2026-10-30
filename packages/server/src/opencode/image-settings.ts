@@ -1,10 +1,10 @@
-import path from "node:path"
 import { Service } from "@opencode/client/service"
 import type { ImageGenerationSelection, ImageModelOption, ImageSettingsSnapshot, PluginControlLocation } from "../api-types"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
 import { editNativeSetting, readNativeSetting } from "./native-setting-document"
 import { readRuntimeContract } from "./compatibility/negotiate"
+import { maskedBy, samePath, type Entry } from "./experimental-layers"
 
 const GENERATION = ["experimental", "image_generate"]
 const MEDIA_STORAGE = ["experimental", "media_blob"]
@@ -33,41 +33,15 @@ export function imageGenerationSelection(value: unknown): ImageGenerationSelecti
   return true
 }
 
-type Entry = { type: string; path?: string; info?: { experimental?: Record<string, unknown> } }
 /** Configuration documents, highest priority first. */
 const documents = (entries: readonly unknown[]) =>
   entries.filter((entry): entry is Entry & { type: "document" } => Boolean(entry) && (entry as Entry).type === "document").reverse()
-
-const pathsFor = (value: string) => /^(?:[A-Za-z]:[\\/]|\\\\)/.test(value) ? path.win32 : path.posix
-function samePath(left: string, right: string) {
-  const paths = pathsFor(left)
-  const normalize = (value: string) => paths.normalize(value).replace(/[\\/]$/, "")
-  return paths === path.win32 ? normalize(left).toLowerCase() === normalize(right).toLowerCase() : normalize(left) === normalize(right)
-}
 
 const located = (entry: Entry | undefined) => !entry ? undefined : entry.path === undefined ? {} : { path: entry.path }
 
 /** The native document that decides a value, when it is not the Global document this group writes. */
 function override(winner: Entry | undefined, target: string): { path?: string } | undefined {
   return winner?.path !== undefined && samePath(winner.path, target) ? undefined : located(winner)
-}
-
-/** A lower-priority document whose whole `experimental` object a new one in `target` would hide
- * (`entries` lowest priority first; a missing target sits just before its directory, as natively).
- * Higher, Location-specific objects are ignored: the Global document also serves Locations without
- * them, and the target's own native entry may be staler than its fresh `targetHasExperimental`. */
-export function maskedBy(entries: readonly unknown[], target: string, targetHasExperimental: boolean): Entry | undefined {
-  if (targetHasExperimental) return undefined
-  const list = entries as Array<Entry | undefined>
-  const own = list.findIndex(entry => entry?.type === "document" && entry.path !== undefined && samePath(entry.path, target))
-  const directory = list.findIndex(entry => entry?.type === "directory" && entry.path !== undefined
-    && samePath(entry.path, pathsFor(target).dirname(target)))
-  const order = own >= 0 ? own : directory >= 0 ? directory - 0.5 : list.length
-  let masked: Entry | undefined
-  list.forEach((entry, index) => {
-    if (index < order && entry?.type === "document" && entry.info?.experimental !== undefined) masked = entry
-  })
-  return masked
 }
 
 type ConfigDocuments = Awaited<ReturnType<PluginControls["readConfigDocuments"]>>["documents"]
