@@ -1,6 +1,6 @@
 import { For, createSignal, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
-import { toggleSweepGroup } from "../../lib/toggle-sweep"
+import { afterSweep, toggleSweepGroup } from "../../lib/toggle-sweep"
 import {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_DESTINATIONS,
@@ -24,11 +24,22 @@ export const NotificationRoutingTable: Component<{
   const [pending, setPending] = createSignal<NotificationRouting>()
   const routing = () => pending() ?? preferences().notificationRouting
   const destinationLabel = (destination: NotificationDestination) => t(`settings.notifications.routing.${destination}`)
-  const change = (category: NotificationCategory, destination: NotificationDestination, enabled: boolean) => {
-    const next = { ...routing(), [category]: { ...routing()[category], [destination]: enabled } }
-    setPending(next)
+  // Each write carries the whole table, so a sweep across boxes writes it once, on release:
+  // concurrent writes could land out of order and drop a box.
+  let writeQueued = false
+  const write = () => {
+    writeQueued = false
+    const next = pending()
+    if (!next) return
     // A failed write shows the saved table again.
     void updatePreferences({ notificationRouting: next }).finally(() => { if (pending() === next) setPending(undefined) })
+  }
+  const change = (category: NotificationCategory, destination: NotificationDestination, enabled: boolean) => {
+    setPending({ ...routing(), [category]: { ...routing()[category], [destination]: enabled } })
+    if (!writeQueued) {
+      writeQueued = true
+      afterSweep(write)
+    }
     if (enabled && destination === "system") props.onSystemChecked()
   }
 

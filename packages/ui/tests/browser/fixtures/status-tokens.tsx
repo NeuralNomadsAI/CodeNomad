@@ -2,6 +2,7 @@ import { createSignal } from "solid-js"
 import { render } from "solid-js/web"
 import StatusTab from "../../../src/components/instance/shell/right-panel/tabs/StatusTab"
 import { ChatSettingsSection } from "../../../src/components/settings/chat-settings-section"
+import { NotificationRoutingTable } from "../../../src/components/settings/notification-routing-table"
 import TranscriptFilters from "../../../src/components/transcript-filters"
 import { transcriptVisibility, transcriptVisibilityRows } from "../../../src/components/transcript-visibility"
 import { ConfigProvider, preferences, toggleUsageMetrics, updatePreferences } from "../../../src/stores/preferences"
@@ -70,7 +71,8 @@ const Fixture = () => {
         expandedItems={expanded} onExpandedItemsChange={setExpanded}
         customization={customization} onCustomizationChange={setCustomization} />
     </aside>
-    <main style={{ width: "600px", "flex-shrink": 0 }}><TranscriptFilters /><ChatSettingsSection /></main>
+    <main style={{ width: "600px", "flex-shrink": 0 }}><TranscriptFilters /><ChatSettingsSection />
+      <NotificationRoutingTable systemUnavailable={false} onSystemChecked={() => {}} /></main>
   </div>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
