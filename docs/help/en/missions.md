@@ -69,6 +69,27 @@ The coordinator is instructed to publish a project briefing after its initial pl
 
 Use **Request an update** below the toolbar for a fresh coordinator assessment, then read **Summary**. **Update requested…** means the request is pending, not answered. **Delivery unconfirmed** does not authorize automatic resending: open the coordinator conversation before making a separate new request. This is an ordinary native input, not a read-only sandbox; the coordinator retains its normal permissions.
 
+## How context flows through a mission {#context-flow}
+
+The mission map is the mission's shared, durable memory. It holds the objective and **Notes**, every task with its **Task brief**, dependencies (**Depends on**) and status, the **Reports** recorded for finished work (summary, **Evidence**, **Recommended next moves** and any **Structured report**), the coordinator's briefings and the **Plan changes**. OpenCode stores it with the project, so it outlives conversations and restarts; Mission Control displays it, and recovery resumes from it. Each participant receives a defined part:
+
+| Participant | What it receives |
+| --- | --- |
+| Coordinator | The objective, notes and playbook instructions on every turn. It reads the whole map whenever it needs to; its stored conversation keeps every result it has read, while OpenCode may [compact](history.md#compact-session) its model context. |
+| Task (**Native subagents**) | Its assignment, passed by the coordinator in an ordinary OpenCode subagent call: the objective, the task's title and brief, its role instructions and the tasks it depends on. The coordinator can add context around it, such as earlier results. |
+| Task (**Independent sessions**) | The same assignment, as a message in its own conversation. On every turn it also receives the objective, notes and its open assignments, and it can read the whole map. |
+| Helpers launched by a task | What their parent writes in the call. The playbooks instruct every parent to pass the scope, constraints and safety rules its helpers need. |
+
+Results travel back the same way. A native subagent returns its result to the conversation that launched it, normally the coordinator, which records it as the task's report. An independent session records its own report, and CodeNomad delivers its summary to the coordinator as a message.
+
+A later task builds on earlier work in two ways. Dependencies order the work: the coordinator starts a task once the tasks it depends on are complete, then puts the relevant results in the brief or alongside the assignment; independent sessions can also read those reports in the map. To continue a finished task's own conversation, the coordinator declares a follow-up task that reuses it: the follow-up continues there with that conversation's current context, which OpenCode may have [compacted](history.md#compact-session), while earlier details stay in its stored history for search. The Debugging playbook returns both reviews to the implementer this way. With **Independent sessions**, the coordinator can also assign a task to an existing main conversation, which keeps that conversation's context, including earlier unrelated work. Otherwise a task starts in a new conversation from its assignment, and another task's transcript reaches it through the coordinator or a search. For **Compare two models**, the judge's assignment and context leave out the objective and notes; its brief carries the anonymized outputs.
+
+In a daily schedule, each run starts with its own coordinator and map. Its first message holds the schedule's instructions plus the new user and assistant text of its [followed conversations](#daily-schedules) since the last completed run; earlier runs' results stay in the schedule history. Conversations launched within a run can read that run's map. A new one-time mission also starts with a new map: to carry results forward, write them into its objective or **Notes**, or let the coordinator prepare a follow-up mission, whose objective and notes it writes.
+
+### Search earlier conversations {#context-search}
+
+While CodeNomad is running, every agent conversation in the project, mission coordinators and tasks included, has CodeNomad's session search tool (`codenomad.session_search`, used through OpenCode's Code Mode). It searches the stored conversations of the conversation's project folder with the same ranking as **Entire workspace** [search](history.md#full-history-search), and returns short excerpts with each conversation's title and identifier, plus a way to read a whole conversation. Native tool permissions apply. An agent searches when it decides to or when the objective, notes or your message ask it to, for example to find what an earlier mission or task concluded. A daily run that executes while CodeNomad is closed works without this tool.
+
 ## Profiles, delegation and depth {#profiles}
 
 1. Use the Missions gear or **Settings → Missions** to edit **New mission defaults**.

@@ -69,6 +69,27 @@ coordinator लाई प्रारम्भिक योजनापछि, t
 
 नयाँ coordinator मूल्याङ्कनका लागि toolbar मुनि **अद्यावधिक माग्नुहोस्** प्रयोग गरी **सारांश** पढ्नुहोस्। **अद्यावधिक मागियो…** भनेको pending हो, उत्तर आएको होइन। **पठाइएको पुष्टि भएन** ले automatic resend अनुमति दिँदैन: छुट्टै नयाँ अनुरोधअघि coordinator कुराकानी खोल्नुहोस्। यो सामान्य native input हो, read-only sandbox होइन; coordinator का सामान्य अधिकार रहन्छन्।
 
+## मिसनमा context कसरी बग्छ {#context-flow}
+
+mission map मिसनको साझा, टिकाउ स्मृति हो। यसमा objective र **टिप्पणीहरू**, हरेक task को **कार्य संक्षेप**, dependency (**… मा निर्भर**) र स्थिति, सकिएको कामका लागि अभिलेख गरिएका **प्रतिवेदनहरू** (सारांश, **प्रमाण**, **सिफारिस गरिएका अर्को कदम** र भए **संरचित प्रतिवेदन**), coordinator का briefing र **योजनाका परिवर्तनहरू** हुन्छन्। OpenCode ले यसलाई project सँगै सुरक्षित राख्छ, त्यसैले यो कुराकानी र restart पछि पनि रहन्छ; मिसन नियन्त्रणले यसलाई देखाउँछ, र recovery यहीँबाट अघि बढ्छ। हरेक सहभागीले यसको तोकिएको भाग पाउँछ:
+
+| सहभागी | के पाउँछ |
+| --- | --- |
+| Coordinator | हरेक turn मा objective, टिप्पणी र playbook निर्देशन। चाहिँदा जुनसुकै बेला पूरै map पढ्छ; यसको सुरक्षित कुराकानीमा यसले पढेका सबै नतिजा रहन्छन्, तर OpenCode ले यसको model context [संक्षिप्त](history.md#compact-session) गर्न सक्छ। |
+| Task (**नेटिभ उपएजेन्टहरू**) | coordinator ले सामान्य OpenCode subagent call मा पठाउने assignment: objective, task को शीर्षक र brief, भूमिकाका निर्देशन र यो निर्भर रहेका task हरू। coordinator ले यसको साथमा अघिल्ला नतिजाजस्ता context थप्न सक्छ। |
+| Task (**स्वतन्त्र सत्रहरू**) | उही assignment, आफ्नै कुराकानीमा सन्देशका रूपमा। हरेक turn मा यसले objective, टिप्पणी र आफ्ना खुला assignment पनि पाउँछ, र पूरै map पढ्न सक्छ। |
+| Task ले सुरु गरेका helper | तिनका parent ले call मा लेखेको कुरा। playbook ले हरेक parent लाई आफ्ना helper लाई चाहिने दायरा, सीमा र सुरक्षा नियम पठाउन निर्देशन दिन्छ। |
+
+नतिजा उही बाटो फर्कन्छन्। native subagent ले आफ्नो नतिजा यसलाई सुरु गर्ने कुराकानीलाई फर्काउँछ, सामान्यतया coordinator लाई, जसले त्यसलाई task को report का रूपमा अभिलेख गर्छ। independent session ले आफ्नै report अभिलेख गर्छ, र CodeNomad ले त्यसको सारांश coordinator लाई सन्देशका रूपमा पुर्‍याउँछ।
+
+पछिको task ले दुई तरिकाले अघिल्लो कामलाई आधार बनाउँछ। dependency ले कामको क्रम तय गर्छ: coordinator ले कुनै task त्यो निर्भर रहेका task पूरा भएपछि सुरु गर्छ, र सान्दर्भिक नतिजा brief मा वा assignment को साथमा राख्छ; independent session ले ती report map मा पनि पढ्न सक्छन्। सकिएको task को आफ्नै कुराकानी जारी राख्न, coordinator ले त्यसलाई पुनःप्रयोग गर्ने follow-up task घोषणा गर्छ: follow-up त्यही कुराकानीको हालको context सहित त्यहीँ जारी रहन्छ, जुन OpenCode ले [संक्षिप्त](history.md#compact-session) गरेको हुन सक्छ, र पहिलेका विवरण खोजका लागि यसको सुरक्षित इतिहासमा रहन्छन्। Debugging playbook ले यसरी दुवै review implementer लाई फर्काउँछ। **स्वतन्त्र सत्रहरू** मा coordinator ले task लाई विद्यमान मुख्य कुराकानीमा पनि तोक्न सक्छ, जसले असम्बन्धित अघिल्लो कामसहित आफ्नै context राख्छ। अन्यथा task आफ्नो assignment बाट नयाँ कुराकानीमा सुरु हुन्छ, र अर्को task को transcript यसलाई coordinator वा खोजमार्फत पुग्छ। **दुई मोडेल तुलना गर्नुहोस्** मा मूल्याङ्कनकर्ताको assignment र context ले objective र टिप्पणी छोड्छन्; यसको brief मा anonymized output हुन्छन्।
+
+दैनिक schedule मा हरेक run आफ्नै coordinator र map सँग सुरु हुन्छ। यसको पहिलो सन्देशमा schedule का निर्देशन र अन्तिम completed run पछि यसका [पछ्याइएका कुराकानीहरू](#daily-schedules) मा थपिएका नयाँ user र assistant पाठ हुन्छन्; अघिल्ला run का नतिजा schedule history मा रहन्छन्। run भित्र सुरु गरिएका कुराकानीले त्यो run को map पढ्न सक्छन्। नयाँ एकपटकको मिसन पनि नयाँ map सँग सुरु हुन्छ: नतिजा अघि सार्न तिनलाई यसको objective वा **टिप्पणीहरू** मा लेख्नुहोस्, वा coordinator लाई follow-up मिसन तयार गर्न दिनुहोस्, जसको objective र टिप्पणी उसैले लेख्छ।
+
+### अघिल्ला कुराकानी खोज्नुहोस् {#context-search}
+
+CodeNomad चलिरहँदा, project का हरेक agent कुराकानी, मिसन coordinator र task समेत, सँग CodeNomad को session search tool (`codenomad.session_search`, OpenCode को Code Mode मार्फत प्रयोग हुने) हुन्छ। यसले कुराकानीको project folder का सुरक्षित कुराकानीहरू **पूरै कार्यस्थान** [खोज](history.md#full-history-search) जस्तै ranking सहित खोज्छ, र हरेक कुराकानीको शीर्षक र identifier सहित छोटा अंश, साथै पूरै कुराकानी पढ्ने तरिका फर्काउँछ। native tool permission लागू हुन्छन्। agent ले आफैं निर्णय गर्दा वा objective, टिप्पणी वा तपाईंको सन्देशले भन्दा खोज्छ, उदाहरणका लागि अघिल्लो मिसन वा task ले के निष्कर्ष निकाल्यो पत्ता लगाउन। CodeNomad बन्द हुँदा चल्ने दैनिक run यो tool बिना काम गर्छ।
+
 ## Profile, प्रत्यायोजन र depth {#profiles}
 
 1. Missions gear वा **सेटिङहरू → मिसनहरू** बाट **नयाँ मिसनका पूर्वनिर्धारित मान** सम्पादन गर्नुहोस्।

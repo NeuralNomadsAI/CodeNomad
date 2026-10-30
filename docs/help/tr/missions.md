@@ -69,6 +69,27 @@ Koordinatöre ilk plandan sonra, her görev sonuçlandırıldığında, insan ya
 
 Yeni bir koordinatör değerlendirmesi için araç çubuğunun altındaki **Güncelleme iste** eylemini kullanıp **Özet** bölümünü okuyun. **Güncelleme istendi…**, isteğin beklediğini, henüz yanıtlanmadığını gösterir. **Gönderim doğrulanmadı** otomatik yeniden göndermeye izin vermez: ayrı bir yeni istekte bulunmadan önce koordinatör konuşmasını açın. Bu, salt okunur bir korumalı ortam değil, sıradan bir OpenCode girdisidir; koordinatör normal izinlerini korur.
 
+## Bağlam bir görevde nasıl akar {#context-flow}
+
+Görev haritası, görevin ortak ve kalıcı belleğidir. Hedefi ve **Notlar** bölümünü, her işi kendi **İş özeti**, bağımlılıkları (**… öğesine bağlı**) ve durumuyla, tamamlanan işler için kaydedilen **Raporlar** bölümünü (özet, **Kanıt**, **Önerilen sonraki adımlar** ve varsa **Yapılandırılmış rapor**), koordinatörün durum özetlerini ve **Plan değişiklikleri** bölümünü içerir. OpenCode haritayı projeyle birlikte saklar; bu nedenle harita konuşmalardan ve yeniden başlatmalardan sonra da kalır. Görev Kontrolü onu gösterir ve kurtarma ondan devam eder. Her katılımcı onun belirli bir bölümünü alır:
+
+| Katılımcı | Ne alır |
+| --- | --- |
+| Koordinatör | Her turda hedefi, notları ve rehber talimatlarını. Gerektiğinde haritanın tamamını okur; saklanan konuşması okuduğu her sonucu tutar, ancak OpenCode model bağlamını [sıkıştırabilir](history.md#compact-session). |
+| İş (**Yerel alt ajanlar**) | Koordinatörün sıradan bir OpenCode alt ajan çağrısında ilettiği atamasını: hedef, işin başlığı ve özeti, rolünün talimatları ve bağlı olduğu işler. Koordinatör yanına önceki sonuçlar gibi bağlam ekleyebilir. |
+| İş (**Bağımsız oturumlar**) | Aynı atamayı kendi konuşmasında bir mesaj olarak. Her turda ayrıca hedefi, notları ve açık atamalarını alır ve haritanın tamamını okuyabilir. |
+| Bir işin başlattığı yardımcılar | Üst konuşmalarının çağrıya yazdıklarını. Rehberler her üst konuşmaya, yardımcılarının ihtiyaç duyduğu kapsamı, kısıtları ve güvenlik kurallarını iletmesini söyler. |
+
+Sonuçlar aynı yoldan geri döner. Yerel alt ajan sonucunu kendisini başlatan konuşmaya, genellikle koordinatöre döndürür; koordinatör bunu işin raporu olarak kaydeder. Bağımsız oturum kendi raporunu kaydeder ve CodeNomad bu raporun özetini koordinatöre mesaj olarak iletir.
+
+Sonraki bir iş, önceki çalışmaya iki yolla dayanır. Bağımlılıklar çalışmanın sırasını belirler: koordinatör bir işi, bağlı olduğu işler tamamlandığında başlatır ve ilgili sonuçları özete ya da atamanın yanına koyar; bağımsız oturumlar bu raporları haritada da okuyabilir. Tamamlanmış bir işin kendi konuşmasını sürdürmek için koordinatör, o konuşmayı yeniden kullanan bir devam işi bildirir: devam işi orada, OpenCode'un [sıkıştırmış](history.md#compact-session) olabileceği o konuşmanın güncel bağlamıyla sürer; daha önceki ayrıntılar arama için saklanan geçmişte kalır. Hata ayıklama rehberi iki incelemeyi de uygulayıcıya bu şekilde geri verir. **Bağımsız oturumlar** ile koordinatör bir işi mevcut bir ana konuşmaya da atayabilir; bu konuşma, ilgisiz önceki çalışmalar dahil kendi bağlamını korur. Aksi halde iş kendi atamasıyla yeni bir konuşmada başlar ve başka bir işin konuşma dökümü ona koordinatör ya da bir arama aracılığıyla ulaşır. **İki modeli karşılaştır** rehberinde hakemin ataması ve bağlamı hedefi ve notları içermez; özeti anonimleştirilmiş çıktıları taşır.
+
+Günlük bir zamanlamada her çalıştırma kendi koordinatörü ve haritasıyla başlar. İlk mesajı, zamanlamanın talimatlarını ve son tamamlanan çalıştırmadan bu yana [takip edilen konuşmalarına](#daily-schedules) eklenen yeni kullanıcı ve asistan metnini içerir; önceki çalıştırmaların sonuçları zamanlamanın geçmişinde kalır. Bir çalıştırma içinde başlatılan konuşmalar o çalıştırmanın haritasını okuyabilir. Yeni bir tek seferlik görev de yeni bir haritayla başlar: sonuçları aktarmak için onları hedefine veya **Notlar** bölümüne yazın ya da koordinatörün, hedefini ve notlarını kendisinin yazdığı bir devam görevi hazırlamasına izin verin.
+
+### Önceki konuşmalarda arayın {#context-search}
+
+CodeNomad çalıştığı sürece projedeki her ajan konuşması, görev koordinatörleri ve işler dahil, CodeNomad'in oturum arama aracına (`codenomad.session_search`, OpenCode'un Code Mode özelliği üzerinden kullanılır) sahiptir. Araç, konuşmanın proje klasöründeki kayıtlı konuşmalarda **Tüm çalışma alanı** [aramasıyla](history.md#full-history-search) aynı sıralamayla arar ve her konuşmanın başlığı ve kimliğiyle kısa alıntılar, ayrıca bir konuşmanın tamamını okumanın yolunu döndürür. OpenCode araç izinleri geçerlidir. Ajan, kendisi karar verdiğinde veya hedef, notlar ya da mesajınız bunu istediğinde arar; örneğin önceki bir görevin veya işin vardığı sonucu bulmak için. CodeNomad kapalıyken yürüyen günlük bir çalıştırma bu araç olmadan çalışır.
+
 ## Profiller, iş devri ve derinlik {#profiles}
 
 1. **Yeni görev varsayılanları** ayarını düzenlemek için Görevler dişli simgesini veya **Ayarlar → Görevler** yolunu kullanın.
