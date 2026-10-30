@@ -146,11 +146,12 @@ function proveWriter(cov: Coverage, file: string, span: Span | undefined, uptoSe
   // Every call that may write this file started before the interval ended, or at an unknown time, is a possible writer.
   const candidates = cov.calls.filter(call => call.seq >= floor && call.seq <= uptoSeq && writes(call.part, file)
     && !(Number(call.part.time?.ran) > span.end))
-  // OpenCode delivers a job's notice once the job has ended, and a failed or cancelled job saves nothing
-  // afterwards: such a call is out of the way when its unique notice precedes the remaining writer's start.
+  // OpenCode delivers a failed job's notice once its run has settled, and the run's last step is the write:
+  // such a call is out of the way when its unique notice precedes the remaining writer's start. A cancelled
+  // job's notice can precede the end of an interrupted write, so cancelled calls stay possible writers.
   const ended = candidates.flatMap(call => {
     const state = generationState(cov, call.part)
-    return state.outcome === "error" || state.outcome === "cancelled" ? [{ call, notice: state.notice }] : []
+    return state.outcome === "error" ? [{ call, notice: state.notice }] : []
   })
   const writers = candidates.filter(call => !ended.some(entry => entry.call === call))
   if (writers.length !== 1) return undefined

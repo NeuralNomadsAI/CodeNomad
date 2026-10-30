@@ -62,20 +62,20 @@ const failedAttempt = (fixture: Fixture, outcome: "error" | "cancelled", noticeA
     fixture.insert(`msg_zz_failed_notice_${n}`, "synthetic", 4, noticeAt(ran) + n, notice)
   }
 }
-for (const outcome of ["error", "cancelled"] as const) {
-  each(`${outcome === "error" ? "an errored" : "a cancelled"} attempt at the same file whose notice came before the retry started leaves the retry proven`, async fixture => {
-    failedAttempt(fixture, outcome, ran => ran - 10)
-    assert(has(image(await fixture.lines(), "icon-a")[0], "origin:proven", "read:asset"))
-    assert.equal((await fixture.reference(fixture.readTarget())).status, "path")
-  })
-}
-for (const [name, noticeAt, notices] of [
-  ["notified once the retry had started", (ran: number) => ran, 1],
-  ["never notified", (ran: number) => ran - 10, 0],
-  ["notified twice", (ran: number) => ran - 10, 2],
+each("an errored attempt at the same file whose notice came before the retry started leaves the retry proven", async fixture => {
+  failedAttempt(fixture, "error", ran => ran - 10)
+  assert(has(image(await fixture.lines(), "icon-a")[0], "origin:proven", "read:asset"))
+  assert.equal((await fixture.reference(fixture.readTarget())).status, "path")
+})
+// A cancelled job's notice can come before its interrupted write settles.
+for (const [name, outcome, noticeAt, notices] of [
+  ["cancelled before the retry started", "cancelled", (ran: number) => ran - 10, 1],
+  ["failed, notified once the retry had started", "error", (ran: number) => ran, 1],
+  ["failed, never notified", "error", (ran: number) => ran - 10, 0],
+  ["failed, notified twice", "error", (ran: number) => ran - 10, 2],
 ] as const) {
-  each(`a failed attempt at the same file ${name} keeps the retry unverifiable`, async fixture => {
-    failedAttempt(fixture, "error", noticeAt, notices)
+  each(`an attempt at the same file ${name} keeps the retry unverifiable`, async fixture => {
+    failedAttempt(fixture, outcome, noticeAt, notices)
     assert(has(image(await fixture.lines(), "icon-a")[0], "origin:unverifiable", "read:asset"))
     assert.deepEqual(await fixture.reference(fixture.readTarget()), { status: "refused", reason: "unverifiable" })
   })
