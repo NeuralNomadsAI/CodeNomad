@@ -212,7 +212,11 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   // Unrelated native domains reject calls; presence owns RPCs and the search tool.
   const unused: any = new Proxy(() => { throw new Error("Unexpected native API or hook") }, { get: () => unused })
   const rpc = Object.assign(() => {}, { register })
-  const ctx = new Proxy({ app: { version: "2.0.22" }, rpc, tool, location: origin, options: {} }, {
+  // The Design transforms register at load, outside presence; no lease here requests Design.
+  const designTransforms: string[] = []
+  const designDomain = (name: string) => ({ reload: () => Effect.die(new Error("Unexpected Design reload")),
+    transform: () => Effect.sync(() => { designTransforms.push(name); return { dispose: Effect.void } }) })
+  const ctx = new Proxy({ app: { version: "2.0.22" }, rpc, tool, agent: designDomain("agent"), skill: designDomain("skill"), location: origin, options: {} }, {
     get: (target, property) => Reflect.get(target, property) ?? unused,
   }) as unknown as Plugin.Context
   const scope = await Effect.runPromise(Scope.make())
@@ -220,6 +224,7 @@ test("production entry shares one presence lifecycle for old/new RPCs, never dou
   t.after(close)
   await Effect.runPromise(desktopPlugin(directory).effect(ctx).pipe(Effect.provideService(Scope.Scope, scope)))
   assert.equal(entries.length, 0)
+  assert.deepEqual(designTransforms, ["agent", "skill"])
   const tick = async (check: () => boolean) => {
     monotonic += PRESENCE_INTERVAL_MS
     t.mock.timers.tick(PRESENCE_INTERVAL_MS)

@@ -178,6 +178,10 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-automation-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Design agent activation through backend leases: load-time registration,
+          # user priority and permissions, union, expiry and retained installations.
+          node scripts/test-design-activation-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-pruning-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Shipped Missions bundle: loading, model-visible tools through the

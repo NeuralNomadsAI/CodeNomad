@@ -59,11 +59,27 @@ function within(directory: string, root: string): boolean {
   return relative === "" || (!path.isAbsolute(relative) && relative !== ".." && !relative.startsWith(`..${path.sep}`))
 }
 
+// Atomic replacement: readers see the previous or the next content, never a partial one.
+// The temporary name never matches the lease pattern that presence scans.
+async function writeLease(lease: string, content: string) {
+  const temporary = `${lease}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporary, content, { flag: "wx" })
+    await rename(temporary, lease)
+  } finally { await rm(temporary, { force: true }) }
+}
+
+/**
+ * `leaseContent` is the backend's current lease state (empty when it requests
+ * nothing). The lease is created with it and rewritten only when it changes:
+ * at `sync()`, else at the next heartbeat, which also retries a failed write.
+ */
 export async function installDesktopPluginPresence(
   feature: DesktopPluginFeature,
   bundle: Uint8Array,
   paths: DesktopPluginPaths,
   assertCurrent: () => void = () => {},
+  leaseContent: () => string = () => "",
 ) {
   assertCurrent()
   const marker = `// Managed by CodeNomad: ${feature.replaceAll("-", " ")} lifecycle v1\n`
@@ -130,8 +146,9 @@ export async function installDesktopPluginPresence(
   await assertBundlePath()
   assertCurrent()
   const lease = path.join(leases, `${randomUUID()}.lease`)
+  let written = leaseContent()
   try {
-    await writeFile(lease, "")
+    await writeLease(lease, written)
     assertCurrent()
     if (existing !== source) {
       const temporary = `${entry}.${randomUUID()}.tmp`
@@ -148,18 +165,25 @@ export async function installDesktopPluginPresence(
     throw error
   }
   let pending = Promise.resolve()
-  const timer = setInterval(() => {
-    pending = pending.then(async () => {
+  let disposed = false
+  // Serialized with the heartbeat and disposal, so a rewrite never resurrects a removed lease.
+  const sync = (renew: boolean) => pending = pending.then(async () => {
+    if (disposed) return
+    const content = leaseContent()
+    if (content !== written) {
+      await writeLease(lease, content)
+      written = content
+    } else if (renew) {
       const now = new Date()
       await utimes(lease, now, now)
-    }).catch(() => {})
-  }, PRESENCE_INTERVAL_MS)
+    }
+  }).catch(() => {})
+  const timer = setInterval(() => { void sync(true) }, PRESENCE_INTERVAL_MS)
   timer.unref()
   // Plugins register at their next presence check; the marker confirms every
   // follower in the daemon process has observed this lease while registered.
   // Bounded: an older plugin without markers only delays the first RPC.
   const readyMarker = `${lease}${PRESENCE_READY_SUFFIX}`
-  let disposed = false
   const ready = (async () => {
     for (const deadline = Date.now() + PRESENCE_READY_WAIT_MS; !disposed && Date.now() < deadline;) {
       if (await stat(readyMarker).then(() => true, () => false)) return true
@@ -173,5 +197,5 @@ export async function installDesktopPluginPresence(
     await pending
     await rm(lease, { force: true })
     await rm(readyMarker, { force: true })
-  }, { ready })
+  }, { ready, sync: () => sync(false) })
 }
