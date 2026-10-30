@@ -19,6 +19,7 @@ import type {
 } from "../missions/control-types"
 import { MISSION_SCHEMA_VERSION, type MissionEvent, type MissionJsonValue, type MissionMap, type MissionTemplateId } from "../missions/model"
 import { parseMissionEvent } from "../missions/journal"
+import { missionPausedInstruction } from "../missions/lifecycle-model"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { executionSchema, parseExecution } from "../missions/execution"
 import { readMissionCatalog, validateNativeExecution, type MissionCatalogClient } from "../missions/native-catalog"
@@ -240,10 +241,12 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       lifecycle: async (input, context) => {
         assertActive()
         const value = object(input)
-        if (!["start", "pause", "stop"].includes(String(value.action)) || !Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 1) throw new Error("Invalid mission control")
+        if (!["start", "pause", "stop"].includes(String(value.action)) || !Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 1
+          || (value.graceful !== undefined && (value.graceful !== true || value.action !== "pause"))) throw new Error("Invalid mission control")
         return mutationResult(context, () => control.lifecycle({
           missionID: requiredText(value.missionID, "missionID", 100), requestID: requiredText(value.requestID, "requestID", 128),
           action: value.action as "start" | "pause" | "stop", expectedRevision: Number(value.expectedRevision),
+          ...(value.graceful === true ? { graceful: true as const } : {}),
         }))
       },
       cleanupTarget: async input => {
@@ -474,6 +477,8 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           selected.current()
           if (selected.readSessionID !== event.sessionID) {
             event.system.push({ type: "text", text: `You are a native descendant of coordinator ${selected.readSessionID}. Return normal scoped results to your immediate parent; only the coordinator declares, revises, reports or finalizes the business plan. mission.inspect is read-only.` })
+            // A paused mission's sub-agents stop after their current step too.
+            if (mission.paused) event.system.push({ type: "text", text: missionPausedInstruction(mission.missionID, true) })
             for (const name of [...COORDINATOR_TOOLS, "report"]) delete event.tools[`mission_${name}`]
             return
           }

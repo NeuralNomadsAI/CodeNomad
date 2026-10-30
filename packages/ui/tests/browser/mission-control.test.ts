@@ -931,7 +931,7 @@ test("one Play control starts and resumes; partial Pause survives remount and St
         runState: input.action === "start" ? "running" : input.action === "pause" ? "paused" : "stopped",
         status: input.action === "stop" ? "stopped" : "active",
         control: { id: "evt_control", missionID: current.id, requestID: input.requestId, expectedRevision: input.expectedRevision, action: input.action,
-          targets: [{ sessionID: "ses_fixture", location: { directory: "/fixture" } }], pending: [] },
+          ...(input.graceful ? { graceful: true } : {}), targets: [{ sessionID: "ses_fixture", location: { directory: "/fixture" } }], pending: [] },
       }
       if (input.action === "pause" && failPause) {
         failPause = false

@@ -260,6 +260,8 @@ const MAX_LISTED_INTERRUPTIONS = 32
 async function interruptedConversations(client: Parameters<typeof readNativeControlFamily>[0], root: Parameters<typeof readNativeControlFamily>[1],
   tasks: MissionSnapshot["missions"][number]["tasks"], paused: NonNullable<MissionLifecycleOperation["pausedDescendants"]>,
   signal: AbortSignal, current: () => void): Promise<string> {
+  if (paused.graceful) return "\n\nThe mission was paused gracefully: you and your sub-agents were asked to finish the step in progress and stop."
+    + " Delegated work may have stopped early. Read their last results, continue unfinished sub-agent conversations where they stopped rather than restarting them, and do not assume their work completed."
   if (!paused.sessions.length && !paused.partial) return ""
   const family = await readNativeControlFamily(client, root, signal, { assertCurrent: current, deadline: Date.now() + 15_000 })
   const ids = [...family.members.values()].filter(({ session }) => session.id !== root.id && session.outcome === "interrupted"

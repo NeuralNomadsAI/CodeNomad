@@ -283,6 +283,8 @@ export const missionMessages = {
   "missions.control.run.rejected.stop": "停止は適用されませんでした。先にミッションが変更され、まだ実行中の可能性があります。再送信はしていません。内容を確認してからもう一度お試しください。",
   "missions.control.run.notSent.stop": "確認中にミッションが変更されました。停止は送信されていません。内容を確認してから再度確認してください。",
   "missions.control.run.partialInterrupt": "一部のサブエージェントがまだ実行中の可能性があります。",
+  "missions.control.run.pausing": "一時停止中: 実行中のステップを完了しています。",
+  "missions.control.run.interruptNow": "ミッションの実行中の会話を今すぐ中断",
   "missions.control.openCoordinator": "コーディネーターを開く",
   "missions.control.mutation.error": "変更を保存できませんでした。入力内容は保持されています。",
   "missions.control.mutation.conflict": "このミッションは変更されました。エディターを閉じて開き直し、最新バージョンを編集してください。",

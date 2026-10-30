@@ -17,6 +17,8 @@ function primaryIcon(key?: string): JSX.Element {
 export function MissionActionBar(props: {
   label: string; reading: boolean; onToggleReader: () => void
   primary?: MissionPrimaryAction; stop?: MissionPrimaryAction; request?: MissionPrimaryAction; onOpenConversation?: () => void
+  /** Interrupts a graceful Pause's still-running steps at once. */
+  interrupt?: MissionPrimaryAction
   onEdit?: () => void; onDelete?: () => void; editDisabled?: boolean; deleteDisabled?: boolean
   runNow?: MissionPrimaryAction; secondary?: JSX.Element; feedback?: JSX.Element
 }) {
@@ -53,8 +55,12 @@ export function MissionActionBar(props: {
       <button type="button" class="mission-control-icon-button" aria-label={t("missionsPanel.picker.delete")} title={t("missionsPanel.picker.delete")}
         disabled={!props.onDelete || props.deleteDisabled} onClick={() => props.onDelete?.()}><Trash2 class="h-4 w-4" aria-hidden="true" /></button>
     </div>
-    <Show when={props.request || props.secondary}>
+    <Show when={props.interrupt || props.request || props.secondary}>
       <div class="mission-action-texts">
+        <Show when={props.interrupt}>{interrupt =>
+          <button type="button" class="window-text-button" title={interrupt().ariaLabel}
+            disabled={interrupt().disabled} onClick={() => void interrupt().onSelect()}>{interrupt().label}</button>}
+        </Show>
         <Show when={props.request}>{request =>
           <button type="button" class="window-text-button mission-action-request" title={request().ariaLabel}
             disabled={request().disabled} onClick={() => void request().onSelect()}>{request().label}</button>}

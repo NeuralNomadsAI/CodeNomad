@@ -287,6 +287,8 @@ export const missionMessages = {
   "missions.control.run.rejected.stop": "Stop was not applied: the mission changed first and may still be running. Nothing was resent; review it and try again.",
   "missions.control.run.notSent.stop": "The mission changed while you were confirming. Stop was not sent; review it and confirm again.",
   "missions.control.run.partialInterrupt": "Some sub-agents may still be running.",
+  "missions.control.run.pausing": "Pausing: the steps in progress are finishing.",
+  "missions.control.run.interruptNow": "Interrupt the mission's running conversations now",
   "missions.control.openCoordinator": "Open coordinator",
   "missions.control.mutation.error": "The change could not be saved. Your input has been kept.",
   "missions.control.mutation.conflict": "This mission changed. Close the editor and reopen it to edit the latest version.",

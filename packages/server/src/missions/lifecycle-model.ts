@@ -32,6 +32,10 @@ export interface MissionLifecycleInput {
   requestID: string
   expectedRevision: number
   action: MissionAction
+  /** Pause only: interrupt nothing. Actors and their sub-agents read the paused
+   * context at their next model request, finish the step in progress and end
+   * their turn. Absent: interrupt the native family at once. */
+  graceful?: true
   /** Internal signed finite passage only; ordinary lifecycle omits this. */
   recurrence?: { grantID: string; passageID: string; messageID: string; coordinatorSessionID: string }
 }
@@ -42,8 +46,9 @@ export interface MissionLifecycleOperation extends MissionLifecycleInput {
   receipts?: MissionLifecycleReceipt[]
   /** Journal revision when this exact operation's final target ACK was saved. */
   completedRevision?: number
-  /** Start only: descendant sessions the latest preceding Pause reported interrupting. */
-  pausedDescendants?: { sessions: string[]; partial: boolean }
+  /** Start only: descendant sessions the latest preceding Pause reported
+   * interrupting, or `graceful` when that Pause interrupted nothing. */
+  pausedDescendants?: { sessions: string[]; partial: boolean; graceful?: true }
 }
 export interface MissionControlRequestedEvent extends MissionLifecycleInput {
   version: 1
@@ -90,6 +95,7 @@ export function projectLifecycle(events: readonly MissionEvent[]): { runState: M
     control: {
       id: operation.id, missionID: operation.missionID, requestID: operation.requestID, expectedRevision: operation.expectedRevision,
       action: operation.action, targets: operation.targets, pending, receipts,
+      ...(operation.graceful ? { graceful: true as const } : {}),
       ...(operation.recurrence ? { recurrence: operation.recurrence } : {}),
       ...(completedRevision !== undefined ? { completedRevision } : {}),
       ...(paused ? { pausedDescendants: paused } : {}),
@@ -103,6 +109,7 @@ function pausedDescendants(events: readonly MissionEvent[], start: MissionContro
   const before = events.slice(0, events.indexOf(start))
   const pause = [...before].reverse().find(event => event.type === "mission.control-requested")
   if (!pause || pause.type !== "mission.control-requested" || pause.action !== "pause") return undefined
+  if (pause.graceful) return { sessions: [], partial: false, graceful: true as const }
   const sessions = new Set<string>()
   let partial = false
   for (const target of pause.targets) {
@@ -114,6 +121,15 @@ function pausedDescendants(events: readonly MissionEvent[], start: MissionContro
     for (const id of descendants?.sessions ?? []) if (sessions.size < MAX_REPORTED_DESCENDANTS) sessions.add(id)
   }
   return { sessions: [...sessions], partial }
+}
+
+/** The context a paused mission's actors (or their native descendants) read at
+ * each model request: a graceful Pause stops the family through it. */
+export function missionPausedInstruction(missionID: string, descendant = false): string {
+  return `Mission ${missionID} is paused by the user. Start no new mission work, sub-agents or replacement mission. `
+    + (descendant
+      ? "Finish only the step already in progress, return what you have to your parent, stating that the mission was paused and where you stopped, and end your turn."
+      : "Finish only the step already in progress, briefly state where you stopped, and end your turn. Wait for the user's Play action.")
 }
 
 export function missionIsRunning(mission: Pick<MissionMap, "status" | "runState" | "controlUnavailable">): boolean {

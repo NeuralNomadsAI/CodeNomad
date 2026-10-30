@@ -37,7 +37,7 @@ import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-inpu
 import { MissionControlError, MissionCreateNoEffectError, decisionInvocationUnavailable, humanDecisionRequired } from "./control-error"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
-import { missionIsRunning, type MissionLifecycleInput } from "./lifecycle-model"
+import { missionIsRunning, missionPausedInstruction, type MissionLifecycleInput } from "./lifecycle-model"
 import { normalizeTaskDeclaration, taskContractReferenceSchema, validateTaskActorChoice, validateTaskAdmissionGraph, validateMissionTaskMode, type TaskContractReference } from "./task-declaration"
 import { compareModelError, freezeCompareProfiles, parseMissionProfiles, sameMissionProfiles, validateMissionProfiles, type MissionProfiles } from "./playbook-profiles"
 import { hasUnsettledNativeExecution } from "./native-call-observation"
@@ -1274,14 +1274,17 @@ export class MissionControl {
   /** The per-turn context of an active mission's actor, and whether it coordinates
    * that mission. From hints: a missed foreign write withholds the context until
    * the next rebuild, never grants anything (every tool re-selects authoritatively). */
-  async contextFor(sessionID: string): Promise<{ instruction: string; coordinator: boolean } | undefined> {
+  async contextFor(sessionID: string): Promise<{ instruction: string; coordinator: boolean; missionID: string; paused: boolean } | undefined> {
     const mission = this.membership(await this.hintedSelection(sessionID), sessionID)
     if (!mission || mission.status !== "active") return undefined
     const coordinator = mission.coordinatorSessionId === sessionID
-    if (!missionIsRunning(mission)) return { coordinator, instruction: `Mission ${mission.id} is ${mission.runState}. Do not continue mission work or create a replacement mission. Wait for the user's Play action. Saved reports may still be recorded without waking the coordinator.` }
+    const paused = !mission.controlUnavailable && mission.runState === "paused"
+    if (!missionIsRunning(mission)) return { coordinator, missionID: mission.id, paused, instruction: paused
+      ? `${missionPausedInstruction(mission.id)} Saved reports may still be recorded without waking the coordinator.`
+      : `Mission ${mission.id} is ${mission.runState}. Do not continue mission work or create a replacement mission. Wait for the user's Play action. Saved reports may still be recorded without waking the coordinator.` }
     const instruction = buildActorContext(mission, sessionID, { backendActions: this.backendActions,
       completedFinalOnly: this.options.completedFinalOnly })
-    return instruction ? { instruction, coordinator } : undefined
+    return instruction ? { instruction, coordinator, missionID: mission.id, paused: false } : undefined
   }
 
   /** Whether coordinator actions can reach the backend (one-time missions with presence, not passages). */

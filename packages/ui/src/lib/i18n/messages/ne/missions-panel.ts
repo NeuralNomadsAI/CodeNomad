@@ -6,6 +6,7 @@ export const missionsPanelMessages = {
   "missionsPanel.needs.permission": "{actor} ले अनुमति माग्यो",
   "missionsPanel.action.start": "सुरु गर्नुहोस्",
   "missionsPanel.action.pause": "रोक्नुहोस्",
+  "missionsPanel.action.interruptNow": "अहिले नै रोक्नुहोस्",
   "missionsPanel.action.resume": "पुनः सुरु गर्नुहोस्",
   "missionsPanel.action.runNow": "अहिले चलाउनुहोस्",
   "missionsPanel.action.checkPassage": "पालो जाँच गर्नुहोस्",

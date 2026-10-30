@@ -387,6 +387,8 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             reading={isReading({ missionId: id, kind: "overview" })} onToggleReader={() => void read({ missionId: id, kind: "overview" })}
             coordinatorActivity={state().activity?.missions.find(item => item.missionId === id)?.actors
               .find(actor => actor.sessionId === selected().coordinatorSessionId)?.state}
+            working={state().activity?.missions.find(item => item.missionId === id)?.actors
+              .some(actor => actor.state === "running" || actor.state === "queued" || actor.state === "background")}
             onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
             interrupted={missionEntries().find(entry => entry.key === `mission:${id}`)?.mark === "interrupted"}
             onAdmitted={refreshVisible} registerRetry={registerRetry}

@@ -25,7 +25,7 @@ export async function controlMission(input: MissionLifecycleInput, options: {
   const previous = await journal.event(input.missionID, eventID)
   if (previous) {
     if (previous.type !== "mission.control-requested" || previous.requestID !== input.requestID || previous.action !== input.action || previous.expectedRevision !== input.expectedRevision
-      || !isDeepStrictEqual(previous.recurrence, input.recurrence)) {
+      || Boolean(previous.graceful) !== Boolean(input.graceful) || !isDeepStrictEqual(previous.recurrence, input.recurrence)) {
       throw new MissionControlError("Control request ID already used", "request-conflict")
     }
     // A completed old action must never undo a newer pause or terminal stop.
@@ -40,11 +40,16 @@ export async function controlMission(input: MissionLifecycleInput, options: {
     if (mission.revision !== input.expectedRevision) throw new MissionControlError("Mission changed; reload before controlling it", "revision-conflict")
     if (mission.control?.pending.length && input.action === "start") throw new MissionControlError("Retry the pending control action first", "control-pending")
     const state = mission.runState ?? "running"
+    if (input.graceful && input.action !== "pause") throw new MissionControlError("Only Pause can be graceful", "control-conflict")
+    // A graceful Pause can be followed by an immediate one for work still finishing.
+    const interruptsGracefulPause = input.action === "pause" && !input.graceful && state === "paused"
+      && mission.control?.action === "pause" && Boolean(mission.control.graceful)
     if ((input.action === "start" && state !== "prepared" && state !== "paused")
-      || (input.action === "pause" && mission.status === "active" && state !== "running" && state !== "prepared")) {
+      || (input.action === "pause" && mission.status === "active" && state !== "running" && state !== "prepared" && !interruptsGracefulPause)) {
       throw new MissionControlError("Action is not valid in the current mission state", "control-conflict")
     }
-    const targets = mission.actors.filter(actor => !mission!.tasks.some(task => task.actorSessionId === actor.sessionId && task.nativeBinding))
+    // A graceful Pause has no native effect: the paused context stops the family.
+    const targets = input.graceful ? [] : mission.actors.filter(actor => !mission!.tasks.some(task => task.actorSessionId === actor.sessionId && task.nativeBinding))
       .filter(actor => input.action !== "start" || actor.kind === "coordinator"
       || mission!.tasks.some(task => task.actorSessionId === actor.sessionId && (task.status === "queued" || task.status === "dispatching" || task.outstandingExecution)))
       .map(actor => ({ sessionID: actor.sessionId, location: { ...actor.location } }))

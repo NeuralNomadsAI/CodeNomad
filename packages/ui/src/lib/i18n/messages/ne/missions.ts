@@ -283,6 +283,8 @@ export const missionMessages = {
   "missions.control.run.rejected.stop": "रोक लागू भएन: मिसन पहिले नै परिवर्तन भयो र अझै चलिरहेको हुन सक्छ। केही पनि पुनः पठाइएन; समीक्षा गरेर फेरि प्रयास गर्नुहोस्।",
   "missions.control.run.notSent.stop": "पुष्टि गर्दै गर्दा मिसन परिवर्तन भयो। रोक पठाइएन; समीक्षा गरेर फेरि पुष्टि गर्नुहोस्।",
   "missions.control.run.partialInterrupt": "केही उप-एजेन्टहरू अझै चलिरहेका हुन सक्छन्।",
+  "missions.control.run.pausing": "रोकिँदै: चलिरहेका चरणहरू सकिँदैछन्।",
+  "missions.control.run.interruptNow": "मिसनका चलिरहेका कुराकानीहरू अहिले नै रोक्नुहोस्",
   "missions.control.openCoordinator": "समन्वयकर्ता खोल्नुहोस्",
   "missions.control.mutation.error": "परिवर्तन सेभ गर्न सकिएन। तपाईंको इनपुट राखिएको छ।",
   "missions.control.mutation.conflict": "यो मिसन परिवर्तन भयो। नवीनतम संस्करण सम्पादन गर्न सम्पादक बन्द गरेर फेरि खोल्नुहोस्।",

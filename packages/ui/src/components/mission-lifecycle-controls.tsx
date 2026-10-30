@@ -20,7 +20,9 @@ export interface MissionControlRetry { pending: () => boolean; reconcile: (missi
 
 /** Play/Pause/Stop for the selected Mission: one contextual primary action and
  * Stop. Unresolved requests are checked, and resent only on explicit refresh. */
-export function createMissionLifecycle(props: { instanceId: string; mission: MissionMap; disabled?: boolean }) {
+export function createMissionLifecycle(props: { instanceId: string; mission: MissionMap; disabled?: boolean
+  /** Observed activity: some actor or its sub-agents still runs. */
+  working?: boolean }) {
   const { t } = useI18n()
   const [refreshing, setRefreshing] = createSignal(false)
   const location = () => {
@@ -42,8 +44,12 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   const unresolved = () => pending() || Boolean(retry())
   const durableRequest = (): MissionLifecycleInput | undefined => {
     const operation = props.mission.control
-    return operation?.pending.length ? { action: operation.action, expectedRevision: operation.expectedRevision, requestId: operation.requestID } : undefined
+    return operation?.pending.length ? { action: operation.action, expectedRevision: operation.expectedRevision, requestId: operation.requestID,
+      ...(operation.graceful ? { graceful: true as const } : {}) } : undefined
   }
+  /** A graceful Pause whose running steps are still finishing. */
+  const pausing = () => !terminal() && state() === "paused" && props.mission.control?.action === "pause"
+    && Boolean(props.mission.control.graceful) && Boolean(props.working)
   const retryBlocked = () => {
     const request = durableRequest() ?? retry()?.input
     return !request || !missionLifecycleIntents.canReserve(identity(), props.mission.id, request)
@@ -57,14 +63,14 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     try { await missionStore.refresh(props.instanceId) }
     finally { if (alive && scope === identity() && startedEpoch === epoch) setRefreshing(false) }
   }
-  async function act(action: "start" | "pause" | "stop", replay = false) {
+  async function act(action: "start" | "pause" | "stop", replay = false, graceful = false) {
     if (props.disabled || busy() || !active() || (!replay && retry() && !pending()) || (replay && !pending() && !retry())) return
     const instanceId = props.instanceId, scope = identity(), sourceLocation = location(), startedEpoch = epoch
     const owned = () => alive && identity() === scope && epoch === startedEpoch
     const mission = props.mission
     if (!replay && full()) return
     const input = replay ? durableRequest() ?? retry()?.input
-      : { action, expectedRevision: mission.revision, requestId: crypto.randomUUID() }
+      : { action, expectedRevision: mission.revision, requestId: crypto.randomUUID(), ...(graceful ? { graceful: true as const } : {}) }
     if (!input) return
     const intent = missionLifecycleIntents.reserve(scope, mission.id, input)
     if (!intent || !missionLifecycleIntents.start(intent)) return
@@ -114,8 +120,12 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
     const disabled = blocked() || pending()
     if (state() === "prepared") return { key: "start", label: t("missionsPanel.action.start"), ariaLabel: t("missions.control.run.start"), disabled, onSelect: () => act("start") }
     if (state() === "paused") return { key: "resume", label: t("missionsPanel.action.resume"), ariaLabel: t("missions.control.run.resume"), disabled, onSelect: () => act("start") }
-    return { key: "pause", label: t("missionsPanel.action.pause"), ariaLabel: t("missions.control.run.pause"), disabled, onSelect: () => act("pause") }
+    // Pause lets running steps finish; Interrupt now stops them at once.
+    return { key: "pause", label: t("missionsPanel.action.pause"), ariaLabel: t("missions.control.run.pause"), disabled, onSelect: () => act("pause", false, true) }
   }
+  const interruptNow = (): MissionPrimaryAction | undefined => pausing() && !unresolved()
+    ? { key: "interrupt", label: t("missionsPanel.action.interruptNow"), ariaLabel: t("missions.control.run.interruptNow"),
+      disabled: blocked(), onSelect: () => act("pause") } : undefined
   const stop = (): MissionPrimaryAction | undefined => !terminal() && !(retry() && !pending())
     ? { key: "stop", label: t("missions.control.run.stop"), disabled: blocked(), onSelect: confirmStop } : undefined
   /** The unresolved exact request may be resent, unchanged, on an explicit click only. */
@@ -134,6 +144,7 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
   const resend = () => retryable() ? act(props.mission.control?.action ?? retry()?.input.action ?? "start", true) : Promise.resolve()
   const feedback = <>
     <Show when={busy()}><small role="status">{t("missions.control.mutation.pending")}</small></Show>
+    <Show when={!busy() && !unresolved() && pausing()}><small role="status">{t("missions.control.run.pausing")}</small></Show>
     <Show when={!busy() && !unresolved() && partialInterrupt(props.mission)}>
       <small role="status">{t("missions.control.run.partialInterrupt")}</small>
     </Show>
@@ -142,5 +153,5 @@ export function createMissionLifecycle(props: { instanceId: string; mission: Mis
       <small role="alert">{t(value().reason === "rejected" ? `missions.control.run.rejected.${value().action}` : "missions.control.run.notSent.stop")}</small>}
     </Show>
   </>
-  return { primary, stop, retryable, reconcile, resend, feedback }
+  return { primary, stop, interruptNow, retryable, reconcile, resend, feedback }
 }

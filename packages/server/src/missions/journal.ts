@@ -469,7 +469,11 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
     }
     case "mission.control-requested": {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
-        || !["start", "pause", "stop"].includes(String(input.action)) || !Array.isArray(input.targets) || input.targets.length > MISSION_MAX_ACTORS || !input.targets.length) return undefined
+        || !["start", "pause", "stop"].includes(String(input.action)) || !Array.isArray(input.targets) || input.targets.length > MISSION_MAX_ACTORS) return undefined
+      // A graceful Pause interrupts nothing and has no targets; every other control has some.
+      const graceful = input.graceful
+      if (graceful !== undefined && (graceful !== true || input.action !== "pause")) return undefined
+      if (graceful ? input.targets.length : !input.targets.length) return undefined
       const targets: Array<{ sessionID: string; location: MissionLocation }> = []
       const recurrence = input.recurrence
       if (recurrence !== undefined && (!record(recurrence) || input.action !== "start"
@@ -485,6 +489,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       }
       if (recurrence !== undefined && (targets.length !== 1 || targets[0].sessionID !== recurrence.coordinatorSessionID)) return undefined
       return { ...eventBase(input), type: "mission.control-requested", requestID: input.requestID, expectedRevision: Number(input.expectedRevision), action: input.action as "start" | "pause" | "stop", targets,
+        ...(graceful ? { graceful: true as const } : {}),
         ...(recurrence === undefined ? {} : { recurrence: { grantID: recurrence.grantID as string, passageID: recurrence.passageID as string,
           messageID: recurrence.messageID as string, coordinatorSessionID: recurrence.coordinatorSessionID as string } }) }
     }

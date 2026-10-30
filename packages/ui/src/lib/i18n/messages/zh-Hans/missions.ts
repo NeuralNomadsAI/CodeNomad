@@ -283,6 +283,8 @@ export const missionMessages = {
   "missions.control.run.rejected.stop": "停止未生效：任务已先发生变化，可能仍在运行。未重新发送；请检查后重试。",
   "missions.control.run.notSent.stop": "确认期间任务发生了变化。停止未发送；请检查后再次确认。",
   "missions.control.run.partialInterrupt": "部分子代理可能仍在运行。",
+  "missions.control.run.pausing": "正在暂停：进行中的步骤正在完成。",
+  "missions.control.run.interruptNow": "立即中断任务中正在运行的对话",
   "missions.control.openCoordinator": "打开协调者",
   "missions.control.mutation.error": "无法保存更改。您的输入已保留。",
   "missions.control.mutation.conflict": "此任务已更改。请关闭编辑器并重新打开，以编辑最新版本。",
