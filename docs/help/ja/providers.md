@@ -52,7 +52,7 @@
 
 OpenAI は、ChatGPT のサインイン方式の 1 つについて使用量を提供していません。その場合、**使用量** は割り当て量の期間を表示する代わりにその旨を示します。チャットは引き続き利用でき、同じログインで再接続しても測定値は戻りません。
 
-使用量は選択されたネイティブ認証情報に従います。`anthropic`／`claude` 経由の Claude は OpenCode の Anthropic OAuth を使用します。`claude-code` プロバイダーは、WSL ディストリビューションを含むデーモンホストの Claude Code ログインを使用します。`CLAUDE_CODE_OAUTH_TOKEN`、次に保存済みログインの順で、`CLAUDE_SECURESTORAGE_CONFIG_DIR`／`CLAUDE_CONFIG_DIR` または `~/.claude` がファイル保存場所を決めます。ローカル macOS では Keychain を使用できます。CodeNomad は、一方の Claude ログインを他方の代わりにしません。
+使用量は選択されたネイティブ認証情報に従います。`anthropic`／`claude` 経由の Claude は OpenCode の Anthropic OAuth を使用します。OpenCode の **Claude Agent** プロバイダー（`claude-agent`）と `claude-code` プロバイダーは、WSL ディストリビューションを含むデーモンホストの Claude Code ログインを使用します。`CLAUDE_CODE_OAUTH_TOKEN`、次に保存済みログインの順で、`CLAUDE_SECURESTORAGE_CONFIG_DIR`／`CLAUDE_CONFIG_DIR` または `~/.claude` がファイル保存場所を決めます。ローカル macOS では Keychain を使用できます。CodeNomad は、一方の Claude ログインを他方の代わりにしません。
 
 プロバイダーログインの期限が切れたら、管理元である OpenCode、Claude Code、Codex CLI で更新／ログインし、その後 CodeNomad を更新します。CodeNomad は外部管理の更新トークンを交換しません。CodeNomad のサーバーログイン期限切れは別です。失敗したプロバイダーリクエストが再送されると思わず、CodeNomad へ再接続／ログインしてください。[トラブルシューティング](troubleshooting.md)を参照してください。
 

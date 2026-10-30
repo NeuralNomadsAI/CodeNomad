@@ -52,7 +52,7 @@ authorization विन्डो रोकिए प्रवाहबाट **�
 
 OpenAI ले एउटा ChatGPT sign-in विधिका लागि usage दिँदैन: त्यसमा **प्रयोग** ले quota window देखाउनुको सट्टा त्यही बताउँछ। च्याट भने चलिरहन्छ, र उही login फेरि जोड्दा reading फर्किँदैन।
 
-Usage ले चयनित नेटिभ credential पछ्याउँछ। `anthropic`/`claude` मार्फत Claude ले OpenCode को Anthropic OAuth प्रयोग गर्छ। `claude-code` provider ले daemon होस्टको Claude Code login, त्यसको WSL वितरणसमेत, प्रयोग गर्छ: `CLAUDE_CODE_OAUTH_TOKEN`, त्यसपछि सुरक्षित login; `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` वा `~/.claude` ले फाइल भण्डारण निर्धारण गर्छन्; स्थानीय macOS ले Keychain प्रयोग गर्न सक्छ। CodeNomad ले एउटा Claude login को सट्टा अर्को राख्दैन।
+Usage ले चयनित नेटिभ credential पछ्याउँछ। `anthropic`/`claude` मार्फत Claude ले OpenCode को Anthropic OAuth प्रयोग गर्छ। OpenCode को **Claude Agent** provider (`claude-agent`) र `claude-code` provider ले daemon होस्टको Claude Code login, त्यसको WSL वितरणसमेत, प्रयोग गर्छ: `CLAUDE_CODE_OAUTH_TOKEN`, त्यसपछि सुरक्षित login; `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` वा `~/.claude` ले फाइल भण्डारण निर्धारण गर्छन्; स्थानीय macOS ले Keychain प्रयोग गर्न सक्छ। CodeNomad ले एउटा Claude login को सट्टा अर्को राख्दैन।
 
 प्रदायक login म्याद सकिए यसको स्वामी—OpenCode, Claude Code वा Codex CLI—मार्फत refresh/sign in गरी CodeNomad रिफ्रेस गर्नुहोस्। CodeNomad ले बाह्य स्वामित्वका refresh token साट्दैन। CodeNomad सर्भर-login expiry छुट्टै हो: असफल प्रदायक अनुरोध फेरि पठाइन्छ नठानी CodeNomad reconnect/sign in गर्नुहोस्। [समस्या समाधान](troubleshooting.md) हेर्नुहोस्।
 

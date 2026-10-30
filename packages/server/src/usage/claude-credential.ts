@@ -17,7 +17,7 @@ export interface ClaudeCredential {
   source: "keychain" | "claude-code" | "opencode" | "env"
 }
 
-/** The host the OpenCode daemon, and therefore opencode-claude's Claude Code, runs on. */
+/** The host the OpenCode daemon, and therefore the Claude Code run by opencode-claude or OpenCode's Claude Agent, runs on. */
 export interface ClaudeCodeHost {
   /** The daemon host's environment, including CodeNomad profile variables. */
   environment: Record<string, string | undefined>
@@ -79,7 +79,7 @@ async function readCredentialsFile(host: ClaudeCodeHost, directory: string): Pro
 }
 
 /**
- * The login opencode-claude's Claude Code uses on the daemon host, in Claude
+ * The login Claude Code uses on the daemon host, in Claude
  * Code's own order: CLAUDE_CODE_OAUTH_TOKEN, then its stored /login record.
  * Read-only and fresh on every call, since Claude Code rotates the record.
  */
@@ -92,7 +92,7 @@ export async function claudeCodeCredential(host: ClaudeCodeHost, signal?: AbortS
     ?? await readCredentialsFile(host, storage.directory)
 }
 
-/** The auth entry the `claude-code` usage provider reads; the route supplies it. */
+/** The auth entry the `claude-code` usage provider (also serving `claude-agent`) reads; the route supplies it. */
 export function claudeCodeAuthEntry(credential: ClaudeCredential | null): AuthEntry | undefined {
   return credential ? { type: "oauth", access: credential.access, refresh: credential.refresh, expires: credential.expires } : undefined
 }

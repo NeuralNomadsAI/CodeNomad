@@ -18,8 +18,9 @@ export interface UsageRouteDeps {
     | "getSessionEnvironment" | "getServiceWslDistro" | "getHostPathForServicePath">
 }
 
-// opencode-claude runs Claude Code inside the daemon, so its login lives on the
-// daemon host (possibly a WSL distro) under that host's environment.
+// opencode-claude and OpenCode's Claude Agent run Claude Code inside the daemon,
+// so its login lives on the daemon host (possibly a WSL distro) under that
+// host's environment.
 async function claudeCodeHost(manager: UsageRouteDeps["workspaceManager"], instanceId: string, signal: AbortSignal): Promise<ClaudeCodeHost> {
   const environment = await manager.getSessionEnvironment(instanceId, signal)
   const wsl = Boolean(manager.getServiceWslDistro(instanceId))
@@ -83,6 +84,8 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRouteDeps) 
             signal.throwIfAborted()
           }
           if (provider?.id === "claude-code") {
+            // Every provider ID resolving to the Claude Code reader (`claude-code`,
+            // `claude-agent`) gets the host login, replacing any native entry.
             auth["claude-code"] = claudeCodeAuthEntry(await claudeCodeCredential(await claudeCodeHost(manager, instanceId, signal), signal))
             signal.throwIfAborted()
           }

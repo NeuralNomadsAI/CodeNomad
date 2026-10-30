@@ -55,8 +55,9 @@ test("maps OpenCode provider aliases to their usage provider", () => {
 test("maps the Anthropic alias to Claude usage", () => {
   assert.equal(resolveUsageProvider("claude")?.id, "claude")
   assert.equal(resolveUsageProvider("anthropic")?.id, "claude")
-  // Registered by opencode-claude, which runs Claude Code's own login.
+  // Registered by opencode-claude and OpenCode's Claude Agent, which both run Claude Code's own login.
   assert.equal(resolveUsageProvider("claude-code")?.id, "claude-code")
+  assert.equal(resolveUsageProvider("claude-agent")?.id, "claude-code")
 })
 
 test("each Claude provider uses only its session's login and fences Claude Code account switches", async () => {
@@ -78,6 +79,34 @@ test("each Claude provider uses only its session's login and fences Claude Code 
     assert.equal((await getProviderUsage("claude-code", { auth: { "claude-code": login("claude-code-first") } })).windows["5h"].usedPercent, 2)
     assert.equal((await getProviderUsage("claude-code", { auth: { "claude-code": login("claude-code-second") } })).windows["5h"].usedPercent, 3)
     assert.deepEqual(tokens, ["Bearer opencode-oauth", "Bearer claude-code-first", "Bearer claude-code-second"])
+  } finally {
+    globalThis.fetch = previousFetch
+    clearProviderUsageCache()
+  }
+})
+
+test("OpenCode's Claude Agent reads only Claude Code's login and shares its snapshot", async () => {
+  const previousFetch = globalThis.fetch
+  const tokens: string[] = []
+  const expires = Date.now() + 3_600_000
+  const login = (access: string) => ({ type: "oauth", access, expires })
+  globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
+    tokens.push(new Headers(init?.headers).get("Authorization") ?? "")
+    return Response.json({ limits: [{ kind: "session", percent: 40 + tokens.length }] })
+  }) as typeof fetch
+  clearProviderUsageCache()
+  try {
+    // Neither OpenCode's Anthropic OAuth nor a native `claude-agent` entry is its login.
+    const foreign = await getProviderUsage("claude-agent", { auth: { anthropic: login("opencode-oauth"), "claude-agent": login("native-entry") } })
+    assert.equal(foreign.supported, true)
+    assert.equal(foreign.configured, false)
+    const agent = await getProviderUsage("claude-agent", { auth: { "claude-code": login("claude-code-login") } })
+    assert.equal(agent.requestedProviderId, "claude-agent")
+    assert.equal(agent.providerName, "Claude")
+    assert.equal(agent.windows["5h"].usedPercent, 41)
+    // One login, one quota: the claude-code provider reuses the same snapshot.
+    assert.equal((await getProviderUsage("claude-code", { auth: { "claude-code": login("claude-code-login") } })).windows["5h"].usedPercent, 41)
+    assert.deepEqual(tokens, ["Bearer claude-code-login"])
   } finally {
     globalThis.fetch = previousFetch
     clearProviderUsageCache()

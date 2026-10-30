@@ -52,7 +52,7 @@ Use **Usage** in the right panel for the active conversation's provider-plan win
 
 OpenAI does not provide usage for one ChatGPT sign-in method: Usage says so instead of showing quota windows. Chatting still works, and reconnecting the same login does not restore the reading.
 
-Usage follows the selected native credential. Claude through `anthropic`/`claude` uses OpenCode's Anthropic OAuth. The `claude-code` provider uses the Claude Code login on the daemon's host, including its WSL distribution: `CLAUDE_CODE_OAUTH_TOKEN`, then the stored login, with `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` or `~/.claude` determining file storage; local macOS can use Keychain. CodeNomad does not substitute one Claude login for the other.
+Usage follows the selected native credential. Claude through `anthropic`/`claude` uses OpenCode's Anthropic OAuth. OpenCode's **Claude Agent** provider (`claude-agent`) and the `claude-code` provider use the Claude Code login on the daemon's host, including its WSL distribution: `CLAUDE_CODE_OAUTH_TOKEN`, then the stored login, with `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` or `~/.claude` determining file storage; local macOS can use Keychain. CodeNomad does not substitute one Claude login for the other.
 
 For an expired provider login, refresh/sign in through its owner—OpenCode, Claude Code or Codex CLI—then refresh CodeNomad. CodeNomad does not exchange externally owned refresh tokens. A CodeNomad server-login expiry is separate: reconnect/sign in to CodeNomad without assuming a failed provider request will be resent. See [Troubleshooting](troubleshooting.md).
 
