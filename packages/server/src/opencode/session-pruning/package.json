@@ -16,6 +16,7 @@
     "history-ranked-prefilter.ts", "history-ranked-cursor.ts",
     "checkout-identity.ts", "history-ranked-ownership.ts",
     "assets-contract.ts", "assets-store.ts", "media-blob.ts",
+    "assets-gallery-contract.ts", "assets-gallery-proof.ts", "assets-gallery.ts", "assets-conversation.ts",
     "history-database.ts", "navigation-contract.ts", "navigation-store.ts",
     "navigation-scope.ts", "outline-index.ts", "outline-layout.ts", "outline-preview.ts",
     "transaction.ts", "tui.ts", "tui-reload.ts"

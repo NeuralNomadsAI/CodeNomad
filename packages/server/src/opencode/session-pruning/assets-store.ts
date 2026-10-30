@@ -7,10 +7,10 @@ import type { HistoryScope } from "./history-store"
 import { ASSET_URI_LIMIT, isEmbeddedAsset, type AssetTarget, type AssetsResult, type AssetReadResult } from "./assets-contract"
 import { mediaBlobBase64, mediaBlobSizes, mediaDataUri, mediaDataUriLength, toolMediaHash } from "./media-blob"
 
-const MESSAGE_LIMIT = 16 * 1024 * 1024
-const cursorSchema = z.object({ binding: z.string().length(64), through: z.number().int().min(0),
+export const MESSAGE_LIMIT = 16 * 1024 * 1024
+export const cursorSchema = z.object({ binding: z.string().length(64), through: z.number().int().min(0),
   sequence: z.number().int().min(0), offset: z.number().int().min(0).max(100000) }).strict()
-const hash = (value: string) => createHash("sha256").update(value).digest("hex")
+export const hash = (value: string) => createHash("sha256").update(value).digest("hex")
 function files(data: Record<string, any>) {
   const entries: Array<{ part: number; index: number; tool: string; file: Record<string, any> }> = []
   const parts = Array.isArray(data.content) ? data.content : []
@@ -32,7 +32,7 @@ function files(data: Record<string, any>) {
 }
 // Media refs list as the files native reads inline, without loading their bytes;
 // a ref whose blob is gone reads natively as text, so it lists nothing.
-function listed(db: DatabaseSync, data: Record<string, any>) {
+export function listed(db: DatabaseSync, data: Record<string, any>) {
   const assets = files(data), refs = assets.map(asset => toolMediaHash(data.content[asset.part], asset.file))
   const sizes = refs.some(Boolean) ? mediaBlobSizes(db, refs.filter((ref): ref is string => !!ref)) : new Map<string, number>()
   if (!sizes) return undefined
@@ -89,21 +89,30 @@ export async function listSessionAssets(db: DatabaseSync, scope: HistoryScope, c
 export async function readSessionAsset(db: DatabaseSync, scope: HistoryScope, target: AssetTarget, signal: AbortSignal): Promise<AssetReadResult> {
   signal.throwIfAborted(); db.exec("BEGIN")
   try {
-    const boundary = ownedSession(db, scope)
-    const row = db.prepare(`SELECT CASE WHEN length(CAST(data AS BLOB))<=? THEN data END AS data FROM session_message
-      WHERE session_id=? AND type='assistant' AND id=? ${boundary ? "AND id < ?" : ""}`).get(MESSAGE_LIMIT, scope.sessionID!, target.messageID, ...(boundary ? [boundary] : []))
-    if (typeof row?.data !== "string") return { status: "blocked", reason: "missing" }
-    const data = JSON.parse(row.data), tool = data.content?.[target.part]
-    const file = tool?.type === "tool" ? tool.state?.content?.[target.index] : undefined
-    if (file?.type !== "file" || typeof file.uri !== "string" || typeof file.mime !== "string"
-      || !/^[\w.+-]+\/[\w.+-]+$/.test(file.mime) || file.mime.length > 128 || hash(file.uri) !== target.digest) {
-      return { status: "blocked", reason: "unavailable" }
-    }
-    // A media ref reads as the data URI native message reads inline from its blob.
-    const ref = toolMediaHash(tool, file)
-    const inline = ref && mediaBlobBase64(db, ref, Math.floor((ASSET_URI_LIMIT - mediaDataUriLength(file.mime, 0)) / 4) * 3)
-    const uri = ref ? inline && mediaDataUri(file.mime, inline) : file.uri
-    if (!uri || !isEmbeddedAsset({ mime: file.mime, uri })) return { status: "blocked", reason: "unavailable" }
-    return { status: "asset", uri, mime: file.mime }
+    const found = storedAsset(db, scope.sessionID!, ownedSession(db, scope), target)
+    return found.status === "file" ? assetBytes(db, found.tool, found.file)
+      : { status: "blocked", reason: found.status === "limit" ? "missing" : found.status }
   } finally { db.exec("ROLLBACK") }
+}
+/** The digest-bound tool file a target names, inside the caller's read transaction; the size is checked before its JSON loads. */
+export function storedAsset(db: DatabaseSync, sessionID: string, boundary: string | undefined, target: AssetTarget) {
+  const row = db.prepare(`SELECT seq,length(CAST(data AS BLOB)) AS bytes,CASE WHEN length(CAST(data AS BLOB))<=? THEN data END AS data FROM session_message
+    WHERE session_id=? AND type='assistant' AND id=? ${boundary ? "AND id < ?" : ""}`).get(MESSAGE_LIMIT, sessionID, target.messageID, ...(boundary ? [boundary] : []))
+  if (!row) return { status: "missing" } as const
+  if (typeof row.data !== "string") return { status: Number(row.bytes) > MESSAGE_LIMIT ? "limit" : "missing" } as const
+  const data = JSON.parse(row.data), tool = data.content?.[target.part]
+  const file = tool?.type === "tool" ? tool.state?.content?.[target.index] : undefined
+  if (file?.type !== "file" || typeof file.uri !== "string" || typeof file.mime !== "string"
+    || !/^[\w.+-]+\/[\w.+-]+$/.test(file.mime) || file.mime.length > 128 || hash(file.uri) !== target.digest) {
+    return { status: "unavailable" } as const
+  }
+  return { status: "file", seq: Number(row.seq), bytes: Number(row.bytes), data, tool, file } as const
+}
+/** A tool file as the data URI native reads return; a media ref reads inline from its blob. */
+export function assetBytes(db: DatabaseSync, tool: any, file: { mime: string; uri: string }): AssetReadResult {
+  const ref = toolMediaHash(tool, file)
+  const inline = ref && mediaBlobBase64(db, ref, Math.floor((ASSET_URI_LIMIT - mediaDataUriLength(file.mime, 0)) / 4) * 3)
+  const uri = ref ? inline && mediaDataUri(file.mime, inline) : file.uri
+  if (!uri || !isEmbeddedAsset({ mime: file.mime, uri })) return { status: "blocked", reason: "unavailable" }
+  return { status: "asset", uri, mime: file.mime }
 }
