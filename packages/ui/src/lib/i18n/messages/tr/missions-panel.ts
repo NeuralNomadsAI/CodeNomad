@@ -6,6 +6,7 @@ export const missionsPanelMessages = {
   "missionsPanel.needs.permission": "{actor} izin istiyor",
   "missionsPanel.action.start": "Başlat",
   "missionsPanel.action.pause": "Duraklat",
+  "missionsPanel.action.interruptNow": "Şimdi kes",
   "missionsPanel.action.resume": "Sürdür",
   "missionsPanel.action.runNow": "Şimdi çalıştır",
   "missionsPanel.action.checkPassage": "Çalıştırmayı denetle",

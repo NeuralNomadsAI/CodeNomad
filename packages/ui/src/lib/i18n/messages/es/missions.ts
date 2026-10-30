@@ -283,6 +283,8 @@ export const missionMessages = {
   "missions.control.run.rejected.stop": "La detención no se aplicó: la misión cambió antes y puede seguir en ejecución. No se reenvió nada; revísala e inténtalo de nuevo.",
   "missions.control.run.notSent.stop": "La misión cambió mientras confirmabas. La detención no se envió; revísala y vuelve a confirmar.",
   "missions.control.run.partialInterrupt": "Es posible que algunos subagentes sigan en ejecución.",
+  "missions.control.run.pausing": "Pausando: los pasos en curso están terminando.",
+  "missions.control.run.interruptNow": "Interrumpir ahora las conversaciones en curso de la misión",
   "missions.control.openCoordinator": "Abrir coordinador",
   "missions.control.mutation.error": "No se pudo guardar el cambio. Tu entrada se ha conservado.",
   "missions.control.mutation.conflict": "Esta misión ha cambiado. Cierra el editor y vuelve a abrirlo para editar la última versión.",

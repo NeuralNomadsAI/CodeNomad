@@ -6,6 +6,7 @@ export const missionsPanelMessages = {
   "missionsPanel.needs.permission": "Permiso solicitado por {actor}",
   "missionsPanel.action.start": "Iniciar",
   "missionsPanel.action.pause": "Pausar",
+  "missionsPanel.action.interruptNow": "Interrumpir ahora",
   "missionsPanel.action.resume": "Reanudar",
   "missionsPanel.action.runNow": "Ejecutar ahora",
   "missionsPanel.action.checkPassage": "Comprobar pasada",

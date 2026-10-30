@@ -131,6 +131,49 @@ test("a normal Pause of an active mission remains resumable", async () => {
   assert.deepEqual(resumed.control?.pending, [])
 })
 
+test("a graceful Pause interrupts nothing, can be interrupted at once later, and tells Play that work may have stopped early", async () => {
+  const f = fixture(), prepared = await f.create()
+  const running = (await f.control().lifecycle(f.action(prepared, "start"))).mission
+  await assert.rejects(f.control().lifecycle({ ...f.action(running, "stop"), graceful: true }), code("control-conflict"))
+  const calls = f.calls.length
+  const paused = (await f.control().lifecycle({ ...f.action(running, "pause"), graceful: true })).mission
+  assert.equal(paused.runState, "paused")
+  assert.equal(paused.control?.graceful, true)
+  assert.deepEqual([paused.control?.targets, paused.control?.pending], [[], []], "nothing native to apply or retry")
+  assert.ok(paused.control?.completedRevision, "settled at once")
+  assert.equal(f.calls.length, calls, "no native interrupt")
+  // The same request replays to the same mission; a mismatched replay is refused.
+  assert.equal((await f.control().lifecycle({ ...f.action(running, "pause"), graceful: true })).mission.revision, paused.revision)
+  await assert.rejects(f.control().lifecycle(f.action(running, "pause")), code("request-conflict"))
+  const context = await f.control().contextFor(paused.coordinatorSessionId)
+  assert.equal(context?.paused, true)
+  assert.match(context?.instruction ?? "", /Finish only the step already in progress/)
+  // A second graceful Pause is not a valid transition; Interrupt now is.
+  await assert.rejects(f.control().lifecycle({ ...f.action(paused, "pause"), graceful: true }), code("control-conflict"))
+  const interrupted = (await f.control().lifecycle(f.action(paused, "pause"))).mission
+  assert.equal(interrupted.runState, "paused")
+  assert.equal(interrupted.control?.graceful, undefined)
+  assert.deepEqual(f.calls.slice(calls).map(call => [call.action, call.sessionID]), [["pause", paused.coordinatorSessionId]])
+  await assert.rejects(f.control().lifecycle(f.action(interrupted, "pause")), code("control-conflict"), "an interrupted Pause is final")
+  const resumed = (await f.control().lifecycle(f.action(interrupted, "start"))).mission
+  assert.equal(resumed.control?.pausedDescendants?.graceful, undefined, "the latest Pause interrupted")
+
+  const again = (await f.control().lifecycle({ ...f.action(resumed, "pause"), graceful: true })).mission
+  const play = (await f.control().lifecycle(f.action(again, "start"))).mission
+  assert.deepEqual(play.control?.pausedDescendants, { sessions: [], partial: false, graceful: true })
+})
+
+test("the journal keeps only graceful Pauses without targets", () => {
+  const base = { version: 1, id: "evt_control", projectID: "project", missionID: "msn_fixture", type: "mission.control-requested",
+    requestID: "request", expectedRevision: 1, createdAt: 1 }
+  const target = { sessionID: "ses_actor", location: { directory: "/repo" } }
+  assert.equal((parseMissionEvent({ ...base, action: "pause", graceful: true, targets: [] }) as { graceful?: true } | undefined)?.graceful, true)
+  for (const invalid of [{ action: "pause", graceful: true, targets: [target] }, { action: "start", graceful: true, targets: [] },
+    { action: "pause", graceful: false, targets: [target] }, { action: "pause", targets: [] }]) {
+    assert.equal(parseMissionEvent({ ...base, ...invalid }), undefined, JSON.stringify(invalid))
+  }
+})
+
 test("stop records native target receipts after final report without rewriting its completed result", async () => {
   const f = fixture(), prepared = await f.create()
   const running = (await f.control().lifecycle(f.action(prepared, "start"))).mission

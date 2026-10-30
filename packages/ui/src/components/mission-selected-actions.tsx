@@ -18,6 +18,8 @@ export function MissionSelectedActions(props: {
   instanceId: string; mission: MissionMap; active: boolean; disabled: boolean; messagingDisabled: boolean
   reading: boolean; onToggleReader: () => void
   coordinatorActivity?: MissionActorActivityState; onOpenCoordinator: () => void; onAdmitted: () => Promise<void>
+  /** Observed activity: some actor or its sub-agents still runs. */
+  working?: boolean
   /** The Mission's mark is interrupted: its coordinator stopped without a report while nothing else runs. */
   interrupted: boolean
   onEdit: () => void; onDelete: () => void; editDisabled: boolean; deleteDisabled: boolean
@@ -25,7 +27,7 @@ export function MissionSelectedActions(props: {
 }) {
   const { t } = useI18n()
   const lifecycle = createMissionLifecycle({ get instanceId() { return props.instanceId }, get mission() { return props.mission },
-    get disabled() { return props.disabled } })
+    get disabled() { return props.disabled }, get working() { return props.working } })
   const briefing = createMissionBriefingRequest({ get instanceId() { return props.instanceId }, get mission() { return props.mission },
     get active() { return props.active }, get disabled() { return props.messagingDisabled } })
   const recovery = createMissionRecoveryAction({ get instanceId() { return props.instanceId }, get mission() { return props.mission },
@@ -54,7 +56,7 @@ export function MissionSelectedActions(props: {
     ariaLabel: briefing.waiting() ? t(`missions.briefing.request.${briefing.state()}`) : undefined,
     disabled: briefing.waiting() || props.messagingDisabled || !props.active, onSelect: () => briefing.ask() } : undefined
   return <MissionActionBar label={t("missionsPanel.picker.actions")} reading={props.reading} onToggleReader={props.onToggleReader}
-    primary={primary()} stop={lifecycle.stop()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
+    primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
     onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
     secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active}
       draft={() => missionRecordedBrief(props.mission)} initialName={() => missionDisplayTitle(props.mission, 80)} />}

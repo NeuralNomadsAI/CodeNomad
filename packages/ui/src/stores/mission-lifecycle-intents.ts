@@ -26,7 +26,7 @@ export interface MissionLifecycleRejection {
   readonly requestId?: string
 }
 const sameInput = (a: MissionLifecycleInput, b: MissionLifecycleInput) =>
-  a.requestId === b.requestId && a.action === b.action && a.expectedRevision === b.expectedRevision
+  a.requestId === b.requestId && a.action === b.action && a.expectedRevision === b.expectedRevision && Boolean(a.graceful) === Boolean(b.graceful)
 const key = (source: string, missionId: string, input: MissionLifecycleInput) => JSON.stringify([source, missionId, input.requestId])
 
 export function createMissionLifecycleIntents(capacity = 64) {

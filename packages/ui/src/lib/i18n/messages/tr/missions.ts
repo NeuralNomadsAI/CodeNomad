@@ -283,6 +283,8 @@ export const missionMessages = {
   "missions.control.run.rejected.stop": "Durdurma uygulanmadı: görev daha önce değişti ve hâlâ çalışıyor olabilir. Hiçbir şey yeniden gönderilmedi; gözden geçirip yeniden deneyin.",
   "missions.control.run.notSent.stop": "Onaylarken görev değişti. Durdurma gönderilmedi; gözden geçirip yeniden onaylayın.",
   "missions.control.run.partialInterrupt": "Bazı alt ajanlar hâlâ çalışıyor olabilir.",
+  "missions.control.run.pausing": "Duraklatılıyor: devam eden adımlar tamamlanıyor.",
+  "missions.control.run.interruptNow": "Görevin çalışan konuşmalarını şimdi kes",
   "missions.control.openCoordinator": "Koordinatörü aç",
   "missions.control.mutation.error": "Değişiklik kaydedilemedi. Girdiniz korundu.",
   "missions.control.mutation.conflict": "Bu görev değişti. En son sürümü düzenlemek için düzenleyiciyi kapatıp yeniden açın.",

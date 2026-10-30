@@ -79,7 +79,7 @@ import { attachEventSourceHandlers } from "./event-source-handlers"
 import { HttpResponseError, retryFileSearch } from "./retryable-file-search"
 import { deleteMissionRequest, type MissionDeletionRequest } from "./mission-cleanup"
 import { missionMutationRequest } from "./mission-mutation"
-import { missionLifecycleRequest } from "./mission-lifecycle-request"
+import { missionLifecycleRequest, type MissionLifecycleInput } from "./mission-lifecycle-request"
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 import { backgroundReads } from "./background-read-queue"
@@ -781,7 +781,7 @@ export const serverApi = {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`
     return deleteMissionRequest(API_BASE ? new URL(path, API_BASE).toString() : path, input)
   },
-  controlMission(instanceId: string, missionId: string, input: { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string }): Promise<{ mission: MissionMap }> {
+  controlMission(instanceId: string, missionId: string, input: MissionLifecycleInput): Promise<{ mission: MissionMap }> {
     const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/control`
     return missionLifecycleRequest(API_BASE ? new URL(path, API_BASE).toString() : path, input)
   },

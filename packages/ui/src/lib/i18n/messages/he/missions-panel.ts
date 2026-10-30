@@ -6,6 +6,7 @@ export const missionsPanelMessages = {
   "missionsPanel.needs.permission": "בקשת הרשאה מאת {actor}",
   "missionsPanel.action.start": "התחלה",
   "missionsPanel.action.pause": "השהיה",
+  "missionsPanel.action.interruptNow": "הפסקה עכשיו",
   "missionsPanel.action.resume": "המשך",
   "missionsPanel.action.runNow": "הרצה עכשיו",
   "missionsPanel.action.checkPassage": "בדיקת ההרצה",

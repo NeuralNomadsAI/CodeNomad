@@ -21,6 +21,7 @@ import { missionMark, type MissionPickerEntry } from "../../../../mission-picker
 import { createDocumentAttention } from "../../../../session/session-idle-attention"
 import { MissionSelectedActions } from "../../../../mission-selected-actions"
 import type { MissionControlRetry } from "../../../../mission-lifecycle-controls"
+import { missionActivityWorking } from "../../../../mission-native-execution-model"
 import { MISSION_ROW_TITLE_MAX, missionDisplayTitle, missionRelativeTime } from "../../../../../lib/mission-display"
 import { useI18n } from "../../../../../lib/i18n"
 import { MissionCleanupPanel } from "../../../../mission-cleanup"
@@ -387,6 +388,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
             reading={isReading({ missionId: id, kind: "overview" })} onToggleReader={() => void read({ missionId: id, kind: "overview" })}
             coordinatorActivity={state().activity?.missions.find(item => item.missionId === id)?.actors
               .find(actor => actor.sessionId === selected().coordinatorSessionId)?.state}
+            working={missionActivityWorking(state().activity?.missions.find(item => item.missionId === id)?.actors)}
             onOpenCoordinator={() => void openActor(selected().coordinatorSessionId)}
             interrupted={missionEntries().find(entry => entry.key === `mission:${id}`)?.mark === "interrupted"}
             onAdmitted={refreshVisible} registerRetry={registerRetry}

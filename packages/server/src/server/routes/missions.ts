@@ -151,11 +151,13 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   })
 
   app.post<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID/control", async (request, reply) => {
-    const parsed = z.object({ action: z.enum(["start", "pause", "stop"]), expectedRevision: z.number().int().positive(), requestId: RequestID }).strict().safeParse(request.body)
+    const parsed = z.object({ action: z.enum(["start", "pause", "stop"]), expectedRevision: z.number().int().positive(), requestId: RequestID,
+      graceful: z.literal(true).optional() }).strict().refine(value => !value.graceful || value.action === "pause").safeParse(request.body)
     const params = z.object({ id: z.string().trim().min(1).max(200), missionID: z.string().trim().min(1).max(100) }).safeParse(request.params)
     if (!parsed.success || !params.success) return reply.code(400).send({ error: "Invalid mission control request" })
     return mutate(request, reply, deps, params.data.id, async (rpc, options) => await rpc.lifecycle({
       missionID: params.data.missionID, requestID: parsed.data.requestId, action: parsed.data.action, expectedRevision: parsed.data.expectedRevision,
+      ...(parsed.data.graceful ? { graceful: true } : {}),
     }, options) as { mission: MissionMap })
   })
 

@@ -283,6 +283,8 @@ export const missionMessages = {
   "missions.control.run.rejected.stop": "L’arrêt n’a pas été appliqué : la mission a changé entre-temps et peut encore être en cours. Rien n’a été renvoyé ; vérifiez-la puis réessayez.",
   "missions.control.run.notSent.stop": "La mission a changé pendant la confirmation. L’arrêt n’a pas été envoyé ; vérifiez-la puis confirmez à nouveau.",
   "missions.control.run.partialInterrupt": "Certains sous-agents sont peut-être encore actifs.",
+  "missions.control.run.pausing": "Mise en pause : les étapes en cours se terminent.",
+  "missions.control.run.interruptNow": "Interrompre maintenant les conversations en cours de la mission",
   "missions.control.openCoordinator": "Ouvrir le coordinateur",
   "missions.control.mutation.error": "La modification n'a pas pu être enregistrée. Votre saisie a été conservée.",
   "missions.control.mutation.conflict": "Cette mission a changé. Fermez l'éditeur et rouvrez-le pour modifier la dernière version.",

@@ -19,12 +19,13 @@ import type {
 } from "../missions/control-types"
 import { MISSION_SCHEMA_VERSION, type MissionEvent, type MissionJsonValue, type MissionMap, type MissionTemplateId } from "../missions/model"
 import { parseMissionEvent } from "../missions/journal"
+import { missionPausedInstruction } from "../missions/lifecycle-model"
 import { CODENOMAD_MISSIONS_RPC } from "../missions/rpc"
 import { executionSchema, parseExecution } from "../missions/execution"
 import { readMissionCatalog, validateNativeExecution, type MissionCatalogClient } from "../missions/native-catalog"
 import { MissionNotificationOutbox } from "../missions/notification-outbox"
 import { MISSION_RPC_REJECTION, missionMutationStatus } from "../missions/rpc-errors"
-import { readLocationRef } from "./compatibility/location"
+import { readLocationRef, sameLocation } from "./compatibility/location"
 import { taskExecutionModeSchema, taskContractReferenceWireSchema } from "../missions/native-wire-schema"
 import { parseExecutionMode, parseMissionTaskMode, missionTaskModeSchema } from "../missions/task-execution-mode"
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
@@ -240,10 +241,12 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
       lifecycle: async (input, context) => {
         assertActive()
         const value = object(input)
-        if (!["start", "pause", "stop"].includes(String(value.action)) || !Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 1) throw new Error("Invalid mission control")
+        if (!["start", "pause", "stop"].includes(String(value.action)) || !Number.isSafeInteger(value.expectedRevision) || Number(value.expectedRevision) < 1
+          || (value.graceful !== undefined && (value.graceful !== true || value.action !== "pause"))) throw new Error("Invalid mission control")
         return mutationResult(context, () => control.lifecycle({
           missionID: requiredText(value.missionID, "missionID", 100), requestID: requiredText(value.requestID, "requestID", 128),
           action: value.action as "start" | "pause" | "stop", expectedRevision: Number(value.expectedRevision),
+          ...(value.graceful === true ? { graceful: true as const } : {}),
         }))
       },
       cleanupTarget: async input => {
@@ -458,6 +461,43 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
     })
     registrations.push(tools)
 
+    // Ordinary native sub-agents of a one-time Mission are not actors and read no
+    // Mission context; a paused Mission still reaches them through their ancestry.
+    // Cached parent IDs only find the candidate actor cheaply (running Missions and
+    // unrelated families need no native read once warm). Placement can change with
+    // a native move, so a paused candidate's whole chain is re-read: every session
+    // must still link to its parent and share the actor's admitted project and Location.
+    const parents = new Map<string, string | null>()
+    const parentOf = async (sessionID: string) => {
+      let parent = parents.get(sessionID)
+      if (parent === undefined) {
+        const session = await context.session.get({ sessionID })
+        parent = session.id === sessionID ? session.parentID ?? null : null
+        if (parents.size >= MAX_PAUSE_ANCESTRY_CACHE) parents.delete(parents.keys().next().value!)
+        parents.set(sessionID, parent)
+      }
+      return parent
+    }
+    const pausedAncestorMission = async (control: MissionBusinessRoute["control"], sessionID: string): Promise<string | undefined> => {
+      const chain = [sessionID]
+      let mission: Awaited<ReturnType<typeof control.contextFor>>
+      while (!mission) {
+        if (chain.length > MAX_PAUSE_ANCESTRY) return undefined
+        const parent = await parentOf(chain.at(-1)!)
+        if (!parent || chain.includes(parent)) return undefined
+        chain.push(parent)
+        mission = await control.contextFor(parent)
+      }
+      if (!mission.paused) return undefined
+      const { projectID, location } = mission.placement
+      for (const [index, id] of chain.entries()) {
+        const session = await context.session.get({ sessionID: id })
+        if (session.id !== id || session.projectID !== projectID || !sameLocation(session.location, location)
+          || (index < chain.length - 1 && session.parentID !== chain[index + 1])) return undefined
+      }
+      return mission.missionID
+    }
+
     const contextHook = await context.session.hook("context", (event) => {
       if (!active) return
       return writer.run(async () => {
@@ -470,10 +510,19 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           selected.current()
           // One hinted membership read per turn: the instruction and the coordinator check share it.
           const mission = await selected.control.contextFor(selected.readSessionID)
+          if (active && !mission && selected.readSessionID === event.sessionID) {
+            const paused = await pausedAncestorMission(selected.control, event.sessionID)
+            if (active && paused) {
+              selected.current()
+              event.system.push({ type: "text", text: missionPausedInstruction(paused, true) })
+            }
+          }
           if (!active || !mission) return
           selected.current()
           if (selected.readSessionID !== event.sessionID) {
             event.system.push({ type: "text", text: `You are a native descendant of coordinator ${selected.readSessionID}. Return normal scoped results to your immediate parent; only the coordinator declares, revises, reports or finalizes the business plan. mission.inspect is read-only.` })
+            // A paused mission's sub-agents stop after their current step too.
+            if (mission.paused) event.system.push({ type: "text", text: missionPausedInstruction(mission.missionID, true) })
             for (const name of [...COORDINATOR_TOOLS, "report"]) delete event.tools[`mission_${name}`]
             return
           }
@@ -496,6 +545,9 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
 
 /** Topology and hand-off tools only the coordinator itself may see. */
 const COORDINATOR_TOOLS = ["delegate", "revise", "briefing", "interrupt", "prepare"] as const
+/** Native nesting levels walked to find a paused Mission actor, and sessions whose parent is remembered. */
+const MAX_PAUSE_ANCESTRY = 32
+const MAX_PAUSE_ANCESTRY_CACHE = 4096
 
 const interruptSchema = {
   type: "object",

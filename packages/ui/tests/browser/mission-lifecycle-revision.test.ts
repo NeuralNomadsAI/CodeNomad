@@ -39,7 +39,7 @@ before(async () => {
 after(() => runWithDiagnosticCleanup({ run: async () => { await browser?.close() }, diagnose: async () => {},
   cleanup: async () => { await server?.close() }, onObservationError: () => {}, onCleanupError: error => console.error("revision fixture shutdown", error) }))
 
-type Input = { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string }
+type Input = { action: "start" | "pause" | "stop"; expectedRevision: number; requestId: string; graceful?: true }
 function mission(id = "revision"): MissionMap {
   return { version: 1, id, projectID: "fixture", projectCanonical: "/fixture", objective: `Lifecycle ${id}`, template: "custom",
     coordinatorSessionId: "ses_fixture", status: "active", runState: "running", actors: [], frontier: [], claims: [], revision: 1,
@@ -209,6 +209,7 @@ for (const action of ["pause", "stop"] as const) {
         const input = route.request().postDataJSON() as Input; calls.push(input)
         current = { ...current, revision: current.revision + 1, runState: action === "pause" ? "paused" : "stopped", status: action === "stop" ? "stopped" : "active",
           control: { id: "evt_partial", missionID: current.id, requestID: input.requestId, expectedRevision: input.expectedRevision, action,
+            ...(input.graceful ? { graceful: true } : {}),
             targets: [{ sessionID: "ses_fixture", location: { directory: "/fixture" } }], pending: calls.length === 1 ? ["ses_fixture"] : [] } }
         return calls.length === 1 ? route.fulfill({ status: 503, json: { code: "control-pending" } }) : route.fulfill({ json: { mission: current } })
       })
@@ -229,6 +230,46 @@ for (const action of ["pause", "stop"] as const) {
     } finally { await page.close() }
   })
 }
+
+// A Form or permission anywhere in the family outranks its running members in the
+// activity projection: waiting for the user must not hide Interrupt now.
+for (const state of ["running", "form"] as const) test(`Pause lets ${state} work finish while it shows Pausing, and Interrupt now stops it at once`, async () => {
+  const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = [], errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  let current = mission(), working = true
+  try {
+    await page.route("**/api/**", route => route.fulfill({ json: {} }))
+    await page.route("**/api/workspaces/mission-visibility/missions**", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [current], generatedAt: current.revision, discardedEvents: 0,
+        activity: { generatedAt: current.revision, missions: [{ missionId: current.id, actors: [{ sessionId: "ses_fixture", state: working ? state : "idle-without-report" }] }] } } })
+      const input = route.request().postDataJSON() as Input; calls.push(input)
+      current = { ...current, revision: current.revision + 1, runState: "paused",
+        control: { id: `evt_${calls.length}`, missionID: current.id, requestID: input.requestId, expectedRevision: input.expectedRevision, action: "pause",
+          ...(input.graceful ? { graceful: true, targets: [] } : { targets: [{ sessionID: "ses_fixture", location: { directory: "/fixture" } }] }), pending: [] } }
+      return route.fulfill({ json: { mission: current } })
+    })
+    await open(page)
+    await pause(page).click()
+    const interrupt = page.getByRole("button", { name: "Interrupt now", exact: true })
+    await interrupt.waitFor()
+    assert.equal(await page.getByRole("status").filter({ hasText: "Pausing: the steps in progress are finishing." }).count(), 1)
+    assert.deepEqual(calls.map(call => [call.action, call.graceful]), [["pause", true]], "Pause interrupts nothing")
+    assert.equal(await page.getByRole("button", { name: "Resume mission", exact: true }).isEnabled(), true)
+
+    await interrupt.click()
+    await interrupt.waitFor({ state: "detached" })
+    assert.deepEqual(calls.map(call => [call.action, call.graceful]), [["pause", true], ["pause", undefined]], "Interrupt now is an immediate Pause")
+    assert.equal(await page.getByText("Pausing: the steps in progress are finishing.").count(), 0)
+
+    // Once nothing runs, a graceful Pause shows neither the status nor the action.
+    current = { ...mission(), revision: 5, runState: "paused", control: { id: "evt_quiet", missionID: "revision", requestID: "quiet", expectedRevision: 4,
+      action: "pause", graceful: true, targets: [], pending: [] } }
+    working = false
+    await missionRefresh(page).click(); await settled(page)
+    assert.equal(await interrupt.count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
 
 test("Stop asks for confirmation in a dialog: cancel and Escape never submit; confirmation submits once", async () => {
   const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = []

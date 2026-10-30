@@ -283,6 +283,8 @@ export const missionMessages = {
   "missions.control.run.rejected.stop": "העצירה לא הוחלה: המשימה השתנתה לפני כן וייתכן שהיא עדיין פועלת. דבר לא נשלח מחדש; בדקו אותה ונסו שוב.",
   "missions.control.run.notSent.stop": "המשימה השתנתה בזמן האישור. העצירה לא נשלחה; בדקו אותה ואשרו שוב.",
   "missions.control.run.partialInterrupt": "ייתכן שחלק מתתי-הסוכנים עדיין פועלים.",
+  "missions.control.run.pausing": "בהשהיה: השלבים הפעילים מסתיימים.",
+  "missions.control.run.interruptNow": "הפסקת השיחות הפעילות של המשימה עכשיו",
   "missions.control.openCoordinator": "פתיחת המתאם",
   "missions.control.mutation.error": "לא ניתן לשמור את השינוי. הקלט נשמר.",
   "missions.control.mutation.conflict": "המשימה הזו השתנתה. יש לסגור את העורך ולפתוח אותו מחדש כדי לערוך את הגרסה העדכנית.",

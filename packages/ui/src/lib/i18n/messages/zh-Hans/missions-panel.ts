@@ -6,6 +6,7 @@ export const missionsPanelMessages = {
   "missionsPanel.needs.permission": "{actor} 请求权限",
   "missionsPanel.action.start": "开始",
   "missionsPanel.action.pause": "暂停",
+  "missionsPanel.action.interruptNow": "立即中断",
   "missionsPanel.action.resume": "继续",
   "missionsPanel.action.runNow": "立即运行",
   "missionsPanel.action.checkPassage": "检查本次运行",

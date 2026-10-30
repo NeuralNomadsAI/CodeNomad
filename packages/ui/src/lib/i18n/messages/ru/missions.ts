@@ -283,6 +283,8 @@ export const missionMessages = {
   "missions.control.run.rejected.stop": "Остановка не применена: миссия успела измениться и, возможно, ещё выполняется. Ничего не отправлено повторно; проверьте её и повторите попытку.",
   "missions.control.run.notSent.stop": "Миссия изменилась во время подтверждения. Остановка не отправлена; проверьте её и подтвердите снова.",
   "missions.control.run.partialInterrupt": "Некоторые субагенты, возможно, ещё работают.",
+  "missions.control.run.pausing": "Приостановка: текущие шаги завершаются.",
+  "missions.control.run.interruptNow": "Прервать текущие разговоры миссии сейчас",
   "missions.control.openCoordinator": "Открыть координатор",
   "missions.control.mutation.error": "Не удалось сохранить изменение. Ваш ввод сохранён.",
   "missions.control.mutation.conflict": "Эта миссия изменилась. Закройте редактор и откройте его снова, чтобы править последнюю версию.",
