@@ -11,29 +11,43 @@ async function ensureGitExclude(repoRoot: string, logger?: LogLike): Promise<voi
     return
   }
 
-  const entries = [".codenomad/worktrees/"]
-
-  let existing = ""
+  let existing: Buffer
   try {
-    existing = await fsp.readFile(excludePath, "utf-8")
+    existing = await readGitExclude(excludePath)
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code
-    if (code !== "ENOENT") {
-      logger?.debug?.({ err: error, excludePath }, "Failed to read .git/info/exclude")
-      return
-    }
-    existing = ""
-  }
-
-  const lines = new Set(existing.split(/\r?\n/).map((l) => l.trim()).filter(Boolean))
-  const missing = entries.filter((e) => !lines.has(e))
-  if (missing.length === 0) {
+    logger?.debug?.({ err: error, excludePath }, "Failed to read .git/info/exclude")
     return
   }
+  await appendCodenomadGitExclude(excludePath, existing, [".codenomad/worktrees/"])
+}
 
-  const header = existing.includes("# codenomad") ? "" : (existing.trim() ? "\n" : "") + "# codenomad\n"
+/** The exclude file's bytes; a missing file is empty, any other read failure throws. */
+export async function readGitExclude(excludePath: string): Promise<Buffer> {
+  try {
+    return await fsp.readFile(excludePath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return Buffer.alloc(0)
+    throw error
+  }
+}
+
+/**
+ * Appends the `entries` missing from `existing` (the file's current bytes) under
+ * the `# codenomad` header. The existing bytes are never rewritten.
+ */
+export async function appendCodenomadGitExclude(excludePath: string, existing: Buffer, entries: readonly string[]): Promise<boolean> {
+  const text = existing.toString("utf-8")
+  const lines = new Set(text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean))
+  const missing = entries.filter((e) => !lines.has(e))
+  if (missing.length === 0) {
+    return false
+  }
+
+  const separator = text && !text.endsWith("\n") ? "\n" : ""
+  const header = text.includes("# codenomad") ? "" : (text.trim() ? "\n" : "") + "# codenomad\n"
   const suffix = missing.map((e) => `${e}\n`).join("")
-  await fsp.writeFile(excludePath, `${existing}${header}${suffix}`, "utf-8")
+  await fsp.appendFile(excludePath, `${separator}${header}${suffix}`, "utf-8")
+  return true
 }
 
 export async function ensureCodenomadGitExclude(workspaceFolder: string, logger?: LogLike): Promise<void> {

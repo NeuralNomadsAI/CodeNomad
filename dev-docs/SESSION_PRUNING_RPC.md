@@ -151,6 +151,25 @@ and creates through `ctx.session.create` only when `absent`; `new` always create
 The lock serializes the callers of one OpenCode process; two processes sharing a
 database can each create one, and the lookup then picks the newest.
 
+`POST /api/workspaces/:id/images-conversation` (`server/routes/images-conversation.ts`)
+brokers it for `{ directory, mode, title?, agent?, model? }`: the directory must be an
+owned location, inside the worktree deletion fence; RPC ID and method are pinned, and
+a missing method, malformed answer or timeout is `blocked: unavailable`, never a
+fallback. In the UI (`ui/src/stores/images-conversation.ts`), `resolveImagesConversation`
+refreshes the current location's agent catalog and sends the localized title,
+`agent: "design"` only when the catalog lists it, and the model `getDefaultModel`
+resolves for that agent; the plugin applies them only when it creates.
+`showImagesConversation` then hydrates and selects a found conversation and requests
+composer focus, so a caller can answer before navigating; nothing is ever sent. After a successful `open`
+or `new` the route excludes `.codenomad/design/` (`workspaces/design-git-exclude.ts`)
+and answers `gitExclusion`: the execution host's Git (`wsl.exe --distribution <owned>
+--exec git` for WSL, in the C locale) resolves `rev-parse --git-path info/exclude`,
+the path is translated for host access, and `appendCodenomadGitExclude` appends the
+entry under `# codenomad` without rewriting existing bytes, never `.gitignore`. Only
+Git's explicit "not a git repository (or any …)" answer is `not-repository`; Git
+missing, an unfollowable `.git` pointer, a failed translation or a location removed
+meanwhile write nothing and give `unavailable`.
+
 ## Version and loading notes
 
 `history` and `pruneBatch` extend this plugin; see
@@ -193,6 +212,8 @@ mocked cache tests.
 
 ```powershell
 node --import tsx --test packages/server/src/opencode/session-pruning/*.test.ts packages/server/src/server/routes/session-pruning.test.ts packages/server/src/server/__tests__/instance-proxy.test.ts
+node --import tsx --test packages/server/src/server/routes/images-conversation.test.ts packages/server/src/workspaces/design-git-exclude.test.ts  # CODENOMAD_TEST_WSL_DISTRO=<distro> adds the real WSL case
+node --import tsx --test tests/browser/images-conversation.test.ts  # from packages/ui
 node --import tsx --conditions=browser --test --test-force-exit packages/ui/src/stores/session-actions.test.ts packages/ui/src/stores/session-pruning-events.test.ts packages/ui/src/stores/session-pruning-projection.test.ts packages/ui/src/stores/opencode-data.test.ts
 node scripts/test-session-pruning-native.mjs C:/isolated-install/opencode2.exe
 npm run typecheck --workspace @neuralnomads/codenomad

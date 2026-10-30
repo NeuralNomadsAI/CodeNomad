@@ -33,6 +33,8 @@ export interface PromptInputProps {
   onCommand?: (commandName: string, args: string) => Promise<void>
   onRunShell?: (command: string) => Promise<void>
   disabled?: boolean
+  // Keeps typing available but refuses every send (prompt, command, shell) until cleared.
+  sendBlocked?: boolean
   escapeInDebounce?: boolean
   isSessionBusy?: boolean
   onAbortSession?: () => Promise<void>

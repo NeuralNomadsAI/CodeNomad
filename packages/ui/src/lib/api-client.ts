@@ -1,6 +1,7 @@
 import type { HistoryQuery, HistoryResult, PruneBatch, PruneBatchResult } from "../../../server/src/opencode/session-pruning/history-contract"
 import type { HistoryRankedInput } from "../../../server/src/opencode/session-pruning/history-ranked-contract"
 import type { RankedHistoryResult } from "../../../server/src/server/routes/session-history-ranked-contract"
+import type { ImagesConversationRequest, ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
 import type { MissionProfiles } from "../../../server/src/missions/playbook-profiles"
 import type { MissionRecurrenceSnapshot } from "../../../server/src/api-types"
 import type { RecurrenceManualResult } from "../../../server/src/missions/recurrence-manual-rpc"
@@ -251,6 +252,11 @@ export const serverApi = {
   pruneSessionHistory(instanceId: string, input: PruneBatch, signal?: AbortSignal): Promise<PruneBatchResult> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/session-history/prune`, {
       method: "POST", body: JSON.stringify(input), signal,
+    })
+  },
+  imagesConversation(instanceId: string, input: ImagesConversationRequest): Promise<ImagesConversationResponse> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/images-conversation`, {
+      method: "POST", body: JSON.stringify(input),
     })
   },
   pruneSessionMessage(instanceId: string, input: PruneRequest): Promise<PruneResult> {

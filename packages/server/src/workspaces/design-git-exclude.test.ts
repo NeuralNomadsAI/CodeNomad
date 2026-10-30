@@ -1,0 +1,187 @@
+import assert from "node:assert/strict"
+import { after, before, test } from "node:test"
+import { execFileSync } from "node:child_process"
+import { existsSync } from "node:fs"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
+import os from "node:os"
+import path from "node:path"
+import { DESIGN_EXCLUDE_ENTRY, excludeDesignFolder, type ExcludeGit, type ExcludeTarget } from "./design-git-exclude"
+import { ensureCodenomadGitExclude } from "./worktree-map"
+
+let root: string
+const git = (directory: string, ...args: string[]) => execFileSync("git", ["-C", directory, ...args], { encoding: "utf8", windowsHide: true }).trim()
+const host = (directory: string): ExcludeTarget => ({ directory, toHost: async value => value })
+const excludeFile = (directory: string) => path.resolve(directory, git(directory, "rev-parse", "--git-path", "info/exclude"))
+const count = (text: string) => text.split(/\r?\n/).filter(line => line.trim() === DESIGN_EXCLUDE_ENTRY).length
+
+async function repository(name: string) {
+  const directory = path.join(root, name)
+  await mkdir(directory)
+  git(directory, "init", "-b", "main")
+  git(directory, "config", "user.name", "Exclude Fixture")
+  git(directory, "config", "user.email", "fixture@example.invalid")
+  git(directory, "config", "core.autocrlf", "false")
+  await writeFile(path.join(directory, "README.md"), "fixture\n")
+  git(directory, "add", ".")
+  git(directory, "commit", "-m", "Initial")
+  return directory
+}
+
+before(async () => {
+  root = await mkdtemp(path.join(os.tmpdir(), "design-exclude-"))
+  // Discovery never climbs above the fixture root into an unrelated repository.
+  process.env.GIT_CEILING_DIRECTORIES = path.dirname(root)
+})
+after(async () => {
+  delete process.env.GIT_CEILING_DIRECTORIES
+  await rm(root, { recursive: true, force: true })
+})
+
+test("appends the design folder once, keeps foreign bytes and leaves .gitignore alone", async () => {
+  const directory = await repository("plain")
+  const file = excludeFile(directory)
+  // CRLF, a non-UTF-8 byte and no final newline must survive byte for byte.
+  const foreign = Buffer.concat([Buffer.from("# local\r\n*.log\r\nbin/"), Buffer.from([0xff]), Buffer.from("cache")])
+  await writeFile(file, foreign)
+
+  assert.equal(await excludeDesignFolder(host(directory)), "excluded")
+  const written = await readFile(file)
+  assert.deepEqual(written.subarray(0, foreign.length), foreign)
+  assert.equal(count(written.toString("utf8")), 1)
+  assert.match(written.subarray(foreign.length).toString("utf8"), /^\n\n# codenomad\n\.codenomad\/design\/\n$/)
+
+  assert.equal(await excludeDesignFolder(host(directory)), "excluded")
+  assert.deepEqual(await readFile(file), written, "a second call adds nothing")
+  assert.equal(existsSync(path.join(directory, ".gitignore")), false)
+
+  await mkdir(path.join(directory, ".codenomad", "design", "subject"), { recursive: true })
+  await writeFile(path.join(directory, ".codenomad", "design", "subject", "app-icon-minimal-a.png"), Buffer.from([0x89, 0x50]))
+  assert.equal(git(directory, "status", "--porcelain"), "")
+})
+
+test("reuses the existing # codenomad header", async () => {
+  const directory = await repository("header")
+  const file = excludeFile(directory)
+  await writeFile(file, "# codenomad\n.codenomad/worktrees/")
+  assert.equal(await excludeDesignFolder(host(directory)), "excluded")
+  assert.equal(await readFile(file, "utf8"), "# codenomad\n.codenomad/worktrees/\n.codenomad/design/\n")
+})
+
+test("the worktree and design entries share one header through the same writer", async () => {
+  const directory = await repository("shared-writer")
+  await writeFile(excludeFile(directory), "foreign\n")
+  await ensureCodenomadGitExclude(directory)
+  assert.equal(await excludeDesignFolder(host(directory)), "excluded")
+  await ensureCodenomadGitExclude(directory)
+  assert.equal(await readFile(excludeFile(directory), "utf8"), "foreign\n\n# codenomad\n.codenomad/worktrees/\n.codenomad/design/\n")
+})
+
+test("concurrent calls append once", async () => {
+  const directory = await repository("concurrent")
+  const results = await Promise.all([excludeDesignFolder(host(directory)), excludeDesignFolder(host(directory)), excludeDesignFolder(host(directory))])
+  assert.deepEqual(results, ["excluded", "excluded", "excluded"])
+  assert.equal(count(await readFile(excludeFile(directory), "utf8")), 1)
+})
+
+test("a linked worktree is covered by the common exclude file", async () => {
+  const directory = await repository("linked-main")
+  const linked = path.join(root, "linked-worktree")
+  git(directory, "worktree", "add", "-b", "linked", linked)
+  assert.equal(await excludeDesignFolder(host(linked)), "excluded")
+  assert.equal(excludeFile(linked), excludeFile(directory))
+  assert.equal(count(await readFile(excludeFile(directory), "utf8")), 1)
+  await mkdir(path.join(linked, ".codenomad", "design"), { recursive: true })
+  await writeFile(path.join(linked, ".codenomad", "design", "x.png"), "x")
+  assert.equal(git(linked, "status", "--porcelain"), "")
+})
+
+test("outside a repository nothing is written", async () => {
+  const directory = path.join(root, "not-a-repository")
+  await mkdir(directory)
+  assert.equal(await excludeDesignFolder(host(directory)), "not-repository")
+  assert.equal(existsSync(path.join(directory, ".git")), false)
+  assert.equal(existsSync(path.join(directory, ".codenomad")), false)
+})
+
+test("discovery failures are unavailable, never 'no repository'", async () => {
+  const unreadable = path.join(root, "broken-pointer")
+  await mkdir(unreadable)
+  await writeFile(path.join(unreadable, ".git"), `gitdir: ${path.join(root, "missing-gitdir")}\n`)
+  assert.equal(await excludeDesignFolder(host(unreadable)), "unavailable")
+  assert.equal(existsSync(path.join(root, "missing-gitdir")), false)
+
+  const malformed = path.join(root, "malformed-pointer")
+  await mkdir(malformed)
+  await writeFile(path.join(malformed, ".git"), "not a pointer\n")
+  assert.equal(await excludeDesignFolder(host(malformed)), "unavailable")
+
+  assert.equal(await excludeDesignFolder(host(path.join(root, "deleted-location"))), "unavailable")
+
+  const missingGit: ExcludeGit = async () => { throw Object.assign(new Error("spawn git ENOENT"), { code: "ENOENT" }) }
+  assert.equal(await excludeDesignFolder(host(root), missingGit), "unavailable")
+})
+
+test("a location deleted during the operation writes nothing", async () => {
+  const directory = await repository("vanishing")
+  const file = excludeFile(directory)
+  const before = await readFile(file)
+  const removing: ExcludeGit = async (target, args) => {
+    const output = git(target.directory, ...args)
+    await rm(directory, { recursive: true, force: true })
+    return output
+  }
+  assert.equal(await excludeDesignFolder(host(directory), removing), "unavailable")
+  assert.equal(existsSync(path.join(directory, ".git")), false, "deleted Git metadata is never recreated")
+  assert.ok(before.length > 0)
+})
+
+test("a WSL location is resolved by the distro's Git, then written through the host translation", async () => {
+  // A worktree created in WSL: Git follows its Linux `gitdir:` pointer and names the common file.
+  const share = path.join(root, "wsl-share")
+  await mkdir(path.join(share, "home", "user", "repo", ".git", "info"), { recursive: true })
+  await mkdir(path.join(share, "home", "user", "linked"), { recursive: true })
+  const calls: Array<{ target: ExcludeTarget; args: string[] }> = []
+  const wslGit: ExcludeGit = async (target, args) => {
+    calls.push({ target, args })
+    return target.directory === "/home/user/repo" ? ".git/info/exclude" : "/home/user/repo/.git/info/exclude"
+  }
+  const translated: string[] = []
+  const target = (directory: string): ExcludeTarget => ({
+    directory, distro: "Ubuntu",
+    toHost: async servicePath => {
+      translated.push(servicePath)
+      return path.join(share, ...servicePath.split("/").filter(Boolean))
+    },
+  })
+  assert.equal(await excludeDesignFolder(target("/home/user/repo"), wslGit), "excluded")
+  assert.equal(await excludeDesignFolder(target("/home/user/linked"), wslGit), "excluded")
+  assert.deepEqual(calls.map(call => [call.target.distro, call.target.directory, ...call.args]), [
+    ["Ubuntu", "/home/user/repo", "rev-parse", "--git-path", "info/exclude"],
+    ["Ubuntu", "/home/user/linked", "rev-parse", "--git-path", "info/exclude"],
+  ])
+  assert.ok(translated.includes("/home/user/repo/.git/info/exclude"), "the Linux path is translated, never given to Windows directly")
+  assert.equal(await readFile(path.join(share, "home", "user", "repo", ".git", "info", "exclude"), "utf8"), "# codenomad\n.codenomad/design/\n")
+
+  const untranslatable = { ...target("/home/user/repo"), toHost: async () => undefined }
+  assert.equal(await excludeDesignFolder(untranslatable, wslGit), "unavailable")
+})
+
+// Real distro Git and wslpath, on a throwaway repository and a linked worktree created in WSL.
+const distro = process.env.CODENOMAD_TEST_WSL_DISTRO
+test("WSL: a project and a worktree created in the distro are excluded through its Git", { skip: process.platform !== "win32" || !distro }, async () => {
+  const wsl = (...args: string[]) => execFileSync("wsl.exe", ["--distribution", distro!, "--exec", ...args], { encoding: "utf8", windowsHide: true }).trim()
+  const base = wsl("mktemp", "-d", "/tmp/codenomad-design-exclude-XXXXXX")
+  try {
+    const repo = `${base}/repo`, linked = `${base}/linked`
+    wsl("sh", "-c", `git init -q -b main "${repo}" && cd "${repo}" && git -c user.name=f -c user.email=f@example.invalid commit -q --allow-empty -m i && git worktree add -q -b linked "${linked}" && printf 'foreign\\n' > .git/info/exclude`)
+    const target = (directory: string): ExcludeTarget => ({ directory, distro, toHost: async servicePath => wsl("wslpath", "-aw", servicePath) })
+    assert.equal(await excludeDesignFolder(target(linked)), "excluded")
+    assert.equal(await excludeDesignFolder(target(repo)), "excluded")
+    assert.equal(wsl("cat", `${repo}/.git/info/exclude`), "foreign\n\n# codenomad\n.codenomad/design/")
+    wsl("sh", "-c", `mkdir -p "${linked}/.codenomad/design/s" && printf x > "${linked}/.codenomad/design/s/a.png"`)
+    assert.equal(wsl("git", "-C", linked, "status", "--porcelain"), "")
+    assert.equal(await excludeDesignFolder(target(base)), "not-repository")
+    wsl("sh", "-c", `printf 'gitdir: /nonexistent\\n' > "${base}/.git"`)
+    assert.equal(await excludeDesignFolder(target(base)), "unavailable")
+  } finally { wsl("rm", "-rf", "--", base) }
+})
