@@ -7,6 +7,7 @@ import Fastify from "fastify"
 import { parse } from "jsonc-parser"
 import { PluginControls } from "./plugin-controls"
 import { SubagentDepthSettings, subagentDepthCapability } from "./subagent-depth-settings"
+import { configuredNestingRules } from "./subagent-nesting"
 import { registerSubagentDepthSettingsRoutes } from "../server/routes/subagent-depth-settings"
 
 const contract = (value: unknown) => ({ components: { schemas: { "Config.InfoEncoded": {
@@ -115,6 +116,88 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     await writeFile(globalFile, "{}")
     await writeFile(projectFile, "{}")
     assert.equal((await settings.read("w", location)).effectiveDepth, null, "missing default stays unknown")
+  } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
+})
+
+test("a depth of 2 or more lifts only General's built-in denial, and Inherit removes only that rule", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "subagent-depth-nesting-"))
+  const app = Fastify()
+  try {
+    const global = path.join(root, "global"), project = path.join(root, "project")
+    await mkdir(global); await mkdir(project)
+    const globalFile = path.join(global, "opencode.jsonc"), projectFile = path.join(project, "opencode.jsonc")
+    const original = '{\n  // kept\n  "shell": "keep"\n}\n'
+    await writeFile(globalFile, "{}"); await writeFile(projectFile, original)
+    let agents = true
+    const entries = async () => [{ type: "directory", path: global },
+      { type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
+      { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) }]
+    // OpenCode's resolution: the base policy and General's built-in denial, then configured rules.
+    const connection: any = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "private" } },
+      assertCurrent: () => {}, fetch: async () => Response.json(contract({ type: "integer", minimum: 0, default: 1 })),
+      client: { config: { get: entries }, plugin: { list: async () => ({ data: [] }) }, agent: { list: async () => {
+        if (!agents) throw new Error("unavailable")
+        return { data: [{ id: "build", permissions: [] }, { id: "general", permissions: [{ action: "*", resource: "*", effect: "allow" },
+          { action: "subagent", resource: "*", effect: "deny" }, ...configuredNestingRules(await entries())] }] }
+      } } },
+    }
+    const manager: any = {
+      get: () => ({}), getSharedServiceConnection: async () => connection,
+      getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
+      ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",
+      getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
+      getServiceWslDistro: () => undefined, getHostPathForServicePath: async (_id: string, value: string) => value,
+    }
+    const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} }, logger: {} as any })
+    const settings = new SubagentDepthSettings(controls, manager), location = { directory: project }
+    registerSubagentDepthSettingsRoutes(app, settings)
+    const save = async (value: number | null) => settings.update("w", location, value, (await settings.read("w", location)).project!.expectation)
+    const saved = async () => parse(await readFile(projectFile, "utf8"))
+    const nesting = async () => (await settings.read("w", location)).nesting
+
+    assert.deepEqual(await nesting(), { effect: "deny", configured: false })
+    await save(1)
+    assert.equal((await saved()).agents, undefined, "a depth of 1 allows no nesting, so no rule")
+    await save(3)
+    assert.match(await readFile(projectFile, "utf8"), /\/\/ kept[\s\S]*\/\/ Added by CodeNomad with the subagent depth/)
+    assert.deepEqual((await saved()).agents, { general: { permissions: [{ action: "subagent", resource: "*", effect: "allow" }] } })
+    assert.deepEqual(await nesting(), { effect: "allow", configured: true, added: true })
+    const reply = await app.inject({ method: "GET", url: `/api/workspaces/w/subagent-depth?directory=${encodeURIComponent(project)}` })
+    assert.deepEqual(reply.json().nesting, { effect: "allow", configured: true, added: true })
+    await save(4)
+    assert.equal((await saved()).agents.general.permissions.length, 1, "the rule is added once")
+    await save(0)
+    assert.deepEqual(await saved(), { shell: "keep", experimental: { subagent_depth: 0 } })
+    await save(2)
+    await save(null)
+    assert.equal(await readFile(projectFile, "utf8"), original, "Inherit restores the file")
+
+    // A configuration rule decides: CodeNomad never overrides it, and the snapshot says which applies.
+    for (const [globalText, effect] of [['{"agents":{"general":{"permissions":[{"action":"subagent","resource":"*","effect":"deny"}]}}}', "deny"],
+      ['{"permissions":[{"action":"*","resource":"*","effect":"ask"}]}', "ask"],
+      ['{"permissions":[{"action":"*","resource":"*","effect":"allow"}]}', "allow"]] as const) {
+      await writeFile(globalFile, globalText)
+      await save(3)
+      assert.equal((await saved()).agents, undefined, globalText)
+      assert.deepEqual(await nesting(), { effect, configured: true })
+      await save(null)
+    }
+    await writeFile(globalFile, "{}")
+
+    // An unreadable agent list adds nothing and reports nothing.
+    agents = false
+    await save(3)
+    assert.equal((await saved()).agents, undefined)
+    assert.equal(await nesting(), null)
+    agents = true
+
+    // The user's own identical rule is not CodeNomad's: Inherit leaves it.
+    const own = '{ "agents": { "general": { "permissions": [{ "action": "subagent", "resource": "*", "effect": "allow" }] } } }\n'
+    await writeFile(projectFile, own)
+    assert.deepEqual(await nesting(), { effect: "allow", configured: true })
+    await save(3)
+    await save(null)
+    assert.deepEqual(await saved(), parse(own))
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
 })
 

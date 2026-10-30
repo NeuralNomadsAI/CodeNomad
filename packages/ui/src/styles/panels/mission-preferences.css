@@ -36,7 +36,7 @@
   color: var(--text-primary); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);
 }
 .mission-preferences > header + .mission-preferences-scope { border-block-start: 0; padding-block-start: 0; }
-.mission-preferences :is(.mission-profile-summary, .mission-depth-effective, .mission-depth-path) { color: var(--text-muted); font-size: var(--font-size-xs); }
+.mission-preferences :is(.mission-profile-summary, .mission-depth-effective, .mission-depth-nesting, .mission-depth-path) { color: var(--text-muted); font-size: var(--font-size-xs); }
 /* One fold for every agent/model choice; its summary keeps the current request visible. */
 .mission-preferences .mission-profiles-disclosure { margin-block-start: var(--space-sm); padding-top: var(--space-sm); border-top-color: var(--border-row); }
 .mission-preferences .mission-profiles-disclosure > summary .mission-profile-summary { margin-inline-start: var(--space-sm); font-weight: var(--font-weight-regular); }
