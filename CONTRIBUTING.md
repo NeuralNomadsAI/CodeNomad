@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing! This guide will help you get started.
 
+Everyone taking part in the project follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report security vulnerabilities privately as described in [SECURITY.md](SECURITY.md), not in public issues.
+
 ## Prerequisites
 
 - **Node.js** from [`.node-version`](.node-version) and npm
