@@ -253,3 +253,62 @@ test("failed presence activation disposes partial registrations and fences captu
   assert.deepEqual(disposed.sort(), ["rpc", "tools"])
   await assert.rejects(captured[0].execute({}, {}), /no longer available/)
 })
+
+test("a graceful Pause reaches the coordinator and every ordinary native descendant at each model request", async () => {
+  const values = new Map<string, unknown>()
+  const tools: Array<{ name: string; execute(input: unknown, context: any): Promise<{ content: string }> }> = []
+  let contextHook: ((event: { sessionID: string; system: Array<{ type: "text"; text: string }>; tools: Record<string, unknown> }) => Promise<void>) | undefined
+  let lifecycle: ((input: unknown, context: any) => Promise<unknown>) | undefined
+  // Ordinary native sub-agents are never Mission actors: only their ancestry links them.
+  const parents: Record<string, string> = { ses_child: "ses_coordinator", ses_grandchild: "ses_child", ses_great: "ses_grandchild", ses_stranger_child: "ses_stranger" }
+  const reads: string[] = []
+  const registration = () => ({ dispose: async () => {} })
+  const cleanup = await setupMissionsPlugin({
+    location: { directory: "/repo", project: { id: "project-1", canonical: "/repo" } },
+    storage: {
+      get: async (key: string) => values.get(key),
+      set: async (key: string, value: unknown) => { values.set(key, structuredClone(value)) },
+      remove: async (key: string) => { values.delete(key) },
+      scan: async ({ prefix }: { prefix: string }) => ({ entries: [...values].filter(([key]) => key.startsWith(prefix)).map(([key, value]) => ({ key, value })) }),
+    },
+    session: {
+      get: async ({ sessionID }: { sessionID: string }) => {
+        reads.push(sessionID)
+        return { id: sessionID, projectID: "project-1", title: sessionID, location: { directory: "/repo" }, ...(parents[sessionID] ? { parentID: parents[sessionID] } : {}) }
+      },
+      create: async () => { throw new Error("not used") }, prompt: async () => {}, synthetic: async () => {},
+      hook: async (_name: "context", callback: typeof contextHook) => { contextHook = callback; return registration() },
+    },
+    tool: { transform: async (callback: (draft: any) => void) => { callback({ namespace: () => {}, add: (tool: any) => tools.push(tool) }); return registration() } },
+    rpc: { register: async (_definition: unknown, handlers: { lifecycle(input: unknown, context: any): Promise<unknown> }) => {
+      lifecycle = handlers.lifecycle
+      return { ...registration(), events: { emit: async () => {} } }
+    } },
+  } as never)
+  try {
+    await tools.find(tool => tool.name === "inspect")!.execute({ start: { objective: "Coordinate", template: "custom" } },
+      { sessionID: "ses_coordinator", messageID: "msg_1", id: "call_1", progress: async () => {} })
+    const context = async (sessionID: string) => {
+      const event = { sessionID, system: [] as Array<{ type: "text"; text: string }>, tools: {} as Record<string, unknown> }
+      await contextHook!(event)
+      return event.system.map(part => part.text).join("\n")
+    }
+    for (const id of ["ses_child", "ses_great"]) assert.doesNotMatch(await context(id), /paused/, "a running mission adds nothing to ordinary sub-agents")
+
+    const mission = JSON.parse((await tools.find(tool => tool.name === "inspect")!.execute({}, {
+      sessionID: "ses_coordinator", messageID: "msg_2", id: "call_2", progress: async () => {} })).content).mission as MissionMap
+    const result = await lifecycle!({ missionID: mission.id, requestID: "pause-gracefully", expectedRevision: mission.revision, action: "pause", graceful: true },
+      { error: (type: string, message: string, data: unknown) => ({ type, message, data }) }) as { mission: MissionMap }
+    assert.equal(result.mission.control?.graceful, true)
+
+    assert.match(await context("ses_coordinator"), /paused by the user[\s\S]*end your turn\. Wait for the user's Play action/)
+    for (const id of ["ses_child", "ses_grandchild", "ses_great"]) {
+      assert.match(await context(id), new RegExp(`Mission ${mission.id} is paused by the user[\\s\\S]*return what you have to your parent`), id)
+    }
+    assert.doesNotMatch(await context("ses_stranger_child"), /paused/, "another conversation's sub-agent is untouched")
+    // A wake-up or the next step of the same sub-agent reads its ancestry from the cache.
+    const before = reads.length
+    assert.match(await context("ses_great"), /paused by the user/)
+    assert.equal(reads.length, before, "parents are remembered across model requests")
+  } finally { await cleanup() }
+})

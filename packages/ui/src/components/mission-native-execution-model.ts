@@ -50,6 +50,13 @@ export function missionReportNotificationKey(report: MissionReportDelivery): str
 /** The latest Pause/Stop could not confirm that every native sub-agent stopped
  * (incomplete inventory or a session still observed active). Older receipts
  * without a family summary claim nothing either way. */
+/** Whether observed activity shows work an immediate interrupt could still stop.
+ * A Form or permission anywhere in a family outranks its running members in the
+ * projection, so a waiting actor counts as working too. */
+export function missionActivityWorking(actors: readonly Pick<MissionActorActivity, "state">[] | undefined): boolean {
+  return Boolean(actors?.some(actor => ["running", "queued", "background", "permission", "form"].includes(actor.state)))
+}
+
 export function partialInterrupt(mission: Pick<MissionMap, "control">): boolean {
   const control = mission.control
   if (!control || control.action === "start") return false

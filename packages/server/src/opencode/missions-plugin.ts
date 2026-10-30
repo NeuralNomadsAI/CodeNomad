@@ -461,6 +461,30 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
     })
     registrations.push(tools)
 
+    // Ordinary native sub-agents of a one-time Mission are not actors and read no
+    // Mission context; a paused Mission still reaches them through their ancestry.
+    // Parents never change, so the bounded cache serves each step after the first.
+    const parents = new Map<string, string | null>()
+    const pausedAncestorMission = async (control: MissionBusinessRoute["control"], sessionID: string): Promise<string | undefined> => {
+      const seen = new Set<string>()
+      let id = sessionID
+      for (let depth = 0; depth < MAX_PAUSE_ANCESTRY; depth++) {
+        seen.add(id)
+        let parent = parents.get(id)
+        if (parent === undefined) {
+          const session = await context.session.get({ sessionID: id })
+          parent = session.id === id ? session.parentID ?? null : null
+          if (parents.size >= MAX_PAUSE_ANCESTRY_CACHE) parents.delete(parents.keys().next().value!)
+          parents.set(id, parent)
+        }
+        if (!parent || seen.has(parent)) return undefined
+        const mission = await control.contextFor(parent)
+        if (mission) return mission.paused ? mission.missionID : undefined
+        id = parent
+      }
+      return undefined
+    }
+
     const contextHook = await context.session.hook("context", (event) => {
       if (!active) return
       return writer.run(async () => {
@@ -473,6 +497,13 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           selected.current()
           // One hinted membership read per turn: the instruction and the coordinator check share it.
           const mission = await selected.control.contextFor(selected.readSessionID)
+          if (active && !mission && selected.readSessionID === event.sessionID) {
+            const paused = await pausedAncestorMission(selected.control, event.sessionID)
+            if (active && paused) {
+              selected.current()
+              event.system.push({ type: "text", text: missionPausedInstruction(paused, true) })
+            }
+          }
           if (!active || !mission) return
           selected.current()
           if (selected.readSessionID !== event.sessionID) {
@@ -501,6 +532,9 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
 
 /** Topology and hand-off tools only the coordinator itself may see. */
 const COORDINATOR_TOOLS = ["delegate", "revise", "briefing", "interrupt", "prepare"] as const
+/** Native nesting levels walked to find a paused Mission actor, and sessions whose parent is remembered. */
+const MAX_PAUSE_ANCESTRY = 32
+const MAX_PAUSE_ANCESTRY_CACHE = 4096
 
 const interruptSchema = {
   type: "object",

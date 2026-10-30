@@ -231,7 +231,9 @@ for (const action of ["pause", "stop"] as const) {
   })
 }
 
-test("Pause lets running steps finish while it shows Pausing, and Interrupt now stops them at once", async () => {
+// A Form or permission anywhere in the family outranks its running members in the
+// activity projection: waiting for the user must not hide Interrupt now.
+for (const state of ["running", "form"] as const) test(`Pause lets ${state} work finish while it shows Pausing, and Interrupt now stops it at once`, async () => {
   const page = await browser.newPage({ locale: "en-US" }), calls: Input[] = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))
   let current = mission(), working = true
@@ -239,7 +241,7 @@ test("Pause lets running steps finish while it shows Pausing, and Interrupt now 
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", route => {
       if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [current], generatedAt: current.revision, discardedEvents: 0,
-        activity: { generatedAt: current.revision, missions: [{ missionId: current.id, actors: [{ sessionId: "ses_fixture", state: working ? "running" : "idle-without-report" }] }] } } })
+        activity: { generatedAt: current.revision, missions: [{ missionId: current.id, actors: [{ sessionId: "ses_fixture", state: working ? state : "idle-without-report" }] }] } } })
       const input = route.request().postDataJSON() as Input; calls.push(input)
       current = { ...current, revision: current.revision + 1, runState: "paused",
         control: { id: `evt_${calls.length}`, missionID: current.id, requestID: input.requestId, expectedRevision: input.expectedRevision, action: "pause",
