@@ -156,7 +156,19 @@ test("Images reads only while open, writes one Global setting at a time and hide
     assert.equal(await group.getByLabel("Image generation", { exact: true }).isDisabled(), true)
     assert.equal(await group.getByLabel("Store images once", { exact: true }).isDisabled(), true)
 
-    await page.evaluate(() => { (window as any).fixture.images.blocked = false; (window as any).fixture.images.supported = false; (window as any).fixture.setDirectory("/b") })
+    // The project's own block decides storage: the box shows that value without a caption, and saving fixes it.
+    await page.evaluate(() => { const fixture = (window as any).fixture; fixture.images.blocked = false; fixture.images.project = true; fixture.setDirectory("/d") })
+    await page.waitForFunction(() => {
+      const box = document.querySelector('input[aria-label="Store images once"]') as HTMLInputElement | null
+      return box && !box.disabled && !box.checked
+    })
+    assert.equal((await images()).mediaStorage, true, "the Global choice is on while this project's block turns it off")
+    assert.equal(await group.locator('p[title$="opencode.jsonc"]').count(), 0)
+    await group.getByLabel("Store images once", { exact: true }).check()
+    await page.waitForFunction(() => (document.querySelector('input[aria-label="Store images once"]') as HTMLInputElement)?.checked)
+    assert.deepEqual((await images()).writes.at(-1), { location: { directory: "/d" }, mediaStorage: true })
+
+    await page.evaluate(() => { const fixture = (window as any).fixture; fixture.images.project = false; fixture.images.supported = false; fixture.setDirectory("/b") })
     await group.getByText("The connected OpenCode version has no image settings.", { exact: true }).waitFor()
     assert.equal(await group.getByLabel("Image generation", { exact: true }).count(), 0)
     assert.equal(await group.getByLabel("Store images once", { exact: true }).count(), 0)

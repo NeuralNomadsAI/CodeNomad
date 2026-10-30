@@ -44,12 +44,15 @@ serverApi.setWebSearchSettings = async (_id, payload) => {
   if (hold) { hold = false; await new Promise<void>(resolve => { release = resolve }) }
   selections[payload.location.directory][payload.scope] = payload.provider
 }
-const images = { generation: false as boolean | string, mediaStorage: false, supported: true, blocked: false, reads: 0, writes: [] as any[] }
+const images = { generation: false as boolean | string, mediaStorage: false, supported: true, blocked: false, reads: 0, writes: [] as any[],
+  project: false, projectStorage: false }
 serverApi.getImageSettings = async (_id, directory) => {
   images.reads++
   return { location: { directory }, generation: images.supported ? { global: images.generation, effective: images.generation,
     models: [{ ref: "openai/gpt-image-2", name: "GPT Image 2" }] } : null,
-  mediaStorage: images.supported ? { global: images.mediaStorage, effective: false, override: { path: `${directory}/opencode.jsonc` } } : null,
+  mediaStorage: !images.supported ? null : images.project
+    ? { global: images.mediaStorage, effective: images.projectStorage, project: { path: `${directory}/.opencode/opencode.jsonc` } }
+    : { global: images.mediaStorage, effective: false, override: { path: `${directory}/opencode.jsonc` } },
   ...(images.blocked ? { blockedBy: { path: "/global/opencode.json" } } : {}) }
 }
 serverApi.setImageSettings = async (_id, payload) => {
@@ -57,6 +60,7 @@ serverApi.setImageSettings = async (_id, payload) => {
   if (reject) { reject = false; throw new Error("fixture mutation failure") }
   if (payload.generation !== undefined) images.generation = payload.generation
   if (payload.mediaStorage !== undefined) images.mediaStorage = payload.mediaStorage
+  if (payload.mediaStorage !== undefined && images.project) images.projectStorage = payload.mediaStorage
 }
 const client = {
   provider: { list: async () => ({ data: [{ id: "openai", name: "OpenAI", integrationID: "openai" }, { id: "anthropic", name: "Anthropic", integrationID: "anthropic" }] }) },

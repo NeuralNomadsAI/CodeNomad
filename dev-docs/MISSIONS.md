@@ -308,14 +308,18 @@ JSONC layer. The effective depth follows OpenCode's own read: the whole
 one, unmerged, so a project `experimental` block without the depth hides the
 global depth (native normalization drops a block holding only unknown keys). Saving
 compares the original full file/target expectation and preserves comments, sibling
-fields and WSL atomic-write protections. Removing the override restores
+fields and WSL atomic-write protections. When saving a depth creates the project
+`experimental` object and the inherited one has `media_blob: true` (declared by the
+runtime contract), the new object also gets `media_blob: true`, so Settings → Images
+storage stays on there. Removing the override restores
 inheritance and also removes a project `experimental` object left without
-properties, moving its comments to the property's place; the snapshot flags an
-existing one (`emptyExperimental`) so Inherit can repair it.
+properties, or holding only a `media_blob` equal to the inherited value, moving its
+comments to the property's place; the snapshot flags an existing one
+(`emptyExperimental`) so Inherit can repair it.
 `node --import tsx scripts/test-subagent-depth-settings-native.mjs <absolute-isolated-opencode-cli>`
 (also in the latest-runtime CI job) qualifies this against a private runtime: depth
-capability, JSONC save/reset preserving comments and siblings, stale-expectation
-conflicts and foreign-location rejection.
+capability, JSONC save/reset preserving comments and siblings, inherited image
+storage, stale-expectation conflicts and foreign-location rejection.
 
 Activity and targeted recovery share `missions/native-session-family.ts`: a root's
 bounded native descendant inventory (32 maximum) must have consistent parent,

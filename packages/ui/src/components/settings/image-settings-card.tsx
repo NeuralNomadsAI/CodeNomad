@@ -56,7 +56,7 @@ export function ImageSettingsCard(props: { instanceId: string; location?: Locati
         </div>
       }}</Show>
       <Show when={data().mediaStorage}>{storage => <>
-        <SettingsChoiceRow checked={storage().global} title={t("settings.images.storage.title")}
+        <SettingsChoiceRow checked={storage().project ? storage().effective : storage().global} title={t("settings.images.storage.title")}
           info={t("settings.images.storage.info")} disabled={settings.busy() || Boolean(data().blockedBy)}
           onChange={checked => void settings.save({ mediaStorage: checked })} />
         <Show when={storage().override}>{override =>

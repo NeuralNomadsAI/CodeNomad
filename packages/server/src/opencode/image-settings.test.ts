@@ -91,16 +91,37 @@ test("global image settings edit JSONC in place and report project overrides", a
     assert.equal(snapshot.mediaStorage?.effective, true)
 
     // A higher `experimental` object hides the global storage choice, but not the per-field generation choice.
-    await writeFile(projectFile, '{ "experimental": { "subagent_depth": 1 } }')
+    await writeFile(projectFile, '{\n  // project comment\n  "experimental": { "subagent_depth": 1 }\n}\n')
     snapshot = await settings.read("w", location)
     assert.equal(snapshot.generation?.effective, "openai/gpt-image-2")
     assert.equal(snapshot.generation?.override, undefined)
-    assert.deepEqual(snapshot.mediaStorage, { global: true, effective: false, override: { path: projectFile } })
+    assert.deepEqual(snapshot.mediaStorage, { global: true, effective: false, project: { path: projectFile } })
+    // The selected Location's own project block decides storage, so saving writes it there too.
+    await settings.update("w", location, { mediaStorage: true })
+    const projectSaved = await readFile(projectFile, "utf8")
+    assert.match(projectSaved, /\/\/ project comment/)
+    assert.deepEqual(parse(projectSaved).experimental, { subagent_depth: 1, media_blob: true })
+    assert.equal(parse(await readFile(globalFile, "utf8")).experimental.media_blob, true)
+    assert.deepEqual((await settings.read("w", location)).mediaStorage, { global: true, effective: true, project: { path: projectFile } })
+    // Generation is read per field, so its choice stays Global only.
+    await settings.update("w", location, { generation: "openai/gpt-image-2" })
+    assert.equal(await readFile(projectFile, "utf8"), projectSaved, "generation never writes the project")
+    // A project block removed after acquisition is never recreated: that would hide inherited settings.
+    const removing = new ImageSettings({
+      readConfigDocuments: (...args: Parameters<PluginControls["readConfigDocuments"]>) => controls.readConfigDocuments(...args),
+      editConfigDocument: async (...args: Parameters<PluginControls["editConfigDocument"]>) => {
+        if (args[2] === "project") await writeFile(projectFile, "{}")
+        return controls.editConfigDocument(...args)
+      },
+    }, manager)
+    await assert.rejects(removing.update("w", location, { mediaStorage: false }), /configuration changed/)
+    assert.equal(await readFile(projectFile, "utf8"), "{}")
+    await settings.update("w", location, { mediaStorage: true })
     await writeFile(projectFile, '{ "experimental": { "image_generate": false } }')
     snapshot = await settings.read("w", location)
     assert.equal(snapshot.generation?.effective, false)
     assert.deepEqual(snapshot.generation?.override, { path: projectFile })
-    assert.equal(await readFile(projectFile, "utf8"), '{ "experimental": { "image_generate": false } }', "the project is never written")
+    assert.equal(await readFile(projectFile, "utf8"), '{ "experimental": { "image_generate": false } }', "reads never write the project")
     // The deciding document is reported wherever it lives, not only in the selected project's own file.
     await writeFile(projectFile, "{}")
     ancestor = { experimental: { image_generate: false } }
@@ -146,6 +167,7 @@ test("global image settings edit JSONC in place and report project overrides", a
     await writeFile(projectFile, '{ "experimental": { "subagent_depth": 1 } }')
     assert.deepEqual((await settings.read("w", location)).blockedBy, { path: lowerFile })
     await assert.rejects(settings.update("w", location, { mediaStorage: true }), /hide inherited experimental/)
+    assert.equal(await readFile(projectFile, "utf8"), '{ "experimental": { "subagent_depth": 1 } }', "a refused Global write leaves the project")
     await writeFile(projectFile, "{}")
     // A stale native entry for the target cannot authorize a write the fresh document would turn into a mask.
     staleGlobal = { experimental: { subagent_depth: 3 } }

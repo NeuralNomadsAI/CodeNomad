@@ -5,8 +5,23 @@ import { PluginControlsError, type PluginControls } from "./plugin-controls"
 import type { PluginControlDocument } from "./plugin-control-document"
 import { editNativeSetting, readNativeSetting, removeEmptyNativeObject } from "./native-setting-document"
 import { readRuntimeContract } from "./compatibility/negotiate"
+import { imageSettingsCapability, maskedBy } from "./image-settings"
 
 const keys = ["experimental", "subagent_depth"]
+const MEDIA_STORAGE = ["experimental", "media_blob"]
+
+/** The text without the project `experimental` object when it changes nothing OpenCode reads: no
+ * properties left, or only a `media_blob` equal to the inherited one (`inherited` is `undefined` when
+ * the runtime lacks the setting). */
+function withoutRedundantExperimental(document: PluginControlDocument, inherited: boolean | undefined): string | undefined {
+  const experimental = readNativeSetting(document, ["experimental"])
+  if (inherited !== undefined && experimental && typeof experimental === "object" && !Array.isArray(experimental)
+    && Object.keys(experimental).length === 1 && (experimental as { media_blob?: unknown }).media_blob === inherited) {
+    const removed = editNativeSetting(document, MEDIA_STORAGE, undefined)
+    document = { ...document, text: document.byteOrderMark ? removed.slice(1) : removed }
+  }
+  return removeEmptyNativeObject(document, ["experimental"])
+}
 
 function depth(value: unknown): number | null {
   if (value === undefined) return null
@@ -43,7 +58,13 @@ export class SubagentDepthSettings {
     connection.assertCurrent()
     const contract = await readRuntimeContract(connection.endpoint, connection.fetch, AbortSignal.timeout(5_000))
     connection.assertCurrent()
-    return { ...snapshot, connection, capability: subagentDepthCapability(contract) }
+    return { ...snapshot, connection, capability: subagentDepthCapability(contract),
+      mediaStorage: imageSettingsCapability(contract).mediaStorage }
+  }
+
+  /** The `media_blob` a new project `experimental` object would hide, when the runtime declares it. */
+  private inheritedMediaStorage(context: Awaited<ReturnType<SubagentDepthSettings["context"]>>, target: string) {
+    return context.mediaStorage ? maskedBy(context.entries, target, false)?.info?.experimental?.media_blob === true : undefined
   }
 
   async read(workspaceId: string, location: PluginControlLocation): Promise<SubagentDepthSnapshot> {
@@ -57,14 +78,17 @@ export class SubagentDepthSettings {
     return { location: context.location, capability: context.capability, effectiveDepth,
       project: project ? { path: project.path, depth: depth(readNativeSetting(project.document, keys)),
         expectation: expectation(project.document),
-        ...(removeEmptyNativeObject(project.document, ["experimental"]) === undefined ? {} : { emptyExperimental: true }) } : null }
+        ...(withoutRedundantExperimental(project.document, this.inheritedMediaStorage(context, project.path)) === undefined
+          ? {} : { emptyExperimental: true }) } : null }
   }
 
   async update(workspaceId: string, location: PluginControlLocation, value: number | null, expected: string): Promise<void> {
     const context = await this.context(workspaceId, location)
     const capability = context.capability
-    if (!capability || !context.documents.some(item => item.scope === "project"))
+    const project = context.documents.find(item => item.scope === "project")
+    if (!capability || !project)
       throw new PluginControlsError("Native subagent depth editing is unavailable", "unavailable")
+    const inherited = this.inheritedMediaStorage(context, project.path)
     const validated = value === null ? null : depth(value)
     if (value !== null && (validated === null || validated < capability.minimum
       || capability.maximum !== undefined && validated > capability.maximum))
@@ -72,11 +96,16 @@ export class SubagentDepthSettings {
     await this.documents.editConfigDocument(workspaceId, location, "project", document => {
       context.connection.assertCurrent()
       if (expectation(document) !== expected) throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
-      if (value !== null) return editNativeSetting(document, keys, value)
+      if (value !== null) {
+        const updated = editNativeSetting(document, keys, value)
+        // A new project `experimental` object hides the inherited one: keep its image storage.
+        if (!inherited || readNativeSetting(document, ["experimental"]) !== undefined) return updated
+        return editNativeSetting({ ...document, text: document.byteOrderMark ? updated.slice(1) : updated }, MEDIA_STORAGE, true)
+      }
       // An emptied project `experimental` object would still hide every inherited experimental setting.
       const removed = editNativeSetting(document, keys, undefined)
       const remaining = { ...document, text: document.byteOrderMark ? removed.slice(1) : removed }
-      return removeEmptyNativeObject(remaining, ["experimental"]) ?? removed
+      return withoutRedundantExperimental(remaining, inherited) ?? removed
     })
     context.connection.assertCurrent()
   }

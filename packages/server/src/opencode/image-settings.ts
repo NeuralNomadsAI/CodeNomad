@@ -56,7 +56,7 @@ function override(winner: Entry | undefined, target: string): { path?: string } 
  * (`entries` lowest priority first; a missing target sits just before its directory, as natively).
  * Higher, Location-specific objects are ignored: the Global document also serves Locations without
  * them, and the target's own native entry may be staler than its fresh `targetHasExperimental`. */
-function maskedBy(entries: readonly unknown[], target: string, targetHasExperimental: boolean): Entry | undefined {
+export function maskedBy(entries: readonly unknown[], target: string, targetHasExperimental: boolean): Entry | undefined {
   if (targetHasExperimental) return undefined
   const list = entries as Array<Entry | undefined>
   const own = list.findIndex(entry => entry?.type === "document" && entry.path !== undefined && samePath(entry.path, target))
@@ -70,8 +70,17 @@ function maskedBy(entries: readonly unknown[], target: string, targetHasExperime
   return masked
 }
 
-/** Global scope only: OpenCode reads `media_blob` from the whole `experimental` object of the
- * highest-priority document that has one, so a project block would hide inherited experimental settings. */
+type ConfigDocuments = Awaited<ReturnType<PluginControls["readConfigDocuments"]>>["documents"]
+
+/** The selected Location's own project document when its `experimental` object decides `media_blob`. */
+function decidingProject(winner: Entry | undefined, documents: ConfigDocuments) {
+  const project = documents.find(item => item.scope === "project")
+  return project && winner?.path !== undefined && samePath(winner.path, project.path) ? project : undefined
+}
+
+/** Edits the Global document. OpenCode reads `media_blob` from the whole `experimental` object of the
+ * highest-priority document that has one, so a project block would hide inherited experimental settings;
+ * when the selected Location's own project block decides it, `media_blob` is also written there. */
 export class ImageSettings {
   constructor(private readonly configuration: Pick<PluginControls, "readConfigDocuments" | "editConfigDocument">,
     private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection">) {}
@@ -129,11 +138,12 @@ export class ImageSettings {
     if (context.capability.mediaStorage && global) {
       // OpenCode reads the whole `experimental` object of the highest-priority document that has one.
       const winner = settings.find(entry => entry.info?.experimental !== undefined)
-      const overridden = override(winner, global.path)
+      const project = decidingProject(winner, context.documents)
+      const overridden = project ? undefined : override(winner, global.path)
       mediaStorage = {
         global: readNativeSetting(global.document, MEDIA_STORAGE) === true,
         effective: winner?.info?.experimental?.media_blob === true,
-        ...(overridden ? { override: overridden } : {}),
+        ...(project ? { project: { path: project.path } } : overridden ? { override: overridden } : {}),
       }
     }
     const blocked = global && (generation || mediaStorage)
@@ -164,6 +174,17 @@ export class ImageSettings {
       if (maskedBy(context.entries, acquired.path, readNativeSetting(document, ["experimental"]) !== undefined))
         throw new PluginControlsError("Saving would hide inherited experimental OpenCode settings", "conflict")
       return editNativeSetting(document, keys, value)
+    })
+    context.connection.assertCurrent()
+    if (generation) return
+    const project = decidingProject(documents(context.entries).find(entry => entry.info?.experimental !== undefined), context.documents)
+    if (!project) return
+    await this.configuration.editConfigDocument(workspaceId, location, "project", document => {
+      context.connection.assertCurrent()
+      // Only the analysed project block decides the value; creating one would hide inherited settings.
+      if (document.requestedPath !== project.document.requestedPath || readNativeSetting(document, ["experimental"]) === undefined)
+        throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
+      return editNativeSetting(document, MEDIA_STORAGE, value)
     })
     context.connection.assertCurrent()
   }

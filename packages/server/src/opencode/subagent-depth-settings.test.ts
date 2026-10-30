@@ -117,3 +117,70 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
     assert.equal((await settings.read("w", location)).effectiveDepth, null, "missing default stays unknown")
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
 })
+
+test("a new project depth block keeps the inherited image storage and Inherit removes it again", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "subagent-depth-media-"))
+  try {
+    const global = path.join(root, "global"), project = path.join(root, "project")
+    await mkdir(global); await mkdir(project)
+    const globalFile = path.join(global, "opencode.jsonc"), projectFile = path.join(project, "opencode.jsonc")
+    await writeFile(globalFile, '{"experimental":{"subagent_depth":2,"media_blob":true}}')
+    await writeFile(projectFile, '{\n  // kept\n  "shell": "keep"\n}\n')
+    let media = true
+    const connection: any = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "private" } },
+      assertCurrent: () => {},
+      fetch: async () => Response.json({ components: { schemas: { "Config.InfoEncoded": { properties: { experimental: { properties: {
+        subagent_depth: { type: "integer", minimum: 0 }, ...(media ? { media_blob: { type: "boolean" } } : {}),
+      } } } } } } }),
+      client: { config: { get: async () => [ { type: "directory", path: global },
+        { type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
+        { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) } ] },
+      plugin: { list: async () => ({ data: [] }) } },
+    }
+    const manager: any = {
+      get: () => ({}), getSharedServiceConnection: async () => connection,
+      getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
+      ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",
+      getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
+      getServiceWslDistro: () => undefined, getHostPathForServicePath: async (_id: string, value: string) => value,
+    }
+    const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} }, logger: {} as any })
+    const settings = new SubagentDepthSettings(controls, manager), location = { directory: project }
+    const save = async (value: number | null) => settings.update("w", location, value, (await settings.read("w", location)).project!.expectation)
+    const experimental = async () => parse(await readFile(projectFile, "utf8")).experimental
+
+    await save(3)
+    assert.match(await readFile(projectFile, "utf8"), /\/\/ kept/)
+    assert.deepEqual(await experimental(), { subagent_depth: 3, media_blob: true })
+    assert.equal((await settings.read("w", location)).project?.emptyExperimental, undefined)
+    await save(null)
+    assert.equal(await experimental(), undefined, "Inherit removes a block left with only the inherited storage")
+    assert.equal((await settings.read("w", location)).effectiveDepth, 2)
+
+    // A block holding only the inherited storage still hides the Global depth: flagged so Inherit repairs it.
+    await writeFile(projectFile, '{ "experimental": { "media_blob": true } }')
+    assert.equal((await settings.read("w", location)).project?.emptyExperimental, true)
+    await save(null)
+    assert.equal(await experimental(), undefined)
+    // A different project choice is the user's own and stays.
+    await writeFile(projectFile, '{ "experimental": { "media_blob": false } }')
+    assert.equal((await settings.read("w", location)).project?.emptyExperimental, undefined)
+    await save(null)
+    assert.deepEqual(await experimental(), { media_blob: false })
+    // An existing block is edited as it is.
+    await writeFile(projectFile, '{ "experimental": { "todo": true } }')
+    await save(4)
+    assert.deepEqual(await experimental(), { todo: true, subagent_depth: 4 })
+
+    // Nothing is copied when storage is not inherited on, or when the runtime lacks the setting.
+    await writeFile(globalFile, '{"experimental":{"subagent_depth":2,"media_blob":false}}')
+    await writeFile(projectFile, "{}")
+    await save(1)
+    assert.deepEqual(await experimental(), { subagent_depth: 1 })
+    await writeFile(globalFile, '{"experimental":{"subagent_depth":2,"media_blob":true}}')
+    await writeFile(projectFile, "{}")
+    media = false
+    await save(1)
+    assert.deepEqual(await experimental(), { subagent_depth: 1 })
+  } finally { await rm(root, { recursive: true, force: true }) }
+})

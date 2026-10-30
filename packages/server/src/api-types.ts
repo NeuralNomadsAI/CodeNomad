@@ -455,6 +455,8 @@ export interface ImageSettingsSnapshot {
     global: boolean
     effective: boolean
     override?: ImageSettingOverride
+    /** The selected Location's own project document decides the value; saving writes it there too. */
+    project?: { path: string }
   } | null
   /** The lower-priority document whose whole `experimental` object a new Global one would hide; writes are refused. */
   blockedBy?: ImageSettingOverride
