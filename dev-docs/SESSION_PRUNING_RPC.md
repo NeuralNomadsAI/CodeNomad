@@ -210,6 +210,13 @@ restart) and gallery membership on that stored tool file. Unit tests cover rollb
 and client projection/read races; the gallery tests replay their proof mutations on
 copies of two OpenCode 2.2.1 Images transcripts, with and without media blobs
 (`assets-gallery-fixture.json`).
+`scripts/test-design-companion-native.mjs` drives an Images conversation end to end with a
+scripted chat model and a fake image model on the shipped bundle: two series of read images
+under `.codenomad/design/`, proven with prompt, lineage and pixels, then a completed
+generation without read-back whose reference is sent and read more than 32 assistant
+messages later (pixels, unverifiable origin). With `--ui <Design ZIP>` the same request is
+prefilled from the installed Design extension through the real right panel, API 4 routes
+and composer, sent, and its relative Markdown image is checked in the real transcript.
 The mock's usage numbers are synthetic; never cite them as provider token savings.
 
 Unvalidated: native WSL runs, interactive TUI, two desktop windows/scroll,
@@ -225,6 +232,8 @@ node --import tsx --test packages/server/src/server/routes/images-conversation.t
 node --import tsx --test tests/browser/images-conversation.test.ts  # from packages/ui
 node --import tsx --conditions=browser --test --test-force-exit packages/ui/src/stores/session-actions.test.ts packages/ui/src/stores/session-pruning-events.test.ts packages/ui/src/stores/session-pruning-projection.test.ts packages/ui/src/stores/opencode-data.test.ts
 node scripts/test-session-pruning-native.mjs C:/isolated-install/opencode2.exe
+node scripts/test-design-companion-native.mjs C:/isolated-install/opencode2.exe  # gallery end to end, scripted chat and image models
+node scripts/test-design-companion-native.mjs C:/isolated-install/opencode2.exe --ui C:/abs/neuralnomads.design-1.0.0.zip  # plus the Design panel, composer and transcript
 npm run typecheck --workspace @neuralnomads/codenomad
 npm run typecheck --workspace @codenomad/ui
 npm run build --workspace @codenomad/ui

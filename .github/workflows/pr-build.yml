@@ -114,6 +114,15 @@ jobs:
           node --import tsx --test packages/server/src/opencode/pruning-installation.test.ts
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/run-session-pruning-native.mjs $cli --ui
+      - name: Design companion end to end with an isolated official runtime
+        shell: pwsh
+        run: |
+          $platform = node -p "process.platform === 'win32' ? 'windows' : process.platform"
+          $arch = node -p "process.arch"
+          $extension = node -p "process.platform === 'win32' ? '.exe' : ''"
+          $cli = Join-Path $env:PRUNING_NATIVE_INSTALL "node_modules/@opencode/cli-$platform-$arch/bin/opencode$extension"
+          # Scripted chat and fake image models: series, proof, lineage, pixels and the late read-back.
+          node scripts/test-design-companion-native.mjs $cli
       - name: Upload isolated native failure diagnostics
         if: ${{ failure() && env.PRUNING_NATIVE_FIXTURES != '' }}
         uses: actions/upload-artifact@v7.0.2
@@ -125,6 +134,7 @@ jobs:
             ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/discovery.json
             ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/ui-*.png
             ${{ env.PRUNING_NATIVE_FIXTURES }}/codenomad-pruning-native-*/test-diagnostics.jsonl
+            ${{ env.PRUNING_NATIVE_FIXTURES }}/design-companion-*/daemon.log
             ${{ env.PRUNING_NATIVE_FIXTURES }}/native-fixture-run-*/
           if-no-files-found: ignore
           retention-days: 7

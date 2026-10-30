@@ -402,9 +402,11 @@ only future online installation; installed copies and local ZIP installation rem
 node --import tsx --test packages/server/src/panel-extensions/extension.test.ts
 node --import tsx --test packages/server/src/panel-extensions/catalog.test.ts
 node --import tsx --test packages/server/src/opencode/session-pruning/assets.test.ts packages/server/src/server/routes/panel-extension-assets.test.ts
-node scripts/test-panel-extension-native.mjs # Windows, isolated Tauri/WebView2
+node scripts/test-panel-extension-native.mjs # isolated Tauri: WebView2, WKWebView or WebKitGTK
 node scripts/test-panel-extension-native.mjs --api2
 node scripts/test-panel-extension-native.mjs --api3
+node scripts/test-panel-extension-native.mjs --api4
+node scripts/test-panel-extension-electron.mjs # real preload, createWindow webPreferences; Linux may add --no-sandbox
 node --import tsx --test packages/server/src/forge/forge.test.ts packages/server/src/server/routes/panel-extension-work-items.test.ts
 node --conditions=browser --import tsx --test packages/ui/src/components/panel-extensions/work-items-channel.test.ts
 node --import tsx --test packages/ui/src/components/panel-extensions/image-bounds.test.ts
@@ -422,6 +424,38 @@ concurrent changes and corrupt-state preservation. Catalogue checks cover SSRF/r
 verification, metadata-only discovery and withdrawn selections after warm reads.
 Rendered tests use the real right panel, installer, routes and event dispatcher
 for online browse/search/consent, offline fallback, incompatibility and lifecycle.
+The native runners share `scripts/panel-extension-native-probe.mjs`: the frame is
+built from `PANEL_EXTENSION_SANDBOX` and `panelExtensionDocument` (the real panel
+must use that constant as its only sandbox), and must report `self.origin === "null"`,
+an unreachable `parent.document`, no native line besides the host's positive
+control, no request to the loopback leak counter (fetch, XHR, beacons, sockets,
+event streams, workers, images, scripts, styles, fonts, media, frames, objects,
+forms, popups) and exactly one port answer per declared method. Each run also hosts
+the same frame with `allow-same-origin` added and with the CSP meta removed, and
+fails unless the probe detects both.
+
+The macOS (WKWebView) and Linux (WebKitGTK) runs are manual, on the macOS and
+Ubuntu test VMs, after each change to the frame document, bridge, panel iframe or
+desktop hosts. Each host needs a checkout of the change with `npm ci` (Electron's
+binary included), Node 22, Rust's `cargo` on `PATH` and Tauri 2's platform
+prerequisites (Xcode Command Line Tools; WebKitGTK 4.1 and libsoup 3 development
+packages). Both webviews need the desktop session of a logged-in user:
+
+- **Ubuntu (GNOME Wayland)**: with the user logged in at the console, a shell over
+  SSH reaches that session by exporting
+  `WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus XDG_SESSION_TYPE=wayland`,
+  then runs `node scripts/test-panel-extension-native.mjs` with no option and with
+  `--api2`, `--api3` and `--api4`, and `node scripts/test-panel-extension-electron.mjs`.
+  Electron's OS sandbox needs `node_modules/electron/dist/chrome-sandbox` owned by
+  root with mode 4755; otherwise Electron refuses to start, and
+  `--no-sandbox` runs the probe without that OS layer.
+- **macOS**: log in to the desktop at the VM console (after resuming, correct the
+  clock with `sudo sntp -sS time.apple.com`), open Terminal in that session, and run
+  the same five commands. Over SSH without a desktop login the WKWebView host
+  never loads its page and the runner fails on its 60-second limit.
+
+A run counts only when every command prints its summary and exits 0; record the
+host, OS version and each summary's `real` line in the review.
 
 ## Agent conventions
 
