@@ -83,6 +83,50 @@ test("dragging across Message content toggles gives every crossed row of that co
   } finally { await page.close() }
 })
 
+test("queued Message content changes keep their order around presets and sweeps still held", async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    await page.goto(`${fixture.url}?saveDelay=400`)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByRole("button", { name: "Message content", exact: true }).click()
+    await preset(page).selectOption("everything")
+    await page.waitForFunction(() => (window as any).fixture.preferences().toolCallExpansionDefaults.preset === "everything")
+    const eyes = page.locator('.transcript-filter-row [data-toggle-sweep="transcript-visibility"]')
+    const idle = () => page.locator('.transcript-filters[aria-busy="false"]').waitFor()
+    const shown = async () => (await page.evaluate(() => (window as any).fixture.savedModes() as string[])).map(mode => mode !== "hidden")
+
+    // A save in flight and a click queued behind it, then a sweep held down: the queued save
+    // carries its own click only; the sweep saves on release.
+    await eyes.nth(0).click()
+    await eyes.nth(1).click()
+    const from = await center(eyes.nth(3)), to = await center(eyes.nth(5))
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(to.x, to.y, { steps: 4 })
+    await idle()
+    assert.deepEqual((await shown()).slice(0, 6), [false, false, true, true, true, true])
+    await page.mouse.up()
+    await idle()
+    assert.deepEqual((await shown()).slice(0, 6), [false, false, true, false, false, false])
+
+    // A click queued, a preset, then a row: the row applies after the preset.
+    await eyes.nth(0).click()
+    await eyes.nth(1).click()
+    await preset(page).selectOption("balanced")
+    const inputs = page.getByRole("group", { name: "Input", exact: true }).locator('[data-toggle-sweep="transcript-visibility"]')
+    const inputsShown = await inputs.getAttribute("aria-pressed")
+    await inputs.click()
+    await idle()
+    const index = await page.locator(".transcript-filter-row").evaluateAll(rows => rows.findIndex(row => row.getAttribute("aria-label") === "Input"))
+    assert.equal((await shown())[index], inputsShown !== "true")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("Message content chooses presets, names manual changes Custom and follows the language", async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 900 }, locale: "en-US" })
   const errors: string[] = []

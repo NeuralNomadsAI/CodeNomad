@@ -106,9 +106,12 @@ test("dragging across the selection checkboxes gives every crossed session the f
 
     // Down the column in one jump and back, released on the first box: every crossed session
     // is selected, the checked one stays so, and the release keeps the first one's new state.
-    const first = await center(0), last = await center(3)
+    // A touch landing mid-drag leaves the mouse sweep going.
+    const first = await center(0), middle = await center(1), last = await center(3)
     await page.mouse.move(first.x, first.y)
     await page.mouse.down()
+    await page.mouse.move(middle.x, middle.y, { steps: 4 })
+    await page.locator("body").dispatchEvent("pointerdown", { pointerId: 2, pointerType: "touch", isPrimary: false, button: 0, buttons: 1 })
     await page.mouse.move(last.x, last.y)
     await page.mouse.move(first.x, first.y)
     await page.mouse.up()

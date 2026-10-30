@@ -36,7 +36,8 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
   const [pending, setPending] = createSignal(0)
   const saving = () => pending() > 0
   // Row changes show at once and stay here until the save carrying them settles.
-  const [requested, setRequested] = createSignal<ReadonlyMap<string, VisibilityPreference>>(new Map())
+  type RowRequest = { mode: VisibilityPreference }
+  const [requested, setRequested] = createSignal<ReadonlyMap<string, RowRequest>>(new Map())
   const preset = createMemo(() => transcriptPreset(preferences()))
   const presetLabel = (value: string) => t(`settings.behavior.expansionPreset.${value}.title`)
   // Changes save in order, each built from the preferences the previous one saved, so
@@ -55,30 +56,31 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
     })
     return queue
   }
-  // Each saved change re-renders the transcript: a sweep saves once, on release, and rows
-  // changed while a save runs merge into the next one.
-  let rowsQueued = false
+  // Each saved change re-renders the transcript, so a sweep saves its rows once, on release.
+  // A batch is sealed as it joins the queue: it never carries a later click past a preset
+  // change, nor a sweep that has not ended.
+  let batch = new Map<string, RowRequest>()
   const requestMode = (row: TranscriptVisibilityRow, mode: VisibilityPreference) => {
-    setRequested((current) => new Map(current).set(row.key, mode))
-    afterSweep(saveRequested)
+    const request = { mode }
+    batch.set(row.key, request)
+    setRequested((current) => new Map(current).set(row.key, request))
+    afterSweep(saveBatch)
   }
-  const saveRequested = () => {
-    if (rowsQueued) return
-    rowsQueued = true
-    let sent: ReadonlyMap<string, VisibilityPreference> = new Map()
+  const saveBatch = () => {
+    if (batch.size === 0) return
+    const sealed = batch
+    batch = new Map()
     void save(() => {
-      rowsQueued = false
-      sent = requested()
       let merged = preferences(), patch: Partial<Preferences> = {}
       for (const target of rows()) {
-        const value = sent.get(target.key)
-        if (!value) continue
-        const next = transcriptVisibilityPatch(merged, target, value)
+        const request = sealed.get(target.key)
+        if (!request) continue
+        const next = transcriptVisibilityPatch(merged, target, request.mode)
         merged = { ...merged, ...next }
         patch = { ...patch, ...next }
       }
       return patch
-    }, () => setRequested((current) => new Map([...current].filter(([key, value]) => sent.get(key) !== value))))
+    }, () => setRequested((current) => new Map([...current].filter(([key, request]) => sealed.get(key) !== request))))
   }
   return (
     <Popover placement="bottom-end" gutter={6} open={props.open} onOpenChange={props.onOpenChange}
@@ -113,7 +115,7 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
           </div>
           <div class="window-body transcript-filters-list">
             <For each={rows()}>{(row) => {
-              const mode = () => requested().get(row.key) ?? transcriptVisibility(preferences(), row)
+              const mode = () => requested().get(row.key)?.mode ?? transcriptVisibility(preferences(), row)
               let previousVisible: VisibilityPreference = "collapsed"
               const setMode = (value: VisibilityPreference) => requestMode(row, value)
               const visibilityLabel = () => t(mode() === "hidden" ? "transcriptFilters.show" : "transcriptFilters.hide", { name: row.label })

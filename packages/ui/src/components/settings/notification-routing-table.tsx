@@ -24,23 +24,30 @@ export const NotificationRoutingTable: Component<{
   const [pending, setPending] = createSignal<NotificationRouting>()
   const routing = () => pending() ?? preferences().notificationRouting
   const destinationLabel = (destination: NotificationDestination) => t(`settings.notifications.routing.${destination}`)
-  // Each write carries the whole table, so a sweep across boxes writes it once, on release:
-  // concurrent writes could land out of order and drop a box.
-  let writeQueued = false
+  // Each write carries the whole table: a sweep across boxes writes it once, on release, and
+  // writes go one after another so an older table never lands last.
+  let writes = Promise.resolve()
+  let writeQueued = false, systemChecked = false
   const write = () => {
     writeQueued = false
+    // One permission request per gesture, however many System boxes it checked.
+    if (systemChecked) {
+      systemChecked = false
+      props.onSystemChecked()
+    }
     const next = pending()
     if (!next) return
     // A failed write shows the saved table again.
-    void updatePreferences({ notificationRouting: next }).finally(() => { if (pending() === next) setPending(undefined) })
+    writes = writes.then(async () => { await updatePreferences({ notificationRouting: next }) })
+      .finally(() => { if (pending() === next) setPending(undefined) })
   }
   const change = (category: NotificationCategory, destination: NotificationDestination, enabled: boolean) => {
     setPending({ ...routing(), [category]: { ...routing()[category], [destination]: enabled } })
+    if (enabled && destination === "system") systemChecked = true
     if (!writeQueued) {
       writeQueued = true
       afterSweep(write)
     }
-    if (enabled && destination === "system") props.onSystemChecked()
   }
 
   return (

@@ -96,7 +96,12 @@ function install() {
   }
 
   window.addEventListener("pointerdown", (event) => {
-    if (sweep) stop()
+    if (sweep) {
+      // Another pointer (a touch during a mouse drag) leaves the sweep alone; the same
+      // pointer pressing again lost its release.
+      if (event.pointerId !== sweep.pointerId) return
+      stop()
+    }
     if (event.button !== 0 || event.pointerType === "touch") return
     const origin = toggleFrom(event.target)
     if (!origin || isDisabled(origin)) return

@@ -31,11 +31,12 @@ const query = new URLSearchParams(location.search)
 const saved = query.get("saved"), saveDelay = Number(query.get("saveDelay") ?? 0)
 let config: any = { settings: { locale: "en", ...(saved === null ? {} : { showUsageMetrics: saved === "true", usageMetricsExpansion: "expanded" }) } }
 serverApi.fetchConfigOwner = async () => config
-let saves = 0
+let saves = 0, inFlight = 0, maxInFlight = 0, systemChecks = 0
 serverApi.patchConfigOwner = async (_owner, patch: any) => {
   saves += 1
+  maxInFlight = Math.max(maxInFlight, ++inFlight)
   // ?saveDelay=<ms> keeps each save pending like a slow server.
-  if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay))
+  try { if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay)) } finally { inFlight -= 1 }
   config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
   return config
 }
@@ -72,11 +73,12 @@ const Fixture = () => {
         customization={customization} onCustomizationChange={setCustomization} />
     </aside>
     <main style={{ width: "600px", "flex-shrink": 0 }}><TranscriptFilters /><ChatSettingsSection />
-      <NotificationRoutingTable systemUnavailable={false} onSystemChecked={() => {}} /></main>
+      <NotificationRoutingTable systemUnavailable={false} onSystemChecked={() => { systemChecks += 1 }} /></main>
   </div>
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
 ;(window as any).fixture = { preferences, updatePreferences, toggleUsageMetrics, width: setWidth, saves: () => saves,
+  maxInFlight: () => maxInFlight, systemChecks: () => systemChecks,
   savedModes: () => transcriptVisibilityRows((key) => key).map(row => transcriptVisibility(preferences(), row)),
   select: (id: string) => { setActiveSession(instanceId, id); select(id) }, usage }
