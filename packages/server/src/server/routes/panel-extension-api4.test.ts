@@ -225,6 +225,16 @@ test("the final reads are fenced: a superseded connection, a session moved or a 
     } })
     assert.notEqual((await d.post(method, body)).statusCode, 200, `${method}, superseded connection`)
   }
+  // The found Images conversation moves outside the workspace after the lookup, or during the gallery read.
+  for (const at of ["imagesConversation", "images"]) {
+    let m: Fixture = await fixture(t, ["session.context", "images.conversation"], { rpc: method => {
+      if (method === at) m.sessions.ses_images.location = { directory: "/elsewhere" }
+      return undefined
+    } })
+    const moved = await m.post("conversationStatus", { directory: "/repo" })
+    assert.notEqual(moved.statusCode, 200, `conversationStatus, found session moved at ${at}`)
+    assert.equal(JSON.stringify(moved.json()).includes("lastUsed"), false, "no timestamp of a foreign session")
+  }
   // Unchanged authority still answers.
   const ok = await fixture(t, ["session.context", "session.images.read"])
   assert.equal((await ok.post("imagesStatus", { sessionID: "ses_work" })).statusCode, 200)

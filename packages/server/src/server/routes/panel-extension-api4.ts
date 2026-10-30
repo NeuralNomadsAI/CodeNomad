@@ -186,15 +186,22 @@ export function registerPanelExtensionApi4Routes(app: FastifyInstance, deps: Pan
       imageCount: null, lastUsed: null, gitExclusion: null,
       displayedIsImages: Boolean(displayed && !displayed.parentID && (displayed.metadata as Record<string, unknown> | undefined)?.["codenomad.companion"] === "images") }
     if (found.status !== "found") return status
-    // Status never writes: the exclusion is only checked; open and startNew append it.
-    const [session, page, gitExclusion] = await Promise.all([
-      connection.client.session.get({ sessionID: found.sessionID }, { signal: bounded(signal) }).catch(() => undefined),
-      sessionRpc(context, input.instanceId, found.sessionID, "images", { sessionID: found.sessionID }).catch(() => undefined),
+    // The found conversation must be owned at this Location; its fence holds the answer.
+    const session = await ownedSession(input.instanceId, connection.client, found.sessionID, signal)
+    if (readLocationRef(session.location).directory !== input.directory) throw new Refused(409)
+    fenceSession(context, input.instanceId, connection.client, found.sessionID, session.location)
+    // Status never writes: the exclusion is only checked; open and startNew append it. An
+    // unreadable gallery only leaves the count unknown; an authority refusal fails the request.
+    const [page, gitExclusion] = await Promise.all([
+      sessionRpc(context, input.instanceId, found.sessionID, "images", { sessionID: found.sessionID }).catch(error => {
+        if (error instanceof Refused || signal.aborted) throw error
+        return undefined
+      }),
       checkExclusion({ directory: input.directory, distro: manager.getServiceWslDistro(input.instanceId),
         toHost: servicePath => manager.getHostPathForServicePath(input.instanceId, servicePath) }),
     ])
     const images = imagesResultSchema.safeParse(page)
-    status.lastUsed = typeof session?.time?.updated === "number" ? session.time.updated : null
+    status.lastUsed = typeof session.time?.updated === "number" ? session.time.updated : null
     // Exact only when the whole gallery fits the one page read; otherwise unknown, never a partial total.
     status.imageCount = images.success && images.data.status === "page" && images.data.cursor === null
       ? images.data.entries.filter(entry => entry.kind === "image").length : null
