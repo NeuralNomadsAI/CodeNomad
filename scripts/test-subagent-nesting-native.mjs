@@ -4,8 +4,9 @@ import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { randomUUID } from "node:crypto"
 import { createServer } from "node:http"
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import path from "node:path"
+import { isDeepStrictEqual } from "node:util"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
 import { parse } from "jsonc-parser"
@@ -72,15 +73,18 @@ try {
   const manager = {
     get: () => ({}), getSharedServiceConnection: async () => connection,
     getServiceDirectoryForPath: async (_id, directory) => directory === project ? project : undefined,
-    ownsLocation: async (_id, value) => value.directory === project, getWorktreeIdentityForPath: async () => "private-fixture-project",
+    ownsLocation: async (_id, value) => value.directory === project,
+    // Runs inside the serialized write, after the save first read its state and before the edit.
+    getWorktreeIdentityForPath: async () => { const run = intercept; intercept = undefined; await run?.(); return "private-fixture-project" },
     getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
     getServiceWslDistro: () => undefined, getHostPathForServicePath: async (_id, value) => value,
   }
   const settings = new SubagentDepthSettings(new PluginControls({ workspaceManager: manager,
     worktreeDeletionFence: { enter: () => () => {} }, logger: {} }), manager)
   const save = async value => settings.update("fixture", location, value, (await settings.read("fixture", location)).project.expectation)
-  const generalAllows = async () => (await client.agent.list({ location })).data.find(agent => agent.id === "general")
-    ?.permissions.filter(rule => rule.action === "subagent").at(-1)?.effect === "allow"
+  const generalRules = async () => (await client.agent.list({ location })).data.find(agent => agent.id === "general")?.permissions ?? []
+  const generalAllows = async () => (await generalRules()).filter(rule => rule.action === "subagent").at(-1)?.effect === "allow"
+  let intercept
   /** The deepest subagent level one prompt reaches when every conversation launches a General subagent. */
   async function nestedLevels() {
     const session = await client.session.create({ location })
@@ -106,7 +110,7 @@ try {
   const file = initial.project.path
   assert.match(await readFile(file, "utf8"), /Added by CodeNomad with the subagent depth/)
   await until(generalAllows, "native reload of the project rule")
-  assert.deepEqual((await settings.read("fixture", location)).nesting, { effect: "allow", configured: true, added: true })
+  assert.deepEqual((await settings.read("fixture", location)).nesting, { effect: "allow", configured: false, added: true })
   assert.equal(await nestedLevels(), 3, "the saved depth nests General subagents up to its limit")
 
   await save(null)
@@ -115,6 +119,52 @@ try {
   const inherited = await settings.read("fixture", location)
   assert.deepEqual([inherited.effectiveDepth, inherited.nesting], [3, { effect: "deny", configured: false }])
   console.log("PASS built-in General denial blocks nesting; a project depth of 3 also lifts it and nests three levels; Inherit restores both")
+
+  // Every user-authored subagent rule, in any format or scope and for any target, stays decisive: the save
+  // writes no rule and General's resolved permissions are unchanged.
+  const baseline = await generalRules()
+  const globalWith = value => writeFile(globalFile, JSON.stringify({ experimental: { subagent_depth: 3 },
+    agents: { reviewer: { mode: "subagent", description: "Private reviewer" } }, ...value }))
+  const markdown = directory => path.join(directory, "agents", "general.md")
+  const deny = '---\npermissions:\n  - action: subagent\n    resource: "*"\n    effect: deny\n---\n'
+  const reloaded = async (label, predicate) => until(async () => predicate(await generalRules()), `native reload: ${label}`)
+  const cases = [
+    ["another target's General denial", () => globalWith({ agents: { reviewer: { mode: "subagent", description: "Private reviewer" },
+      general: { permissions: [{ action: "subagent", resource: "reviewer", effect: "deny" }] } } }), rules => rules.some(rule => rule.resource === "reviewer")],
+    ["another target's top-level ask", () => globalWith({ permissions: [{ action: "subagent", resource: "reviewer", effect: "ask" }] }),
+      rules => rules.some(rule => rule.resource === "reviewer")],
+    ["a Global Markdown General denial", async () => { await mkdir(path.dirname(markdown(config)), { recursive: true }); await writeFile(markdown(config), deny) },
+      rules => rules.filter(rule => rule.action === "subagent" && rule.effect === "deny").length === 2],
+    ["a project Markdown General denial", async () => { await mkdir(path.dirname(markdown(path.join(project, ".opencode"))), { recursive: true })
+      await writeFile(markdown(path.join(project, ".opencode")), deny) },
+      rules => rules.filter(rule => rule.action === "subagent" && rule.effect === "deny").length === 2],
+    ["an uppercase top-level denial", () => globalWith({ permissions: [{ action: "SUBAGENT", resource: "*", effect: "deny" }] }),
+      rules => rules.some(rule => rule.action === "SUBAGENT")],
+  ]
+  for (const [label, prepare, loaded] of cases) {
+    await prepare()
+    await reloaded(label, loaded)
+    const before = await generalRules()
+    await save(3)
+    assert.doesNotMatch(await readFile(file, "utf8"), /Added by CodeNomad/, label)
+    assert.equal((await settings.read("fixture", location)).nesting.configured, true, label)
+    await delay(500)
+    assert.deepEqual(await generalRules(), before, `${label}: resolved General permissions unchanged`)
+    await save(null)
+    await rm(markdown(config), { force: true }); await rm(markdown(path.join(project, ".opencode")), { force: true })
+    await writeFile(globalFile, '{"experimental":{"subagent_depth":3}}\n')
+    await reloaded(`${label} restored`, rules => isDeepStrictEqual(rules, baseline))
+  }
+  // A denial loaded while the save waits in the write queue is read there.
+  intercept = async () => {
+    await writeFile(globalFile, JSON.stringify({ experimental: { subagent_depth: 3 },
+      agents: { general: { permissions: [{ action: "subagent", resource: "*", effect: "deny" }] } } }))
+    await reloaded("concurrent Global denial", rules => rules.filter(rule => rule.action === "subagent" && rule.effect === "deny").length === 2)
+  }
+  await save(3)
+  assert.equal(intercept, undefined, "the write queue ran the interception")
+  assert.doesNotMatch(await readFile(file, "utf8"), /Added by CodeNomad/, "a concurrent Global denial")
+  console.log("PASS other targets' rules, Global and project Markdown agents, uppercase actions and a concurrent Global denial keep General's permissions")
 } finally {
   await stopFixtureChild(child, stopped)
   provider.closeAllConnections()

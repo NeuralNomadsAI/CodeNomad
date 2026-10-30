@@ -473,9 +473,10 @@ export interface SubagentDepthSnapshot {
   location: PluginControlLocation
   capability: SubagentDepthCapability | null
   effectiveDepth: number | null
-  /** Whether OpenCode's built-in General subagent may launch subagents, which nesting needs: `null` when
-   * unknown. `configured`: a configuration rule decides it, not OpenCode's built-in policy. `added`: the
-   * project holds the rule CodeNomad writes with a depth of 2 or more. */
+  /** Whether OpenCode's built-in General subagent may launch General, which nesting needs: `null` when
+   * unknown. `configured`: General's resolved rules hold `subagent` rules besides OpenCode's built-in policy
+   * and CodeNomad's own, so CodeNomad changes nothing. `added`: the project holds the rule CodeNomad writes
+   * with a depth of 2 or more. */
   nesting: { effect: SubagentNestingEffect; configured: boolean; added?: boolean } | null
   /** `emptyExperimental`: the project holds an `experimental` object without properties, which
    * hides every inherited experimental setting; Inherit removes it. */

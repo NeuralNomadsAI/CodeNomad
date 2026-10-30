@@ -9,8 +9,10 @@ import { readRuntimeContract } from "./compatibility/negotiate"
 import { imageSettingsCapability } from "./image-settings"
 import { maskedBy, samePath } from "./experimental-layers"
 import {
-  NESTING_AGENT, NESTING_DEPTH, addedNestingRule, configuredNestingRules, nestingEffect, withNestingRule, withoutNestingRule,
+  NESTING_AGENT, NESTING_DEPTH, addedNestingRule, builtInNesting, nestingEffect, nestingRulesLoaded, withNestingRule, withoutNestingRule,
+  type Rule,
 } from "./subagent-nesting"
+import type { ServiceConnection } from "../workspaces/opencode-service"
 
 const keys = ["experimental", "subagent_depth"]
 
@@ -48,11 +50,20 @@ function expectation(document: PluginControlDocument): string {
   ])).digest("hex")
 }
 
-/** Only the owned Location's project layer, where a depth of 2 or more also lets OpenCode's General
- * subagent launch subagents unless configuration decides that; never reloads Locations. */
+/** General's resolved permission rules; `undefined` when unreadable or General is missing. */
+async function generalRules(connection: ServiceConnection, directory: string): Promise<Rule[] | undefined> {
+  try {
+    const agents = (await connection.client.agent.list({ location: { directory } }, { signal: AbortSignal.timeout(5_000) })).data
+    const general = Array.isArray(agents) ? agents.find(agent => agent.id === NESTING_AGENT) : undefined
+    return Array.isArray(general?.permissions) ? general.permissions : undefined
+  } catch { return undefined }
+}
+
+/** Only the owned Location's project layer, where a depth of 2 or more also neutralizes OpenCode's built-in
+ * denial of General launching subagents while nothing else decides that; never reloads Locations. */
 export class SubagentDepthSettings {
   constructor(private readonly documents: Pick<PluginControls, "readConfigDocuments" | "editConfigDocument">,
-    private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection">) {}
+    private readonly manager: Pick<WorkspaceManager, "getSharedServiceConnection" | "getServicePathStyle">) {}
 
   private async context(workspaceId: string, location: PluginControlLocation) {
     const connection = await this.manager.getSharedServiceConnection(workspaceId)
@@ -60,18 +71,29 @@ export class SubagentDepthSettings {
     // Document acquisition proves directory ownership before the schema request.
     const snapshot = await this.documents.readConfigDocuments(workspaceId, location)
     connection.assertCurrent()
-    const [contract, agents] = await Promise.all([
+    const [contract, rules] = await Promise.all([
       readRuntimeContract(connection.endpoint, connection.fetch, AbortSignal.timeout(5_000)),
-      // General's resolved rules; unknown when unreadable, which never adds a rule.
-      (async () => (await connection.client.agent.list({ location: { directory: snapshot.location.directory } },
-        { signal: AbortSignal.timeout(5_000) })).data)().catch(() => undefined),
+      generalRules(connection, snapshot.location.directory),
     ])
     connection.assertCurrent()
-    const general = Array.isArray(agents) ? agents.find(agent => agent.id === NESTING_AGENT) : undefined
     return { ...snapshot, connection, capability: subagentDepthCapability(contract),
-      mediaStorage: imageSettingsCapability(contract).mediaStorage,
-      nesting: Array.isArray(general?.permissions) ? nestingEffect(general.permissions) : undefined,
-      configured: nestingEffect(configuredNestingRules(snapshot.entries)) !== undefined }
+      mediaStorage: imageSettingsCapability(contract).mediaStorage, rules }
+  }
+
+  /** Whether CodeNomad's rule may stand in the fresh project `document`, decided inside the serialized write
+   * from state read now: General's resolved rules hold only the built-in denial (bracketing reads must agree)
+   * and OpenCode has loaded the owned documents' current rules. Anything uncertain refuses. */
+  private async admitsNesting(workspaceId: string, location: PluginControlLocation, directory: string,
+    connection: ServiceConnection, document: PluginControlDocument): Promise<boolean> {
+    try {
+      const before = await generalRules(connection, directory)
+      const fresh = await this.documents.readConfigDocuments(workspaceId, location)
+      const after = await generalRules(connection, directory)
+      connection.assertCurrent()
+      const owned = fresh.documents.map(item => item.scope === "project" ? { ...item, document } : item)
+      return before !== undefined && isDeepStrictEqual(before, after) && nestingRulesLoaded(owned, fresh.entries, samePath)
+        && builtInNesting(before, addedNestingRule(document) >= 0)
+    } catch { return false }
   }
 
   /** The `media_blob` removing the project `experimental` object would expose, only when certain: the
@@ -96,9 +118,11 @@ export class SubagentDepthSettings {
     const effectiveDepth = configured === undefined ? context.capability?.default ?? null : depth(configured)
     const project = context.documents.find(item => item.scope === "project")
     const added = project !== undefined && addedNestingRule(project.document) >= 0
+    // OpenCode matches permissions case-insensitively on Windows execution hosts.
+    const effect = context.rules && nestingEffect(context.rules, this.manager.getServicePathStyle(workspaceId) === "win32")
     return { location: context.location, capability: context.capability, effectiveDepth,
-      nesting: context.nesting === undefined ? null
-        : { effect: context.nesting, configured: context.configured, ...(added ? { added } : {}) },
+      nesting: !context.rules || !effect ? null
+        : { effect, configured: !builtInNesting(context.rules, added), ...(added ? { added } : {}) },
       project: project ? { path: project.path, depth: depth(readNativeSetting(project.document, keys)),
         expectation: expectation(project.document),
         ...(withoutRedundantExperimental(project.document, this.exposedMediaStorage(context, project.path)) === undefined
@@ -116,7 +140,7 @@ export class SubagentDepthSettings {
     if (value !== null && (validated === null || validated < capability.minimum
       || capability.maximum !== undefined && validated > capability.maximum))
       throw new PluginControlsError("Subagent depth is outside the native contract", "invalid")
-    await this.documents.editConfigDocument(workspaceId, location, "project", document => {
+    await this.documents.editConfigDocument(workspaceId, location, "project", async document => {
       context.connection.assertCurrent()
       if (expectation(document) !== expected) throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
       // An emptied project `experimental` object would still hide every inherited experimental setting,
@@ -124,10 +148,12 @@ export class SubagentDepthSettings {
       const text = value !== null ? editNativeSetting(document, keys, value)
         : withoutRedundantExperimental(document, exposed, keys[1]) ?? editNativeSetting(document, keys, undefined)
       const edited = withEditedText(document, text)
-      if (validated === null || validated < NESTING_DEPTH) return withoutNestingRule(edited) ?? text
-      // Only OpenCode's built-in denial is lifted, never a configuration rule's decision.
-      const lift = addedNestingRule(edited) < 0 && context.nesting !== undefined && context.nesting !== "allow" && !context.configured
-      return lift ? withNestingRule(edited) : text
+      // Permission state is reread here, never taken from before the write queue; without a fresh admission
+      // CodeNomad's rule goes, which only ever withdraws its own grant.
+      if (validated === null || validated < NESTING_DEPTH
+        || !await this.admitsNesting(workspaceId, location, context.location.directory, context.connection, document))
+        return withoutNestingRule(edited) ?? text
+      return addedNestingRule(edited) >= 0 ? text : withNestingRule(edited)
     })
     context.connection.assertCurrent()
   }

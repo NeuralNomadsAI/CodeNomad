@@ -96,6 +96,8 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
   const nesting = () => {
     const snapshot = state().snapshot, nesting = snapshot?.nesting
     if (!nesting || (snapshot?.effectiveDepth ?? 0) < 2) return undefined
+    // CodeNomad's rule beside rules the user set later: it may override them.
+    if (nesting.added && nesting.configured) return t("missions.depth.nesting.conflict")
     if (nesting.effect === "allow") return nesting.added ? t("missions.depth.nesting.added") : undefined
     if (!nesting.configured) return t("missions.depth.nesting.default")
     return t(nesting.effect === "ask" ? "missions.depth.nesting.ask" : "missions.depth.nesting.denied")

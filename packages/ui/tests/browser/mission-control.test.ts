@@ -417,10 +417,12 @@ test("the depth editor says whether General subagents can nest at the effective 
   // Each saved value selects the native state the next read reports.
   const states: Record<string, { effectiveDepth: number; depth: number | null; nesting: unknown }> = {
     initial: { effectiveDepth: 1, depth: null, nesting: { effect: "deny", configured: false } },
-    "3": { effectiveDepth: 3, depth: 3, nesting: { effect: "allow", configured: true, added: true } },
+    "3": { effectiveDepth: 3, depth: 3, nesting: { effect: "allow", configured: false, added: true } },
     null: { effectiveDepth: 4, depth: null, nesting: { effect: "deny", configured: false } },
     "2": { effectiveDepth: 2, depth: 2, nesting: { effect: "deny", configured: true } },
     "5": { effectiveDepth: 5, depth: 5, nesting: { effect: "ask", configured: true } },
+    // The added rule beside rules the user set afterwards.
+    "6": { effectiveDepth: 6, depth: 6, nesting: { effect: "allow", configured: true, added: true } },
   }
   let state = states.initial
   try {
@@ -450,9 +452,11 @@ test("the depth editor says whether General subagents can nest at the effective 
     await controls.getByText("OpenCode effective depth: 4", { exact: true }).waitFor()
     assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest. Saving a project depth of 2 or more allows them.")
     await save("2", 2)
-    assert.equal(await note.innerText(), "Your OpenCode configuration stops General subagents from launching subagents, so they do not nest.")
+    assert.equal(await note.innerText(), "General subagents cannot launch subagents here. Your OpenCode configuration sets their subagent permissions, so CodeNomad leaves them unchanged.")
     await save("5", 5)
-    assert.equal(await note.innerText(), "Your OpenCode configuration makes General subagents ask before launching subagents.")
+    assert.equal(await note.innerText(), "General subagents ask before launching subagents. Your OpenCode configuration sets their subagent permissions, so CodeNomad leaves them unchanged.")
+    await save("6", 6)
+    assert.equal(await note.innerText(), "The rule CodeNomad added to this project may override subagent permissions your OpenCode configuration sets for General subagents. Inherit or a depth below 2 removes it.")
   } finally { await page.close() }
 })
 
