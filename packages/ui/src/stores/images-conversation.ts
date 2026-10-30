@@ -37,8 +37,8 @@ export function isDesignAgentMissing(instanceId: string, location: LocationRef):
  */
 export async function resolveImagesConversation(instanceId: string, mode: "open" | "new"): Promise<ImagesConversationResponse> {
   const location = getActiveCatalogLocation(instanceId)
-  await fetchAgents(instanceId, location, true)
-  // Without this Location's catalog, Design's presence is unknown: create nothing.
+  // Without a fresh catalog of this Location, Design's presence is unknown: create nothing.
+  if (!await fetchAgents(instanceId, location, true)) return { status: "unknown" }
   const catalog = locationAgents(instanceId, location)
   if (!catalog) return { status: "unknown" }
   const agent = catalog.some(entry => entry.id === DESIGN_AGENT_ID) ? DESIGN_AGENT_ID : undefined

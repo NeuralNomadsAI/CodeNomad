@@ -110,6 +110,11 @@ test("another Location's catalog never blocks or decides creation, even when its
     await notice(page).waitFor()
     await page.evaluate(async () => { (window as any).fixture.setOther("ok", true); await (window as any).fixture.refreshOther() })
     await notice(page).waitFor({ state: "detached" })
+
+    // A failed refresh of this same Location never lets its retained catalog decide a creation.
+    await page.evaluate(() => (window as any).fixture.setOther("fail"))
+    assert.deepEqual(await open(page, "new"), { status: "unknown" })
+    assert.equal(bodies.length, 0, "a stale same-Location catalog creates nothing")
     assert.deepEqual(errors, [])
   } finally { await page.close() }
 })
