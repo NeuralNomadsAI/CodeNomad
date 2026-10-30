@@ -7,7 +7,7 @@ import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
-import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { clearFixtureGitEnvironment, stopFixtureChild } from "./native-fixture-guards.mjs"
 
 /** The resolved `opencode` folder fixtures are created in. With `projectConfig` the daemon reads
  * every ancestor's `.opencode/`, so outside CI it must lie outside the user's home. */
@@ -33,6 +33,8 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
   const root = await mkdtemp(path.join(await fixtureParent({ projectConfig }), "product-native-"))
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_|npm_config_)/i.test(key)))
+  // Inherited GIT_* variables would redirect the daemon's Git or expose the user's Git configuration.
+  clearFixtureGitEnvironment(env)
   for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
   // 2.0.29+ reads system-managed settings from %ProgramData%\opencode on Windows.
   if (process.platform === "win32") {
@@ -46,6 +48,7 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     OPENCODE_SERVER_PASSWORD: password })
   Object.assign(env, { npm_config_userconfig: path.join(root, ".npmrc"), npm_config_globalconfig: path.join(root, "global.npmrc"), npm_config_cache: path.join(root, "npm-cache") })
   await mkdir(env.OPENCODE_CONFIG_DIR)
+  assert(Object.keys(env).every(key => !/^GIT_/i.test(key)), "The fixture daemon never inherits GIT_* variables")
   const configuration = await prepare({ root, configDirectory: env.OPENCODE_CONFIG_DIR })
   const requests = []
   let providerError
