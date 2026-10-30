@@ -63,6 +63,8 @@ const [sessions, setSessions] = createSignal<Map<string, Map<string, Session>>>(
 const [activeSessionId, setActiveSessionId] = createSignal<Map<string, string>>(new Map())
 const [activeParentSessionId, setActiveParentSessionId] = createSignal<Map<string, string>>(new Map())
 const [agents, setAgents] = createSignal<Map<string, Agent[]>>(new Map())
+// The Location authority key each instance's `agents` list was read for.
+const [agentCatalogLocations, setAgentCatalogLocations] = createSignal<Map<string, string>>(new Map())
 const [providers, setProviders] = createSignal<Map<string, Provider[]>>(new Map())
 const [sessionDraftPrompts, setSessionDraftPrompts] = createSignal<Map<string, string>>(new Map())
 const [authoritativeDraftKeys, setAuthoritativeDraftKeys] = createSignal<Set<string>>(new Set())
@@ -1265,6 +1267,8 @@ export {
   activeParentSessionId,
   agents,
   setAgents,
+  agentCatalogLocations,
+  setAgentCatalogLocations,
   providers,
   setProviders,
   loading,

@@ -1,11 +1,13 @@
 import type { ImagesConversationResponse } from "../../../server/src/server/routes/images-conversation-contract"
 import { serverApi } from "../lib/api-client"
 import { tGlobal } from "../lib/i18n"
-import type { Session } from "../types/session"
+import type { LocationRef } from "@opencode/client"
+import type { Agent, Session } from "../types/session"
 import { requestComposerFocus } from "./composer-focus"
+import { locationAuthorityKey } from "./request-locations"
 import { fetchAgents, getActiveCatalogLocation, hydrateRestoredSessionChain } from "./session-api"
 import { getDefaultModel } from "./session-models"
-import { agents, prependSessionListId, setActiveParentSession } from "./session-state"
+import { agentCatalogLocations, agents, prependSessionListId, setActiveParentSession } from "./session-state"
 
 export const DESIGN_AGENT_ID = "design"
 const COMPANION_KEY = "codenomad.companion"
@@ -15,9 +17,14 @@ export function isImagesConversation(session: Pick<Session, "parentId" | "metada
   return Boolean(session && !session.parentId && (session.metadata as Record<string, unknown> | undefined)?.[COMPANION_KEY] === "images")
 }
 
-/** Whether the loaded agent catalog of the active location lacks `design`; unknown while it has not loaded. */
-export function isDesignAgentMissing(instanceId: string): boolean {
-  const catalog = agents().get(instanceId)
+/** The instance's agent list when it was read for `location`; another Location's list counts as not loaded. */
+export function locationAgents(instanceId: string, location: LocationRef): Agent[] | undefined {
+  return agentCatalogLocations().get(instanceId) === locationAuthorityKey(location) ? agents().get(instanceId) : undefined
+}
+
+/** Whether `location`'s loaded agent catalog lacks `design`; false while that catalog is not loaded. */
+export function isDesignAgentMissing(instanceId: string, location: LocationRef): boolean {
+  const catalog = locationAgents(instanceId, location)
   return Boolean(catalog) && !catalog!.some(agent => agent.id === DESIGN_AGENT_ID)
 }
 
@@ -31,7 +38,10 @@ export function isDesignAgentMissing(instanceId: string): boolean {
 export async function resolveImagesConversation(instanceId: string, mode: "open" | "new"): Promise<ImagesConversationResponse> {
   const location = getActiveCatalogLocation(instanceId)
   await fetchAgents(instanceId, location, true)
-  const agent = isDesignAgentMissing(instanceId) || !agents().get(instanceId) ? undefined : DESIGN_AGENT_ID
+  // Without this Location's catalog, Design's presence is unknown: create nothing.
+  const catalog = locationAgents(instanceId, location)
+  if (!catalog) return { status: "unknown" }
+  const agent = catalog.some(entry => entry.id === DESIGN_AGENT_ID) ? DESIGN_AGENT_ID : undefined
   const model = await getDefaultModel(instanceId, agent)
   return serverApi.imagesConversation(instanceId, {
     directory: location.directory, mode, title: tGlobal("imagesConversation.title"),

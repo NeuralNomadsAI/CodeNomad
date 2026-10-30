@@ -9,6 +9,7 @@ const url = "/api/workspaces/w/images-conversation"
 const model = { providerID: "fixture", id: "chosen" }
 function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; distro?: string; exclusion?: GitExclusion; directory?: string } = {}) {
   const calls: any[] = []
+  const order: string[] = []
   const excluded: ExcludeTarget[] = []
   const app = Fastify()
   const fence = new WorktreeDeletionFence()
@@ -16,27 +17,61 @@ function fixture(options: { owned?: boolean; output?: unknown; fail?: boolean; d
     worktreeDeletionFence: fence,
     excludeDesignFolder: async target => { excluded.push(target); return options.exclusion ?? "excluded" },
     workspaceManager: {
-      getSharedServiceClient: async () => ({
-        location: { get: async () => {
-          if (options.directory === "") throw new Error("location not found")
-          return { directory: options.directory ?? "/owned/repo", project: { id: "p" } }
-        } },
-        rpc: { call: async (input: unknown, opts: any) => {
-          assert(opts.signal instanceof AbortSignal)
-          calls.push(input)
-          if (options.fail) throw new Error("method not found")
-          return { output: options.output ?? { status: "found", sessionID: "ses_images", created: true } }
-        } },
-      }) as any,
-      ownsLocation: async () => options.owned !== false,
-      desktopPluginsReady: async () => {},
-      getWorktreeIdentityForPath: async () => "/owned/repo",
+      getSharedServiceClient: async () => {
+        order.push("client")
+        return {
+          location: { get: async () => {
+            order.push("location.get")
+            if (options.directory === "") throw new Error("location not found")
+            return { directory: options.directory ?? "/owned/repo", project: { id: "p" } }
+          } },
+          rpc: { call: async (input: unknown, opts: any) => {
+            assert(opts.signal instanceof AbortSignal)
+            order.push("rpc")
+            calls.push(input)
+            if (options.fail) throw new Error("method not found")
+            return { output: options.output ?? { status: "found", sessionID: "ses_images", created: true } }
+          } },
+        } as any
+      },
+      // Only the workspace "w" exists; ownership needs no OpenCode request.
+      ownsLocation: async (id: string, location: { directory: string }) => {
+        order.push(`owns:${location.directory}`)
+        return id === "w" && options.owned !== false
+      },
+      desktopPluginsReady: async () => { order.push("plugins") },
+      getWorktreeIdentityForPath: async (id: string) => { order.push("identity"); return id === "w" ? "/owned/repo" : undefined },
       getServiceWslDistro: () => options.distro,
       getHostPathForServicePath: async (_id: string, servicePath: string) => `\\\\wsl.localhost\\Ubuntu${servicePath.replaceAll("/", "\\")}`,
     },
   })
-  return { app, calls, excluded, fence }
+  return { app, calls, excluded, fence, order }
 }
+
+test("an unowned directory or unknown workspace never reaches OpenCode", async () => {
+  for (const [path, options] of [[url, { owned: false }], ["/api/workspaces/unknown/images-conversation", {}]] as const) {
+    const { app, order } = fixture(options)
+    try {
+      const response = await app.inject({ method: "POST", url: path, payload: { directory: "/anywhere/else", mode: "open" } })
+      assert.equal(response.statusCode, 403)
+      assert.deepEqual(order, ["owns:/anywhere/else"], "no client, plugin wait or Location read before authorization")
+    } finally { await app.close() }
+  }
+})
+
+test("the authorized Location is resolved inside the deletion fence, before the RPC", async () => {
+  const { app, order, fence } = fixture()
+  try {
+    assert.equal((await app.inject({ method: "POST", url, payload: { directory: "/owned/repo", mode: "open" } })).statusCode, 200)
+    assert.deepEqual(order.slice(0, 3), ["owns:/owned/repo", "identity", "client"])
+    assert.ok(order.indexOf("location.get") < order.indexOf("rpc"))
+    order.length = 0
+    await fence.run("/owned/repo", ["/owned/repo"], async () => {
+      assert.equal((await app.inject({ method: "POST", url, payload: { directory: "/owned/repo", mode: "open" } })).statusCode, 409)
+    })
+    assert.equal(order.includes("location.get"), false, "a fenced worktree is not read")
+  } finally { await app.close() }
+})
 
 test("open pins the fixed method, passes the caller's title, agent and model, then excludes the design folder", async () => {
   const { app, calls, excluded } = fixture()

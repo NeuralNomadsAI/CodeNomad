@@ -32,12 +32,31 @@ export async function readGitExclude(excludePath: string): Promise<Buffer> {
 }
 
 /**
+ * A line as Git reads an exclude file: one `\r` before the newline dropped,
+ * then trailing spaces unless backslash-escaped (Git's `trim_trailing_spaces`);
+ * leading whitespace is part of the pattern.
+ */
+function gitPatternLine(line: string): string {
+  const value = line.endsWith("\r") ? line.slice(0, -1) : line
+  let lastSpace = -1
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === " ") {
+      if (lastSpace < 0) lastSpace = index
+      continue
+    }
+    if (value[index] === "\\" && ++index >= value.length) return value
+    lastSpace = -1
+  }
+  return lastSpace < 0 ? value : value.slice(0, lastSpace)
+}
+
+/**
  * Appends the `entries` missing from `existing` (the file's current bytes) under
  * the `# codenomad` header. The existing bytes are never rewritten.
  */
 export async function appendCodenomadGitExclude(excludePath: string, existing: Buffer, entries: readonly string[]): Promise<boolean> {
   const text = existing.toString("utf-8")
-  const lines = new Set(text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean))
+  const lines = new Set(text.split("\n").map(gitPatternLine).filter(Boolean))
   const missing = entries.filter((e) => !lines.has(e))
   if (missing.length === 0) {
     return false

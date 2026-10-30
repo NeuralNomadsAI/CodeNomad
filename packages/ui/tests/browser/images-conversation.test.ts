@@ -78,6 +78,42 @@ test("Open creates the Images conversation with Design and CodeNomad's model, fo
   } finally { await page.close() }
 })
 
+test("another Location's catalog never blocks or decides creation, even when its own refresh waits or fails", async () => {
+  const { page, errors, bodies } = await openPage([])
+  try {
+    // The first Location really lacks Design: its Images conversation is blocked.
+    await page.evaluate(() => (window as any).fixture.setDesignPresent(false))
+    await page.evaluate(() => (window as any).fixture.show("ses_images"))
+    await notice(page).waitFor()
+
+    // Switch to an Images conversation of a Location that has Design, while its catalog read waits.
+    await page.evaluate(() => (window as any).fixture.setOther("hang"))
+    await page.evaluate(() => (window as any).fixture.show("ses_other_images"))
+    await waitFor(page, state => state.active === "ses_other_images", "the other Location's conversation")
+    await page.waitForFunction(() => (window as any).fixture.otherWaiting() > 0)
+    const input = page.locator("textarea.prompt-input")
+    await input.fill("Draw a banner")
+    assert.equal(await notice(page).count(), 0, "the first Location's catalog does not judge this one")
+    assert.equal(await sendButton(page).isDisabled(), false)
+
+    // A failed refresh keeps the catalog unloaded for this Location: no block, and no creation either.
+    await page.evaluate(() => (window as any).fixture.releaseOther(false))
+    await page.waitForTimeout(100)
+    assert.equal(await notice(page).count(), 0)
+    assert.equal(await sendButton(page).isDisabled(), false)
+    await page.evaluate(() => (window as any).fixture.setOther("fail"))
+    assert.deepEqual(await open(page, "open"), { status: "unknown" })
+    assert.equal(bodies.length, 0, "Design's presence unknown: nothing is created")
+
+    // Once this Location's own catalog loads, it decides: absent blocks, present does not.
+    await page.evaluate(async () => { (window as any).fixture.setOther("ok", false); await (window as any).fixture.refreshOther() })
+    await notice(page).waitFor()
+    await page.evaluate(async () => { (window as any).fixture.setOther("ok", true); await (window as any).fixture.refreshOther() })
+    await notice(page).waitFor({ state: "detached" })
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("an unknown lookup creates nothing and keeps the current conversation", async () => {
   const { page, errors } = await openPage([{ status: "unknown" }])
   try {

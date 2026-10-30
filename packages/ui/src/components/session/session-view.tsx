@@ -31,9 +31,9 @@ import { getFilePreview, closeFilePreview } from "../../stores/files-preview"
 import { getSubmitBottomPinTargetCount, resolveSessionBottomPinIntent, shouldClearSessionBottomPinIntent, type SessionBottomPinIntent } from "./session-bottom-pin-intent"
 import { focusConversationStream } from "../focus-conversation"
 import { getOpenCodeSessionInbox, syncOpenCodeSessionInbox } from "../../stores/opencode-data"
-import { agents, sessionMessagesNeedLoad, sessions } from "../../stores/session-state"
+import { sessionMessagesNeedLoad, sessions } from "../../stores/session-state"
 import { stageSessionRevert } from "../../stores/session-actions"
-import { DESIGN_AGENT_ID, isDesignAgentMissing, isImagesConversation } from "../../stores/images-conversation"
+import { DESIGN_AGENT_ID, isDesignAgentMissing, isImagesConversation, locationAgents } from "../../stores/images-conversation"
 import { clearComposerFocusRequest, composerFocusRequested } from "../../stores/composer-focus"
 import { isSelectablePrimaryAgent } from "../../types/session"
 import DesignAgentNotice from "../prompt-input/DesignAgentNotice"
@@ -88,13 +88,17 @@ export const SessionView: Component<SessionViewProps> = (props) => {
     return Boolean(currentSession.pendingPermission || currentSession.pendingForm)
   })
 
-  // Only an Images conversation whose selected agent is an absent `design` blocks sending.
+  // Only an Images conversation whose selected agent is an absent `design` blocks
+  // sending, judged on its own Location's loaded catalog.
   const designAgentBlocked = createMemo(() => {
     const currentSession = session()
     return props.isActive !== false && isImagesConversation(currentSession)
-      && currentSession!.agent === DESIGN_AGENT_ID && isDesignAgentMissing(props.instanceId)
+      && currentSession!.agent === DESIGN_AGENT_ID && isDesignAgentMissing(props.instanceId, currentSession!.location)
   })
-  const defaultAgentId = () => agents().get(props.instanceId)?.find(isSelectablePrimaryAgent)?.id
+  const defaultAgentId = () => {
+    const currentSession = session()
+    return currentSession ? locationAgents(props.instanceId, currentSession.location)?.find(isSelectablePrimaryAgent)?.id : undefined
+  }
 
   const attachments = createMemo(() => getAttachments(props.instanceId, props.sessionId))
   const pendingUserPrompts = createMemo(() => getOpenCodeSessionInbox(props.instanceId, props.sessionId, props.instanceFolder)

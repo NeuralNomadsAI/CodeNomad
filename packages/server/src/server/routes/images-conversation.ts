@@ -32,18 +32,20 @@ export function registerImagesConversationRoute(app: FastifyInstance, deps: Imag
     if (!parsed.success) return reply.code(400).send({ error: "Invalid Images conversation request" })
     const { directory, ...input } = parsed.data
     const manager = deps.workspaceManager
-    const client = await manager.getSharedServiceClient()
-    // Await plugin registration before reading and authorizing the location.
-    await manager.desktopPluginsReady()
-    const location = await client.location.get({ location: { directory } }).then(readLocationRef, () => undefined)
-    if (!location || location.directory !== directory || !await manager.ownsLocation(request.params.id, location, client)) {
-      return reply.code(403).send({ error: "Location does not belong to workspace" })
-    }
+    // Authorize the caller's directory before any OpenCode request: reading a
+    // Location boots its services (configuration discovery, plugins).
+    const denied = () => reply.code(403).send({ error: "Location does not belong to workspace" })
+    if (!await manager.ownsLocation(request.params.id, { directory })) return denied()
     const identity = await manager.getWorktreeIdentityForPath(request.params.id, directory)
-    if (!identity) return reply.code(403).send({ error: "Location does not belong to workspace" })
+    if (!identity) return denied()
     const release = deps.worktreeDeletionFence.enter([identity])
     if (!release) return reply.code(409).send({ error: "Worktree deletion is in progress" })
     try {
+      const client = await manager.getSharedServiceClient()
+      // Await plugin registration before reading the authorized Location.
+      await manager.desktopPluginsReady()
+      const location = await client.location.get({ location: { directory } }).then(readLocationRef, () => undefined)
+      if (!location || location.directory !== directory || !await manager.ownsLocation(request.params.id, location, client)) return denied()
       let result: ImagesConversationResponse
       try {
         const response = await client.rpc.call({ rpcID: PRUNING_RPC_ID, method: "imagesConversation", input, location: { directory } },

@@ -152,20 +152,29 @@ The lock serializes the callers of one OpenCode process; two processes sharing a
 database can each create one, and the lookup then picks the newest.
 
 `POST /api/workspaces/:id/images-conversation` (`server/routes/images-conversation.ts`)
-brokers it for `{ directory, mode, title?, agent?, model? }`: the directory must be an
-owned location, inside the worktree deletion fence; RPC ID and method are pinned, and
+brokers it for `{ directory, mode, title?, agent?, model? }`: the workspace manager
+authorizes the directory and the worktree deletion fence is entered before any OpenCode
+request (reading a Location boots its services); only then is the Location read and
+checked again. RPC ID and method are pinned, and
 a missing method, malformed answer or timeout is `blocked: unavailable`, never a
 fallback. In the UI (`ui/src/stores/images-conversation.ts`), `resolveImagesConversation`
 refreshes the current location's agent catalog and sends the localized title,
 `agent: "design"` only when the catalog lists it, and the model `getDefaultModel`
-resolves for that agent; the plugin applies them only when it creates.
+resolves for that agent; the plugin applies them only when it creates. The agent list
+counts only when it was read for that Location (`agentCatalogLocations`); otherwise the
+answer is `unknown` and nothing is created.
 `showImagesConversation` then hydrates and selects a found conversation and requests
 composer focus, so a caller can answer before navigating; nothing is ever sent. After a successful `open`
-or `new` the route excludes `.codenomad/design/` (`workspaces/design-git-exclude.ts`)
+or `new` the route excludes the Location's `.codenomad/design/` (`workspaces/design-git-exclude.ts`)
 and answers `gitExclusion`: the execution host's Git (`wsl.exe --distribution <owned>
---exec git` for WSL, in the C locale) resolves `rev-parse --git-path info/exclude`,
+--exec git` for WSL, in the C locale) resolves `rev-parse --show-prefix --git-path info/exclude`,
 the path is translated for host access, and `appendCodenomadGitExclude` appends the
-entry under `# codenomad` without rewriting existing bytes, never `.gitignore`. Only
+rule under `# codenomad` without rewriting existing bytes, never `.gitignore`. At a
+worktree top the rule is `.codenomad/design/`; a nested Location gets
+`/<prefix>.codenomad/design/` with glob characters escaped, since slash-containing
+patterns anchor at the worktree top (the shared `info/exclude` applies at each
+worktree's top). Existing lines compare as Git reads them: a final `\r` and unescaped
+trailing spaces are ignored, leading whitespace is part of the pattern. Only
 Git's explicit "not a git repository (or any …)" answer is `not-repository`; Git
 missing, an unfollowable `.git` pointer, a failed translation or a location removed
 meanwhile write nothing and give `unavailable`.

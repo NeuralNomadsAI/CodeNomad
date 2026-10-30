@@ -56,28 +56,43 @@ function serialized<T>(key: string, run: () => Promise<T>): Promise<T> {
 }
 
 /**
- * Excludes `.codenomad/design/` locally through the file Git itself names
- * (`rev-parse --git-path info/exclude`), resolved by the execution host's Git
- * and appended without touching existing lines or `.gitignore`. Only Git's
- * explicit "not a repository" answer means no repository; every other failure
- * writes nothing and is `unavailable`.
+ * The rule for a Location at `prefix` (`rev-parse --show-prefix`) below its
+ * worktree top: `info/exclude` patterns containing a slash are anchored at the
+ * top, so a nested Location gets its own anchored, glob-escaped rule. At the
+ * top it is `.codenomad/design/`, shared with the worktree writer's header.
+ */
+export function designExcludeRule(prefix: string): string {
+  return prefix ? `/${prefix.replace(/[\\*?[]/g, "\\$&")}${DESIGN_EXCLUDE_ENTRY}` : DESIGN_EXCLUDE_ENTRY
+}
+
+/**
+ * Excludes the Location's `.codenomad/design/` locally through the file Git
+ * itself names (`rev-parse --show-prefix --git-path info/exclude`), resolved by
+ * the execution host's Git and appended without touching existing lines or
+ * `.gitignore`. Only Git's explicit "not a repository" answer means no
+ * repository; every other failure writes nothing and is `unavailable`.
  */
 export async function excludeDesignFolder(target: ExcludeTarget, git: ExcludeGit = runExcludeGit): Promise<GitExclusion> {
   let output: string
   try {
-    output = await git(target, ["rev-parse", "--git-path", "info/exclude"])
+    output = await git(target, ["rev-parse", "--show-prefix", "--git-path", "info/exclude"])
   } catch (error) {
     return notRepository(error) ? "not-repository" : "unavailable"
   }
   try {
-    if (!output || /[\x00-\x1f\x7f]/.test(output)) return "unavailable"
-    const resolved = target.distro ? path.posix.resolve(target.directory, output) : path.resolve(target.directory, output)
+    const lines = output.split(/\r?\n/)
+    if (lines.length !== 2 || lines.some(line => /[\x00-\x1f\x7f]/.test(line))) return "unavailable"
+    const [prefix, file] = lines as [string, string]
+    if (!file || (prefix && (!prefix.endsWith("/") || prefix.split("/").slice(0, -1).some(part => !part || part === "." || part === "..")))) {
+      return "unavailable"
+    }
+    const resolved = target.distro ? path.posix.resolve(target.directory, file) : path.resolve(target.directory, file)
     const [excludePath, location] = await Promise.all([target.toHost(resolved), target.toHost(target.directory)])
     if (!excludePath || !await isDirectory(location)) return "unavailable"
     return await serialized(path.resolve(excludePath).toLowerCase(), async () => {
       // The Git directory must still exist: never recreate a deleted checkout's metadata.
       await mkdir(path.dirname(excludePath)).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error })
-      await appendCodenomadGitExclude(excludePath, await readGitExclude(excludePath), [DESIGN_EXCLUDE_ENTRY])
+      await appendCodenomadGitExclude(excludePath, await readGitExclude(excludePath), [designExcludeRule(prefix)])
       return "excluded" as const
     })
   } catch {

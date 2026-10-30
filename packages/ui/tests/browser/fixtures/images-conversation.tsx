@@ -18,6 +18,8 @@ import "../../../src/index.css"
 await applyUiSettings({ locale: "en" })
 const instanceId = "images-instance"
 const state = { designPresent: true, prompts: 0, switchAgent: [] as any[], switchModel: [] as any[] }
+// The second Location's agent catalog: Design present, and reads that answer, fail or wait.
+const other = { design: true, mode: "ok" as "ok" | "fail" | "hang", waiting: [] as Array<(ok: boolean) => void> }
 const mark = { "codenomad.companion": "images" }
 const infos: Record<string, any> = {
   ses_work: { agent: "build", model: { providerID: "fixture", id: "native" }, title: "Work" },
@@ -25,6 +27,7 @@ const infos: Record<string, any> = {
   ses_images_new: { agent: "design", model: { providerID: "fixture", id: "chosen" }, title: "Images", metadata: mark },
   ses_images_build: { agent: "build", model: { providerID: "fixture", id: "chosen" }, title: "Images", metadata: mark },
   ses_unmarked_design: { agent: "design", model: { providerID: "fixture", id: "chosen" }, title: "Designing" },
+  ses_other_images: { agent: "design", model: { providerID: "fixture", id: "chosen" }, title: "Images", metadata: mark, location: { directory: "/other" } },
 }
 const info = (id: string) => ({ id, projectID: "fixture", location: { directory: "/fixture" }, cost: 0,
   tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, time: { created: 1, updated: 1 }, ...infos[id] })
@@ -40,7 +43,12 @@ const client: any = {
     prompt: async () => { state.prompts++; return {} },
   },
   agent: {
-    list: async () => ({ data: [agent("build"), ...(state.designPresent ? [agent("design")] : [])] }),
+    list: async (input: any) => {
+      if (input?.location?.directory !== "/other") return { data: [agent("build"), ...(state.designPresent ? [agent("design")] : [])] }
+      if (other.mode === "hang" && !await new Promise<boolean>(resolve => other.waiting.push(resolve))) throw new Error("agent list failed")
+      if (other.mode === "fail") throw new Error("agent list failed")
+      return { data: [agent("build"), ...(other.design ? [agent("design")] : [])] }
+    },
     get: async ({ agentID }: any) => ({ data: agent(agentID) }),
   },
   model: { default: async () => ({ data: { providerID: "fixture", id: "native" } }) },
@@ -69,6 +77,11 @@ render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   open: (mode: "open" | "new") => openImagesConversation(instanceId, mode),
   show: async (id: string) => { await hydrateRestoredSessionChain(instanceId, [id]); setActiveParentSession(instanceId, id) },
   setDesignPresent: async (present: boolean) => { state.designPresent = present; await fetchAgents(instanceId, { directory: "/fixture" }, true) },
+  setOther: (mode: "ok" | "fail" | "hang", design = true) => { other.mode = mode; other.design = design },
+  // Settles the waiting reads of the second Location (a failure when `ok` is false).
+  releaseOther: (ok: boolean) => { for (const resolve of other.waiting.splice(0)) resolve(ok) },
+  otherWaiting: () => other.waiting.length,
+  refreshOther: () => fetchAgents(instanceId, { directory: "/other" }, true),
   // The user picks another model through the real selector action.
   changeModel: async (id: string, model: string) => {
     infos[id].model = { providerID: "fixture", id: model }

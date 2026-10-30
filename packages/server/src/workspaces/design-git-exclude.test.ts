@@ -76,6 +76,57 @@ test("the worktree and design entries share one header through the same writer",
   assert.equal(await readFile(excludeFile(directory), "utf8"), "foreign\n\n# codenomad\n.codenomad/worktrees/\n.codenomad/design/\n")
 })
 
+async function designImage(location: string) {
+  await mkdir(path.join(location, ".codenomad", "design", "subject"), { recursive: true })
+  await writeFile(path.join(location, ".codenomad", "design", "subject", "icon.png"), "x")
+}
+
+test("a nested Location gets a rule anchored at its own folder, in the main and a linked worktree", async () => {
+  const directory = await repository("nested-main")
+  const nested = path.join(directory, "packages", "feature [x]")
+  await mkdir(nested, { recursive: true })
+  assert.equal(await excludeDesignFolder(host(nested)), "excluded")
+  assert.match(await readFile(excludeFile(directory), "utf8"), /^\/packages\/feature \\\[x\]\/\.codenomad\/design\/$/m)
+  await designImage(nested)
+  assert.equal(git(directory, "status", "--porcelain", "--untracked-files=all"), "")
+  // Only that Location's folder: the repository root keeps its own rule.
+  await designImage(directory)
+  assert.notEqual(git(directory, "status", "--porcelain", "--untracked-files=all"), "")
+  assert.equal(await excludeDesignFolder(host(directory)), "excluded")
+  assert.equal(git(directory, "status", "--porcelain", "--untracked-files=all"), "")
+
+  const linked = path.join(root, "nested-linked")
+  git(directory, "worktree", "add", "-b", "nested-linked", linked)
+  const linkedNested = path.join(linked, "packages", "feature [x]")
+  await mkdir(linkedNested, { recursive: true })
+  assert.equal(await excludeDesignFolder(host(linkedNested)), "excluded")
+  await designImage(linkedNested)
+  await designImage(linked)
+  assert.equal(git(linked, "status", "--porcelain", "--untracked-files=all"), "", "the common file covers each worktree's top and nested Location")
+})
+
+test("existing lines match as Git reads them: leading spaces count, trailing spaces do not", async () => {
+  const leading = await repository("leading-space")
+  await writeFile(excludeFile(leading), " .codenomad/design/\n")
+  assert.equal(await excludeDesignFolder(host(leading)), "excluded")
+  assert.equal(await readFile(excludeFile(leading), "utf8"), " .codenomad/design/\n\n# codenomad\n.codenomad/design/\n")
+  await designImage(leading)
+  assert.equal(git(leading, "status", "--porcelain", "--untracked-files=all"), "")
+
+  const trailing = await repository("trailing-space")
+  const existing = "# codenomad\r\n.codenomad/design/   \r\n"
+  await writeFile(excludeFile(trailing), existing)
+  assert.equal(await excludeDesignFolder(host(trailing)), "excluded")
+  assert.equal(await readFile(excludeFile(trailing), "utf8"), existing, "an equivalent rule is kept as is")
+  await designImage(trailing)
+  assert.equal(git(trailing, "status", "--porcelain", "--untracked-files=all"), "")
+
+  // The worktree-creation entry goes through the same reading.
+  await writeFile(excludeFile(trailing), "\t.codenomad/worktrees/\n")
+  await ensureCodenomadGitExclude(trailing)
+  assert.equal(await readFile(excludeFile(trailing), "utf8"), "\t.codenomad/worktrees/\n\n# codenomad\n.codenomad/worktrees/\n")
+})
+
 test("concurrent calls append once", async () => {
   const directory = await repository("concurrent")
   const results = await Promise.all([excludeDesignFolder(host(directory)), excludeDesignFolder(host(directory)), excludeDesignFolder(host(directory))])
@@ -143,7 +194,9 @@ test("a WSL location is resolved by the distro's Git, then written through the h
   const calls: Array<{ target: ExcludeTarget; args: string[] }> = []
   const wslGit: ExcludeGit = async (target, args) => {
     calls.push({ target, args })
-    return target.directory === "/home/user/repo" ? ".git/info/exclude" : "/home/user/repo/.git/info/exclude"
+    // `--show-prefix` then `--git-path`, one line each; the prefix line is empty at a worktree top.
+    return target.directory === "/home/user/repo" ? "\n.git/info/exclude"
+      : target.directory === "/home/user/repo/app" ? "app/\n/home/user/repo/.git/info/exclude" : "\n/home/user/repo/.git/info/exclude"
   }
   const translated: string[] = []
   const target = (directory: string): ExcludeTarget => ({
@@ -155,12 +208,16 @@ test("a WSL location is resolved by the distro's Git, then written through the h
   })
   assert.equal(await excludeDesignFolder(target("/home/user/repo"), wslGit), "excluded")
   assert.equal(await excludeDesignFolder(target("/home/user/linked"), wslGit), "excluded")
+  await mkdir(path.join(share, "home", "user", "repo", "app"))
+  assert.equal(await excludeDesignFolder(target("/home/user/repo/app"), wslGit), "excluded")
   assert.deepEqual(calls.map(call => [call.target.distro, call.target.directory, ...call.args]), [
-    ["Ubuntu", "/home/user/repo", "rev-parse", "--git-path", "info/exclude"],
-    ["Ubuntu", "/home/user/linked", "rev-parse", "--git-path", "info/exclude"],
+    ["Ubuntu", "/home/user/repo", "rev-parse", "--show-prefix", "--git-path", "info/exclude"],
+    ["Ubuntu", "/home/user/linked", "rev-parse", "--show-prefix", "--git-path", "info/exclude"],
+    ["Ubuntu", "/home/user/repo/app", "rev-parse", "--show-prefix", "--git-path", "info/exclude"],
   ])
   assert.ok(translated.includes("/home/user/repo/.git/info/exclude"), "the Linux path is translated, never given to Windows directly")
-  assert.equal(await readFile(path.join(share, "home", "user", "repo", ".git", "info", "exclude"), "utf8"), "# codenomad\n.codenomad/design/\n")
+  assert.equal(await readFile(path.join(share, "home", "user", "repo", ".git", "info", "exclude"), "utf8"),
+    "# codenomad\n.codenomad/design/\n/app/.codenomad/design/\n")
 
   const untranslatable = { ...target("/home/user/repo"), toHost: async () => undefined }
   assert.equal(await excludeDesignFolder(untranslatable, wslGit), "unavailable")
@@ -180,6 +237,11 @@ test("WSL: a project and a worktree created in the distro are excluded through i
     assert.equal(wsl("cat", `${repo}/.git/info/exclude`), "foreign\n\n# codenomad\n.codenomad/design/")
     wsl("sh", "-c", `mkdir -p "${linked}/.codenomad/design/s" && printf x > "${linked}/.codenomad/design/s/a.png"`)
     assert.equal(wsl("git", "-C", linked, "status", "--porcelain"), "")
+    wsl("mkdir", "-p", `${linked}/packages/app`)
+    assert.equal(await excludeDesignFolder(target(`${linked}/packages/app`)), "excluded")
+    wsl("sh", "-c", `mkdir -p "${linked}/packages/app/.codenomad/design/s" && printf x > "${linked}/packages/app/.codenomad/design/s/a.png"`)
+    assert.equal(wsl("git", "-C", linked, "status", "--porcelain", "--untracked-files=all"), "")
+    assert.match(wsl("cat", `${repo}/.git/info/exclude`), /^\/packages\/app\/\.codenomad\/design\/$/m)
     assert.equal(await excludeDesignFolder(target(base)), "not-repository")
     wsl("sh", "-c", `printf 'gitdir: /nonexistent\\n' > "${base}/.git"`)
     assert.equal(await excludeDesignFolder(target(base)), "unavailable")
