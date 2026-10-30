@@ -7,8 +7,7 @@ import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { createServer } from "node:http"
-import { mkdir, mkdtemp, readdir, readFile, realpath, writeFile } from "node:fs/promises"
-import os from "node:os"
+import { mkdir, mkdtemp, readdir, readFile, writeFile } from "node:fs/promises"
 import path from "node:path"
 import readline from "node:readline"
 import { setTimeout as delay } from "node:timers/promises"
@@ -16,6 +15,7 @@ import { fileURLToPath } from "node:url"
 import { tsImport } from "tsx/esm/api"
 import { OpenCode } from "@opencode/client"
 import { clearFixtureGitEnvironment, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureParent } from "./native-product-fixture.mjs"
 
 const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "packages", "server", "src", "opencode")
 const load = file => tsImport(`../packages/server/src/opencode/${file}`, import.meta.url)
@@ -63,13 +63,7 @@ const content = parseDesignContent(sources)
 const version = spawnSync(cli, ["--version"], { encoding: "utf8" }).stdout.trim()
 // Project discovery walks every ancestor directory: outside CI the fixture must live
 // outside the user's home, or it would read the user's own agents and skills.
-const requested = path.join(process.env.CODENOMAD_NATIVE_FIXTURE_PARENT || os.tmpdir(), "opencode")
-await mkdir(requested, { recursive: true })
-const parent = await realpath(requested)
-const relative = path.relative(await realpath(os.homedir()), parent)
-assert(process.env.CI || relative.startsWith("..") || path.isAbsolute(relative),
-  "Project-config fixtures read every ancestor directory: set CODENOMAD_NATIVE_FIXTURE_PARENT outside your home")
-const root = await mkdtemp(path.join(parent, "design-activation-"))
+const root = await mkdtemp(path.join(await fixtureParent({ projectConfig: true }), "design-activation-"))
 const configDirectory = path.join(root, "config")
 const project = name => path.join(root, name)
 // clearFixtureGitEnvironment edits the environment it receives in place.
@@ -128,7 +122,7 @@ const provider = createServer(async (req, res) => {
 await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
 const settings = { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }
 
-const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_|CODENOMAD_|npm_config_)/i.test(key)))
+const env = Object.fromEntries(Object.entries(gitEnv).filter(([key]) => !/^(OPENCODE_|XDG_|CODENOMAD_|npm_config_)/i.test(key)))
 for (const key of Object.keys(env)) if (["programdata", "temp", "tmp", "appdata", "localappdata"].includes(key.toLowerCase())) delete env[key]
 for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
 const password = randomUUID()
