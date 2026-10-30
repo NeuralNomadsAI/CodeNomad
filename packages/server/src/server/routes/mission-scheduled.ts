@@ -19,8 +19,10 @@ import { holdScheduledMission, scheduledMissionHold, scheduledMissionCreationHol
   type ScheduledHoldBinding } from "./mission-scheduled-holds"
 import type { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { WorkspaceManager } from "../../workspaces/manager"
+import type { ServiceSupervisionSettings } from "../../host-lifetime/service-supervision-service"
 
 type Deps = Parameters<typeof registerMissionRecurrenceCreate>[1] & {
+  supervision?: Pick<ServiceSupervisionSettings, "missionPlay">
   workspaceManager: Parameters<typeof registerMissionRecurrenceCreate>[1]["workspaceManager"] & Partial<Pick<WorkspaceManager, "getServicePathStyle">>
 }
 type Owned = Awaited<ReturnType<typeof prepareMissionMapMutation>>
@@ -108,12 +110,16 @@ export function registerMissionScheduled(app: FastifyInstance, deps: Deps) {
             manager: manager as WorkspaceManager, workspaceID: selected.data.id,
             roots: { assertRoots: async () => { await owned.refresh(); check(owned) } }, assertCurrent: () => { check(owned); return true } })
             if (!held) retain!(release => { held = holdScheduledMission(deps.worktreeDeletionFence!, binding, release); ownsHold = true })
+            await owned.refresh(); check(owned)
+            if (value.action === "play" && deps.supervision) {
+              await deps.supervision.missionPlay(owned.connection, value.requestID, () => check(owned))
+              await owned.refresh(); check(owned)
+            }
             const identity = { sessionID: human.sessionId, workspaceID: selected.data.id, requestID: value.requestID,
               location: options.location, scheduleID: missionID, action: value.action, expectedRevision: value.expectedRevision,
               profileSource, issuedAt: Date.now(), ...(["create", "configure", "delete"].includes(value.action)
                 ? { configDigest: missionSchedulePayloadDigest({ configuration, deleteManagedSessions: value.deleteManagedSessions }) } : {}) }
             const proof = { ...identity, digest: recurrenceControlRequestDigest(identity) }
-            await owned.refresh(); check(owned)
             if (held!.preparing) held!.dispatch()
             else { held!.retry(binding, retryReceipt); ownsHold = true }
             const { signal: _observerSignal, ...nativeOptions } = options

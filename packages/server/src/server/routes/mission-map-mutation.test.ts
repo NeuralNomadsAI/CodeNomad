@@ -59,6 +59,33 @@ test("every map mutation enters the worktree-deletion fence before its single na
   }
 })
 
+test("immediate human Play defaults supervision on its exact fenced connection; Pause and revoked Play leave it alone", async () => {
+  const h = harness(), app = Fastify({ logger: false }), connection = await h.manager.getSharedServiceConnection()
+  h.manager.getSharedServiceConnection = async () => connection
+  let human = true, plays = 0, revoke = false
+  registerMissionRoutes(app, { workspaceManager: h.manager as never, worktreeDeletionFence: h.state.fence,
+    auth: { isAuthEnabled: () => true, getSessionFromRequest: () => human ? { username: "human", sessionId: "cookie" } : null },
+    supervision: { missionPlay: async (exact, _id, authorize) => {
+      assert.equal(exact, connection); assert.ok(h.state.entries > 0)
+      authorize(); plays++; if (revoke) human = false; authorize()
+      return {} as never
+    } },
+  })
+  try {
+    const post = (action: string) => app.inject({ method: "POST", url: routes[1].url,
+      payload: { action, expectedRevision: 1, requestId: action } })
+    assert.equal((await post("start")).statusCode, 200)
+    assert.equal(plays, 1); assert.deepEqual(h.state.rpcs, ["lifecycle"])
+    assert.equal((await post("pause")).statusCode, 200)
+    assert.equal(plays, 1)
+    revoke = true
+    assert.equal((await post("start")).statusCode, 503)
+    assert.equal(h.state.rpcs.length, 2)
+    assert.equal((await post("start")).statusCode, 401)
+    assert.equal(plays, 2)
+  } finally { await app.close() }
+})
+
 test("existing map mutations keep their native contract without requiring document-creation capabilities", async () => {
   for (const route of routes) {
     const h = harness({ unsupportedDocuments: true })

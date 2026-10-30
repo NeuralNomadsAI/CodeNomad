@@ -946,3 +946,4 @@ export interface ServiceUsageSnapshot {
   connection?: string
   stats: import("@opencode/client").SessionStatsInfo
 }
+export type { SupervisionSettingsResponse, SupervisionSettingsControl } from "./host-lifetime/service-supervision-service"

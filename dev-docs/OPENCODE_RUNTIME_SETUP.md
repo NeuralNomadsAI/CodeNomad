@@ -185,6 +185,301 @@ terminals/background commands closed for all clients) and never presents it as a
 process restart or memory reclamation. Conflicting service actions are refused
 while an explicit action runs.
 
+## Service supervision primitives and native adapters
+
+`host-lifetime/service-supervision-contract.ts` defines the private service-wide
+preference and status projection. The key uses the execution host, native UID/SID,
+canonical configuration/state roots and exact registration channel. Binary selection,
+CodeNomad profiles and changing daemon incarnations remain separate from that key.
+The acquired Settings execution host supplies the canonical namespace and validates
+the absolute executable selection before using these internal APIs.
+
+`ServiceSupervisionStore` stores a bounded 64 KiB manifest below a caller-provisioned
+private service-wide root. Revision-checked controls persist intent before OS effects;
+fresh adapter read-back acknowledges its revision separately. An exact retained
+request receipt reconciles a lost reply. An absent receipt stays unknown. First Play
+sets an unset choice to ON; explicit OFF persists across subsequent Plays. Reads and
+binary selection preserve the preference. OFF can fence an unfinished ON; stale
+acknowledgements and stale ON requests conflict.
+
+Windows mutations and Start admission share an OS `FileShare.None` handle on
+`admission.lock`. The transaction helper owns both that handle and the atomic
+manifest replacement. Caller/helper exit releases the handle; a late caller callback
+cannot write outside exclusion. Linux mutations and Start share a native `flock`
+descriptor, released by the OS when its holder exits; a short pipe-owned helper
+holds it across the asynchronous operation. macOS uses a bundled native helper's
+advisory descriptor lock, also released on caller death. Its `proc_pidinfo` lookup
+records the microsecond native start identity for health and guard ownership.
+
+`readSupervisionHealth` reuses the bounded public registration projection and
+official exact-file read-only discovery. PID start identity and incarnation are
+rechecked after authenticated discovery. A live unresponsive process remains
+unhealthy/unknown; a later healthy read preserves its identity. Status reaches
+Running only with current-revision installed resources, an active guard and healthy
+service. An absent guard with a responding service exposes a supervision failure.
+
+`ServiceSupervisionSettings` sequences private intent, adapter attempts and exact
+receipt reads. The acquired execution-host scope supplies its store/adapter and
+current-context fence; controls additionally revalidate the live human at the
+serialized preference write. Requests pin the displayed service key and revision.
+Adapter failures persist a fixed `adapter-failed` cause and attempt timestamp with
+ON still requested. Explicit Retry reconciles that same revision and preserves its
+original receipt. A later OFF fences an older attempt's diagnostics. Passive reads
+and acknowledged request replays observe supervision resources; Linux also completes
+an already requested, deferred linger rollback when its safety checks allow it.
+The internal first-Play
+entry sets an unset preference to ON and preserves every existing explicit choice.
+
+The Settings route registrar in `server/routes/service-supervision.ts` defines
+`GET|POST /api/opencode/supervision`, using the existing live human-session check.
+Responses expose the key, preference, revision, protection state, fixed cause,
+responding-service flag, known attempt/backoff and optional exact receipt status.
+Its POST input permits ON, OFF and Retry; executable paths, arbitrary commands and
+internal first-Play/binary-selection controls stay behind the execution-host seam.
+The production HTTP server registers these routes under its authentication hook.
+The shared response/control types are exported by `api-types.ts`.
+
+`service-supervision-resolver.ts` resolves the selected Settings executable without
+project or session discovery. Windows native `debug paths` and the selected CLI's
+credential identify exactly one service channel; canonical native roots, current SID
+and host determine the service key. Native Linux uses its canonical roots and UID
+through the POSIX resolver in `service-supervision-linux-resolver.ts`, shared with
+native macOS. Windows UNC selections resolve the registered WSL distro spelling,
+native account/UID and canonical Linux roots through the selected distro.
+Missing/ambiguous namespaces, unqualified platforms and unsupported command wrappers return a fixed
+unavailable response.
+Mission Play additionally pins its already-authorized service connection, registration
+PID/URL and credential. The immediate, daily and unified Play paths default only an
+unset service preference to ON; paused creation, passive reads and other controls
+preserve it. Human/connection/physical-root checks surround the operation. Signed
+schedule proofs are issued after supervision preparation.
+
+Focused checks: `node --import tsx --test
+packages/server/src/host-lifetime/service-supervision.test.ts`. Native exact-file
+health qualification: `node --import tsx
+scripts/test-service-supervision-health-native.mjs ABSOLUTE_CLI`; its isolated roots
+and service are removed after actual process exit.
+
+`WindowsServiceSupervision` is the internal execution-host adapter. Its caller
+supplies the acquired service namespace, private store, durable owned runtime and
+native path-only environment. Its immutable private `windows.json` descriptor
+contains the PowerShell/Node/probe paths and minimal host roots. The build target
+`npm run build:supervision --workspace @neuralnomads/codenomad` bundles the read-only
+probe and copies the PowerShell guard into `dist/host-lifetime/`. On acquisition,
+the resolver provisions `%LOCALAPPDATA%/CodeNomadServiceSupervision` with a private
+current-SID/SYSTEM DACL, preserving existing ACLs. Its service directory holds
+immutable content-addressed copies of the bundled Node, probe and guard; the private
+descriptor pins their paths across package replacement. Artifact size admission
+uses a 256 MiB bound with the same complete ancestor/owner/DACL checks as metadata.
+Unsafe storage leaves supervision unavailable. Explicit executable selection and
+verified CodeNomad installation publish the validated target under the service-wide
+revision/admission lock. Before an explicit service restart, publication completes
+before the CLI stop/start operation. Passive reads preserve the selected target;
+a different service channel resolves its own independent manifest and preference.
+
+`service-supervision-target.ts` binds the absolute native executable to complete
+SHA256 bytes and, for the exact published npm layout, the package manifest and
+prefix installation lock. Missing/partial images, an active installation lock and
+changed package provenance wait with the guard's capped backoff. Every spawn reads
+the current manifest and verifies its target, with no command/PATH fallback.
+A complete external npm upgrade at the same authorized package/path is admitted
+after bounded CLI root/credential-channel checks and stable image/package rereads;
+custom-image replacements require explicit selection publication. A healthy
+incumbent survives installation and target publication unchanged. The shared server
+selection/install/restart seams supply the same contract to Electron and Tauri.
+
+Main uses PowerShell and native `CreateProcessW` with independent NUL stdio and a
+foreground child handle. Main has IgnoreNew and unlimited execution time; Recovery
+has Queue, event/logon/60-second triggers and a ten-second OS deadline. Ownership
+read-back checks names, marker, action, principal, settings and trigger policy.
+Recovery makes one bounded Start attempt under the shared admission handle; the
+independent OS trigger keeps the retry obligation after an unavailable action.
+Owned guard invocations use PowerShell's process-scoped `-ExecutionPolicy Bypass`,
+matching native executable-wrapper launches; persisted execution-policy settings
+remain untouched and enforced Group Policy still applies.
+Main adopts an incumbent, retains live unhealthy children, backs off after actual
+exit and rereads the manifest before each spawn. The native service `disabled`
+configuration also gates spawn. Fixed error codes and non-secret status are bounded;
+OpenCode owns its native logs.
+The guard records its actual last spawn attempt and next backoff time; the adapter
+exposes these only with a matching revision and live guard-start identity. A native
+disabled/unknown service configuration appears as a supervision failure even while
+an incumbent responds.
+
+OFF persists before trigger removal, waits for Main to release handles and exit,
+then unregisters the owned tasks. An incomplete release stays pending for retry.
+The next ON adopts the surviving incarnation. Native qualification is
+`node --import tsx scripts/test-service-supervision-windows-native.mjs ABSOLUTE_CLI`:
+uniquely named tasks and isolated services are removed after confirmed exit. Its
+private-leaf DACL policy isolates OS mechanics; production storage admission also
+requires the full ancestor policy.
+
+Platform packaging qualification remains separate
+from these Windows checks. Windows native tests exercise the authenticated route
+with real login sessions and the production resolver in an isolated namespace.
+Their explicit private-leaf test policy qualifies OS mechanics; production retains
+the complete ancestor/DACL policy. Settings-controller and HTTP-admission checks run with
+`node --import tsx --test packages/server/src/host-lifetime/service-supervision-service.test.ts`.
+
+Binary/package checks run with `node --import tsx --test
+packages/server/src/host-lifetime/service-supervision-target.test.ts` and updater
+ordering with `packages/server/src/opencode-update/service.test.ts`.
+`node --import tsx scripts/test-service-supervision-binary-native.mjs OUTPUT_DIRECTORY`
+uses real Windows tasks and an isolated npm prefix/home/service with paths containing
+spaces. It exercises actual native upgrade, healthy-incumbent preservation, automatic
+same-package replacement, explicit restart publication, installation-lock/missing/
+partial/provenance backoff and concurrent OFF/selection revisions. The run removes
+its OS resources and waits for its services to exit, retaining its bounded evidence.
+
+### Native Linux systemd user supervision
+
+`LinuxServiceSupervision` installs one exact, privately owned unit under the account's
+`.config/systemd/user`, enabled for `default.target`. It runs the content-addressed
+bundled Node/guard in the foreground, with `Restart=always`, two-second restart delay,
+and five guard starts per sixty seconds. Retry resets a reached systemd StartLimit.
+The guard's genuine child-exit retries have a separate 2–30 second capped delay.
+Live but unreachable children and incumbents remain untouched; authenticated health
+recovery preserves their identity. The native `disabled` flag gates every spawn.
+Minimal HOME/XDG path roots live in the private descriptor. The unit carries only
+fixed executable paths and the non-secret namespace key.
+
+OFF writes its preference under the shared admission lock, stops the foreground
+guard **while `KillMode=process` remains loaded**, checks it inactive, then disables,
+unlinks and reloads the unit. Never use `disable --now` or unlink before stop. The
+released OpenCode process keeps its independent stdio and its populated accounting
+cgroup until natural exit; the next ON adopts it without a second daemon.
+
+Linux ON requests `loginctl --no-ask-password enable-linger` for the acquired UID.
+Linger starts **all enabled user services at boot and keeps them after logout**.
+A private account-home registry, shared across service namespaces and independent
+of profiles/XDG roots, records requests, enable intent/acknowledgement and the owned
+root linger-marker fingerprint. Preexisting linger remains external. Lost enable
+acknowledgement, altered markers and corrupt provenance preserve linger as uncertain.
+Polkit refusal preserves ON and exposes `linux-linger-permission-required`; explicit
+Retry repeats the same intent without sudo, passwords or an embedded auth agent.
+
+The last OFF restores owned linger only with an active/online logind session or
+proven exit of every released service and absence of a replacement at its registration.
+Before guard removal, the account-wide registry retains each released service's exact
+registration, PID, incarnation and native boot/start identity. Deferred reads compare
+that identity directly with the OS; a missing registration without retained process
+proof keeps rollback deferred. Otherwise supervision is removed while
+the process and linger survive, with `linux-linger-deferred` visible on the OFF
+status. Startup acquisition, status reads and ON/OFF reconciliation automatically
+recheck the deferred rollback's requests, ownership and safety; explicit Retry is
+also available. A new ON cancels deferred rollback. Unknown service/session evidence preserves linger.
+The parent user manager's stop policy applies to all its remaining children.
+
+Focused Linux logic checks run on every host with fake logind/health responses:
+`node --import tsx --test packages/server/src/host-lifetime/service-supervision-linux.test.ts`.
+The disposable Linux VM check is `scripts/test-service-supervision-linux-native.ts`;
+bundle it and the production guard with esbuild, then run its explicit phases against
+an isolated CLI/XDG sandbox. It covers real refusal, foreground hosting, OFF/adoption,
+health loss/recovery, service and guard crashes, StartLimit, reboot boot/login timing,
+and cleanup. Keep the personal installation and initial linger state intact.
+`service-supervision-windows-recovery.ts` reads the exact owned Recovery task and
+its native `NextRunTime` independently of the guard script. A missing guard/action
+keeps ON, shows failure and exposes `recoveryNextTickAt` when its OS obligation is
+verified. The guard's own backoff remains `retryAt`; stale revisions and OFF clear
+the Recovery date. Missing action artifacts use the fixed `artifact-missing` cause.
+
+### Native macOS LaunchAgent supervision
+
+`MacosServiceSupervision` owns one exact plist per service namespace under the real
+account's `Library/LaunchAgents`. It uses `gui/<uid>`, `RunAtLoad`, `KeepAlive`, a
+five-second `ThrottleInterval` and `AbandonProcessGroup=true`. The adapter verifies
+both private plist bytes and the loaded LaunchAgent's complete argv, path, type,
+throttle and restart/release flags before mutation. Missing graphical domains and
+incomplete ownership remain explicit failures with the requested preference intact.
+The account's graphical login supplies the automatic startup boundary.
+
+The shared POSIX foreground guard (`service-supervision-linux-guard.ts`) starts the
+managed service with independent null stdio and the descriptor's minimal HOME/XDG
+paths. Live unresponsive children and incumbents are retained; authenticated health
+probes back off from one to sixteen seconds. Only confirmed process absence permits
+another start, under the same native descriptor lock as ON/OFF. The native service
+`disabled` setting gates each spawn. Fixed status records bind guard PID/start time
+and preference revision; a loaded plist alone provides the Installed state.
+
+OFF persists before `bootout`, waits for confirmed guard exit and removes the exact
+owned plist. `AbandonProcessGroup` preserves the hosted service during normal removal
+and guard crashes. ON adopts its surviving incarnation before considering a spawn.
+OpenCode retains its own registration, authentication and logs.
+
+`build:supervision` compiles a universal x64/ARM64 `service-supervision-macos-native.c`
+helper with the macOS build toolchain and the desktop's 13.5 deployment target.
+The packaged helper provides only `proc_pidinfo` identity and a pipe-owned
+`flock`; the runtime provisions content-addressed private copies of it, Node and the
+guard. The user installation consumes these built artifacts. Run focused logic
+checks with `node --import tsx --test
+packages/server/src/host-lifetime/service-supervision-macos.test.ts`.
+`scripts/test-service-supervision-macos-native.ts`, bundled beside the production
+guard and native helper, checks isolated foreground hosting, OFF/adoption, native
+lock release, artifact recovery, service/guard crashes, CLI stop/restart and live
+unreachable child/incumbent recovery. It requires an open graphical session and a
+separate CLI/XDG sandbox. Real logout/login/reboot and desktop packaging remain
+separate qualification gates; keep personal applications and services untouched.
+
+### Windows-to-WSL supervision
+
+`service-supervision-wsl-resolver.ts` acquires the selected UNC executable without
+project discovery. It pins the registered distro name, Linux account and numeric
+UID, canonical native HOME/XDG roots and exact credential-selected channel. The
+service key uses Linux-native roots and UID plus the Windows host/SID, distinguishing
+the per-Windows-user distro registry. The private descriptor and task principal also
+pin that Windows owner. `wsl.exe --user` receives the acquired
+account name, and each observation revalidates its numeric UID and physical roots.
+
+The adapter reuses `WindowsServiceSupervision`, including Main/Recovery ownership,
+the shared admission handle, IgnoreNew/Queue, the independent sixty-second backstop
+and Recovery's ten-second deadline. Main keeps a native foreground handle to
+`wsl.exe --distribution … --user … --exec /bin/sh …`. The fixed Linux shell bridge
+waits for the managed `serve --service` child with independent null stdio and
+inherited ignored SIGHUP. It observes the atomically published private preference
+through its acquired mounted manifest path solely to release at OFF; Start admission
+uses the Windows handle plus a native Linux `flock` shared with preference writes.
+The final Linux ON/revision check and child fork hold that lock; the child closes
+its inherited lock descriptor. This fences a cold WSL activation that reaches Linux
+after OFF or a later ON. A pipe-owned Linux helper keeps preference writes excluded
+through atomic publication of the mounted manifest. The Linux descriptor holder
+performs the bounded read, temporary-file flush and rename itself; Windows sends
+only the proposed bytes through its pipe. Holder exit closes publication authority,
+including for a callback still awaiting validation. Every WSL manifest mutation,
+including diagnostics and acknowledgements, uses this publisher and requires the
+acquired distro to be available.
+The bridge stays resident throughout ON and releases
+the child without a signal at OFF, allowing its Windows client to exit before task
+removal. A subsequent ON observes the same surviving service before considering
+another spawn.
+
+Health uses exact native registration paths mapped through the selected distro,
+Linux `/proc` boot/start identities and official read-only authenticated discovery
+from Windows. This also verifies localhost forwarding. A live Linux PID with failed
+forwarding or unknown health stays preserved; Windows process APIs only inspect
+the Windows guard. Read-only native CLI status distinguishes an internally healthy
+service with failed Windows discovery as `wsl-forwarding-unavailable`; ambiguous
+native health remains unknown. The descriptor contains minimal paths rather than profile
+environment or credentials. WSL follows the Windows login boundary; its distro
+startup/idle/sleep policies apply independently. Linger stays under the distro's
+own policy.
+
+Focused checks: `node --import tsx --test
+packages/server/src/host-lifetime/service-supervision-wsl.test.ts`.
+`node --import tsx scripts/test-service-supervision-wsl-native.mjs OUTPUT_DIRECTORY`
+uses an isolated downloaded Linux CLI and Ubuntu roots, private run-owned Windows
+artifacts and unique tasks. It covers managed foreground
+hosting, real health loss/recovery, guard/action loss and OS backstop, OFF survival
+without Windows clients, adoption, crash/stop/restart and native disabled behavior.
+It removes its tasks/service/Linux roots, preserves distribution lifetime under the
+user's control and compares the shared Windows service registration fingerprint.
+Stopped-distro startup requires a separately prepared, verified disposable distro.
+Use an expendable Ubuntu distro
+with the fixture's explicit account; real login/reboot and desktop packaging remain
+host-release gates. The forwarding diagnostic check injects a failed Windows
+discovery against real healthy Linux status. Physical forwarding disablement, an
+occupied Windows port, running-distro shutdown and the Recovery kill/timeout/Start
+refusal combinations have separate OS qualification gates.
+
 ## Stored-history migration
 
 `scripts/test-opencode-history-migration.mjs OLD_CLI TARGET_CLI` seeds synthetic

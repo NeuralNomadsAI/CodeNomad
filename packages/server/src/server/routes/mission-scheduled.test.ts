@@ -26,6 +26,7 @@ async function fixture(t: test.TestContext) {
   const profile = canonicalScope("stable", yaml, root, root), workspace = {}, app = Fastify({ logger: false })
   const fence = new WorktreeDeletionFence(5000)
   const state = { human: true, owned: true, workspace, profile, checkout: root, canonical: root, projectID: "project",
+    plays: [] as string[], play: undefined as (() => void) | undefined,
     writes: [] as MissionScheduleRequest[], reads: [] as Array<{ missionID: string; requestID?: string }>, entries: 0,
     write: undefined as ((input: MissionScheduleRequest) => Promise<unknown>) | undefined,
     read: undefined as ((input: { missionID: string; requestID?: string }) => Promise<unknown>) | undefined,
@@ -62,6 +63,9 @@ async function fixture(t: test.TestContext) {
     getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix" }
   app.addHook("preHandler", async request => { state.abort = () => { request.raw.emit("aborted") } })
   registerMissionScheduled(app, { workspaceManager: manager, worktreeDeletionFence: fence, bridgeToken: "fixture-token",
+    supervision: { missionPlay: async (connection: unknown, requestID: string, authorize: () => void) => {
+      assert.equal(connection, selected); authorize(); state.plays.push(requestID); state.play?.(); authorize()
+    } },
     auth: { isAuthEnabled: () => true, getSessionFromRequest: () => state.human ? { sessionId: "human_cookie", username: "human" } : undefined },
     settings: { getProfileScope: () => state.profile, configYamlPathForAuthority: () => yaml },
   } as never)
@@ -74,6 +78,24 @@ async function fixture(t: test.TestContext) {
     deleting() { let entered = false; const done = fence.run(root, [root], async () => { entered = true }); return { done, entered: () => entered } },
   }
 }
+
+test("only authenticated Play calls service default-ON on the exact acquired connection before dispatch", async t => {
+  const f = await fixture(t)
+  const create = { action: "create", requestID: "create_paused", expectedRevision: 0, configuration: config }
+  assert.equal((await f.post(create, "/api/workspaces/owned/missions/scheduled")).statusCode, 200)
+  assert.equal((await f.get()).statusCode, 200)
+  assert.equal((await f.post({ action: "configure", requestID: "configure_paused", expectedRevision: 1, configuration: config })).statusCode, 200)
+  assert.deepEqual(f.state.plays, [])
+  f.state.play = () => assert.equal(f.state.writes.at(-1)!.action, "configure")
+  assert.equal((await f.post(control)).statusCode, 200)
+  assert.deepEqual(f.state.plays, [control.requestID])
+  f.state.play = () => { f.state.human = false }
+  assert.equal((await f.post({ ...control, requestID: "revoked_play" })).statusCode, 503)
+  assert.equal(f.state.writes.at(-1)!.requestID, control.requestID)
+  f.state.plays.length = 0
+  assert.equal((await f.post({ ...control, requestID: "unauthenticated_play" })).statusCode, 401)
+  assert.deepEqual(f.state.plays, [])
+})
 
 test("exact original complete ACK releases; missing/null/partial receipts and negative reads keep deletion fenced", async t => {
   const f = await fixture(t)

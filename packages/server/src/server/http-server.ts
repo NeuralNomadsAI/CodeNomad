@@ -68,6 +68,8 @@ import { registerServiceUsageRoutes } from "./routes/service-usage"
 import { registerWebSearchSettingsRoutes } from "./routes/websearch-settings"
 import { SubagentDepthSettings } from "../opencode/subagent-depth-settings"
 import { NativeScheduleSettingsActivation } from "../opencode/native-schedule-settings-activation"
+import { createServiceSupervisionSettings } from "../host-lifetime/service-supervision-resolver"
+import { registerServiceSupervisionRoutes } from "./routes/service-supervision"
 import { registerSubagentDepthSettingsRoutes } from "./routes/subagent-depth-settings"
 import { ImageSettings } from "../opencode/image-settings"
 import { registerImageSettingsRoutes } from "./routes/image-settings"
@@ -356,13 +358,15 @@ export function createHttpServer(deps: HttpServerDeps) {
   const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)
   registerImageSettingsRoutes(app, imageSettings)
   registerServiceUsageRoutes(app, new ServiceUsage(deps.workspaceManager, deps.settings))
-  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger })
+  const supervision = createServiceSupervisionSettings(deps.settings, deps.workspaceManager)
+  registerServiceSupervisionRoutes(app, { service: supervision, auth: deps.authManager, remoteDevices: deps.remoteControlManager })
+  registerSettingsRoutes(app, { settings: deps.settings, logger: apiLogger, publishSupervisionTarget: () => supervision.selectBinary() })
   const accounts = new ProviderAccountsService(deps.settings)
   const stopQuotaObserver = observeProviderQuotaFailures(deps.eventBus, accounts)
   app.addHook("onClose", async () => stopQuotaObserver())
   registerProviderAccountsRoutes(app, { accounts, workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerOpenCodeUpdateRoutes(app, {
-    service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager),
+    service: createOpenCodeUpdateService(deps.settings, deps.workspaceManager, supervision),
     logger: apiLogger,
   })
   registerFilesystemRoutes(app, { fileSystemBrowser: deps.fileSystemBrowser })
@@ -402,11 +406,12 @@ export function createHttpServer(deps: HttpServerDeps) {
   app.addHook("onClose", async () => developerCdp.close())
   registerUsageRoutes(app, { workspaceManager: deps.workspaceManager })
   registerMissionRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, settings: deps.settings,
+    supervision,
     scheduleSettingsActivation: new NativeScheduleSettingsActivation(configurationControls, deps.workspaceManager),
     auth: deps.authManager, bridgeToken: deps.automationBridgeToken, remoteDevices: deps.remoteControlManager,
     missionsHost: deps.missionsHost })
   registerMissionRecurrenceControl(app, { auth: deps.authManager, manager: deps.workspaceManager,
-    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager })
+    settings: deps.settings, bridgeToken: deps.automationBridgeToken, fence: worktreeDeletionFence, remoteDevices: deps.remoteControlManager, supervision })
   registerMissionRecurrenceControlStatus(app, { auth: deps.authManager, manager: deps.workspaceManager, fence: worktreeDeletionFence,
     remoteDevices: deps.remoteControlManager })
   registerMissionRecurrenceManual(app, { auth: deps.authManager, manager: deps.workspaceManager,

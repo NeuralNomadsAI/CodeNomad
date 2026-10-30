@@ -43,6 +43,13 @@ principals. Temporal edits preserve retired proofs until cleanup, while relative
 origins, the first Play and admitted counts remain durable. A first Play on a
 calendar-backed policy requires ready settings activation. Creation remains paused.
 
+Human Play also calls the shared service-supervision default-ON path on its exact
+acquired connection. An explicit OFF remains OFF; creating, configuring, pausing,
+stopping and deleting a Mission preserve that service-wide preference. Supervision
+preparation precedes the signed control proof and native schedule dispatch. Runtime
+namespace/storage failures remain explicit at the product boundary; independent
+OS protection and native calendar admission keep separate status contracts.
+
 Each technical wake enters an exact-file, own-process HTTP RPC with an eight-second
 deadline. A read-only preflight freezes complete fan-in coverage before a dispatch
 claim. Technical high-water advances at durable reservation; the pending business
