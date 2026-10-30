@@ -105,7 +105,10 @@ decoded by SQLite only for rows of at most 64 KiB. A read of file `F` over
 undecoded row is dated at or before the read's end, the scan covers the item's whole
 range (its message and the 31 before it, within 32 MiB, unless the session starts
 sooner; a range an oversized row or the scan budget cuts proves nothing), exactly one
-`experimental_image_generate` call that may write `F` in that range started before that end, it
+`experimental_image_generate` call that may write `F` in that range started before that end
+(a call whose single decoded notice reports `error` or `cancelled` before that call's start
+does not count: OpenCode delivers a notice once its job has ended, and a failed job saves
+nothing afterwards, so a failed attempt followed by a retry under the same name stays provable), it
 completed with a `jobID` before the read began, its single
 decoded notice names `F` between the call's start and the read's start, and no
 other completed notice names `F` from then until the read's end. Parents of a proven
