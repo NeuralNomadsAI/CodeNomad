@@ -3,8 +3,11 @@ import { test } from "node:test"
 import { mkdir, mkdtemp, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
+import { setTimeout as delay } from "node:timers/promises"
+import { fileURLToPath, pathToFileURL } from "node:url"
+import { build } from "esbuild"
 import { DesktopPluginLifecycle } from "../desktop-plugin-lifecycle"
-import { observeDesignRequest, PRESENCE_EXPIRY_MS } from "../desktop-plugin-presence"
+import { observeDesignRequest, PRESENCE_EXPIRY_MS, PRESENCE_READY_SUFFIX } from "../desktop-plugin-presence"
 import type { PanelExtensionSummary } from "../../panel-extensions/contract"
 import { DESIGN_LEASE_MAX_BYTES, designLeaseContent, leaseRequestsDesign } from "./activation"
 import { DESIGN_CONTENT_MARK } from "./content"
@@ -56,6 +59,39 @@ test("live leases request Design by union; expired, oversized, unknown and unrea
   const expired = new Date(Date.now() - PRESENCE_EXPIRY_MS - 1_000)
   await utimes(path.join(older, "bbb-1.lease"), expired, expired)
   assert.equal(await requested([current, older]), false, "An expired lease requests nothing")
+})
+
+test("observing Design leaves readiness shared with other bundle copies and older generations", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-design-readiness-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const directory = path.join(root, "presence")
+  await mkdir(directory)
+  await writeFile(path.join(directory, "abc-123.lease"), REQUEST)
+  const source = fileURLToPath(new URL("../desktop-plugin-presence.ts", import.meta.url))
+  const outputs = [path.join(root, "current.mjs"), path.join(root, "other.mjs")]
+  await Promise.all(outputs.map(outfile => build({ entryPoints: [source], outfile, bundle: true, platform: "node", format: "esm" })))
+  const [current, other] = await Promise.all(outputs.map(file => import(pathToFileURL(file).href)))
+  let finish!: () => void
+  const held = new Promise<void>(resolve => { finish = resolve })
+  const slow = other.followPresence(directory, async () => { await held; return () => {} })
+  const design = current.observeDesignRequest(directory)
+  t.after(() => design.release())
+  assert.equal(await design.read(), true)
+  const fast = await current.followPresence(directory, async () => () => {})
+  t.after(fast)
+  await delay(30)
+  const markers = async () => (await readdir(directory)).filter(name => name.endsWith(PRESENCE_READY_SUFFIX))
+  assert.deepEqual(await markers(), [], "A copy still registering withholds the marker")
+  // Older bundles share readiness through this exact key and snapshot shape.
+  const shared = (globalThis as Record<symbol, Map<string, { leases: unknown; followers: Set<unknown> }> | undefined>)[
+    Symbol.for("codenomad.desktop-plugin-presence.snapshot.v2")]?.get(directory)
+  assert.deepEqual(shared?.leases, ["abc-123.lease"])
+  assert.equal(shared?.followers.size, 2)
+  finish()
+  t.after(async () => (await slow)())
+  await slow
+  for (let attempt = 0; attempt < 100 && !(await markers()).length; attempt++) await delay(10)
+  assert.deepEqual(await markers(), ["abc-123.lease.ready"])
 })
 
 test("every retained lease of a backend carries its current request, including later installations", async t => {
@@ -113,6 +149,27 @@ test("the request follows enabled extensions declaring opencode.designAgent; ref
   entries = [entry(true, ["session.context", "opencode.designAgent"])]
   await refresh()
   assert.deepEqual(writes.slice(2), ["", ""], "Disabled, removed or unreadable state requests nothing")
+})
+
+test("a refresh arriving while a pass completes is never lost", async () => {
+  const enabled = [{ enabled: true, digest: "0".repeat(64), manifest: { permissions: ["session.context", "opencode.designAgent"] } }] as unknown as PanelExtensionSummary[]
+  for (let depth = 0; depth <= 8; depth++) {
+    let entries = enabled
+    let later: Promise<void> | undefined
+    const writes: string[] = []
+    const refresh = designRequestRefresher({ list: async () => entries }, { setLeaseContent: async content => {
+      writes.push(content)
+      if (writes.length > 1) return
+      // Disable after the write settles, `depth` microtasks later: before, at and after the pass ends.
+      let step = () => { entries = []; later = refresh() }
+      for (let n = 0; n < depth; n++) { const next = step; step = () => queueMicrotask(next) }
+      queueMicrotask(step)
+    } })
+    await refresh()
+    for (let attempt = 0; attempt < 20 && !later; attempt++) await Promise.resolve()
+    await later
+    assert.deepEqual(writes, [REQUEST, ""], `depth ${depth}`)
+  }
 })
 
 test("the agent status distinguishes CodeNomad's Design agent from the user's", () => {

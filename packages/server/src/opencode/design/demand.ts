@@ -28,12 +28,18 @@ export function designRequestRefresher(
       return pending
     }
     pending = (async () => {
-      do {
-        queued = false
-        const requested = await store.list().then(extensionsRequestDesign, () => false)
-        await lifecycle.setLeaseContent(designLeaseContent(requested))
-      } while (queued)
-    })().finally(() => { pending = undefined })
+      try {
+        do {
+          queued = false
+          // Always asynchronous, so the worker never settles before `pending` is assigned.
+          const requested = await (async () => extensionsRequestDesign(await store.list()))().catch(() => false)
+          await lifecycle.setLeaseContent(designLeaseContent(requested))
+        } while (queued)
+      } finally {
+        // In the same synchronous step as the last `queued` check: a later call starts a new pass.
+        pending = undefined
+      }
+    })()
     return pending
   }
 }

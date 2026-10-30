@@ -190,7 +190,8 @@ try {
     let errors = ""
     child.stderr.on("data", data => { errors += data })
     const next = async () => {
-      const line = await Promise.race([lines.next(), delay(60_000).then(() => ({ done: true }))])
+      // Unreferenced: a losing timeout never keeps the fixture process alive.
+      const line = await Promise.race([lines.next(), delay(60_000, undefined, { ref: false }).then(() => ({ done: true }))])
       if (line.done) throw new Error(`Backend child failed: ${errors}`)
       return line.value
     }
