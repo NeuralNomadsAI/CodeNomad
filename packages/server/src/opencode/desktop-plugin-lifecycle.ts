@@ -16,6 +16,7 @@ export class DesktopPluginLifecycle {
   private readonly installations = new Map<string, Installation>()
   private latest?: Installation
   private stopped = false
+  private leaseContent = ""
 
   constructor(
     private readonly feature: DesktopPluginFeature,
@@ -56,7 +57,7 @@ export class DesktopPluginLifecycle {
           current()
           const bundle = await this.readBundle()
           current()
-          return installDesktopPluginPresence(this.feature, bundle, paths, current)
+          return installDesktopPluginPresence(this.feature, bundle, paths, current, () => this.leaseContent)
         }),
       }
       this.installations.set(key, entry)
@@ -93,6 +94,17 @@ export class DesktopPluginLifecycle {
    */
   async ready(): Promise<void> {
     await this.latest?.pending.then(presence => presence.ready, () => undefined)
+  }
+
+  /**
+   * Backend state carried by every lease this lifecycle retains, one per
+   * namespace. Pending and later installations are created with it; settles once
+   * each existing lease has attempted its rewrite (a failure retries at its next heartbeat).
+   */
+  async setLeaseContent(content: string): Promise<void> {
+    this.leaseContent = content
+    await Promise.all([...this.installations.values()].map(installation =>
+      installation.pending.then(presence => presence.sync(), () => {})))
   }
 
   private close(installation: Installation): Promise<void> {

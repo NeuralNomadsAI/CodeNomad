@@ -45,6 +45,7 @@ import { createOpencodeYoloPersistence } from "./permissions/opencode-yolo-metad
 import { NativeParent } from "./native-parent"
 import { PruningLifecycle } from "./opencode/pruning-lifecycle"
 import { DesktopPluginLifecycle, prepareDesktopPluginPresence } from "./opencode/desktop-plugin-lifecycle"
+import { designRequestRefresher } from "./opencode/design/demand"
 import { resolveDesktopPluginPaths } from "./opencode/desktop-plugin-paths"
 import { provisionDesktopPlugins } from "./opencode/desktop-plugin-provisioning"
 import { AUTOMATION_BRIDGE_PATH, createAutomationBridgeRegistration, publishAutomationBridge } from "./opencode/automation-plugin"
@@ -554,7 +555,11 @@ async function main() {
   const servers: Array<ReturnType<typeof createHttpServer>> = []
   const panelExtensions = new PanelExtensionStore(path.join(configDir, "panel-extensions"), () => {
     eventBus.publish({ type: "storage.stateChanged", owner: "panelExtensions", value: {} })
+    void refreshDesignRequest()
   })
+  // This backend's Design request, carried by each of its session-pruning leases.
+  const refreshDesignRequest = designRequestRefresher(panelExtensions, pruningLifecycle)
+  void refreshDesignRequest()
   // Every listener admits the same worktrees: one fence (and its mission holds),
   // so a deletion through HTTPS drains a mission admitted through the bridge.
   const worktreeDeletionFence = new WorktreeDeletionFence()
