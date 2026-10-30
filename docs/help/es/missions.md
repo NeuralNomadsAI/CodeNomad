@@ -14,6 +14,8 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 ### Guiones {#playbooks}
 
+El selector **Guion** muestra justo debajo una descripción de una frase del guion seleccionado.
+
 | Guion | Trabajo previsto |
 | --- | --- |
 | Misión flexible | El coordinador elige un plan con dependencias para el objetivo. |
