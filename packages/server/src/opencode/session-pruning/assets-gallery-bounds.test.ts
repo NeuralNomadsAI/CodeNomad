@@ -59,8 +59,10 @@ each("a parent generated more than 32 assistant messages before its child is not
 each("private values never leave the whitelist; user prompts stay intact and appear only when granted for a marked root", async fixture => {
   const row = fixture.row(A_CALL), value = JSON.parse(row.data), call = value.content.find((part: any) => part.name === "image_generate")
   call.id = "call_SENTINEL_CALL"; call.state.metadata.notificationID = "SENTINEL_NOTIFY"; call.state.input.prompt = "Use D:\\art and image_ref literally"
-  value.content.push({ type: "tool", id: "call_SENTINEL_ERR", name: "image_generate", time: { created: 1, ran: 1 }, state: { status: "error", input: { prompt: "p" }, error: "SENTINEL_ERROR" } })
   fixture.update(row.id, value)
+  // After every read, so icon-a stays proven: an errored call may write any file.
+  fixture.insert("msg_zz_error", "assistant", 400, Date.now(), { ...value, content: [{ type: "tool", id: "call_SENTINEL_ERR", name: "image_generate",
+    time: { created: Date.now(), ran: Date.now() }, state: { status: "error", input: { prompt: "p" }, error: "SENTINEL_ERROR" } }] })
   const noticeRow = fixture.row(A_NOTICE), notice = JSON.parse(noticeRow.data); notice.text = notice.text.replace("Use the read tool", "SENTINEL_NOTICE"); fixture.update(noticeRow.id, notice)
   const notices = fixture.raw.prepare("SELECT data FROM session_message WHERE type='synthetic'").all().map(entry => JSON.parse(String(entry.data)).metadata)
   const temporary = notices.find(meta => meta?.path?.includes("opencode"))!.path as string
@@ -110,35 +112,52 @@ for (const writer of [false, true]) {
   })
 }
 
-// The native shape of an `image_generate` call still running: `metadata: {}`, its destination only in `input.path`.
-const running = (id: string, ran: number, input: unknown) => ({ type: "tool", name: "image_generate", id, time: { created: ran, ran },
-  state: { status: "running", input, metadata: {} } })
-for (const [name, input, origin] of [
-  ["same relative path", { prompt: "p", path: ".codenomad/design/icon/icon-a.png" }, "unverifiable"],
-  ["same stem, another extension", { prompt: "p", path: ".codenomad/design/icon/icon-a.webp" }, "unverifiable"],
-  ["unparsed input", "{\"prompt\":\"p\",\"pa", "unverifiable"],
-  ["home-relative path", { prompt: "p", path: "~/icon-a.png" }, "unverifiable"],
-  ["another file", { prompt: "p", path: ".codenomad/design/icon/icon-zz.png" }, "proven"],
-  ["no path (temporary file)", { prompt: "p" }, "proven"],
-] as const) {
-  each(`a running generator (${name}) before the read: icon-a ${origin}`, async fixture => {
+// Only a completed `image_generate` with `metadata.path` names its file; any other call may write any file.
+const generator = (id: string, ran: number, state: Record<string, unknown>, completed = true) => ({ type: "tool", name: "image_generate", id,
+  time: { created: ran, ran, ...(completed ? { completed: ran + 1 } : {}) }, state })
+const other = ".codenomad/design/icon/icon-zz.png"
+const unknownWriters = [
+  ["running, native shape (metadata {})", (ran: number) => generator("call_zz_w", ran, { status: "running", input: { prompt: "p", path: other }, metadata: {} }, false)],
+  ["streaming, input unparsed", (ran: number) => generator("call_zz_w", ran, { status: "streaming", input: "{\"prompt\":\"p\",\"pa" }, false)],
+  ["errored without metadata (interrupted after its job started)", (ran: number) => generator("call_zz_w", ran,
+    { status: "error", input: { prompt: "p", path: other }, error: "Tool execution was interrupted" })],
+  ["running, Windows alias of the file", (ran: number) => generator("call_zz_w", ran,
+    { status: "running", input: { prompt: "p", path: "/c/cn-gallery-fixture/p/.codenomad/design/icon/icon-a.png" }, metadata: {} }, false)],
+  ["completed without metadata.path", (ran: number) => generator("call_zz_w", ran, { status: "completed", input: { prompt: "p" }, metadata: { model: "m" } })],
+] as const
+for (const [name, make] of unknownWriters) {
+  each(`a call that may write any file (${name}) in the range: icon-a unverifiable with pixels, references refused`, async fixture => {
     const message = fixture.json(A_CALL)
-    fixture.insert("msg_zz_running", "assistant", 8, 1, { ...message, content: [running("call_zz_running", fixture.call().time.ran + 1, input)] })
-    assert(has(image(await fixture.lines(), "icon-a")[0], `origin:${origin}`, "read:asset"))
-    assert.equal((await fixture.reference(fixture.readTarget())).status, origin === "proven" ? "path" : "refused")
+    fixture.insert("msg_zz_writer", "assistant", 8, 1, { ...message, content: [make(fixture.call().time.ran + 1)] })
+    assert(has(image(await fixture.lines(), "icon-a")[0], "origin:unverifiable", "read:asset"))
+    assert.deepEqual(await fixture.reference(fixture.readTarget()), { status: "refused", reason: "unverifiable" })
+  })
+  each(`a generation reference with a parallel call that may write any file (${name}) is refused`, async fixture => {
+    const { row, value, own, target } = iconB(fixture)
+    assert.equal((await fixture.reference(target)).status, "path")
+    value.content.push(make(own.time.ran + 1)); fixture.update(String(row.id), value)
+    assert.deepEqual(await fixture.reference(target), { status: "refused", reason: "unverifiable" })
   })
 }
-
-each("a generation reference with a parallel running generator of the same file (native running shape) is refused", async fixture => {
+each("witness: a completed call naming another file leaves icon-a proven and both references accepted; a later unknown call refuses the reference only", async fixture => {
+  const message = fixture.json(A_CALL), known = { status: "completed", input: { prompt: "p", path: other },
+    metadata: { path: path.join(DIRECTORY, ".codenomad", "design", "icon", "icon-zz"), model: "m", jobID: "image_zz_known" } }
+  fixture.insert("msg_zz_known", "assistant", 8, 1, { ...message, content: [generator("call_zz_known", fixture.call().time.ran + 1, known)] })
+  const { row, value, own, target } = iconB(fixture)
+  value.content.push(generator("call_zz_known_b", own.time.ran + 1, known)); fixture.update(String(row.id), value)
+  assert(has(image(await fixture.lines(), "icon-a")[0], "origin:proven"))
+  assert.equal((await fixture.reference(fixture.readTarget())).status, "path")
+  assert.equal((await fixture.reference(target)).status, "path")
+  fixture.insert("msg_zz_later", "assistant", 300, Date.now(), { ...message, content: [unknownWriters[0][1](Date.now())] })
+  assert(has(image(await fixture.lines(), "icon-a")[0], "origin:proven"))
+  assert.deepEqual(await fixture.reference(fixture.readTarget()), { status: "refused", reason: "unverifiable" })
+})
+function iconB(fixture: Fixture) {
   const rows = fixture.raw.prepare("SELECT id,data FROM session_message WHERE type='assistant'").all()
   const row = rows.find(entry => String(entry.data).includes("icon-b.png") && String(entry.data).includes("image_generate"))!
   const value = JSON.parse(String(row.data)), own = value.content.find((part: any) => part.name === "image_generate")
-  const target = { messageID: String(row.id), part: value.content.indexOf(own), digest: sha(`${own.id}\u0000${own.state.metadata.jobID}`) }
-  assert.equal((await fixture.reference(target)).status, "path")
-  value.content.push(running("call_zz_parallel_b", own.time.ran + 1, { prompt: "p", path: ".codenomad/design/icon/icon-b.png" }))
-  fixture.update(String(row.id), value)
-  assert.deepEqual(await fixture.reference(target), { status: "refused", reason: "unverifiable" })
-})
+  return { row, value, own, target: { messageID: String(row.id), part: value.content.indexOf(own), digest: sha(`${own.id}\u0000${own.state.metadata.jobID}`) } }
+}
 
 each("the notice cap proves nothing and leaves outcomes unknown", async fixture => {
   const insert = fixture.raw.prepare("INSERT INTO session_message VALUES (?,?,?,?,?,?,?)")

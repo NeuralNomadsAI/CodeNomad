@@ -51,6 +51,26 @@ test("the RPC handler answers unknown when storage cannot be read, creates nothi
   assert.equal(created.length, 0)
 })
 
+test("the RPC handler answers unknown when the storage challenge rejects, and creates nothing", async () => {
+  const created: unknown[] = []
+  let handlers: any
+  const readonly = Object.assign(new Error("attempt to write a readonly database"), { code: "SQLITE_READONLY" })
+  const ctx = {
+    app: {}, options: { databasePath: path.join(os.tmpdir(), "codenomad-readonly-images", "opencode.db") }, location: { directory, project: { id: "p" } },
+    session: { create: async (input: unknown) => { created.push(input); return { id: "ses_new" } } },
+    storage: { set: async () => { throw readonly }, remove: async () => {} },
+    rpc: { register: async (_: unknown, implementation: unknown) => { handlers = implementation; return { dispose: async () => {} } } },
+    tool: { transform: async () => ({ dispose: async () => {} }) },
+  }
+  const cleanup = await plugin.setup(ctx as any)
+  try {
+    for (const mode of ["lookup", "open", "new"]) assert.deepEqual(await handlers.imagesConversation({ mode }, { signal: signal() }), { status: "unknown" }, mode)
+    const cancelled = new AbortController(); cancelled.abort()
+    await assert.rejects(handlers.imagesConversation({ mode: "open" }, { signal: cancelled.signal }), { name: "AbortError" })
+  } finally { await (cleanup as any)?.() }
+  assert.equal(created.length, 0)
+})
+
 test("lookup: newest unarchived marked root of this location, never a marked child, beyond any native page", () => {
   const { db, add } = database()
   assert.deepEqual(lookupImagesConversation(db, scope), { status: "absent" })

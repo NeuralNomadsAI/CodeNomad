@@ -6,7 +6,7 @@ import type { AssetReadResult, AssetTarget } from "./assets-contract"
 import { assetBytes, cursorSchema, hash, listed, MESSAGE_LIMIT, storedAsset } from "./assets-store"
 import { GALLERY_RESPONSE_LIMIT, type GalleryEntry, type GenerationTarget, type ImageReferenceResult, type ImagesResult } from "./assets-gallery-contract"
 import { after, annotate, coverage, generationState, interval, isGalleryFile, key, labelOf, promptFields, relativeInside, resolveName,
-  sameFile, visible, writes, type Coverage, type Part } from "./assets-gallery-proof"
+  sameFile, visible, writes, writesAnyFile, type Coverage, type Part } from "./assets-gallery-proof"
 
 // The image gallery (dev-docs/SESSION_PRUNING_RPC.md#image-gallery): image `read` parts and
 // `image_generate` calls of one session, recomputed from the transcript on every request.
@@ -145,7 +145,7 @@ export async function galleryImageReference(db: DatabaseSync, scope: HistoryScop
       const floor = cov.floorFor(seq), own = part, written = file
       if (floor === Infinity) return refused("unverifiable")
       pending = later => [...cov.calls.filter(call => call.seq >= floor && call.seq < seq), ...later.calls.filter(call => call.seq >= seq)]
-        .some(call => !(call.seq === seq && call.part.id === own.id) && writes(call.part, written, scope.directory) && !(Number(call.part.time?.ran) >= start)
+        .some(call => !(call.seq === seq && call.part.id === own.id) && writes(call.part, written) && !(Number(call.part.time?.ran) >= start)
           && (!Number.isFinite(call.part.time?.completed)
             || ![...cov.notices, ...later.notices].some(notice => notice.job === call.part.state?.metadata?.jobID)))
     }
@@ -153,8 +153,11 @@ export async function galleryImageReference(db: DatabaseSync, scope: HistoryScop
     if (!relative) return refused("outside")
     // No later write: the newest assistant rows down to the item (32 messages, 32 MiB) and the notices of that range.
     const later = coverage(db, sessionID, boundary, through, through, new Map(), 0)
-    if (!(later.floor <= seq) || later.capped || later.undecoded.some(row => !(row.time < start)) || pending(later)) return refused("unverifiable")
-    if (later.calls.some(call => call.seq >= seq && writes(call.part, file!, scope.directory) && !(Number(call.part.time?.ran) < start))
+    // A later call that may write any file leaves the reference unverifiable; one to this file changed it.
+    const sinceStart = (call: { part: Part }) => !(Number(call.part.time?.ran) < start)
+    if (!(later.floor <= seq) || later.capped || later.undecoded.some(row => !(row.time < start)) || pending(later)
+      || later.calls.some(call => call.seq >= seq && writesAnyFile(call.part) && sinceStart(call))) return refused("unverifiable")
+    if (later.calls.some(call => call.seq >= seq && writes(call.part, file!) && sinceStart(call))
       || later.notices.some(notice => sameFile(notice.file, file!) && notice.time > start)) return refused("changed")
     return { status: "path", path: process.platform === "win32" ? relative.replaceAll("\\", "/") : relative }
   } finally { db.exec("ROLLBACK") }

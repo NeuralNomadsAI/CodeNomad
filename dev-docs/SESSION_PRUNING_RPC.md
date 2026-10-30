@@ -109,13 +109,11 @@ sooner; a range an oversized row or the scan budget cuts proves nothing), exactl
 completed with a `jobID` before the read began, its single
 decoded notice names `F` between the call's start and the read's start, and no
 other completed notice names `F` from then until the read's end. Parents of a proven
-call follow the same rule over the generation's own interval. A call may write `F`
-when its `metadata.path` is `F`'s stem or, without one (native running parts carry
-`metadata: {}`), when its `input.path` resolves to that stem whatever the extension;
-an unparsed input or a `~` path may write any file, an input without `path` writes
-a new temporary file, and an errored call without `metadata.path` started no job.
-Relative read names
-and references resolve lexically against the session directory in the daemon's
+call follow the same rule over the generation's own interval. Only a `completed`
+`image_generate` part with `metadata.path` names the file it writes (that stem);
+every other `image_generate` part (streaming, running, errored or completed without
+`metadata.path`) may write any file, so it leaves every proof and reference it could
+affect unverifiable. Relative read names and parent references resolve lexically against the session directory in the daemon's
 path style (Windows without case); one outside the location has no label and no
 reference. Generation states are the native part status and, when established, the
 outcome of its unique decoded notice (`completed`, `error`, `cancelled`), else
@@ -126,14 +124,15 @@ directories, job, notification or call IDs, or notice and error text.
 
 References also require no later write: the newest 32 assistant rows within 32 MiB
 must reach the item, with a complete notice scan, no undecoded row dated from the
-read's start (a generation's notice time), and no call to the same stem started from
-then or other notice naming the file after it. A generation target is also refused as
+read's start (a generation's notice time), no call that may write any file started
+from then (`unverifiable`), and no call to the same stem started from then or other
+notice naming the file after it (`changed`). A generation target is also refused as
 `unverifiable` when the scan cuts its range, or while another call that may write
 its file, started before its notice (or at an unknown time) in the item's range or
 later, lacks a completion time or a decoded notice of its own.
 
 Consumed contracts: `read` tool `state.content` files, `image_generate` parts
-(`state.input.prompt|images|path`, `state.metadata.path` as the stem, `jobID`, `model`,
+(`state.status`, `state.input.prompt|images`, `state.metadata.path` as the stem, `jobID`, `model`,
 `time.ran|completed`) and its synthetic notices (`metadata.source|jobID|state|path`,
 text `Saved image: <file> (`). A change leaves generations `unknown` and images
 unverifiable.
@@ -144,8 +143,9 @@ unverifiable.
 The lookup reads `session_v2` with `ownedSession`'s location predicate, root and
 unarchived sessions whose `metadata."codenomad.companion"` is `images`, newest by
 `time_created DESC, id DESC`, over at most 20,000 roots: `found`, `absent` only after
-a complete scan, else `unknown`, as is every mode when the database cannot be read
-(nothing is created; cancellation still rejects). `open` repeats the lookup under a process-wide lock
+a complete scan, else `unknown`. Every mode also answers `unknown` when the database
+or its storage challenge cannot be read or fails, and creates nothing; cancellation
+still rejects. `open` repeats the lookup under a process-wide lock
 (global symbol, keyed by database file, project, storage directory and workspace)
 and creates through `ctx.session.create` only when `absent`; `new` always creates.
 The lock serializes the callers of one OpenCode process; two processes sharing a

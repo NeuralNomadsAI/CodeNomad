@@ -40,12 +40,14 @@ async function exclusive<T>(key: string, run: () => Promise<T>) {
   }
 }
 
-/** The RPC handler: storage that cannot be read leaves the conversation `unknown`, and nothing is created. */
+/** The RPC handler: storage or authority that cannot be read or fails leaves the conversation `unknown`; cancellation still rejects. */
 export async function imagesConversationRpc(ctx: Plugin.Context, input: ImagesConversationInput, signal: AbortSignal): Promise<ImagesConversationResult> {
   signal.throwIfAborted()
-  const result = await withHistoryDatabase(ctx, undefined, signal,
-    (db, scope) => imagesConversation(db, scope, input, session => ctx.session.create(session as never) as Promise<{ id: string }>, signal))
-  if (result.status !== "blocked") return result
+  try {
+    const result = await withHistoryDatabase(ctx, undefined, signal,
+      (db, scope) => imagesConversation(db, scope, input, session => ctx.session.create(session as never) as Promise<{ id: string }>, signal))
+    if (result.status !== "blocked") return result
+  } catch {}
   signal.throwIfAborted()
   return { status: "unknown" }
 }
