@@ -125,9 +125,6 @@ export const controlNativeMissionSchedule = Effect.fn("missions.controlSchedule"
     yield* Effect.tryPromise(() => runtime!.reconcile(entry))
   }
   else {
-    // Unknown source baselines are supplied by the qualified logic reader slice.
-    if (["play", "resume"].includes(action) && doc.firstPlayedAt === null && doc.configuration.launch.condition)
-      throw new Error("Mission condition baseline unavailable")
     if (!interruption) {
       doc = yield* Effect.tryPromise(() => owner.prepareControl({ missionID, requestID, expectedRevision,
         action, configuration: request.configuration, deleteManagedSessions: request.deleteManagedSessions }))

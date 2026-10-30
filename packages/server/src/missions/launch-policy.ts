@@ -49,7 +49,7 @@ export const missionConditionSchema = z.discriminatedUnion("kind", [
       && !value.includes("..") && !value.includes("@{") && value.split("/").every(part => part && !part.startsWith(".") && !part.endsWith(".") && !part.endsWith(".lock"))) }).strict(),
   z.object({ kind: z.literal("conversation-message"), conversationID: nativeDocumentID }).strict(),
   z.object({ kind: z.literal("files-changed"), paths: z.array(relativePath).min(1).max(128)
-    .refine(paths => new Set(paths).size === paths.length) }).strict(),
+    .refine(paths => new Set(paths).size === paths.length).transform(paths => [...paths].sort()) }).strict(),
 ])
 export const missionLaunchPolicySchema = z.object({ timing: missionTimingSchema, condition: missionConditionSchema.nullable(),
   ends: z.object({ maxLaunches: documentCounter.positive().nullable(), afterMs: duration.nullable(), at: documentTimestamp.nullable() }).strict(),

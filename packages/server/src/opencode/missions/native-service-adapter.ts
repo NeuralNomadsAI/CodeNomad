@@ -27,11 +27,11 @@ type NativeSessionService = {
   synthetic(input: AutonomousMissionCommand["input"] | NativeRecurrenceLifecycleCommand["input"] | NativeDocumentPassageCommand["input"]): NativeEffect
   inbox(id: string): NativeEffect
   cancelInbox?(input: { sessionID: string; inboxID: string }): NativeEffect
-  messages?(input: { sessionID: string; order: "asc"; limit: number; cursor?: { id: string; direction: "next" } }): NativeEffect
+  messages?(input: { sessionID: string; order: "asc" | "desc"; limit: number; cursor?: { id: string; direction: "next" } }): NativeEffect
   message?(input: { sessionID: string; messageID: string }): NativeEffect
 }
 export type NativeSourceReadInput = { sessionID: string; directory: string; workspaceID?: string;
-  afterMessageID: string | null; afterNativeDigest?: string; limit: number; contextLimit: number }
+  afterMessageID: string | null; afterNativeDigest?: string; limit: number; contextLimit: number; excludeTechnical?: boolean }
 export type NativeCreateInput = {
   id: string; title: string; location: { directory: string }; metadata: Record<string, unknown>
   agent: string; model: { providerID: string; id: string; variant?: string }
@@ -132,6 +132,22 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       if (!Predicate.isFunction(service.message)) rejectAuthority("effect-unavailable")
       return run(() => service.message!({ ...input }), Schema.UndefinedOr(Schema.toType(SessionMessage.Info)), options, assertCurrent)
     },
+    sourceBaseline: async (sessionID: string, options: { signal?: AbortSignal }) => {
+      if (!Predicate.isFunction(service.messages)) rejectAuthority("effect-unavailable")
+      const page = await run(() => service.messages!({ sessionID, order: "desc", limit: 32 }),
+        Schema.Array(Schema.toType(SessionMessage.Info)).check(Schema.isMaxLength(32)), options, assertCurrent)
+      let anchor: typeof SessionMessage.Info.Type | undefined
+      for (const item of [...page].reverse()) {
+        if (item.type === "location-switched") rejectAuthority("observation-unavailable")
+        if (item.type === "assistant" && (!item.time.completed || item.content.some(part => part.type === "tool" && ["running", "streaming"].includes(part.state.status)))
+          || item.type === "shell" && item.status === "running" || item.type === "compaction" && item.status === "running") break
+        const exact = await run(() => service.message!({ sessionID, messageID: item.id }), Schema.UndefinedOr(Schema.toType(SessionMessage.Info)), options, assertCurrent)
+        if (!exact || nativePassageMessageDigest(exact) !== nativePassageMessageDigest(item)) rejectAuthority("observation-unavailable")
+        anchor = exact
+      }
+      if (!anchor && page.length === 32) rejectAuthority("observation-unavailable")
+      return anchor
+    },
     cancelInbox: (input: { sessionID: string; inboxID: string }, current: () => true, expected: NativeRootPlacement) => {
       if (!Predicate.isFunction(service.cancelInbox)) rejectAuthority("effect-unavailable")
       return run(() => service.cancelInbox!({ ...input }), Schema.Void, undefined, current, expected, true)
@@ -193,9 +209,11 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
           if (!stable || !Predicate.hasProperty(stable, "id") || stable.id !== item.id) rejectAuthority("observation-unavailable")
           const bytes = nativeBytes(item)
           if (nativeBytes(stable) !== bytes) break // Updated since the page read: defer this ID and every later ID.
-          const text = item.type === "user" || item.type === "synthetic" ? item.text
+          const technical = request.excludeTechnical && (item.type === "user" || item.type === "synthetic")
+            && item.metadata && ("schedule" in item.metadata || "codenomad.scheduleCarrier" in item.metadata || item.metadata.notice === "restart")
+          const text = technical ? "" : item.type === "user" || item.type === "synthetic" ? item.text
             : item.type === "assistant" ? item.content.filter(part => part.type === "text").map(part => part.text).join("\n") : ""
-          const reference = { id: String(item.id), type: item.type, nativeDigest: createHash("sha256").update(bytes).digest("hex"),
+          const reference = { id: String(item.id), type: technical ? "technical" : item.type, nativeDigest: createHash("sha256").update(bytes).digest("hex"),
             ...(item.type === "assistant" && item.time.completed ? { completedAt: DateTime.toEpochMillis(item.time.completed) } : {}) }
           const complete = { ...reference, text }
           // Keep complete source messages, never trimmed prose. Leave enough
@@ -251,4 +269,5 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
     },
   }
 })
-export type MissionNativeService = Effect.Success<ReturnType<typeof acquireMissionNativeService>>
+type AcquiredMissionNativeService = Effect.Success<ReturnType<typeof acquireMissionNativeService>>
+export type MissionNativeService = Omit<AcquiredMissionNativeService, "sourceBaseline"> & Partial<Pick<AcquiredMissionNativeService, "sourceBaseline">>

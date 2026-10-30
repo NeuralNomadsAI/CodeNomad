@@ -20,6 +20,8 @@ import { prepareNativeDocumentSources, type DocumentConditionReader } from "./na
 import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human-answer"
 import { controlNativeScheduledPassage, type ScheduledPassageControl } from "./native-scheduled-passage-controls"
 import { acquireNativeScheduledPassageCapability } from "./native-scheduled-passage-capability"
+import { acquireNativeMissionConditionReader } from "./native-mission-condition-reader"
+import { acquireNativeSourceFence } from "./native-source-fence"
 
 type Entry = { current(): true; signal: AbortSignal }
 type Options = {
@@ -41,6 +43,7 @@ export const acquireNativeScheduledPassageRuntime = Effect.fn("missions.acquireS
   const native = yield* acquireMissionNativeService(alive, run)
   const observation = yield* acquireNativePassageObservation(undefined, run)
   const store = yield* acquireNativeMissionDocumentStore(ctx, run)
+  const sourceFence = yield* acquireNativeSourceFence(alive)
   const dispatchAllowed = documentPassageDispatchAllowed, businessAllowed = documentPassageBusinessAllowed
   const capability = yield* acquireNativeScheduledPassageCapability(ctx, alive)
   const authority = yield* acquireNativeScheduledPassageAuthority(alive, dispatchAllowed, businessAllowed, capability.assertCurrent)
@@ -82,7 +85,11 @@ export const acquireNativeScheduledPassageRuntime = Effect.fn("missions.acquireS
       incarnation: options.incarnation ?? incarnation, now, current,
       verifyWake: async (doc, wake) => (await calendars()).verifyWake(doc, wake, current, entry.signal),
       coverage: async (doc, window) => (await calendars()).coverage(doc, window, current, entry.signal),
-      snapshot: doc => prepareNativeDocumentSources(doc, native, entry.signal, current, options.condition),
+      snapshot: async doc => {
+        const reader = options.condition ?? await run(acquireNativeMissionConditionReader(ctx, store, run, entry.signal, current)
+          .pipe(Effect.provideService(Scope.Scope, scope)))
+        return prepareNativeDocumentSources(doc, native, entry.signal, current, reader, sourceFence())
+      },
       admit: async (doc, locked) => admitNativeScheduledPassage(await context(doc, locked, entry), dispatchAllowed),
       observe: async (doc, locked) => observeNativeScheduledPassage(await context(doc, locked, entry)),
     })

@@ -17,6 +17,26 @@ profile source, request ID and document revision through the existing signed bri
 `scheduleRead({missionID,requestID})` reads an exact retained control receipt;
 missing or evicted proof stays unknown. Passive reads send no controls.
 
+Five explicit source conditions share the native source preparation boundary:
+another schedule's successful passage, a completed one-time Mission, commits on
+a local branch, stable new messages in a followed conversation, and an explicit
+file set. Event-only policies check every 15 minutes; calendar-backed conditions
+are read only at those calendar slots. First Play establishes their baseline,
+Pause/Resume preserves it, and configuration retains removed source checkpoints.
+A pending freezes the observed proof; only successful settlement consumes it.
+Success counters outlive the 30-result window, and missing retained success proof,
+cyclic dependencies, moved/deleted sources or incomplete reads block admission.
+Missing native correlation is an explicit unknown block; positively active source
+families retain their prior checkpoint while waiting. Historical journal-only
+sources use their validated coordinator placement under an explicitly authorized
+root. Followed conversations exclude the Mission's own passage families through
+their bounded native parent chains.
+Local file and Git reads yield the service event loop and share a cancellable
+ten-second budget with their final pre-publication revalidation. Exact native
+input/terminal bytes remain fenced synchronously inside the document CAS.
+Bounds, transaction fences and qualification are in the native contracts' event
+source readers section.
+
 The native calendar owner records create intents and reverse carrier ownership
 before native effects. It acknowledges the reconciliation calendar before arming
 principals. Temporal edits preserve retired proofs until cleanup, while relative

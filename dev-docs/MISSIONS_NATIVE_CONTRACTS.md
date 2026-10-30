@@ -229,6 +229,72 @@ claim/inbox/child quiescence. A self-active auxiliary retains its native wake an
 reverse index; the parent schedules a fresh invocation after idle or an explicit
 Check to finish that same cleanup intent.
 
+## Event source readers
+
+`native-mission-condition-reader.ts`, `native-scheduled-passage-sources.ts` and
+`missions/mission-local-sources.ts` read one explicit condition in the service
+namespace. First Play prepares a fresh baseline under document exclusion; Resume
+retains it. Editing adds baselines only for new source keys. Retained keys win
+over newly observed proofs during configuration, preserving remove/re-add cursors.
+The pending stores the complete bounded checkpoint. Successful archive consumes
+that checkpoint, while failures preserve the prior one and retain the admission
+barrier. A conversation condition also contributes its frozen prefix to launch input.
+
+Schedule success uses durable `successfulCount` and `lastSuccessfulPassageID`,
+independent of the 30 retained results. Every unseen success needs its retained
+receipt, exact completed journal and correlated whole-family terminal proof.
+Exceeding that receipt window blocks. One-time completion uses the exact original
+admission, completed journal and the same family proof. A positively active family
+waits with its prior checkpoint; unavailable original/terminal correlation blocks
+explicitly as unknown coverage. Journal-only sources derive placement from their
+coordinator's journal identity and exact native session, validate the configured
+authorized root and pin that placement across checks. Dependency chains are
+point-read with a 64-object ceiling and reject cycles, deletion and unknown edges.
+
+Conversation reads use a latest stable baseline page of at most 32 messages,
+then the shared bounded stable-prefix reader. Exact native message digests and
+placement remain pinned. Technical wakes/restart notices contribute no event;
+technical carriers and the schedule's own coordinator families are excluded.
+The bounded, cycle-checked parent walk pins each ancestor's placement and metadata
+before awaiting its native read, then rechecks that same projection at publication;
+carrier recognition uses `codenomad.schedule-carrier` and the reserved ID prefix.
+Streaming, compaction, changed/deleted anchors and input capacity preserve unknown
+coverage. A full prefix containing only technical records requires a decision.
+`native-source-observation.ts` borrows only an explicitly selected authorized
+source Location for family requests, retaining its graph through the receiving RPC.
+
+Local Git reads use a full local branch, physical worktree/common-directory identity,
+commit OIDs and ancestry. Asynchronous child commands have a shared ten-second deadline and
+1 MiB output ceiling, with lazy fetch, optional locks and prompts disabled. Files
+use explicit relative paths, absence or SHA-256 bytes, at most 128 paths,
+1 MiB/file and 16 MiB/check. Parent links, devices, directories, root escapes,
+unreadable files and changed reads fail closed. Promise-based filesystem calls run
+off the service event loop. One ten-second deadline covers initial reads and final
+revalidation; cancellation or expiry promptly rejects the caller, including while
+metadata, open, read or close is pending. Late kernel completions are observed and
+acquired handles close in `finally`; a blocked kernel operation releases its handle
+when it returns. Git cancellation kills its child. Byte and physical-placement
+rereads run under document exclusion after the target read and immediately before
+publication. A failed revalidation invalidates the proof. External filesystem
+writers can race the final reread and SQLite commit.
+
+`native-source-fence.ts` pins bounded exact document/journal/message/family SQL
+projections before observation, then checks them synchronously at target CAS.
+Family proofs include the existence and full native bytes of each correlation
+input and latest terminal, with exact assignment IDs for managed actor roots.
+The document adapter supplies its current transaction Context to those reads;
+the guard borrows that transaction's SQL service. Local publication preparation
+awaits the byte/branch/placement reread outside SQL; its synchronous guard checks
+the proof's lifetime, cancellation, deadline and completed revalidation state.
+The source guard expires with its RPC.
+
+Qualification: `node --import tsx scripts/test-mission-event-readers-native.mjs
+<absolute-isolated-cli> <fresh-approved-reader-scratch>` exercises all five actual
+readers, private SQL/CAS, service restart without a CodeNomad backend, frozen
+consumption, remove/re-add and a changed-file reservation race. Its explicit test
+controls seed/archive passage journals; product wake and actor-settlement journeys
+remain covered by the separate scheduled-product qualification.
+
 ## Experimental document authors
 
 `native-experimental-settings.ts` shares the depth/schedules JSONC reader and

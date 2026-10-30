@@ -102,6 +102,22 @@ test("100 condition-false checks cost zero launches and advance high-water beyon
   assert.equal(doc.launchedCount, 0); assert.equal(doc.calendars[0].highWater, 100); assert.equal(doc.pending, null)
 })
 
+test("calendar reservation, false-condition consumption and manual reservation await source revalidation before publishing", async () => {
+  for (const mode of ["changed", "unchanged", "manual"] as const) {
+    const f = await fixture()
+    let revalidated = false
+    f.ports.snapshot = async () => ({ changed: mode !== "unchanged", checkpoints: [], current,
+      revalidate: async () => { await Promise.resolve(); revalidated = true; throw new Error("source changed before CAS") } })
+    const execute = mode === "manual"
+      ? () => f.engine.runNow({ missionID: "review", requestID: "manual_source_race", expectedRevision: 2 })
+      : () => f.engine.wake({ missionID: "review", wake: f.wake() })
+    await assert.rejects(execute(), /source changed before CAS/)
+    assert.equal(revalidated, true, mode)
+    const doc = await f.read()
+    assert.equal(doc.pending, null); assert.equal(doc.launchedCount, 0); assert.equal(doc.calendars[0].highWater, 0)
+  }
+})
+
 test("reservation crash blocks its place without counting; retry keeps exact IDs and shared manual/native quota", async () => {
   const f = await fixture(1, 3), wake = f.wake()
   f.crash = true

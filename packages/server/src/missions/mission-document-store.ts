@@ -48,15 +48,16 @@ export class NativeMissionDocumentStore {
       const doc: MissionDocument = { version: 1, id, projectID: this.projectID, projectCanonical: this.projectCanonical,
         revision: 0, configurationGeneration: 1, timeGeneration: 1, createdAt: now,
         configuration: missionConfigurationSchema.parse(configuration), state: "paused", firstPlayedAt: null,
-        oneShotAt: null, slotEndsAt: null, launchedCount: 0, settledCount: 0, everCreatedTask: false, blocked: null,
+        oneShotAt: null, slotEndsAt: null, launchedCount: 0, settledCount: 0, successfulCount: 0, lastSuccessfulPassageID: null, everCreatedTask: false, blocked: null,
         calendars: [], synchronization: null, deletion: null, checkpoints: [], pending: null, history: [], oneTime, scheduleActivation: null, calendarOwner: null, fanIn: null,
         ...(creation === undefined ? {} : { creation }) }
       return this.publish(doc, null, current)
     })
   }
 
-  change(id: string, expectedRevision: number, current: () => true, update: (document: MissionDocument) => void): Promise<MissionDocument> {
-    return this.exclusive(() => this.changeUnlocked(id, expectedRevision, current, update))
+  change(id: string, expectedRevision: number, current: () => true, update: (document: MissionDocument) => void,
+    prepare?: () => Promise<void>): Promise<MissionDocument> {
+    return this.exclusive(() => this.changeUnlocked(id, expectedRevision, current, update, prepare))
   }
 
   /** Hold only the project mutation exclusion across native I/O. Each change
@@ -74,7 +75,8 @@ export class NativeMissionDocumentStore {
     return this.borrowed()
   }
 
-  private async changeUnlocked(id: string, expectedRevision: number, current: () => true, update: (document: MissionDocument) => void): Promise<MissionDocument> {
+  private async changeUnlocked(id: string, expectedRevision: number, current: () => true, update: (document: MissionDocument) => void,
+    prepare?: () => Promise<void>): Promise<MissionDocument> {
       assertSynchronousAuthorityGuard(current, "policy-unqualified")
       const doc = await this.required(id)
       if (!Number.isSafeInteger(expectedRevision) || doc.revision !== expectedRevision) throw new Error("Mission document revision conflict")
@@ -83,13 +85,15 @@ export class NativeMissionDocumentStore {
       if (result && (typeof result === "object" || typeof result === "function") && "then" in result)
         throw new Error("Mission document update must be synchronous")
       if (canonicalAuthority(doc, MISSION_DOCUMENT_MAX_BYTES) === canonicalAuthority(previous, MISSION_DOCUMENT_MAX_BYTES)) {
+        await prepare?.()
         assertSynchronousAuthorityGuard(current, "policy-unqualified")
         return previous
       }
       if (doc.id !== previous.id || doc.projectID !== previous.projectID || doc.projectCanonical !== previous.projectCanonical
         || canonicalAuthority(doc.creation ?? null) !== canonicalAuthority(previous.creation ?? null)
         || doc.createdAt !== previous.createdAt || previous.firstPlayedAt !== null && doc.firstPlayedAt !== previous.firstPlayedAt
-        || doc.launchedCount < previous.launchedCount || doc.settledCount < previous.settledCount
+        || doc.launchedCount < previous.launchedCount || doc.settledCount < previous.settledCount || doc.successfulCount < previous.successfulCount
+        || doc.successfulCount === previous.successfulCount && doc.lastSuccessfulPassageID !== previous.lastSuccessfulPassageID
          || previous.pending?.admissionAttempted && doc.pending?.id === previous.pending.id && doc.pending.admissionAttempted !== true
          || previous.pending && doc.pending?.id === previous.pending.id && doc.pending.manualExpectedRevision !== previous.pending.manualExpectedRevision
         || doc.configurationGeneration < previous.configurationGeneration || doc.timeGeneration < previous.timeGeneration
@@ -102,7 +106,7 @@ export class NativeMissionDocumentStore {
           && (item.timeGeneration !== old.timeGeneration || item.sessionID !== old.sessionID || item.highWater < old.highWater))))
         throw new Error("Mission document progress is monotone")
       doc.revision = expectedRevision + 1
-      return this.publish(doc, expectedRevision, current)
+       return this.publish(doc, expectedRevision, current, prepare)
   }
 
   /** Native cleanup must first reconcile every mapping/preparation/control. A
@@ -170,13 +174,18 @@ export class NativeMissionDocumentStore {
     }
     return runMissionExclusive(`document-mutation:${this.projectToken}`, work)
   }
-  private async publish(doc: MissionDocument, expected: number | null, current: () => true) {
+  private async publish(doc: MissionDocument, expected: number | null, current: () => true, prepare?: () => Promise<void>) {
     const parsed = parseMissionDocument(doc, { id: doc.id, projectID: this.projectID, projectCanonical: this.projectCanonical })
-    await this.commit(this.key(doc.id), parsed, expected, current)
+    await this.commit(this.key(doc.id), parsed, expected, current, MISSION_DOCUMENT_MAX_BYTES, prepare)
     return parsed
   }
-  private async commit(key: string, input: unknown, expected: number | null, current: () => true, maxBytes = MISSION_DOCUMENT_MAX_BYTES) {
+  private async commit(key: string, input: unknown, expected: number | null, current: () => true, maxBytes = MISSION_DOCUMENT_MAX_BYTES,
+    prepare?: () => Promise<void>) {
     const bytes = canonicalAuthority(input, maxBytes), fence = () => { this.borrowed?.(); return assertSynchronousAuthorityGuard(current, "policy-unqualified") }
+    fence()
+    // Bounded source I/O runs under document exclusion, before the short SQL CAS.
+    // Only synchronous invocation/native projection guards enter the transaction.
+    await prepare?.()
     fence()
     await this.storage.compareAndSet(key, JSON.parse(bytes) as MissionJsonValue, expected, fence)
     const saved = await this.storage.get(key)

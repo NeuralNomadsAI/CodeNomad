@@ -23,7 +23,8 @@ export type NativeScheduleOwnerControl = { missionID: string; requestID: string;
 export type NativeScheduleOwnerOptions = { store: NativeMissionDocumentStore; native: NativeScheduleCalendarService;
   bindings: NativeScheduleOwnerBindings; installation: NativeScheduleCarrierInstallation;
   profileSource: { profileID: string; executionHost: string; configYamlPath: string }; current(): true; now?: () => number;
-  resumePending?: (locked: NativeMissionDocumentStore, document: MissionDocument) => Promise<NativeSchedulePendingResumeProof | undefined> }
+  resumePending?: (locked: NativeMissionDocumentStore, document: MissionDocument) => Promise<NativeSchedulePendingResumeProof | undefined>;
+  sources?: (document: MissionDocument, locked: NativeMissionDocumentStore) => Promise<{ checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }> }
 export type NativeSchedulePendingResumeProof = { passageID: string; messageID: string; coordinatorSessionID: string; current(): true }
 const same = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)
 const target = (doc: MissionDocument, descriptor: MissionCalendarOwnerSlot) => ({ missionID: doc.id, descriptor })
@@ -169,9 +170,14 @@ export class NativeScheduleCalendarOwner {
       const phaseDue = phase && (phase.nextDueAt ?? phase.createdAt + interval)
       const principalAnchorAt = phaseDue === undefined ? undefined : phaseDue + Math.max(0, Math.floor((now - phaseDue) / interval) + 1) * interval - interval
       const syncID = `cal_${stableToken(input.requestID, 40)}`
-      doc = await locked.change(doc.id, doc.revision, () => { locked.assertActive(); if (resumeProof) assertSynchronousAuthorityGuard(resumeProof.current, "policy-unqualified"); return this.options.current() }, value => {
+      const needsSources = input.action === "play" && !wasPlayed || input.action === "configure"
+        && (!same(configuration.launch.condition, doc.configuration.launch.condition)
+          || !same(configuration.watchedConversationIDs, doc.configuration.watchedConversationIDs))
+      const sources = needsSources ? await this.options.sources?.({ ...doc, configuration }, locked) : undefined
+      if (needsSources && configuration.launch.condition && !sources) throw new Error("Mission condition baseline unavailable")
+      doc = await locked.change(doc.id, doc.revision, () => { locked.assertActive(); sources?.current(); if (resumeProof) assertSynchronousAuthorityGuard(resumeProof.current, "policy-unqualified"); return this.options.current() }, value => {
         const old = value.calendarOwner
-        if (input.action === "play" && value.firstPlayedAt === null) missionDocumentChanges.play(value, syncID, now, input.checkpoints ?? [])
+        if (input.action === "play" && value.firstPlayedAt === null) missionDocumentChanges.play(value, syncID, now, sources?.checkpoints ?? input.checkpoints ?? [])
         else if (["play", "resume"].includes(input.action)) {
           if (value.state === "stopped" || value.state === "finished" && !resumeProof || value.deletion || value.pending && !resumeProof || value.synchronization)
             throw new Error("Mission calendar cannot resume before reconciliation")
@@ -182,7 +188,7 @@ export class NativeScheduleCalendarOwner {
         else if (input.action === "stop") value.state = "stopped"
         else if (input.action === "delete") missionDocumentChanges.requestDeletion(value, input.requestID, now,
           { expectedRevision: input.expectedRevision, deleteManagedSessions: input.deleteManagedSessions ?? false })
-        else if (input.action === "configure") { if (convertingOneTime) value.oneTime = null; missionDocumentChanges.configure(value, input.configuration!, now) }
+        else if (input.action === "configure") { if (convertingOneTime) value.oneTime = null; missionDocumentChanges.configure(value, input.configuration!, now, sources?.checkpoints) }
         if (["pause", "stop", "delete"].includes(input.action) && value.pending) value.pending.manualAllowed = false
         if (value.state !== "running" && value.fanIn && !value.fanIn.completed) value.fanIn.suppress = true
         const replaced = old && old.slots.some(slot => slot.timeGeneration !== value.timeGeneration)
@@ -194,7 +200,7 @@ export class NativeScheduleCalendarOwner {
           operation: { requestID: input.requestID, expectedRevision: input.expectedRevision, fingerprint,
             action: input.action, pending: true, startedAt: now }, receipts: old?.receipts ?? [], checks: old?.checks ?? [],
            slots: !old || replaced || !wasPlayed ? this.slots(value, now, principalAnchorAt) : old.slots, retired, auxiliaryReady: replaced ? false : old?.auxiliaryReady ?? false, error: null }
-      })
+       }, sources?.revalidate)
       return processAfterCommit ? this.process(locked, doc) : doc
     })
   }

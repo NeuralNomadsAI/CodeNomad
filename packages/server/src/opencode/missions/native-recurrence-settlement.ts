@@ -6,6 +6,8 @@ import { isMissionTaskSession } from "../../missions/session-identity"
 import { passageSourceCursors, passageStartInput, type PassageSource } from "../../missions/recurrence-input"
 import type { MissionMap } from "../../missions/model"
 import { samePassageObservation, type NativePassageObservation, type PassageSessionObservation } from "./native-passage-observation"
+import { canonicalAuthority } from "../../missions/authority-protocol"
+import { stableToken } from "../../missions/receipt-identity"
 
 export type PassageOutcome = "completed" | "failed" | "ended-without-report"
 
@@ -109,6 +111,7 @@ export async function observePassageFamilySettlement(input: {
   if (await native.requests([...seen])) return undefined
   signal.throwIfAborted(); input.current(); native.assertCurrent()
   const interrupted = outcome === "ended-without-report" && family.some(session => session.terminal?.outcome === "interrupted")
-  return { outcome, interrupted }
+  return { outcome, interrupted, proof: { revision: mission.revision,
+    familyDigest: stableToken(canonicalAuthority({ family, children: [...children] }, 16 * 1024 * 1024), 64) } }
 }
 

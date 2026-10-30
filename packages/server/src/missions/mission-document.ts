@@ -79,7 +79,8 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
   createdAt: documentTimestamp, configuration: missionConfigurationSchema,
   state: z.enum(["paused", "running", "stopped", "finished"]),
   firstPlayedAt: documentTimestamp.nullable(), oneShotAt: documentTimestamp.nullable(), slotEndsAt: documentTimestamp.nullable(),
-  launchedCount: documentCounter, settledCount: documentCounter, everCreatedTask: z.boolean(),
+  launchedCount: documentCounter, settledCount: documentCounter, successfulCount: documentCounter.default(0),
+  lastSuccessfulPassageID: documentID.nullable().default(null), everCreatedTask: z.boolean(),
   blocked: z.enum(["failed", "ended-without-report", "unknown"]).nullable(),
   creation: z.object({ requestID, digest }).strict().optional(),
   oneTime: oneTime.nullable(), scheduleActivation: missionScheduleActivationSchema.nullable(),
@@ -103,6 +104,10 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   if (doc.id !== identity.id || doc.projectID !== identity.projectID || doc.projectCanonical !== identity.projectCanonical
     || doc.configurationGeneration > doc.revision + 1 || doc.timeGeneration > doc.configurationGeneration
     || doc.history.length !== Math.min(doc.settledCount, MISSION_DOCUMENT_HISTORY_LIMIT)
+    || doc.successfulCount > doc.settledCount || doc.successfulCount < doc.history.filter(item => item.outcome === "completed").length
+    || (doc.successfulCount === 0) !== (doc.lastSuccessfulPassageID === null)
+    || doc.history.some(item => item.id === doc.lastSuccessfulPassageID && item.outcome !== "completed")
+    || doc.history.some(item => item.outcome === "completed") && doc.history.filter(item => item.outcome === "completed").at(-1)!.id !== doc.lastSuccessfulPassageID
     || doc.firstPlayedAt !== null && doc.firstPlayedAt < doc.createdAt
     || doc.firstPlayedAt === null && (doc.launchedCount || doc.pending || doc.settledCount || doc.calendars.length || doc.state === "running"
       || doc.oneShotAt !== null || doc.slotEndsAt !== null)

@@ -16,7 +16,7 @@ export interface DocumentPassagePorts {
   current(): true
   verifyWake(doc: MissionDocument, wake: DocumentPassageWake): Promise<{ wake: MissionWake; current(): true }>
   coverage(doc: MissionDocument, window: DocumentFanInWindow): Promise<{ complete: boolean; wakes: MissionWake[]; current(): true }>
-  snapshot(doc: MissionDocument): Promise<{ changed: boolean; checkpoints: MissionSourceCheckpoint[]; current(): true }>
+  snapshot(doc: MissionDocument): Promise<{ changed: boolean; checkpoints: MissionSourceCheckpoint[]; current(): true; revalidate?(): Promise<void> }>
   admit(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<DocumentPassageAdmission>
   observe(doc: MissionDocument, locked: NativeMissionDocumentStore): Promise<{ outcome: "completed" | "failed" | "ended-without-report"; current(): true } | undefined>
   retired?(doc: MissionDocument): void
@@ -109,7 +109,7 @@ export class MissionDocumentPassageEngine {
         const snapshot = await this.ports.snapshot(doc)
         snapshot.current(); coverage.current()
         if (!snapshot.changed) {
-          await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() })
+          await this.consume(locked, doc, wakes, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate)
           return "ignored"
         }
         // reserve accepts one next occurrence per principal. Older contiguous
@@ -128,7 +128,7 @@ export class MissionDocumentPassageEngine {
             if (principal && wake.run > principal.highWater) changes.processWake(next, wake)
           }
           next.fanIn!.completed = true
-        }, () => { snapshot.current(); return coverage.current() })
+        }, () => { snapshot.current(); return coverage.current() }, snapshot.revalidate)
         const reconciled = await this.reconcileLocked(locked, doc.id)
         return reconciled === "pending" ? "started" : reconciled
       }
@@ -178,7 +178,7 @@ export class MissionDocumentPassageEngine {
         next.pending!.manualExpectedRevision = input.expectedRevision
         next.pending!.manualAllowed = true
         next.state = state
-      }, snapshot.current)
+      }, snapshot.current, snapshot.revalidate)
       return this.reconcileLocked(locked, doc.id)
     })
   }
@@ -234,11 +234,11 @@ export class MissionDocumentPassageEngine {
     return { incarnation: this.ports.incarnation, cutoff, timeGeneration: doc.timeGeneration,
       principalIDs: doc.calendars.filter(item => item.role === "principal").map(item => item.scheduleID).sort(), completed: false, suppress }
   }
-  private consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true) {
+  private consume(locked: NativeMissionDocumentStore, doc: MissionDocument, wakes: MissionWake[], current: () => true, prepare?: () => Promise<void>) {
     return this.change(locked, doc, next => {
       for (const wake of [...wakes].sort((a, b) => a.run - b.run)) changes.processWake(next, wake)
       next.fanIn!.completed = true
-    }, current)
+    }, current, prepare)
   }
   private contiguous(doc: MissionDocument, wakes: MissionWake[]) {
     if (wakes.length > 256 || new Set(wakes.map(wake => `${wake.scheduleID}:${wake.run}`)).size !== wakes.length) return false
@@ -254,7 +254,8 @@ export class MissionDocumentPassageEngine {
     const doc = await locked.read(id)
     return doc && !("deletedAt" in doc) ? doc : undefined
   }
-  private change(locked: NativeMissionDocumentStore, doc: MissionDocument, mutate: (next: MissionDocument) => void, proof?: () => true) {
-    return locked.change(doc.id, doc.revision, () => { proof?.(); return this.ports.current() }, mutate)
+  private change(locked: NativeMissionDocumentStore, doc: MissionDocument, mutate: (next: MissionDocument) => void, proof?: () => true,
+    prepare?: () => Promise<void>) {
+    return locked.change(doc.id, doc.revision, () => { proof?.(); return this.ports.current() }, mutate, prepare)
   }
 }

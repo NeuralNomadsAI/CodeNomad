@@ -30,7 +30,7 @@ function baseline(config: MissionConfiguration, checkpoints: MissionSourceCheckp
 /** Mutates a detached, validated document under the store's CAS. Native evidence
  * and ownership are supplied by the caller's fresh synchronous commit guard. */
 export const missionDocumentChanges = {
-  configure(doc: MissionDocument, input: MissionConfiguration, now: number) {
+  configure(doc: MissionDocument, input: MissionConfiguration, now: number, checkpoints?: MissionSourceCheckpoint[]) {
     const config = missionConfigurationSchema.parse(input), edit = projectMissionDocument(doc).edit
     if (!edit.structural) {
       const { objective: _oldObjective, notes: _oldNotes, ...oldStructure } = doc.configuration
@@ -44,8 +44,11 @@ export const missionDocumentChanges = {
     const temporal = (value: MissionConfiguration) => ({ timing: value.launch.timing, at: value.launch.ends.at, afterMs: value.launch.ends.afterMs })
     const changedTime = !same(temporal(config), temporal(doc.configuration))
     const changedTiming = !same(config.launch.timing, doc.configuration.launch.timing)
-    if (doc.firstPlayedAt !== null && !same(config.launch.condition, doc.configuration.launch.condition))
-      throw new Error("Mission condition baseline reconciliation required")
+    if (doc.firstPlayedAt !== null && !same(config.launch.condition, doc.configuration.launch.condition)) {
+      if (!checkpoints) throw new Error("Mission condition baseline reconciliation required")
+      baseline(config, checkpoints)
+    }
+    if (checkpoints) doc.checkpoints = [...new Map([...missionCheckpointsSchema.parse(checkpoints), ...doc.checkpoints].map(item => [item.key, item])).values()]
     if (doc.calendars.some(item => item.pendingWake || item.wakePreparing)) throw new Error("Mission wake unresolved")
     doc.configuration = config
     doc.configurationGeneration++
@@ -157,7 +160,11 @@ export const missionDocumentChanges = {
       settledAt: now, outcome, ...(notStarted ? { reason: "not-started" as const } : {}) })
     doc.history = doc.history.slice(-30)
     doc.settledCount++
-    if (outcome === "completed") doc.checkpoints = [...new Map([...doc.checkpoints, ...checkpoints].map(item => [item.key, item])).values()]
+    if (outcome === "completed") {
+      doc.successfulCount++
+      doc.lastSuccessfulPassageID = pending.id
+      doc.checkpoints = [...new Map([...doc.checkpoints, ...checkpoints].map(item => [item.key, item])).values()]
+    }
     else doc.blocked = outcome
     if (pending.origin.kind === "wake") for (const wake of pending.origin.wakes) {
       const calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)!

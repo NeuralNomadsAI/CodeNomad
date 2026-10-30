@@ -13,6 +13,9 @@ import { assertNativeScheduleProviderAvailable } from "./native-schedule-provide
 import type { NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
 import { acquireMissionNativeService, type MissionNativeRunner } from "./native-service-adapter"
 import type { AutonomousProfileSource } from "./autonomous-environment"
+import { acquireNativeMissionConditionReader, assertMissionSourceAcyclic } from "./native-mission-condition-reader"
+import { prepareNativeDocumentSources } from "./native-scheduled-passage-sources"
+import { acquireNativeSourceFence } from "./native-source-fence"
 
 /** Shared acquisition for authenticated controls and technical reconciliation.
  * Native services and their guards live only in this receiving RPC graph. */
@@ -32,8 +35,16 @@ export const acquireNativeMissionScheduleOwner = Effect.fn("missions.acquireSche
   const native = yield* acquireNativeScheduleCalendarService(ctx, carrier.id, current, run,
     () => assertNativeScheduleProviderAvailable(ctx, selectedInstallation))
   const service = yield* acquireMissionNativeService(current, run)
+  const fence = yield* acquireNativeSourceFence(current)
+  const signal = new AbortController().signal
+  const reader = yield* acquireNativeMissionConditionReader(ctx, store, run, signal, current)
   const owner = new NativeScheduleCalendarOwner({ store, native, bindings: nativeScheduleOwnerBindings(ctx, run),
     installation: selectedInstallation, profileSource: selectedProfile, current,
+    sources: async (doc, locked) => {
+      locked.assertActive(); current()
+      await assertMissionSourceAcyclic(doc, locked)
+      return prepareNativeDocumentSources(doc, service, signal, current, reader, fence())
+    },
     resumePending: async (locked, doc) => {
       const pending = doc.pending, owner = doc.calendarOwner
       if (!pending || pending.admittedAt === null || !owner || doc.blocked === "unknown") return undefined

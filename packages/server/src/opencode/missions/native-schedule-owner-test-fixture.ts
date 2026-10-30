@@ -11,11 +11,12 @@ import type { MissionConfiguration } from "../../missions/launch-policy"
 import type { MissionJsonValue } from "../../missions/model"
 import { NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { nativeScheduleCarrierLookupKey, NATIVE_SCHEDULE_CARRIER_MARKER } from "./native-schedule-carrier-binding"
-import { NativeScheduleCalendarOwner } from "./native-schedule-owner"
+import { NativeScheduleCalendarOwner, type NativeScheduleOwnerOptions } from "./native-schedule-owner"
 import { nativeScheduleOwnerBindings } from "./native-schedule-owner-bindings"
 import type { NativeScheduleCalendarInfo, NativeScheduleCalendarService, NativeScheduleCalendarTarget } from "./native-schedule-calendar-service"
 
-export async function ownerFixture(t: test.TestContext, timing: MissionConfiguration["launch"]["timing"] = { kind: "every", intervalMs: 90 * 60_000 }, maximum = 3) {
+export async function ownerFixture(t: test.TestContext, timing: MissionConfiguration["launch"]["timing"] = { kind: "every", intervalMs: 90 * 60_000 }, maximum = 3,
+  sources?: NativeScheduleOwnerOptions["sources"]) {
   const scratch = process.env.CODENOMAD_SCHEDULE_TEST_SCRATCH ?? path.join(os.tmpdir(), "codenomad-owner-tests")
   mkdirSync(scratch, { recursive: true })
   const directory = mkdtempSync(path.join(scratch, "calendar-"))
@@ -80,7 +81,7 @@ export async function ownerFixture(t: test.TestContext, timing: MissionConfigura
   }
   const installation = { registrationFile: path.join(directory, "registration.json"), provider: artifact("provider.mjs"), runtime: artifact("runtime.mjs") }
   const owner = new NativeScheduleCalendarOwner({ store, native, bindings: nativeScheduleOwnerBindings(ctx, Effect.runPromise),
-    installation, profileSource: { profileID: "profile", executionHost: "host", configYamlPath: path.join(directory, "config.yaml") }, current, now: () => clock,
+    installation, profileSource: { profileID: "profile", executionHost: "host", configYamlPath: path.join(directory, "config.yaml") }, current, now: () => clock, sources,
     resumePending: async (_locked, document) => allowResume && document.pending ? { passageID: document.pending.id, messageID: document.pending.messageID,
       coordinatorSessionID: document.pending.coordinatorSessionID, current } : undefined })
   const read = async () => { const result = await store.read(doc.id); if (!result || "deletedAt" in result) throw new Error("missing fixture doc"); return result }

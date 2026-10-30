@@ -8,6 +8,7 @@ import { MISSION_DOCUMENT_PREFIX, MISSION_TOMBSTONE_MAX_BYTES, missionTombstoneS
   parseMissionTombstoneRegistry } from "../../missions/mission-document"
 import { NativeMissionDocumentStore, type MissionDocumentStorage } from "../../missions/mission-document-store"
 import { stableToken } from "../../missions/receipt-identity"
+import { withNativeSourceTransaction } from "./native-source-fence"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const clientSchema = Schema.declare<SqlClient.SqlClient>((value): value is SqlClient.SqlClient => Predicate.isFunction(value)
@@ -57,7 +58,8 @@ export const acquireNativeMissionDocumentStore = Effect.fn("missions.acquireNati
       const bytes = canonicalAuthority(value, max), databaseKey = nativeKey(key)
       if (next.revision !== (expected === null ? key === `${prefix}/tombstones` ? 1 : 0 : expected + 1)) throw new Error("Mission document revision conflict")
       return run(db.transaction(() => Effect.gen(function* () {
-        const guard = () => assertSynchronousAuthorityGuard(current, "policy-unqualified")
+        const transaction = yield* Effect.context<never>()
+        const guard = () => withNativeSourceTransaction(transaction, () => assertSynchronousAuthorityGuard(current, "policy-unqualified"))
         guard()
         const previous = (yield* query("SELECT value FROM kv WHERE key=?", [databaseKey]))[0]?.value
         if (expected === null) {

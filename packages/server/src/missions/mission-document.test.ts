@@ -54,6 +54,36 @@ async function armed(f: ReturnType<typeof fixture>, config = configuration(true)
   return f.mutate(doc => changes.synchronized(doc, "first_play", calendars(doc)))
 }
 
+test("source revalidation runs after the target read and before CAS, under exclusion, and failure publishes nothing", async () => {
+  const f = fixture(), doc = await f.store.create("review", configuration(), now, current)
+  const get = f.storage.get, cas = f.storage.compareAndSet
+  let source = "before", publications = 0
+  f.storage.get = async key => { const result = await get(key); source = "changed during target read"; return result }
+  f.storage.compareAndSet = async (...args) => { publications++; return cas(...args) }
+  await f.store.withExclusion(async locked => {
+    await assert.rejects(locked.change(doc.id, doc.revision, current, next => { next.configuration.title = "Updated" }, async () => {
+      locked.assertActive()
+      await Promise.resolve()
+      assert.equal(source, "changed during target read")
+      throw new Error("source changed")
+    }), /source changed/)
+  })
+  assert.equal(publications, 0)
+  assert.equal((await f.store.read(doc.id))!.revision, doc.revision)
+})
+
+test("editing or re-adding a source preserves its consumed checkpoint; only genuinely new sources receive a baseline", async () => {
+  const f = fixture(), config = configuration(true), condition = { kind: "files-changed" as const, paths: ["included"] }
+  config.launch.condition = condition
+  await f.store.create("review", config, now, current)
+  const checkpoint = { key: missionSourceKey(condition), kind: condition.kind, placementDigest: "a".repeat(64), value: { digest: "consumed" } }
+  await f.mutate(doc => { changes.play(doc, "play_source", now, [checkpoint]); changes.synchronized(doc, "play_source", calendars(doc)) })
+  const removed = configuration(true)
+  await f.mutate(doc => changes.configure(doc, removed, now + 1000, []))
+  await f.mutate(doc => changes.configure(doc, config, now + 2000, [{ ...checkpoint, value: { digest: "new unconsumed" } }]))
+  assert.deepEqual((await f.store.read("review") as MissionDocument).checkpoints, [checkpoint])
+})
+
 test("strict launch policy accepts six timings, five single conditions and combined ends", () => {
   const base = configuration().launch
   const timings = [{ kind: "immediate" }, { kind: "at", at: now, zone: "Europe/Paris" }, { kind: "in", delayMs: 60_000 },
