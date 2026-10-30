@@ -323,9 +323,9 @@ try {
   assert.deepEqual(entries.filter(entry => entry.kind === "image" && entry.label !== "icon-mono-a").map(entry => entry.origin), ["proven", "proven", "proven"])
   results.ac52 = { assistantMessagesBetween: between, origin: late[0].origin, ui: Boolean(designZip) }
   console.log(`PASS AC-52${designZip ? " (native and browser)" : " (native)"}: no read-back, reference, request sent, read ${between} assistant messages later, pixels, unverifiable origin`)
-  passed = true
   assert.equal(state.imageCalls.length, 4, "every image request reached the fake image provider")
   console.log(`PASS ${version}: ${JSON.stringify({ ...results, imageCalls: state.imageCalls.length, chatRequests: state.chat })}`)
+  passed = true
 } finally {
   await lifecycle.stop()
   try { await stopFixtureChild(daemon, daemonStopped) } finally {

@@ -8,6 +8,7 @@ import { tsImport } from "tsx/esm/api"
 import replyFrom from "@fastify/reply-from"
 import pino from "pino"
 import { loadPruningUIDependencies } from "./test-session-pruning-ui.mjs"
+import { assertFixtureEnvironment, fixtureEnvironment } from "./native-product-fixture.mjs"
 
 const load = file => tsImport(`../packages/server/src/${file}`, import.meta.url)
 // Vite loads before the native preamble (see test-session-pruning-ui.mjs).
@@ -43,7 +44,13 @@ export async function testDesignCompanionUI({ cli, client, url, password, root, 
     getInstanceAuthorizationHeader: () => authorization,
     getServiceDirectory: () => directory, getServiceLocation: () => location, getWorktrees: async () => ({ worktrees: [] }),
     getSharedServiceClient: async () => connection.client, getSharedServiceFetch: async () => runtimeFetch, desktopPluginsReady: async () => {},
-    getSessionEnvironment: async () => (await load("workspaces/session-environment.ts")).sessionEnvironment({}),
+    // The snapshot sent to the isolated session: the fixture's own environment, never this process's.
+    getSessionEnvironment: async () => {
+      const snapshot = await (await load("workspaces/session-environment.ts")).sessionEnvironment({},
+        { environment: await fixtureEnvironment(path.join(root, "session-environment")) })
+      assertFixtureEnvironment(snapshot)
+      return snapshot
+    },
     getWorktreeIdentityForPath: async (_id, candidate) => owns(candidate) ? "isolated-fixture" : undefined,
     getServiceDirectoryForPath: async (_id, candidate) => owns(candidate) ? directory : undefined,
     ownsDirectory: async (_id, candidate) => owns(candidate), ownsPath: async (_id, candidate) => owns(candidate),
