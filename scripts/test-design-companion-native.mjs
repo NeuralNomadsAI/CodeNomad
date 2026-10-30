@@ -16,13 +16,13 @@ import { spawn, spawnSync } from "node:child_process"
 import { createHash, randomUUID } from "node:crypto"
 import { createServer } from "node:http"
 import { mkdir, mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises"
-import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { crc32, deflateSync } from "node:zlib"
 import { tsImport } from "tsx/esm/api"
 import { OpenCode } from "@opencode/client"
 import { clearFixtureGitEnvironment, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureParent } from "./native-product-fixture.mjs"
 
 const load = file => tsImport(`../packages/server/src/${file}`, import.meta.url)
 const { DesktopPluginLifecycle, prepareDesktopPluginPresence } = await load("opencode/desktop-plugin-lifecycle.ts")
@@ -41,20 +41,23 @@ const companionUI = designZip ? await import("./test-design-companion-ui.mjs") :
 await companionUI?.loadDesignCompanionUIDependencies()
 const version = spawnSync(cli, ["--version"], { encoding: "utf8" }).stdout.trim()
 // Project discovery walks every ancestor directory: outside CI the fixture lives outside the home.
-const requested = path.join(process.env.CODENOMAD_NATIVE_FIXTURE_PARENT || os.tmpdir(), "opencode")
-await mkdir(requested, { recursive: true })
-const parent = await realpath(requested)
-const fromHome = path.relative(await realpath(os.homedir()), parent)
-assert(process.env.CI || fromHome.startsWith("..") || path.isAbsolute(fromHome),
-  "Project-config fixtures read every ancestor directory: set CODENOMAD_NATIVE_FIXTURE_PARENT outside your home")
-const root = await mkdtemp(path.join(parent, "design-companion-"))
+const root = await mkdtemp(path.join(await fixtureParent({ projectConfig: true }), "design-companion-"))
 const configDirectory = path.join(root, "config")
 const project = path.join(root, "project")
 await mkdir(configDirectory, { recursive: true })
 await mkdir(project, { recursive: true })
 await writeFile(path.join(configDirectory, "opencode.json"), "{}\n")
 await writeFile(path.join(project, "README.md"), "Design companion fixture\n")
-assert.equal(spawnSync("git", ["init", "-q", project], { env: clearFixtureGitEnvironment({ ...process.env }) }).status, 0)
+// Every Git call, the daemon's and the in-process host routes' included, runs without
+// inherited GIT_* (a GIT_DIR or GIT_WORK_TREE would send its writes outside the fixture).
+const gitEnv = { ...process.env }
+clearFixtureGitEnvironment(gitEnv)
+clearFixtureGitEnvironment(process.env)
+const git = args => spawnSync("git", args, { cwd: project, env: gitEnv, encoding: "utf8" })
+assert.equal(git(["init", "-q", project]).status, 0)
+const samePath = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value)
+assert.equal(samePath(git(["rev-parse", "--absolute-git-dir"]).stdout.trim()), samePath(path.join(await realpath(project), ".git")),
+  "Git writes only the fixture's own repository")
 
 // Distinct, decodable 16 × 16 PNGs, so each file's pixels identify its generation.
 function png() {
@@ -142,7 +145,7 @@ const provider = createServer(async (req, res) => {
 await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
 const settings = { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }
 
-const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_|CODENOMAD_|npm_config_)/i.test(key)))
+const env = Object.fromEntries(Object.entries(gitEnv).filter(([key]) => !/^(OPENCODE_|XDG_|CODENOMAD_|npm_config_)/i.test(key)))
 for (const key of Object.keys(env)) if (["programdata", "temp", "tmp", "appdata", "localappdata"].includes(key.toLowerCase())) delete env[key]
 for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
 const password = randomUUID()

@@ -77,8 +77,12 @@ export async function testDesignCompanionUI({ cli, client, url, password, root, 
   })
   await broker.listen({ host: "127.0.0.1", port: 0 })
   const brokerUrl = `http://127.0.0.1:${broker.server.address().port}`
+  // An owned optimized-dependency cache, removed only once the server drained (dev-docs/BROWSER_TESTING.md).
+  const { createFixtureCache } = await tsImport("../packages/ui/tests/browser/fixture-cache.ts", import.meta.url)
+  const { createFixtureShutdown } = await tsImport("../packages/ui/tests/browser/fixture-shutdown.ts", import.meta.url)
+  const cache = await createFixtureCache(), shutdown = createFixtureShutdown(cache)
   const server = await createServer({
-    configFile: false, root: uiRoot, logLevel: "error", plugins: [solid(), {
+    configFile: false, root: uiRoot, logLevel: "error", cacheDir: cache.cacheDir, plugins: [shutdown.plugin, solid(), {
       name: "design-companion-fixture",
       configureServer(vite) {
         vite.middlewares.use("/fixture", async (_req, res) => {
@@ -91,6 +95,7 @@ export async function testDesignCompanionUI({ cli, client, url, password, root, 
       [`/workspaces/${instanceId}/instance`]: { target: brokerUrl }, "/api/panel-extensions": { target: brokerUrl }, "/fixture-events": { target: brokerUrl },
     } },
   })
+  shutdown.own(server)
   let browser, page
   const pageErrors = []
   try {

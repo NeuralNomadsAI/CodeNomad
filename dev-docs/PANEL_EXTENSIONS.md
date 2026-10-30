@@ -434,6 +434,29 @@ forms, popups) and exactly one port answer per declared method. Each run also ho
 the same frame with `allow-same-origin` added and with the CSP meta removed, and
 fails unless the probe detects both.
 
+The macOS (WKWebView) and Linux (WebKitGTK) runs are manual, on the macOS and
+Ubuntu test VMs, after each change to the frame document, bridge, panel iframe or
+desktop hosts. Each host needs a checkout of the change with `npm ci` (Electron's
+binary included), Node 22, Rust's `cargo` on `PATH` and Tauri 2's platform
+prerequisites (Xcode Command Line Tools; WebKitGTK 4.1 and libsoup 3 development
+packages). Both webviews need the desktop session of a logged-in user:
+
+- **Ubuntu (GNOME Wayland)**: with the user logged in at the console, a shell over
+  SSH reaches that session by exporting
+  `WAYLAND_DISPLAY=wayland-0 XDG_RUNTIME_DIR=/run/user/$(id -u) DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus XDG_SESSION_TYPE=wayland`,
+  then runs `node scripts/test-panel-extension-native.mjs` with no option and with
+  `--api2`, `--api3` and `--api4`, and `node scripts/test-panel-extension-electron.mjs`.
+  Electron's OS sandbox needs `node_modules/electron/dist/chrome-sandbox` owned by
+  root with mode 4755; otherwise Electron refuses to start, and
+  `--no-sandbox` runs the probe without that OS layer.
+- **macOS**: log in to the desktop at the VM console (after resuming, correct the
+  clock with `sudo sntp -sS time.apple.com`), open Terminal in that session, and run
+  the same five commands. Over SSH without a desktop login the WKWebView host
+  never loads its page and the runner fails on its 60-second limit.
+
+A run counts only when every command prints its summary and exits 0; record the
+host, OS version and each summary's `real` line in the review.
+
 ## Agent conventions
 
 - Right-panel customization keeps Extensions below a separator in a native disclosure, collapsed on each popup opening. Expanding mounts one compact searchable list combining installed and online addons, deduplicated by ID; collapse, dismissal and inactive/instance changes dispose its requests and confirmations; never add separate list modes or a floating extension window. The per-addon checkbox above the disclosure is the sole activation control, including for disabled installed addons; never add a manager switch or a per-window visibility gate. Reset changes built-in layout only, never addon consent. Keep metadata on hover/focus and technical consent details folded; retain explicit trust and digest-bound replacement/removal. Installation and activation are profile-wide. Legacy folder grants never become general consent.

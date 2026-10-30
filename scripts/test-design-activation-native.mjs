@@ -72,7 +72,9 @@ assert(process.env.CI || relative.startsWith("..") || path.isAbsolute(relative),
 const root = await mkdtemp(path.join(parent, "design-activation-"))
 const configDirectory = path.join(root, "config")
 const project = name => path.join(root, name)
-const gitEnv = clearFixtureGitEnvironment({ ...process.env })
+// clearFixtureGitEnvironment edits the environment it receives in place.
+const gitEnv = { ...process.env }
+clearFixtureGitEnvironment(gitEnv)
 const USER_AGENT = "USER-DESIGN-AGENT"
 const USER_SKILL = "USER-DESIGN-CORE"
 const files = {
