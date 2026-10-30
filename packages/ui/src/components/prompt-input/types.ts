@@ -15,6 +15,7 @@ export interface PromptInputApi {
   setPromptText(text: string, opts?: { focus?: boolean }): void
   restoreQueuedPrompt(text: string, payload: SessionInboxUserPayload): void
   getPromptText(): string
+  getMode(): PromptMode
   focus(): void
 }
 

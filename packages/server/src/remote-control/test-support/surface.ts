@@ -7,6 +7,7 @@ import { AuthManager } from "../../auth/manager"
 import { createLogger } from "../../logger"
 import { PreviewManager } from "../../previews/manager"
 import { createHttpServer } from "../../server/http-server"
+import type { PanelExtensionStore } from "../../panel-extensions/store"
 import { RemoteDeviceRegistry } from "../devices"
 import { RemoteControlManager } from "../manager"
 
@@ -22,6 +23,8 @@ const logger = createLogger({ level: "silent" } as never)
 export async function startRemoteSurface(t: TestContext, options: {
   skipAuth?: boolean
   openTunnel?: (options: OpenRemoteTunnelOptions) => Promise<RemoteTunnel>
+  /** Real panel extension routes over this store, with `workspaceManager` in place of the stub. */
+  panelExtensions?: { store: PanelExtensionStore; workspaceManager: unknown }
 } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), "codenomad-remote-surface-"))
   t.after(() => fs.rmSync(directory, { recursive: true, force: true }))
@@ -70,7 +73,8 @@ export async function startRemoteSurface(t: TestContext, options: {
     bindPort: 0,
     defaultPort: 0,
     protocol: "http",
-    workspaceManager: stub,
+    workspaceManager: (options.panelExtensions?.workspaceManager ?? stub) as never,
+    panelExtensions: options.panelExtensions?.store,
     settings: stub,
     fileSystemBrowser: stub,
     eventBus: stub,

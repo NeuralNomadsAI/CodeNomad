@@ -39,7 +39,7 @@ Ein aktiviertes Panel kann bei Auswahl eingebunden werden; Ausblenden kann desse
 3. Reaktivieren Sie über das normale Kontrollkästchen erst nach Ihrer Entscheidung, dem Ersatz zu vertrauen.
 4. Verwenden Sie zum Deinstallieren **Entfernen…** und **Entfernen bestätigen** nach Zielprüfung.
 
-Jeder Ersatz widerruft die Aktivierung in allen Projekten, selbst bei unveränderter Berechtigungsliste. Validierungs-/Konflikt-/Speicherfehler erhalten das installierte Paket. Es gibt keine stillen Erweiterungsupdates. Entfernen löscht Paket und Aktivierungseinstellungen, keine OpenCode-Sitzungen oder Projektdateien. Deaktivieren Sie unerwünschten Code zur Wiederherstellung zuerst; installieren Sie nur ein überprüftes vertrauenswürdiges Paket erneut.
+Jeder Ersatz widerruft die Aktivierung in allen Projekten, selbst bei unveränderter Berechtigungsliste, und löscht die gespeicherten eigenen Einstellungen des Panels. Validierungs-/Konflikt-/Speicherfehler erhalten das installierte Paket. Es gibt keine stillen Erweiterungsupdates. Entfernen löscht Paket, Aktivierungseinstellungen und gespeicherte Panel-Einstellungen, keine OpenCode-Sitzungen oder Projektdateien. Deaktivieren Sie unerwünschten Code zur Wiederherstellung zuerst; installieren Sie nur ein überprüftes vertrauenswürdiges Paket erneut.
 
 ## Kontext, Asset-Zustimmung und Sandbox-Grenzen {#permissions-sandbox}
 
@@ -48,8 +48,17 @@ Jeder Ersatz widerruft die Aktivierung in allen Projekten, selbst bei unverände
 | API 1 / `session.context` | Aktuelle Sitzungskennung (oder keine), Oberflächensprache und Darstellung. Kein Verlaufstext oder Dateisystemzugriff. |
 | API 2 / `session.assets.read` plus Kontext | Ausdrücklich geprüfte Berechtigung, begrenzte Bild-/Anhangsmetadaten aktueller Sitzungs-Werkzeugergebnisse aufzulisten und unterstützte eingebettete Bytes zu lesen. Kein allgemeiner Verlaufs-, Datei- oder URL-Zugriff. |
 | API 3 / `repository.workItems.read` plus Kontext | Ausdrücklich geprüfte Berechtigung, begrenzte Seiten der Issues und Pull Requests des Projekt-Repositorys auf GitHub, GitLab oder Gitea/Forgejo aufzulisten und eines davon im Browser zu öffnen. Kein Zugriff auf Dateien, Anmeldedaten oder das Netzwerk allgemein. |
+| API 4 / Kontext plus eine oder mehrere der folgenden Berechtigungen | Die Prüfung listet einen Satz je deklarierter Berechtigung; die Aktivierung gewährt alle zusammen, und ein Ersatz widerruft sie alle. |
+| `session.images.read` | Die vom read-Werkzeug zurückgegebenen Bilder in der angezeigten Unterhaltung lesen, mit Generierungsstatus und Herkunft, sofern sie überprüfbar sind. |
+| `session.images.prompts` (benötigt `session.images.read`) | Prompt und Modell jedes Bildes lesen, das in der Bilder-Unterhaltung des Projekts generiert wurde. |
+| `composer.prefill` | Text zum Eingabefeld der angezeigten Unterhaltung hinzufügen. Sendet nie eine Nachricht. |
+| `images.conversation` | Die Bilder-Unterhaltung dieses Projekts öffnen oder starten. |
+| `opencode.designAgent` | Fügt OpenCode den Design-Agenten von CodeNomad und seine Bild-Skills hinzu, solange diese Erweiterung aktiviert ist. |
+| `panel.preferences` | Die eigenen Einstellungen dieses Panels speichern. |
 
 Asset-Zugriff folgt dem aktuell eingebundenen Host/der Sitzung, nicht einer vom Autor ausgewählten Sitzung. Lokale/entfernte Referenzen können als nicht verfügbar erscheinen; die Asset-API lädt keine beliebigen entfernten URLs und öffnet keine lokalen Dateien. Sitzungswechsel, Trennung oder Zustimmungswiderruf macht alten Zugriff ungültig.
+
+Mit API 4 folgt das Lesen von Bildern ebenso der angezeigten Unterhaltung und zeigt nur die Bilder, die der Agent in sie zurückgelesen hat. Eine Erweiterung mit `session.images.prompts` kann die Prompts lesen, die Sie oder der Agent für Bilder in einer Bilder-Unterhaltung geschrieben haben, und könnte sie trotz Sandbox weitergeben; gewähren Sie sie daher nur Autoren, denen Sie diese anvertrauen. Von `composer.prefill` hinzugefügter Text bleibt im Eingabefeld, bis Sie ihn bearbeiten oder **Nachricht senden** wählen; er beginnt nie mit einem Befehl, endet nie mit einer offenen `@`-Erwähnung und nennt Bildpfade als reinen Text. Rückgängigmachen mit Ctrl+Z (Cmd+Z unter macOS) im Eingabefeld entfernt ihn nicht. Gespeicherte Panel-Einstellungen gehören zu diesem CodeNomad-Profil, höchstens 4 KiB pro Erweiterung; beim Deaktivieren einer Erweiterung bleiben sie erhalten.
 
 Die Einträge stammen vom Remote `upstream` des Projektordners, sonst von `origin`. CodeNomad liest sie mit der bereits angemeldeten GitHub-, GitLab- oder Gitea-CLI (`gh`, `glab`, `tea`) oder bei öffentlichen Repositorys anonym und speichert kein Token; die Erweiterung sieht nur den Repository-Namen und die Einträge. Anonym gelesen werden github.com, gitlab.com, codeberg.org und gitea.com; eine selbst gehostete Forge nur über ihre dort angemeldete CLI. Beim Öffnen eines Eintrags öffnet CodeNomad dessen Seite auf derselben Forge im Browser, höchstens einmal pro Sekunde; andere Adressen kann die Erweiterung nicht öffnen.
 

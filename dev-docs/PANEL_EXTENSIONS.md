@@ -1,4 +1,4 @@
-# External right-panel extensions — APIs 1, 2 and 3
+# External right-panel extensions — APIs 1 to 4
 
 CodeNomad panel extensions are independently distributed right-panel **UI
 addons**. Open **Customize right panel → Extensions** to browse/search installed
@@ -22,7 +22,10 @@ currently displayed session, never prompts, transcript text, arbitrary URLs,
 local files, credentials or a generic RPC proxy. API 3 adds the explicit
 `repository.workItems.read` permission: bounded issue and pull request pages of
 the project's GitHub, GitLab or Gitea/Forgejo repository, read by the host, and
-opening one item's page in the browser.
+opening one item's page in the browser. API 4 carries `session.context` plus any
+non-empty subset of a finite permission set for the Design image companion
+([API 4](#api-4)): read-back images of the displayed conversation, their prompts,
+composer prefill, the Images conversation, the Design agent and panel preferences.
 
 ## Package layout
 
@@ -59,10 +62,12 @@ HTML, 32 installed extensions, 16 MiB persisted installed-extension store.
 - Version: `major.minor.patch`, optionally `-prerelease`. Publish new code under a
   new version; never replace the bytes of an already published release asset.
 - API version: the extension-host contract major, independent of the application
-  version. This host supports APIs 1 to 3. API 2 requires exactly
+  version. This host supports APIs 1 to 4. API 2 requires exactly
   `["session.context", "session.assets.read"]` and API 3 exactly
-  `["session.context", "repository.workItems.read"]`. An unsupported major
-  API or unknown permission is rejected, without executing author code.
+  `["session.context", "repository.workItems.read"]`; API 4 takes
+  `session.context` plus a non-empty subset of its six permissions, each at most
+  once, in any order. An unsupported major API or unknown permission is
+  rejected, without executing author code, and the catalogue shows it incompatible.
 - Author, name, license and repository are mandatory. Repository must be an HTTPS
   GitHub repository URL, without credentials/query/fragment. Use a real
   repository, SPDX license where possible, and include that license's notice in
@@ -86,9 +91,10 @@ reads never rewrite storage, and the next explicit mutation drops folder grants.
 To update, download and inspect a new release ZIP and install it over the same ID.
 Compare the displayed digest with the publisher's checksum through a trusted
 channel. Replacing code revokes **all** activation grants, even when permissions
-are unchanged. The old package remains intact on validation, conflict or storage
-failure. Concurrent mutations compare exact digests. Removal is explicit and
-removes only the installed code and its grants.
+are unchanged, and drops the record's API 4 preferences. The old package remains
+intact on validation, conflict or storage failure. Concurrent mutations compare
+exact digests. Removal is explicit and removes only the installed code, its grants
+and its preferences.
 
 Never add an arbitrary URL installer, silent update, automatic project discovery,
 signature authority or remote-code startup hook. Keep trusted source/releases
@@ -215,6 +221,116 @@ an addon URL, and opens it through the host's external link opener: one open at
 a time, at most once a second measured at the opener. The channel caps four
 requests per frame and aborts on unmount and transport loss.
 
+### API 4
+
+Use `apiVersion: 4`, `session.context` and at least one of the permissions below.
+Each permission is one capability with fixed methods and one install sentence
+(`panelExtensions.api4.<permission>` in every locale); inspection lists them before
+the trust checkbox, activation grants the whole set and replacement revokes it. The
+bridge defines only the objects of declared permissions, and every server route
+(`server/routes/panel-extension-api4.ts`) checks its own permission on the enabled
+exact package before and after IO. Never add a permission registry, generic RPC or partial grant.
+
+| Permission | Frame API | Host authority |
+|---|---|---|
+| `session.images.read` | `images.status()`, `images.list(cursor?)`, `images.read(target, { thumbnail })`, `images.onChanged(listener)` | displayed conversation; session-pruning `images`/`imageRead` ([gallery](SESSION_PRUNING_RPC.md#image-gallery)) |
+| `session.images.prompts` (requires the above) | adds `prompt`, `promptTruncated`, `model` to generations and proven images | only in a root session marked `codenomad.companion: images`, enforced by the plugin |
+| `composer.prefill` | `composer.prefill({ text, refs? })` | displayed conversation's composer; `imageReference` per target |
+| `images.conversation` | `conversation.status()`, `conversation.open()`, `conversation.startNew()` | the displayed conversation's Location (else the instance's), `images-conversation.ts` |
+| `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
+| `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
+
+```js
+const status = await codenomad.images.status()
+// { generation: "available" | "disabled" | "unsupported", imageModels, designAgent: "present" | "absent" | "user",
+//   contentVersion, chatModelSeesImages: boolean | null }
+const page = await codenomad.images.list() // { status: "page", entries, cursor } or { status: "blocked", reason }
+const image = await codenomad.images.read(page.entries[0].target, { thumbnail: true })
+// { status: "asset", mime, uri } | { status: "not-previewable" } | { status: "blocked", reason }
+codenomad.images.onChanged(({ gallery, status }) => { /* gallery: restart from page 1; status: read it again */ })
+await codenomad.composer.prefill({ text: "Refine {{1}}", refs: [target] }) // "added" | "busy" | "no-session" | "too-long" | "invalid"
+await codenomad.conversation.status()
+// { lookup: "found" | "absent" | "unknown", imageCount: number | null, lastUsed: number | null, displayedIsImages,
+//   gitExclusion: "excluded" | "missing" | "not-repository" | "unavailable" | null }
+await codenomad.conversation.open() // { opened, created }; codenomad.conversation.startNew() → { opened }
+await codenomad.preferences.get() // object, or "unavailable"
+await codenomad.preferences.set({ imagesPerTurn: 3 }) // "saved" | "too-large" | "invalid" | "unavailable"
+```
+
+- **Status** reads the session's Location (without a displayed conversation, the
+  instance's current Location): generation from `experimental.image_generate` in the
+  daemon schema and its effective value (`opencode/image-settings.ts`), image models
+  from the Location's image catalog, the Design agent's content mark
+  (`opencode/design/status.ts`), and whether the effective chat model (session,
+  else its agent's when available, else the native default) lists an `image*`
+  input. No provider name or key leaves the host.
+- **Gallery** pages are the plugin's own, with `blocked` reasons passed through
+  (`conflict` restarts from the first page). Full-size reads and thumbnails both pass
+  `assertThumbnailBounds` first; outside the bounds the answer is `not-previewable`,
+  which AVIF always is, since its grids cannot be bounded before decoding. Without a
+  displayed conversation the list is empty.
+- **Invalidations** reuse native events, coalesced over 300 ms into one
+  `images:changed`, delivered to each `images.onChanged` listener as a frozen
+  `{ gallery, status }`: the displayed session's tool calls and results, synthetic
+  notices, updates, moves, deletion, reverts, compaction and prunes set `gallery`
+  (restart from the first page); agent, skill, configuration, plugin, model, provider,
+  integration and credential events set `status` (read `images.status()` again);
+  reconnects set both. Never poll.
+- **Prefill** (`components/panel-extensions/composer-prefill.ts`, [Composer](COMPOSER.md)):
+  `{{n}}` markers (1 to 16) must match `refs` exactly; each reference is revalidated by
+  its own `imageReference` call, in that call's own read transaction, when the request
+  arrives, and cited as a backtick-quoted Location-relative path, never substituted;
+  any refused reference makes the whole prefill `invalid`. The added text is at most
+  2,048 UTF-8 bytes after substitution; the resulting draft is refused when its trimmed
+  text starts with `/` or when the picker's own `findMentionStart` finds an open
+  mention at its end. One write of the draft captured at mount, rechecked just before.
+  At most one request a second per extension and window: every request accepted past
+  the session, shell and rate checks counts, including one that then answers `invalid`
+  (malformed input and more than 16 references are refused before counting); shell
+  mode answers `busy`. Desktop focuses the composer and retakes focus once a frame
+  later; a phone answers, then closes the floating panel and requests composer focus.
+  Prefill only writes the draft: never send, attach or run anything from it.
+- **Conversation**: `open`/`startNew` resolve title, agent and model as the host's own
+  action (`stores/images-conversation.ts`), answer the frame, then show the
+  conversation (closing the phone panel); they alone append the `.codenomad/design/`
+  exclusion. `status` never writes. For a found conversation it adds its last update
+  (`lastUsed`), `imageCount` (its read-back images when the whole gallery fits the one
+  page read, i.e. no further cursor; otherwise `null`, never a partial total) and
+  `gitExclusion` from a read-only check (`checkDesignFolderExclusion`): the execution
+  host's Git resolves the exclude file as for the append, and its lines, compared as Git
+  reads them, give `excluded` or `missing`; `not-repository` and `unavailable` as for
+  the append.
+- **Preferences**: one plain JSON object per installed record, replaced whole, at most
+  4 KiB serialized; written through the store's queue and atomic write without a
+  catalogue change event. Disabling keeps them; replacement and removal drop them. Only
+  the enabled exact package declaring the permission reads or writes them; a corrupt
+  store, another digest or a missing package answers `unavailable`, never rewriting the
+  file. An invalid stored entry alone reads `{}`. Panels keep only their own display
+  settings there; never treat preferences as a security boundary.
+- **Channel** (`api4-channel.ts`): one dispatcher per mounting. Frame-supplied capability
+  and method names select only own entries of `Map`s; never index an object with frame
+  data (inherited names such as `constructor` would run). Inputs are validated per
+  method, and deferred host actions are host functions only (`typeof after === "function"`). The bridge refuses a
+  fifth pending request and the host refuses one too, so the cap holds for any sender on
+  the port. Each request is answered or failed within 19.5 s (the bridge's own limit is
+  20 s), its fetch aborted so the route cancels the plugin call. Results after unmount, a
+  session change or the deadline are dropped. Host actions that remove the frame
+  (showing the conversation, closing the phone panel) run one task after the answer is
+  posted, so the frame handles its answer first; showing the conversation then selects
+  it only if the mount's conversation is still the selected one after hydration (a
+  conversation the user picks meanwhile wins; the phone panel still closes).
+- **Server routes** settle on their 19 s deadline or the caller's departure even while a
+  read still waits: the answer races the abort, and the signal reaches every daemon read
+  the route makes (each also bounded to 8 s), image settings included. The conversation
+  helper (`resolveImagesConversationAt`) unwinds on abort too, so its worktree-deletion
+  fence is released at once. Each read registers a fence; after the last
+  read the route re-reads the session (same Location, still owned) or the Location's
+  ownership, then the extension's consent, then asserts every connection it read through
+  as current, synchronously, before answering. Any change fails the request.
+
+Prompts reach the frame only with their separate permission; an approved author can
+exfiltrate them like API 2 bytes, which the install sentence and the help state.
+
 ### Sandbox
 
 Author code runs in an iframe with `sandbox="allow-scripts"` as its only grant.
@@ -292,9 +408,12 @@ node scripts/test-panel-extension-native.mjs --api3
 node --import tsx --test packages/server/src/forge/forge.test.ts packages/server/src/server/routes/panel-extension-work-items.test.ts
 node --conditions=browser --import tsx --test packages/ui/src/components/panel-extensions/work-items-channel.test.ts
 node --import tsx --test packages/ui/src/components/panel-extensions/image-bounds.test.ts
+node --import tsx --test packages/server/src/panel-extensions/api4.test.ts packages/server/src/server/routes/panel-extension-api4.test.ts packages/server/src/remote-control/panel-extension-remote.test.ts
+node --conditions=browser --import tsx --test packages/ui/src/components/panel-extensions/composer-prefill.test.ts packages/ui/src/components/panel-extensions/api4-messages.test.ts
 node scripts/run-session-pruning-native.mjs /absolute/path/to/opencode # isolated CLI/config/database
 # from packages/ui:
 node --import tsx --test tests/browser/panel-extensions.test.ts
+node --import tsx --test tests/browser/panel-extension-api4.test.ts # real composer beside the real panel
 ```
 
 Server checks cover format/permission/API validation, ZIP bounds/path attacks,
@@ -309,4 +428,5 @@ for online browse/search/consent, offline fallback, incompatibility and lifecycl
 - Right-panel customization keeps Extensions below a separator in a native disclosure, collapsed on each popup opening. Expanding mounts one compact searchable list combining installed and online addons, deduplicated by ID; collapse, dismissal and inactive/instance changes dispose its requests and confirmations; never add separate list modes or a floating extension window. The per-addon checkbox above the disclosure is the sole activation control, including for disabled installed addons; never add a manager switch or a per-window visibility gate. Reset changes built-in layout only, never addon consent. Keep metadata on hover/focus and technical consent details folded; retain explicit trust and digest-bound replacement/removal. Installation and activation are profile-wide. Legacy folder grants never become general consent.
 - External panel extensions use `components/panel-extensions/` and `styles/panels/panel-extensions.css`. The official online catalogue is in `NeuralNomadsAI/CodeNomad-Extensions`; metadata discovery never downloads author code. Inspect/install revalidate the exact index/manifest/digest and use bounded credential-free HTTPS GitHub release downloads, never client-provided URLs. Never import author JavaScript into the main renderer or expose native/OpenCode bridges. ZIPs contain only a manifest and a self-contained HTML panel; install/replacement revokes activation. API versions cover only the public `window.codenomad` contract; never make internal Solid modules or import paths part of it.
 - Extension API 3 requires explicit `repository.workItems.read` consent. `work-items-channel.ts` takes only kind/query/page/number from addons; the project folder, remote, provider and credentials stay host-side in `server/src/forge/` (CLI sign-ins or anonymous REST on the public forges only, never stored tokens, never `--paginate`, never addon text inside forge query syntax, never anonymous requests to other hosts). Opening uses the server-built forge page through `openExternalUrl`, rate-limited; never open addon-supplied URLs. Each API version carries exactly its own capability.
+- Extension API 4 is a finite permission set (`PANEL_EXTENSION_API4_PERMISSIONS` in `panel-extensions/contract.ts`): one permission = one capability, fixed methods, one install sentence in every locale and its own server-side check. Adding a permission means a new contract entry, schema case, bridge object, route and sentence together; never a registry, a pass-through method or an author-chosen session/Location. `api4-channel.ts` owns the 19.5 s deadline, four-request cap and mount/session fencing for every API 4 method; keep APIs 1 to 3 on their exact tuples and channels.
 - Extension API 1 stays context-only; API 2 requires explicit `session.assets.read` consent. `assets-channel.ts` derives session authority from the current mounted host, never author selectors, and exposes only bounded asset pages/exact digest-bound embedded reads. Use the presence-owned history bundle's fixed `assets`/`assetRead` methods, never transcript stores, generic RPC, remote downloads or filesystem fallbacks. Recheck consent and Location ownership after IO; revoke old-port/session/reconnect results. Gallery HTML belongs in the independent catalogue repository; never add it to the application renderer.

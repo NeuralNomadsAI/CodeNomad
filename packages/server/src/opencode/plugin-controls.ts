@@ -102,8 +102,8 @@ export class PluginControls {
   // Shared scope acquisition for native settings that have no native write API.
   // Callers receive only the already-authorized documents; path/WSL selection,
   // deletion admission, connection fencing and atomic conflict checks stay here.
-  async readConfigDocuments(workspaceId: string, location: PluginControlLocation) {
-    const context = await this.readContext(workspaceId, location)
+  async readConfigDocuments(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal) {
+    const context = await this.readContext(workspaceId, location, signal)
     const documents = await Promise.all(context.targets.map(async target => ({
       scope: target.scope, path: target.path,
       document: await readPluginControlDocument(target.ioPath, context.fileSystem),
@@ -223,7 +223,7 @@ export class PluginControls {
     })
   }
 
-  private async readContext(workspaceId: string, input: PluginControlLocation): Promise<ReadContext> {
+  private async readContext(workspaceId: string, input: PluginControlLocation, signal?: AbortSignal): Promise<ReadContext> {
     if (!this.options.workspaceManager.get(workspaceId)) {
       throw new PluginControlsError("Workspace not found", "not-found")
     }
@@ -241,7 +241,8 @@ export class PluginControls {
     }
 
     const requestLocation = { directory: location.directory }
-    const requestOptions = locationRequestOptions(location)
+    // A caller's signal (bounded reads such as extension status) also cancels the native reads.
+    const requestOptions = signal ? { ...locationRequestOptions(location), signal } : locationRequestOptions(location)
     let entries: ConfigEntry[]
     let runtime: PluginInfo[]
     try {

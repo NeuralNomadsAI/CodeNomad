@@ -39,7 +39,7 @@ An enabled panel can mount when selected; hiding it can dispose its temporary UI
 3. Reactivate through the normal checkbox only after deciding to trust the replacement.
 4. To uninstall, use **Remove…** and **Confirm removal** after reviewing the target.
 
-Every replacement revokes activation across all projects, even if the permission list is unchanged. Validation/conflict/storage failure preserves the installed package. There are no silent extension updates. Removal deletes the package and its activation settings, not OpenCode sessions or project files. To recover from unwanted code, disable it first; reinstall only a verified trusted package.
+Every replacement revokes activation across all projects, even if the permission list is unchanged, and clears the panel's own saved settings. Validation/conflict/storage failure preserves the installed package. There are no silent extension updates. Removal deletes the package, its activation settings and its saved panel settings, not OpenCode sessions or project files. To recover from unwanted code, disable it first; reinstall only a verified trusted package.
 
 ## Context, asset consent and sandbox limits {#permissions-sandbox}
 
@@ -48,8 +48,17 @@ Every replacement revokes activation across all projects, even if the permission
 | API 1 / `session.context` | Current session identifier (or none), interface language and appearance. No transcript text or filesystem access. |
 | API 2 / `session.assets.read` plus context | Explicitly reviewed permission to list bounded current-session tool-result image/attachment metadata and read supported embedded bytes. It is not general transcript, file or URL access. |
 | API 3 / `repository.workItems.read` plus context | Explicitly reviewed permission to list bounded pages of the project repository's issues and pull requests on GitHub, GitLab or Gitea/Forgejo, and to open one of them in the browser. It is not file, credential or general network access. |
+| API 4 / context plus one or more of the permissions below | The review lists one sentence per declared permission; activation grants all of them together, and a replacement revokes them all. |
+| `session.images.read` | Read the images returned by the read tool in the displayed conversation, with generation status and lineage when they can be verified. |
+| `session.images.prompts` (needs `session.images.read`) | Read the prompt and model of each image generated in the project's Images conversation. |
+| `composer.prefill` | Add text to the message box of the displayed conversation. It never sends a message. |
+| `images.conversation` | Open or start this project's Images conversation. |
+| `opencode.designAgent` | Adds CodeNomad's Design agent and its image skills to OpenCode while this extension is enabled. |
+| `panel.preferences` | Remember this panel's own settings. |
 
 Asset access follows the currently mounted host/session, not an author-selected session. Local/remote references may be listed as unavailable; the asset API does not fetch arbitrary remote URLs or open local files. Switching sessions, disconnecting or revoking consent invalidates old access.
+
+With API 4, image reading follows the displayed conversation in the same way, and only shows the images the agent read back into it. An extension with `session.images.prompts` can read the prompts you or the agent wrote for images in an Images conversation, and could pass them on despite the sandbox, so grant it only to authors you trust with them. Text added by `composer.prefill` stays in the message box until you edit it or select **Send message**; it never starts with a command, never ends with an open `@` mention, and cites image paths as plain text. Undoing with Ctrl+Z (Cmd+Z on macOS) in the message box does not remove it. Saved panel settings belong to this CodeNomad profile, at most 4 KiB per extension; disabling an extension keeps them.
 
 Work items come from the project folder's `upstream` remote, else `origin`. CodeNomad reads them with the GitHub, GitLab or Gitea CLI you already signed in to (`gh`, `glab`, `tea`), or anonymously for public repositories, and stores no token; the extension sees only the repository name and the items. Anonymous reads cover github.com, gitlab.com, codeberg.org and gitea.com; a self-hosted forge is read only through its CLI signed in to it. Opening an item asks CodeNomad to open that item's page on the same forge in your browser, at most once a second; the extension cannot open other addresses.
 

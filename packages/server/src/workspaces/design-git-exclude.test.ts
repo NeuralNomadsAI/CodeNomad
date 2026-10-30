@@ -5,7 +5,7 @@ import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { DESIGN_EXCLUDE_ENTRY, excludeDesignFolder, type ExcludeGit, type ExcludeTarget } from "./design-git-exclude"
+import { checkDesignFolderExclusion, DESIGN_EXCLUDE_ENTRY, excludeDesignFolder, type ExcludeGit, type ExcludeTarget } from "./design-git-exclude"
 import { ensureCodenomadGitExclude } from "./worktree-map"
 
 let root: string
@@ -57,6 +57,40 @@ test("appends the design folder once, keeps foreign bytes and leaves .gitignore 
   await mkdir(path.join(directory, ".codenomad", "design", "subject"), { recursive: true })
   await writeFile(path.join(directory, ".codenomad", "design", "subject", "app-icon-minimal-a.png"), Buffer.from([0x89, 0x50]))
   assert.equal(git(directory, "status", "--porcelain"), "")
+})
+
+test("the read-only check reports missing or excluded as Git reads lines and leaves the file byte-identical", async () => {
+  const directory = await repository("check")
+  const file = excludeFile(directory)
+  const nested = path.join(directory, "packages", "app")
+  await mkdir(nested, { recursive: true })
+  const bytes = async () => existsSync(file) ? await readFile(file) : undefined
+  for (const content of [undefined, Buffer.from("# local\r\n*.log"), Buffer.from(".codenomad/design/x\n"), Buffer.from("/other/.codenomad/design/\n")]) {
+    if (content) await writeFile(file, content); else await rm(file, { force: true })
+    const before = await bytes()
+    assert.equal(await checkDesignFolderExclusion(host(directory)), "missing", String(content))
+    assert.equal(await checkDesignFolderExclusion(host(nested)), "missing")
+    assert.deepEqual(await bytes(), before, "never written, never created")
+  }
+  // Git ignores a final \r and unescaped trailing spaces; leading whitespace is part of the pattern.
+  for (const [content, expected] of [[".codenomad/design/\r\n", "excluded"], [".codenomad/design/   \n", "excluded"],
+    [" .codenomad/design/\n", "missing"], [".codenomad/design/\\ \n", "missing"]] as const) {
+    await writeFile(file, content)
+    assert.equal(await checkDesignFolderExclusion(host(directory)), expected, JSON.stringify(content))
+    assert.equal(await readFile(file, "utf8"), content)
+  }
+  await writeFile(file, "# keep\n")
+  assert.equal(await excludeDesignFolder(host(nested)), "excluded")
+  const written = await readFile(file)
+  assert.equal(await checkDesignFolderExclusion(host(nested)), "excluded", "the anchored nested rule")
+  assert.equal(await checkDesignFolderExclusion(host(directory)), "missing", "the top's own rule is separate")
+  assert.deepEqual(await readFile(file), written)
+
+  const outside = path.join(root, "check-outside")
+  await mkdir(outside)
+  assert.equal(await checkDesignFolderExclusion(host(outside)), "not-repository")
+  const failing: ExcludeGit = async () => { throw Object.assign(new Error("spawn"), { code: "ENOENT" }) }
+  assert.equal(await checkDesignFolderExclusion(host(directory), failing), "unavailable")
 })
 
 test("reuses the existing # codenomad header", async () => {
@@ -232,7 +266,10 @@ test("WSL: a project and a worktree created in the distro are excluded through i
     const repo = `${base}/repo`, linked = `${base}/linked`
     wsl("sh", "-c", `git init -q -b main "${repo}" && cd "${repo}" && git -c user.name=f -c user.email=f@example.invalid commit -q --allow-empty -m i && git worktree add -q -b linked "${linked}" && printf 'foreign\\n' > .git/info/exclude`)
     const target = (directory: string): ExcludeTarget => ({ directory, distro, toHost: async servicePath => wsl("wslpath", "-aw", servicePath) })
+    assert.equal(await checkDesignFolderExclusion(target(linked)), "missing")
+    assert.equal(wsl("cat", `${repo}/.git/info/exclude`), "foreign", "the check writes nothing")
     assert.equal(await excludeDesignFolder(target(linked)), "excluded")
+    assert.equal(await checkDesignFolderExclusion(target(repo)), "excluded", "the linked worktree's rule is the common file's")
     assert.equal(await excludeDesignFolder(target(repo)), "excluded")
     assert.equal(wsl("cat", `${repo}/.git/info/exclude`), "foreign\n\n# codenomad\n.codenomad/design/")
     wsl("sh", "-c", `mkdir -p "${linked}/.codenomad/design/s" && printf x > "${linked}/.codenomad/design/s/a.png"`)

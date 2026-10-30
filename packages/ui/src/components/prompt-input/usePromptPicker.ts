@@ -47,8 +47,8 @@ type PromptPickerController = {
 // anything else, including CJK text and brackets, it starts a mention.
 const MID_WORD_BEFORE_AT = /[A-Za-z0-9_./\\:+~-]/
 
-/** The mention being typed at the end of `textBeforeCursor`, or -1. */
-function findMentionStart(textBeforeCursor: string) {
+/** The mention being typed at the end of `textBeforeCursor`, or -1. Panel prefills refuse drafts that would open one. */
+export function findMentionStart(textBeforeCursor: string) {
   // The nearest word-start "@" in the current token, so "@packages/@scope/x"
   // keeps searching from its first "@".
   for (let index = textBeforeCursor.length - 1; index >= 0; index--) {

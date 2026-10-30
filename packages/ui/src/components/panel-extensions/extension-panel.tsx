@@ -5,16 +5,17 @@ import { useI18n } from "../../lib/i18n"
 import { PANEL_EXTENSION_SANDBOX, panelExtensionDocument } from "./frame-document"
 import { useAssetsChannel } from "./assets-channel"
 import { useWorkItemsChannel } from "./work-items-channel"
+import { useApi4Channel, type Api4Host } from "./api4-channel"
 import { resolveCssColor } from "../../lib/css-color"
 
 export function ExtensionPanel(props: {
-  entry: PanelExtensionSummary; instanceId: string; active: boolean; context: PanelExtensionContext
+  entry: PanelExtensionSummary; instanceId: string; active: boolean; context: PanelExtensionContext; host: Api4Host
 }) {
   const identity = createMemo(() => props.active ? JSON.stringify([props.instanceId, props.entry.digest, props.context.sessionId]) : null)
-  return <Show keyed when={identity()}>{_identity => <PanelFrame entry={props.entry} instanceId={props.instanceId} context={props.context} />}</Show>
+  return <Show keyed when={identity()}>{_identity => <PanelFrame entry={props.entry} instanceId={props.instanceId} context={props.context} host={props.host} />}</Show>
 }
 
-function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; context: PanelExtensionContext }) {
+function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; context: PanelExtensionContext; host: Api4Host }) {
   const { t } = useI18n()
   const [document, setDocument] = createSignal<string>()
   const [failed, setFailed] = createSignal(false)
@@ -24,11 +25,14 @@ function PanelFrame(props: { entry: PanelExtensionSummary; instanceId: string; c
   const controller = new AbortController()
   const send = (value: unknown) => { if (!disposed && authenticated) port?.postMessage(value) }
   const authority = { instanceId: props.instanceId, id: props.entry.manifest.id, digest: props.entry.digest, send }
-  // Each API version carries exactly its own capability.
-  const receive = props.entry.manifest.apiVersion === 2 ? useAssetsChannel({ ...authority, sessionId: () => props.context.sessionId })
-    : props.entry.manifest.apiVersion === 3 ? useWorkItemsChannel(authority) : () => {}
-  void panelExtensionsApi.panel(props.instanceId, props.entry.manifest.id, props.entry.digest, controller.signal).then(result => {
-    if (!disposed) setDocument(panelExtensionDocument(result.html, handshake, props.entry.manifest.apiVersion))
+  // Each API version carries exactly its own capabilities; API 4 only those its manifest declares.
+  const manifest = props.entry.manifest
+  const receive = manifest.apiVersion === 2 ? useAssetsChannel({ ...authority, sessionId: () => props.context.sessionId })
+    : manifest.apiVersion === 3 ? useWorkItemsChannel(authority)
+      : manifest.apiVersion === 4 ? useApi4Channel({ ...authority, permissions: manifest.permissions, sessionId: props.context.sessionId, host: props.host })
+        : () => {}
+  void panelExtensionsApi.panel(props.instanceId, manifest.id, props.entry.digest, controller.signal).then(result => {
+    if (!disposed) setDocument(panelExtensionDocument(result.html, handshake, manifest.apiVersion, manifest.permissions))
   }).catch(() => { if (!disposed) setFailed(true) })
   const publish = () => {
     const style = getComputedStyle(globalThis.document.documentElement)

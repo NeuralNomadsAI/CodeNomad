@@ -2,9 +2,9 @@ import { execFile } from "node:child_process"
 import { mkdir, stat } from "node:fs/promises"
 import path from "node:path"
 import { runWorktreeGit } from "./git-process"
-import { appendCodenomadGitExclude, readGitExclude } from "./worktree-map"
-import type { GitExclusion } from "../server/routes/images-conversation-contract"
-export type { GitExclusion }
+import { appendCodenomadGitExclude, gitExcludePatterns, readGitExclude } from "./worktree-map"
+import type { GitExclusion, GitExclusionCheck } from "../server/routes/images-conversation-contract"
+export type { GitExclusion, GitExclusionCheck }
 
 export const DESIGN_EXCLUDE_ENTRY = ".codenomad/design/"
 
@@ -66,35 +66,61 @@ export function designExcludeRule(prefix: string): string {
 }
 
 /**
- * Excludes the Location's `.codenomad/design/` locally through the file Git
- * itself names (`rev-parse --show-prefix --git-path info/exclude`), resolved by
- * the execution host's Git and appended without touching existing lines or
- * `.gitignore`. Only Git's explicit "not a repository" answer means no
- * repository; every other failure writes nothing and is `unavailable`.
+ * The host path of the exclude file Git itself names for the Location
+ * (`rev-parse --show-prefix --git-path info/exclude`, run by the execution
+ * host's Git) and the Location's rule. Only Git's explicit "not a repository"
+ * answer means no repository; every other failure is `unavailable`.
  */
-export async function excludeDesignFolder(target: ExcludeTarget, git: ExcludeGit = runExcludeGit): Promise<GitExclusion> {
+async function resolveDesignExclude(target: ExcludeTarget, git: ExcludeGit): Promise<{ excludePath: string; rule: string } | "not-repository" | "unavailable"> {
   let output: string
   try {
     output = await git(target, ["rev-parse", "--show-prefix", "--git-path", "info/exclude"])
   } catch (error) {
     return notRepository(error) ? "not-repository" : "unavailable"
   }
+  const lines = output.split(/\r?\n/)
+  if (lines.length !== 2 || lines.some(line => /[\x00-\x1f\x7f]/.test(line))) return "unavailable"
+  const [prefix, file] = lines as [string, string]
+  if (!file || (prefix && (!prefix.endsWith("/") || prefix.split("/").slice(0, -1).some(part => !part || part === "." || part === "..")))) {
+    return "unavailable"
+  }
+  const resolved = target.distro ? path.posix.resolve(target.directory, file) : path.resolve(target.directory, file)
+  const [excludePath, location] = await Promise.all([target.toHost(resolved), target.toHost(target.directory)])
+  if (!excludePath || !await isDirectory(location)) return "unavailable"
+  return { excludePath, rule: designExcludeRule(prefix) }
+}
+
+/**
+ * Excludes the Location's `.codenomad/design/` locally: its rule is appended to
+ * the resolved exclude file without touching existing lines or `.gitignore`.
+ * Every failure writes nothing.
+ */
+export async function excludeDesignFolder(target: ExcludeTarget, git: ExcludeGit = runExcludeGit): Promise<GitExclusion> {
   try {
-    const lines = output.split(/\r?\n/)
-    if (lines.length !== 2 || lines.some(line => /[\x00-\x1f\x7f]/.test(line))) return "unavailable"
-    const [prefix, file] = lines as [string, string]
-    if (!file || (prefix && (!prefix.endsWith("/") || prefix.split("/").slice(0, -1).some(part => !part || part === "." || part === "..")))) {
-      return "unavailable"
-    }
-    const resolved = target.distro ? path.posix.resolve(target.directory, file) : path.resolve(target.directory, file)
-    const [excludePath, location] = await Promise.all([target.toHost(resolved), target.toHost(target.directory)])
-    if (!excludePath || !await isDirectory(location)) return "unavailable"
+    const resolved = await resolveDesignExclude(target, git)
+    if (typeof resolved === "string") return resolved
+    const { excludePath, rule } = resolved
     return await serialized(path.resolve(excludePath).toLowerCase(), async () => {
       // The Git directory must still exist: never recreate a deleted checkout's metadata.
       await mkdir(path.dirname(excludePath)).catch((error: NodeJS.ErrnoException) => { if (error.code !== "EEXIST") throw error })
-      await appendCodenomadGitExclude(excludePath, await readGitExclude(excludePath), [designExcludeRule(prefix)])
+      await appendCodenomadGitExclude(excludePath, await readGitExclude(excludePath), [rule])
       return "excluded" as const
     })
+  } catch {
+    return "unavailable"
+  }
+}
+
+/**
+ * Reads, never writes: whether the resolved exclude file already holds the
+ * Location's rule, its lines compared as Git reads them (`excluded`), or not
+ * (`missing`; an absent file counts as empty).
+ */
+export async function checkDesignFolderExclusion(target: ExcludeTarget, git: ExcludeGit = runExcludeGit): Promise<GitExclusionCheck> {
+  try {
+    const resolved = await resolveDesignExclude(target, git)
+    if (typeof resolved === "string") return resolved
+    return gitExcludePatterns(await readGitExclude(resolved.excludePath)).has(resolved.rule) ? "excluded" : "missing"
   } catch {
     return "unavailable"
   }

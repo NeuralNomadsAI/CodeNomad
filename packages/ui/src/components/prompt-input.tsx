@@ -266,6 +266,7 @@ export default function PromptInput(props: PromptInputProps) {
         restoredQueuedPayload = payload
       },
       getPromptText: prompt,
+      getMode: mode,
       focus: () => {
         const textarea = textareaRef
         if (!textarea || textarea.disabled) return

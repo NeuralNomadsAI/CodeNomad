@@ -39,7 +39,7 @@ Un panneau activé peut être monté à sa sélection ; le masquer peut libérer
 3. Réactivez-le via la case normale seulement après avoir décidé de faire confiance au remplacement.
 4. Pour désinstaller, utilisez **Supprimer…** et **Confirmer la suppression** après vérification de la cible.
 
-Chaque remplacement révoque l’activation dans tous les projets, même si les permissions sont inchangées. Un échec de validation/conflit/stockage préserve le paquet installé. Aucune mise à jour d’extension silencieuse n’existe. La suppression retire le paquet et ses réglages d’activation, pas les sessions OpenCode ni fichiers du projet. Pour récupérer après du code indésirable, désactivez-le d’abord ; ne réinstallez qu’un paquet vérifié et fiable.
+Chaque remplacement révoque l’activation dans tous les projets, même si les permissions sont inchangées, et efface les réglages enregistrés propres au panneau. Un échec de validation/conflit/stockage préserve le paquet installé. Aucune mise à jour d’extension silencieuse n’existe. La suppression retire le paquet, ses réglages d’activation et ses réglages de panneau enregistrés, pas les sessions OpenCode ni fichiers du projet. Pour récupérer après du code indésirable, désactivez-le d’abord ; ne réinstallez qu’un paquet vérifié et fiable.
 
 ## Contexte, consentement aux ressources et limites du bac à sable {#permissions-sandbox}
 
@@ -48,8 +48,17 @@ Chaque remplacement révoque l’activation dans tous les projets, même si les 
 | API 1 / `session.context` | Identifiant de session courante (ou aucun), langue et apparence d’interface. Aucun texte de transcription ni accès aux fichiers. |
 | API 2 / `session.assets.read` plus contexte | Permission explicitement examinée pour lister des métadonnées bornées d’images de résultats d’outils/pièces jointes de la session courante et lire les octets intégrés pris en charge. Ce n’est pas un accès général aux transcriptions, fichiers ou URL. |
 | API 3 / `repository.workItems.read` plus le contexte | Permission examinée explicitement pour lister des pages bornées d’issues et de pull requests du dépôt du projet sur GitHub, GitLab ou Gitea/Forgejo, et en ouvrir une dans le navigateur. Ce n’est pas un accès aux fichiers, aux identifiants ni au réseau en général. |
+| API 4 / contexte plus une ou plusieurs des permissions ci-dessous | L’examen liste une phrase par permission déclarée ; l’activation les accorde toutes ensemble, et un remplacement les révoque toutes. |
+| `session.images.read` | Lire les images renvoyées par l’outil read dans la conversation affichée, avec leur état de génération et leur filiation lorsqu’ils peuvent être vérifiés. |
+| `session.images.prompts` (nécessite `session.images.read`) | Lire le prompt et le modèle de chaque image générée dans la conversation Images du projet. |
+| `composer.prefill` | Ajouter du texte à la zone de saisie de la conversation affichée. N’envoie jamais de message. |
+| `images.conversation` | Ouvrir ou démarrer la conversation Images de ce projet. |
+| `opencode.designAgent` | Ajoute l’agent Design de CodeNomad et ses compétences d’image à OpenCode tant que cette extension est activée. |
+| `panel.preferences` | Mémoriser les réglages propres à ce panneau. |
 
 L’accès aux ressources suit l’hôte/la session actuellement monté, pas une session choisie par l’auteur. Des références locales/distantes peuvent être listées comme indisponibles ; l’API de ressources ne récupère pas d’URL distantes arbitraires et n’ouvre pas de fichiers locaux. Changer de session, déconnecter ou révoquer le consentement invalide l’ancien accès.
+
+Avec l’API 4, la lecture d’images suit de la même façon la conversation affichée et ne montre que les images que l’agent y a relues. Une extension disposant de `session.images.prompts` peut lire les prompts que vous ou l’agent avez écrits pour des images dans une conversation Images, et pourrait les transmettre malgré le bac à sable ; ne l’accordez donc qu’à des auteurs à qui vous les confiez. Le texte ajouté par `composer.prefill` reste dans la zone de saisie jusqu’à ce que vous le modifiiez ou sélectionniez **Envoyer le message** ; il ne commence jamais par une commande, ne se termine jamais par une mention `@` ouverte et cite les chemins d’images en texte brut. Annuler avec Ctrl+Z (Cmd+Z sur macOS) dans la zone de saisie ne le retire pas. Les réglages de panneau enregistrés appartiennent à ce profil CodeNomad, 4 Kio au maximum par extension ; désactiver une extension les conserve.
 
 Les éléments viennent du remote `upstream` du dossier du projet, sinon d’`origin`. CodeNomad les lit avec la CLI GitHub, GitLab ou Gitea à laquelle vous êtes déjà connecté (`gh`, `glab`, `tea`), ou anonymement pour les dépôts publics, et ne stocke aucun jeton ; l’extension ne voit que le nom du dépôt et les éléments. La lecture anonyme couvre github.com, gitlab.com, codeberg.org et gitea.com ; une forge auto-hébergée n’est lue que via sa CLI connectée à elle. Ouvrir un élément demande à CodeNomad d’ouvrir sa page sur la même forge dans votre navigateur, au plus une fois par seconde ; l’extension ne peut pas ouvrir d’autres adresses.
 
