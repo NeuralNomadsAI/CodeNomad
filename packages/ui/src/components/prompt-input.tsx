@@ -465,7 +465,7 @@ export default function PromptInput(props: PromptInputProps) {
     const draftText = prompt()
     const text = draftText.trim()
     const currentAttachments = attachments()
-    if (props.disabled || isReadingFiles() || submissionsInFlight > 0 || (!text && currentAttachments.length === 0)) return
+    if (props.disabled || props.sendBlocked || isReadingFiles() || submissionsInFlight > 0 || (!text && currentAttachments.length === 0)) return
     const resolvedDelivery = delivery ?? promptDelivery()
     const restoredPayload = restoredQueuedPayload
 
@@ -714,7 +714,7 @@ export default function PromptInput(props: PromptInputProps) {
   const canHistoryGoNext = () => historyIndex() >= 0
 
   const canSend = () => {
-    if (props.disabled || isReadingFiles()) return false
+    if (props.disabled || props.sendBlocked || isReadingFiles()) return false
     const hasText = prompt().trim().length > 0
     if (mode() === "shell") return hasText
     return hasText || attachments().length > 0

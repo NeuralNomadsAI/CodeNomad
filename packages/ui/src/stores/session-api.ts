@@ -29,6 +29,7 @@ import {
   getSessionMessagesLoadError,
   providers,
   setAgents,
+  setAgentCatalogLocations,
   setMessagesLoaded,
   advanceMessageLoadEpoch,
   finishMessageLoad,
@@ -1450,6 +1451,7 @@ async function loadAgents(instanceId: string, location: LocationRef): Promise<bo
       next.set(instanceId, agentList)
       return next
     })
+    setAgentCatalogLocations((prev) => new Map(prev).set(instanceId, catalogLocationKey(location)))
     return true
   } catch (error) {
     log.error("Failed to fetch agents:", error)
