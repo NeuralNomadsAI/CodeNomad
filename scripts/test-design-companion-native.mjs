@@ -22,7 +22,7 @@ import { crc32, deflateSync } from "node:zlib"
 import { tsImport } from "tsx/esm/api"
 import { OpenCode } from "@opencode/client"
 import { clearFixtureGitEnvironment, stopFixtureChild } from "./native-fixture-guards.mjs"
-import { fixtureParent } from "./native-product-fixture.mjs"
+import { fixtureEnvironment, fixtureParent } from "./native-product-fixture.mjs"
 
 const load = file => tsImport(`../packages/server/src/${file}`, import.meta.url)
 const { DesktopPluginLifecycle, prepareDesktopPluginPresence } = await load("opencode/desktop-plugin-lifecycle.ts")
@@ -39,7 +39,6 @@ assert(uiIndex < 0 || (designZip && path.isAbsolute(designZip)), "--ui takes the
 // Browser dependencies load before the native preamble (see test-session-pruning-ui.mjs).
 const companionUI = designZip ? await import("./test-design-companion-ui.mjs") : undefined
 await companionUI?.loadDesignCompanionUIDependencies()
-const version = spawnSync(cli, ["--version"], { encoding: "utf8" }).stdout.trim()
 // Project discovery walks every ancestor directory: outside CI the fixture lives outside the home.
 const root = await mkdtemp(path.join(await fixtureParent({ projectConfig: true }), "design-companion-"))
 const configDirectory = path.join(root, "config")
@@ -48,12 +47,13 @@ await mkdir(configDirectory, { recursive: true })
 await mkdir(project, { recursive: true })
 await writeFile(path.join(configDirectory, "opencode.json"), "{}\n")
 await writeFile(path.join(project, "README.md"), "Design companion fixture\n")
-// Every Git call, the daemon's and the in-process host routes' included, runs without
-// inherited GIT_* (a GIT_DIR or GIT_WORK_TREE would send its writes outside the fixture).
-const gitEnv = { ...process.env }
-clearFixtureGitEnvironment(gitEnv)
+// Children (Git, the CLI, the daemon) get only allowlisted variables and a private profile;
+// the in-process host routes' Git also runs without inherited GIT_* (a GIT_DIR or
+// GIT_WORK_TREE would send its writes outside the fixture).
+const childEnv = await fixtureEnvironment(root)
 clearFixtureGitEnvironment(process.env)
-const git = args => spawnSync("git", args, { cwd: project, env: gitEnv, encoding: "utf8" })
+const version = spawnSync(cli, ["--version"], { env: childEnv, encoding: "utf8" }).stdout.trim()
+const git = args => spawnSync("git", args, { cwd: project, env: childEnv, encoding: "utf8" })
 assert.equal(git(["init", "-q", project]).status, 0)
 const samePath = value => process.platform === "win32" ? path.resolve(value).toLowerCase() : path.resolve(value)
 assert.equal(samePath(git(["rev-parse", "--absolute-git-dir"]).stdout.trim()), samePath(path.join(await realpath(project), ".git")),
@@ -145,22 +145,16 @@ const provider = createServer(async (req, res) => {
 await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
 const settings = { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }
 
-const env = Object.fromEntries(Object.entries(gitEnv).filter(([key]) => !/^(OPENCODE_|XDG_|CODENOMAD_|npm_config_)/i.test(key)))
-for (const key of Object.keys(env)) if (["programdata", "temp", "tmp", "appdata", "localappdata"].includes(key.toLowerCase())) delete env[key]
-for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
 const password = randomUUID()
-Object.assign(env, {
-  HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root, ProgramData: path.join(root, "ProgramData"),
-  TEMP: path.join(root, "tmp"), TMP: path.join(root, "tmp"), APPDATA: path.join(root, "AppData", "Roaming"), LOCALAPPDATA: path.join(root, "AppData", "Local"),
+// Only the fixture providers load, and the fake image model is named, so automatic selection can never pick another provider.
+const env = await fixtureEnvironment(root, {
   OPENCODE_CONFIG_DIR: configDirectory, OPENCODE_DB: path.join(root, "fixture.db"), OPENCODE_SERVER_PASSWORD: password,
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
-  npm_config_userconfig: path.join(root, ".npmrc"), npm_config_globalconfig: path.join(root, "global.npmrc"), npm_config_cache: path.join(root, "npm-cache"),
-  OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: "fixture/vision", small_model: "fixture/vision", experimental: { image_generate: true }, providers: {
+  OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: "fixture/vision", small_model: "fixture/vision", enabled_providers: ["fixture", "fiximg"], experimental: { image_generate: { model: "fiximg/image" } }, providers: {
     fixture: { package: "@opencode/ai/providers/openai-compatible", settings, models: { vision: { name: "Fixture vision", capabilities: { tools: true, input: ["text", "image/png"], output: ["text"] } } } },
     fiximg: { package: "@opencode/ai/providers/openai-compatible/images", settings, models: { image: { name: "Fixture image", type: "image", capabilities: { tools: false, input: ["text", "image/png"], output: ["image"] } } } },
   } }),
 })
-for (const directory of [env.TEMP, env.ProgramData]) await mkdir(directory, { recursive: true })
 
 let output = ""
 const daemon = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
@@ -192,6 +186,12 @@ try {
   const locationOptions = locationRequestOptions(location)
   const rpc = async (method, input) => (await client.rpc.call({ rpcID: "codenomad.session-pruning", method, location, input }, locationOptions)).output
   await client.location.get({ location })
+  // Discovery sees only the fixture's loopback providers, whatever the caller's environment holds.
+  const models = async types => (await (await fetch(`${url}/api/model?${types ? `types=${types}&` : ""}location[directory]=${encodeURIComponent(project)}`,
+    { headers: { authorization }, signal: AbortSignal.timeout(30_000) })).json()).data.map(model => `${model.providerID}/${model.id}`)
+  results.models = await models()
+  assert(results.models.every(ref => /^(fixture|fiximg)\//.test(ref)), `only fixture models are discovered: ${results.models}`)
+  assert.deepEqual(await models("image"), ["fiximg/image"])
   await lifecycle.setLeaseContent(designLeaseContent(true))
   await prepareDesktopPluginPresence(await resolveDesktopPluginPaths({ client, assertCurrent() {} }, { kind: "host", platform: process.platform, binary: "fixture" }),
     () => {}, { pruning: lifecycle })
@@ -267,7 +267,7 @@ try {
     assert.equal(entry.origin, "proven", JSON.stringify(entry))
     assert(generations.some(generation => generation.key === entry.generationKey && generation.tool === "completed" && generation.outcome === "completed"), JSON.stringify(entry))
     assert.equal(typeof entry.prompt, "string")
-    assert.equal(typeof entry.model, "string")
+    assert.equal(entry.model, "fiximg/image", "the named fake image model generated it")
     const bytes = await pixels(entry.target)
     assert.deepEqual(bytes, await readFile(file(`${entry.label}.png`)), `${entry.label}: the gallery pixels are the file's`)
     assert(state.imageCalls.some(item => item.sha === sha(bytes)), `${entry.label}: the pixels come from the image model`)
@@ -324,6 +324,7 @@ try {
   results.ac52 = { assistantMessagesBetween: between, origin: late[0].origin, ui: Boolean(designZip) }
   console.log(`PASS AC-52${designZip ? " (native and browser)" : " (native)"}: no read-back, reference, request sent, read ${between} assistant messages later, pixels, unverifiable origin`)
   passed = true
+  assert.equal(state.imageCalls.length, 4, "every image request reached the fake image provider")
   console.log(`PASS ${version}: ${JSON.stringify({ ...results, imageCalls: state.imageCalls.length, chatRequests: state.chat })}`)
 } finally {
   await lifecycle.stop()

@@ -7,7 +7,7 @@ import os from "node:os"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { OpenCode } from "@opencode/client"
-import { clearFixtureGitEnvironment, stopFixtureChild } from "./native-fixture-guards.mjs"
+import { stopFixtureChild } from "./native-fixture-guards.mjs"
 
 /** The resolved `opencode` folder fixtures are created in. With `projectConfig` the daemon reads
  * every ancestor's `.opencode/`, so outside CI it must lie outside the user's home. */
@@ -24,6 +24,37 @@ export async function fixtureParent({ projectConfig = false } = {}) {
   return parent
 }
 
+// Inherited only to run binaries: never provider credentials, cloud SDK settings, Git
+// variables or user profile paths (a daemon reads all of them for provider discovery).
+const INHERITED = /^(PATH|PATHEXT|SYSTEMROOT|WINDIR|COMSPEC|SYSTEMDRIVE|OS|NUMBER_OF_PROCESSORS|PROCESSOR_ARCHITECTURE|PROGRAMFILES|PROGRAMFILES\(X86\)|PROGRAMW6432|COMMONPROGRAMFILES|COMMONPROGRAMFILES\(X86\)|COMMONPROGRAMW6432|LANG|LANGUAGE|LC_[A-Z_]+|TZ|CI|SHELL|USER|LOGNAME|TERM)$/i
+
+/** The environment of a fixture-owned child: allowlisted process variables, then a private
+ * home, profile, temp, XDG and npm tree under `root`, then `extra`. */
+export async function fixtureEnvironment(root, extra = {}) {
+  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => INHERITED.test(key)))
+  const temp = path.join(root, "tmp")
+  Object.assign(env, {
+    HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root,
+    APPDATA: path.join(root, "AppData", "Roaming"), LOCALAPPDATA: path.join(root, "AppData", "Local"),
+    // 2.0.29+ reads system-managed settings from %ProgramData%\opencode on Windows.
+    ProgramData: path.join(root, "ProgramData"), TEMP: temp, TMP: temp, TMPDIR: temp,
+    XDG_CONFIG_HOME: path.join(root, "XDG_CONFIG_HOME"), XDG_DATA_HOME: path.join(root, "XDG_DATA_HOME"),
+    XDG_STATE_HOME: path.join(root, "XDG_STATE_HOME"), XDG_CACHE_HOME: path.join(root, "XDG_CACHE_HOME"),
+    npm_config_userconfig: path.join(root, ".npmrc"), npm_config_globalconfig: path.join(root, "global.npmrc"), npm_config_cache: path.join(root, "npm-cache"),
+    ...extra,
+  })
+  for (const directory of [env.APPDATA, env.LOCALAPPDATA, env.ProgramData, temp]) await mkdir(directory, { recursive: true })
+  assertFixtureEnvironment(env)
+  return env
+}
+
+/** Every key a fixture child receives from this process is allowlisted; the rest is the fixture's own. */
+export function assertFixtureEnvironment(env) {
+  const leaked = Object.keys(env).filter(key => process.env[key] !== undefined && process.env[key] === env[key] && !INHERITED.test(key))
+  assert.deepEqual(leaked, [], "A fixture child inherits only allowlisted variables")
+  assert(Object.keys(env).every(key => !/^(GIT_|CLOUDSDK_|GOOGLE_|AWS_|AZURE_)|_API_KEY$/i.test(key)), "No Git, cloud or provider credential variable reaches a fixture child")
+}
+
 // Shared by product-contract fixtures. Explicit owned process, random password,
 // private discovery/database/home, and a loopback synthetic provider only.
 // `projectConfig` lets the daemon read a fixture project's own `.opencode/` folder. Project discovery
@@ -32,23 +63,12 @@ export async function fixtureParent({ projectConfig = false } = {}) {
 export async function withProductRuntime(cli, prepare, run, { projectConfig = false } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
   const root = await mkdtemp(path.join(await fixtureParent({ projectConfig }), "product-native-"))
-  const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_|npm_config_)/i.test(key)))
-  // Inherited GIT_* variables would redirect the daemon's Git or expose the user's Git configuration.
-  clearFixtureGitEnvironment(env)
-  for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
-  // 2.0.29+ reads system-managed settings from %ProgramData%\opencode on Windows.
-  if (process.platform === "win32") {
-    for (const key of Object.keys(env)) if (key.toLowerCase() === "programdata") delete env[key]
-    env.ProgramData = path.join(root, "ProgramData")
-  }
   const password = randomUUID()
-  Object.assign(env, { HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root,
+  const env = await fixtureEnvironment(root, {
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
     ...(projectConfig ? {} : { OPENCODE_CONFIG_PROJECT_DISABLE: "1" }), OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_SERVER_PASSWORD: password })
-  Object.assign(env, { npm_config_userconfig: path.join(root, ".npmrc"), npm_config_globalconfig: path.join(root, "global.npmrc"), npm_config_cache: path.join(root, "npm-cache") })
   await mkdir(env.OPENCODE_CONFIG_DIR)
-  assert(Object.keys(env).every(key => !/^GIT_/i.test(key)), "The fixture daemon never inherits GIT_* variables")
   const configuration = await prepare({ root, configDirectory: env.OPENCODE_CONFIG_DIR })
   const requests = []
   let providerError

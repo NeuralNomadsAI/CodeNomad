@@ -14,8 +14,8 @@ import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath } from "node:url"
 import { tsImport } from "tsx/esm/api"
 import { OpenCode } from "@opencode/client"
-import { clearFixtureGitEnvironment, stopFixtureChild } from "./native-fixture-guards.mjs"
-import { fixtureParent } from "./native-product-fixture.mjs"
+import { stopFixtureChild } from "./native-fixture-guards.mjs"
+import { fixtureEnvironment, fixtureParent } from "./native-product-fixture.mjs"
 
 const server = path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "packages", "server", "src", "opencode")
 const load = file => tsImport(`../packages/server/src/opencode/${file}`, import.meta.url)
@@ -60,15 +60,14 @@ const sources = {
   apacheLicense: await readSource(DESIGN_SOURCE_FILES.apacheLicense),
 }
 const content = parseDesignContent(sources)
-const version = spawnSync(cli, ["--version"], { encoding: "utf8" }).stdout.trim()
 // Project discovery walks every ancestor directory: outside CI the fixture must live
 // outside the user's home, or it would read the user's own agents and skills.
 const root = await mkdtemp(path.join(await fixtureParent({ projectConfig: true }), "design-activation-"))
 const configDirectory = path.join(root, "config")
 const project = name => path.join(root, name)
-// clearFixtureGitEnvironment edits the environment it receives in place.
-const gitEnv = { ...process.env }
-clearFixtureGitEnvironment(gitEnv)
+// Children (Git, the CLI, the daemon, the backends) get only allowlisted variables and a private profile.
+const childEnv = await fixtureEnvironment(root)
+const version = spawnSync(cli, ["--version"], { env: childEnv, encoding: "utf8" }).stdout.trim()
 const USER_AGENT = "USER-DESIGN-AGENT"
 const USER_SKILL = "USER-DESIGN-CORE"
 const files = {
@@ -81,7 +80,7 @@ const files = {
 for (const name of ["p1", "p2-ask", "p3-user", "p4-late"]) {
   await mkdir(project(name), { recursive: true })
   // A Git root stops OpenCode's upward project-configuration search.
-  assert.equal(spawnSync("git", ["init", "-q", project(name)], { env: gitEnv }).status, 0)
+  assert.equal(spawnSync("git", ["init", "-q", project(name)], { env: childEnv }).status, 0)
 }
 for (const [file, content] of Object.entries(files)) {
   await mkdir(path.dirname(file), { recursive: true })
@@ -122,22 +121,16 @@ const provider = createServer(async (req, res) => {
 await new Promise(resolve => provider.listen(0, "127.0.0.1", resolve))
 const settings = { baseURL: `http://127.0.0.1:${provider.address().port}/v1`, apiKey: "fixture-only" }
 
-const env = Object.fromEntries(Object.entries(gitEnv).filter(([key]) => !/^(OPENCODE_|XDG_|CODENOMAD_|npm_config_)/i.test(key)))
-for (const key of Object.keys(env)) if (["programdata", "temp", "tmp", "appdata", "localappdata"].includes(key.toLowerCase())) delete env[key]
-for (const key of ["XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME"]) env[key] = path.join(root, key)
 const password = randomUUID()
-Object.assign(env, {
-  HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root, ProgramData: path.join(root, "ProgramData"),
-  TEMP: path.join(root, "tmp"), TMP: path.join(root, "tmp"), APPDATA: path.join(root, "AppData", "Roaming"), LOCALAPPDATA: path.join(root, "AppData", "Local"),
+// Only the fixture providers load, and the fake image model is named, so automatic selection can never pick another provider.
+const env = await fixtureEnvironment(root, {
   OPENCODE_CONFIG_DIR: configDirectory, OPENCODE_DB: path.join(root, "fixture.db"), OPENCODE_SERVER_PASSWORD: password,
   OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
-  npm_config_userconfig: path.join(root, ".npmrc"), npm_config_globalconfig: path.join(root, "global.npmrc"), npm_config_cache: path.join(root, "npm-cache"),
-  OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: "fixture/vision", small_model: "fixture/vision", experimental: { image_generate: true }, providers: {
+  OPENCODE_CONFIG_CONTENT: JSON.stringify({ model: "fixture/vision", small_model: "fixture/vision", enabled_providers: ["fixture", "fiximg"], experimental: { image_generate: { model: "fiximg/image" } }, providers: {
     fixture: { package: "@opencode/ai/providers/openai-compatible", settings, models: { vision: { name: "Fixture", capabilities: { tools: true, input: ["text", "image/png"], output: ["text"] } } } },
     fiximg: { package: "@opencode/ai/providers/openai-compatible/images", settings, models: { image: { name: "Fixture image", type: "image", capabilities: { tools: false, input: ["text"], output: ["image"] } } } },
   } }),
 })
-for (const directory of [env.TEMP, env.ProgramData]) await mkdir(directory, { recursive: true })
 
 let output = ""
 const daemon = spawn(cli, ["serve", "--hostname", "127.0.0.1", "--port", "0", "--print-logs"], { cwd: root, env, windowsHide: true })
@@ -173,13 +166,16 @@ try {
   }
   const located = route => async directory => (await api("GET", `${route}?location[directory]=${encodeURIComponent(directory)}`)).json?.data ?? []
   const agents = located("/api/agent"), skills = located("/api/skill"), plugins = located("/api/plugin")
+  // Discovery sees only the fixture's loopback providers, whatever the caller's environment holds.
+  results.models = (await located("/api/model")(project("p1"))).map(model => `${model.providerID}/${model.id}`)
+  assert(results.models.every(ref => /^(fixture|fiximg)\//.test(ref)), `only fixture models are discovered: ${results.models}`)
   const designSkills = async directory => (await skills(directory)).filter(skill => skill.id.startsWith("design-"))
   const hasDesign = async directory => (await agents(directory)).some(agent => agent.id === "design")
   const allHave = async (names, wanted) => (await Promise.all(names.map(name => hasDesign(project(name))))).every(value => value === wanted)
   const loaded = ["p1", "p2-ask", "p3-user"]
 
   async function startBackend(design) {
-    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--backend", url, password, design ? "design" : "none"], { stdio: ["pipe", "pipe", "pipe"], windowsHide: true })
+    const child = spawn(process.execPath, [fileURLToPath(import.meta.url), "--backend", url, password, design ? "design" : "none"], { env: childEnv, stdio: ["pipe", "pipe", "pipe"], windowsHide: true })
     backends.add(child)
     const closed = new Promise(resolve => child.once("close", resolve))
     const lines = readline.createInterface({ input: child.stdout })[Symbol.asyncIterator]()
