@@ -23,8 +23,8 @@ local files, credentials or a generic RPC proxy. API 3 adds the explicit
 `repository.workItems.read` permission: bounded issue and pull request pages of
 the project's GitHub, GitLab or Gitea/Forgejo repository, read by the host, and
 opening one item's page in the browser. API 4 carries `session.context` plus any
-non-empty subset of a finite permission set for the Design image companion
-([API 4](#api-4)): read-back images of the displayed conversation, their prompts,
+non-empty subset of a finite permission set used by the independent **Design**
+image companion ([API 4](#api-4)): read-back images of the displayed conversation, their prompts,
 composer prefill, the Images conversation, the Design agent and panel preferences.
 
 ## Package layout
