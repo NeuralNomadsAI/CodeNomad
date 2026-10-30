@@ -59,7 +59,7 @@ export const settingsMessages = {
   "settings.images.unsupported": "已连接的 OpenCode 版本没有图像设置。",
   "settings.images.blocked": "在此保存会隐藏另一个 OpenCode 配置的实验性设置。请改为在该文件中修改这些选项。",
   "settings.images.generation.title": "图像生成",
-  "settings.images.generation.info": "允许智能体使用已连接提供商的图像模型创建和编辑图像。每张图像都是一次付费请求，智能体会先征求你的许可。适用于所有项目。",
+  "settings.images.generation.info": "允许智能体使用已连接提供商的图像模型创建和编辑图像。每张图像都是一次付费请求。适用于所有项目。",
   "settings.images.generation.off": "关闭",
   "settings.images.generation.auto": "开启，自动选择模型",
   "settings.images.generation.override": "此处以另一个 OpenCode 配置为准：{value}。",
