@@ -111,6 +111,7 @@ export const missionMessages = {
   "missions.depth.nesting.denied": "General 子代理在这里无法启动子代理。你的 OpenCode 配置设定了它们的子代理权限，因此 CodeNomad 不会更改。",
   "missions.depth.nesting.ask": "General 子代理在启动子代理前会请求确认。你的 OpenCode 配置设定了它们的子代理权限，因此 CodeNomad 不会更改。",
   "missions.depth.nesting.conflict": "CodeNomad 添加到此项目的规则可能会覆盖你的 OpenCode 配置为 General 子代理设定的子代理权限。继承或小于 2 的深度会将其移除。",
+  "missions.depth.nesting.unverified": "General 子代理在这里无法启动子代理，因此不会嵌套。在无法确认其权限时（存在可设定权限的 General 代理文件、旧配置格式或 OpenCode 尚未加载的更改），CodeNomad 不会添加规则；请改为在你的 OpenCode 配置中允许 General 启动子代理。",
   "missions.defaults.title": "新任务默认设置",
   "missions.defaults.hint": "仅用于新任务。场景专属选择会覆盖这些全局默认设置，现有任务保持不变。",
   "missions.defaults.reset": "重置默认值",

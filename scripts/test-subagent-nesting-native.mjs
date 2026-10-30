@@ -21,6 +21,9 @@ const root = await mkdtemp(path.join(await fixtureParent({ projectConfig: true }
 const project = path.join(root, "project"), config = path.join(root, "config"), globalFile = path.join(config, "opencode.jsonc")
 await mkdir(project); await mkdir(config)
 await writeFile(globalFile, '{"experimental":{"subagent_depth":3}}\n')
+// An inherited document the project discovers from the start.
+const ancestorFile = path.join(root, "opencode.jsonc")
+await writeFile(ancestorFile, "{}\n")
 let calls = 0, providerError
 const provider = createServer(async (request, response) => {
   try {
@@ -165,6 +168,47 @@ try {
   assert.equal(intercept, undefined, "the write queue ran the interception")
   assert.doesNotMatch(await readFile(file, "utf8"), /Added by CodeNomad/, "a concurrent Global denial")
   console.log("PASS other targets' rules, Global and project Markdown agents, uppercase actions and a concurrent Global denial keep General's permissions")
+
+  // A denial already on disk when the save's admission reads begin, before OpenCode loads it: the grant is
+  // declined while the depth is saved, and once the denial loads it stays effective.
+  await save(null)
+  await writeFile(globalFile, '{"experimental":{"subagent_depth":3}}\n')
+  await reloaded("Global denial removed", rules => isDeepStrictEqual(rules, baseline))
+  const generalDescription = async () => (await client.agent.list({ location })).data.find(agent => agent.id === "general")?.description
+  const denyGeneral = JSON.stringify({ agents: { general: { permissions: [{ action: "subagent", resource: "*", effect: "deny" }] } } })
+  const pending = [
+    ["a pending Global Markdown denial", async () => {
+      await mkdir(path.dirname(markdown(config)), { recursive: true })
+      await writeFile(markdown(config), "---\ndescription: Private general\n---\nInstructions only\n")
+      await until(async () => await generalDescription() === "Private general", "native reload: General instructions")
+    }, () => writeFile(markdown(config), `${deny}Instructions only\n`)],
+    ["a pending project Markdown denial", async () => {
+      await mkdir(path.dirname(markdown(path.join(project, ".opencode"))), { recursive: true })
+      await writeFile(markdown(path.join(project, ".opencode")), "---\ndescription: Project general\n---\nInstructions only\n")
+      await until(async () => await generalDescription() === "Project general", "native reload: project General instructions")
+    }, () => writeFile(markdown(path.join(project, ".opencode")), `${deny}Instructions only\n`)],
+    ["a pending inherited denial", async () => {}, () => writeFile(ancestorFile, denyGeneral)],
+  ]
+  for (const [label, prepare, change] of pending) {
+    await prepare()
+    // Inside the serialized write, before its first agent read; nothing waits for the reload.
+    intercept = change
+    await save(3)
+    assert.equal(intercept, undefined, `${label}: the write queue ran the interception`)
+    const written = await readFile(file, "utf8")
+    assert.doesNotMatch(written, /Added by CodeNomad/, label)
+    assert.equal(parse(written).experimental.subagent_depth, 3, `${label}: the depth itself is saved`)
+    await reloaded(`${label} loaded`, rules => rules.filter(rule => rule.action === "subagent" && rule.effect === "deny").length === 2)
+    await delay(500)
+    assert.doesNotMatch(await readFile(file, "utf8"), /Added by CodeNomad/, `${label}: after reload`)
+    assert.equal((await generalRules()).filter(rule => rule.action === "subagent").at(-1).effect, "deny", `${label}: the user's denial stays effective`)
+    assert.equal((await settings.read("fixture", location)).nesting.effect, "deny", `${label}: snapshot`)
+    await save(null)
+    await rm(markdown(config), { force: true }); await rm(markdown(path.join(project, ".opencode")), { force: true })
+    await writeFile(ancestorFile, "{}\n")
+    await reloaded(`${label} restored`, rules => isDeepStrictEqual(rules, baseline))
+  }
+  console.log("PASS pending Global and project Markdown and inherited denials decline the grant and stay effective once loaded")
 } finally {
   await stopFixtureChild(child, stopped)
   provider.closeAllConnections()

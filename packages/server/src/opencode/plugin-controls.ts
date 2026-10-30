@@ -112,6 +112,31 @@ export class PluginControls {
     return { location: context.location, entries: context.entries, documents }
   }
 
+  /** `readConfigDocuments` plus the current text of the service paths `select` derives from the native
+   * entries, read through the same mapping, file system and size bound: `text` is `undefined` for a missing
+   * file, and a file that cannot be mapped, read or decoded is `unreadable` without failing the read. */
+  async readConfigFiles(workspaceId: string, location: PluginControlLocation,
+    select: (entries: readonly ConfigEntry[], paths: path.PlatformPath) => string[]) {
+    const context = await this.readContext(workspaceId, location)
+    const distro = this.options.workspaceManager.getServiceWslDistro(workspaceId)
+    const [documents, files] = await Promise.all([
+      Promise.all(context.targets.map(async target => ({
+        scope: target.scope, path: target.path,
+        document: await readPluginControlDocument(target.ioPath, context.fileSystem),
+      }))),
+      Promise.all(select(context.entries, context.paths).map(async servicePath => {
+        try {
+          const ioPath = distro ? servicePath : await this.options.workspaceManager.getHostPathForServicePath(workspaceId, servicePath)
+          if (!ioPath) return { path: servicePath, unreadable: true }
+          const file = await context.fileSystem.load(ioPath)
+          return { path: servicePath, text: file.exists ? new TextDecoder("utf-8", { fatal: true }).decode(file.contents) : undefined }
+        } catch { return { path: servicePath, unreadable: true } }
+      })),
+    ])
+    assertCurrentConnection(context.connection)
+    return { location: context.location, entries: context.entries, documents, files }
+  }
+
   editConfigDocument(
     workspaceId: string,
     location: PluginControlLocation,

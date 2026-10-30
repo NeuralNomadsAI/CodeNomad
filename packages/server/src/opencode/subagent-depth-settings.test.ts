@@ -122,21 +122,25 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
  * does: the base policy and the built-in denial, every document's top-level rules, every document's General
  * rules, Markdown agent files (absent from the entries), then a built-in plugin's rules. */
 async function nestingFixture(run: (fixture: {
-  app: ReturnType<typeof Fastify>; project: string; projectFile: string; globalFile: string; style: string
+  app: ReturnType<typeof Fastify>; project: string; projectFile: string; globalFile: string; ancestorFile: string; style: string
   save: (value: number | null) => Promise<void>; saved: () => Promise<any>; nesting: () => Promise<unknown>
   native: { agents: boolean; markdown: unknown[]; frozen?: unknown[]; fresh: () => Promise<unknown[]>; intercept?: () => Promise<void> }
 }) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), "subagent-depth-nesting-"))
   const app = Fastify()
   try {
-    const global = path.join(root, "global"), project = path.join(root, "project")
-    await mkdir(global); await mkdir(project)
+    const global = path.join(root, "global"), ancestor = path.join(root, "ancestor"), project = path.join(ancestor, "project")
+    await mkdir(global); await mkdir(project, { recursive: true })
     const globalFile = path.join(global, "opencode.jsonc"), projectFile = path.join(project, "opencode.jsonc")
-    await writeFile(globalFile, "{}"); await writeFile(projectFile, '{\n  // kept\n  "shell": "keep"\n}\n')
+    const ancestorFile = path.join(ancestor, "opencode.jsonc")
+    await writeFile(globalFile, "{}"); await writeFile(ancestorFile, "{}")
+    await writeFile(projectFile, '{\n  // kept\n  "shell": "keep"\n}\n')
     const style = process.platform === "win32" ? "win32" : "posix"
-    const fresh = async () => [{ type: "directory", path: global },
-      { type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
-      { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) }]
+    // The project's own `.opencode` directory is discovered even without a document in it, as natively.
+    const fresh = async () => [{ type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
+      { type: "directory", path: global }, { type: "document", path: ancestorFile, info: parse(await readFile(ancestorFile, "utf8")) },
+      { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) },
+      { type: "directory", path: path.join(project, ".opencode") }]
     // `frozen` holds native state back, as before a reload.
     const native: any = { agents: true, markdown: [], fresh }
     const entries = async () => native.frozen ?? await fresh()
@@ -165,7 +169,7 @@ async function nestingFixture(run: (fixture: {
     const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} }, logger: {} as any })
     const settings = new SubagentDepthSettings(controls, manager), location = { directory: project }
     registerSubagentDepthSettingsRoutes(app, settings)
-    await run({ app, project, projectFile, globalFile, style, native,
+    await run({ app, project, projectFile, globalFile, ancestorFile, style, native,
       save: async value => settings.update("w", location, value, (await settings.read("w", location)).project!.expectation),
       saved: async () => parse(await readFile(projectFile, "utf8")),
       nesting: async () => (await settings.read("w", location)).nesting })
@@ -263,6 +267,42 @@ test("permission state is reread inside the serialized write", () => nestingFixt
   await save(3)
   assert.equal(native.intercept, undefined, "the write queue ran the interception")
   assert.equal((await saved()).agents, undefined, "a concurrent Global denial")
+}))
+
+test("a General agent file that can set permissions declines the grant, even before OpenCode loads it", () => nestingFixture(async ({
+  globalFile, projectFile, save, saved, nesting,
+}) => {
+  // The denial is on disk while both agent reads still resolve only the built-in rules.
+  const globalAgents = path.join(path.dirname(globalFile), "agents")
+  await mkdir(globalAgents)
+  await writeFile(path.join(globalAgents, "general.md"), '---\npermissions:\n  - action: subagent\n    resource: "*"\n    effect: deny\n---\nPrompt\n')
+  await save(3)
+  assert.equal((await saved()).agents, undefined, "a pending Global Markdown denial")
+  assert.equal((await saved()).experimental.subagent_depth, 3, "the depth itself is saved")
+  assert.deepEqual(await nesting(), { effect: "deny", configured: false, unverified: true })
+  await save(null)
+  // A file with instructions only sets no permission, so the grant proceeds.
+  await writeFile(path.join(globalAgents, "general.md"), "---\ndescription: Custom general\n---\nPrompt\n")
+  await save(3)
+  assert.deepEqual((await saved()).agents, { general: { permissions: [rule("subagent", "*", "allow")] } })
+  await save(null)
+  // The project's `.opencode` directory, in the singular folder OpenCode also reads.
+  const projectAgents = path.join(path.dirname(projectFile), ".opencode", "agent")
+  await mkdir(projectAgents, { recursive: true })
+  await writeFile(path.join(projectAgents, "general.md"), "---\npermission:\n  task: deny\n---\n")
+  await save(3)
+  assert.equal((await saved()).agents, undefined, "a pending project Markdown denial")
+}))
+
+test("an inherited document whose denial is on disk but not loaded yet declines the grant", () => nestingFixture(async ({
+  ancestorFile, native, save, saved, nesting,
+}) => {
+  native.frozen = await native.fresh()
+  await writeFile(ancestorFile, generalRules(rule("subagent", "*", "deny")))
+  await save(3)
+  assert.equal((await saved()).agents, undefined, "a pending inherited denial")
+  assert.equal((await saved()).experimental.subagent_depth, 3, "the depth itself is saved")
+  assert.deepEqual(await nesting(), { effect: "deny", configured: false, unverified: true })
 }))
 
 test("owned documents whose rules OpenCode has not loaded yet admit nothing", () => nestingFixture(async ({ globalFile, native, save, saved }) => {

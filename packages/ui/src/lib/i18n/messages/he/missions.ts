@@ -111,6 +111,7 @@ export const missionMessages = {
   "missions.depth.nesting.denied": "תתי-הסוכנים General אינם יכולים להפעיל כאן תתי-סוכנים. הגדרות OpenCode שלכם קובעות את הרשאות תתי-הסוכנים שלהם, ולכן CodeNomad אינו משנה אותן.",
   "missions.depth.nesting.ask": "תתי-הסוכנים General מבקשים אישור לפני הפעלת תתי-סוכנים. הגדרות OpenCode שלכם קובעות את הרשאות תתי-הסוכנים שלהם, ולכן CodeNomad אינו משנה אותן.",
   "missions.depth.nesting.conflict": "הכלל ש-CodeNomad הוסיף לפרויקט זה עשוי לעקוף הרשאות תתי-סוכנים שהגדרות OpenCode שלכם קובעות עבור תתי-הסוכנים General. ירושה או עומק קטן מ-2 מסירים אותו.",
+  "missions.depth.nesting.unverified": "תתי-הסוכנים General אינם יכולים להפעיל כאן תתי-סוכנים, ולכן אינם מקוננים. CodeNomad אינו מוסיף כלל כל עוד אינו יכול לאשר את ההרשאות שלהם (קובץ סוכן General שיכול לקבוע אותן, תבנית הגדרות ישנה או שינוי ש-OpenCode עדיין לא טען); אפשרו במקום זאת תתי-סוכנים עבור General בהגדרות OpenCode שלכם.",
   "missions.defaults.title": "ברירות מחדל למשימות חדשות",
   "missions.defaults.hint": "למשימות חדשות בלבד. בחירות לפי תרחיש מחליפות את ברירות המחדל הכלליות האלה; משימות קיימות נשארות ללא שינוי.",
   "missions.defaults.reset": "איפוס ברירות המחדל",

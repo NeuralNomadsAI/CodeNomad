@@ -20,6 +20,8 @@ const MARKER = "Added by CodeNomad with the subagent depth; Inherit removes it."
 export const NESTING_DEPTH = 2
 
 export type Rule = { action?: unknown; resource?: unknown; effect?: unknown }
+/** A policy file's current text: `undefined` when missing. */
+export type NestingSource = { path: string; text?: string; unreadable?: boolean }
 type Entry = { type?: string; path?: string; info?: Record<string, any> }
 
 // OpenCode's whole-value wildcard (core `util/wildcard.ts`): backslashes read as slashes, `*` any
@@ -66,17 +68,45 @@ function documentRules(info: Record<string, any> | undefined, project: boolean) 
   return { all: subagentRules(list(info?.permissions)), general: project ? general.filter(rule => !isDeepStrictEqual(rule, RULE)) : general }
 }
 
-/** Whether OpenCode has loaded the `subagent` rules of each fresh owned document (`entries` are the native
- * configuration documents): native entries lag behind writes, so a mismatch makes every reading uncertain. */
-export function nestingRulesLoaded(documents: readonly { scope: string; path: string; document: PluginControlDocument }[],
-  entries: readonly unknown[], samePath: (left: string, right: string) => boolean): boolean {
-  return documents.every(({ scope, path, document }) => {
+/** The files whose current content admission compares with what OpenCode loaded, all derived from the
+ * native entries (`paths` is the execution host's path module): every listed configuration document, and
+ * in every listed configuration directory (Global and each discovered `.opencode`) its configuration
+ * documents and the General agent files OpenCode reads there. */
+export function nestingSources(entries: readonly unknown[], paths: Pick<typeof import("node:path"), "join">) {
+  const listed = (type: string) => (entries as Entry[]).flatMap(entry => entry?.type === type && typeof entry.path === "string" ? [entry.path] : [])
+  const directories = listed("directory")
+  return {
+    documents: [...listed("document"), ...directories.flatMap(directory => ["opencode.json", "opencode.jsonc"].map(name => paths.join(directory, name)))],
+    agents: directories.flatMap(directory => [paths.join(directory, "agents", "general.md"), paths.join(directory, "agent", "general.md")]),
+  }
+}
+
+/** Whether a General agent file's frontmatter can carry permissions. Nothing in the native contract attributes
+ * loaded rules to the file, so its rules cannot be reconciled with its content: any mention counts. */
+function agentFileMayDecide(text: string): boolean {
+  const lines = text.split(/\r?\n/)
+  if (lines[0]?.trim() !== "---") return false
+  const end = lines.findIndex((line, index) => index > 0 && line.trim() === "---")
+  return end < 0 || /permission|tools/i.test(lines.slice(1, end).join("\n"))
+}
+
+/** Whether every policy source OpenCode reported is settled: each document's `subagent` rules on disk equal
+ * its loaded entry (a file that is unlisted, missing or listed only on one side counts as empty there), and
+ * no General agent file can set permissions. Native reloads lag behind writes, so anything else, unreadable
+ * or uncomparable content included, makes the resolved rules uncertain. `project` is the owned project
+ * document, whose CodeNomad rule may be in flight. */
+export function nestingSourcesLoaded(documents: readonly NestingSource[], agents: readonly NestingSource[],
+  entries: readonly unknown[], project: string | undefined, samePath: (left: string, right: string) => boolean): boolean {
+  if ([...documents, ...agents].some(source => source.unreadable)) return false
+  const settled = documents.every(({ path, text }) => {
     const errors: ParseError[] = []
-    const fresh = document.exists ? parse(document.text, errors, { allowTrailingComma: true }) : {}
+    const fresh = text === undefined ? {} : parse(text, errors, { allowTrailingComma: true })
     const entry = (entries as Entry[]).find(entry => entry?.type === "document" && entry.path !== undefined && samePath(entry.path, path))
-    const [owned, loaded] = [documentRules(fresh, scope === "project"), documentRules(entry?.info, scope === "project")]
-    return errors.length === 0 && owned !== undefined && loaded !== undefined && isDeepStrictEqual(owned, loaded)
+    const own = project !== undefined && samePath(path, project)
+    const [disk, loaded] = [documentRules(fresh, own), documentRules(entry?.info, own)]
+    return errors.length === 0 && disk !== undefined && loaded !== undefined && isDeepStrictEqual(disk, loaded)
   })
+  return settled && agents.every(({ text }) => text === undefined || !agentFileMayDecide(text))
 }
 
 /** The index of the rule CodeNomad added among the document's General rules, or -1. */

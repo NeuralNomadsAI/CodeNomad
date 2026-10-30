@@ -111,6 +111,7 @@ export const missionMessages = {
   "missions.depth.nesting.denied": "General alt ajanları burada alt ajan başlatamaz. OpenCode yapılandırmanız alt ajan izinlerini belirliyor, bu yüzden CodeNomad onları değiştirmez.",
   "missions.depth.nesting.ask": "General alt ajanları alt ajan başlatmadan önce onay ister. OpenCode yapılandırmanız alt ajan izinlerini belirliyor, bu yüzden CodeNomad onları değiştirmez.",
   "missions.depth.nesting.conflict": "CodeNomad'ın bu projeye eklediği kural, OpenCode yapılandırmanızın General alt ajanları için belirlediği alt ajan izinlerini geçersiz kılabilir. Devral veya 2'den küçük bir derinlik onu kaldırır.",
+  "missions.depth.nesting.unverified": "General alt ajanları burada alt ajan başlatamaz, bu yüzden iç içe geçmezler. CodeNomad, izinlerini doğrulayamadığı sürece (bunları belirleyebilen bir General ajan dosyası, eski bir yapılandırma biçimi veya OpenCode'un henüz yüklemediği bir değişiklik) kural eklemez; bunun yerine OpenCode yapılandırmanızda General için alt ajanlara izin verin.",
   "missions.defaults.title": "Yeni görev varsayılanları",
   "missions.defaults.hint": "Yalnızca yeni görevler için. Senaryoya özel seçimler bu genel varsayılanları geçersiz kılar; mevcut görevler değişmez.",
   "missions.defaults.reset": "Varsayılanları sıfırla",

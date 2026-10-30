@@ -1,9 +1,10 @@
 import assert from "node:assert/strict"
+import path from "node:path"
 import test from "node:test"
 import { parse as parseJsonc, type ParseError } from "jsonc-parser"
 import type { PluginControlDocument } from "./plugin-control-document"
 import {
-  addedNestingRule, builtInNesting, nestingEffect, nestingRulesLoaded, wildcardMatch, withNestingRule, withoutNestingRule,
+  addedNestingRule, builtInNesting, nestingEffect, nestingSources, nestingSourcesLoaded, wildcardMatch, withNestingRule, withoutNestingRule,
 } from "./subagent-nesting"
 import { samePath } from "./experimental-layers"
 
@@ -67,26 +68,48 @@ test("only OpenCode's built-in denial, alone, is CodeNomad's to neutralize", () 
   assert.equal(builtInNesting(base.slice(0, -1), false), false, "without the built-in denial there is nothing to neutralize")
 })
 
-test("rules count as loaded only when native entries match the fresh owned documents", () => {
-  const owned = (scope: string, path: string, text?: string) =>
-    ({ scope, path, document: { text: text ?? "", exists: text !== undefined, byteOrderMark: false } as PluginControlDocument })
+test("policy sources are what the native entries report: listed documents, and documents and General agent files in listed directories", () => {
+  const entries = [{ type: "document", path: "/g/opencode.jsonc", info: {} }, { type: "directory", path: "/g" },
+    { type: "document", path: "/a/opencode.jsonc", info: {} }, { type: "directory", path: "/a/.opencode" }, { type: "document", info: {} }]
+  assert.deepEqual(nestingSources(entries, path.posix), {
+    documents: ["/g/opencode.jsonc", "/a/opencode.jsonc", "/g/opencode.json", "/g/opencode.jsonc", "/a/.opencode/opencode.json", "/a/.opencode/opencode.jsonc"],
+    agents: ["/g/agents/general.md", "/g/agent/general.md", "/a/.opencode/agents/general.md", "/a/.opencode/agent/general.md"],
+  })
+})
+
+test("sources are settled only when each document's loaded rules match its disk content and no General agent file can decide", () => {
   const entry = (path: string, info: unknown) => ({ type: "document", path, info })
   const deny = rule("subagent", "*", "deny")
-  const global = '{ "agents": { "general": { "permissions": [{ "action": "subagent", "resource": "*", "effect": "deny" }] } } }'
-  const loaded = (documents: ReturnType<typeof owned>[], entries: unknown[]) => nestingRulesLoaded(documents, entries, samePath)
-  assert.equal(loaded([owned("global", "/g/opencode.jsonc"), owned("project", "/p/opencode.jsonc", "{}")], []), true)
-  assert.equal(loaded([owned("global", "/g/opencode.jsonc", global)], [entry("/g/opencode.jsonc", { agents: { general: { permissions: [deny] } } })]), true)
-  assert.equal(loaded([owned("global", "/g/opencode.jsonc", global)], [entry("/g/opencode.jsonc", {})]), false, "a denial not loaded yet")
-  assert.equal(loaded([owned("global", "/g/opencode.jsonc", "{}")], [entry("/g/opencode.jsonc", { permissions: [deny] })]), false, "a removed denial still loaded")
-  assert.equal(loaded([owned("global", "C:\\G\\opencode.jsonc", '{ "permissions": [] }')], [entry("c:\\g\\OPENCODE.jsonc", { permissions: [] })]), true)
-  // CodeNomad's own rule may be in flight in the project document only.
+  const denied = '{ "agents": { "general": { "permissions": [{ "action": "subagent", "resource": "*", "effect": "deny" }] } } }'
+  const settled = (documents: { path: string; text?: string; unreadable?: boolean }[], entries: unknown[], agents: { path: string; text?: string; unreadable?: boolean }[] = [],
+    project?: string) => nestingSourcesLoaded(documents, agents, entries, project, samePath)
+  assert.equal(settled([{ path: "/g/opencode.jsonc" }, { path: "/p/opencode.jsonc", text: "{}" }], []), true)
+  assert.equal(settled([{ path: "/g/opencode.jsonc", text: denied }], [entry("/g/opencode.jsonc", { agents: { general: { permissions: [deny] } } })]), true)
+  assert.equal(settled([{ path: "/g/opencode.jsonc", text: denied }], [entry("/g/opencode.jsonc", {})]), false, "a denial not loaded yet")
+  assert.equal(settled([{ path: "/a/opencode.jsonc", text: denied }], [entry("/a/opencode.jsonc", {})]), false, "an inherited denial not loaded yet")
+  assert.equal(settled([{ path: "/a/.opencode/opencode.jsonc", text: denied }], []), false, "an undiscovered document in a listed directory")
+  assert.equal(settled([{ path: "/g/opencode.jsonc", text: "{}" }], [entry("/g/opencode.jsonc", { permissions: [deny] })]), false, "a removed denial still loaded")
+  assert.equal(settled([{ path: "/g/opencode.jsonc" }], [entry("/g/opencode.jsonc", { permissions: [deny] })]), false, "a deleted document still loaded")
+  assert.equal(settled([{ path: "C:\\G\\opencode.jsonc", text: '{ "permissions": [] }' }], [entry("c:\\g\\OPENCODE.jsonc", { permissions: [] })]), true)
+  assert.equal(settled([{ path: "/g/opencode.jsonc", unreadable: true }], []), false)
+  // CodeNomad's own rule may be in flight in the owned project document only.
   const project = withNestingRule(document("{}"))
-  assert.equal(loaded([owned("project", "/p/opencode.jsonc", project)], [entry("/p/opencode.jsonc", {})]), true)
-  assert.equal(loaded([owned("global", "/g/opencode.jsonc", project)], [entry("/g/opencode.jsonc", {})]), false)
+  assert.equal(settled([{ path: "/p/opencode.jsonc", text: project }], [entry("/p/opencode.jsonc", {})], [], "/p/opencode.jsonc"), true)
+  assert.equal(settled([{ path: "/g/opencode.jsonc", text: project }], [entry("/g/opencode.jsonc", {})], [], "/p/opencode.jsonc"), false)
   // Formats whose rules cannot be compared with normalized entries are uncertain.
   for (const text of ['{ "permission": { "task": "allow" } }', '{ "tools": { "task": false } }', '{ "agent": { "general": {} } }',
     '{ "agents": { "general": { "tools": { "task": false } } } }', '{ "permissions": [', '{ "agents": { "general": { "permission": {} } } }'])
-    assert.equal(loaded([owned("global", "/g/opencode.jsonc", text)], [entry("/g/opencode.jsonc", {})]), false, text)
+    assert.equal(settled([{ path: "/g/opencode.jsonc", text }], [entry("/g/opencode.jsonc", {})]), false, text)
+
+  // A General agent file settles only when its frontmatter cannot set permissions: its loaded rules cannot be attributed.
+  const agent = (text?: string) => settled([], [], [{ path: "/g/agents/general.md", text }])
+  assert.equal(agent(undefined), true)
+  assert.equal(agent("Prompt only, no frontmatter. Mentions permissions in the body."), true)
+  assert.equal(agent("---\ndescription: Custom general\n---\nPrompt\n"), true)
+  for (const text of ["---\npermissions:\n  - action: subagent\n    resource: \"*\"\n    effect: deny\n---\n", "---\r\npermissions: []\r\n---\r\n",
+    "---\ntools:\n  task: false\n---\n", "---\npermission:\n  task: deny\n---\n", "---\n{ \"Permissions\": [] }\n---\n", "---\ndescription: unterminated\n"])
+    assert.equal(agent(text), false, text)
+  assert.equal(settled([], [], [{ path: "/g/agent/general.md", unreadable: true }]), false)
 })
 
 test("the added rule carries its marker, keeps the document and is the only one Inherit removes", () => {

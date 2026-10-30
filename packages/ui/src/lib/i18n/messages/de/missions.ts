@@ -111,6 +111,7 @@ export const missionMessages = {
   "missions.depth.nesting.denied": "General-Unteragenten können hier keine Unteragenten starten. Ihre OpenCode-Konfiguration legt ihre Unteragent-Berechtigungen fest, daher lässt CodeNomad sie unverändert.",
   "missions.depth.nesting.ask": "General-Unteragenten fragen nach, bevor sie Unteragenten starten. Ihre OpenCode-Konfiguration legt ihre Unteragent-Berechtigungen fest, daher lässt CodeNomad sie unverändert.",
   "missions.depth.nesting.conflict": "Die von CodeNomad in diesem Projekt hinzugefügte Regel kann Unteragent-Berechtigungen überschreiben, die Ihre OpenCode-Konfiguration für General-Unteragenten festlegt. Erben oder eine Tiefe unter 2 entfernt sie.",
+  "missions.depth.nesting.unverified": "General-Unteragenten können hier keine Unteragenten starten und verschachteln sich daher nicht. CodeNomad fügt keine Regel hinzu, solange es ihre Berechtigungen nicht bestätigen kann (eine General-Agent-Datei, die sie festlegen kann, ein älteres Konfigurationsformat oder eine Änderung, die OpenCode noch nicht geladen hat); erlauben Sie Unteragenten für General stattdessen in Ihrer OpenCode-Konfiguration.",
   "missions.defaults.title": "Vorgaben für neue Missionen",
   "missions.defaults.hint": "Nur für neue Missionen. Szenariospezifische Auswahl überschreibt diese globalen Standardwerte; bestehende Missionen bleiben unverändert.",
   "missions.defaults.reset": "Standardwerte zurücksetzen",

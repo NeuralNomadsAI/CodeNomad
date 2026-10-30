@@ -111,6 +111,7 @@ export const missionMessages = {
   "missions.depth.nesting.denied": "ここでは General サブエージェントはサブエージェントを起動できません。OpenCode の設定がそのサブエージェント権限を指定しているため、CodeNomad は変更しません。",
   "missions.depth.nesting.ask": "General サブエージェントはサブエージェントを起動する前に確認を求めます。OpenCode の設定がそのサブエージェント権限を指定しているため、CodeNomad は変更しません。",
   "missions.depth.nesting.conflict": "CodeNomad がこのプロジェクトに追加したルールが、OpenCode の設定で General サブエージェントに指定したサブエージェント権限を上書きする可能性があります。継承または 2 未満の深さで削除されます。",
+  "missions.depth.nesting.unverified": "ここでは General サブエージェントがサブエージェントを起動できないため、入れ子になりません。権限を確認できない間（権限を設定できる General のエージェントファイル、古い設定形式、または OpenCode がまだ読み込んでいない変更がある場合）、CodeNomad はルールを追加しません。代わりに OpenCode の設定で General のサブエージェントを許可してください。",
   "missions.defaults.title": "新規ミッションの既定値",
   "missions.defaults.hint": "新しいミッションにのみ適用されます。シナリオ別の選択はこれらのグローバル既定値を上書きします。既存のミッションは変更されません。",
   "missions.defaults.reset": "既定値をリセット",

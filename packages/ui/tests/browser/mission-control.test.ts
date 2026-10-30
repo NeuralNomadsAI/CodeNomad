@@ -423,6 +423,8 @@ test("the depth editor says whether General subagents can nest at the effective 
     "5": { effectiveDepth: 5, depth: 5, nesting: { effect: "ask", configured: true } },
     // The added rule beside rules the user set afterwards.
     "6": { effectiveDepth: 6, depth: 6, nesting: { effect: "allow", configured: true, added: true } },
+    // A policy source that is not settled: the save kept the depth and added no rule.
+    "7": { effectiveDepth: 7, depth: 7, nesting: { effect: "deny", configured: false, unverified: true } },
   }
   let state = states.initial
   try {
@@ -457,6 +459,8 @@ test("the depth editor says whether General subagents can nest at the effective 
     assert.equal(await note.innerText(), "General subagents ask before launching subagents. Your OpenCode configuration sets their subagent permissions, so CodeNomad leaves them unchanged.")
     await save("6", 6)
     assert.equal(await note.innerText(), "The rule CodeNomad added to this project may override subagent permissions your OpenCode configuration sets for General subagents. Inherit or a depth below 2 removes it.")
+    await save("7", 7)
+    assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest. CodeNomad adds no rule while it cannot confirm their permissions (a General agent file that can set them, an older configuration format or a change OpenCode has not loaded yet); allow subagents for General in your OpenCode configuration instead.")
   } finally { await page.close() }
 })
 
