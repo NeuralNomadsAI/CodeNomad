@@ -52,7 +52,7 @@
 
 Для одного способа входа ChatGPT OpenAI не предоставляет данные об использовании: панель «Использование» сообщает об этом вместо окон квоты. Общение в чате продолжает работать, а повторное подключение того же входа не возвращает показания.
 
-Использование следует выбранным нативным учётным данным. Claude через `anthropic`/`claude` использует Anthropic OAuth OpenCode. Провайдер `claude-code` использует вход Claude Code на хосте демона, включая его дистрибутив WSL: `CLAUDE_CODE_OAUTH_TOKEN`, затем сохранённый вход; `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` или `~/.claude` определяют файловое хранилище; локальная macOS может использовать Keychain. CodeNomad не подменяет один вход Claude другим.
+Использование следует выбранным нативным учётным данным. Claude через `anthropic`/`claude` использует Anthropic OAuth OpenCode. Провайдер OpenCode **Claude Agent** (`claude-agent`) и провайдер `claude-code` используют вход Claude Code на хосте демона, включая его дистрибутив WSL: `CLAUDE_CODE_OAUTH_TOKEN`, затем сохранённый вход; `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` или `~/.claude` определяют файловое хранилище; локальная macOS может использовать Keychain. CodeNomad не подменяет один вход Claude другим.
 
 При истёкшем входе провайдера обновите/войдите через владельца — OpenCode, Claude Code или Codex CLI — затем обновите CodeNomad. CodeNomad не обменивает чужие токены обновления. Истечение входа на сервер CodeNomad — отдельный случай: переподключитесь/войдите в CodeNomad, не предполагая повторной отправки неудачного запроса провайдера. См. [устранение неполадок](troubleshooting.md).
 

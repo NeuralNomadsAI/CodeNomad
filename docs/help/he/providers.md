@@ -52,7 +52,7 @@
 
 OpenAI אינה מספקת נתוני שימוש עבור אחת משיטות ההתחברות של ChatGPT: לוח השימוש מציין זאת במקום להציג חלונות מכסה. השיחה עדיין עובדת, וחיבור מחדש של אותה התחברות אינו משחזר את הקריאה.
 
-שימוש עוקב אחר האישור המקורי שנבחר. Claude דרך `anthropic`/`claude` משתמש ב־OAuth של Anthropic ב־OpenCode. הספק `claude-code` משתמש בהתחברות Claude Code במארח הדמון, לרבות הפצת WSL שלו: `CLAUDE_CODE_OAUTH_TOKEN`, ואז ההתחברות השמורה, כאשר `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` או `~/.claude` קובעים אחסון קבצים; macOS מקומי יכול להשתמש ב־Keychain. CodeNomad אינו מחליף התחברות Claude אחת באחרת.
+שימוש עוקב אחר האישור המקורי שנבחר. Claude דרך `anthropic`/`claude` משתמש ב־OAuth של Anthropic ב־OpenCode. הספק **Claude Agent** של OpenCode (`claude-agent`) והספק `claude-code` משתמשים בהתחברות Claude Code במארח הדמון, לרבות הפצת WSL שלו: `CLAUDE_CODE_OAUTH_TOKEN`, ואז ההתחברות השמורה, כאשר `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` או `~/.claude` קובעים אחסון קבצים; macOS מקומי יכול להשתמש ב־Keychain. CodeNomad אינו מחליף התחברות Claude אחת באחרת.
 
 להתחברות ספק שפגה, רעננו/התחברו דרך בעליה — OpenCode, Claude Code או Codex CLI — ואז רעננו את CodeNomad. CodeNomad אינו מחליף אסימוני רענון בבעלות חיצונית. תפוגת התחברות לשרת CodeNomad נפרדת: התחברו מחדש ל־CodeNomad בלי להניח שבקשת ספק שנכשלה תישלח שוב. ראו [פתרון בעיות](troubleshooting.md).
 

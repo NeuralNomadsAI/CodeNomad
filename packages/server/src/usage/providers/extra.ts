@@ -364,8 +364,9 @@ function createClaudeProvider(input: Pick<UsageProvider, "id" | "aliases"> & {
 }
 
 // A session's quota must come from the login that session uses: OpenCode's
-// Anthropic OAuth for `anthropic`, and for opencode-claude's `claude-code` the
-// Claude Code login the route resolves on the daemon host.
+// Anthropic OAuth for `anthropic`, and for the providers that run Claude Code
+// inside the daemon (opencode-claude's `claude-code`, OpenCode's Claude Agent
+// `claude-agent`) the Claude Code login the route resolves on the daemon host.
 // Fresh instances carry no rate-limit fallback snapshot from another account,
 // so account selection never mistakes a cached read for current evidence.
 export const createAnthropicClaudeUsage = () => createClaudeProvider({
@@ -376,9 +377,10 @@ export const createAnthropicClaudeUsage = () => createClaudeProvider({
 })
 const claude = createAnthropicClaudeUsage()
 
+// One login, one quota: both providers share this reader's snapshot and rate-limit backoff.
 const claudeCode = createClaudeProvider({
   id: "claude-code",
-  aliases: ["claude-code"],
+  aliases: ["claude-code", "claude-agent"],
   credential: auth => authClaudeCredential(auth, ["claude-code"]),
   reauthError: "Claude Code session expired. Use Claude Code to sign in again.",
 })

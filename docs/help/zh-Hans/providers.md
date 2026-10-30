@@ -52,7 +52,7 @@
 
 OpenAI 不为某一种 ChatGPT 登录方式提供用量：此时用量面板会说明这一点，而不显示配额窗口。聊天仍可正常使用，重新连接同一登录也不会恢复该读数。
 
-用量跟随所选原生凭据。通过 `anthropic`/`claude` 使用 Claude 时，采用 OpenCode 的 Anthropic OAuth。`claude-code` 提供商使用守护进程主机上的 Claude Code 登录，包括其 WSL 发行版：先用 `CLAUDE_CODE_OAUTH_TOKEN`，再用已存储登录，文件存储由 `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` 或 `~/.claude` 决定；本地 macOS 可使用钥匙串。CodeNomad 不会用一种 Claude 登录替代另一种。
+用量跟随所选原生凭据。通过 `anthropic`/`claude` 使用 Claude 时，采用 OpenCode 的 Anthropic OAuth。OpenCode 的 **Claude Agent** 提供商（`claude-agent`）和 `claude-code` 提供商使用守护进程主机上的 Claude Code 登录，包括其 WSL 发行版：先用 `CLAUDE_CODE_OAUTH_TOKEN`，再用已存储登录，文件存储由 `CLAUDE_SECURESTORAGE_CONFIG_DIR` / `CLAUDE_CONFIG_DIR` 或 `~/.claude` 决定；本地 macOS 可使用钥匙串。CodeNomad 不会用一种 Claude 登录替代另一种。
 
 提供商登录过期时，通过其所属方——OpenCode、Claude Code 或 Codex CLI——刷新/登录，再刷新 CodeNomad。CodeNomad 不交换外部所有的刷新令牌。CodeNomad 服务器登录过期是另一回事：重新连接/登录 CodeNomad，不要假定失败的提供商请求会重发。参阅[故障排查](troubleshooting.md)。
 
