@@ -36,7 +36,7 @@ Paths are under `packages/ui/src/` or `packages/server/src/` unless stated.
 - **Projects and tabs** (closing tabs, temporary workspaces, new-instance launcher, Git-unavailable mode): `dev-docs/PROJECTS.md`.
 - **Files panel and Git** (Workspace/Changes/Commits, file watches, Git init, whitespace filter): `dev-docs/FILES_PANEL.md`.
 - **Worktrees and event ownership** (`workspaces/native-worktrees.ts`, `workspaces/worktree-inventory.ts`): `dev-docs/WORKTREE_SESSION_PLACEMENT.md`.
-- **OpenCode runtime, setup, upgrades and OpenCode settings**: `dev-docs/OPENCODE_RUNTIME_SETUP.md`; bundled plugin builds, provisioning, presence readiness and the event relay: `dev-docs/OPENCODE_COMPATIBILITY.md`; connection budget: `dev-docs/CACHE_REFRESH_CONVENTIONS.md`; session environment: `dev-docs/SESSION_ENVIRONMENT.md`; pruning: `dev-docs/SESSION_PRUNING_RPC.md`.
+- **OpenCode runtime, setup, upgrades and OpenCode settings**: `dev-docs/OPENCODE_RUNTIME_SETUP.md`; bundled plugin builds, provisioning, presence readiness, the event relay and the Design agent and skills (`opencode/design/`): `dev-docs/OPENCODE_COMPATIBILITY.md`; connection budget: `dev-docs/CACHE_REFRESH_CONVENTIONS.md`; session environment: `dev-docs/SESSION_ENVIRONMENT.md`; pruning: `dev-docs/SESSION_PRUNING_RPC.md`.
 - **Remote Control and Remote Access settings**: `dev-docs/REMOTE_CONTROL.md`; **SideCars**: `dev-docs/architecture.md`.
 - **Browser previews and automation**: `dev-docs/BROWSER_AUTOMATION.md`, `dev-docs/BROWSER_DEVICE_EMULATION.md`.
 - **Desktop hosts**: data profiles `dev-docs/DESKTOP_DATA_PROFILES.md`; updates and update feed `dev-docs/TAURI_UPDATER.md`; Tao/Tauri backports `packages/tauri-app/vendor/README.md`; bundled Node/npm `dev-docs/RUNTIME_MAINTENANCE.md`.

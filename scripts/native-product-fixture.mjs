@@ -11,9 +11,15 @@ import { stopFixtureChild } from "./native-fixture-guards.mjs"
 
 // Shared by product-contract fixtures. Explicit owned process, random password,
 // private discovery/database/home, and a loopback synthetic provider only.
-export async function withProductRuntime(cli, prepare, run) {
+// `projectConfig` lets the daemon read a fixture project's own `.opencode/` folder. Project discovery
+// walks every ancestor directory, so outside CI the fixture must live outside the user's home
+// (`CODENOMAD_NATIVE_FIXTURE_PARENT`), or it would read the user's own agents and skills.
+export async function withProductRuntime(cli, prepare, run, { projectConfig = false } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
-  const parent = path.join(os.tmpdir(), "opencode")
+  const parent = path.join(projectConfig && process.env.CODENOMAD_NATIVE_FIXTURE_PARENT || os.tmpdir(), "opencode")
+  const relative = path.relative(os.homedir(), parent)
+  assert(!projectConfig || process.env.CI || relative.startsWith("..") || path.isAbsolute(relative),
+    "Project-config fixtures read every ancestor directory: set CODENOMAD_NATIVE_FIXTURE_PARENT outside your home")
   await mkdir(parent, { recursive: true })
   const root = await mkdtemp(path.join(parent, "product-native-"))
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^(OPENCODE_|XDG_|npm_config_)/i.test(key)))
@@ -26,7 +32,7 @@ export async function withProductRuntime(cli, prepare, run) {
   const password = randomUUID()
   Object.assign(env, { HOME: root, USERPROFILE: root, OPENCODE_TEST_HOME: root,
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
-    OPENCODE_CONFIG_PROJECT_DISABLE: "1", OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
+    ...(projectConfig ? {} : { OPENCODE_CONFIG_PROJECT_DISABLE: "1" }), OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_SERVER_PASSWORD: password })
   Object.assign(env, { npm_config_userconfig: path.join(root, ".npmrc"), npm_config_globalconfig: path.join(root, "global.npmrc"), npm_config_cache: path.join(root, "npm-cache") })
   await mkdir(env.OPENCODE_CONFIG_DIR)
