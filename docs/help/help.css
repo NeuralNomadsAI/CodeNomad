@@ -99,7 +99,8 @@ kbd { border: 1px solid var(--border); padding: .1em .3em; }
 table { border-collapse: collapse; width: 100%; font-size: .95rem; margin: 1.5rem 0; }
 .table-scroll { overflow-x: auto; max-inline-size: 100%; }
 .table-scroll table { min-inline-size: 36rem; }
-th, td { border-bottom: 1px solid var(--border); padding: .65rem .5rem; text-align: start; overflow-wrap: anywhere; }
+/* break-word, not anywhere: a column never narrows below its longest word. */
+th, td { border-bottom: 1px solid var(--border); padding: .65rem .5rem; text-align: start; overflow-wrap: break-word; }
 th { font-weight: 600; }
 blockquote { border-inline-start: 3px solid var(--accent); margin: 1.5rem 0; padding-inline-start: 1rem; color: var(--muted); }
 .release-line, .download-size, .download-primary p { color: var(--muted); }

@@ -165,6 +165,24 @@ test("all English articles fit mobile and desktop widths", async (ctx) => {
         await page.goto(`${base}en/${slug}.html`)
         assert.equal(await page.locator("article h1").count(), 1, slug)
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), `${slug} overflows at ${width}px`)
+        // Table columns keep whole words: a word outside code never spans two lines.
+        const splitWords = await page.evaluate(() => {
+          const split = []
+          for (const cell of document.querySelectorAll("article th, article td")) {
+            const walker = document.createTreeWalker(cell, NodeFilter.SHOW_TEXT)
+            for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+              if (node.parentElement.closest("code")) continue
+              for (const match of node.data.matchAll(/[\p{L}\p{N}]+/gu)) {
+                const range = document.createRange()
+                range.setStart(node, match.index)
+                range.setEnd(node, match.index + match[0].length)
+                if (new Set([...range.getClientRects()].map(rect => Math.round(rect.top))).size > 1) split.push(match[0])
+              }
+            }
+          }
+          return split
+        })
+        assert.deepEqual(splitWords, [], `${slug} splits table words at ${width}px`)
         if (slug === "server" && width === 390 || slug === "missions" && width === 1440) {
           const path = join(screenshots, `${slug}-${width}.png`)
           await page.screenshot({ path, fullPage: true })
