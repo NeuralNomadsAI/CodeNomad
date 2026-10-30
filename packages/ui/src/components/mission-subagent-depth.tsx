@@ -151,7 +151,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
       <Show when={state().error || ["uncertain", "confirming"].includes(state().phase)}>
         <button type="button" class="window-action mission-icon-action" aria-label={t("missions.depth.refresh")} title={t("missions.depth.refresh")} disabled={!props.active() || busy() || !props.directory} onClick={() => void read(true)}><RefreshCw aria-hidden="true" /></button>
       </Show></div>
-    {/* Only a write announces itself: a read keeps the field read-only and the layout still. */}
+    {/* Only a confirmation or a write announces itself: a read keeps the field read-only and the layout still. */}
     <Show when={["confirming", "saving"].includes(state().phase)}><p role="status">{t("missions.control.mutation.pending")}</p></Show>
     <Show when={state().snapshot && !state().snapshot?.capability}><p role="status">{t("missions.depth.unsupported")}</p></Show>
     <Show when={state().rejected}><p role="alert">{t("missions.depth.invalidValue")}</p></Show>
