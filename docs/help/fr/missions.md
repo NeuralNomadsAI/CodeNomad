@@ -67,6 +67,27 @@ Le coordinateur reçoit l’instruction de publier un point sur le projet après
 
 Utilisez **Demander un point** sous la barre d’outils pour une nouvelle évaluation du coordinateur, puis lisez **Résumé**. **Point demandé…** signifie que la demande attend, pas qu’elle a reçu une réponse. **Envoi non confirmé** n’autorise pas le renvoi automatique : ouvrez la conversation du coordinateur avant de faire une nouvelle demande séparée. C’est une entrée native ordinaire, pas un bac à sable en lecture seule ; le coordinateur conserve ses autorisations normales.
 
+## Comment le contexte circule dans une mission {#context-flow}
+
+Le plan de mission est la mémoire partagée et durable de la mission. Il contient l’objectif et les **Notes**, chaque tâche avec son **Brief de tâche**, ses dépendances (**Dépend de**) et son état, les **Rapports** enregistrés pour le travail terminé (résumé, **Preuves**, **Prochaines étapes recommandées** et éventuel **Rapport structuré**), les points de situation du coordinateur et les **Modifications du plan**. OpenCode le stocke avec le projet : il survit donc aux conversations et aux redémarrages ; le centre de mission l’affiche, et la récupération repart de lui. Chaque participant en reçoit une partie définie :
+
+| Participant | Ce qu’il reçoit |
+| --- | --- |
+| Coordinateur | L’objectif, les notes et les instructions du scénario à chaque tour. Il lit le plan entier chaque fois qu’il en a besoin, et sa conversation conserve chaque résultat qu’il a lu. |
+| Tâche (**Sous-agents natifs**) | Son affectation, transmise par le coordinateur dans un appel de sous-agent OpenCode ordinaire : l’objectif, le titre et la consigne de la tâche, les instructions de son rôle et les tâches dont elle dépend. Le coordinateur peut y ajouter du contexte, comme des résultats antérieurs. |
+| Tâche (**Sessions indépendantes**) | La même affectation, sous forme de message dans sa propre conversation. À chaque tour, elle reçoit aussi l’objectif, les notes et ses affectations ouvertes, et elle peut lire le plan entier. |
+| Assistants lancés par une tâche | Ce que leur parent écrit dans l’appel. Les scénarios demandent à chaque parent de transmettre le périmètre, les contraintes et les règles de sécurité dont ses assistants ont besoin. |
+
+Les résultats remontent par le même chemin. Un sous-agent natif renvoie son résultat à la conversation qui l’a lancé, normalement le coordinateur, qui l’enregistre comme rapport de la tâche. Une session indépendante enregistre son propre rapport, et CodeNomad remet son résumé au coordinateur sous forme de message.
+
+Une tâche ultérieure s’appuie sur le travail antérieur de deux façons. Les dépendances ordonnent le travail : le coordinateur démarre une tâche une fois terminées les tâches dont elle dépend, puis place les résultats utiles dans la consigne ou à côté de l’affectation ; les sessions indépendantes peuvent aussi lire ces rapports dans le plan. Pour poursuivre la conversation même d’une tâche terminée, le coordinateur déclare une tâche de suite qui la réutilise, et cette suite s’y exécute avec tout l’historique de la conversation : le scénario Débogage renvoie ainsi les deux revues à l’implémenteur. Toute autre tâche démarre dans une nouvelle conversation à partir de son affectation, et la transcription d’une autre tâche lui parvient par le coordinateur ou par une recherche. Pour **Comparer deux modèles**, l’affectation et le contexte du juge omettent l’objectif et les notes ; sa consigne contient les résultats anonymisés.
+
+Dans un programme quotidien, chaque exécution démarre avec son propre coordinateur et son propre plan. Son premier message contient les instructions du programme ainsi que le nouveau texte utilisateur et assistant de ses [conversations suivies](#daily-schedules) depuis la dernière exécution terminée ; les résultats des exécutions précédentes restent dans l’historique du programme. Les conversations lancées au cours d’une exécution peuvent lire le plan de cette exécution. Une nouvelle mission ponctuelle démarre aussi avec un nouveau plan : pour reporter des résultats, écrivez-les dans son objectif ou ses **Notes**, ou laissez le coordinateur préparer une mission de suite, dont il rédige l’objectif et les notes.
+
+### Rechercher dans les conversations antérieures {#context-search}
+
+Tant que CodeNomad fonctionne, chaque conversation d’agent du projet, coordinateurs de mission et tâches compris, dispose de l’outil de recherche de sessions de CodeNomad (`codenomad.session_search`, utilisé via le Code Mode d’OpenCode). Il recherche dans les conversations enregistrées du dossier de projet de la conversation avec le même classement que la [recherche](history.md#full-history-search) **Workspace entier**, et renvoie de courts extraits avec le titre et l’identifiant de chaque conversation, ainsi qu’un moyen de lire une conversation entière. Les autorisations natives des outils s’appliquent. Un agent cherche lorsqu’il le décide ou lorsque l’objectif, les notes ou votre message le lui demandent, par exemple pour retrouver ce qu’a conclu une mission ou une tâche antérieure. Une exécution quotidienne qui tourne pendant que CodeNomad est fermé travaille sans cet outil.
+
 ## Profils, délégation et profondeur {#profiles}
 
 1. Utilisez l’engrenage des Missions ou **Paramètres → Missions** pour modifier **Défauts des nouvelles missions**.

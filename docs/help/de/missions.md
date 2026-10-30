@@ -67,6 +67,27 @@ Der Koordinator erhält die Anweisung, nach dem ersten Plan, nach Aufgabenerledi
 
 Verwenden Sie **Update anfordern** unter der Symbolleiste für eine neue Koordinatoreinschätzung und lesen Sie dann **Zusammenfassung**. **Update angefordert…** bedeutet wartend, nicht beantwortet. **Zustellung unbestätigt** erlaubt kein automatisches erneutes Senden: Öffnen Sie die Koordinatorunterhaltung vor einer separaten neuen Anfrage. Dies ist normale native Eingabe, keine schreibgeschützte Sandbox; der Koordinator behält seine normalen Rechte.
 
+## Wie Kontext durch eine Mission fließt {#context-flow}
+
+Die Missionskarte ist das gemeinsame, dauerhafte Gedächtnis der Mission. Sie enthält das Ziel und die **Notizen**, jede Aufgabe mit ihrem **Aufgabenbrief**, ihren Abhängigkeiten (**Hängt ab von**) und ihrem Status, die für erledigte Arbeit erfassten **Berichte** (Zusammenfassung, **Nachweise**, **Empfohlene nächste Schritte** und gegebenenfalls **Strukturierter Bericht**), die Lageberichte des Koordinators und die **Planänderungen**. OpenCode speichert sie mit dem Projekt, sodass sie Unterhaltungen und Neustarts überdauert; die Missionszentrale zeigt sie an, und die Wiederherstellung setzt bei ihr an. Jeder Beteiligte erhält einen festgelegten Teil:
+
+| Beteiligter | Was er erhält |
+| --- | --- |
+| Koordinator | Bei jedem Turn das Ziel, die Notizen und die Playbook-Anweisungen. Er liest die ganze Karte, wann immer er sie braucht, und seine Unterhaltung behält jedes Ergebnis, das er gelesen hat. |
+| Aufgabe (**Native Unteragenten**) | Ihre Zuweisung, die der Koordinator in einem gewöhnlichen OpenCode-Subagentenaufruf übergibt: das Ziel, Titel und Brief der Aufgabe, ihre Rollenanweisungen und die Aufgaben, von denen sie abhängt. Der Koordinator kann Kontext hinzufügen, etwa frühere Ergebnisse. |
+| Aufgabe (**Unabhängige Sitzungen**) | Dieselbe Zuweisung als Nachricht in ihrer eigenen Unterhaltung. Bei jedem Turn erhält sie außerdem das Ziel, die Notizen und ihre offenen Zuweisungen, und sie kann die ganze Karte lesen. |
+| Von einer Aufgabe gestartete Helfer | Was ihr Elternteil in den Aufruf schreibt. Die Playbooks weisen jedes Elternteil an, Umfang, Vorgaben und Sicherheitsregeln weiterzugeben, die seine Helfer brauchen. |
+
+Ergebnisse gehen auf demselben Weg zurück. Ein nativer Subagent gibt sein Ergebnis an die Unterhaltung zurück, die ihn gestartet hat, normalerweise den Koordinator, der es als Bericht der Aufgabe erfasst. Eine unabhängige Sitzung erfasst ihren eigenen Bericht, und CodeNomad stellt dessen Zusammenfassung dem Koordinator als Nachricht zu.
+
+Eine spätere Aufgabe baut auf zwei Wegen auf früherer Arbeit auf. Abhängigkeiten ordnen die Arbeit: Der Koordinator startet eine Aufgabe, sobald die Aufgaben, von denen sie abhängt, erledigt sind, und gibt die relevanten Ergebnisse in den Brief oder neben die Zuweisung; unabhängige Sitzungen können diese Berichte auch in der Karte lesen. Um die eigene Unterhaltung einer erledigten Aufgabe fortzusetzen, erklärt der Koordinator eine Folgeaufgabe, die sie wiederverwendet; die Folgeaufgabe läuft dort mit dem ganzen Verlauf dieser Unterhaltung. Das Playbook Fehlerbehebung gibt so beide Prüfungen an den Implementierer zurück. Jede andere Aufgabe beginnt in einer frischen Unterhaltung mit ihrer Zuweisung, und der Verlauf einer anderen Aufgabe erreicht sie über den Koordinator oder eine Suche. Bei **Zwei Modelle vergleichen** lassen Zuweisung und Kontext des Gutachters Ziel und Notizen weg; sein Brief enthält die anonymisierten Ergebnisse.
+
+In einem täglichen Zeitplan beginnt jeder Lauf mit eigenem Koordinator und eigener Karte. Seine erste Nachricht enthält die Anweisungen des Zeitplans und den neuen Benutzer- und Assistententext seiner [verfolgten Unterhaltungen](#daily-schedules) seit dem letzten abgeschlossenen Lauf; Ergebnisse früherer Läufe bleiben im Verlauf des Zeitplans. Innerhalb eines Laufs gestartete Unterhaltungen können die Karte dieses Laufs lesen. Auch eine neue einmalige Mission beginnt mit einer neuen Karte: Um Ergebnisse weiterzugeben, schreiben Sie sie in ihr Ziel oder ihre **Notizen**, oder lassen Sie den Koordinator eine Folgemission vorbereiten, deren Ziel und Notizen er schreibt.
+
+### Frühere Unterhaltungen durchsuchen {#context-search}
+
+Solange CodeNomad läuft, hat jede Agentenunterhaltung im Projekt, auch Missionskoordinatoren und Aufgaben, das Sitzungssuchwerkzeug von CodeNomad (`codenomad.session_search`, genutzt über den Code Mode von OpenCode). Es durchsucht die gespeicherten Unterhaltungen des Projektordners der Unterhaltung mit derselben Rangfolge wie die [Suche](history.md#full-history-search) **Gesamter Arbeitsbereich** und liefert kurze Auszüge mit Titel und Kennung jeder Unterhaltung sowie einen Weg, eine ganze Unterhaltung zu lesen. Es gelten die nativen Werkzeugberechtigungen. Ein Agent sucht, wenn er sich dafür entscheidet oder wenn Ziel, Notizen oder Ihre Nachricht ihn darum bitten, etwa um herauszufinden, was eine frühere Mission oder Aufgabe ergeben hat. Ein täglicher Lauf, der bei geschlossenem CodeNomad ausgeführt wird, arbeitet ohne dieses Werkzeug.
+
 ## Profile, Delegation und Tiefe {#profiles}
 
 1. Verwenden Sie das Missionszahnrad oder **Einstellungen → Missionen**, um **Vorgaben für neue Missionen** zu bearbeiten.
