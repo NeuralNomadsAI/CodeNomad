@@ -33,7 +33,7 @@ Renklerin okunması zorlaşırsa yerleşik bir palet seçin veya düzenlenen pal
 ## Paneller ve Durum bölümleri {#panels-status}
 
 1. Panelleri göstermek/gizlemek için dış başlık köşelerindeki **Sol panel** ve **Sağ panel** kontrollerini veya **Görünüm** menüsündeki karşılıklarını kullanın.
-2. Sağ panelde **Sağ paneli özelleştir** öğesini açın. Yerleşik sekmeleri ve Durum bölümlerini seçmek için onay kutularını kullanın; en az bir Durum bölümü görünür durumda kalır.
+2. Sağ panelde **Sağ paneli özelleştir** öğesini açın. Yerleşik sekmeleri ve Durum bölümlerini seçmek için onay kutularını kullanın; en az bir Durum bölümü görünür durumda kalır. Birkaçını tek seferde ayarlamak için bu onay kutularının üzerinde sürükleyin.
 3. Yeniden sıralamak için sağ panel sekmelerini sürükleyin. Yerleşik düzen seçeneklerini geri yüklemek için **Sıfırla** öğesini kullanın.
 
 Durum; belirteç bilgilerini, Yolo modunu, sağlayıcı Kullanımı, arka plan kabuklarını, MCP ve Eklentileri içerir. Bir bölümün gizlenmesi, o bölümün hizmetini devre dışı bırakmaz veya izinleri iptal etmez. Dar düzenler, konuşmayı sıkıştırmak yerine artık sığmayan panelleri kapatır; orada açılan bir panel konuşmanın üzerinde yüzer ve bir yüzer panelin açılması diğerini kapatır.
@@ -53,7 +53,7 @@ Zaman çizelgesinde, konuşmada gösterilen her yanıt, akıl yürütme, araç, 
 
 ## Bildirimler ve rozetler {#notifications}
 
-1. **Bildirimler** öğesini açın. Her bildirim türü için nerede görüneceğini işaretleyin: **Ekranda** (geçici bir baloncuk), **Geçmiş** (sekme çubuğundaki, macOS masaüstü uygulamasında başlık çubuğundaki zilin bildirim geçmişinde saklanır) ve **Sistem** (işletim sistemi bildirimi).
+1. **Bildirimler** öğesini açın. Her bildirim türü için nerede görüneceğini işaretleyin: **Ekranda** (geçici bir baloncuk), **Geçmiş** (sekme çubuğundaki, macOS masaüstü uygulamasında başlık çubuğundaki zilin bildirim geçmişinde saklanır) ve **Sistem** (işletim sistemi bildirimi). Birkaçını tek seferde ayarlamak için bir kutu satırı veya sütunu üzerinde sürükleyin.
 2. Bir **Sistem** kutusunu işaretlemek gerekirse izin ister. **Sistem bildirimleri** altında, izin eksikken **İste** yeniden izin ister.
 3. Bu pencere odaktayken de sistem bildirimlerini almak için **Uygulama odaktayken bildir** seçeneğini etkinleştirin. Aksi halde pencere ekranda açık kalsa bile odakta olmadığında bildirimler görünür.
 

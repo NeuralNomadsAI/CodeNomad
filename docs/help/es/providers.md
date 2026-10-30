@@ -40,7 +40,7 @@ Esto **no es conmutación durante una solicitud en curso**. No reintenta solicit
 ## Visibilidad de modelos, favoritos y Razonamiento {#models}
 
 1. Elige **Gestionar modelos** junto a un proveedor de modelos.
-2. Busca por nombre/ID y cambia la visibilidad; **Mostrar todos** y **Ocultar todos** afectan a la lista del selector de ese proveedor.
+2. Busca por nombre/ID y cambia la visibilidad; **Mostrar todos** y **Ocultar todos** afectan a la lista del selector de ese proveedor. Arrastra sobre las casillas para cambiar varios modelos a la vez.
 3. En el selector **Modelo** de una conversación, usa **Agregar a favoritos** o **Quitar de favoritos**; **Mostrar todos los modelos** sale del filtrado de solo favoritos.
 4. Usa **Razonamiento** en el editor para las variantes que ofrezca el modelo seleccionado.
 

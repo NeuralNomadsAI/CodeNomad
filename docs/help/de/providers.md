@@ -40,7 +40,7 @@ Dies ist **kein Failover während der Ausführung**. Es wiederholt weder fehlges
 ## Modellsichtbarkeit, Favoriten und Denken {#models}
 
 1. Wählen Sie **Modelle verwalten** neben einem Modellanbieter.
-2. Suchen Sie nach Name/ID und ändern Sie die Sichtbarkeit; **Alle anzeigen** und **Alle ausblenden** betreffen dessen Auswahlliste.
+2. Suchen Sie nach Name/ID und ändern Sie die Sichtbarkeit; **Alle anzeigen** und **Alle ausblenden** betreffen dessen Auswahlliste. Ziehen Sie über die Kontrollkästchen, um mehrere Modelle auf einmal zu ändern.
 3. Verwenden Sie in der **Modell**-Auswahl einer Unterhaltung **Zu Favoriten hinzufügen** oder **Aus Favoriten entfernen**; **Alle Modelle anzeigen** verlässt den Nur-Favoriten-Filter.
 4. Verwenden Sie **Denken** im Eingabefeld für die Varianten des ausgewählten Modells.
 

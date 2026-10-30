@@ -85,3 +85,52 @@ test("search is flat, filters each session, selects only matches and restores th
     throw error
   } finally { await page.close() }
 })
+
+test("dragging across the selection checkboxes gives every crossed session the first one's new state", async () => {
+  const page = await browser.newPage()
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+  try {
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByRole("switch", { name: "Subsessions", exact: true }).check()
+    await page.waitForFunction(() => document.querySelectorAll(".session-item-base").length === 4)
+    const boxes = page.locator('.session-item-base input[type="checkbox"]')
+    const checked = () => boxes.evaluateAll(inputs => inputs.map(input => (input as HTMLInputElement).checked))
+    const center = async (index: number) => {
+      const box = (await boxes.nth(index).boundingBox())!
+      return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+    }
+    await boxes.nth(1).check()
+
+    // Down the column in one jump and back, released on the first box: every crossed session
+    // is selected, the checked one stays so, and the release keeps the first one's new state.
+    const first = await center(0), last = await center(3)
+    await page.mouse.move(first.x, first.y)
+    await page.mouse.down()
+    await page.mouse.move(last.x, last.y)
+    await page.mouse.move(first.x, first.y)
+    await page.mouse.up()
+    assert.deepEqual(await checked(), [true, true, true, true])
+
+    // Back up from the last, then released over the second row's title: the release opens no session.
+    const second = await center(1), title = (await page.locator(".session-item-select").nth(1).boundingBox())!
+    await page.mouse.move(last.x, last.y)
+    await page.mouse.down()
+    await page.mouse.move(second.x, second.y, { steps: 8 })
+    await page.mouse.move(title.x + title.width / 2, title.y + title.height / 2, { steps: 4 })
+    await page.mouse.up()
+    assert.deepEqual(await checked(), [true, false, false, false])
+    assert.deepEqual(await page.evaluate(() => (window as any).fixture.selected), [])
+    assert.equal(await page.evaluate(() => window.getSelection()?.toString()), "")
+
+    // A press whose release went elsewhere (another window, a system prompt) leaves no sweep
+    // behind: moving with the button up toggles nothing.
+    await boxes.nth(3).dispatchEvent("pointerdown", { button: 0, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true })
+    await page.mouse.move(last.x, last.y)
+    await page.mouse.move(first.x, first.y, { steps: 8 })
+    assert.deepEqual(await checked(), [true, false, false, false])
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})

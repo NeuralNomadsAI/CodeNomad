@@ -10,7 +10,7 @@ Akıl yürütme ve araç başlıkları her adımın ne kadar sürdüğünü gös
 
 1. **Session'lar** altında satır seçin veya üst konuşma başlatmak için **Yeni session** eylemini kullanın.
 2. Alt oturumlarını görmek için üst konuşmanın okunu genişletin. Kapalı ok, alt konuşmalarının en acil durumunu gösterir: girdi bekliyor, çalışıyor veya yakın zamanda bitti (boşta); araç ipucu bunları sayar.
-3. Listeyi daraltmak için **Session ara…**, **Ana oturumlar** / **Alt oturumlar**, çalışma ağacı filtresini ve **Etkinlik**, **Ad** veya **Çalışma ağacı** sıralamasını kullanın.
+3. Listeyi daraltmak için **Session ara…**, **Ana oturumlar** / **Alt oturumlar**, çalışma ağacı filtresini ve **Etkinlik**, **Ad** veya **Çalışma ağacı** sıralamasını kullanın. Arama sonuçlarında, birden fazla konuşmayı tek seferde seçmek veya seçimini kaldırmak için satırların onay kutularının üzerinde sürükleyin.
 4. Görüntülediğiniz konuşmaları yeniden ziyaret etmek için kenar çubuğundaki **Geri** ve **İleri** öğesini kullanın.
 
 Normal gezinme hiyerarşiktir; arama/filtre sonuçları her konuşmanın kendi kimliği ve çalışma ağacıyla düz listelenir. Yeni çalışmaya başlayan alt oturum yalnızca etkin konuşmanın ailesi altında otomatik gösterilir. Dalı kapatmak o anda çalışan alt konuşmaların otomatik gösterimini kaldırır.

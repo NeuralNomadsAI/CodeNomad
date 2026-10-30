@@ -1,5 +1,6 @@
 import { For, createSignal, type Component } from "solid-js"
 import { useI18n } from "../../lib/i18n"
+import { toggleSweepGroup } from "../../lib/toggle-sweep"
 import {
   NOTIFICATION_CATEGORIES,
   NOTIFICATION_DESTINATIONS,
@@ -55,6 +56,7 @@ export const NotificationRoutingTable: Component<{
                     aria-label={`${label()} · ${destinationLabel(destination)}`}
                     checked={routing()[category][destination]}
                     disabled={destination === "system" && props.systemUnavailable}
+                    data-toggle-sweep={toggleSweepGroup("notification-routing")}
                     onChange={(event) => change(category, destination, event.currentTarget.checked)}
                   />
                 </td>

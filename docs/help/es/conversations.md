@@ -10,7 +10,7 @@ Los encabezados de razonamiento y de herramientas muestran cuánto duró cada pa
 
 1. Selecciona una fila en **Sesiones** o usa **Nueva sesión** para iniciar una conversación padre.
 2. Expande el chevrón de una conversación padre para ver sus subsesiones. Un chevrón contraído muestra el estado más urgente de sus descendientes: necesitan entrada, están trabajando o terminaron hace poco (inactivos); su información emergente los cuenta.
-3. Usa **Buscar sesiones…**, **Sesiones principales** / **Subsesiones**, el filtro de worktree y la ordenación por **Actividad**, **Nombre** o **Worktree** para acotar la lista.
+3. Usa **Buscar sesiones…**, **Sesiones principales** / **Subsesiones**, el filtro de worktree y la ordenación por **Actividad**, **Nombre** o **Worktree** para acotar la lista. En los resultados de búsqueda, arrastra sobre las casillas de las filas para seleccionar o deseleccionar varias conversaciones a la vez.
 4. Usa **Atrás** y **Adelante** en la barra lateral para volver a conversaciones que hayas mostrado.
 
 La exploración normal es jerárquica; los resultados de búsqueda/filtro son entradas planas con la identidad y el worktree propios de cada conversación. Una subsesión que empiece a trabajar solo se revela automáticamente dentro de la familia de la conversación activa. Contraer esa rama descarta esa apertura automática para los descendientes actualmente en ejecución.

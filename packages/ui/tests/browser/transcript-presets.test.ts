@@ -16,6 +16,72 @@ const settingsPreset = (page: Page) => page.locator('.settings-expansion-preset[
 const options = (page: Page) => preset(page).locator("option").evaluateAll(items =>
   items.map(item => ({ value: (item as HTMLOptionElement).value, label: item.textContent, hidden: (item as HTMLOptionElement).hidden })))
 const saved = (page: Page) => page.evaluate(() => (window as any).fixture.preferences().toolCallExpansionDefaults.preset)
+const center = async (locator: ReturnType<Page["locator"]>) => {
+  const box = (await locator.boundingBox())!
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 }
+}
+const pressed = (column: ReturnType<Page["locator"]>) => column.evaluateAll(buttons => buttons.map(button => button.getAttribute("aria-pressed")))
+
+test("dragging across Message content toggles gives every crossed row of that column the first one's new state", async () => {
+  const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 900 }, locale: "en-US" })
+  const errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  try {
+    await page.addInitScript(() => { (window as any).EventSource = class { addEventListener() {} removeEventListener() {} close() {} } })
+    await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
+    // Slow saves: the sweep crosses rows while earlier rows are still saving.
+    await page.goto(`${fixture.url}?saveDelay=400`)
+    await page.waitForFunction(() => Boolean((window as any).fixture))
+    await page.getByRole("button", { name: "Message content", exact: true }).click()
+    await preset(page).selectOption("everything")
+    await page.waitForFunction(() => (window as any).fixture.preferences().toolCallExpansionDefaults.preset === "everything")
+    const eyes = page.locator('.transcript-filter-row [data-toggle-sweep="transcript-visibility"]')
+    const chevrons = page.locator('.transcript-filter-row [data-toggle-sweep="transcript-expansion"]')
+    const idle = () => page.locator('.transcript-filters[aria-busy="false"]').waitFor()
+    assert.ok(await eyes.count() >= 7)
+    await eyes.nth(2).click()
+    await idle()
+    assert.deepEqual((await pressed(eyes)).slice(0, 5), ["true", "true", "false", "true", "true"])
+
+    // One jump from the first eye to the fourth, back to the first, and release there:
+    // the first flips once, the rows jumped over follow, and the hidden one stays hidden.
+    const first = await center(eyes.nth(0)), fourth = await center(eyes.nth(3))
+    const savesBefore = await page.evaluate(() => (window as any).fixture.saves())
+    await page.mouse.move(first.x, first.y)
+    await page.mouse.down()
+    await page.mouse.move(fourth.x, fourth.y)
+    await page.mouse.move(first.x, first.y)
+    // During the drag only the popup changes: nothing is saved, so the transcript stays put.
+    assert.deepEqual((await pressed(eyes)).slice(0, 5), ["false", "false", "false", "false", "true"])
+    assert.equal(await page.evaluate(() => (window as any).fixture.saves()) - savesBefore, 0)
+    await page.mouse.up()
+    // The release saves the whole sweep in one write; rows keep their state meanwhile.
+    assert.equal(await page.locator(".transcript-filters").getAttribute("aria-busy"), "true")
+    assert.deepEqual((await pressed(eyes)).slice(0, 5), ["false", "false", "false", "false", "true"])
+    await idle()
+    assert.deepEqual((await pressed(eyes)).slice(0, 5), ["false", "false", "false", "false", "true"])
+    assert.equal(await page.evaluate(() => (window as any).fixture.saves()) - savesBefore, 1)
+    assert.deepEqual((await page.evaluate(() => (window as any).fixture.savedModes() as string[])).slice(0, 5).map(mode => mode !== "hidden"),
+      [false, false, false, false, true])
+    assert.equal(await page.evaluate(() => window.getSelection()?.toString()), "")
+
+    // The chevron column sweeps on its own; crossing into the eyes leaves them alone.
+    const before = await pressed(chevrons), savesBeforeChevrons = await page.evaluate(() => (window as any).fixture.saves())
+    const from = await center(chevrons.nth(4)), to = await center(chevrons.nth(6)), eye = await center(eyes.nth(6))
+    await page.mouse.move(from.x, from.y)
+    await page.mouse.down()
+    await page.mouse.move(to.x, to.y, { steps: 6 })
+    await page.mouse.move(eye.x, eye.y, { steps: 4 })
+    await page.mouse.up()
+    await idle()
+    const flipped = before[4] === "true" ? "false" : "true"
+    assert.deepEqual((await pressed(chevrons)).slice(4, 7), [flipped, flipped, flipped])
+    assert.deepEqual((await pressed(eyes)).slice(4, 7), ["true", "true", "true"])
+    // A slow drag over many moves still saves once.
+    assert.equal(await page.evaluate(() => (window as any).fixture.saves()) - savesBeforeChevrons, 1)
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
 
 test("Message content chooses presets, names manual changes Custom and follows the language", async () => {
   const page = await fixture.browser.newPage({ viewport: { width: 1200, height: 900 }, locale: "en-US" })

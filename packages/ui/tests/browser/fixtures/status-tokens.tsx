@@ -3,6 +3,7 @@ import { render } from "solid-js/web"
 import StatusTab from "../../../src/components/instance/shell/right-panel/tabs/StatusTab"
 import { ChatSettingsSection } from "../../../src/components/settings/chat-settings-section"
 import TranscriptFilters from "../../../src/components/transcript-filters"
+import { transcriptVisibility, transcriptVisibilityRows } from "../../../src/components/transcript-visibility"
 import { ConfigProvider, preferences, toggleUsageMetrics, updatePreferences } from "../../../src/stores/preferences"
 import { I18nProvider, useI18n } from "../../../src/lib/i18n"
 import { ThemeProvider } from "../../../src/lib/theme"
@@ -25,10 +26,15 @@ const client: any = {
     list: async () => ({ data: nativeSessions, cursor: {} }), get: async ({ sessionID }: any) => nativeSessions.find(s => s.id === sessionID) },
   model: { default: async () => model }, shell: { list: async () => ({ data: [] }) },
 }
-const saved = new URLSearchParams(location.search).get("saved")
+const query = new URLSearchParams(location.search)
+const saved = query.get("saved"), saveDelay = Number(query.get("saveDelay") ?? 0)
 let config: any = { settings: { locale: "en", ...(saved === null ? {} : { showUsageMetrics: saved === "true", usageMetricsExpansion: "expanded" }) } }
 serverApi.fetchConfigOwner = async () => config
+let saves = 0
 serverApi.patchConfigOwner = async (_owner, patch: any) => {
+  saves += 1
+  // ?saveDelay=<ms> keeps each save pending like a slow server.
+  if (saveDelay) await new Promise(resolve => setTimeout(resolve, saveDelay))
   config = { ...config, ...patch, settings: { ...config.settings, ...patch.settings } }
   return config
 }
@@ -69,5 +75,6 @@ const Fixture = () => {
 }
 render(() => <ConfigProvider><I18nProvider><ThemeProvider><Fixture /></ThemeProvider></I18nProvider></ConfigProvider>, document.getElementById("root")!)
 await updatePreferences({ locale: "en" })
-;(window as any).fixture = { preferences, updatePreferences, toggleUsageMetrics, width: setWidth,
+;(window as any).fixture = { preferences, updatePreferences, toggleUsageMetrics, width: setWidth, saves: () => saves,
+  savedModes: () => transcriptVisibilityRows((key) => key).map(row => transcriptVisibility(preferences(), row)),
   select: (id: string) => { setActiveSession(instanceId, id); select(id) }, usage }
