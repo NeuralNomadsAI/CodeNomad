@@ -47,13 +47,15 @@ function withoutKey(value: unknown, keys: string[]): unknown {
   return copy
 }
 
-/** Removes `keys` when it holds an object without properties, in one edit of the original source:
- * the property and one adjacent comma go, and comments written inside the object stay in its place
- * (line comments become block comments, so they can share the line). The result must parse without
- * errors to the original value minus that key; otherwise nothing is returned, like for any other value. */
-export function removeEmptyNativeObject(document: PluginControlDocument, keys: string[]): string | undefined {
+/** Removes `keys` when it holds an object without properties (or whose properties `removable` accepts),
+ * in one edit of the original source: the property and one adjacent comma go, and comments written inside
+ * the object stay in its place (line comments become block comments, so they can share the line). The
+ * result must parse without errors to the original value minus that key; otherwise nothing is returned,
+ * like for any other value. */
+export function removeEmptyNativeObject(document: PluginControlDocument, keys: string[],
+  removable: (value: Record<string, unknown>) => boolean = value => Object.keys(value).length === 0): string | undefined {
   const value = readNativeSetting(document, keys)
-  if (!value || typeof value !== "object" || Array.isArray(value) || Object.keys(value).length) return undefined
+  if (!value || typeof value !== "object" || Array.isArray(value) || !removable(value as Record<string, unknown>)) return undefined
   const text = document.text
   const root = parseTree(text, [], { allowTrailingComma: true })!
   const parent = keys.length > 1 ? findNodeAtLocation(root, keys.slice(0, -1))! : root

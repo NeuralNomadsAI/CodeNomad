@@ -1,12 +1,27 @@
 import { createHash } from "node:crypto"
+import { isDeepStrictEqual } from "node:util"
 import type { PluginControlLocation, SubagentDepthCapability, SubagentDepthSnapshot } from "../api-types"
 import type { WorkspaceManager } from "../workspaces/manager"
 import { PluginControlsError, type PluginControls } from "./plugin-controls"
 import type { PluginControlDocument } from "./plugin-control-document"
 import { editNativeSetting, readNativeSetting, removeEmptyNativeObject } from "./native-setting-document"
 import { readRuntimeContract } from "./compatibility/negotiate"
+import { imageSettingsCapability } from "./image-settings"
+import { maskedBy, samePath } from "./experimental-layers"
 
 const keys = ["experimental", "subagent_depth"]
+
+/** The text without the project `experimental` object when, apart from the `removing` property, it
+ * changes nothing OpenCode reads: no properties, or only a `media_blob` (written by Settings → Images)
+ * equal to the one removal would expose (`inherited` is `undefined` when that is uncertain). */
+function withoutRedundantExperimental(document: PluginControlDocument, inherited: boolean | undefined,
+  removing?: string): string | undefined {
+  return removeEmptyNativeObject(document, ["experimental"], value => {
+    const properties = Object.keys(value).filter(key => key !== removing)
+    return properties.length === 0
+      || inherited !== undefined && properties.length === 1 && properties[0] === "media_blob" && value.media_blob === inherited
+  })
+}
 
 function depth(value: unknown): number | null {
   if (value === undefined) return null
@@ -43,7 +58,21 @@ export class SubagentDepthSettings {
     connection.assertCurrent()
     const contract = await readRuntimeContract(connection.endpoint, connection.fetch, AbortSignal.timeout(5_000))
     connection.assertCurrent()
-    return { ...snapshot, connection, capability: subagentDepthCapability(contract) }
+    return { ...snapshot, connection, capability: subagentDepthCapability(contract),
+      mediaStorage: imageSettingsCapability(contract).mediaStorage }
+  }
+
+  /** The `media_blob` removing the project `experimental` object would expose, only when certain: the
+   * runtime declares it, and the next native object belongs to the Global write target and matches its
+   * fresh document exactly (native entries lag behind writes and normalize what they load). */
+  private exposedMediaStorage(context: Awaited<ReturnType<SubagentDepthSettings["context"]>>, target: string) {
+    const global = context.documents.find(item => item.scope === "global")
+    const lower = maskedBy(context.entries, target, false)
+    if (!context.mediaStorage || !global?.document.exists || lower?.path === undefined || !samePath(lower.path, global.path))
+      return undefined
+    let fresh: unknown
+    try { fresh = readNativeSetting(global.document, ["experimental"]) } catch { return undefined }
+    return isDeepStrictEqual(fresh, lower.info?.experimental) ? lower.info?.experimental?.media_blob === true : undefined
   }
 
   async read(workspaceId: string, location: PluginControlLocation): Promise<SubagentDepthSnapshot> {
@@ -57,14 +86,17 @@ export class SubagentDepthSettings {
     return { location: context.location, capability: context.capability, effectiveDepth,
       project: project ? { path: project.path, depth: depth(readNativeSetting(project.document, keys)),
         expectation: expectation(project.document),
-        ...(removeEmptyNativeObject(project.document, ["experimental"]) === undefined ? {} : { emptyExperimental: true }) } : null }
+        ...(withoutRedundantExperimental(project.document, this.exposedMediaStorage(context, project.path)) === undefined
+          ? {} : { emptyExperimental: true }) } : null }
   }
 
   async update(workspaceId: string, location: PluginControlLocation, value: number | null, expected: string): Promise<void> {
     const context = await this.context(workspaceId, location)
     const capability = context.capability
-    if (!capability || !context.documents.some(item => item.scope === "project"))
+    const project = context.documents.find(item => item.scope === "project")
+    if (!capability || !project)
       throw new PluginControlsError("Native subagent depth editing is unavailable", "unavailable")
+    const exposed = this.exposedMediaStorage(context, project.path)
     const validated = value === null ? null : depth(value)
     if (value !== null && (validated === null || validated < capability.minimum
       || capability.maximum !== undefined && validated > capability.maximum))
@@ -73,10 +105,9 @@ export class SubagentDepthSettings {
       context.connection.assertCurrent()
       if (expectation(document) !== expected) throw new PluginControlsError("OpenCode configuration changed; refresh before saving", "conflict")
       if (value !== null) return editNativeSetting(document, keys, value)
-      // An emptied project `experimental` object would still hide every inherited experimental setting.
-      const removed = editNativeSetting(document, keys, undefined)
-      const remaining = { ...document, text: document.byteOrderMark ? removed.slice(1) : removed }
-      return removeEmptyNativeObject(remaining, ["experimental"]) ?? removed
+      // An emptied project `experimental` object would still hide every inherited experimental setting,
+      // so it goes in one edit that keeps the comments written inside it.
+      return withoutRedundantExperimental(document, exposed, keys[1]) ?? editNativeSetting(document, keys, undefined)
     })
     context.connection.assertCurrent()
   }

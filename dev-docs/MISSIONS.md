@@ -309,13 +309,18 @@ one, unmerged, so a project `experimental` block without the depth hides the
 global depth (native normalization drops a block holding only unknown keys). Saving
 compares the original full file/target expectation and preserves comments, sibling
 fields and WSL atomic-write protections. Removing the override restores
-inheritance and also removes a project `experimental` object left without
-properties, moving its comments to the property's place; the snapshot flags an
-existing one (`emptyExperimental`) so Inherit can repair it.
+inheritance and also removes, in one edit that moves its comments to the property's
+place, a project `experimental` object left without properties or holding only a
+`media_blob` (which Settings → Images writes there) equal to the one removal exposes.
+That value counts only when certain: the runtime contract declares `media_blob`, and
+the next native `experimental` object (`opencode/experimental-layers.ts`) belongs to
+the Global write target and equals its fresh document, since native entries lag
+behind writes and normalize what they load; otherwise the object stays. The snapshot
+flags such an object (`emptyExperimental`) so Inherit can repair it.
 `node --import tsx scripts/test-subagent-depth-settings-native.mjs <absolute-isolated-opencode-cli>`
 (also in the latest-runtime CI job) qualifies this against a private runtime: depth
-capability, JSONC save/reset preserving comments and siblings, stale-expectation
-conflicts and foreign-location rejection.
+capability, JSONC save/reset preserving comments and siblings, Global image storage
+cleanup, stale-expectation conflicts and foreign-location rejection.
 
 Activity and targeted recovery share `missions/native-session-family.ts`: a root's
 bounded native descendant inventory (32 maximum) must have consistent parent,
