@@ -1,8 +1,10 @@
 import { createSignal } from "solid-js"
 import { catalogModelKey, listCatalogModels, type CatalogModel } from "../lib/model-catalog"
 import type { Provider } from "../types/session"
+import { instances } from "./instances"
 import { getOpenCodeInstanceGeneration } from "./opencode-data"
 import { getFavoritesOnlyPreference, getProviderModelVisibilityPreference, uiState } from "./preferences"
+import { normalizeSessionDirectory } from "./session-list-options"
 import { providers } from "./session-state"
 
 /** The list the conversation's model selector shows, under the user's model preferences. */
@@ -27,9 +29,16 @@ interface RememberedNames {
 // selection or availability authority.
 const [missionCatalogNames, setMissionCatalogNames] = createSignal(new Map<string, RememberedNames>())
 
+/** The Location a catalog read serves: an omitted directory is the workspace root, as for the
+ *  server's default Location and Settings; spelled as the UI compares directories. */
+function catalogDirectoryKey(instanceId: string, directory: string | undefined): string {
+  return normalizeSessionDirectory(directory?.trim() ? directory : instances().get(instanceId)?.folder)
+}
+
 export function rememberModelNames(instanceId: string, directory: string | undefined, models: readonly CatalogModel[]) {
   const names = new Map(models.filter((model) => model.name).map((model) => [catalogModelKey(model.providerId, model.id), model.name]))
-  const remembered = { names, directory: directory ?? "", generation: getOpenCodeInstanceGeneration(instanceId), conversation: providers().get(instanceId) }
+  const remembered = { names, directory: catalogDirectoryKey(instanceId, directory), generation: getOpenCodeInstanceGeneration(instanceId),
+    conversation: providers().get(instanceId) }
   setMissionCatalogNames((previous) => new Map(previous).set(instanceId, remembered))
 }
 
@@ -40,7 +49,7 @@ export function knownModelName(instanceId: string, directory: string | undefined
   const fromConversation = conversation?.find((item) => item.id === model.providerID)?.models.find((item) => item.id === model.id)?.name || undefined
   const remembered = missionCatalogNames().get(instanceId)
   // Names read before a reconnect or for another Location do not apply.
-  if (!remembered || remembered.directory !== (directory ?? "") || remembered.generation !== getOpenCodeInstanceGeneration(instanceId)) return fromConversation
+  if (!remembered || remembered.directory !== catalogDirectoryKey(instanceId, directory) || remembered.generation !== getOpenCodeInstanceGeneration(instanceId)) return fromConversation
   const fromMissions = remembered.names.get(catalogModelKey(model.providerID, model.id))
   // A conversation catalog published after that read is the fresher one.
   return remembered.conversation === conversation ? fromMissions ?? fromConversation : fromConversation ?? fromMissions

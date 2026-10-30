@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { after, afterEach, before, test } from "node:test"
 import { serverApi } from "../lib/api-client.ts"
+import { addInstance, removeInstance } from "./instances.ts"
 import { knownModelName, rememberModelNames } from "./model-picker.ts"
 import { destroyOpenCodeData } from "./opencode-data.ts"
 import { setProviders } from "./session-state.ts"
@@ -25,6 +26,18 @@ test("the newer of the conversation catalog and the Missions read names a model"
   assert.equal(knownModelName(instanceId, "/project", model), "Opus 5.5 Fast", "a later conversation catalog wins over the remembered name")
   rememberModelNames(instanceId, "/project", missions("Opus 6"))
   assert.equal(knownModelName(instanceId, "/project", model), "Opus 6")
+})
+
+test("an omitted Location is the workspace root, however either directory is spelled", () => {
+  const rootInstance = "model-picker-root"
+  addInstance({ id: rootInstance, folder: "C:\\Work\\Project\\", port: 0, pid: 0, proxyPath: "", status: "ready", client: null })
+  try {
+    rememberModelNames(rootInstance, "c:/work/project", missions("Opus 5.5"))
+    assert.equal(knownModelName(rootInstance, undefined, model), "Opus 5.5", "the editor's omitted Location is Settings' explicit root")
+    rememberModelNames(rootInstance, undefined, missions("Opus 6"))
+    assert.equal(knownModelName(rootInstance, "C:\\Work\\Project", model), "Opus 6")
+    assert.equal(knownModelName(rootInstance, "C:\\Work\\Project\\packages", model), undefined, "a different directory stays fenced")
+  } finally { removeInstance(rootInstance, { authoritative: false }) }
 })
 
 test("remembered names serve only their Location and native generation", () => {
