@@ -65,3 +65,33 @@ API 4 ile görsel okuma da aynı şekilde görüntülenen konuşmayı takip eder
 Yazar kodu güvenilir uygulama arayüzünde değil, kısıtlanmış iframe içinde çalışır. Native/OpenCode köprüsü, kimlik bilgilerine erişim, genel RPC, form gönderimi, açılır pencere veya indirme yetkisi almaz; ağ API'leri ve dış kaynaklar kısıtlıdır. Uzantılar [OpenCode eklentileri](integrations.md) değil, arayüz eklentileridir.
 
 Korumalı alan süreç/CPU yalıtımı veya onaylanan kodun zararsız olduğu garantisi değildir. Kötü amaçlı uzantı kendi arayüz sürecini aksatabilir. Yalnızca güvenilir yazarların paketlerini yükleyin, sırlarınızı vermeyin ve beklenmedik davranışta eklentiyi devre dışı bırakın/kaldırın.
+
+## Design uzantısıyla görsel oluşturun {#design}
+
+**Design** uzantısı, bir projenin **Görseller sohbeti** içinde CodeNomad'in Design ajanıyla oluşturduğunuz görseller için bir ışık masasıdır. Görselleri gösterir, mesaj kutusunda istekler hazırlar ve her üretimi sizin gönderdiğiniz mesajlara bırakır.
+
+1. **Ayarlar → Provider'lar → Görseller** içinde görsel oluşturmayı açın ve görsel modeli sunan bir sağlayıcı bağlayın ([Görsel oluşturma ve saklama](providers.md#images)).
+2. **Sağ paneli özelleştir → Uzantılar** içinde, izinlerini inceledikten sonra ([Bağlam, varlık izni ve korumalı alan sınırları](#permissions-sandbox)) **Design** uzantısını katalogdan yükleyin ([İnceleyin ve devre dışı olarak yükleyin](#install)), ardından onay kutusunu seçin ([Etkinleştirin ve kapsamını anlayın](#activate-scope)).
+3. **Design** panelini açın ve **Görseller sohbetini aç** öğesini seçin.
+
+Uzantı etkinken CodeNomad, Design ajanını ve görsel becerilerini OpenCode'a ekler. Kendi `design` ajanınız ve `design-*` becerileriniz her zaman önceliklidir; panel bu durumda **Kendi Design ajanınız kullanılıyor.** gösterir. Görsel oluşturma, bir görsel modeli veya Design ajanı eksik olduğunda da panel bunu belirtir.
+
+### Görseller sohbeti {#design-conversation}
+
+Her proje klasörünün veya worktree'nin, başlığı **Görseller** olan kendi Görseller sohbeti vardır. **Görseller sohbetini aç** onu bulur ya da Design ajanı ve CodeNomad'in bu ajanla yeni bir sohbet için seçtiği modelle oluşturur, ardından odak mesaj kutusundayken gösterir; açmak hiçbir şey göndermez. Mevcut bir Görseller sohbeti kendi modelini korur. **Yeni Görseller sohbeti** boş bir ışık masasıyla başka bir sohbet başlatır; bir sohbette çok sayıda görsel olduğunda panel bunu önerir ve ardından **Aç** en yenisini gösterir. Arşivlenmiş ve silinmiş Görseller sohbetleri atlanır.
+
+İhtiyacınızı yazıp gönderin: ajan birkaç çerçeveleme sorusu sorar, kaç görsel üreteceğini söyler, onları üretir, her birini geri okur ve değerlendirir. Görseller proje klasörünün `.codenomad/design/` klasörüne kaydedilir. CodeNomad bu klasörü deponun yerel Git hariç tutmalarına (`.git/info/exclude`) ekler ve `.gitignore` dosyasına dokunmaz; ekleyemediğinde panel **Bu konumdaki görseller Git’te görünebilir.** gösterir. Bir turu geri almak, görsellerini ışık masasından kaldırır ama dosyalarını korur; ajanın üzerine yazdığı bir görsel ise geri getirilemez. Ajan yaklaşık 1K piksellik görseller ister, ancak sağlayıcılar daha büyüklerini döndürebilir ve aynı anda birkaç büyük görsel paylaşılan OpenCode hizmetinde çok bellek kullanabilir.
+
+Design ajanını kullanan bir Görseller sohbetinde bu ajan yoksa mesaj kutusu **Design agent'ı kullanılamıyor** gösterir ve göndermeyi engeller: **Varsayılan agent'ı kullan** öğesini seçin veya Design uzantısını yeniden etkinleştirin. Sohbetin sohbet modeli görsel alamıyorsa panel, ajanın görselleri görsel olarak değerlendiremeyeceği uyarısını gösterir; geri okuduğu görseller ışık masasında görünmeye devam eder.
+
+### Işık masası {#design-light-table}
+
+**Işık masası**, ajanın görüntülenen sohbette geri okuduğu görselleri en yeniden eskiye, yanıtlara göre gruplanmış olarak gösterir. Bir görseli seçmek onu 16, 32 ve 64 px **Küçük boyutlar** önizlemeleriyle daha büyük gösterir; **Karşılaştır** iki görseli yan yana koyar ve **Tam boyutta görüntüle** bir görüntüleyici açar. Dar bir panelde karşılaştırmak için paneli genişletin. Soy ağacı (**Şundan üretildi**, **Şunda kullanıldı**) ve Görseller sohbetinde istem ile model, yalnızca CodeNomad görseli hangi üretimin oluşturduğunu doğrulayabildiğinde görünür; aksi halde görsel piksellerini korur ve **kaynağı doğrulanamıyor** gösterir. **Üretimler** her görsel üretimini durumuyla listeler; ilerlemesini sohbetten izleyin. Başka bir sohbette panel, o sohbette geri okunan görselleri istemler ve istekler olmadan gösterir ve Görseller sohbetini açmayı önerir.
+
+Görseller sohbetinde **Şununla başla** (uygulama simgesi veya logo gibi bir tarif), **İyileştir**, **Varyantlar**, **Yönü uygula**, **Projeye kaydet…**, **Ajandan göstermesini iste** ve **Yeniden dene**, görsel yollarını projeye göre göreli olarak alıntılayan bir isteği yalnızca mesaj kutusuna ekler: panel hiçbir zaman mesaj göndermez veya görsel üretmez. İsteği düzenleyin, ardından kendiniz gönderin. Yalnızca kaynağı doğrulanabilen proje görselleri alıntılanabilir. **Projeye kaydet…**, ajandan görseli isteğin ardından yazdığınız hedefe kopyalamasını ister. **Tur başına görsel** (1 ile 4 arası, varsayılan 3) her isteğe kopyalanır ve panelin kayıtlı ayarlarında saklanır. Telefonda panel yüzer ve bir istek eklediğinde kapanır.
+
+### Design ajanını CodeNomad olmadan kullanın {#design-without-codenomad}
+
+Design ajanı ve becerileri sıradan OpenCode dosyalarıdır. Onları CodeNomad olmadan OpenCode TUI'de veya başka bir istemcide kullanmak için [Design içerik klasörünün](../../../packages/server/src/opencode/design/opencode/) içeriğini bir projenin `.opencode/` klasörüne veya genel OpenCode yapılandırma klasörünüze (`~/.config/opencode/`) kopyalayın; `NOTICE.md` ve lisansı da yanlarında tutun. Ardından **design** ajanını seçin; becerilerini adlarıyla yükler ve diğer ajanlar onları yalnızca siz adlarını verdiğinizde kullanır.
+
+Design ajanı ve becerileri [Open Design](https://github.com/nexu-io/open-design) (Apache-2.0) ve [taste-skill](https://github.com/Leonxlnx/taste-skill) (MIT) kaynaklı materyalleri uyarlar; `NOTICE.md` uyarlanan her dosyayı listeler. Design uzantısı MCP Assets uzantısının kodunu (MIT) yeniden kullanır.
