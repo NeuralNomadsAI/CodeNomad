@@ -31,6 +31,9 @@ serverApi.fetchStateOwner = async () => ({} as any)
 serverApi.getPluginControls = async () => { calls.push({ type: "read" }); return structuredClone(snapshot) }
 serverApi.addPluginSource = async (_id, request) => {
   calls.push({ type: "add", ...request })
+  if (!snapshot.targets.some(target => target.scope === request.scope)) {
+    throw new HttpResponseError("OpenCode configuration scope is unavailable", 503, null, undefined, { error: "unavailable" })
+  }
   if (nextError) {
     const error = nextError
     nextError = undefined
@@ -67,6 +70,7 @@ const notify = () => (serverEvents as any).dispatchBatch([{
 ;(window as any).fixture = {
   calls,
   failNextAdd: (status: number, code?: string) => { nextError = { status, code } },
+  dropProjectTarget: () => { snapshot.targets = snapshot.targets.filter(target => target.scope !== "project"); notify() },
   notify,
   /** OpenCode reports the target: loaded with a version (and a pending update), or failed with a ref. */
   report: (target: string, outcome: "active" | "failed", options: { id?: string; gui?: boolean } = {}) => {

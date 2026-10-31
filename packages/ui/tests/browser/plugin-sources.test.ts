@@ -52,13 +52,17 @@ test("adding a plugin defaults to Global, warns for Project and shows Installing
     assert.match(await dialog.getByRole("note").innerText(), /runs whenever this folder is opened/)
     await scope.selectOption("global")
     const input = dialog.getByLabel("Package", { exact: true })
-    const styles = await dialog.evaluate((element, field) => ({
-      radius: getComputedStyle(element).borderTopLeftRadius,
-      field: getComputedStyle(field as Element).backgroundColor,
-      fieldRole: getComputedStyle(document.documentElement).getPropertyValue("--surface-field").trim(),
-    }), await input.elementHandle())
-    assert.equal(styles.radius, "0px", "square dialog corners")
-    assert.ok(styles.fieldRole.length > 0)
+    const styles = await dialog.evaluate((element, field) => {
+      // Resolve the field role to a concrete colour the same way the input's background is computed.
+      const probe = document.createElement("div")
+      probe.style.backgroundColor = "var(--surface-field)"
+      element.appendChild(probe)
+      const fieldRole = getComputedStyle(probe).backgroundColor
+      probe.remove()
+      return { radius: getComputedStyle(element).borderTopLeftRadius, field: getComputedStyle(field as Element).backgroundColor, fieldRole }
+    }, await input.elementHandle())
+    assert.equal(styles.radius, "0px", "square window corners")
+    assert.equal(styles.field, styles.fieldRole, "the spec input uses the field surface role")
     await input.fill("fixture-plugin@1.0.0")
     await dialog.getByRole("button", { name: "Add", exact: true }).click()
     await dialog.waitFor({ state: "hidden" })
@@ -120,6 +124,22 @@ test("an install failure shows its native reference, and a refused spec stays in
     const details = await tooltip(page, '[data-package-target="missing-plugin@1.0.0"]')
     assert.match(details, /Failed — Plugin failed to load/)
     assert.match(details, /Error reference in the OpenCode log: err_fixture01/)
+  } finally { await page.close() }
+})
+
+test("a Project choice whose target disappears is refused, never widened to Global", async () => {
+  const page = await browser.newPage({ viewport: { width: 520, height: 800 }, locale: "en-US" })
+  try {
+    await page.goto(url)
+    const dialog = await openAdd(page)
+    await dialog.getByLabel("Scope", { exact: true }).selectOption("project")
+    await dialog.getByLabel("Package", { exact: true }).fill("project-only")
+    await page.evaluate(() => (window as any).fixture.dropProjectTarget())
+    await page.waitForFunction(() => document.querySelector<HTMLOptionElement>('.plugin-source-add option[value="project"]')?.disabled === true)
+    await dialog.getByRole("button", { name: "Add", exact: true }).click()
+    await dialog.getByText("The Project configuration is unavailable for this location.", { exact: true }).waitFor()
+    assert.deepEqual((await calls(page, "add")).map((call: any) => call.scope), ["project"])
+    assert.equal(await page.locator('[data-source-target="project-only"]').count(), 0)
   } finally { await page.close() }
 })
 

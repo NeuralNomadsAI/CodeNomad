@@ -37,7 +37,8 @@ export function PluginSourceAdd(props: {
     event.preventDefault()
     const value = spec().trim()
     if (!value || pending() || props.active === false) return
-    const target = scope() === "project" && !props.projectAvailable ? "global" : scope()
+    // Never widen the chosen scope: an unavailable Project target is refused by the server.
+    const target = scope()
     setPending(true)
     setError(undefined)
     try {

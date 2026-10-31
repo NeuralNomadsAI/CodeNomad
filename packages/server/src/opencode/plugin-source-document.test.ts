@@ -17,7 +17,8 @@ function documentFor(text: string, plugins: PluginConfigEntry[], byteOrderMark =
 describe("plugin source specs", () => {
   it("accepts registry, alias and remote Git specs exactly as OpenCode's plugin add does", () => {
     for (const spec of ["foo", "@scope/pkg", "@scope/pkg@^1.2.0", "foo@latest", "foo@1.2.3", "bar@npm:foo@1",
-      "github:user/repo", "user/repo#v1", "git+https://github.com/user/repo.git#v1", "git+ssh://git@example.com/x.git"]) {
+      "github:user/repo", "user/repo#v1", "git+https://github.com/user/repo.git#v1", "git+ssh://git@example.com/x.git",
+      "foo@>=1 <2", "foo@^1 || ^2"]) {
       assert.doesNotThrow(() => validatePluginSourceSpec(spec), spec)
     }
   })
@@ -28,7 +29,8 @@ describe("plugin source specs", () => {
       ["C:\\plugin", "local-path"], ["file:../plugin", "local-path"], ["git+file:///tmp/repo", "local-path"],
       ["https://example.com/plugin.tgz", "invalid-spec"], ["foo@{env:VERSION}", "invalid-spec"], ["{file:./spec}", "invalid-spec"],
       ["-foo", "plugin-id"], ["foo.*", "plugin-id"], ["*", "plugin-id"], ["opencode.builtin", "plugin-id"],
-      ["foo\u0007", "invalid-spec"], [" foo", "invalid-spec"], ["a b", "invalid-spec"], ["", "invalid-spec"], ["x".repeat(513), "invalid-spec"],
+      ["foo\u0007", "invalid-spec"], ["foo@1\n", "invalid-spec"], ["foo@\t1", "invalid-spec"], [" foo", "invalid-spec"], ["foo ", "invalid-spec"],
+      ["a b", "invalid-spec"], ["", "invalid-spec"], ["x".repeat(513), "invalid-spec"], ["\\\\server\\share\\plugin", "local-path"],
     ]
     for (const [spec, code] of cases) {
       assert.throws(() => validatePluginSourceSpec(spec), (error: unknown) => error instanceof PluginSourceSpecError && error.code === code, spec)
@@ -44,6 +46,9 @@ describe("plugin source specs", () => {
     assert.ok(same("bar@npm:foo@1", "bar@3"), "and declares its alias name")
     assert.ok(same("github:user/repo", "git+https://github.com/user/repo.git#v2"))
     assert.ok(same("user/repo#main", "git+ssh://git@github.com/user/repo.git"))
+    assert.ok(same("git+https://example.com/a/b.git", "git+ssh://git@example.com:2222/a/b.git#v1"), "other hosts compare host and path")
+    assert.ok(same("git+https://Example.com/a/b", "git+ssh://git@example.com:a/b.git"), "scp-like form")
+    assert.ok(!same("git+https://example.com/a/b.git", "git+https://example.com/a/c.git"))
     assert.ok(!same("foo", "foobar"))
     assert.ok(!same("@a/foo", "@b/foo"))
     assert.deepEqual(pluginPackageIdentities("./local"), [])

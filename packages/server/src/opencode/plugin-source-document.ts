@@ -29,8 +29,9 @@ export function pluginEntryTarget(entry: PluginConfigEntry): string {
  * activation selectors are refused before any file is touched.
  */
 export function validatePluginSourceSpec(spec: string): npa.Result {
+  // Inner spaces belong to valid ranges (`foo@>=1 <2`, `foo@^1 || ^2`); npm-package-arg rejects the rest.
   if (spec.length === 0 || spec.length > PLUGIN_SOURCE_MAX_SPEC_LENGTH || spec !== spec.trim()
-    || /[\s\u0000-\u001f\u007f]/.test(spec)) {
+    || /[\u0000-\u001f\u007f-\u009f]/.test(spec)) {
     throw new PluginSourceSpecError("Plugin package spec is invalid", "invalid-spec")
   }
   if (/\{(?:env|file):/i.test(spec)) throw new PluginSourceSpecError("Configuration variables are not accepted in a plugin spec", "invalid-spec")
@@ -80,14 +81,26 @@ export function pluginPackageIdentities(spec: string): string[] {
     addName(parsed.name)
     // hosted-git-info's shortcut (`github:user/repo`) is missing from the published typings.
     const hosted = parsed.hosted as unknown as { shortcut(options: { noCommittish: boolean }): string } | undefined
-    const repository = hosted
-      ? hosted.shortcut({ noCommittish: true })
-      : parsed.fetchSpec?.replace(/#.*$/, "").replace(/\.git$/i, "")
+    const repository = hosted ? hosted.shortcut({ noCommittish: true }) : gitRepositoryIdentity(parsed.fetchSpec)
     if (repository) keys.add(`git:${repository.toLowerCase()}`)
   } else if (parsed.registry) {
     addName(parsed.name)
   }
   return [...keys]
+}
+
+// Other Git hosts: the same repository over https, ssh or git, whatever the user, port or `.git` suffix.
+function gitRepositoryIdentity(fetchSpec: string | null | undefined): string | undefined {
+  if (!fetchSpec) return undefined
+  const spec = fetchSpec.replace(/#.*$/, "")
+  try {
+    const url = new URL(spec)
+    return `${url.hostname}${url.pathname.replace(/\/+$/, "").replace(/\.git$/i, "")}`
+  } catch {
+    // scp-like `git@host:owner/repo.git`
+    const scp = /^(?:[^@/]+@)?([^:/]+):(.+)$/.exec(spec)
+    return scp ? `${scp[1]}/${scp[2]!.replace(/^\/+/, "").replace(/\.git$/i, "")}` : spec.replace(/\.git$/i, "")
+  }
 }
 
 /**

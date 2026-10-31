@@ -78,6 +78,21 @@ describe("plugin source mutations", () => {
     } finally { await f.cleanup() }
   })
 
+  it("refuses the second of two concurrent adds of one package in different scopes", async () => {
+    const f = await fixture()
+    try {
+      await writeFile(f.globalFile, "{}")
+      const results = await Promise.allSettled([
+        f.sources.add("w", { location: f.location, scope: "global", spec: "race-plugin@1" }),
+        f.sources.add("w", { location: f.location, scope: "project", spec: "race-plugin@2" }),
+      ])
+      assert.deepEqual(results.map(result => result.status), ["fulfilled", "rejected"])
+      assert.equal((results[1] as PromiseRejectedResult).reason.code, "duplicate")
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["race-plugin@1"])
+      await assert.rejects(readFile(f.projectFile), "the refused scope is never written")
+    } finally { await f.cleanup() }
+  })
+
   it("refuses local paths, variables and plugin IDs as 422 before any write", async () => {
     const f = await fixture()
     try {

@@ -4,7 +4,6 @@ import type {
   PluginControlLocation,
   PluginControlScope,
   PluginControlsSnapshot,
-  PluginRuntimeInventoryEntry,
 } from "../../../server/src/api-types"
 import type { PluginSourceAddRequest, PluginSourceMutationResponse, PluginSourceRemoveRequest } from "../../../server/src/plugin-source-types"
 import { serverApi } from "../lib/api-client"
@@ -91,11 +90,6 @@ export class PluginSourcesStore {
 
 function removalKey(instanceId: string, location: PluginControlLocation, source: PluginConfiguredSource): string {
   return JSON.stringify([instanceId, location.directory, source.scope, source.target, source.entryIndex])
-}
-
-/** The runtime entry a configured or added target loaded as, matched by exact native target. */
-export function runtimeForTarget(snapshot: PluginControlsSnapshot | undefined, target: string): PluginRuntimeInventoryEntry | undefined {
-  return snapshot?.runtime.find(entry => entry.source.type === "package" && entry.source.target === target)
 }
 
 /** Declarations the shared document primitive can remove: those in the scope's own write target. */

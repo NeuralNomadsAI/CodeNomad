@@ -44,7 +44,10 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   `PLUGIN_SOURCE_PENDING_TIMEOUT_MS` (120 s) bounds that window: a source still
   absent afterwards, like any configured source the inventory never reports, is
   `unconfirmed` (**Not confirmed**, with a Refresh action), since a disabled
-  package and a never-installed one look the same to `plugin.list`.
+  package and a never-installed one look the same to `plugin.list`. `plugin.list`
+  omits disabled plugins and exposes no package-to-ID link for them, so a disabled
+  package with an exact `-id` rule shows two rows: its ID row with switches, and
+  its unconfirmed source row carrying the Remove items.
 - **Correlation**: snapshot sources carry `pluginId` when the runtime inventory
   loaded them, so Remove items attach to the plugin row. A row offers removal only
   for declarations in a scope's own write target; inherited, inline and other

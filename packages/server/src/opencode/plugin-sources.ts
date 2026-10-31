@@ -32,16 +32,28 @@ type Documents = Pick<PluginControls, "read" | "readConfigDocuments" | "editConf
  * The package cache is never touched; OpenCode reloads the watched document.
  */
 export class PluginSources {
+  private readonly addTails = new Map<string, Promise<void>>()
+
   constructor(private readonly options: { documents: Documents; logger: Logger }) {}
 
-  async add(workspaceId: string, request: PluginSourceAddRequest): Promise<PluginSourceMutationResponse> {
-    const { spec, scope } = request
+  add(workspaceId: string, request: PluginSourceAddRequest): Promise<PluginSourceMutationResponse> {
     try {
-      validatePluginSourceSpec(spec)
+      validatePluginSourceSpec(request.spec)
     } catch (error) {
-      if (error instanceof PluginSourceSpecError) throw new PluginSourcesError(error.message, "invalid", error.code)
-      throw error
+      return Promise.reject(error instanceof PluginSourceSpecError ? new PluginSourcesError(error.message, "invalid", error.code) : error)
     }
+    // The duplicate check spans both scopes while the document lock covers one file:
+    // serialize this workspace's adds so a concurrent add in the other scope is visible.
+    const tail = this.addTails.get(workspaceId) ?? Promise.resolve()
+    const result = tail.then(() => this.addSerialized(workspaceId, request))
+    const tracked = result.then(() => undefined, () => undefined)
+    this.addTails.set(workspaceId, tracked)
+    void tracked.then(() => { if (this.addTails.get(workspaceId) === tracked) this.addTails.delete(workspaceId) })
+    return result
+  }
+
+  private async addSerialized(workspaceId: string, request: PluginSourceAddRequest): Promise<PluginSourceMutationResponse> {
+    const { spec, scope } = request
     const identities = new Set(pluginPackageIdentities(spec))
     const [snapshot, raw] = await Promise.all([
       this.options.documents.read(workspaceId, request.location),
