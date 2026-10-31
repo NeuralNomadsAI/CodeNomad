@@ -11,9 +11,15 @@ export interface LocalWindowRecord {
   loading: boolean
   backendUrl: string | null
   pendingFolders: PendingFolder[]
+  pendingConnections?: PendingConnection[]
+  /** Opened only to run a `--connect-server` launch: the host closes it once that connection settles. */
+  connectOnly?: boolean
 }
 
 interface PendingFolder { path: string; attempts: number }
+
+/** A `--connect-server` request for the renderer; `failure` is another window's message to show here. */
+export interface PendingConnection { target: string; failure?: string }
 
 const MAX_FOLDER_ATTEMPTS = 3
 
@@ -109,6 +115,32 @@ export class LocalWindowRegistry {
       throw new Error("Pending folder acknowledgement is out of order")
     }
     if (!opened && ++pending.attempts < MAX_FOLDER_ATTEMPTS) record.pendingFolders.push(pending)
+  }
+
+  queueConnection(id: string, connection: PendingConnection): void {
+    const record = this.get(id)
+    if (!record) throw new Error("Unknown local window")
+    ;(record.pendingConnections ??= []).push(connection)
+    if (!record.window.isDestroyed() && !record.window.webContents.isDestroyed()) {
+      record.window.webContents.send("window:connections-pending")
+    }
+  }
+
+  nextConnection(id: string): (PendingConnection & { deferFailure: boolean }) | null {
+    const record = this.get(id)
+    if (!record) throw new Error("Unknown local window")
+    const pending = record.pendingConnections?.[0]
+    return pending ? { ...pending, deferFailure: Boolean(record.connectOnly && !pending.failure) } : null
+  }
+
+  /** Removes the delivered connection; the caller decides what a failure in a connect-only window means. */
+  acknowledgeConnection(id: string, target: string): { record: LocalWindowRecord; connection: PendingConnection } {
+    const record = this.get(id)
+    if (!record) throw new Error("Unknown local window")
+    const pending = record.pendingConnections?.[0]
+    if (pending?.target !== target) throw new Error("Pending connection acknowledgement is out of order")
+    record.pendingConnections!.shift()
+    return { record, connection: pending }
   }
 
   remove(id: string): LocalWindowRecord | undefined {

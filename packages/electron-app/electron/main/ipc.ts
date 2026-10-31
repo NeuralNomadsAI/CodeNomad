@@ -21,6 +21,8 @@ interface CliIPCDependencies {
   newWindow(): Promise<unknown>
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
+  nextConnection(windowId: string): { target: string; failure?: string; deferFailure: boolean } | null
+  acknowledgeConnection(windowId: string, target: string, failure: string | null): void
   browserController: BrowserController
 }
 
@@ -97,6 +99,13 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     const { id } = local(event)
     if (typeof folder !== "string" || typeof opened !== "boolean") throw new Error("Invalid folder acknowledgement")
     dependencies.acknowledgeFolder(id, folder, opened)
+    return { ok: true }
+  })
+  ipcMain.handle("window:nextConnection", async (event) => dependencies.nextConnection(local(event).id))
+  ipcMain.handle("window:ackConnection", async (event, target: unknown, failure: unknown) => {
+    const { id } = local(event)
+    if (typeof target !== "string" || (failure !== null && typeof failure !== "string")) throw new Error("Invalid connection acknowledgement")
+    dependencies.acknowledgeConnection(id, target, failure)
     return { ok: true }
   })
   ipcMain.handle("menu:popup", async (event, menu: unknown, x: unknown, y: unknown) => {

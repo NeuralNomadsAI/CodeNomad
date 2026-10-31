@@ -105,6 +105,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "Weiter",
   "folderSelection.servers.certificateInstall.cancelLabel": "Abbrechen",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad benötigt das Vertrauen in das lokale Zertifikat, bevor es selbstsignierte HTTPS-Remote-Fenster öffnen kann.",
+  "folderSelection.servers.launch.error.missing": "--connect-server benötigt den Namen eines gespeicherten Servers oder eine http(s)-URL.",
+  "folderSelection.servers.launch.error.invalid": "„{value}“ ist keine gültige http://- oder https://-Serveradresse.",
+  "folderSelection.servers.launch.error.credentials": "„{value}“ enthält Anmeldedaten oder einen Kopplungscode. Startadressen dürfen keine enthalten: Koppeln Sie den Server stattdessen über „Mit Server verbinden“.",
+  "folderSelection.servers.launch.error.unknown": "Kein gespeicherter Server heißt „{value}“. Verwenden Sie den Namen eines gespeicherten Servers oder eine http(s)-URL.",
+  "folderSelection.servers.launch.error.ambiguous": "Mehrere gespeicherte Server heißen „{value}“. Benennen Sie einen um oder verwenden Sie seine URL.",
   "folderSelection.sidecars.button": "SideCar öffnen",
 
   "projectRenameDialog.title": "Arbeitsbereich umbenennen",

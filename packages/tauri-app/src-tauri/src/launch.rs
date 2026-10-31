@@ -8,6 +8,35 @@ use serde::Deserialize;
 pub(crate) struct LaunchIntent {
     pub(crate) new_window: bool,
     pub(crate) folders: Vec<String>,
+    /// `--connect-server` value: a saved server name or id, or an http(s) URL; empty when the value is missing.
+    pub(crate) connect_server: Option<String>,
+}
+
+impl LaunchIntent {
+    /// A launch that only asks for a remote window: it opens no local window of its own when the connection succeeds.
+    pub(crate) fn is_connect_only(&self) -> bool {
+        self.connect_server.is_some() && !self.new_window && self.folders.is_empty()
+    }
+}
+
+/// Reads `--connect-server <value>` or `--connect-server=<value>` at `index` with the count of extra arguments it consumed.
+fn connect_server_argument(arguments: &[String], index: usize) -> Option<(String, usize)> {
+    let value = &arguments[index];
+    if let Some(inline) = value.strip_prefix("--connect-server=") {
+        return Some((inline.trim().to_string(), 0));
+    }
+    if value != "--connect-server" {
+        return None;
+    }
+    Some(
+        match arguments
+            .get(index + 1)
+            .filter(|target| !target.starts_with('-'))
+        {
+            Some(target) => (target.trim().to_string(), 1),
+            None => (String::new(), 0),
+        },
+    )
 }
 
 fn directory(value: &str, cwd: &Path) -> Option<String> {
@@ -25,7 +54,10 @@ pub(crate) fn parse_launch_intent(arguments: &[String], cwd: &Path) -> LaunchInt
     let mut index = 0;
     while index < arguments.len() {
         let value = &arguments[index];
-        if value == "--new-window" {
+        if let Some((target, consumed)) = connect_server_argument(arguments, index) {
+            intent.connect_server = Some(target);
+            index += consumed;
+        } else if value == "--new-window" {
             intent.new_window = true;
         } else if value == "--folder" {
             if let Some(folder) = arguments
@@ -67,7 +99,10 @@ pub(crate) fn parse_windows_forwarded_launch_intent(
     let mut index = 0;
     while index < arguments.len() {
         let value = &arguments[index];
-        if value == "--new-window" {
+        if let Some((target, consumed)) = connect_server_argument(arguments, index) {
+            intent.connect_server = Some(target);
+            index += consumed;
+        } else if value == "--new-window" {
             intent.new_window = true;
         } else if value == "--folder" {
             if let Some(folder) = arguments
@@ -94,6 +129,7 @@ pub(crate) fn parse_windows_forwarded_launch_intent(
     }
     if unknown_fragment {
         intent.folders.clear();
+        intent.connect_server = None;
     }
     intent
 }
@@ -118,6 +154,10 @@ pub(crate) fn prepare_second_launch_intent(
     mut intent: LaunchIntent,
     config_path: &Path,
 ) -> LaunchIntent {
+    // A connection runs in an existing window; a new window would be left empty beside the remote one.
+    if intent.is_connect_only() {
+        return intent;
+    }
     let focus_existing = std::fs::read_to_string(config_path)
         .ok()
         .and_then(|content| serde_yaml::from_str::<LaunchConfig>(&content).ok())
@@ -175,9 +215,97 @@ mod tests {
             parse_launch_intent(&args, root.path()),
             LaunchIntent {
                 new_window: true,
-                folders: vec![folder.to_string_lossy().into_owned()]
+                folders: vec![folder.to_string_lossy().into_owned()],
+                connect_server: None,
             }
         );
+    }
+
+    #[test]
+    fn connect_server_takes_a_separate_or_inline_value_beside_folders() {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("workspace");
+        std::fs::create_dir(&folder).unwrap();
+        let parse = |args: &[&str]| {
+            let arguments = args
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>();
+            parse_launch_intent(&arguments, root.path())
+        };
+        assert_eq!(
+            parse(&["--connect-server", "https://server.example.com"]).connect_server,
+            Some("https://server.example.com".to_string())
+        );
+        assert_eq!(
+            parse(&["--connect-server= Build box "]).connect_server,
+            Some("Build box".to_string())
+        );
+        let combined = parse(&["workspace", "--connect-server", "Build box"]);
+        assert_eq!(
+            combined.folders,
+            vec![folder.to_string_lossy().into_owned()]
+        );
+        assert_eq!(combined.connect_server, Some("Build box".to_string()));
+        assert!(!combined.is_connect_only());
+        // The value is never taken for a folder, even when a directory of that name exists.
+        let only = parse(&["--connect-server", "workspace"]);
+        assert!(only.folders.is_empty());
+        assert!(only.is_connect_only());
+    }
+
+    #[test]
+    fn connect_server_without_a_value_is_empty_and_keeps_the_next_flag() {
+        let root = tempfile::tempdir().unwrap();
+        let parsed = parse_launch_intent(
+            &["--connect-server".to_string(), "--new-window".to_string()],
+            root.path(),
+        );
+        assert_eq!(parsed.connect_server, Some(String::new()));
+        assert!(parsed.new_window);
+        assert_eq!(
+            parse_launch_intent(&["--connect-server".to_string()], root.path()).connect_server,
+            Some(String::new())
+        );
+    }
+
+    #[test]
+    fn windows_forwarding_keeps_connections_unless_the_arguments_were_fragmented() {
+        let root = tempfile::tempdir().unwrap();
+        let forwarded = parse_windows_forwarded_launch_intent(
+            &["--connect-server".into(), "Build box".into()],
+            root.path(),
+        );
+        assert_eq!(forwarded.connect_server, Some("Build box".to_string()));
+        assert!(parse_windows_forwarded_launch_intent(
+            &[
+                "--connect-server".into(),
+                "Build".into(),
+                "pipe-fragment".into()
+            ],
+            root.path(),
+        )
+        .connect_server
+        .is_none());
+    }
+
+    #[test]
+    fn forwarded_connect_only_launches_run_in_an_existing_window() {
+        let root = tempfile::tempdir().unwrap();
+        let config = root.path().join("config.yaml");
+        let intent = LaunchIntent {
+            connect_server: Some("prod".into()),
+            ..LaunchIntent::default()
+        };
+        assert_eq!(
+            prepare_second_launch_intent(intent.clone(), &config),
+            intent
+        );
+        let with_folder = LaunchIntent {
+            folders: vec!["workspace".into()],
+            ..intent
+        };
+        assert!(prepare_second_launch_intent(with_folder, &config).new_window);
     }
 
     #[test]
@@ -217,6 +345,7 @@ mod tests {
         let intent = LaunchIntent {
             new_window: false,
             folders: vec!["workspace".into()],
+            connect_server: None,
         };
         assert!(prepare_second_launch_intent(intent.clone(), &config).new_window);
         std::fs::write(

@@ -82,6 +82,8 @@ fn main() {
             "desktop_launch_ready",
             "desktop_launch_next_folder",
             "desktop_launch_acknowledge_folder",
+            "desktop_launch_next_connection",
+            "desktop_launch_acknowledge_connection",
             "install_desktop_update",
             "check_desktop_update",
             "take_desktop_update_failure",

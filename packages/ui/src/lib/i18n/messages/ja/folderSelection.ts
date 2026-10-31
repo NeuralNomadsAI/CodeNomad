@@ -105,6 +105,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "続行",
   "folderSelection.servers.certificateInstall.cancelLabel": "キャンセル",
   "folderSelection.servers.certificateInstall.cancelled": "自己署名 HTTPS のリモートウィンドウを開くには、CodeNomad のローカル証明書を信頼する必要があります。",
+  "folderSelection.servers.launch.error.missing": "--connect-server には保存済みサーバーの名前か http(s) URL が必要です。",
+  "folderSelection.servers.launch.error.invalid": "「{value}」は有効な http:// または https:// のサーバーアドレスではありません。",
+  "folderSelection.servers.launch.error.credentials": "「{value}」には認証情報またはペアリングコードが含まれています。起動時のアドレスには含められません。代わりに「サーバーに接続」からペアリングしてください。",
+  "folderSelection.servers.launch.error.unknown": "「{value}」という名前の保存済みサーバーはありません。保存済みサーバーの名前か http(s) URL を指定してください。",
+  "folderSelection.servers.launch.error.ambiguous": "「{value}」という名前の保存済みサーバーが複数あります。いずれかの名前を変更するか、URL を指定してください。",
   "folderSelection.sidecars.button": "SideCar を開く",
 
   "projectRenameDialog.title": "ワークスペース名を変更",

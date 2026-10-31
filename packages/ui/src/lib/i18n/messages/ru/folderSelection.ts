@@ -105,6 +105,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "Продолжить",
   "folderSelection.servers.certificateInstall.cancelLabel": "Отмена",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad должен доверять локальному сертификату, прежде чем сможет открывать удаленные HTTPS-окна с самоподписанным сертификатом.",
+  "folderSelection.servers.launch.error.missing": "Для --connect-server нужно имя сохранённого сервера или URL http(s).",
+  "folderSelection.servers.launch.error.invalid": "«{value}» не является допустимым адресом сервера http:// или https://.",
+  "folderSelection.servers.launch.error.credentials": "«{value}» содержит учётные данные или код сопряжения. Адрес запуска не может их содержать: выполните сопряжение через «Подключиться к серверу».",
+  "folderSelection.servers.launch.error.unknown": "Нет сохранённого сервера с именем «{value}». Укажите имя сохранённого сервера или URL http(s).",
+  "folderSelection.servers.launch.error.ambiguous": "Несколько сохранённых серверов называются «{value}». Переименуйте один из них или укажите его URL.",
   "folderSelection.sidecars.button": "Открыть SideCar",
 
   "projectRenameDialog.title": "Переименовать рабочее пространство",

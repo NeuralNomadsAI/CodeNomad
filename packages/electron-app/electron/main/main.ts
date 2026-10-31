@@ -2,7 +2,7 @@ import "./process-output"
 import { app, BrowserWindow, dialog, ipcMain, nativeImage, screen, session } from "electron"
 import http from "node:http"
 import https from "node:https"
-import { createHash } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
@@ -13,6 +13,7 @@ import { isBrowserUrlAllowed, secureBrowserWebview } from "./browser-webview-sec
 import { ClientStateManager } from "./client-state"
 import { setupClientStateIPC } from "./client-state-ipc"
 import { ClientStateNavigationController } from "./client-state-navigation"
+import { acknowledgeLaunchConnection, type ConnectLaunchHost } from "./connect-launch"
 import { setupCliIPC } from "./ipc"
 import { notificationBadgeBitmap, setupNotificationBadgeIPC } from "./notification-badge"
 import { LocalWindowRegistry, type LocalWindowRecord } from "./local-window-registry"
@@ -27,7 +28,7 @@ import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
 import { InvalidProfileError } from "./data-profile"
 import { stripPrivateRelaunchEnvironment, sweepSelectionFolders } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
@@ -373,9 +374,30 @@ function runPrimary(firstIntent: LaunchIntent) {
     return createWindow(identity.id, identity.persisted)
   }
   const handleIntent = async (intent: LaunchIntent) => {
+    if (isConnectOnlyLaunch(intent) && !registry.mruRecord()) {
+      // Nothing to run the connection in: an ephemeral window runs it and closes once it settles.
+      const record = createWindow(randomUUID(), false)
+      record.connectOnly = true
+      registry.queueConnection(record.id, { target: intent.connectServer! })
+      registry.focus(record.id)
+      return
+    }
     const record = intent.newWindow ? await createNewWindow() : registry.focusMru() ?? ensureLocalWindow() ?? await createNewWindow()
     for (const folder of intent.folders) registry.queueFolder(record.id, folder)
+    if (intent.connectServer !== undefined) registry.queueConnection(record.id, { target: intent.connectServer })
     registry.focus(record.id)
+  }
+  const restoreNormalStart = async () => {
+    for (const id of clientState.windowIds) if (!registry.get(id)) createWindow(id)
+    return registry.focus(clientState.activeWindowId)
+      ?? registry.all().find((record) => !record.connectOnly && !record.window.isDestroyed())
+      ?? await createNewWindow()
+  }
+  const connectLaunchHost: ConnectLaunchHost = {
+    acknowledgeConnection: (id, target) => registry.acknowledgeConnection(id, target),
+    queueConnection: (id, connection) => registry.queueConnection(id, connection),
+    restoreNormalStart,
+    close: (record) => { if (!record.window.isDestroyed()) record.window.close() },
   }
   const intentQueue = createLaunchIntentQueue(handleIntent, (error) => console.error("[electron-startup] launch intent failed", error))
   const firstLaunch = intentQueue.enqueue(firstIntent)
@@ -385,6 +407,11 @@ function runPrimary(firstIntent: LaunchIntent) {
     resolveLocal: (sender) => registry.resolve(sender), resolvePreferences: (sender) => preferencesWindows.resolve(sender), getAllowedOrigins,
     openRemoteWindow, newWindow: () => intentQueue.enqueue({ newWindow: true, folders: [] }),
     nextFolder: (id) => registry.nextFolder(id), acknowledgeFolder: (id, folder, opened) => registry.acknowledgeFolder(id, folder, opened),
+    nextConnection: (id) => registry.nextConnection(id),
+    acknowledgeConnection: (id, target, failure) => {
+      void acknowledgeLaunchConnection(connectLaunchHost, id, target, failure)
+        .catch((error) => console.error("[electron-startup] launch connection failed", error))
+    },
     browserController,
   })
   const profileRoots = resolveProfileRoots(baseUserDataPath)
@@ -492,8 +519,11 @@ function runPrimary(firstIntent: LaunchIntent) {
       reload: (window) => { const record = registry.resolve(window.webContents); if (record) void record.navigation.navigate((target) => target.webContents.reload()); else window.webContents.reload() },
       forceReload: (window) => { const record = registry.resolve(window.webContents); if (record) void record.navigation.navigate((target) => target.webContents.reloadIgnoringCache()); else window.webContents.reloadIgnoringCache() },
     })
-    for (const id of clientState.windowIds) createWindow(id)
-    registry.focus(clientState.activeWindowId)
+    // A launch that only connects to a server restores the local windows only if the connection fails.
+    if (!isConnectOnlyLaunch(firstIntent)) {
+      for (const id of clientState.windowIds) createWindow(id)
+      registry.focus(clientState.activeWindowId)
+    }
     intentQueue.start()
     await firstLaunch.catch(() => {})
     void cli.start({ dev: !app.isPackaged }).catch((error) => registry.fanout("cli:error", { message: error instanceof Error ? error.message : String(error) }))

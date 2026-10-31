@@ -89,4 +89,6 @@ certificate चेतावनी आए रोकिएर hostname, SAN, trust
 
 सुरक्षित सर्भर फेरि खोल्न गृह पृष्ठको **सर्भरहरू** ट्याबमा त्यसलाई चयन गर्नुहोस्। bookmark यो CodeNomad कन्फिगरेसनका हुन्, remote server का project होइनन्। URL बचतले server सुरु वा access प्रदान गर्दैन। **बचत गरिएको सर्भर हटाउनुहोस्** ले bookmark हटाउँछ, remote कुराकानी, backend वा credential होइन।
 
+सुरक्षित सर्भर command line बाट सिधै खोल्न, सर्भरको सुरक्षित नाम वा यसको `https://` URL सहित desktop app लाई `--connect-server <name>` (वा `--connect-server=<name>`) सँग सुरु गर्नुहोस्। CodeNomad ले remote window मात्र खोल्छ, **जडान गर्नुहोस्** जस्तै उही जाँच र sign in सहित; CodeNomad पहिले नै चलिरहेको छ भने, नयाँ window को सट्टा यसको हालको window ले त्यसलाई खोल्छ। कुनै सुरक्षित सर्भरसँग नमिल्ने URL यसको host नाममा बचत हुन्छ। सुरु गर्दा दिइने मानमा credential कहिल्यै हुँदैन: user नाम, password वा pairing code भएको URL अस्वीकार हुन्छ। नाम अज्ञात भए, URL अमान्य भए वा जडान असफल भए, CodeNomad सामान्य रूपमा सुरु हुन्छ र त्रुटि देखाउँछ।
+
 Remote Control मा **सर्भर URL** मा नयाँ pairing link paste गर्नुहोस्। bookmark ले tunnel origin मात्र राख्छ, one-use code कहिल्यै होइन; device-cookie हराएपछि पुनःpair गर्न [Remote Control](remote-control.md) हेर्नुहोस्।

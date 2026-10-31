@@ -89,6 +89,10 @@ browser ─TLS─▶ OpenTunnel relay (forwards ciphertext) ─▶ OpenTunnel SD
   The code is never stored with the server;
   re-pairing a saved server reuses its window storage, which keeps the device
   cookie across launches. Covered by `tests/browser/remote-server-pairing.test.ts`.
+- `--connect-server` opens a saved server or URL at launch through that same
+  connect flow ([architecture.md](architecture.md#native-profiles-windows-and-client-state)).
+  It refuses URLs with user info or a fragment, so a pairing code or password
+  never travels on a command line; pair from Add server instead.
 
 ## Validation
 

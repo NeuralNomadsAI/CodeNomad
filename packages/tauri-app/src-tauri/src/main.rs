@@ -1778,10 +1778,11 @@ fn main() {
     );
 
     let launch_queue = Arc::new(launch::LaunchQueue::default());
-    launch_queue.enqueue(launch::parse_launch_intent(
-        &std::env::args().skip(1).collect::<Vec<_>>(),
-        &cwd,
-    ));
+    let first_intent =
+        launch::parse_launch_intent(&std::env::args().skip(1).collect::<Vec<_>>(), &cwd);
+    // A launch that only connects to a server restores the local windows only if the connection fails.
+    let restore_on_start = !first_intent.is_connect_only();
+    launch_queue.enqueue(first_intent);
     let singleton_queue = Arc::clone(&launch_queue);
     let second_launch_config = std::path::PathBuf::from(&scope.config_identity);
     let single_instance = tauri_plugin_single_instance::init(move |app, args, callback_cwd| {
@@ -1953,8 +1954,10 @@ fn main() {
             app.manage(shutdown::ShutdownCoordinator::default());
             app.manage(desktop_updater::UpdateState::default());
             build_menu(&app.handle())?;
-            local_windows::restore_windows(&app.handle())
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            if restore_on_start {
+                local_windows::restore_windows(&app.handle())
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::Other, err))?;
+            }
             schedule_launch_drain(app.handle().clone(), Arc::clone(&setup_queue));
             update_fullscreen_shortcut(&app.handle());
 
@@ -2007,6 +2010,8 @@ fn main() {
             local_windows::desktop_launch_ready,
             local_windows::desktop_launch_next_folder,
             local_windows::desktop_launch_acknowledge_folder,
+            local_windows::desktop_launch_next_connection,
+            local_windows::desktop_launch_acknowledge_connection,
             desktop_updater::check_desktop_update,
             desktop_updater::install_desktop_update,
             desktop_updater::take_desktop_update_failure,

@@ -42,6 +42,13 @@ const localElectronAPI = {
     ipcRenderer.on("window:folders-pending", handler)
     return () => ipcRenderer.removeListener("window:folders-pending", handler)
   },
+  nextPendingConnection: () => ipcRenderer.invoke("window:nextConnection"),
+  acknowledgePendingConnection: (target, failure) => ipcRenderer.invoke("window:ackConnection", target, typeof failure === "string" ? failure : null),
+  onPendingConnections: (callback) => {
+    const handler = () => callback()
+    ipcRenderer.on("window:connections-pending", handler)
+    return () => ipcRenderer.removeListener("window:connections-pending", handler)
+  },
   onMenuAction: (callback) => {
     const handler = (_event, action) => callback(action)
     ipcRenderer.on("menu:action", handler)

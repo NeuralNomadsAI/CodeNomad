@@ -45,6 +45,95 @@ fn registry_enforces_maximum_and_lowercase_labels() {
 }
 
 #[test]
+fn connect_only_windows_defer_failures_and_settle_by_outcome() {
+    let mut registry = Registry::default();
+    let launch = registry.add(id(1), false).unwrap();
+    registry
+        .records
+        .get_mut(&launch.label)
+        .unwrap()
+        .connect_only = true;
+    registry
+        .queue_connection(&launch.label, "prod".into(), None)
+        .unwrap();
+    assert_eq!(
+        registry.next_connection(&launch.label).unwrap(),
+        Some(PendingConnectionPayload {
+            target: "prod".into(),
+            failure: None,
+            defer_failure: true,
+        })
+    );
+    assert_eq!(
+        registry
+            .acknowledge_connection(&launch.label, "prod", false)
+            .unwrap(),
+        ConnectionSettlement::Close
+    );
+
+    registry
+        .queue_connection(&launch.label, "missing".into(), None)
+        .unwrap();
+    registry
+        .queue_connection(&launch.label, "later".into(), None)
+        .unwrap();
+    assert!(registry
+        .acknowledge_connection(&launch.label, "later", false)
+        .unwrap_err()
+        .contains("out of order"));
+    let ConnectionSettlement::StartNormally(remaining) = registry
+        .acknowledge_connection(&launch.label, "missing", true)
+        .unwrap()
+    else {
+        panic!("a failed connect-only launch starts normally");
+    };
+    assert_eq!(
+        remaining
+            .into_iter()
+            .map(|pending| pending.target)
+            .collect::<Vec<_>>(),
+        vec!["later".to_string()]
+    );
+    assert_eq!(registry.next_connection(&launch.label).unwrap(), None);
+}
+
+#[test]
+fn ordinary_windows_report_their_own_failures_and_stay_open() {
+    let mut registry = Registry::default();
+    let local = registry.add(id(1), true).unwrap();
+    registry
+        .queue_connection(
+            &local.label,
+            "missing".into(),
+            Some("No saved server".into()),
+        )
+        .unwrap();
+    registry
+        .queue_connection(&local.label, "down".into(), None)
+        .unwrap();
+    assert_eq!(
+        registry.next_connection(&local.label).unwrap(),
+        Some(PendingConnectionPayload {
+            target: "missing".into(),
+            failure: Some("No saved server".into()),
+            defer_failure: false,
+        })
+    );
+    assert_eq!(
+        registry
+            .acknowledge_connection(&local.label, "missing", false)
+            .unwrap(),
+        ConnectionSettlement::Keep
+    );
+    assert_eq!(
+        registry
+            .acknowledge_connection(&local.label, "down", true)
+            .unwrap(),
+        ConnectionSettlement::Keep
+    );
+}
+
+#[test]
 fn remote_focus_never_falls_through_to_background_local() {
     let local = format!("local-{}", id(1));
     assert_eq!(

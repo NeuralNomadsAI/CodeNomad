@@ -17,6 +17,9 @@ pub(crate) struct LocalWindowRecord {
     pub(crate) label: String,
     pub(crate) persisted: bool,
     pending_folders: VecDeque<PendingFolder>,
+    pending_connections: VecDeque<PendingConnection>,
+    /// Opened only to run a `--connect-server` launch: closed once that connection settles.
+    connect_only: bool,
     renderer_ready: bool,
     workspace_menu_enabled: bool,
     pub(crate) view_menu_state: Option<crate::view_menu::ViewMenuState>,
@@ -26,6 +29,98 @@ pub(crate) struct LocalWindowRecord {
 struct PendingFolder {
     path: String,
     attempts: u8,
+}
+
+/// A `--connect-server` request for the renderer; `failure` is another window's message to show here.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PendingConnection {
+    target: String,
+    failure: Option<String>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct PendingConnectionPayload {
+    target: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    failure: Option<String>,
+    defer_failure: bool,
+}
+
+/// What a settled connection asks of its window.
+#[derive(Debug, Eq, PartialEq)]
+enum ConnectionSettlement {
+    Keep,
+    Close,
+    /// The connect-only launch failed: start normally, report the failure there with the queued rest, then close.
+    StartNormally(VecDeque<PendingConnection>),
+}
+
+impl Registry {
+    fn queue_connection(
+        &mut self,
+        label: &str,
+        target: String,
+        failure: Option<String>,
+    ) -> Result<bool, String> {
+        let record = self
+            .records
+            .get_mut(label)
+            .ok_or_else(|| "Unknown local window".to_string())?;
+        record
+            .pending_connections
+            .push_back(PendingConnection { target, failure });
+        Ok(record.renderer_ready)
+    }
+
+    fn next_connection(&self, label: &str) -> Result<Option<PendingConnectionPayload>, String> {
+        let record = self
+            .records
+            .get(label)
+            .ok_or_else(|| "Unknown local window".to_string())?;
+        Ok(record
+            .pending_connections
+            .front()
+            .map(|pending| PendingConnectionPayload {
+                target: pending.target.clone(),
+                failure: pending.failure.clone(),
+                defer_failure: record.connect_only && pending.failure.is_none(),
+            }))
+    }
+
+    fn acknowledge_connection(
+        &mut self,
+        label: &str,
+        target: &str,
+        failed: bool,
+    ) -> Result<ConnectionSettlement, String> {
+        let record = self
+            .records
+            .get_mut(label)
+            .ok_or_else(|| "Unknown local window".to_string())?;
+        if record
+            .pending_connections
+            .front()
+            .map(|pending| pending.target.as_str())
+            != Some(target)
+        {
+            return Err("Pending connection acknowledgement is out of order".to_string());
+        }
+        let settled = record.pending_connections.pop_front().unwrap();
+        if !record.connect_only || settled.failure.is_some() {
+            return Ok(ConnectionSettlement::Keep);
+        }
+        if failed {
+            return Ok(ConnectionSettlement::StartNormally(std::mem::take(
+                &mut record.pending_connections,
+            )));
+        }
+        Ok(if record.pending_connections.is_empty() {
+            ConnectionSettlement::Close
+        } else {
+            ConnectionSettlement::Keep
+        })
+    }
 }
 
 #[derive(Default)]
@@ -49,6 +144,8 @@ impl Registry {
             label: label.clone(),
             persisted,
             pending_folders: VecDeque::new(),
+            pending_connections: VecDeque::new(),
+            connect_only: false,
             renderer_ready: false,
             workspace_menu_enabled: false,
             view_menu_state: None,
@@ -207,21 +304,76 @@ impl LocalWindows {
     }
 
     pub(crate) fn renderer_ready(&self, app: &AppHandle, label: &str) -> Result<(), String> {
-        let pending = {
+        let (folders, connections) = {
             let mut registry = self.registry.lock().map_err(|error| error.to_string())?;
             let record = registry
                 .records
                 .get_mut(label)
                 .ok_or_else(|| "Unknown local window".to_string())?;
             record.renderer_ready = true;
-            !record.pending_folders.is_empty()
+            (
+                !record.pending_folders.is_empty(),
+                !record.pending_connections.is_empty(),
+            )
         };
-        if pending {
-            if let Some(webview) = app.get_webview(label) {
+        if let Some(webview) = app.get_webview(label) {
+            if folders {
                 let _ = webview.emit("desktop:folders-pending", ());
+            }
+            if connections {
+                let _ = webview.emit("desktop:connections-pending", ());
             }
         }
         Ok(())
+    }
+
+    fn mark_connect_only(&self, label: &str) -> Result<(), String> {
+        let mut registry = self.registry.lock().map_err(|error| error.to_string())?;
+        registry
+            .records
+            .get_mut(label)
+            .ok_or_else(|| "Unknown local window".to_string())?
+            .connect_only = true;
+        Ok(())
+    }
+
+    pub(crate) fn queue_connection(
+        &self,
+        app: &AppHandle,
+        label: &str,
+        target: String,
+        failure: Option<String>,
+    ) -> Result<(), String> {
+        let ready = self
+            .registry
+            .lock()
+            .map_err(|error| error.to_string())?
+            .queue_connection(label, target, failure)?;
+        if ready {
+            if let Some(webview) = app.get_webview(label) {
+                let _ = webview.emit("desktop:connections-pending", ());
+            }
+        }
+        Ok(())
+    }
+
+    fn next_connection(&self, label: &str) -> Result<Option<PendingConnectionPayload>, String> {
+        self.registry
+            .lock()
+            .map_err(|error| error.to_string())?
+            .next_connection(label)
+    }
+
+    fn acknowledge_connection(
+        &self,
+        label: &str,
+        target: &str,
+        failed: bool,
+    ) -> Result<ConnectionSettlement, String> {
+        self.registry
+            .lock()
+            .map_err(|error| error.to_string())?
+            .acknowledge_connection(label, target, failed)
     }
 
     pub(crate) fn next_folder(&self, label: &str) -> Result<Option<String>, String> {
@@ -471,6 +623,20 @@ pub(crate) fn restore_windows(app: &AppHandle) -> Result<(), String> {
 }
 
 pub(crate) fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<(), String> {
+    let windows = app.state::<LocalWindows>();
+    if intent.is_connect_only() && windows.mru_label().is_none() {
+        // Nothing to run the connection in: an ephemeral window runs it and closes once it settles.
+        let record = create_local_window(app, uuid::Uuid::new_v4().to_string(), false)?;
+        windows.mark_connect_only(&record.label)?;
+        windows.queue_connection(
+            app,
+            &record.label,
+            intent.connect_server.unwrap_or_default(),
+            None,
+        )?;
+        focus(app, &record.label);
+        return Ok(());
+    }
     let record = if intent.new_window {
         create_new_window(app)?
     } else if let Some(label) = app.state::<LocalWindows>().mru_label() {
@@ -484,7 +650,73 @@ pub(crate) fn handle_intent(app: &AppHandle, intent: LaunchIntent) -> Result<(),
         app.state::<LocalWindows>()
             .queue_folder(app, &record.label, folder)?;
     }
+    if let Some(target) = intent.connect_server {
+        windows.queue_connection(app, &record.label, target, None)?;
+    }
     focus(app, &record.label);
+    Ok(())
+}
+
+/// Opens the local windows a normal start shows, beside a failed connect-only window, and returns the one to report in.
+fn restore_normal_start(app: &AppHandle) -> Result<String, String> {
+    let state = app.state::<ClientState>();
+    let windows = app.state::<LocalWindows>();
+    let persisted = state.is_primary_process();
+    for id in state.window_ids() {
+        if !windows.contains_id(&id) {
+            create_local_window(app, id, persisted)?;
+        }
+    }
+    let usable = |label: &String| {
+        windows
+            .record(label)
+            .is_some_and(|record| !record.connect_only)
+    };
+    let active = state
+        .active_window_id()
+        .ok()
+        .and_then(|id| local_window_label(&id).ok())
+        .filter(usable);
+    let label = match active.or_else(|| {
+        windows
+            .records()
+            .into_iter()
+            .map(|record| record.label)
+            .find(usable)
+    }) {
+        Some(label) => label,
+        None => create_new_window(app)?.label,
+    };
+    focus(app, &label);
+    Ok(label)
+}
+
+fn close_local_window(app: &AppHandle, label: &str) {
+    if let Some(window) = app.get_webview_window(label) {
+        let _ = window.close();
+    }
+}
+
+fn settle_connection(
+    app: &AppHandle,
+    label: &str,
+    target: String,
+    failure: Option<String>,
+    settlement: ConnectionSettlement,
+) -> Result<(), String> {
+    match settlement {
+        ConnectionSettlement::Keep => {}
+        ConnectionSettlement::Close => close_local_window(app, label),
+        ConnectionSettlement::StartNormally(remaining) => {
+            let fallback = restore_normal_start(app)?;
+            let windows = app.state::<LocalWindows>();
+            windows.queue_connection(app, &fallback, target, failure)?;
+            for pending in remaining {
+                windows.queue_connection(app, &fallback, pending.target, pending.failure)?;
+            }
+            close_local_window(app, label);
+        }
+    }
     Ok(())
 }
 
@@ -561,6 +793,41 @@ pub(crate) fn desktop_launch_acknowledge_folder(
 ) -> Result<(), String> {
     crate::require_local_app_webview(&webview, &state)?;
     windows.acknowledge_folder(webview.label(), &folder, opened)
+}
+
+#[tauri::command]
+pub(crate) fn desktop_launch_next_connection(
+    webview: Webview,
+    windows: tauri::State<'_, LocalWindows>,
+    state: tauri::State<'_, crate::AppState>,
+) -> Result<Option<PendingConnectionPayload>, String> {
+    crate::require_local_app_webview(&webview, &state)?;
+    windows.next_connection(webview.label())
+}
+
+#[tauri::command]
+pub(crate) fn desktop_launch_acknowledge_connection(
+    webview: Webview,
+    app: AppHandle,
+    windows: tauri::State<'_, LocalWindows>,
+    state: tauri::State<'_, crate::AppState>,
+    target: String,
+    failure: Option<String>,
+) -> Result<(), String> {
+    crate::require_local_app_webview(&webview, &state)?;
+    let label = webview.label().to_string();
+    let settlement = windows.acknowledge_connection(&label, &target, failure.is_some())?;
+    if settlement == ConnectionSettlement::Keep {
+        return Ok(());
+    }
+    // Windows are created and closed from the event loop, never inside a command.
+    let dispatch = app.clone();
+    app.run_on_main_thread(move || {
+        if let Err(error) = settle_connection(&dispatch, &label, target, failure, settlement) {
+            eprintln!("[tauri-startup] launch connection failed: {error}");
+        }
+    })
+    .map_err(|error| error.to_string())
 }
 
 #[cfg(test)]

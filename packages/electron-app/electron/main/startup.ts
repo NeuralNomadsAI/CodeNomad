@@ -10,7 +10,13 @@ import { resolveTransitionProfile, type TransitionContext, type TransitionResult
 export interface LaunchIntent {
   newWindow: boolean
   folders: string[]
+  /** `--connect-server` value: a saved server name or id, or an http(s) URL; empty when the value is missing. */
+  connectServer?: string
 }
+
+/** A launch that only asks for a remote window: it opens no local window of its own when the connection succeeds. */
+export const isConnectOnlyLaunch = (intent: LaunchIntent): boolean =>
+  intent.connectServer !== undefined && !intent.newWindow && intent.folders.length === 0
 
 export interface StorageScope {
   /** Profile storage key; `stable` is the default profile (see data-profile.ts). */
@@ -228,10 +234,25 @@ function existingDirectory(value: string, cwd: string): string | undefined {
 export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
   const folders: string[] = []
   let newWindow = false
+  let connectServer: string | undefined
   for (let index = 0; index < argv.length; index++) {
     const value = argv[index]!
     if (value === "--new-window") {
       newWindow = true
+      continue
+    }
+    if (value === "--connect-server") {
+      const target = argv[index + 1]
+      if (target !== undefined && !target.startsWith("-")) {
+        index++
+        connectServer = target.trim()
+      } else {
+        connectServer = ""
+      }
+      continue
+    }
+    if (value.startsWith("--connect-server=")) {
+      connectServer = value.slice("--connect-server=".length).trim()
       continue
     }
     if (value === "--folder") {
@@ -252,10 +273,12 @@ export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
     const resolved = existingDirectory(value, cwd)
     if (resolved) folders.push(resolved)
   }
-  return { newWindow, folders: [...new Set(folders)] }
+  return { newWindow, folders: [...new Set(folders)], ...(connectServer !== undefined ? { connectServer } : {}) }
 }
 
 export function prepareSecondLaunchIntent(intent: LaunchIntent, configPath: string): LaunchIntent {
+  // A connection runs in an existing window; a new window would be left empty beside the remote one.
+  if (isConnectOnlyLaunch(intent)) return intent
   try {
     const config = parseYaml(readFileSync(configPath, "utf8")) as any
     if (config?.ui?.settings?.focusExistingWindowOnSecondLaunch === true) return intent

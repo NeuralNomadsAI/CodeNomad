@@ -105,6 +105,11 @@ export const folderSelectionMessages = {
   "folderSelection.servers.certificateInstall.confirmLabel": "继续",
   "folderSelection.servers.certificateInstall.cancelLabel": "取消",
   "folderSelection.servers.certificateInstall.cancelled": "CodeNomad 需要先信任本地证书，才能打开使用自签名 HTTPS 的远程窗口。",
+  "folderSelection.servers.launch.error.missing": "--connect-server 需要已保存服务器的名称或 http(s) URL。",
+  "folderSelection.servers.launch.error.invalid": "“{value}”不是有效的 http:// 或 https:// 服务器地址。",
+  "folderSelection.servers.launch.error.credentials": "“{value}”包含凭据或配对码。启动地址不能包含它们：请改为通过“连接到服务器”配对该服务器。",
+  "folderSelection.servers.launch.error.unknown": "没有名为“{value}”的已保存服务器。请使用已保存服务器的名称或 http(s) URL。",
+  "folderSelection.servers.launch.error.ambiguous": "有多个已保存服务器名为“{value}”。请重命名其中一个，或使用其 URL。",
   "folderSelection.sidecars.button": "打开 SideCar",
 
   "projectRenameDialog.title": "重命名工作区",

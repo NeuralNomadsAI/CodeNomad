@@ -1354,6 +1354,7 @@ void ensureLoaded().catch((error: unknown) => {
 
 interface ConfigContextValue {
   isLoaded: Accessor<boolean>
+  ensureLoaded: typeof ensureLoaded
   isUiConfigLoaded: typeof isUiConfigLoaded
   uiConfigLoadFailed: typeof uiConfigLoadFailed
   missionDefaultsValid: typeof missionDefaultsValid
@@ -1440,6 +1441,7 @@ const ConfigContext = createContext<ConfigContextValue>()
 
 const configContextValue: ConfigContextValue = {
   isLoaded,
+  ensureLoaded,
   isUiConfigLoaded,
   uiConfigLoadFailed,
   missionDefaultsValid,

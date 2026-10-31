@@ -350,6 +350,8 @@ jobs:
           packages/ui/src/lib/hooks/use-instance-metadata.test.ts
           packages/ui/src/lib/hooks/use-foreground-refresh.test.ts
           packages/ui/src/lib/hooks/use-electron-folder-launch.test.ts
+          packages/ui/src/lib/desktop-connection-queue.test.ts
+          packages/ui/src/lib/launch-connect-target.test.ts
           packages/ui/src/lib/launch-errors.test.ts
           packages/ui/src/lib/i18n/messages/missions.test.ts
           packages/ui/src/lib/clipboard.test.ts
