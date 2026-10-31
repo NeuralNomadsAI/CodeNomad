@@ -35,7 +35,10 @@ daemon with an authenticated HTTP request when its slice ends — portable, the
 daemon runs its own cleanup — and fails the run when that cleanup fails or
 has to be forced. The daemon also watches its owner's pid and cleans up after
 an owner that ended without stopping it (on Windows it is spawned detached,
-so the owner's exit does not end it first). A test file invoked outside a
+so the owner's exit does not end it first). Detached, it has no console, so
+`fixture-daemon/hide-console-windows.mjs`, imported first, makes the console
+programs it starts (Vite's `net use`) hide their windows; otherwise each would
+open a visible console that takes the user's keyboard focus. A test file invoked outside a
 runner gets the same treatment from `borrowFixture`: one daemon child for the
 process, no warmup, stopping shortly after the process ends.
 
