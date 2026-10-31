@@ -8,6 +8,7 @@ import type { MissionActorActivity, MissionMap, MissionTask } from "../../../ser
 import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
 import { captureMissionView } from "./mission-view-capture"
+import { missionContentFixture } from "./mission-content-fixture"
 import { inlineMissionEntry, missionDetail, missionEntryStatus, missionGeneralAction, missionPicker, selectMission,
   selectedMissionTitle } from "./mission-actions"
 
@@ -68,7 +69,8 @@ async function open(page: Page, missions: MissionMap[], schedules: RecurrenceSch
   await page.addInitScript(`Object.assign(window,{__CODENOMAD_RUNTIME_HOST__:'electron',__CODENOMAD_WINDOW_CONTEXT__:'local',electronAPI:{
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
-    const path = new URL(route.request().url()).pathname
+    const path = new URL(route.request().url()).pathname, content = missionContentFixture(route.request().url(), route.request().method(), missions)
+    if (content) return route.fulfill({ json: content })
     if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions, generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: missions.map(value => ({ missionId: value.id, actors: value === active ? activeActivity : [] })) } } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",

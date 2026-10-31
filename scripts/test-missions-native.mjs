@@ -55,6 +55,7 @@ const { registerAutomationPluginRoute } = await tsImport("../packages/server/src
 const { registerMissionRoutes } = await tsImport("../packages/server/src/server/routes/missions.ts", import.meta.url)
 const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
 const { CODENOMAD_MISSIONS_RPC } = await tsImport("../packages/server/src/missions/rpc.ts", import.meta.url)
+const { describeMissionBodies } = await tsImport("../packages/server/src/missions/mission-body-descriptors.ts", import.meta.url)
 const { isMissionTaskSession } = await tsImport("../packages/server/src/missions/session-identity.ts", import.meta.url)
 let child, stopped, manager, plugin, removeBridge, output = "", failure, held, hold = false, stage = "setup"
 const diagnosticReads = []
@@ -825,10 +826,13 @@ try {
   assert.ok(listed.missions.some(mission => mission.id === live.id), "The open mission's full map is listed")
   assert(!listed.missions.some(mission => finished(mission.id)), "No finished map is loaded unasked")
   assert.deepEqual(listed.activity.missions.map(item => item.missionId).sort(), listed.missions.map(mission => mission.id).sort(), "Activity observes only the listed maps")
+  // Panel reads carry each body's descriptor beside it, as the bundle computes them from the same map.
   const included = await panel(`?include=${history[1].id}&summaries=${listed.summariesVersion}`)
-  assert.deepEqual(included.missions.find(mission => mission.id === history[1].id), withHistory.missions.find(mission => mission.id === history[1].id),
+  const finishedMap = describeMissionBodies(withHistory.missions.find(mission => mission.id === history[1].id))
+  assert.deepEqual(included.missions.find(mission => mission.id === history[1].id), finishedMap,
     "An included finished mission's range reads as its snapshot map")
-  assert.deepEqual((await panel(`/${history[1].id}`)).mission, withHistory.missions.find(mission => mission.id === history[1].id), "The single-mission read")
+  assert.deepEqual((await panel(`/${history[1].id}`)).mission, finishedMap, "The single-mission read")
+  assert.ok(finishedMap.bodies.objective?.digest, "with its body descriptors")
   // Probe which reads see the whole journal: a damaged entry written beside the
   // bundle (as another process would) is visible to full reads at once and to
   // the activation's index only after its next rebuild, a minute away.

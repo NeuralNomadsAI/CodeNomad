@@ -188,7 +188,7 @@ Si **Créer** n’est pas confirmé, la fenêtre conserve la demande soumise et 
 
 ## Modifier, supprimer et nettoyer les conversations {#cleanup}
 
-Utilisez **Modifier la mission sélectionnée** sur une mission ponctuelle modifiable ; en cas de conflit, fermez/rouvrez l’éditeur pour charger la révision actuelle plutôt que l’écraser. Les programmes quotidiens ne proposent pas de modification/suppression.
+Utilisez **Modifier la mission sélectionnée** sur une mission ponctuelle modifiable ; en cas de conflit, fermez/rouvrez l’éditeur pour charger la révision actuelle plutôt que l'écraser. Si l'objectif ou les notes changent pendant le chargement du formulaire, il indique que la mission a changé depuis son ouverture au lieu de les remplir ; choisissez **Rouvrir** pour modifier la version actuelle. Les programmes quotidiens ne proposent pas de modification/suppression.
 
 1. Pour une mission ponctuelle devenue inutile, choisissez **Supprimer la mission sélectionnée…** et examinez la confirmation.
 2. Sélectionnez éventuellement **Supprimer aussi les conversations spécialistes créées pour cette mission** avant de confirmer.

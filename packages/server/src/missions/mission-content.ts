@@ -1,40 +1,11 @@
 import { z } from "zod"
-import type { MissionListUnavailableResponse, MissionMap, MissionPlanChange } from "./model"
-import { contentDigest, contentText, missionContentValue, sliceEnd, type MissionInspectSelector } from "./inspect-view"
+import type { MissionMap, MissionPlanChange } from "./model"
+import { contentDigest, contentText, missionContentValue, sliceEnd } from "./inspect-view"
+import type { MissionContentRequest, MissionContentResult } from "./mission-content-wire"
 
-/** A display read of one mission body (`MissionControl.content`): the value a selector
- * names in the mission's live map (a map field, a task's own field, any report by ID,
- * current, earlier or late, a plan change by revision), in slices. The first read
- * starts at offset 0 without a digest; its answer names the value's `digest`, which
- * every later slice repeats so it is cut from exactly that value. */
-export type MissionContentSelector = Exclude<MissionInspectSelector, { kind: "inspection" }>
-export type MissionContentRequest = MissionContentSelector & { missionID: string; digest?: string; offset: number }
-
-/** Why a read returns no slice: no live map, no value at the selector, or a value that
- * now reads differently than the digest the read repeats. */
-export type MissionContentRefusal = "mission-not-found" | "content-not-found" | "content-changed"
-
-export interface MissionContentSlice {
-  kind: MissionContentSelector["kind"]
-  field: string
-  taskKey?: string
-  reportId?: string
-  change?: number
-  digest: string
-  offset: number
-  /** The whole value's text length; `text` is `[offset, next ?? characters)`. */
-  characters: number
-  /** The text is the value's JSON; otherwise it is the string itself. */
-  json?: true
-  text: string
-  /** The offset of the next slice, present until the last. */
-  next?: number
-}
-
-export type MissionContentResult = { version: 1; projectID: string; missionID: string; revision?: number }
-  & ({ content: MissionContentSlice } | { refused: MissionContentRefusal })
-/** `GET /api/workspaces/:id/missions/:missionID/content`. */
-export type MissionContentResponse = ({ available: true } & MissionContentResult) | MissionListUnavailableResponse
+// The wire types live apart, so the UI imports them without this module's node dependencies.
+export type { MissionContentRefusal, MissionContentRequest, MissionContentResponse, MissionContentResult, MissionContentSelector,
+  MissionContentSlice } from "./mission-content-wire"
 
 const DIGEST = /^[A-Za-z0-9_-]{43}$/
 const TASK_KEY = /^[a-z0-9][a-z0-9._-]{1,63}$/

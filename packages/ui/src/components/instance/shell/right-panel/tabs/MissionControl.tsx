@@ -363,13 +363,24 @@ const MissionControl: Component<MissionControlProps> = (props) => {
         // Live view activity; each operation captures its own view fence.
         return <MissionEditor instanceId={props.instanceId} viewDirectory={directory()} projectID={projectID()} action={action}
         active={() => (props.isActive?.() ?? true) && editor() === action}
-        onDispose={draft => settleMissionEditor(action, draft && { ...action, draft })}
+        onDispose={draft => settleMissionEditor(action, draft === null ? action : draft && { ...action, draft })}
         captureOperation={() => {
           const origin = captureView(), operation = intent
           completionCurrent = () => origin() && operation === intent
           return completionCurrent
         }}
         onCancel={closeEditor} onOpenPreferences={openPreferences} onShowPlaybook={showPlaybook}
+        onReopen={() => {
+          // The edit reopens on the newest map, read first: the one it opened on is outdated.
+          // The form stays as it opened until this settles; a failed read rejects, so it says so.
+          const view = captureView()
+          return missionStore.refresh(props.instanceId).then(() => {
+            if (!view() || editor() !== action) return
+            if (missionStore.state(props.instanceId).status !== "ready") throw new Error("The mission map could not be read")
+            const current = missions().find(mission => mission.id === action.mission?.id)
+            if (current) openEditor({ kind: "edit", mission: current })
+          })
+        }}
         onRecurrenceRefresh={() => setRecurrenceRefresh(value => value + 1)}
         onRecurrenceSaved={() => { if (!completionCurrent() || editor() !== action) return; settleMissionEditor(action); setRecurrenceRefresh(value => value + 1) }}
         onSaved={saved => {

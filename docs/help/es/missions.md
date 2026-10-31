@@ -188,7 +188,7 @@ Si **Crear** queda sin confirmar, la ventana conserva la solicitud enviada y des
 
 ## Editar, eliminar y limpiar conversaciones {#cleanup}
 
-Usa **Editar la misión seleccionada** en una misión puntual editable; ante un conflicto, cierra/reabre el editor para cargar la revisión actual en lugar de sobrescribirla. Las programaciones diarias no ofrecen controles de edición/eliminación.
+Usa **Editar la misión seleccionada** en una misión puntual editable; ante un conflicto, cierra/reabre el editor para cargar la revisión actual en lugar de sobrescribirla. Si el objetivo o las notas cambian mientras el formulario aún carga, indica que la misión cambió desde que la abriste en lugar de rellenarlos; elige **Volver a abrir** para editar la versión actual. Las programaciones diarias no ofrecen controles de edición/eliminación.
 
 1. Para una misión puntual que ya no necesites, elige **Eliminar la misión seleccionada…** y revisa la confirmación.
 2. Opcionalmente, selecciona **Eliminar también las conversaciones de especialistas creadas para esta misión** antes de confirmar.

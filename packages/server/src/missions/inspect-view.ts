@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { MissionInspection } from "./control-types"
 import type { MissionMap, MissionPlanChange, MissionReport, MissionTask } from "./model"
+import type { MissionContentSelector } from "./mission-content-wire"
 
 /** Characters of every `mission.inspect` result as the tool serializes it (two-space
  * indented JSON), its page metadata and omission markers included. A result within it
@@ -11,12 +12,7 @@ export const MISSION_INSPECT_OUTPUT_LIMIT = 100_000
 /** Where a value too large for one result lives. Fields are the map's own keys;
  * `revision` pins the map the value was paged from. The native catalog is the
  * caller's Location's, independent of any mission. */
-export type MissionInspectSelector =
-  | { kind: "inspection"; field: string }
-  | { kind: "mission"; field: string }
-  | { kind: "task"; taskKey: string; field: string }
-  | { kind: "report"; reportId: string; field: string }
-  | { kind: "change"; change: number; field: string }
+export type MissionInspectSelector = { kind: "inspection"; field: string } | MissionContentSelector
 type ContentSource = MissionInspectSelector | { kind: "catalog" }
 /** A content read. `digest` names the exact serialized value its slices are cut from:
  * values read afresh on each call (the catalog, native conversations, human answers)

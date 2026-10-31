@@ -1,10 +1,11 @@
-import { createSignal, createUniqueId, For, Show, onCleanup } from "solid-js"
+import { createEffect, createSignal, createUniqueId, For, Show, onCleanup } from "solid-js"
 import { useI18n } from "../lib/i18n"
 import { MAX_MISSION_MODELS, parseMissionModel, type UserMissionModel } from "../lib/mission-model-library"
 import { useConfig } from "../stores/preferences"
 import { showConfirmDialog } from "../stores/alerts"
 import { ConfigOwnerReconciliationPendingError } from "../lib/storage"
 import ActionOverflowMenu from "./action-overflow-menu"
+import { MissionBodyPending } from "./mission-reader-body"
 
 export type MissionModelBrief = Pick<UserMissionModel, "objective" | "notes" | "template" | "profiles" | "taskMode">
 
@@ -146,11 +147,14 @@ export function MissionBriefPicker(props: LibraryProps & { value?: string; onUse
 
 /** A "Save as brief" button that asks for a name inline: the creation footer's
  * draft, or a selected Mission's recorded brief inputs (`initialName` prefills).
+ * `onOpen` follows the name field, which shows `reading` while the draft is still read.
  * A window footer passes its own button template; elsewhere these are text commands. */
-export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; buttonClass?: string }) {
+export function MissionBriefSave(props: LibraryProps & { draft: () => MissionModelBrief; initialName?: () => string; buttonClass?: string
+  onOpen?: (open: boolean) => void; reading?: () => { failed: boolean; changed?: boolean; onRetry: () => void } | undefined }) {
   const { t } = useI18n(), config = useConfig(), actions = createMissionModelActions(props)
   const buttonClass = () => props.buttonClass ?? "window-text-button"
   const [open, setOpen] = createSignal(false), [name, setName] = createSignal("")
+  createEffect(() => props.onOpen?.(open()))
   let input: HTMLInputElement | undefined
   const full = () => config.preferences().missionModels.length >= MAX_MISSION_MODELS
   const save = async () => {
@@ -169,6 +173,7 @@ export function MissionBriefSave(props: LibraryProps & { draft: () => MissionMod
       <button type="button" class={buttonClass()} disabled={actions.disabled() || !name().trim() || !props.draft().objective.trim() || full()}
         onClick={() => void save()}>{t("missions.models.save")}</button>
       <button type="button" class={buttonClass()} aria-label={t("missions.create.brief.cancel")} onClick={() => setOpen(false)}>{t("missions.control.cancel")}</button>
+      <Show when={props.reading?.()}>{reading => <MissionBodyPending failed={reading().failed} changed={reading().changed} onRetry={() => reading().onRetry()} />}</Show>
     </Show>
     {actions.status()}
   </div>

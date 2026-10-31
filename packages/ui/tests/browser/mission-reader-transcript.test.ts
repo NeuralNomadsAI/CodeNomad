@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
+import { routeMissionContent } from "./mission-content-fixture"
 import { chromium, type Browser, type Page } from "playwright"
 
 let browser: Browser, url: string
@@ -27,6 +28,7 @@ async function open(missions: unknown[]) {
   page.on("pageerror", error => console.error("fixture error", error))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   await page.route("**/api/workspaces/browser-instance/missions", route => route.fulfill({ json: { available: true, missions, generatedAt: 1, discardedEvents: 0 } }))
+  await routeMissionContent(page, () => missions)
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).fixture))
   return page

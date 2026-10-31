@@ -6,6 +6,7 @@ import { MissionJournal, stableToken, type MissionStorage, type MissionView } fr
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
+import { describeMissionBodies } from "./mission-body-descriptors"
 import {
   MISSION_SCHEMA_VERSION,
   missionPlanChanges,
@@ -164,7 +165,7 @@ export class MissionControl {
       ...hinted.ids.flatMap(missionID => fresh(missionID) && !known.has(missionID) ? [missionSummary(fresh(missionID)!)] : [])]
       .sort((left, right) => right.updatedAt - left.updatedAt)
     const order = new Map(rows.map((row, index) => [row.id, index]))
-    const missions = hinted.ids.flatMap(missionID => fresh(missionID) ? [stampDamage(fresh(missionID)!, damage)] : [])
+    const missions = hinted.ids.flatMap(missionID => fresh(missionID) ? [describeMissionBodies(stampDamage(fresh(missionID)!, damage))] : [])
       .sort((left, right) => order.get(left.id)! - order.get(right.id)!)
     const summariesVersion = stableToken(JSON.stringify(rows), 32)
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
@@ -179,7 +180,7 @@ export class MissionControl {
     const view = await this.journal.missionView(missionID)
     const damage = projectDamage(aggregate, [view])
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
-      ...(view.mission ? { mission: stampDamage(view.mission, damage) } : {}), cleanups: view.cleanups ?? [], ...damage }
+      ...(view.mission ? { mission: describeMissionBodies(stampDamage(view.mission, damage)) } : {}), cleanups: view.cleanups ?? [], ...damage }
   }
 
   /** One mission body for display, in slices (`readMissionContent`): one read of that

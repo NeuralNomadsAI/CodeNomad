@@ -30,6 +30,8 @@ import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
 import { createRequestLocation, requestLocationOptions, toRequestLocation } from "../stores/request-locations"
 import { MissionConversationPicker } from "./mission-conversation-picker"
 import type { MissionEditorAction, MissionEditorDraft } from "../stores/mission-editor-state"
+import { MissionBodyPending } from "./mission-reader-body"
+import { missionTargetState, retryMissionTarget, useTargetBody } from "./mission-target-bodies"
 
 export type { MissionEditorAction }
 type FieldError = { field: "objective" | "when" | "zone" | "profiles" | "followed"; message: string }
@@ -44,8 +46,12 @@ export function MissionEditor(props: {
   onShowPlaybook?: (template: MissionMap["template"], taskMode: MissionTaskMode) => void
   onRecurrenceSaved?: () => void
   onRecurrenceRefresh?: () => void
-  /** On unmount: the idle draft to reopen, or undefined while a request is in flight or held. */
-  onDispose?: (draft?: MissionEditorDraft) => void
+  /** On unmount: the idle draft to reopen, null to reopen as opened (an edit still reading
+   * its fields), or undefined while a request is in flight or held. */
+  onDispose?: (draft?: MissionEditorDraft | null) => void
+  /** Opens this edit again on the current map (its fields changed since it opened); settles
+   * once it did, or chose not to, and rejects when the current map could not be read. */
+  onReopen?: () => Promise<void>
 }) {
   const { t } = useI18n()
   const ids = { zoneError: createUniqueId(), zoneList: createUniqueId(), objective: createUniqueId(), objectiveError: createUniqueId(),
@@ -74,12 +80,36 @@ export function MissionEditor(props: {
     try { new Intl.DateTimeFormat(undefined, { timeZone: zone().trim() }); return true } catch { return false }
   })
   const [watched, setWatched] = createSignal<string[]>(recurrenceHold?.watchedConversationIDs ?? draft?.watched ?? [])
+  // An edit starts from the objective and notes of exactly the map it opened (its CAS
+  // revision): content reads count only when their digests are that map's descriptors.
+  const prefill = kind === "edit" && original !== undefined && !draft
+  const opened = () => prefill ? original : undefined
+  const editedObjective = useTargetBody(() => props.instanceId, opened, "objective"), editedNotes = useTargetBody(() => props.instanceId, opened, "notes")
+  const prefillState = () => missionTargetState([editedObjective(), editedNotes()])
+  const [prefilling, setPrefilling] = createSignal(prefill)
+  // While a Reopen runs, this form stays read-only as it opened (its CAS revision too): a
+  // field matching again meanwhile never makes it editable, so no draft typed here is
+  // replaced by the reopened edit. It settles back when the parent declines or fails.
+  const [reopen, setReopen] = createSignal<"idle" | "pending" | "failed">("idle")
+  const reopenEdit = () => {
+    if (reopen() === "pending" || !props.onReopen) return
+    setReopen("pending")
+    props.onReopen().then(() => setReopen("idle"), () => setReopen("failed"))
+  }
+  // Reading while a Reopen runs; a changed field, or a failed Reopen, offers Reopen.
+  const offersReopen = () => reopen() === "failed" || reopen() === "idle" && prefillState() === "changed"
   // One shared draft: one-time objective or recurring permanent instructions.
-  const [objective, setObjective] = createSignal(recurrenceHold?.instructions ?? held?.objective ?? draft?.objective ?? original?.objective ?? "")
+  const [objective, setObjective] = createSignal(recurrenceHold?.instructions ?? held?.objective ?? draft?.objective ?? "")
   const derivedTitle = () => deriveMissionTitle(objective())
   const title = () => titleOverride() ?? derivedTitle()
   const submittedTitle = () => title().trim() || derivedTitle()
-  const [notes, setNotes] = createSignal(recurrenceHold?.notes ?? held?.notes ?? draft?.notes ?? original?.notes ?? "")
+  const [notes, setNotes] = createSignal(recurrenceHold?.notes ?? held?.notes ?? draft?.notes ?? "")
+  createEffect(() => {
+    const objectiveField = editedObjective(), notesField = editedNotes()
+    if (!prefilling() || reopen() === "pending" || objectiveField.state !== "ready" || notesField.state !== "ready") return
+    setObjective(objectiveField.value ?? ""); setNotes(notesField.value ?? "")
+    setPrefilling(false)
+  })
   const [template, setTemplate] = createSignal<MissionMap["template"]>(recurrenceHold?.template ?? held?.template ?? draft?.template ?? "custom")
   const [profiles, setProfiles] = createSignal<MissionProfiles | undefined>(copyMissionProfiles(recurrenceHold?.profiles ?? held?.profiles ?? draft?.profiles))
   const [customProfiles, setCustomProfiles] = createSignal(Boolean(held || recurrenceHold || draft?.customProfiles))
@@ -161,7 +191,7 @@ export function MissionEditor(props: {
   let requestId = held?.requestId ?? recurrenceHold?.requestID ?? draft?.requestId ?? crypto.randomUUID(), lastPayload = draft?.lastPayload ?? ""
   const locked = () => !creationReady() || defaultsRefreshing() || busy()
   // Only an idle draft is kept: a request in flight or held settles through its own hold.
-  onCleanup(() => props.onDispose?.(busy() ? undefined : { mode: mode(), titleOverride: titleOverride(), time: time(), zone: zone(),
+  onCleanup(() => props.onDispose?.(busy() ? undefined : prefilling() ? null : { mode: mode(), titleOverride: titleOverride(), time: time(), zone: zone(),
     watched: watched(), objective: objective(), notes: notes(), template: template(), profiles: copyMissionProfiles(profiles()),
     customProfiles: customProfiles(), taskMode: taskMode(), customTaskMode: customTaskMode(), defaults: defaults(),
     defaultsReady: defaultsReady(), selectedModel: selectedModel(), optionsOpen: optionsOpen(), profileDetailsOpen: profileDetailsOpen(),
@@ -476,11 +506,15 @@ export function MissionEditor(props: {
           onChange={event => setDeleteManagedSessions(event.currentTarget.checked)} />{t("missions.control.delete.sessions")}</label>
       </>}>
         <label>{t("missions.control.objective")}
-          <textarea required maxLength={20_000} value={objective()} disabled={pending()} onInput={e => setObjective(e.currentTarget.value)} />
+          <textarea required maxLength={20_000} value={objective()} disabled={pending() || prefilling()} onInput={e => setObjective(e.currentTarget.value)} />
         </label>
         <label>{t("missions.control.guidance.notes")}
-          <textarea maxLength={20_000} value={notes()} disabled={pending()} onInput={e => setNotes(e.currentTarget.value)} />
+          <textarea maxLength={20_000} value={notes()} disabled={pending() || prefilling()} onInput={e => setNotes(e.currentTarget.value)} />
         </label>
+        {/* A field changed since this edit opened is never prefilled: reopen it on the current map. */}
+        <Show when={prefilling()}><MissionBodyPending failed={reopen() === "failed" || reopen() === "idle" && prefillState() === "failed"}
+          changed={reopen() === "idle" && prefillState() === "changed"} actionLabel={offersReopen() ? "missions.control.reopen" : undefined}
+          onRetry={() => offersReopen() ? reopenEdit() : retryMissionTarget([editedObjective(), editedNotes()])} /></Show>
       </Show>}>{createBody()}</Show>
       <Show when={uncertain()} fallback={<Show when={error()}><p role="alert">{error()}</p></Show>}><p role="alert">{t(otherUncertain() ? "missions.control.creation.uncertainOther" : "missions.control.creation.uncertain")}</p></Show>
     </div>

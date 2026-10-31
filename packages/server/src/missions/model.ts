@@ -4,6 +4,7 @@ export type { MissionBriefing, MissionBriefingItem, MissionBriefingResponse } fr
 import type { MissionTaskExecutionMode } from "./task-execution-mode"
 export type { MissionTaskExecutionMode } from "./task-execution-mode"
 import type { MissionSummary } from "./mission-summary"
+import type { MissionBodyDescriptors } from "./mission-content-wire"
 export type { MissionSummary } from "./mission-summary"
 import { hasInvalidControlHistory, isReportReceipt } from "./receipt-identity"
 import { hasInvalidReportNotificationHistory, isCoordinatorNotificationReport, sameNativeCall } from "./native-report-provenance"
@@ -109,6 +110,8 @@ export interface MissionReport {
   delivery?: "coordinator-notification" | "native-return" | "coordinator-readout"
   notificationStatus?: "pending" | "admitted"
   createdAt: number
+  /** Body descriptors, in the mission's own `reports` of list and mission reads only. */
+  bodies?: MissionBodyDescriptors
 }
 
 export interface MissionTask {
@@ -135,6 +138,8 @@ export interface MissionTask {
   report?: MissionReport
   lateReports?: MissionReport[]
   outstandingExecution: boolean
+  /** Body descriptors, in list and mission reads only. */
+  bodies?: MissionBodyDescriptors
 }
 
 export interface MissionDependencyUpdate {
@@ -164,6 +169,8 @@ export interface MissionPlanChange {
   retiredTasks: MissionRetiredTask[]
   dependencyUpdates: MissionDependencyChange[]
   createdAt: number
+  /** Body descriptors, in list and mission reads only. */
+  bodies?: MissionBodyDescriptors
 }
 
 export interface MissionMap {
@@ -204,6 +211,9 @@ export interface MissionMap {
   revision: number
   history: MissionPlanChange[]
   historyTruncated: boolean
+  /** Body descriptors (`missions/mission-body-descriptors.ts`), in list and mission reads only:
+   * the reducer never writes them, so content values never include them. */
+  bodies?: MissionBodyDescriptors
 }
 
 export type MissionCleanupReason = "children" | "shared" | "moved" | "identity" | "guarded"

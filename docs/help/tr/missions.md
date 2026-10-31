@@ -188,7 +188,7 @@ Raporunu vermeden boşta kalan tek seferlik koordinatör için ana ▶ eylemi do
 
 ## Konuşmaları düzenleyin, silin ve temizleyin {#cleanup}
 
-Düzenlenebilir tek seferlik görevde **Seçili görevi düzenle** eylemini kullanın; çakışma olursa üzerine yazmak yerine güncel revizyonu yüklemek için düzenleyiciyi kapatıp açın. Günlük zamanlamalarda düzenleme/silme kontrolleri yoktur.
+Düzenlenebilir tek seferlik görevde **Seçili görevi düzenle** eylemini kullanın; çakışma olursa üzerine yazmak yerine güncel revizyonu yüklemek için düzenleyiciyi kapatıp açın. Form hâlâ yüklenirken amaç veya notlar değişirse, form bunları doldurmak yerine görevin siz açtıktan sonra değiştiğini belirtir; güncel sürümü düzenlemek için **Yeniden aç** seçeneğini kullanın. Günlük zamanlamalarda düzenleme/silme kontrolleri yoktur.
 
 1. Artık gerek duymadığınız tek seferlik görev için **Seçili görevi sil…** eylemini seçip onayı inceleyin.
 2. Onaylamadan önce isteğe bağlı olarak **Bu görev için oluşturulan uzman konuşmalarını da sil** seçeneğini işaretleyin.

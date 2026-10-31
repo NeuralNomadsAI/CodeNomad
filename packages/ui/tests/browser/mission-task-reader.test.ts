@@ -5,6 +5,7 @@ import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type Locator, type Page } from "playwright"
 import type { MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
+import { missionContentFixture } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -53,6 +54,8 @@ async function setup(value = mission()) {
     requests.push(`${route.request().method()} ${pathname}`)
     if (route.request().method() !== "GET") mutations.push(route.request().url())
     if (/\/session\/(actor|native-parent)$/.test(pathname)) return route.fulfill({ json: { data: nativeSession(pathname.split("/").at(-1)!) } })
+    const content = missionContentFixture(route.request().url(), route.request().method(), [current])
+    if (content) return route.fulfill({ json: content })
     return route.fulfill({ json: route.request().url().includes("/missions")
       ? { available: true, projectID: "project", missions: [current], generatedAt: 1, activity: { generatedAt: 1, missions: [{ missionId: "mission", actors: [{ sessionId: "actor", state: "running" }] }] } }
       : new URL(route.request().url()).pathname.endsWith("/shell") ? { location: { directory: "/fixture" }, data: [] } : {} })
