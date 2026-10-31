@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import type { MissionDeleteInput } from "./control-types"
 import type { MissionView } from "./journal"
-import { compareEvents, MISSION_MAX_STORED_EVENTS, type MissionCleanup, type MissionMap } from "./model"
+import { compareEvents, MISSION_MAX_EVENTS, type MissionCleanup, type MissionMap } from "./model"
 import { SETTLED_CLEANUP_HISTORY } from "./cleanup-projection"
 import { fixture, seedCrossMission, step, type HistoryFixture } from "./journal-history-fixture"
 
@@ -116,10 +116,10 @@ test("cross-mission edges compose: shared sessions, one range's orphaned receipt
 test("a mission range keeps its read bound in range and project reads", async () => {
   const f = fixture(1)
   const { mission } = await f.control().create({ requestID: "large", objective: "Large", template: "custom" })
-  for (let index = 0; index <= MISSION_MAX_STORED_EVENTS; index++) f.values.set(`${f.prefix}/${mission.id}/evt_filler_${index}`, { damaged: true })
-  await assert.rejects(f.journal.missionView(mission.id), new RegExp(`${MISSION_MAX_STORED_EVENTS}-event safety limit`))
-  await assert.rejects(f.journal.snapshot(), new RegExp(`${MISSION_MAX_STORED_EVENTS}-event safety limit`))
-  await assert.rejects(f.journal.readHints(hints => hints.openIDs()), new RegExp(`${MISSION_MAX_STORED_EVENTS}-event safety limit`))
+  for (let index = 0; index <= MISSION_MAX_EVENTS; index++) f.values.set(`${f.prefix}/${mission.id}/evt_filler_${index}`, { damaged: true })
+  await assert.rejects(f.journal.missionView(mission.id), new RegExp(`${MISSION_MAX_EVENTS}-event safety limit`))
+  await assert.rejects(f.journal.snapshot(), new RegExp(`${MISSION_MAX_EVENTS}-event safety limit`))
+  await assert.rejects(f.journal.readHints(hints => hints.openIDs()), new RegExp(`${MISSION_MAX_EVENTS}-event safety limit`))
 })
 
 test("a mission range read never straddles a purge", async () => {

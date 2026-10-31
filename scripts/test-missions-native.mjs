@@ -695,6 +695,66 @@ try {
   await probe(managedReuseSession, "managed-reuse-fresh")
   gate("managed root creation, environment and busy reuse preserve original ownership and durable queue")
 
+  stage = "many actors and tasks"
+  // A mission of 12 actors and 107 tasks: managed roots, revisions, a paged
+  // mission.inspect, Pause/Play/Stop receipts for every actor through the typed
+  // RPC outputs, and a cleanup deletion of every managed root.
+  const wide = (await client.rpc(CODENOMAD_MISSIONS_RPC).create({ requestID: "native-wide", objective: "Many actors and tasks", template: "custom" }, { location })).mission
+  const wideCoordinator = wide.coordinatorSessionId
+  const wideActors = []
+  for (let index = 0; index < 11; index++) {
+    const delegatedWide = await invoke("delegate", { ...task, missionID: wide.id, taskKey: `wide-actor-${index}` }, wideCoordinator, `wide-actor-${index}`)
+    wideActors.push(delegatedWide.mission.tasks.find(value => value.key === `wide-actor-${index}`).actorSessionId)
+  }
+  for (const sessionID of wideActors) await client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })
+  let wideMap
+  for (let added = 0; added < 96; added += 24) {
+    wideMap = (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions.find(mission => mission.id === wide.id)
+    await invoke("revise", { missionID: wide.id, expectedRevision: wideMap.revision, requestID: `wide-plan-${added}`, reason: "More declared work",
+      addTasks: Array.from({ length: 24 }, (_, offset) => ({ taskKey: `wide-task-${added + offset}`, title: `Wide task ${added + offset}`,
+        brief: `Declared work ${added + offset}. ${"Detail ".repeat(200)}`, role: "reviewer", execution: task.execution, blockedBy: [] })) }, wideCoordinator, `wide-plan-${added}`)
+  }
+  wideMap = (await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })).missions.find(mission => mission.id === wide.id)
+  assert.deepEqual([wideMap.actors.length, wideMap.tasks.length], [12, 107])
+  // The model-facing map pages instead of returning every brief at once.
+  const inspectWide = async (input, callID) => {
+    const content = await client.rpc(invocation).invoke({ tool: "inspect", input, sessionID: wideCoordinator, callID }, { location })
+    assert.ok(content.length <= 100_000, `inspect result of ${content.length} characters`)
+    return JSON.parse(content)
+  }
+  const firstWide = await inspectWide({ missionID: wide.id }, "wide-inspect")
+  assert.equal(firstWide.mission.objective, wideMap.objective)
+  const wideKeys = firstWide.mission.tasks.map(value => value.key)
+  for (let offset = firstWide.taskPage.nextTaskOffset; offset !== undefined;) {
+    const page = await inspectWide({ missionID: wide.id, taskOffset: offset }, `wide-inspect-${offset}`)
+    wideKeys.push(...page.mission.tasks.map(value => value.key))
+    offset = page.taskPage.nextTaskOffset
+  }
+  assert.deepEqual(wideKeys, wideMap.tasks.map(value => value.key), "The pages read every task once, in map order")
+  const wideAction = async action => {
+    const response = await bridge.inject({ method: "POST", url: `${missionURL}/${wide.id}/control`,
+      payload: { requestId: `native-wide-${action}-${wideMap.revision}`, expectedRevision: wideMap.revision, action } })
+    assert.equal(response.statusCode, 200, response.body)
+    wideMap = response.json().mission
+  }
+  await wideAction("pause")
+  assert.deepEqual([wideMap.runState, wideMap.control.pending.length, wideMap.control.receipts.length], ["paused", 0, 12])
+  await wideAction("start")
+  assert.deepEqual([wideMap.runState, wideMap.control.pending.length], ["running", 0])
+  await Promise.all([wideCoordinator, ...wideActors].map(sessionID => client.session.wait({ sessionID }, { signal: AbortSignal.timeout(20_000) })))
+  const widePanel = (await bridge.inject({ method: "GET", url: `${missionURL}?include=${wide.id}` })).json()
+  assert.equal(widePanel.missions.find(mission => mission.id === wide.id).tasks.length, 107)
+  assert.equal(widePanel.activity.missions.find(item => item.missionId === wide.id).actors.length, 12)
+  await wideAction("stop")
+  assert.deepEqual([wideMap.status, wideMap.control.pending.length, wideMap.control.receipts.length], ["stopped", 0, 12])
+  const wideDeleted = await bridge.inject({ method: "DELETE", url: `${missionURL}/${wide.id}`,
+    payload: { requestId: "native-wide-delete", expectedRevision: wideMap.revision, deleteManagedSessions: true } })
+  assert.equal(wideDeleted.statusCode, 200, wideDeleted.body)
+  assert.deepEqual([wideDeleted.json().cleanup.removed, wideDeleted.json().cleanup.pending], [11, 0])
+  for (const sessionID of wideActors) await assert.rejects(client.session.get({ sessionID }), "Cleanup removes every managed root")
+  assert.equal((await client.session.get({ sessionID: wideCoordinator })).id, wideCoordinator)
+  gate("a mission beyond eight actors and 96 tasks: managed roots, revisions, paged inspect, Pause/Play/Stop receipts and cleanup deletion")
+
   stage = "finished mission history and journal index"
   // Many finished missions through the real bundle, then a new activation whose
   // index builds once over them. Last stage: its damage probe must not leak.
@@ -708,7 +768,7 @@ try {
   }
   // The journal bound is per mission: the finished missions' own ranges, seeded in
   // the isolated KV table as an earlier activation left them, take the project past
-  // one mission's 2,036-entry bound while each mission stays far below it.
+  // one mission's 2,000-entry bound while each mission stays far below it.
   const { DatabaseSync } = await import("node:sqlite")
   const namespace = `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:`
   const journalEntries = (database, range) => database.prepare("SELECT COUNT(*) AS count FROM kv WHERE substr(key, 1, ?) = ?").get(range.length, range).count
@@ -730,7 +790,7 @@ try {
       }
     }
     seeding.exec("COMMIT")
-    assert.ok(journalEntries(seeding, journalRange) > 2_036, "The project holds more than one mission's bound")
+    assert.ok(journalEntries(seeding, journalRange) > 2_000, "The project holds more than one mission's bound")
   } finally { seeding.close() }
   await client.location.reload({ signal: AbortSignal.timeout(20_000) })
   await until(async () => { try { return Boolean(await client.rpc(CODENOMAD_MISSIONS_RPC).snapshot({}, { location })) } catch { return false } })
@@ -776,7 +836,7 @@ try {
   try {
     database.exec("PRAGMA busy_timeout = 10000")
     assert.equal(journalEntries(database, `${journalRange}${settled.at(-1).missionID}/`), 0, "Native storage.remove cleared the purged range")
-    assert.ok(journalEntries(database, journalRange) > 2_036, "The project still holds more than one mission's bound")
+    assert.ok(journalEntries(database, journalRange) > 2_000, "The project still holds more than one mission's bound")
     const liveKey = database.prepare("SELECT key FROM kv WHERE key LIKE ? LIMIT 1").get(`${namespace}codenomad-missions/v2/%/${live.id}/%`)?.key
     assert.ok(liveKey, "The live mission's journal range is in the isolated native KV table")
     const strayKey = `${liveKey.slice(0, liveKey.indexOf(`/${live.id}/`))}/stray-history-probe`

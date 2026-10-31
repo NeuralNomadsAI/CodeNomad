@@ -74,7 +74,7 @@ test("marks follow the session palette and a completion stays green until this w
   let list = [
     mission("stuck", { updatedAt: 6 }),
     mission("working", { updatedAt: 5 }),
-    mission("history", { updatedAt: 4, status: "completed" }),
+    mission("history", { updatedAt: 4, finishSequence: 1, status: "completed" }),
     mission("failed", { updatedAt: 3, status: "failed" }),
     mission("paused", { updatedAt: 2, runState: "paused" }),
     mission("prepared", { updatedAt: 1, runState: "prepared" }),
@@ -100,7 +100,7 @@ test("marks follow the session palette and a completion stays green until this w
     assert.equal(await expander.getAttribute("data-attention"), null, "the open list shows each mark itself")
     assert.equal(await expander.getAttribute("aria-label"), "Hide the mission list")
 
-    list = list.map(value => value.id === "working" ? { ...value, status: "completed", updatedAt: 7, revision: 2 } : value)
+    list = list.map(value => value.id === "working" ? { ...value, status: "completed", updatedAt: 7, finishSequence: 2, revision: 2 } : value)
     activity = activity.filter(item => item.missionId !== "working")
     await refresh(page)
     await page.waitForFunction(() => [...document.querySelectorAll(".mission-picker-inline .mission-picker-mark")]
@@ -130,7 +130,7 @@ test("a selected mission completing behind the creation form stays green until i
     await page.getByRole("button", { name: "Create mission", exact: true }).click()
     await page.locator("form.mission-editor").waitFor()
     assert.equal(await page.locator("section.mission-detail").isVisible(), false)
-    list = list.map(value => value.id === "selected" ? { ...value, status: "completed", updatedAt: 3, revision: 2 } : value)
+    list = list.map(value => value.id === "selected" ? { ...value, status: "completed", updatedAt: 3, finishSequence: 1, revision: 2 } : value)
     await refresh(page)
     // The hidden (still mounted) current-mission line keeps the unseen completion green.
     const fieldMark = () => page.evaluate(() => document.querySelector(".mission-picker-field .mission-picker-mark")?.getAttribute("data-mark"))

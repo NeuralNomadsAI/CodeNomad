@@ -31,6 +31,8 @@ import { parseExecutionMode, parseMissionTaskMode, missionTaskModeSchema } from 
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
 import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCatalog } from "../missions/playbook-profiles"
 import { compactMission, compactMissionTask, compactMissionTasks, nativeAssignment } from "../missions/tool-result"
+import { MISSION_TASK_VIEW_FIELDS, boundedInspection, boundedMissionList, boundedTaskView, inspectionContent, inspectionContentValue,
+  type MissionInspectContent } from "../missions/inspect-view"
 import { missionBriefingToolSchema, parseMissionBriefingRequest } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
 import { MISSION_TITLE_MAX, parseMissionTitle } from "../missions/mission-title"
@@ -330,7 +332,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "inspect",
-        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, product delivery, or two-model comparison mission. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
+        description: "Inspect the caller's durable mission map and optional native catalog, or start a custom, debugging, Wayfinder, product delivery, or two-model comparison mission. Compare requires different model-a/model-b profiles and always a blind judge. Pass taskKey to read only that task with its revision, frontier, contract, exact current assignmentPrompt, observed native conversations and any qualifying human answers instead of the full map. A map too large for one result lists its tasks in pages: follow taskPage.nextTaskOffset with taskOffset. Any value too large for one result is replaced by { omittedCharacters, read }: pass read as the whole input to read that value in slices, following each slice's next. Pass list: true to find your missions and prepared hand-offs; missionID also reads a hand-off you prepared.",
         input: inspectSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -339,15 +341,29 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           await tool.progress({ status: "Reading the mission map" })
           selected.current()
           const parsed = parseInspectInput(input)
-          if (parsed.list) return textResult({ missions: await selected.control.listMissions(selected.readSessionID) })
+          if (parsed.list) return textResult(boundedMissionList(await selected.control.listMissions(selected.readSessionID), parsed.listOffset))
+          const read = parsed.content
+          // The caller's Location's native catalog, read afresh on every call.
+          const catalog = async () => readMissionCatalog(context, (await context.session.get({ sessionID: tool.sessionID })).location.directory)
+          // A catalog read selects no mission: only the owned-root checks, no journal read.
+          if (read?.kind === "catalog") {
+            await selected.control.ownedRoot(selected.readSessionID)
+            selected.current()
+            return textResult(inspectionContent(undefined, read, await catalog()))
+          }
           const result = await selected.control.inspect(selected.readSessionID, parsed, tool.id)
           const response = parsed.taskKey === undefined ? result
             : await observedTaskView(selected.control, selected.readSessionID, result.mission, parsed.taskKey)
-          if (object(input).catalog === true) {
-            const session = await context.session.get({ sessionID: tool.sessionID })
-            response.catalog = await readMissionCatalog(context, session.location.directory)
+          if (object(input).catalog === true) response.catalog = await catalog()
+          if (read) {
+            if (!result.mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
+            const value = read.kind === "task" && (MISSION_TASK_VIEW_FIELDS as readonly string[]).includes(read.field)
+              ? taskViewField(await observedTaskView(selected.control, selected.readSessionID, result.mission, read.taskKey), read)
+              : inspectionContentValue(result, read)
+            return textResult(inspectionContent(result.mission.id, read, value))
           }
-          return textResult(response)
+          return textResult(parsed.taskKey === undefined ? boundedInspection(result, parsed.taskOffset)
+            : boundedTaskView(response as Record<string, unknown>, result.mission!, parsed.taskKey))
         },
       })
       add({
@@ -599,7 +615,25 @@ const inspectSchema = {
   properties: {
     missionID: { type: "string", description: "Mission to inspect; omit to use the caller's active mission." },
     taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$", description: "Read only this task: its status, revision, frontier and, for a live native task, its contract, exact current assignmentPrompt, observed native conversations and, for a Wayfinder decision, the qualifying human answers with ready-to-pass artifacts. Not with start." },
-    list: { type: "boolean", const: true, description: "List the missions you belong to and the hand-offs you prepared, newest first. Use alone." },
+    taskOffset: { type: "integer", minimum: 0, description: "Read the map's tasks from this position when the map is too large for one result: its taskPage gives nextTaskOffset. Not with taskKey, list or start." },
+    list: { type: "boolean", const: true, description: "List the missions you belong to and the hand-offs you prepared, newest first. Use alone, or with listOffset." },
+    listOffset: { type: "integer", minimum: 0, description: "With list: read the list from this position when it is too large for one result: its listPage gives nextListOffset." },
+    content: {
+      type: "object",
+      description: "Read one slice of a value a result replaced by { omittedCharacters, read }: pass that read as the whole input, then each slice's next. A slice of a value that changed since the read began is refused: inspect again for its current read.",
+      properties: {
+        kind: { type: "string", enum: ["inspection", "mission", "task", "report", "change", "catalog"] },
+        field: { type: "string", minLength: 1, maxLength: 64 },
+        taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$" },
+        reportId: { type: "string", minLength: 1, maxLength: 240 },
+        change: { type: "integer", minimum: 1 },
+        revision: { type: "integer", minimum: 1 },
+        digest: { type: "string", pattern: "^[A-Za-z0-9_-]{43}$" },
+        offset: { type: "integer", minimum: 0 },
+      },
+      required: ["kind", "digest", "offset"],
+      additionalProperties: false,
+    },
     catalog: { type: "boolean", description: "Include the native agent, enabled model and variant catalog for this session's location." },
     start: {
       type: "object",
@@ -652,15 +686,32 @@ const reportSchema = {
   additionalProperties: false,
 }
 
-export function parseInspectInput(input: unknown): MissionInspectInput & { taskKey?: string; list?: true } {
+export function parseInspectInput(input: unknown): MissionInspectInput & {
+  taskKey?: string; list?: true; taskOffset?: number; listOffset?: number; content?: MissionInspectContent
+} {
   const value = object(input)
   const missionID = optionalText(value.missionID, "missionID", 100)
+  if (value.content !== undefined) {
+    if (value.list !== undefined || value.taskKey !== undefined || value.start !== undefined || value.taskOffset !== undefined
+      || value.listOffset !== undefined || value.catalog !== undefined) throw new Error("content reads one value; use it with missionID only")
+    const content = parseInspectContent(value.content)
+    if (content.kind === "catalog" && missionID !== undefined) throw new Error("A catalog read names no mission: pass its read as the whole input")
+    return { missionID, content }
+  }
+  if (value.taskOffset !== undefined) {
+    if (!Number.isSafeInteger(value.taskOffset) || Number(value.taskOffset) < 0) throw new Error("taskOffset must be a non-negative integer")
+    if (value.list !== undefined || value.taskKey !== undefined || value.start !== undefined) throw new Error("taskOffset pages an existing map; use it without taskKey, list or start")
+    return { missionID, taskOffset: Number(value.taskOffset) }
+  }
   if (value.list !== undefined) {
     if (value.list !== true || value.taskKey !== undefined || value.start !== undefined || missionID !== undefined) {
-      throw new Error("list must be true and used alone")
+      throw new Error("list must be true and used alone or with listOffset")
     }
-    return { list: true }
+    if (value.listOffset === undefined) return { list: true }
+    if (!Number.isSafeInteger(value.listOffset) || Number(value.listOffset) < 0) throw new Error("listOffset must be a non-negative integer")
+    return { list: true, listOffset: Number(value.listOffset) }
   }
+  if (value.listOffset !== undefined) throw new Error("listOffset pages list: true")
   if (value.taskKey !== undefined) {
     if (value.start !== undefined) throw new Error("taskKey reads an existing mission and cannot start one")
     return { missionID, taskKey: identifier(value.taskKey, "taskKey") }
@@ -679,6 +730,30 @@ export function parseInspectInput(input: unknown): MissionInspectInput & { taskK
       ...(start.profiles === undefined ? {} : { profiles: parseMissionProfiles(start.profiles) }),
     },
   }
+}
+
+function parseInspectContent(input: unknown): MissionInspectContent {
+  const value = object(input)
+  if (typeof value.digest !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(value.digest) || !Number.isSafeInteger(value.offset) || Number(value.offset) < 0) {
+    throw new Error("content needs its digest and a non-negative offset")
+  }
+  const read = { digest: value.digest, offset: Number(value.offset) }
+  if (value.kind === "catalog") {
+    if (value.field !== undefined || value.revision !== undefined || value.taskKey !== undefined || value.reportId !== undefined || value.change !== undefined) {
+      throw new Error("A catalog read has only its digest and offset")
+    }
+    return { kind: "catalog", ...read }
+  }
+  if (!Number.isSafeInteger(value.revision) || Number(value.revision) < 1) throw new Error("content needs the positive revision of its map")
+  const base = { field: requiredText(value.field, "content.field", 64), revision: Number(value.revision), ...read }
+  if (value.kind === "inspection" || value.kind === "mission") return { kind: value.kind, ...base }
+  if (value.kind === "task") return { kind: "task", taskKey: identifier(value.taskKey, "content.taskKey"), ...base }
+  if (value.kind === "report") return { kind: "report", reportId: requiredText(value.reportId, "content.reportId", 240), ...base }
+  if (value.kind === "change") {
+    if (!Number.isSafeInteger(value.change) || Number(value.change) < 1) throw new Error("content.change must be a positive revision")
+    return { kind: "change", change: Number(value.change), ...base }
+  }
+  throw new Error("content.kind is unsupported")
 }
 
 const reviseSchema = {
@@ -712,8 +787,9 @@ const reviseSchema = {
         }, required: ["taskKey", "title", "brief", "role", "blockedBy"], additionalProperties: false,
       },
     },
+    // One update per distinct live task, checked against the map.
     dependencyUpdates: {
-      type: "array", maxItems: 96, items: {
+      type: "array", items: {
         type: "object", properties: {
           taskKey: { type: "string", minLength: 2, maxLength: 64 },
           blockedBy: { type: "array", maxItems: 24, items: { type: "string", maxLength: 64 } },
@@ -816,9 +892,17 @@ async function observedTaskView(control: MissionControl, sessionID: string, miss
   const [native, answers] = await Promise.allSettled([control.observeTask(sessionID, mission.id, taskKey),
     control.decisionCandidates(sessionID, mission.id, taskKey)])
   return { ...compactMission(mission), task: compactMissionTask(task), ...nativeAssignment(mission, task),
+    reports: mission.reports.filter(report => report.taskKey === taskKey),
     ...(native.status === "rejected" ? { native: { unknown: true } } : native.value
       ? { native: native.value.sessions.length ? native.value : { ...native.value, note: NO_TASK_CONVERSATION } } : {}),
     ...(answers.status === "rejected" ? { humanAnswers: { unknown: true } } : answers.value ? { humanAnswers: answers.value } : {}) }
+}
+
+/** A `taskKey` view value a content read names, from a view of the same revision. */
+function taskViewField(view: Record<string, unknown>, read: Extract<MissionInspectContent, { kind: "task" }>): unknown {
+  if (view.revision !== read.revision) throw new Error("Mission changed since this page: read it again from its first page")
+  if (!Object.prototype.hasOwnProperty.call(view, read.field)) throw new Error("Mission content unavailable")
+  return view[read.field]
 }
 
 function textResult(value: unknown): { content: string } {
@@ -862,7 +946,7 @@ export function parseReviseInput(input: unknown): MissionReviseInput {
   const addTasks = value.addTasks === undefined ? [] : value.addTasks
   if (!Array.isArray(addTasks) || addTasks.length > 24) throw new Error("addTasks must contain at most 24 entries")
   const dependencyUpdates = value.dependencyUpdates === undefined ? [] : value.dependencyUpdates
-  if (!Array.isArray(dependencyUpdates) || dependencyUpdates.length > 96) throw new Error("dependencyUpdates must contain at most 96 entries")
+  if (!Array.isArray(dependencyUpdates)) throw new Error("dependencyUpdates must be an array")
   const parseKey = (item: unknown, name: string) => identifier(item, name)
   const parsedRetire = retireTasks.map((item, index) => {
     const entry = object(item)

@@ -74,6 +74,7 @@ const mission = {
     controlUnavailable: { type: "boolean" },
     notificationUnavailable: { type: "boolean" },
     summary: { type: "string" },
+    finishSequence: { type: "integer", minimum: 1 },
     coordinatorSessionId: { type: "string" },
     briefing: missionBriefingSnapshotSchema,
     briefingResponses: missionBriefingResponsesSchema,
@@ -198,7 +199,7 @@ export const CODENOMAD_MISSIONS_RPC = {
         revision: { type: "integer" }, expectedRevision: { type: "integer" }, action: { type: "string", enum: ["play", "pause", "stop", "resume", "run-now", "check"] },
         state: { type: "string", enum: ["running", "paused", "stopped"] }, targetsKnown: { type: "boolean" },
         controlsComplete: { type: "boolean" }, schedulerCancellation: { type: "string", enum: ["acknowledged", "unknown"] },
-        targets: { type: "array", maxItems: 32, items: recurrenceNativeControlWire } },
+        targets: { type: "array", items: recurrenceNativeControlWire } },
         required: ["version", "scheduleID", "requestID", "revision", "expectedRevision", "action", "state", "targetsKnown", "targets", "controlsComplete"], additionalProperties: false },
     },
     recurrenceControlStatus: {

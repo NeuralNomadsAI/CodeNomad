@@ -43,7 +43,8 @@ function fixture(options: { completedFinalOnly?: boolean } = {}) {
   const finish = (outcome: "completed" | "blocked" | "failed") =>
     control.report(coordinator, { final: true, outcome, summary: `Ended ${outcome}`, evidence: [], next: [] })
   const current = async () => (await control.snapshot()).missions[0]!
-  const events = async () => [...storage.values].filter(([key]) => key.startsWith(MISSION_JOURNAL_STORAGE_PREFIX))
+  const journal = `${MISSION_JOURNAL_STORAGE_PREFIX}/${new MissionJournal(storage, "project-1", "/repo").projectToken}/`
+  const events = async () => [...storage.values].filter(([key]) => key.startsWith(journal))
     .map(([, value]) => parseMissionEvent(value)!).sort((left, right) => left.createdAt - right.createdAt)
   return { control, storage, synthetics, start, finish, current, events }
 }

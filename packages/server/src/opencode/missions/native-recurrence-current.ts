@@ -50,17 +50,15 @@ const readCurrent = Effect.fn("missions.readNativeRecurrenceCurrent")(function* 
   if (doc.pending) {
     if ("passageID" in input && input.passageID !== doc.pending.passage.id) throw new Error("Current passage changed")
     const passage = recurrencePassage(storage, doc, current)
-    const snapshot = yield* Effect.promise(() => passage.journal.snapshot())
-    if (snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable || snapshot.missions.length > 1)
-      throw new Error("Current passage journal unavailable")
-    mission = snapshot.missions[0]
+    // One read of the passage mission's range (the only one its isolated journal holds):
+    // the map, its damage flags and the creation evidence come from the same events.
+    const view = yield* Effect.promise(() => passage.journal.missionView(passage.missionID))
+    if (view.discardedEvents || view.controlUnavailable || view.notificationUnavailable) throw new Error("Current passage journal unavailable")
+    mission = view.mission
     if (mission && (mission.id !== passage.missionID || mission.coordinatorSessionId !== passage.coordinatorSessionID
       || !equal(mission.profiles, doc.config.profiles) || mission.taskMode !== doc.config.taskMode)) throw new Error("Current passage identity differs")
-    if (mission) {
-      const events = yield* Effect.promise(() => passage.journal.events())
-      if (events.discardedEvents || !events.events.some(event => event.type === "mission.created"
-        && event.missionID === passage.missionID && event.requestID === passage.passageID)) throw new Error("Current passage creation differs")
-    }
+    if (mission && !view.events.some(event => event.type === "mission.created"
+      && event.missionID === passage.missionID && event.requestID === passage.passageID)) throw new Error("Current passage creation differs")
   }
   const fresh = yield* Effect.promise(() => store.read(doc.id))
   current()

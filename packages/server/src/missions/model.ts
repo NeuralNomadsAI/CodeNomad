@@ -12,15 +12,19 @@ import { nativeCallObservationID } from "./native-call-reconciliation"
 import { projectLifecycle, type MissionControlRequestedEvent, type MissionControlAppliedEvent, type MissionRunState, type MissionLifecycleOperation } from "./lifecycle-model"
 
 export const MISSION_SCHEMA_VERSION = 1 as const
-export const MISSION_MAX_ACTORS = 8
-/** Ordinary entries of one mission's journal range; a project holds any number of missions. */
+/** Stored entries of one mission's journal range, receipts and tombstone included,
+ * and the read bound of that range; a project holds any number of missions. */
 export const MISSION_MAX_EVENTS = 2_000
-/** Room above a mission's ordinary limit for its deletion tombstone and reserved
- * receipts, so a full mission can still be deleted. */
-export const MISSION_DELETION_RESERVE = 4 * (1 + MISSION_MAX_ACTORS)
-/** Physical read bound of one mission's journal range. */
-export const MISSION_MAX_STORED_EVENTS = MISSION_MAX_EVENTS + MISSION_DELETION_RESERVE
-export const MISSION_MAX_TASKS = 96
+/** Entries a Stop or a deletion of a mission with `actors` actors can need: the
+ * request or tombstone plus one receipt per target, targets being actors. */
+export function missionTerminalShare(actors: number): number {
+  return 1 + actors
+}
+/** Room ordinary writes leave in a mission's range so that one Stop and then
+ * its deletion always fit, however many actors it has. */
+export function missionLifecycleReserve(actors: number): number {
+  return 2 * missionTerminalShare(actors)
+}
 export const MISSION_MAX_HISTORY = 50
 
 export type MissionJsonValue = null | boolean | number | string | readonly MissionJsonValue[] | {
@@ -60,9 +64,10 @@ export interface MissionActivityProjection {
   missions: Array<{
     missionId: string
     actors: MissionActorActivity[]
-    /** Observed native membership for display only, never task/actor authority. */
+    /** Observed native membership for display only, never task/actor authority.
+     * `partial`: the members of the actors this refresh read; the others read as unknown. */
     family?: {
-      state: "observed" | "unknown"
+      state: "observed" | "partial" | "unknown"
       members: Array<{
         sessionId: string
         parentSessionId?: string
@@ -181,6 +186,9 @@ export interface MissionMap {
   controlUnavailable?: boolean
   notificationUnavailable?: boolean
   summary?: string
+  /** Project-wide order of the finish in effect (`MissionJournal.appendFinish`): later
+   * finishes have larger numbers, whatever deletions, reloads and clocks did. */
+  finishSequence?: number
   briefing?: MissionBriefing
   /** Exact request identities of the most recent accepted briefings, oldest
    * first, so a superseded requested response is still recognizable. */
@@ -439,6 +447,8 @@ export interface MissionFinishedEvent extends MissionEventBase {
   type: "mission.finished"
   outcome: "completed" | "failed"
   summary: string
+  /** The project's finish number, absent from isolated recurrence passages. */
+  sequence?: number
   /** Exact original control/message and durable native failure, not a task report. */
   nativeFailure?: { operationID: string; sessionID: string; messageID: string; evidenceID: string; inputDigest: string }
 }
@@ -538,7 +548,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
 
   let stoppedForReports = false
   // Index of the finish in effect: a resumed failure no longer finishes the mission.
-  let finishedAt = -1
+  let finishIndex = -1
   for (const event of events) {
     updatedAt = Math.max(updatedAt, event.createdAt)
     if (event.projectID !== created.projectID || event.missionID !== created.missionID) {
@@ -609,7 +619,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         task.updatedAt = event.createdAt
       }
       for (const added of event.addedTasks) {
-        if (tasks.has(added.key) || tasks.size >= MISSION_MAX_TASKS) { discarded.count += 1; continue }
+        if (tasks.has(added.key)) { discarded.count += 1; continue }
         tasks.set(added.key, {
           ...added,
           contractGeneration: 1,
@@ -635,7 +645,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       continue
     }
     if (event.type === "task.created") {
-      if (tasks.has(event.task.key) || tasks.size >= MISSION_MAX_TASKS) {
+      if (tasks.has(event.task.key)) {
         discarded.count += 1
         continue
       }
@@ -660,8 +670,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
         || !actors.has(event.binding.parentSessionID) || event.binding.parentSessionID === event.actor.sessionID
         || (existing && (existing.kind !== "specialist" || existing.managed !== event.actor.managed
           || existing.title !== event.actor.title || existing.location.directory !== event.actor.location.directory
-          || existing.location.workspaceID !== event.actor.location.workspaceID))
-        || (!existing && actors.size >= MISSION_MAX_ACTORS)) {
+          || existing.location.workspaceID !== event.actor.location.workspaceID))) {
         discarded.count += 1
         continue
       }
@@ -750,7 +759,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
       const existing = actors.get(event.actor.sessionID)
       if (existing) {
         if (!existing.roles.includes(task.role)) existing.roles.push(task.role)
-      } else if (actors.size < MISSION_MAX_ACTORS) {
+      } else {
         actors.set(event.actor.sessionID, {
           sessionId: event.actor.sessionID,
           kind: "specialist",
@@ -760,8 +769,6 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
           location: event.actor.location,
           joinedAt: event.createdAt,
         })
-      } else {
-        discarded.count += 1
       }
       continue
     }
@@ -822,14 +829,14 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     }
     if (event.type === "mission.finished") {
       status = event.outcome
-      finishedAt = events.indexOf(event)
+      finishIndex = events.indexOf(event)
       continue
     }
     if (event.type === "mission.reopened") {
       // Only a failure can be resumed, at the exact revision the user saw.
       if (status !== "failed" || event.expectedRevision !== events.indexOf(event)) { discarded.count += 1; continue }
       status = "active"
-      finishedAt = -1
+      finishIndex = -1
     }
   }
 
@@ -848,7 +855,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
   const firstStop = events.findIndex(event => event.type === "mission.control-requested" && event.action === "stop")
   // Denial receipts in the normal final-report/native-settlement interval do
   // not rewrite the already recorded terminal result. A prior Stop remains terminal.
-  const finishedBeforeStop = finishedAt >= 0 && finishedAt < firstStop
+  const finishedBeforeStop = finishIndex >= 0 && finishIndex < firstStop
   if (lifecycle.runState === "stopped" && !finishedBeforeStop) {
     status = "stopped"
     for (const task of tasks.values()) {
@@ -889,7 +896,9 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     status,
     ...lifecycle,
     ...(hasInvalidReportNotificationHistory(events) ? { notificationUnavailable: true } : {}),
-    summary: finishedAt >= 0 ? (events[finishedAt] as MissionFinishedEvent).summary : undefined,
+    summary: finishIndex >= 0 ? (events[finishIndex] as MissionFinishedEvent).summary : undefined,
+    ...(finishIndex >= 0 && (events[finishIndex] as MissionFinishedEvent).sequence !== undefined
+      ? { finishSequence: (events[finishIndex] as MissionFinishedEvent).sequence } : {}),
     coordinatorSessionId: created.coordinator.sessionID,
     actors: [...actors.values()].sort((left, right) => left.joinedAt - right.joinedAt),
     tasks: taskList,

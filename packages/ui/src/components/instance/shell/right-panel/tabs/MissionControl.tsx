@@ -287,7 +287,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     const actors = value.actorSessionIds.map(sessionId => ({ sessionId }))
     const mark = missionMark(value, { openRequests: openRequests(value.id, actors, state().activity), actorStates: observed?.actors.map(actor => actor.state),
       coordinatorState: observed?.actors.find(actor => actor.sessionId === value.coordinatorSessionId)?.state,
-      seen: missionFinishedSeen(scope(), value.id) })
+      seen: missionFinishedSeen(scope(), value) })
     const stateText = props.t(value.status === "active" && (value.runState === "prepared" || value.runState === "paused")
       ? `missions.control.run.${value.runState}` : value.status === "active" && mark === "interrupted" ? "missionsPanel.state.interrupted"
         : value.status === "active" ? "missionsPanel.state.inProgress" : statusKey(value.status))
@@ -306,7 +306,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const documentAttention = createDocumentAttention()
   createEffect(() => {
     if (state().status !== "ready") return
-    const completed = rows().filter(value => value.status === "completed").map(value => value.id)
+    const completed = rows().filter(value => value.status === "completed")
     const shown = (props.isActive?.() ?? true) && documentAttention() && !creating() && selectedOneTime()?.status === "completed"
       ? [selectedOneTime()!.id] : []
     const viewScope = scope()

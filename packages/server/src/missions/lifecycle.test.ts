@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionControl, MissionControlError } from "./control"
 import type { MissionInputTransport, NativeMissionSession } from "./control-types"
-import type { MissionJsonValue, MissionMap } from "./model"
+import { MISSION_MAX_EVENTS, missionLifecycleReserve, type MissionJsonValue, type MissionMap } from "./model"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, parseMissionEvent, type MissionStorage } from "./journal"
 import { controlResumeAdmissionID, recurrenceMessageID } from "./receipt-identity"
 
@@ -449,11 +449,13 @@ test("Stop can supersede an incomplete start while CAS prevents stale new action
   assert.equal(mission.status, "stopped")
 })
 
-test("Stop supersedes pending Pause reservations at the physical journal limit without replay", async () => {
+test("Stop supersedes pending Pause reservations at the mission's capacity without replay", async () => {
   const f = fixture()
   let mission = (await f.control().lifecycle(f.action(await f.create(), "start"))).mission
   const prefix = `${MISSION_JOURNAL_STORAGE_PREFIX}/${new MissionJournal(f.storage, "project", "/repo").projectToken}`
-  for (let index = 0; f.values.size < 1997; index++) {
+  // The Pause and its pending receipt then fill the ordinary capacity.
+  const filled = MISSION_MAX_EVENTS - missionLifecycleReserve(mission.actors.length) - 2
+  for (let index = 0; f.values.size < filled; index++) {
     const event = { version: 1 as const, missionID: mission.id, projectID: mission.projectID, id: `evt_update_${index}`,
       type: "mission.updated" as const, requestID: `update-${index}`, expectedRevision: 3 + index,
       objective: "Fixture", notesSpecified: false, createdAt: 2000 + index }
@@ -465,12 +467,14 @@ test("Stop supersedes pending Pause reservations at the physical journal limit w
   const pause = f.action(mission, "pause")
   await assert.rejects(f.control().lifecycle(pause), code("control-pending"))
   mission = (await f.control().snapshot()).missions[0]
-  assert.equal(f.values.size, 1998)
+  assert.equal(f.values.size, filled + 1)
   assert.equal(mission.control?.pending.length, 1)
+  await assert.rejects(f.control().update({ missionID: mission.id, requestID: "full", expectedRevision: mission.revision, objective: "Full" }),
+    /2000-event safety limit/)
   f.failing.clear()
   const stop = f.action(mission, "stop")
   mission = (await f.control().lifecycle(stop)).mission
-  assert.equal(f.values.size, 2000)
+  assert.equal(f.values.size, filled + 3)
   assert.equal(mission.status, "stopped")
   assert.deepEqual(mission.control?.pending, [])
   assert.deepEqual(f.calls.map(call => call.action), ["start", "pause", "stop"])

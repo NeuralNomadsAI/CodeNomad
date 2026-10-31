@@ -3,10 +3,9 @@ export { stableToken } from "./receipt-identity"
 
 import {
   MISSION_MAX_EVENTS,
-  MISSION_MAX_STORED_EVENTS,
-  MISSION_MAX_ACTORS,
-  MISSION_MAX_TASKS,
   MISSION_SCHEMA_VERSION,
+  missionLifecycleReserve,
+  missionTerminalShare,
   reduceMissionEvents,
   compareEvents,
   type MissionEvent,
@@ -41,7 +40,7 @@ const MAX_SHORT_TEXT = 240
 // A key's mission range, relative to the project prefix; anything else lies outside every range.
 const RANGE = /^\/([A-Za-z0-9_-]{3,100})\//
 const MISSION_FULL = `Mission journal reached the ${MISSION_MAX_EVENTS}-event safety limit of this mission`
-const RANGE_OVER_BOUND = `Mission journal exceeds the ${MISSION_MAX_STORED_EVENTS}-event safety limit of one mission`
+const RANGE_OVER_BOUND = `Mission journal exceeds the ${MISSION_MAX_EVENTS}-event safety limit of one mission`
 type CapacityIntent = Extract<MissionEvent, { type: "mission.deleted" | "mission.control-requested" }>
 interface CapacitySlot { intent: CapacityIntent; sessionID: string }
 /** `unreadable`: missions whose deletion record could not be read, kept as damage. */
@@ -164,14 +163,14 @@ export class MissionJournal {
   }
 
   /** No mission range, nor the entries outside every range together, is read
-   * past `MISSION_MAX_STORED_EVENTS`; a whole project has no bound of its own.
+   * past `MISSION_MAX_EVENTS`; a whole project has no bound of its own.
    * Returns the counted key's mission. */
   private rangeBound(): (key: string) => string | undefined {
     const prefix = this.prefix(), counts = new Map<string, number>()
     return key => {
       const missionID = key.startsWith(prefix) ? RANGE.exec(key.slice(prefix.length))?.[1] : undefined
       const count = (counts.get(missionID ?? "") ?? 0) + 1
-      if (count > MISSION_MAX_STORED_EVENTS) throw new Error(RANGE_OVER_BOUND)
+      if (count > MISSION_MAX_EVENTS) throw new Error(RANGE_OVER_BOUND)
       counts.set(missionID ?? "", count)
       return missionID
     }
@@ -279,6 +278,33 @@ export class MissionJournal {
     return runMissionExclusive(`append:${this.projectToken}`, () => this.appendUnlocked(event, current))
   }
 
+  /** Appends a finish with the project's next finish number. The counter lives beside
+   * the deletion records, outside every mission range: it costs no journal capacity
+   * and survives deletion, purge, reloads, new controls and clock changes, so a later
+   * finish always has a larger number. Advanced under the append exclusion, after the
+   * capacity check; a refused or failed write leaves at most a gap. An exact replay
+   * (whatever its number) returns the stored finish. Isolated passages keep none. */
+  appendFinish(event: Extract<MissionEvent, { type: "mission.finished" }>, current?: () => void): Promise<MissionEvent> {
+    return runMissionExclusive(`append:${this.projectToken}`, async () => {
+      const existing = await this.event(event.missionID, event.id)
+      if (existing) {
+        const unnumbered = (value: unknown) => JSON.stringify({ ...parseMissionEvent(JSON.parse(JSON.stringify(value))), sequence: undefined })
+        if (unnumbered(existing) !== unnumbered(event)) throw new Error("Mission event identity collision")
+        return existing
+      }
+      if (this.storage.isolated) { await this.appendUnlocked(event, current); return event }
+      const key = missionFinishCounterKey(this.projectToken), stored = await this.storage.get(key)
+      const counter = stored === undefined ? 0 : parseFinishCounter(stored, this.projectID)
+      const finish = { ...event, sequence: counter + 1 }
+      if (!await this.fits(finish.missionID, finish)) throw new Error(MISSION_FULL)
+      this.written(finish.missionID)
+      current?.()
+      await this.storage.set(key, { version: 1, projectID: this.projectID, finishes: finish.sequence }, current)
+      await this.appendUnlocked(finish, current)
+      return finish
+    })
+  }
+
   async event(missionID: string, eventID: string): Promise<MissionEvent | undefined> {
     const key = this.eventKey(missionID, eventID)
     const value = await this.storage.get(key)
@@ -299,15 +325,21 @@ export class MissionJournal {
     if (!await this.fits(event?.missionID ?? request as string, event ?? count)) throw new Error(MISSION_FULL)
   }
 
-  /** Capacity is one mission's own: only its range is read, whatever the project holds. */
+  /** Capacity is one mission's own: only its range is read, whatever the project holds.
+   * Stored entries plus pending reserved receipts never exceed `MISSION_MAX_EVENTS`.
+   * Ordinary writes keep the lifecycle reserve of the actors they leave the mission
+   * with; a Stop keeps the deletion's share; a deletion and reserved receipts spend
+   * the rest. Actors only join through ordinary writes, so after any ordinary
+   * write one Stop (at most one target per actor) fits, and after it the deletion
+   * (at most one cleanup target per actor) still fits. */
   private async fits(missionID: string, request: MissionEvent | number): Promise<boolean> {
     const capacity = await this.storedCapacity(missionID)
-    const slots = capacity.cleanupSlots
-    const required = typeof request === "number" ? request : this.requiredCapacity(request, slots)
-    // Deletion intents and already reserved receipts may spend the mission's deletion reserve.
-    const limit = typeof request !== "number" && (request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots))
-      ? MISSION_MAX_STORED_EVENTS : MISSION_MAX_EVENTS
-    return capacity.count + slots.size + required <= limit
+    const slots = capacity.cleanupSlots, used = capacity.count + slots.size
+    if (typeof request === "number") return used + request + missionLifecycleReserve(capacity.actors.size) <= MISSION_MAX_EVENTS
+    const kept = request.type === "mission.deleted" || this.matchesCapacityReceipt(request, slots) ? 0
+      : request.type === "mission.control-requested" && request.action === "stop" ? missionTerminalShare(capacity.actors.size)
+        : missionLifecycleReserve(new Set([...capacity.actors, ...eventActors(request)]).size)
+    return used + this.requiredCapacity(request, slots) + kept <= MISSION_MAX_EVENTS
   }
 
   private async appendUnlocked(event: MissionEvent, current?: () => void): Promise<void> {
@@ -341,9 +373,11 @@ export class MissionJournal {
       + (event.type === "mission.control-requested" ? event.targets.length : 0) - superseded
   }
 
-  private async storedCapacity(missionID: string): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot> }> {
+  private async storedCapacity(missionID: string): Promise<{ count: number; cleanupSlots: Map<string, CapacitySlot>; actors: Set<string> }> {
     const prefix = `${this.prefix()}/${safeKey(missionID)}/`
     let count = 0
+    // Every session a valid entry admits as an actor: a superset of the map's actors.
+    const actors = new Set<string>()
     // Physical deterministic receipt keys include mission scope. Retain the
     // original intent/target as well: a different event kind cannot spend them.
     const cleanupSlots = new Map<string, CapacitySlot>()
@@ -358,11 +392,12 @@ export class MissionJournal {
     do {
       const page = await this.storage.scan({ prefix, after, limit: PAGE_SIZE })
       count += page.entries.length
-      if (count > MISSION_MAX_STORED_EVENTS) throw new Error(RANGE_OVER_BOUND)
+      if (count > MISSION_MAX_EVENTS) throw new Error(RANGE_OVER_BOUND)
       for (const entry of page.entries) {
         // Invalid entries still consume physical space, but supply no authority
         // to establish, supersede or discharge a reservation.
         const event = this.parseEntry(entry.key, entry.value)
+        if (event) for (const sessionID of eventActors(event)) actors.add(sessionID)
         if (event?.type === "mission.deleted") {
           for (const target of event.cleanupTargets ?? []) reserve(event, target.sessionID)
         } else if (event?.type === "mission.session-cleaned") receipts.push(event)
@@ -377,7 +412,7 @@ export class MissionJournal {
       for (const target of operation.targets) reserve(operation, target.sessionID)
     }
     for (const receipt of receipts) if (this.matchesCapacityReceipt(receipt, cleanupSlots)) cleanupSlots.delete(this.eventKey(receipt.missionID, receipt.id))
-    return { count, cleanupSlots }
+    return { count, cleanupSlots, actors }
   }
 
   private matchesCapacityReceipt(event: MissionEvent, slots: Map<string, CapacitySlot>): boolean {
@@ -410,6 +445,25 @@ export class MissionJournal {
 // Beside, never under, the scanned journal prefix: records cost no journal capacity.
 export function missionDeletionRecordKey(projectToken: string, missionID: string): string {
   return `${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${projectToken}/${safeKey(missionID)}`
+}
+
+/** The project's finish counter (`appendFinish`), beside the deletion records. */
+export function missionFinishCounterKey(projectToken: string): string {
+  return `${MISSION_JOURNAL_STORAGE_PREFIX}/finishes/${projectToken}`
+}
+
+function parseFinishCounter(value: MissionJsonValue, projectID: string): number {
+  const counter = record(value) ? value as Record<string, unknown> : undefined
+  if (!counter || counter.version !== 1 || counter.projectID !== projectID || !Number.isSafeInteger(counter.finishes) || Number(counter.finishes) < 0) {
+    throw new Error("Mission finish counter is damaged")
+  }
+  return Number(counter.finishes)
+}
+
+/** Sessions an event admits as mission actors (`reduceMission`), which the lifecycle reserve covers. */
+function eventActors(event: MissionEvent): string[] {
+  return event.type === "mission.created" ? [event.coordinator.sessionID]
+    : event.type === "task.dispatching" || event.type === "task.native-bound" ? [event.actor.sessionID] : []
 }
 
 function safeKey(value: string): string {
@@ -469,7 +523,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
     }
     case "mission.control-requested": {
       if (!text(input.requestID, 128) || !Number.isSafeInteger(input.expectedRevision) || Number(input.expectedRevision) < 1
-        || !["start", "pause", "stop"].includes(String(input.action)) || !Array.isArray(input.targets) || input.targets.length > MISSION_MAX_ACTORS) return undefined
+        || !["start", "pause", "stop"].includes(String(input.action)) || !Array.isArray(input.targets) || input.targets.length > MISSION_MAX_EVENTS) return undefined
       // A graceful Pause interrupts nothing and has no targets; every other control has some.
       const graceful = input.graceful
       if (graceful !== undefined && (graceful !== true || input.action !== "pause")) return undefined
@@ -513,7 +567,8 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
       if (input.deleteManagedSessions !== undefined && typeof input.deleteManagedSessions !== "boolean") return undefined
       const cleanupTargets: Array<{ sessionID: string; location: MissionLocation }> = []
       if (input.cleanupTargets !== undefined) {
-        if (input.deleteManagedSessions !== true || !Array.isArray(input.cleanupTargets) || input.cleanupTargets.length > MISSION_MAX_ACTORS) return undefined
+        // Each target needs a receipt within the mission's range.
+        if (input.deleteManagedSessions !== true || !Array.isArray(input.cleanupTargets) || input.cleanupTargets.length > MISSION_MAX_EVENTS) return undefined
         for (const target of input.cleanupTargets) {
           if (!record(target) || !text(target.sessionID, MAX_SHORT_TEXT)) return undefined
           const location = parseLocation(target.location)
@@ -541,7 +596,7 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         || (input.notes !== undefined && !boundedText(input.notes, MAX_TEXT))
         || !Array.isArray(input.retiredTasks) || input.retiredTasks.length > 24
         || !Array.isArray(input.addedTasks) || input.addedTasks.length > 24
-        || !Array.isArray(input.dependencyUpdates) || input.dependencyUpdates.length > MISSION_MAX_TASKS) return undefined
+        || !Array.isArray(input.dependencyUpdates)) return undefined
       const retiredTasks: MissionRevisedEvent["retiredTasks"] = []
       for (const retired of input.retiredTasks) {
         if (!record(retired) || !text(retired.taskKey, MAX_SHORT_TEXT)
@@ -565,10 +620,13 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
           ...(executionMode === undefined ? {} : { executionMode }),
         })
       }
-      const dependencyUpdates: MissionRevisedEvent["dependencyUpdates"] = []
+      // Each update rewrites one distinct task: no more updates than the mission has tasks.
+      const dependencyUpdates: MissionRevisedEvent["dependencyUpdates"] = [], updated = new Set<string>()
       for (const update of input.dependencyUpdates) {
         if (!record(update) || !onlyFields(update, ["taskKey", "blockedBy"])
-          || !text(update.taskKey, MAX_SHORT_TEXT) || !stringArray(update.blockedBy, 24, MAX_SHORT_TEXT)) return undefined
+          || !text(update.taskKey, MAX_SHORT_TEXT) || !stringArray(update.blockedBy, 24, MAX_SHORT_TEXT)
+          || updated.has(update.taskKey)) return undefined
+        updated.add(update.taskKey)
         dependencyUpdates.push({ taskKey: update.taskKey, blockedBy: update.blockedBy })
       }
       return {
@@ -680,8 +738,10 @@ export function parseMissionEvent(input: unknown): MissionEvent | undefined {
         || !nativeID(failure.operationID) || !nativeID(failure.sessionID)
         || !nativeID(failure.messageID) || !nativeID(failure.evidenceID)
         || typeof failure.inputDigest !== "string" || !/^[a-f0-9]{64}$/.test(failure.inputDigest))) return undefined
+      if (input.sequence !== undefined && (!Number.isSafeInteger(input.sequence) || Number(input.sequence) < 1)) return undefined
       return (input.outcome === "completed" || input.outcome === "failed") && text(input.summary, MAX_TEXT)
         ? { ...eventBase(input), type: "mission.finished", outcome: input.outcome, summary: input.summary,
+          ...(input.sequence === undefined ? {} : { sequence: Number(input.sequence) }),
           ...(failure === undefined ? {} : { nativeFailure: { operationID: failure.operationID as string,
             sessionID: failure.sessionID as string, messageID: failure.messageID as string, evidenceID: failure.evidenceID as string,
             inputDigest: failure.inputDigest as string } }) }

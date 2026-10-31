@@ -6,8 +6,6 @@ import { MissionJournal, stableToken, type MissionStorage, type MissionView } fr
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import {
-  MISSION_MAX_ACTORS,
-  MISSION_MAX_TASKS,
   MISSION_SCHEMA_VERSION,
   type MissionActor,
   type MissionEvent,
@@ -582,9 +580,6 @@ export class MissionControl {
       && input.addTasks.length === 0 && input.dependencyUpdates.length === 0) {
       throw new MissionControlError("A revision must change the objective, notes, tasks, or dependencies", "empty-revision")
     }
-    if (mission.tasks.length + input.addTasks.length > MISSION_MAX_TASKS) {
-      throw new MissionControlError("Mission task limit reached", "task-limit")
-    }
 
     const current = new Map(mission.tasks.map((task) => [task.key, task]))
     const retired = new Map<string, string | undefined>()
@@ -729,7 +724,6 @@ export class MissionControl {
         }
         if (task.status === "withdrawn") throw new MissionControlError("Task was withdrawn; declare a new task key", "task-withdrawn")
       } else {
-        if (mission.tasks.length >= MISSION_MAX_TASKS) throw new MissionControlError("Mission task limit reached", "task-limit")
         validateTaskAdmissionGraph([...mission.tasks, { key: input.taskKey, blockedBy: input.blockedBy,
           executionMode: input.executionMode, status: "ready" }])
         validateTaskActorChoice(mission, input)
@@ -764,6 +758,12 @@ export class MissionControl {
   inspect(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
     if (!input.start) return this.inspectCurrent(sessionID, input, operationID)
     return this.mutate(() => this.inspectCurrent(sessionID, input, operationID))
+  }
+
+  /** The caller's owned root, read afresh with the root and project checks of every
+   * inspection, selecting no mission: native catalog reads need nothing else. */
+  ownedRoot(sessionID: string): Promise<NativeMissionSession> {
+    return this.ownedRootSession(sessionID)
   }
 
   private async inspectCurrent(sessionID: string, input: MissionInspectInput, operationID: string): Promise<MissionInspection> {
@@ -973,7 +973,6 @@ export class MissionControl {
     if (!task) {
       if (input.targetSessionID) await this.ownedRootSession(input.targetSessionID)
       await this.options.validateExecution?.(input, sessionID)
-      if (mission.tasks.length >= MISSION_MAX_TASKS) throw new MissionControlError("Mission task limit reached", "task-limit")
       if (blockedBy.includes(input.taskKey)) throw new MissionControlError("A task cannot block itself", "invalid-blocker")
       const existingTasks = mission.tasks
       const unknownBlocker = blockedBy.find((key) => !existingTasks.some((candidate) => candidate.key === key))
@@ -1159,7 +1158,7 @@ export class MissionControl {
       }
       // A resumed failure finishes again under a new, revision-bound identity.
       const firstFinish = this.eventID(mission.id, "finished")
-      await this.journal.append({
+      await this.journal.appendFinish({
         version: MISSION_SCHEMA_VERSION,
         id: await this.journal.event(mission.id, firstFinish) ? this.eventID(mission.id, `finished-${mission.revision}`) : firstFinish,
         type: "mission.finished",
@@ -1389,9 +1388,6 @@ export class MissionControl {
     if (targetSessionID === coordinatorID) throw new MissionControlError("The coordinator cannot delegate a task to itself", "invalid-target")
     if (targetSessionID) {
       const target = await this.ownedRootSession(targetSessionID)
-      if (mission.actors.length >= MISSION_MAX_ACTORS && !mission.actors.some((actor) => actor.sessionId === targetSessionID)) {
-        throw new MissionControlError("Mission actor limit reached", "actor-limit")
-      }
       const foreignMission = snapshot.missions.find((candidate) => (candidate.status === "active" || candidate.control?.pending.includes(targetSessionID))
         && candidate.id !== mission.id && candidate.actors.some((actor) => actor.sessionId === targetSessionID))
       if (foreignMission) throw new MissionControlError("Target session already belongs to another active mission", "target-claimed")
@@ -1402,7 +1398,6 @@ export class MissionControl {
         managed: false,
       }
     }
-    if (mission.actors.length >= MISSION_MAX_ACTORS) throw new MissionControlError("Mission actor limit reached", "actor-limit")
     return {
       sessionID: missionTaskSessionID(mission.id, task.id, this.options.now?.() ?? Date.now()),
       title: `Mission · ${task.role}: ${task.title}`.slice(0, 160),

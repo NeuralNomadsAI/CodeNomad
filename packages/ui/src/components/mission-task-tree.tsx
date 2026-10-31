@@ -55,6 +55,9 @@ export function MissionTaskTree(props: {
   const { t } = useI18n()
   let list!: HTMLUListElement
   const ordered = createMemo(() => orderMissionTasks(props.mission.tasks))
+  // Rows read their task and actor activity by identity: hundreds of rows stay linear.
+  const byID = createMemo(() => new Map(props.mission.tasks.map(task => [task.id, task])))
+  const activities = createMemo(() => new Map(props.activity?.map(value => [value.sessionId, value.state])))
   const linked = () => props.mission.tasks.some(task => task.blockedBy.length)
   const id = `mission-tree-${createUniqueId()}`
   // Per project, like the picker list: the folder scope survives instance restarts.
@@ -73,10 +76,10 @@ export function MissionTaskTree(props: {
       ? "missions.progress.prepared" : "missions.progress.noPlan")}</p>}>
       <div class="mission-flow" classList={{ "mission-flow-linked": linked() }}>
         <ul ref={list} class="mission-tree-list"><For each={ordered().map(task => task.id)}>{id => {
-          const task = () => props.mission.tasks.find(task => task.id === id)!
+          const task = () => byID().get(id)!
           const activity = () => {
             const actor = task().actorSessionId
-            if (actor) return props.activity?.find(value => value.sessionId === actor)?.state
+            if (actor) return activities().get(actor)
             const linked = props.conversation(task())
             return linked ? conversationActivity(props.instanceId, props.mission, linked) : undefined
           }
