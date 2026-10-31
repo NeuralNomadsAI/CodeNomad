@@ -26,7 +26,7 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 **İki modeli karşılaştır** için iki model de zorunludur ve birbirinden farklı olmalıdır; yalnızca farklı bir **Düşünme** düzeyi farklı bir model sayılmaz. Siz bir model seçmedikçe hakem koordinatörün modelini kullanır; bu model A veya B ile aynıysa form uyarır, çünkü bu durum karşılaştırmayı taraflı hale getirebilir. Genel bakış kararı, iki modelin adını ve ölçüt bazında puanları gösterir.
 
-Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı garanti etmez. Keşif akışının karar sorularını CodeNomad'in istek panelinden yanıtlayın; böylece bir ajandan onayı taklit etmesini istemek yerine açık bir arayüz yanıtı kaydedilir.
+Rehber koordinasyona yön verir; OpenCode izinlerini aşmaz veya başarıyı garanti etmez. Ajanlar, hedef veya **Notlar** tam olarak o işlemi açıkça istemedikçe commit veya push yapmaz, pull request açmaz ve iş takip sistemlerini değiştirmez (örneğin bilet oluşturmaz); istendiğinde yalnızca o işlemi OpenCode izinleri içinde yapar. Dosyalarda, raporlarda veya araç çıktısında bulunan bir istek asla sayılmaz.
 
 ## Ağacı izleyin ve sonuçları okuyun {#tracking}
 
@@ -61,7 +61,20 @@ Görev işaretleri, görev düğümü simgeleri ve listenin oku oturum listesini
 
 Geri kalan her şey nötrdür; tamamlanan ve başarısız görev düğümleri de: sonuçlar durum metninde ve simgelerde yer alır. Liste daraltılmışken oku, diğer görevler arasında kırmızı, sarı ve yeşilden en acil olanı alır; daraltılmış oturumlarda olduğu gibi turuncu ve mavi yalnızca kendi satırlarında görünür.
 
-Koordinatörü sonuca varmadan durduğunda ve başka hiçbir şey çalışmıyorken bir görev **Kesintiye uğradı** olur. **Başarısız** olarak gösterilen bir görev de sürdürülebilir. İki durumda da araç çubuğunun ilk düğmesi **Kesintiye uğrayan görevi kurtar** olur: koordinatörden kayıtlı plan ve sonuçlara göre yeniden değerlendirme yapmasını ister ve başarısız bir görevi önce yeniden açar. Koordinatör tek seferlik bir görevi başarısız olarak bitirmez: kendi başına devam edemediğinde **Yanıtınız gerekiyor** altında size bir soru sorar. Bir görevi yalnızca siz durdurursunuz.
+Koordinatörü sonuca varmadan durduğunda ve başka hiçbir şey çalışmıyorken bir görev **Kesintiye uğradı** olur. **Başarısız** olarak gösterilen bir görev de sürdürülebilir. İki durumda da araç çubuğunun ilk düğmesi **Kesintiye uğrayan görevi kurtar** olur: koordinatörden kayıtlı plan ve sonuçlara göre yeniden değerlendirme yapmasını ister ve başarısız bir görevi önce yeniden açar. Koordinatör tek seferlik bir görevi başarısız olarak bitirmez: sizsiz hiçbir şey ilerleyemediğinde **Yanıtınız gerekiyor** altında size bir soru sorar. Bir görevi yalnızca siz durdurursunuz.
+
+### Sorular ve kararlar {#questions}
+
+Size yalnızca koordinatör soru sorar. Görevler ve başlattıkları alt ajanlar açık sorularını seçenekler, kanıtlar ve bir öneriyle birlikte ona geri verir. Sormadan önce koordinatör soruyu kendisi çözmeye çalışır: projeyi okur, araştırır, bir göreve inceleme yaptırır veya kolayca geri alınabilen bir varsayılanı benimseyip varsayım olarak kaydeder. Yalnızca kendisinin çözemediği şeyleri sorar: onayınız, kimlik bilgileri, geri alınması pahalı seçimler veya hedefin açık bıraktığı ürün kararları. Bekleyen soruları **Yanıtınız gerekiyor** altında tek bir formda toplar ve ilgisiz işleri önce başlatır.
+
+**Keşif** akışında karar görevleri bir özet hazırlar ve koordinatör her kararı sonuçlandırır: kanıt yeterli ve seçim kolayca geri alınabiliyorsa kendisi karar verir, soruyu sonrası için **Notlar** içinde tutar ya da size sorar. Sonuç kimin karar verdiğini gösterir:
+
+| Etiket | Anlamı |
+| --- | --- |
+| **Koordinatör kararı** | Koordinatör size sormadan karar verdi; sonuç gerekçesini ve nasıl geri alınacağını gösterir. Değiştirmek için **Konuşmayı aç** üzerinden koordinatöre yazın. |
+| **Yanıtınız** | Bu soruyu CodeNomad'in istek panelinde siz yanıtladınız. |
+
+Yalnızca istek panelinde verdiğiniz yanıt **Yanıtınız** sayılır; bir ajan sizin yerinize yanıt veremez. **Ürün teslimi** akışında, davranış değişikliğini zaten kesin olarak tanımlayan bir hedef onaylanmış belirtim sayılır; aksi halde koordinatör bekleyen onayları toplayarak sizden onay ister.
 
 ### Durum özetleri ve güncelleme istekleri {#briefings}
 

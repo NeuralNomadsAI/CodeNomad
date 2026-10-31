@@ -1009,6 +1009,11 @@ test("charts a Wayfinder frontier breadth-first without auto-dispatching work in
     role: "decision", blockedBy: ["storage-facts", "audience-facts"], delivery: "queue",
   })
   assert.equal(decision.disposition, "dispatched")
+  // A task actor returns its decision brief; only the coordinator records who decided.
+  await assert.rejects(control.report(actorFor(decision.mission, "decision"), {
+    taskKey: "choose-boundary", outcome: "completed", summary: "I decided for the coordinator.", evidence: [], next: [], final: false,
+    artifact: { kind: "decision", decidedBy: "coordinator", question: "Which boundary?", decision: "Journal", rationale: "Facts" },
+  }), /Only the coordinator records who settled a decision/)
   await control.report(actorFor(decision.mission, "decision"), {
     taskKey: "choose-boundary", outcome: "completed", summary: "Use the project-local append-only journal.",
     evidence: ["Both blockers resolved"], next: [], final: false,

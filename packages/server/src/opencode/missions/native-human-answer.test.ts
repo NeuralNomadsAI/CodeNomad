@@ -22,7 +22,8 @@ import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human
 import { attachRemoteDevice, markRemoteSocket } from "../../remote-control/request-origin"
 
 const encode = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
-async function fixture() {
+/** `asker`: the conversation holding the question; `ses_root` is the coordinator asking from its own conversation. */
+async function fixture(asker: "ses_child" | "ses_root" = "ses_child") {
   const temporaryRoot = path.join(tmpdir(), "opencode")
   await mkdir(temporaryRoot, { recursive: true })
   const directory = await mkdtemp(path.join(temporaryRoot, "human-mark-"))
@@ -46,17 +47,17 @@ async function fixture() {
       model: { providerID: "provider", id: "model" }, ...(row.parent_id ? { parentID: row.parent_id } : {}) }
   }
   const input = { questions: [{ question: "Choose the seam?", header: "Seam", options: [{ label: "Module", description: "Own the boundary" }] }] }
-  const form = { id: "frm_actual", sessionID: "ses_child", title: "Questions", metadata: { kind: "question", tool: { messageID: "msg_question", id: "call_question" } },
+  const form = { id: "frm_actual", sessionID: asker, title: "Questions", metadata: { kind: "question", tool: { messageID: "msg_question", id: "call_question" } },
     fields: [{ key: "q0", type: "string", title: "Seam", description: "Choose the seam?", custom: true,
       options: [{ value: "Module", label: "Module", description: "Own the boundary" }] }] }
   let state: { status: string; answer?: { q0: string } } = { status: "pending" }, replies = 0, expired = false, failReply = false, loseReply = false, complete = true
   const part = { type: "tool", name: "question", id: "call_question", executed: false, state: { status: "running", input } }
-  const message = () => db.prepare("INSERT OR REPLACE INTO session_message VALUES(?,?,?,?)").run("msg_question", "ses_child", "assistant", JSON.stringify({ content: [part] }))
+  const message = () => db.prepare("INSERT OR REPLACE INTO session_message VALUES(?,?,?,?)").run("msg_question", asker, "assistant", JSON.stringify({ content: [part] }))
   message()
   const delegation = { type: "tool", name: "subagent", id: "call_delegate", executed: false, state: { status: "running", input: {}, metadata: { sessionID: "ses_child" } } }
   db.prepare("INSERT INTO session_message VALUES(?,?,?,?)").run("msg_delegate", "ses_root", "assistant", JSON.stringify({ content: [delegation] }))
-  const event = (id: string, seq: number, type: string, data: unknown) => db.prepare("INSERT INTO event VALUES(?,?,?,?,?)").run(id, seq, type, "ses_child",
-    JSON.stringify({ sessionID: "ses_child", assistantMessageID: "msg_question", id: "call_question", executed: false, ...data as object }))
+  const event = (id: string, seq: number, type: string, data: unknown) => db.prepare("INSERT INTO event VALUES(?,?,?,?,?)").run(id, seq, type, asker,
+    JSON.stringify({ sessionID: asker, assistantMessageID: "msg_question", id: "call_question", executed: false, ...data as object }))
   event("event_called", 1, "session.tool.called.1", { input })
   const finish = () => {
     const metadata = { answers: [[state.answer!.q0]] }, content = [{ type: "text", text: "Native question answer" }]
@@ -94,7 +95,7 @@ async function fixture() {
   const nativeStorage = { get: (key: string) => Effect.promise(() => storage.get(key)),
     scan: (options: Parameters<MissionStorage["scan"]>[0]) => Effect.promise(() => { journalScans++; return storage.scan(options) }) }
   const native = await Effect.runPromise(Effect.provide(acquireNativeHumanAnswers({ location, storage: nativeStorage } as never), graph))
-  const markKey = `${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`project\0${directory}`, 24)}/ses_child/${form.id}`
+  const markKey = `${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`project\0${directory}`, 24)}/${asker}/${form.id}`
   const auth = new AuthManager({ configPath: path.join(directory, "auth.yaml"), username: "human", generateToken: true }, pino({ level: "silent" }) as never)
   const cookie = auth.createSession("human")
   let ordinary = false
@@ -140,7 +141,7 @@ async function fixture() {
     secrets: [cookie.id, registration.token],
     counts: () => replies, journalScans: () => journalScans, expire: () => { expired = true }, fail: (value = true) => { failReply = value }, lose: () => { loseReply = true }, defer: () => { complete = false },
     changeState: (status: string) => { state.status = status },
-    submit: (human = true, answer = "Module", cookieID = cookie.id) => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/ses_child/form/${form.id}/reply`,
+    submit: (human = true, answer = "Module", cookieID = cookie.id) => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/${asker}/form/${form.id}/reply`,
       headers: { cookie: `${auth.getCookieName()}=${encodeURIComponent(cookieID)}`, ...(human ? { "x-codenomad-human-answer": "1" } : {}) }, payload: { answer: { q0: answer } } }),
     devices,
     /** The dock's actual call: the generated client against the proxy, which enforces the native success status. */
@@ -236,7 +237,7 @@ test("Wayfinder without a published binding accepts only the exact fresh assignm
     delegate({ agent: "worker", description: "Decision", prompt: assignment, sessionID: "ses_child" })
     await assert.rejects(control.report("ses_root", report()), /not this assignment/, "a continuation is not a fresh assignment child")
     delegate({ agent: "worker", description: "Decision", prompt: `Context first.\n${assignment}` })
-    await assert.rejects(control.report("ses_root", report({ ...provenance.nativeCall, parentSessionID: "ses_other" })), /invocation unavailable/)
+    await assert.rejects(control.report("ses_root", report({ ...provenance.nativeCall, parentSessionID: "ses_other" })), /Wayfinder decision evidence unavailable/)
     assert.equal((await control.report("ses_root", report())).disposition, "reported")
     assert.equal((await control.snapshot()).missions[0].tasks[0].status, "completed")
   } finally { await f.dispose() }
@@ -260,7 +261,7 @@ test("a decision readout discovers the human's exact answer from native structur
     const candidates = () => control.decisionCandidates("ses_root", mission.id, "decision")
     const readout = { taskKey: "decision", outcome: "completed" as const, summary: "The human chose the module seam", evidence: [], next: [], final: false }
     assert.deepEqual(await candidates(), { candidates: [], complete: true }, "no UI mark yet")
-    await assert.rejects(control.report("ses_root", readout), /Human decision required/)
+    await assert.rejects(control.report("ses_root", readout), /Decision outcome required/)
     assert.equal((await f.submit()).statusCode, 204)
     delegate("Unrelated work")
     assert.deepEqual(await candidates(), { candidates: [], complete: true }, "a child born for other work never qualifies")
@@ -269,7 +270,7 @@ test("a decision readout discovers the human's exact answer from native structur
     assert.equal(discovery.complete, true)
     const [found, ...others] = discovery.candidates
     assert.deepEqual(others, [])
-    assert.deepEqual(found, { question: "Choose the seam?", answer: "Module", artifact: { kind: "decision", question: "Choose the seam?", answer: "Module",
+    assert.deepEqual(found, { question: "Choose the seam?", answer: "Module", askedBy: "decision-task", artifact: { kind: "decision", question: "Choose the seam?", answer: "Module",
       provenance: { kind: "native-form-answer", contract: { missionID: mission.id, taskKey: "decision", generation: 1 },
         nativeCall: { generation: 1, parentSessionID: "ses_root", parentMessageID: "msg_delegate", toolCallID: "call_delegate" },
         sessionID: "ses_child", formID: f.form.id, messageID: "msg_question", toolCallID: "call_question", fieldKey: "q0" } } })
@@ -285,6 +286,47 @@ test("a decision readout discovers the human's exact answer from native structur
     f.changeState("answered")
     assert.equal((await control.report("ses_root", readout)).disposition, "reported")
     assert.deepEqual((await control.snapshot()).missions[0].tasks[0].report?.artifact, found.artifact)
+  } finally { await f.dispose() }
+})
+
+test("the coordinator's own question: its dock mark proves the exact answer, listed by inspect and never chosen automatically", async () => {
+  const f = await fixture("ses_root")
+  try {
+    f.db.exec("DELETE FROM event")
+    const control = new MissionControl({ storage: f.storage, project: { id: "project", canonical: f.directory, location: { directory: f.directory } },
+      sessions: { get: f.nativeGet, create: async () => { throw new Error("No ghost root") }, prompt: async () => {}, synthetic: async () => {} },
+      humanGate: nativeHumanAnswerGate(use => use(f.native)) })
+    const made = await control.create({ requestID: "wayfinder-coordinator", objective: "Choose the seam", template: "wayfinder", coordinatorSessionID: "ses_root" })
+    await new MissionJournal(f.storage, "project", f.directory).append({ version: 1, id: "decision_created", type: "task.created", missionID: made.mission.id,
+      projectID: "project", createdAt: made.mission.createdAt + 1, task: { id: "tsk_decision", key: "decision", title: "Decision", brief: "Return a decision brief",
+        role: "decision", executionMode: { kind: "native", parentTaskKey: null }, blockedBy: [] } })
+    const mission = (await control.snapshot()).missions[0]
+    const candidates = () => control.decisionCandidates("ses_root", mission.id, "decision")
+    const readout = { taskKey: "decision", outcome: "completed" as const, summary: "The human chose the module seam", evidence: [], next: [], final: false }
+    assert.deepEqual(await candidates(), { candidates: [], complete: true }, "no UI mark yet")
+    assert.equal((await f.submit()).statusCode, 204)
+    assert.equal(f.get(f.markKey)?.state, "confirmed", "the coordinator's own Form takes the mark path")
+    const [found, ...others] = (await candidates())!.candidates
+    assert.deepEqual(others, [])
+    assert.deepEqual(found, { question: "Choose the seam?", answer: "Module", askedBy: "coordinator", artifact: { kind: "decision", decidedBy: "human",
+      question: "Choose the seam?", answer: "Module", provenance: { kind: "coordinator-form-answer", contract: { missionID: mission.id, taskKey: "decision", generation: 1 },
+        sessionID: "ses_root", formID: f.form.id, messageID: "msg_question", toolCallID: "call_question", fieldKey: "q0" } } })
+    await assert.rejects(control.report("ses_root", readout), /Decision outcome required/, "a coordinator answer is passed explicitly")
+    await assert.rejects(control.report("ses_root", { ...readout, artifact: { ...found.artifact, answer: "Adapter" } }), /Human decision required/,
+      "a model-written answer never borrows the human's mark")
+    assert.equal((await control.report("ses_root", { ...readout, artifact: found.artifact })).disposition, "reported")
+    f.expire()
+    assert.equal((await control.report("ses_root", { ...readout, final: true })).disposition, "finished", "the saved Form snapshot re-verifies")
+  } finally { await f.dispose() }
+})
+
+test("a coordinator-asked answer qualifies only from a root conversation", async () => {
+  const f = await fixture()
+  try {
+    assert.equal((await f.submit()).statusCode, 204)
+    const { nativeCall: _call, delegationToolName: _name, ...request } = f.decision
+    await assert.rejects(f.native.verify({ ...request, kind: "coordinator-form-answer" }), /outside a root conversation/)
+    assert.equal((await f.native.verify(f.decision)).via, "ui")
   } finally { await f.dispose() }
 })
 
@@ -376,6 +418,16 @@ test("recurring passage decisions use the same mark gate without recurrence ledg
     assert.equal((await f.submit()).statusCode, 204); f.expire()
     assert.equal((await f.native.verify(f.decision)).via, "ui")
     assert.equal(f.db.prepare("SELECT count(*) AS count FROM kv").get()!.count, 1, "only the mark, no passage ledger or key")
+  } finally { await f.dispose() }
+})
+
+test("a recurring passage coordinator's own question takes the same mark gate", async () => {
+  const f = await fixture("ses_root")
+  try {
+    recurring(f)
+    assert.equal((await f.submit()).statusCode, 204); f.expire()
+    const { nativeCall: _call, delegationToolName: _name, ...request } = f.decision
+    assert.equal((await f.native.verify({ ...request, kind: "coordinator-form-answer", sessionID: "ses_root" })).via, "ui")
   } finally { await f.dispose() }
 })
 

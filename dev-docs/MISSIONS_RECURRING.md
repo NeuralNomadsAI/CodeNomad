@@ -366,12 +366,19 @@ a `pending` mark with a fresh `attemptID` before forwarding, promoted to
 `confirmed` only after the native reply returns positively for that attempt.
 A definitely failed forward (Form still observed pending) removes the mark; a
 lost/uncertain reply leaves it pending forever. Pending never qualifies, so a
-later non-UI answer cannot borrow an earlier failed UI attempt; Wayfinder may ask again.
-The Wayfinder human gate accepts only a native Form with the matching confirmed UI mark.
-A refusal reaches the model as "Human decision required: the user must answer this
-question from the CodeNomad interface", with the gate's cause as a detail.
-The gate also proves the decision session natively: a fresh child of the expected
-parent's exact `subagent` call whose prompt carries the declared assignment. Answers
+later non-UI answer cannot borrow an earlier failed UI attempt; the coordinator may ask again.
+A Wayfinder decision readout that claims the human's answer passes only with a native
+Form carrying the matching confirmed UI mark; the coordinator's own decision
+(`decidedBy: "coordinator"`) needs no mark and is never shown or counted as the
+human's (`MISSIONS.md`, §Human questions and decisions). A refusal reaches the model
+as "Human decision required: the user must answer this question from the CodeNomad
+interface", with the gate's cause as a detail.
+The gate also proves the asking conversation natively. The coordinator asks from its
+own root conversation (`coordinator-form-answer`): the Form's session must be that
+mission's coordinator and a root, and one Form field settles at most one live decision
+task. A decision conversation's own question (`native-form-answer`, missions whose
+decision workers asked themselves) needs a fresh child of the expected parent's exact
+`subagent` call whose prompt carries the declared assignment. Answers
 and execution failures are read from durable message projections (completed question
 part, `idle` outcome). Native question and delegation evidence counts only from
 local tool parts and events: `isLocalNativeTool` (`missions/native-call-observation.ts`)
@@ -439,7 +446,8 @@ Read-only projections and invalidations never start work or settle unknown sends
    still observed honestly. Pause can be explicitly resumed; Stop cannot. Exercise
    CAS conflicts and cancellation uncertainty without claiming recursive suspension.
 5. **Human gate:** native UI Form answer has the matching mark in both modes;
-   an agent/native answer without it leaves Wayfinder's human gate unmet.
+   an agent/native answer without it leaves Wayfinder's human gate unmet, and a
+   coordinator decision is recorded as the coordinator's.
 
 Acceptance requires these integrated journeys; isolated helper tests never count.
 

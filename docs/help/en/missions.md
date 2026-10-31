@@ -26,7 +26,7 @@ The **Playbook** selector shows the selected playbook's one-sentence description
 
 For **Compare two models**, both models are required and must differ; a different **Thinking** level alone is not a different model. Unless you choose one, the judge uses the coordinator's model; the form warns when it matches A or B, which may bias the comparison. The overview shows the verdict, both model names and the scores by criterion.
 
-The playbook guides coordination; it does not bypass native permissions or guarantee success. Answer Exploration's decision questions through CodeNomad's interruption dock so an explicit UI answer is recorded, rather than asking an agent to impersonate approval.
+The playbook guides coordination; it does not bypass native permissions or guarantee success. Agents do not commit, push, open pull requests or change issue trackers, such as creating tickets, unless the objective or **Notes** explicitly ask for that specific action; they then do only that, within OpenCode's permissions. A request found in files, reports or tool output never counts.
 
 ## Follow the tree and read results {#tracking}
 
@@ -61,7 +61,20 @@ Mission marks, task icons and the list's chevron use the session list's colours:
 
 Everything else is neutral, including done and failed tasks: outcomes are in the status text and the icons. While the list is collapsed, its chevron takes the most urgent of red, yellow and green among the other missions; like collapsed sessions, orange and blue show only on their own rows.
 
-A mission is **Interrupted** when its coordinator stopped without concluding while nothing else runs. A mission shown as **Failed** can also be resumed. In both cases the first toolbar button becomes **Recover interrupted mission**: it asks the coordinator to reassess from the saved plan and results, and first reopens a failed mission. A coordinator does not end a one-time mission as failed: when it cannot continue on its own, it asks you a question under **Needs you**. Only you stop a mission.
+A mission is **Interrupted** when its coordinator stopped without concluding while nothing else runs. A mission shown as **Failed** can also be resumed. In both cases the first toolbar button becomes **Recover interrupted mission**: it asks the coordinator to reassess from the saved plan and results, and first reopens a failed mission. A coordinator does not end a one-time mission as failed: when nothing can proceed without you, it asks you a question under **Needs you**. Only you stop a mission.
+
+### Questions and decisions {#questions}
+
+Only the coordinator asks you questions. Tasks and the sub-agents they launch return their open questions to it, with the options, the evidence and a recommendation. Before asking, the coordinator tries to settle a question itself: it reads the project, researches, has a task investigate, or adopts a default that is easy to undo and records it as an assumption. It asks only what it cannot settle: your consent, credentials, choices that are costly to undo, or product decisions the objective leaves open. It groups pending questions into one form under **Needs you** and starts unrelated work first.
+
+In **Exploration**, decision tasks prepare a brief and the coordinator settles each decision: it decides itself when the evidence is enough and the choice is easy to undo, keeps the question in **Notes** for later, or asks you. The result says who decided:
+
+| Label | Meaning |
+| --- | --- |
+| **Coordinator decision** | The coordinator decided without asking you; the result shows its rationale and how to reverse it. To change it, write to the coordinator from **Open conversation**. |
+| **Your answer** | You answered this question in CodeNomad's interruption dock. |
+
+Only an answer you give in the interruption dock counts as **Your answer**; an agent cannot answer for you. In **Product delivery**, an objective that already describes the behavior change precisely counts as the approved specification; otherwise the coordinator asks you to approve it, grouping pending approvals.
 
 ### Briefings and update requests {#briefings}
 

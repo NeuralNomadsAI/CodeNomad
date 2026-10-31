@@ -188,7 +188,7 @@ const candidate = (missionID: string, answer: string): HumanDecisionCandidate =>
   const provenance = { kind: "native-form-answer" as const, contract: { missionID, taskKey: "choose", generation: 1 },
     nativeCall: { generation: 1, parentSessionID: coordinator, parentMessageID: "msg_parent", toolCallID: "call_subagent" },
     sessionID: "ses_decision", formID: `frm_${answer}`, messageID: "msg_question", toolCallID: "call_question", fieldKey: "q0" }
-  return { question: "Which seam?", answer, artifact: { kind: "decision", question: "Which seam?", answer, provenance } }
+  return { question: "Which seam?", answer, askedBy: "decision-task", artifact: { kind: "decision", question: "Which seam?", answer, provenance } }
 }
 
 test("a decision readout without an artifact uses the single qualifying human answer, still verified by the gate", async () => {
@@ -198,7 +198,7 @@ test("a decision readout without an artifact uses the single qualifying human an
   f.sessions.set("ses_decision", { id: "ses_decision", parentID: coordinator, projectID: "project-1", location: { directory: "/repo" } })
   await f.declare("choose", "decision")
   const readout = { taskKey: "choose", outcome: "completed" as const, summary: "The human chose the module seam.", evidence: [], next: [], final: false }
-  await assert.rejects(f.control.report(coordinator, readout), /Human decision required/)
+  await assert.rejects(f.control.report(coordinator, readout), /Decision outcome required: no answered question qualifies.*"decidedBy":"coordinator"/)
   found = [candidate(mission.id, "Module"), candidate(mission.id, "Adapter")]
   await assert.rejects(f.control.report(coordinator, readout), /Several answered questions qualify/)
   assert.deepEqual((await f.control.decisionCandidates(coordinator, undefined, "choose"))?.candidates.map(item => item.answer), ["Module", "Adapter"])

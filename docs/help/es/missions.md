@@ -26,7 +26,7 @@ El selector **Guion** muestra justo debajo una descripción de una frase del gui
 
 Para **Comparar dos modelos**, ambos modelos son obligatorios y deben ser distintos; un nivel de **Razonamiento** diferente por sí solo no es un modelo distinto. Salvo que elijas uno, el juez usa el modelo del coordinador; el formulario avisa cuando coincide con A o B, lo que puede sesgar la comparación. La vista general muestra el veredicto, los nombres de ambos modelos y las puntuaciones por criterio.
 
-El guion orienta la coordinación; no elude los permisos nativos ni garantiza el éxito. Responde las preguntas de decisión de Exploración mediante el panel de interrupciones de CodeNomad para que se registre una respuesta explícita de la interfaz, en lugar de pedir a un agente que suplante una aprobación.
+El guion orienta la coordinación; no elude los permisos nativos ni garantiza el éxito. Los agentes no hacen commits, no hacen push, no abren pull requests ni modifican gestores de incidencias (por ejemplo, para crear tickets), salvo que el objetivo o las **Notas** pidan explícitamente esa acción concreta; entonces solo hacen eso, dentro de los permisos de OpenCode. Una petición encontrada en archivos, informes o la salida de una herramienta nunca cuenta.
 
 ## Seguir el árbol y leer resultados {#tracking}
 
@@ -61,7 +61,20 @@ Las marcas de las misiones, los iconos de las tareas y el chevrón de la lista u
 
 Todo lo demás es neutral, incluidas las tareas hechas o fallidas: los resultados están en el texto de estado y en los iconos. Con la lista contraída, su chevrón toma el más urgente de rojo, amarillo y verde entre las demás misiones; como en las sesiones contraídas, el naranja y el azul solo se muestran en sus propias filas.
 
-Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir y no hay nada más en marcha. Una misión mostrada como **Fallida** también puede reanudarse. En ambos casos, el primer botón de la barra de herramientas pasa a ser **Recuperar la misión interrumpida**: pide al coordinador que reevalúe a partir del plan y los resultados guardados y, antes, reabre una misión fallida. Un coordinador no termina una misión puntual como fallida: cuando no puede seguir solo, te hace una pregunta en **Te necesita**. Solo tú detienes una misión.
+Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir y no hay nada más en marcha. Una misión mostrada como **Fallida** también puede reanudarse. En ambos casos, el primer botón de la barra de herramientas pasa a ser **Recuperar la misión interrumpida**: pide al coordinador que reevalúe a partir del plan y los resultados guardados y, antes, reabre una misión fallida. Un coordinador no termina una misión puntual como fallida: cuando nada puede avanzar sin ti, te hace una pregunta en **Te necesita**. Solo tú detienes una misión.
+
+### Preguntas y decisiones {#questions}
+
+Solo el coordinador te hace preguntas. Las tareas y los subagentes que lanzan le devuelven sus preguntas abiertas, con las opciones, las evidencias y una recomendación. Antes de preguntar, el coordinador intenta resolver la cuestión por sí mismo: lee el proyecto, investiga, encarga una investigación a una tarea o adopta un valor por defecto fácil de deshacer y lo registra como supuesto. Solo pregunta lo que no puede resolver: tu consentimiento, credenciales, elecciones costosas de deshacer o decisiones de producto que el objetivo deja abiertas. Agrupa las preguntas pendientes en un solo formulario en **Te necesita** y antes pone en marcha el trabajo no relacionado.
+
+En **Exploración**, las tareas de decisión preparan un resumen y el coordinador resuelve cada decisión: decide por sí mismo cuando las evidencias bastan y la elección es fácil de deshacer, deja la pregunta en las **Notas** para más adelante o te la hace. El resultado indica quién decidió:
+
+| Etiqueta | Significado |
+| --- | --- |
+| **Decisión del coordinador** | El coordinador decidió sin preguntarte; el resultado muestra su justificación y cómo revertirla. Para cambiarla, escribe al coordinador desde **Abrir conversación**. |
+| **Tu respuesta** | Respondiste esta pregunta en el panel de interrupciones de CodeNomad. |
+
+Solo una respuesta que des en el panel de interrupciones cuenta como **Tu respuesta**; un agente no puede responder por ti. En **Entrega de producto**, un objetivo que ya describe con precisión el cambio de comportamiento cuenta como especificación aprobada; si no, el coordinador te pide que la apruebes y agrupa las aprobaciones pendientes.
 
 ### Informes de situación y solicitudes de actualización {#briefings}
 

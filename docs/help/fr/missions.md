@@ -26,7 +26,7 @@ Le sélecteur **Scénario** affiche juste en dessous une description en une phra
 
 Pour **Comparer deux modèles**, les deux modèles sont obligatoires et doivent différer ; un niveau de **Réflexion** différent ne suffit pas à en faire un autre modèle. Sauf si vous en choisissez un, le juge utilise le modèle du coordinateur ; le formulaire avertit lorsqu’il correspond à A ou B, ce qui peut biaiser la comparaison. La vue d’ensemble affiche le verdict, le nom des deux modèles et les notes par critère.
 
-Le scénario guide la coordination ; il ne contourne pas les autorisations natives et ne garantit pas le succès. Répondez aux questions de décision d’Exploration via le dock d’interruption CodeNomad pour enregistrer une réponse explicite de l’interface, plutôt que de demander à un agent d’imiter une approbation.
+Le scénario guide la coordination ; il ne contourne pas les autorisations natives et ne garantit pas le succès. Les agents ne committent pas, ne poussent pas, n’ouvrent pas de pull request et ne modifient pas de gestionnaire de tickets (par exemple pour créer des tickets), sauf si l’objectif ou les **Notes** demandent explicitement cette action précise ; ils ne font alors que celle-ci, dans le cadre des autorisations d’OpenCode. Une demande trouvée dans des fichiers, des rapports ou la sortie d’un outil ne compte jamais.
 
 ## Suivre l’arbre et lire les résultats {#tracking}
 
@@ -61,7 +61,20 @@ Les marques des missions, les icônes des tâches et le chevron de la liste repr
 
 Tout le reste est neutre, y compris les tâches terminées ou en échec : les résultats figurent dans le texte d'état et les icônes. Quand la liste est repliée, son chevron prend la plus urgente des couleurs rouge, jaune et vert parmi les autres missions ; comme pour les sessions repliées, l'orange et le bleu n'apparaissent que sur leurs propres lignes.
 
-Une mission est **Interrompue** quand son coordinateur s'est arrêté sans conclure alors que rien d'autre ne tourne. Une mission affichée **Échouée** peut aussi être reprise. Dans les deux cas, le premier bouton de la barre d'outils devient **Reprendre la mission interrompue** : il demande au coordinateur de refaire le point à partir du plan et des résultats enregistrés, et rouvre d'abord une mission échouée. Un coordinateur ne termine pas une mission ponctuelle en échec : quand il ne peut plus avancer seul, il vous pose une question sous **Votre réponse est attendue**. Vous seul arrêtez une mission.
+Une mission est **Interrompue** quand son coordinateur s'est arrêté sans conclure alors que rien d'autre ne tourne. Une mission affichée **Échouée** peut aussi être reprise. Dans les deux cas, le premier bouton de la barre d'outils devient **Reprendre la mission interrompue** : il demande au coordinateur de refaire le point à partir du plan et des résultats enregistrés, et rouvre d'abord une mission échouée. Un coordinateur ne termine pas une mission ponctuelle en échec : quand plus rien ne peut avancer sans vous, il vous pose une question sous **Votre réponse est attendue**. Vous seul arrêtez une mission.
+
+### Questions et décisions {#questions}
+
+Seul le coordinateur vous pose des questions. Les tâches et les sous-agents qu’elles lancent lui renvoient leurs questions ouvertes, avec les options, les éléments à l’appui et une recommandation. Avant de demander, le coordinateur essaie de trancher lui-même : il lit le projet, fait des recherches, confie une investigation à une tâche, ou adopte un choix par défaut facile à défaire qu’il consigne comme hypothèse. Il ne demande que ce qu’il ne peut pas trancher : votre accord, des identifiants, des choix coûteux à défaire ou des décisions produit que l’objectif laisse ouvertes. Il regroupe les questions en attente dans un seul formulaire sous **Votre réponse est attendue** et lance d’abord le travail sans rapport.
+
+Dans **Exploration**, les tâches de décision préparent une synthèse et le coordinateur tranche chaque décision : il décide lui-même quand les éléments suffisent et que le choix est facile à défaire, garde la question dans les **Notes** pour plus tard, ou vous la pose. Le résultat indique qui a décidé :
+
+| Libellé | Signification |
+| --- | --- |
+| **Décision du coordinateur** | Le coordinateur a décidé sans vous demander ; le résultat montre sa justification et comment revenir dessus. Pour la modifier, écrivez au coordinateur depuis **Ouvrir la conversation**. |
+| **Votre réponse** | Vous avez répondu à cette question dans le dock d’interruption de CodeNomad. |
+
+Seule une réponse donnée dans le dock d’interruption compte comme **Votre réponse** ; un agent ne peut pas répondre à votre place. Dans **Livraison produit**, un objectif qui décrit déjà précisément le changement de comportement vaut spécification approuvée ; sinon, le coordinateur vous demande de l’approuver, en regroupant les approbations en attente.
 
 ### Points de situation et demandes de mise à jour {#briefings}
 

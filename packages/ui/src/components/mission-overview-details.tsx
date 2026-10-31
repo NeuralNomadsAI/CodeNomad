@@ -6,6 +6,7 @@ import { updateMissionProjectView, type MissionReaderTarget } from "../stores/mi
 import { MissionCleanupPanel } from "./mission-cleanup"
 import { MissionProfileSummary } from "./mission-profile-summary"
 import { missionReportIsPrevious, missionReports } from "./mission-progress-model"
+import { missionReportDecisionMaker } from "./mission-decision-report"
 
 /** Secondary overview material, folded at the bottom of the central overview
  * reader: plan changes, reports, conversation cleanup history and identifiers.
@@ -46,7 +47,8 @@ export function MissionOverviewDetails(props: {
         <ol class="mission-reader-links"><For each={reports()}>{report => <li>
           <button type="button" class="window-text-button" onClick={() => { const target = reportTarget(report); open(target.kind, target.id) }}>
             {props.mission.tasks.find(task => task.key === report.taskKey)?.title ?? (report.taskKey || t("missions.control.overview"))}</button>
-          <small>{when(report.createdAt)} · {t(missionReportIsPrevious(props.mission, report) ? "missions.progress.previousAttempt" : `missions.control.report.outcome.${report.outcome}`)}</small>
+          <small>{when(report.createdAt)} · {t(missionReportIsPrevious(props.mission, report) ? "missions.progress.previousAttempt" : `missions.control.report.outcome.${report.outcome}`)}
+            <Show when={missionReportDecisionMaker(props.mission, report)}>{by => <> · <span data-decided-by={by()}>{t(`missions.decision.${by()}`)}</span></>}</Show></small>
         </li>}</For></ol>
       </details>
     </Show>

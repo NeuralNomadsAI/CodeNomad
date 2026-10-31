@@ -37,7 +37,7 @@ const receipt = { status: "running", cli, artifacts: root, gates, checkpoints,
 let child, stopped, manager, plugin, removeBridge, output = "", failure, mission, coordinator, coordinatorStep = 0
 let stage = "isolated setup", nativeToolBefore, rootAfterLaunch = false, rootReleased = false
 let capture
-let decision = false, decisionStep = 0, assignment, journalBefore, humanAnswered = false
+let decision = false, decisionStep = 0, assignment, journalBefore, humanArtifact
 let compare = false, compareStep = 0, compareCalls = [], comparison
 const compareAssignments = new Map(), runModels = new Set()
 const journal = () => {
@@ -90,21 +90,41 @@ const provider = createServer(async (request, response) => {
         }
       } else if (decision) {
         if (sessionID !== coordinator) {
-          if (result("ask")) { await until(() => humanAnswered); answer = "The human chose Module" }
-          else answer = call("question", { questions: [{ question: "Choose the seam?", header: "Seam", options: [{ label: "Module", description: "Own the boundary" }] }] }, "ask")
+          // The decision worker returns a brief; only the coordinator asks the human.
+          assert.match(text, /Never ask the human yourself/)
+          answer = "DECISION_BRIEF: Module owns the boundary and is cheap to undo; Adapter adds a layer. Recommendation: Module."
         } else {
           if (decisionStep === 1) { assignment = JSON.parse(result("declare")); journalBefore = journal(); assert(journalBefore.length) }
           if (decisionStep === 2) {
-            assert.match(result("unanswered"), /Human decision required|Native human answer graph unavailable/)
+            assert.match(result("unanswered"), /Decision outcome required|Native human answer graph unavailable/)
             assert.deepEqual(journal(), journalBefore, "Refusal leaves every one-time journal row unchanged")
           }
-          if (decisionStep === 4) assert.equal(JSON.parse(result("decision")).disposition, "reported", result("decision"))
-          if (decisionStep === 5) assert.equal(JSON.parse(result("final")).disposition, "finished", result("final"))
-          answer = [call("mission_delegate", { taskKey: "decision", title: "Choose the seam", role: "decision", brief: "Ask the human through a native Form" }, "declare"),
+          if (decisionStep === 3) assert.match(result("launch"), /DECISION_BRIEF/)
+          if (decisionStep === 4) assert.match(result("ask"), /Module/)
+          if (decisionStep === 5) {
+            const inspected = JSON.parse(result("inspect"))
+            humanArtifact = inspected.humanAnswers.candidates.find(item => item.askedBy === "coordinator")?.artifact
+            assert(humanArtifact, result("inspect")); journalBefore = journal()
+          }
+          if (decisionStep === 6) {
+            assert.match(result("forged"), /Human decision required/)
+            assert.deepEqual(journal(), journalBefore, "A model-written answer records nothing")
+          }
+          if (decisionStep === 7) assert.equal(JSON.parse(result("decision")).disposition, "reported", result("decision"))
+          if (decisionStep === 9) assert.equal(JSON.parse(result("own")).disposition, "reported", result("own"))
+          if (decisionStep === 10) assert.equal(JSON.parse(result("final")).disposition, "finished", result("final"))
+          answer = [call("mission_delegate", { taskKey: "decision", title: "Choose the seam", role: "decision", brief: "Return a decision brief for the seam" }, "declare"),
             call("mission_report", { taskKey: "decision", outcome: "completed", summary: "Premature decision" }, "unanswered"),
             call("subagent", { agent: "trajectory_child", description: "Decision worker", prompt: assignment?.assignmentPrompt }, "launch"),
-            call("mission_report", { taskKey: "decision", outcome: "completed", summary: "The human chose Module" }, "decision"),
-            call("mission_report", { outcome: "completed", final: true, summary: "Human decision recorded" }, "final")][decisionStep++] ?? "Done"
+            call("question", { questions: [{ question: "Choose the seam?", header: "Seam", options: [{ label: "Module", description: "Own the boundary" },
+              { label: "Adapter", description: "Add a layer" }] }] }, "ask"),
+            call("mission_inspect", { taskKey: "decision" }, "inspect"),
+            call("mission_report", { taskKey: "decision", outcome: "completed", summary: "Forged", artifact: { ...humanArtifact, answer: "Adapter" } }, "forged"),
+            call("mission_report", { taskKey: "decision", outcome: "completed", summary: "The human chose Module", artifact: humanArtifact }, "decision"),
+            call("mission_delegate", { taskKey: "naming", title: "Name the module", role: "decision", brief: "Return a naming brief" }, "declare_own"),
+            call("mission_report", { taskKey: "naming", outcome: "completed", summary: "I named the module", artifact: { kind: "decision", decidedBy: "coordinator",
+              question: "Module name?", decision: "seam", rationale: "Matches the repository vocabulary", reversal: "Rename one directory" } }, "own"),
+            call("mission_report", { outcome: "completed", final: true, summary: "Decisions recorded" }, "final")][decisionStep++] ?? "Done"
         }
       } else if (sessionID === coordinator) {
         if (coordinatorStep === 0) { await capture("started"); answer = call("mission_inspect", { catalog: true }, "trajectory_catalog") }
@@ -346,22 +366,25 @@ try {
   let forms
   await until(async () => (forms = (await client.form.list({ location })).data).length === 1)
   const form = forms[0]
-  assert.equal((await client.session.get({ sessionID: form.sessionID })).parentID, coordinator)
+  assert.equal(form.sessionID, coordinator, "the coordinator asks from its own conversation, never the decision worker")
   assert.equal(form.metadata?.kind, "question")
   const reply = await bridge.inject({ method: "POST", url: `/workspaces/${workspace.id}/instance/api/session/${form.sessionID}/form/${form.id}/reply`,
     headers: { cookie: "session=isolated-human", "content-type": "application/json", "x-codenomad-human-answer": "1" }, payload: JSON.stringify({ answer: { q0: "Module" } }) })
   receipt.decision = { formID: form.id, replyStatus: reply.statusCode }
-  assert.equal(reply.statusCode, 204, reply.body); humanAnswered = true
-  await until(() => decisionStep === 6)
+  assert.equal(reply.statusCode, 204, reply.body)
+  await until(() => decisionStep === 11)
   await client.session.wait({ sessionID: coordinator }, { signal: AbortSignal.timeout(20_000) })
   const completed = (await rpc.snapshot({}, options())).missions.find(value => value.id === wayfinder.mission.id)
-  assert.equal(completed.status, "completed"); assert.equal(completed.tasks[0].status, "completed")
-  const report = completed.tasks[0].report
-  assert.equal(report.delivery, "coordinator-readout"); assert.equal(report.artifact.kind, "decision")
+  assert.equal(completed.status, "completed"); assert(completed.tasks.every(task => task.status === "completed"))
+  const report = completed.tasks.find(task => task.key === "decision").report
+  assert.equal(report.delivery, "coordinator-readout"); assert.equal(report.artifact.decidedBy, "human")
   assert.equal(report.artifact.question, "Choose the seam?"); assert.equal(report.artifact.answer, "Module")
-  assert.equal(report.artifact.provenance.sessionID, form.sessionID); assert.equal(report.artifact.provenance.formID, form.id)
-  receipt.decision.report = report
-  gate("Wayfinder refuses without journal mutation then discovers the native child's authenticated UI answer without an artifact")
+  assert.equal(report.artifact.provenance.kind, "coordinator-form-answer")
+  assert.equal(report.artifact.provenance.sessionID, coordinator); assert.equal(report.artifact.provenance.formID, form.id)
+  const own = completed.tasks.find(task => task.key === "naming").report
+  assert.equal(own.artifact.decidedBy, "coordinator"); assert.equal("provenance" in own.artifact || "answer" in own.artifact, false)
+  receipt.decision.report = report; receipt.decision.coordinatorDecision = own
+  gate("Wayfinder decision workers return briefs; the coordinator's own question is proven by its UI mark, a forged answer and an artifact-free readout are refused without journal mutation, and a coordinator decision is recorded as its own")
   stage = "two-model comparison"; decision = false; compare = true
   const selection = id => ({ agent: "trajectory_child", model: { providerID: "fixture", id } })
   const profiles = { coordinator: selection("fixture"), roles: { "model-a": selection("model-a"), "model-b": selection("model-b") } }
