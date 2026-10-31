@@ -207,10 +207,11 @@ export function createOfferRegistry({ protocol = 1, now = Date.now, hello = endp
   }
 }
 
-/** The daemon-wide registry of HST-12, shared by every Location of the process. */
-export function sharedOfferRegistry(marker, options) {
+/** The daemon-wide registry of HST-12, shared by every Location of the process, on the real clock and hello
+ * probe; tests that move time use createOfferRegistry. */
+export function sharedOfferRegistry(marker) {
   const key = Symbol.for(`${marker.rpc}.offers`)
-  return globalThis[key] ??= createOfferRegistry({ protocol: marker.host.protocol, ...options })
+  return globalThis[key] ??= createOfferRegistry({ protocol: marker.host.protocol })
 }
 
 const SEVERITY = { incompatible: 2, outdated: 1, ok: 0 }

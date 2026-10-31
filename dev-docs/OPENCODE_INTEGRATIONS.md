@@ -57,7 +57,7 @@ revalidate outputs with `contract.ts`.
   `attachHost`/`detachHost` IDs, `busy`/`gone`/`refused` attachment, at most 10,000 bindings) on the injected clock;
   host part compatibility is derived for the fake's own range `^0.1.0` only, prereleases included.
   `createFakeIntegrationRpc` adds `status`, `installHost` and the event relay; `sharedOfferRegistry` keeps one
-  registry per daemon process.
+  real-clock registry per daemon process.
 - `scripts/fixtures/fake-integration/index.mjs`: `writeFakeIntegrationPackage`/`packFakeIntegration` write or
   pack `@neuralnomads/opencode-<id>` (default `fixture`) with options `markerMismatch` (`status` reports
   `<id>-other`), `hostPart` (`absent` or installed) and `installOutcome`; `startFakeHost` is a loopback host whose
