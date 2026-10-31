@@ -1,5 +1,7 @@
 import { isDeepStrictEqual } from "node:util"
-import { applyEdits, createScanner, findNodeAtLocation, modify, parse, parseTree, SyntaxKind, type ParseError } from "jsonc-parser"
+import {
+  applyEdits, createScanner, findNodeAtLocation, modify, parse, parseTree, SyntaxKind, type Node as JsonNode, type ParseError,
+} from "jsonc-parser"
 import { PluginControlDocumentError, type PluginControlDocument } from "./plugin-control-document"
 
 // Restrict callers to one known setting path, retaining comments and foreign
@@ -30,16 +32,31 @@ export function editNativeSetting(document: PluginControlDocument, keys: string[
  * follows the last one on its own line at its indentation (or beside it), keeping a trailing comma, so
  * existing lines stay untouched; `comment` becomes the first line inside an object element. */
 export function appendNativeSetting(document: PluginControlDocument, keys: string[], value: unknown, comment?: string): string {
-  const list = readNativeSetting(document, keys)
-  if (list !== undefined && !Array.isArray(list)) throw new PluginControlDocumentError("OpenCode setting must be a list", "invalid")
-  if (list === undefined) return appendNativeSetting(withEditedText(document, editNativeSetting(document, keys, [])), keys, value, comment)
+  return appendMember(document, keys, value, comment)
+}
+
+/** `appendNativeSetting` for a new property `name` of the object at `keys`, which must not have it yet. */
+export function appendNativeProperty(document: PluginControlDocument, keys: string[], name: string, value: unknown,
+  comment?: string): string {
+  return appendMember(document, keys, value, comment, name)
+}
+
+function appendMember(document: PluginControlDocument, keys: string[], value: unknown, comment?: string, name?: string): string {
+  const container = readNativeSetting(document, keys)
+  const object = (item: unknown): item is Record<string, unknown> => Boolean(item) && typeof item === "object" && !Array.isArray(item)
+  if (container !== undefined && (name === undefined ? !Array.isArray(container) : !object(container)))
+    throw new PluginControlDocumentError(`OpenCode setting must be ${name === undefined ? "a list" : "an object"}`, "invalid")
+  if (container === undefined)
+    return appendMember(withEditedText(document, editNativeSetting(document, keys, name === undefined ? [] : {})), keys, value, comment, name)
+  if (name !== undefined && Object.prototype.hasOwnProperty.call(container, name)) throw new PluginControlDocumentError("OpenCode setting already exists", "invalid")
   const text = document.text, eol = text.includes("\r\n") ? "\r\n" : "\n", unit = /^([ \t]+)\S/m.exec(text)?.[1] ?? "  "
   const lineStart = (offset: number) => text.lastIndexOf("\n", offset - 1) + 1
   const indentation = (offset: number) => /^[ \t]*/.exec(text.slice(lineStart(offset)))![0]
   const render = (base: string) => {
     const lines = JSON.stringify(value, null, unit).split("\n")
     if (comment !== undefined && lines.length > 2 && lines[0] === "{") lines.splice(1, 0, `${unit}// ${comment}`)
-    return lines.map((line, index) => index ? base + line : line).join(eol)
+    const member = lines.map((line, index) => index ? base + line : line).join(eol)
+    return name === undefined ? member : `${JSON.stringify(name)}: ${member}`
   }
   const node = findNodeAtLocation(parseTree(text, [], { allowTrailingComma: true })!, keys)!
   const last = node.children?.at(-1)
@@ -59,8 +76,9 @@ export function appendNativeSetting(document: PluginControlDocument, keys: strin
   }
   const updated = applyEdits(text, edits)
   const errors: ParseError[] = []
-  const expected = parse(text, [], { allowTrailingComma: true })
-  keys.reduce((parent, key) => parent[key], expected).push(value)
+  const expected = parse(text, [], { allowTrailingComma: true }), target = keys.reduce((parent, key) => parent[key], expected)
+  if (name === undefined) target.push(value)
+  else target[name] = value
   if (!isDeepStrictEqual(parse(updated, errors, { allowTrailingComma: true }), expected) || errors.length)
     throw new PluginControlDocumentError("OpenCode setting could not be appended", "invalid")
   return `${document.byteOrderMark ? String.fromCharCode(0xfeff) : ""}${updated}${updated.endsWith("\n") ? "" : eol}`
@@ -137,14 +155,26 @@ export function removeEmptyNativeList(document: PluginControlDocument, keys: str
 export function removeNativeListElement(document: PluginControlDocument, keys: string[], index: number): string | undefined {
   const list = readNativeSetting(document, keys)
   if (!Array.isArray(list) || !Number.isSafeInteger(index) || index < 0 || index >= list.length) return undefined
-  const text = document.text
-  const elements = findNodeAtLocation(parseTree(text, [], { allowTrailingComma: true })!, keys)!.children!
-  const element = elements[index], end = element.offset + element.length
+  const elements = findNodeAtLocation(parseTree(document.text, [], { allowTrailingComma: true })!, keys)!.children!
+  return removeMember(document, elements, index, [...keys, index])
+}
+
+/** `removeNativeListElement` for the property at `keys`, comments inside its value included. */
+export function removeNativeProperty(document: PluginControlDocument, keys: string[]): string | undefined {
+  if (readNativeSetting(document, keys) === undefined) return undefined
+  const root = parseTree(document.text, [], { allowTrailingComma: true })!
+  const properties = (keys.length > 1 ? findNodeAtLocation(root, keys.slice(0, -1))! : root).children ?? []
+  return removeMember(document, properties, properties.findIndex(child => child.children?.[0]?.value === keys.at(-1)), keys)
+}
+
+/** Removes `members[index]` (a list element or an object property) with one adjacent comma. */
+function removeMember(document: PluginControlDocument, members: JsonNode[], index: number, path: (string | number)[]) {
+  const text = document.text, member = members[index], end = member.offset + member.length
   const following = nextToken(text, end)
-  const previous = index > 0 ? nextToken(text, elements[index - 1].offset + elements[index - 1].length) : undefined
+  const previous = index > 0 ? nextToken(text, members[index - 1].offset + members[index - 1].length) : undefined
   const comma = following.kind === SyntaxKind.CommaToken ? following.offset
     : previous?.kind === SyntaxKind.CommaToken ? previous.offset : undefined
-  return removeLine(document, element.offset, end, "", comma, [...keys, index])
+  return removeLine(document, member.offset, end, "", comma, path)
 }
 
 /** Removes `start`..`end` (replaced by `content`) and the comma at `comma`, from the preceding line break

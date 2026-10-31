@@ -477,9 +477,9 @@ export interface SubagentDepthSnapshot {
   location: PluginControlLocation
   capability: SubagentDepthCapability | null
   effectiveDepth: number | null
-  /** Whether OpenCode's General subagent may launch General per its resolved rules, which nesting needs:
-   * `null` when unknown. */
-  nesting: { effect: SubagentNestingEffect } | null
+  /** OpenCode's General subagent per its resolved rules: `effect` of launching another General subagent,
+   * and `hidden` when OpenCode removes the subagent tool from General (a blanket denial last); `null` when unknown. */
+  nesting: { effect: SubagentNestingEffect; hidden?: true } | null
   /** `emptyExperimental`: the project holds an `experimental` object without properties, which
    * hides every inherited experimental setting; Inherit removes it. */
   project: { path: string; depth: number | null; expectation: string; emptyExperimental?: boolean } | null

@@ -100,7 +100,7 @@ try {
 
   const initial = await settings.read("fixture", location)
   assert.equal(initial.effectiveDepth, 3)
-  assert.deepEqual(initial.nesting, { effect: "deny" }, "General's built-in rule decides")
+  assert.deepEqual(initial.nesting, { effect: "deny", hidden: true }, "General's built-in rule decides")
   assert.equal(await nestedLevels(), 1, "a Global depth of 3 alone never nests General subagents")
   const file = initial.project.path
   const depthLoaded = value => until(async () => (await settings.read("fixture", location)).effectiveDepth === value, `native reload of depth ${value}`)
@@ -130,9 +130,34 @@ try {
   assert.deepEqual(parse(await readFile(file, "utf8")) ?? {}, {}, "Inherit removes the depth and the rule")
   await until(async () => !await generalAllows(), "native reload of the restored project")
   await depthLoaded(3)
-  assert.deepEqual((await settings.read("fixture", location)).nesting, { effect: "deny" })
+  assert.deepEqual((await settings.read("fixture", location)).nesting, { effect: "deny", hidden: true })
   assert.equal(await nestedLevels(), 1, "Inherit restores the built-in denial")
   console.log("PASS any project depth writes the rule; depth 1 stops nesting, depth 2 nests a grandchild, depth 0 starts none; Inherit restores the built-in denial")
+
+  // A legacy General block in the project document takes the rule itself: a native block beside it would
+  // replace it whole, dropping its prompt, step limit and denials.
+  const legacy = '{\n  "agent": {\n    "general": {\n      "description": "USER_GENERAL",\n      "prompt": "USER_PROMPT",\n      "maxSteps": 7,\n'
+    + '      "permission": {\n        "edit": "deny",\n        "bash": "deny",\n        "task": "deny"\n      }\n    }\n  }\n}\n'
+  await writeFile(file, legacy)
+  const general = async () => (await client.agent.list({ location })).data.find(agent => agent.id === "general")
+  await until(async () => (await general())?.description === "USER_GENERAL", "native reload of the legacy General block")
+  assert.equal(await generalAllows(), false, "the legacy task denial decides")
+  await save(2)
+  const written = parse(await readFile(file, "utf8"))
+  assert.equal(written.agents, undefined, "no native General block beside the legacy one")
+  assert.deepEqual(written.agent.general.permission.subagent, { "*": "allow" })
+  await until(generalAllows, "native reload of the legacy rule")
+  const kept = await general()
+  assert.deepEqual([kept.description, kept.system, kept.steps], ["USER_GENERAL", "USER_PROMPT", 7], "the legacy definition stays effective")
+  for (const action of ["edit", "shell"])
+    assert.ok(kept.permissions.some(rule => rule.action === action && rule.resource === "*" && rule.effect === "deny"), `the legacy ${action} denial stays`)
+  await depthLoaded(2)
+  assert.equal(await nestedLevels(), 2, "the legacy General nests a grandchild at depth 2")
+  await save(null)
+  assert.equal(await readFile(file, "utf8"), legacy, "Inherit restores the legacy file")
+  await until(async () => !await generalAllows(), "native reload of the restored legacy block")
+  assert.equal((await general()).description, "USER_GENERAL")
+  console.log("PASS a legacy agent.general block takes the rule, keeps its prompt, steps and denials, nests at depth 2 and is restored by Inherit")
 } finally {
   await stopFixtureChild(child, stopped)
   provider.closeAllConnections()

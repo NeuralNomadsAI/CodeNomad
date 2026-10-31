@@ -94,11 +94,13 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
   }
   /** Whether General subagents can nest here, per OpenCode's resolved rules and the effective depth. */
   const nesting = () => {
-    const snapshot = state().snapshot, effect = snapshot?.nesting?.effect, effective = snapshot?.effectiveDepth
-    if (!effect || effective == null) return undefined
+    const snapshot = state().snapshot, nesting = snapshot?.nesting, effective = snapshot?.effectiveDepth
+    if (!nesting || effective == null) return undefined
     // Below 2, OpenCode's own depth limit stops nesting whatever General may do.
     if (effective < 2) return t("missions.depth.nesting.limited")
-    return t(effect === "allow" ? "missions.depth.nesting.allowed" : effect === "ask" ? "missions.depth.nesting.ask" : "missions.depth.nesting.blocked")
+    // The effect concerns General launching General; other targets may still be allowed unless the tool is hidden.
+    if (nesting.hidden) return t("missions.depth.nesting.blocked")
+    return t(nesting.effect === "allow" ? "missions.depth.nesting.allowed" : nesting.effect === "ask" ? "missions.depth.nesting.ask" : "missions.depth.nesting.some")
   }
   // Reads and writes only lock the field (read-only keeps keyboard focus); it is disabled when unusable.
   const locked = () => busy() || refreshPending()

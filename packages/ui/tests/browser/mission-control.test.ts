@@ -420,11 +420,13 @@ test("the depth editor states the nesting rule and whether General subagents can
   const page = await browser.newPage({ locale: "en-US" })
   // Each saved value selects the native state the next read reports.
   const states: Record<string, { effectiveDepth: number; depth: number | null; nesting: unknown }> = {
-    initial: { effectiveDepth: 1, depth: null, nesting: { effect: "deny" } },
+    initial: { effectiveDepth: 1, depth: null, nesting: { effect: "deny", hidden: true } },
     "3": { effectiveDepth: 3, depth: 3, nesting: { effect: "allow" } },
     "2": { effectiveDepth: 2, depth: 2, nesting: { effect: "ask" } },
-    "4": { effectiveDepth: 4, depth: 4, nesting: { effect: "deny" } },
-    null: { effectiveDepth: 5, depth: null, nesting: { effect: "deny" } },
+    "4": { effectiveDepth: 4, depth: 4, nesting: { effect: "deny", hidden: true } },
+    null: { effectiveDepth: 5, depth: null, nesting: { effect: "deny", hidden: true } },
+    // General may not launch General, but the tool stays for other agents.
+    "6": { effectiveDepth: 6, depth: 6, nesting: { effect: "deny" } },
     // The rule is written with a depth of 1 too, but OpenCode's depth limit still stops nesting.
     "1": { effectiveDepth: 1, depth: 1, nesting: { effect: "allow" } },
     // 0 keeps OpenCode's meaning: no subagents at all.
@@ -457,9 +459,11 @@ test("the depth editor states the nesting rule and whether General subagents can
     await save("3", 3)
     assert.equal(await note.innerText(), "General subagents can launch their own subagents here, so they nest up to this depth.")
     await save("2", 2)
-    assert.equal(await note.innerText(), "General subagents ask before launching subagents here.")
+    assert.equal(await note.innerText(), "General subagents ask before launching other General subagents here.")
     await save("4", 4)
     assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest.")
+    await save("6", 6)
+    assert.equal(await note.innerText(), "General subagents can launch some subagents here, but not other General subagents.")
     await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
     await controls.getByRole("button", { name: "Inherit", exact: true }).click()
     await controls.getByText("OpenCode effective depth: 5", { exact: true }).waitFor()
@@ -469,7 +473,7 @@ test("the depth editor states the nesting rule and whether General subagents can
       "General may launch subagents, but a depth of 1 still stops nesting")
     await save("0", 0)
     assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.")
-    assert.deepEqual(writes.map(write => (write as { depth: number | null }).depth), [3, 2, 4, null, 1, 0], "only depth writes")
+    assert.deepEqual(writes.map(write => (write as { depth: number | null }).depth), [3, 2, 4, 6, null, 1, 0], "only depth writes")
   } finally { await page.close() }
 })
 

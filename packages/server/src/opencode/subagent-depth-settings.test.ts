@@ -139,7 +139,7 @@ async function nestingFixture(run: (fixture: {
       const documents = (await entries()).filter((entry: any) => entry.type === "document") as any[]
       return [{ action: "*", resource: "*", effect: "allow" }, { action: "question", resource: "*", effect: "deny" },
         { action: "subagent", resource: "*", effect: "deny" }, ...documents.flatMap(entry => entry.info.permissions ?? []),
-        ...documents.flatMap(entry => entry.info.agents?.general?.permissions ?? [])]
+        ...documents.flatMap(entry => entry.info.agents?.general?.permissions ?? legacyRules(entry.info.agent?.general))]
     }
     const connection: any = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "private" } },
       assertCurrent: () => {}, fetch: async () => Response.json(contract({ type: "integer", minimum: 0, default: 1 })),
@@ -165,13 +165,20 @@ async function nestingFixture(run: (fixture: {
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
 }
 const rule = (action: string, resource: string, effect: string) => ({ action, resource, effect })
+/** A legacy General entry's `permission` object as OpenCode migrates it: keys in order, `task` read as `subagent`. */
+function legacyRules(general: any) {
+  return Object.entries(general?.permission ?? {}).flatMap(([key, value]: [string, any]) => {
+    const action = key === "task" ? "subagent" : key === "bash" ? "shell" : key
+    return typeof value === "string" ? [rule(action, "*", value)] : Object.entries(value).map(([resource, effect]) => rule(action, resource, effect as string))
+  })
+}
 const allowRule = { general: { permissions: [rule("subagent", "*", "allow")] } }
 
 test("any project depth override writes CodeNomad's marked rule once, and Inherit removes only that rule", () => nestingFixture(async ({
   app, project, projectFile, save, saved, nesting,
 }) => {
   const original = await readFile(projectFile, "utf8")
-  assert.deepEqual(await nesting(), { effect: "deny" }, "OpenCode's built-in rule stops General")
+  assert.deepEqual(await nesting(), { effect: "deny", hidden: true }, "OpenCode's built-in rule stops General")
   for (const value of [1, 0, 3]) {
     await save(value)
     assert.deepEqual((await saved()).agents, allowRule, `depth ${value} writes the rule once`)
@@ -183,7 +190,7 @@ test("any project depth override writes CodeNomad's marked rule once, and Inheri
   assert.deepEqual(reply.json().nesting, { effect: "allow" })
   await save(null)
   assert.equal(await readFile(projectFile, "utf8"), original, "Inherit removes the depth and the rule, restoring the file")
-  assert.deepEqual(await nesting(), { effect: "deny" })
+  assert.deepEqual(await nesting(), { effect: "deny", hidden: true })
 }))
 
 test("the override writes the rule whatever else decides, and Inherit leaves every other rule", () => nestingFixture(async ({
@@ -197,7 +204,7 @@ test("the override writes the rule whatever else decides, and Inherit leaves eve
   assert.deepEqual(await nesting(), { effect: "allow" })
   assert.equal(await readFile(globalFile, "utf8"), denial, "the Global document is never edited")
   await save(null)
-  assert.deepEqual(await nesting(), { effect: "deny" })
+  assert.deepEqual(await nesting(), { effect: "deny", hidden: true })
   await writeFile(globalFile, "{}")
   // An unreadable agent list reports nothing and changes nothing written.
   native.agents = false
@@ -213,6 +220,37 @@ test("the override writes the rule whatever else decides, and Inherit leaves eve
   assert.equal((await saved()).agents.general.permissions.length, 2)
   await save(null)
   assert.deepEqual(await saved(), parse(own))
+}))
+
+test("a legacy General block in the project document takes the rule, keeping its prompt, steps and denials", () => nestingFixture(async ({
+  projectFile, save, saved, nesting,
+}) => {
+  const legacy = '{\n  "agent": {\n    "general": {\n      "description": "USER_GENERAL",\n      "prompt": "USER_PROMPT",\n      "maxSteps": 7,\n'
+    + '      "permission": {\n        "edit": "deny",\n        "bash": "deny",\n        "task": "deny"\n      }\n    }\n  }\n}\n'
+  await writeFile(projectFile, legacy)
+  await save(3)
+  const value = await saved()
+  assert.equal(value.agents, undefined, "no native General block that would replace the legacy one")
+  assert.deepEqual(value.agent.general, { description: "USER_GENERAL", prompt: "USER_PROMPT", maxSteps: 7,
+    permission: { edit: "deny", bash: "deny", task: "deny", subagent: { "*": "allow" } } })
+  assert.deepEqual(await nesting(), { effect: "allow" })
+  await save(4)
+  assert.equal(Object.keys((await saved()).agent.general.permission).length, 4, "the rule is written once")
+  await save(null)
+  assert.equal(await readFile(projectFile, "utf8"), legacy, "Inherit restores the file")
+}))
+
+test("a General denial scoped to General leaves the tool, so the snapshot does not claim it is hidden", () => nestingFixture(async ({
+  globalFile, save, nesting,
+}) => {
+  await save(3)
+  await writeFile(globalFile, JSON.stringify({ agents: { general: { permissions: [rule("subagent", "general", "deny")] } } }))
+  assert.deepEqual(await nesting(), { effect: "allow" }, "the project rule comes after Global rules")
+  await writeFile(globalFile, "{}")
+  await save(null)
+  // A project rule after the marked one: General may not launch General, but the tool stays for other agents.
+  await writeFile(globalFile, JSON.stringify({ permissions: [rule("subagent", "*", "allow"), rule("subagent", "general", "deny")] }))
+  assert.deepEqual(await nesting(), { effect: "deny" })
 }))
 
 test("Inherit removes a block left with only the Global image storage, only when that is certain", async () => {
