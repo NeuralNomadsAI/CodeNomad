@@ -1,4 +1,4 @@
-import { onCleanup } from "solid-js"
+import { createSignal, onCleanup } from "solid-js"
 import type { MissionMap } from "../../../server/src/api-types"
 import type { MissionActorActivityState } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
@@ -9,6 +9,8 @@ import { createMissionRecoveryAction } from "./mission-recovery-button"
 import { MissionBriefSave } from "./mission-model-library"
 import { missionRecordedBrief } from "../lib/mission-model-library"
 import { missionDisplayTitle } from "../lib/mission-display"
+import { useRecordedBriefInputs } from "./mission-target-bodies"
+import { missionStore } from "../stores/missions"
 
 /** Summary reader, lifecycle (with coordinator recovery on Play), update
  * request, coordinator conversation, edit and delete of the selected one-time
@@ -49,6 +51,15 @@ export function MissionSelectedActions(props: {
   }
   // Waiting requests keep their exact identity: the button only shows the
   // state (full wording as tooltip) and never resends automatically.
+  // Save as brief saves the recorded inputs of the one snapshot shown when its name field opens.
+  const [briefOpen, setBriefOpen] = createSignal(false)
+  const brief = useRecordedBriefInputs({ instanceId: () => props.instanceId, mission: () => props.mission, open: briefOpen,
+    refresh: () => missionStore.refresh(props.instanceId) })
+  const recordedBrief = () => {
+    const inputs = brief.values()
+    return inputs ? { ...missionRecordedBrief(inputs.target), objective: inputs.objective, notes: inputs.notes }
+      : { ...missionRecordedBrief(props.mission), objective: "", notes: "" }
+  }
   const requestLabel = () => !briefing.waiting() ? t("missionsPanel.action.requestUpdate")
     : t(briefing.state() === "uncertain" ? "missionsPanel.action.requestUpdateUncertain" : "missionsPanel.action.requestUpdatePending")
   const request = (): MissionPrimaryAction | undefined => briefing.available() ? {
@@ -59,6 +70,8 @@ export function MissionSelectedActions(props: {
     primary={primary()} stop={lifecycle.stop()} interrupt={lifecycle.interruptNow()} request={request()} onOpenConversation={() => props.onOpenCoordinator()}
     onEdit={() => props.onEdit()} onDelete={() => props.onDelete()} editDisabled={props.editDisabled} deleteDisabled={props.deleteDisabled}
     secondary={<MissionBriefSave disabled={props.disabled} active={() => props.active}
-      draft={() => missionRecordedBrief(props.mission)} initialName={() => missionDisplayTitle(props.mission, 80)} />}
+      draft={recordedBrief} initialName={() => missionDisplayTitle(props.mission, 80)} onOpen={setBriefOpen}
+      reading={() => brief.state() === "ready" ? undefined
+        : { failed: brief.state() === "failed", changed: brief.state() === "changed", onRetry: brief.retry }} />}
     feedback={<>{lifecycle.feedback}{briefing.feedback(() => props.onOpenCoordinator())}{recovery.feedback}</>} />
 }

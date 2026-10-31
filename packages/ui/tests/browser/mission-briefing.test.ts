@@ -10,6 +10,7 @@ import type { MissionMap, MissionReport } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-navigation"
 import { inlineMissionEntry, missionEntryStatus } from "./mission-actions"
 import { missionReadFixture } from "./mission-read-fixture"
+import { missionContentFixture } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -62,8 +63,8 @@ async function setup(locale = "fr-FR") {
     if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: values,
       generatedAt: NOW + 10000, discardedEvents: 0, activity: { generatedAt: NOW + 10000, missions: values.map(value => ({ missionId: value.id,
         actors: [{ sessionId: value.coordinatorSessionId, state: "idle-without-report" }] })) } } })
-    // The coordinator message's fresh read of its one mission.
-    const read = missionReadFixture(pathname, request.method(), values as never)
+    // The coordinator message's fresh read of its one mission, and the readers' bodies.
+    const read = missionReadFixture(pathname, request.method(), values as never) ?? missionContentFixture(request.url(), request.method(), values as never)
     if (read) return route.fulfill({ json: read })
     if (/\/session\/ses_[AB]$/.test(pathname)) return route.fulfill({ json: { data: { id: pathname.split("/").pop(), projectID: "project",
       title: "Coordinateur mobile", slug: "coordinator", version: "1", agent: "build", model: { id: "native", providerID: "native" },

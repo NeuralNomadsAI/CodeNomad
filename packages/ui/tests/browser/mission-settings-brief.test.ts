@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
+import { missionContentFixture } from "./mission-content-fixture"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
@@ -45,7 +46,8 @@ async function setup(page: Page, preferences: "accept" | "reject") {
     return route.fulfill({ json: { settings } })
   })
   await page.route("**/api/workspaces/fixture/missions**", route => {
-    const request = route.request(), path = new URL(request.url()).pathname
+    const request = route.request(), path = new URL(request.url()).pathname, content = missionContentFixture(request.url(), request.method(), [finished])
+    if (content) return route.fulfill({ json: content })
     if (request.method() !== "GET") { missionWrites.push(path); return route.abort() }
     return route.fulfill({ json: path.endsWith("/missions/recurrence")
       ? recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] })

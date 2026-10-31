@@ -3,15 +3,17 @@ import test from "node:test"
 import Ajv from "ajv"
 import { MISSION_INSPECT_OUTPUT_LIMIT } from "./inspect-view"
 import { missionContentRequestSchema, type MissionContentResult, type MissionContentSelector } from "./mission-content"
+import { MISSION_BODY_FIELDS, missionBodyDescriptor, type MissionBodyDescriptors } from "./mission-content-wire"
 import { missionPluginFixture } from "./mission-plugin-fixture"
-import type { MissionMap } from "./model"
+import type { MissionList, MissionMap, MissionRead } from "./model"
 import { CODENOMAD_MISSIONS_RPC } from "./rpc"
 
 const size = (value: unknown) => JSON.stringify(value, null, 2).length
 // Accepted control characters serialize as six characters each; emoji are surrogate pairs.
 const escaped = (length: number, mark: string) => `${mark}${"\u0001".repeat(length - mark.length - 1)}.`
 const emoji = (length: number) => "😀".repeat(length / 2)
-const validOutput = new Ajv({ allErrors: true }).compile(CODENOMAD_MISSIONS_RPC.methods.content.output)
+const ajv = new Ajv({ allErrors: true }), validOutput = ajv.compile(CODENOMAD_MISSIONS_RPC.methods.content.output)
+const validList = ajv.compile(CODENOMAD_MISSIONS_RPC.methods.list.output), validRead = ajv.compile(CODENOMAD_MISSIONS_RPC.methods.mission.output)
 
 /** A mission whose bodies are as large as each is accepted: objective, notes, briefs,
  * a failed report superseded by a replacement task's report, a late report, a plan
@@ -83,14 +85,15 @@ async function readWhole(content: (input: unknown) => Promise<MissionContentResu
     offset = result.content.next
     if (slices === 1) await between?.()
   }
-  return { value: json ? JSON.parse(text) : text, slices }
+  return { value: json ? JSON.parse(text) : text, slices, digest, characters: text.length }
 }
 
 test("every body of a large mission reads back exactly through the content RPC, each answer within its bound", { timeout: 300_000 }, async () => {
   const f = missionPluginFixture(), plugin = await f.plugin()
   try {
     const mission = await largeMission(f)
-    const reference = JSON.parse(JSON.stringify((await f.control().mission(mission.id)).mission)) as MissionMap
+    // The map as the reducer derives it: the mission read's body descriptors describe its values and are none of them.
+    const reference = JSON.parse(JSON.stringify((await f.control().mission(mission.id)).mission, (key, value) => key === "bodies" ? undefined : value)) as MissionMap
     const content = (input: unknown) => plugin.rpc("content", input) as Promise<MissionContentResult>
     let multiSlice = 0
     for (const selector of selectors(reference)) {
@@ -102,6 +105,44 @@ test("every body of a large mission reads back exactly through the content RPC, 
     // Every report, current, superseded or late, reads by its own ID.
     assert.deepEqual(reference.reports.map(report => [report.taskKey, report.outcome, Boolean(report.late)]),
       [["first", "failed", false], ["first-again", "completed", false], ["actor-task", "completed", true]])
+  } finally { await plugin.dispose() }
+})
+
+test("every body descriptor of the list and mission reads names exactly the text a content read of that field slices", { timeout: 300_000 }, async () => {
+  const f = missionPluginFixture(), plugin = await f.plugin()
+  try {
+    const mission = await largeMission(f)
+    const content = (input: unknown) => plugin.rpc("content", input) as Promise<MissionContentResult>
+    const listed = await plugin.rpc("list", { include: [mission.id] }) as MissionList, read = await plugin.rpc("mission", { missionID: mission.id }) as MissionRead
+    assert.ok(validList(listed), JSON.stringify(validList.errors)); assert.ok(validRead(read), JSON.stringify(validRead.errors))
+    for (const map of [listed.missions.find(value => value.id === mission.id)!, read.mission!]) {
+      type Owner = [MissionContentSelector["kind"], object, (field: string) => MissionContentSelector]
+      const owners: Owner[] = [
+        ["mission", map, field => ({ kind: "mission", field })],
+        ...map.tasks.map((task): Owner => ["task", task, field => ({ kind: "task", taskKey: task.key, field })]),
+        ...map.reports.map((report): Owner => ["report", report, field => ({ kind: "report", reportId: report.id, field })]),
+        ...map.history.map((change): Owner => ["change", change, field => ({ kind: "change", change: change.revision, field })]),
+      ]
+      let described = 0
+      for (const [kind, owner, selector] of owners) {
+        const bodies = (owner as { bodies?: MissionBodyDescriptors }).bodies ?? {}
+        for (const field of MISSION_BODY_FIELDS[kind]) {
+          if ((owner as Record<string, unknown>)[field] === undefined) { assert.equal(bodies[field], undefined, `${kind} ${field}`); continue }
+          const whole = await readWhole(content, mission.id, selector(field))
+          assert.deepEqual(bodies[field], { characters: whole.characters, digest: whole.digest }, `${kind} ${field}`)
+          assert.equal(missionBodyDescriptor(map, selector(field)), bodies[field])
+          described++
+        }
+      }
+      // Objective, notes, briefing; four tasks' briefs, modes and reports; three reports' four fields; a plan change's three.
+      assert.ok(described >= 25, `${described} bodies described`)
+    }
+    // Descriptors are the reads' own: content values carry none.
+    for (const selector of [{ kind: "mission", field: "bodies" }, { kind: "task", taskKey: "first", field: "bodies" }] as const) {
+      assert.equal(((await content({ missionID: mission.id, ...selector, offset: 0 })) as { refused?: string }).refused, "content-not-found")
+    }
+    const report = (await content({ missionID: mission.id, kind: "task", taskKey: "first-again", field: "report", offset: 0 })) as { content: { text: string } }
+    assert.ok(!report.content.text.includes("\"bodies\""))
   } finally { await plugin.dispose() }
 })
 

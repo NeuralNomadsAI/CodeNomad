@@ -6,6 +6,7 @@ import { missionSummary } from "../../../server/src/missions/mission-summary"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { inlineMissionEntry, missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
+import { routeMissionContent } from "./mission-content-fixture"
 
 // A backend that lists summaries: the open mission as a full map, closed ones as
 // rows until the panel includes them, and unchanged rows skipped by version.
@@ -50,6 +51,7 @@ async function open() {
       activity: { generatedAt: Date.now(), missions: listed.map(value => ({ missionId: value.id,
         actors: [{ sessionId: value.coordinatorSessionId, state: value.status === "active" ? "running" : "unknown" }] })) } } })
   })
+  await routeMissionContent(page, () => maps)
   await page.goto(url)
   return { page, errors, requests }
 }
@@ -69,6 +71,7 @@ async function panel(maps: MissionMap[], answer: (include: string[], read: numbe
     return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: 2, discardedEvents: 0, cleanups: [], missions: listed,
       summaries: maps.map(missionSummary), summariesVersion: "v1", activity: { generatedAt: 2, missions: [] } } })
   })
+  await routeMissionContent(page, () => maps)
   await page.goto(url)
   await page.waitForFunction(() => (window as any).missionFixture?.snapshot().status === "ready")
   return { page, includes }

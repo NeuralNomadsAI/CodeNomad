@@ -8,8 +8,9 @@ import { missionTaskStatusKey } from "./mission-native-execution-model"
 import { MissionReaderSection } from "./mission-reader"
 import { missionExcerpt, missionReports, missionTaskHistory, missionTaskReport } from "./mission-progress-model"
 import type { MissionPassageSection } from "./mission-passage-section"
-import { MissionComparisonReport } from "./mission-comparison-report"
-import { MissionDecisionReport } from "./mission-decision-report"
+import type { MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
+import { missionReaderBody, useReaderValue } from "./mission-reader-body"
+import { MissionReportArtifact, MissionReportProse, useReportBodies } from "./mission-report-prose"
 
 /** Read-only task facts; dependency navigation changes only this window's reader target. */
 export function MissionTaskReader(props: {
@@ -35,11 +36,18 @@ export function MissionTaskReader(props: {
   // Once a task is done, the tasks it unblocked need no pointer.
   const unblocks = createMemo(() => props.task.status === "completed" ? []
     : props.mission.tasks.filter(task => task.blockedBy.includes(props.task.key) && task.status !== "withdrawn" && !task.replacedByTaskKey))
-  const sections = (report: MissionReport) => [
-      { label: "missions.control.summary", text: report.summary },
-      { label: "missions.control.report.next", text: report.next.join("\n\n") },
-      { label: "missions.control.report.evidence", text: report.evidence.join("\n\n") },
-    ]
+  // A one-time mission's bodies come from the content route, a disclosure's only while open; a passage's from its own map.
+  const oneTime = () => !props.recurrence
+  const body = (selector: MissionContentSelector, fallback: string) => missionReaderBody(props.instanceId, props.mission, oneTime(), selector, fallback)
+  const [briefOpen, setBriefOpen] = createSignal(false)
+  const [technicalOpen, setTechnicalOpen] = createSignal(false)
+  const executionMode = useReaderValue<MissionTask["executionMode"]>({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime,
+    active: technicalOpen, local: () => props.task.executionMode,
+    selector: () => props.task.executionMode?.kind === "independent" ? { kind: "task", taskKey: props.task.key, field: "executionMode" } : undefined })
+  const explanation = (mode: MissionTask["executionMode"] | undefined) => mode?.kind === "independent" ? mode.explanation : ""
+  // The coordinator's readout shows only for a task completed without its own report.
+  const readoutBodies = useReportBodies({ instanceId: () => props.instanceId, mission: () => props.mission, oneTime,
+    report: () => !latest() && props.task.status === "completed" ? readout() : undefined })
   const source = (section: MissionPassageSection["section"], report?: MissionReport): MissionPassageSection | undefined => {
     const owner = props.recurrence
     return owner ? { scheduleID: owner.scheduleID, passageID: owner.passageID, projectID: owner.projectID,
@@ -56,17 +64,13 @@ export function MissionTaskReader(props: {
     </>}>
       {/* Completed without its own report: say so plainly, with the coordinator's readout when one exists. */}
       <p>{t("missionsPanel.task.done")}</p>
-      <Show when={readout()}>{report => <MissionReaderSection label="missionsPanel.task.readout" text={report().summary}
+      <Show when={readout()}>{report => <MissionReaderSection label="missionsPanel.task.readout" text={readoutBodies.summary().text}
+        body={readoutBodies.summary().body} read={readoutBodies.summary().read}
         identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} source={reportSource("missions.control.summary", report())} />}</Show>
     </Show>}>{report => <>
       <p>{t(`missions.control.report.outcome.${report().outcome}`)}</p>
-      <For each={sections(report()).map(section => section.label)}>{label => {
-        const section = () => sections(report()).find(section => section.label === label)!
-        return <Show when={section().text}><MissionReaderSection label={label} text={section().text}
-          identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} source={reportSource(label, report())} /></Show>
-      }}</For>
-      <MissionComparisonReport artifact={report().artifact} profiles={props.mission.profiles} identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} />
-      <MissionDecisionReport mission={props.mission} report={report()} identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} />
+      <MissionReportProse instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()}
+        identity={`${props.identity}:${report().id}`} source={label => reportSource(label, report())} />
     </>}</Show>
     <div class="mission-task-dependencies">
       <For each={props.task.blockedBy}>{key => link(key, "missions.control.task.blockedBy")}</For>
@@ -78,7 +82,7 @@ export function MissionTaskReader(props: {
         <h3>{t("missions.progress.previousResults")}</h3>
         <For each={history().map(report => report.id)}>{id => {
           const report = () => history().find(report => report.id === id)!
-          const [open, setOpen] = createSignal(false)
+          const [open, setOpen] = createSignal(false), [details, setDetails] = createSignal(false)
           return <details onToggle={event => setOpen(event.currentTarget.open)}>
             <summary>
               <span>{t(report().late ? "missions.control.report.late" : "missions.progress.previousAttempt")}</span>{" · "}
@@ -87,31 +91,28 @@ export function MissionTaskReader(props: {
             </summary>
             <Show when={open()}>
               <p>{t(`missions.control.report.outcome.${report().outcome}`)}</p>
-              <For each={sections(report()).map(section => section.label)}>{label => {
-                const section = () => sections(report()).find(section => section.label === label)!
-                return <Show when={section().text}><MissionReaderSection label={label} text={section().text}
-                  identity={`${props.identity}:history:${id}`} instanceId={props.instanceId} source={reportSource(label, report())} /></Show>
-              }}</For>
-              <MissionComparisonReport artifact={report().artifact} profiles={props.mission.profiles} identity={`${props.identity}:history:${id}`} instanceId={props.instanceId} />
-              <MissionDecisionReport mission={props.mission} report={report()} identity={`${props.identity}:history:${id}`} instanceId={props.instanceId} />
-              <details><summary>{t("missions.control.task.details")}</summary>
+              <MissionReportProse instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()}
+                identity={`${props.identity}:history:${id}`} source={label => reportSource(label, report())} />
+              <details onToggle={event => setDetails(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
                 <MissionReportNotification report={report()} />
-                <Show when={report().artifact !== undefined}><MissionReaderSection label="missions.control.artifact"
-                  text={JSON.stringify(report().artifact, null, 2)} raw identity={`${props.identity}:history:${id}`}
-                  instanceId={props.instanceId} source={source("artifact", report())} /></Show>
+                <MissionReportArtifact instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()} active={details()}
+                  identity={`${props.identity}:history:${id}`} source={source("artifact", report())} />
               </details>
             </Show>
           </details>
         }}</For>
       </section>
     </Show>
-    <details><summary>{t("missions.control.brief")}</summary>
-    <MissionReaderSection label="missions.control.brief" text={props.task.brief} identity={props.identity} instanceId={props.instanceId} source={source("brief")} />
+    <details onToggle={event => setBriefOpen(event.currentTarget.open)}><summary>{t("missions.control.brief")}</summary>
+    <MissionReaderSection label="missions.control.brief" text={props.task.brief} body={body({ kind: "task", taskKey: props.task.key, field: "brief" }, props.task.brief)}
+      active={briefOpen()} identity={props.identity} instanceId={props.instanceId} source={source("brief")} />
     </details>
-    <details><summary>{t("missions.control.task.details")}</summary>
-    <Show when={props.task.executionMode?.kind === "independent" ? props.task.executionMode.explanation : undefined}>{text =>
-      <MissionReaderSection label="missions.control.notes" text={text()} identity={props.identity} instanceId={props.instanceId} source={source("notes")} />
-    }</Show>
+    <details onToggle={event => setTechnicalOpen(event.currentTarget.open)}><summary>{t("missions.control.task.details")}</summary>
+    <Show when={explanation(props.task.executionMode)}>
+      <MissionReaderSection label="missions.control.notes" text={executionMode.settled() ? explanation(executionMode.value()) : ""}
+        read={executionMode.read()}
+        identity={props.identity} instanceId={props.instanceId} source={source("notes")} />
+    </Show>
     <article aria-label={t("missions.control.task.details")}>
       <h3>{t("missions.control.task.details")}</h3>
       <div class="mission-route-meta"><code>{props.task.key}</code><span>{props.task.role}</span>
@@ -133,8 +134,8 @@ export function MissionTaskReader(props: {
         <Show when={report().late}><p>{t("missions.control.report.late")}</p></Show>
         <MissionReportNotification report={report()} />
       </article>
-      <Show when={report().artifact !== undefined}><MissionReaderSection label="missions.control.artifact"
-        text={JSON.stringify(report().artifact, null, 2)} raw identity={`${props.identity}:${report().id}`} instanceId={props.instanceId} source={source("artifact", report())} /></Show>
+      <MissionReportArtifact instanceId={props.instanceId} mission={props.mission} report={report()} oneTime={oneTime()} active={technicalOpen()}
+        identity={`${props.identity}:${report().id}`} source={source("artifact", report())} />
     </>}</Show>
     </details>
   </div>

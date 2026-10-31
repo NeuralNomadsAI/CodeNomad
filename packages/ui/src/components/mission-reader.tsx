@@ -30,35 +30,86 @@ import { MissionOverviewDetails } from "./mission-overview-details"
 import { MissionComparisonReport } from "./mission-comparison-report"
 import { MissionDecisionReport } from "./mission-decision-report"
 import { MissionPlaybookReader } from "./mission-playbook-reader"
-import type { MissionTemplateId } from "../../../server/src/missions/model"
+import type { MissionBriefing, MissionPlanChange, MissionTemplateId } from "../../../server/src/missions/model"
+import type { MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
+import { useMissionBody } from "../stores/mission-content"
+import { missionBodyCovers, missionBodyNeed } from "../lib/mission-body-pages"
+import { MissionBodyPending, missionReaderBody, useReaderValue, useReaderValues, type MissionBodyRead, type MissionReaderBody } from "./mission-reader-body"
+import { useReportBodies } from "./mission-report-prose"
+import type { MissionReport } from "../../../server/src/api-types"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
-export function MissionReaderSection(props: { text: string; raw?: boolean; identity: string; instanceId: string; label: string; source?: MissionPassageSection;
+/** A section of `text`, or of `body`, a one-time mission's body read through the content
+ * route: only the prefix the shown page needs, the whole of one digest to copy, and only
+ * while `active` (an open disclosure). `read` is the state of text formatted from bodies
+ * read whole: shown once settled. A failed read shows beside the last good page. */
+export function MissionReaderSection(props: { text?: string; body?: MissionReaderBody; active?: boolean; raw?: boolean; identity: string; instanceId: string
+  label: string; source?: MissionPassageSection; read?: MissionBodyRead
   pagination?: { page: number; pageCount: number; content: MissionMarkdownPage; onPage: (page: number) => void } }) {
   const { t } = useI18n()
   const [page, setPage] = createSignal(0)
   const [copyStatus, setCopyStatus] = createSignal("")
   const [remoteCount, setRemoteCount] = createSignal<number>()
-  const currentPage = () => props.pagination?.page ?? page()
-  const pageCount = () => props.pagination?.pageCount ?? remoteCount() ?? Math.max(1, Math.ceil(props.text.length / READER_PAGE_SIZE))
-  let article: HTMLElement | undefined
-  const captureCopy = createMissionViewFence(() => JSON.stringify([props.instanceId, props.identity, props.text]), () => true)
-  let previousIdentity: string | undefined
-  let previousText: string | undefined
-  createEffect(() => {
-    const identity = props.identity, text = props.text
-    if (identity === previousIdentity && text === previousText) return
-    previousIdentity = identity; previousText = text
-    setPage(0); setCopyStatus(""); setRemoteCount(undefined)
+  const [copying, setCopying] = createSignal(false)
+  const remote = useMissionBody(() => props.body && props.active !== false ? props.body : undefined,
+    () => copying() ? Infinity : missionBodyNeed(remote.state().body, page(), READER_PAGE_SIZE))
+  /** What the section shows: the loaded text, its whole length and the value it is cut from.
+   * A plugin without content reads shows the map's own value, whatever was read before. */
+  const shown = createMemo(() => {
+    if (props.read && !props.read.settled) return undefined
+    if (!props.body) return { text: props.text ?? "", characters: (props.text ?? "").length, value: props.text ?? "" }
+    const state = remote.state()
+    if (state.status === "unsupported") return { text: props.body.fallback, characters: props.body.fallback.length, value: props.body.fallback }
+    if (state.status === "missing") return { text: "", characters: 0, value: "" }
+    return state.body && { text: state.body.text, characters: state.body.characters, value: state.body.digest }
   })
-  const content = createMemo(() => props.pagination?.content ?? missionMarkdownPage(props.text, page(), READER_PAGE_SIZE))
-  const copy = async () => {
-    const current = captureCopy(), text = props.text
-    const success = await copyToClipboard(text)
-    if (current())
-      setCopyStatus(t(success ? "markdown.codeBlock.copy.copied" : "markdown.codeBlock.copy.failed"))
+  /** The section's read: its whole value's, or its own body's. */
+  const status = (): MissionBodyRead | undefined => props.read
+    ?? (props.body ? { settled: shown() !== undefined, failed: remote.state().status === "error", onRetry: remote.retry } : undefined)
+  const currentPage = () => props.pagination?.page ?? page()
+  const pageCount = () => props.pagination?.pageCount ?? remoteCount() ?? Math.max(1, Math.ceil((shown()?.characters ?? 0) / READER_PAGE_SIZE))
+  let article: HTMLElement | undefined
+  const captureCopy = createMissionViewFence(() => JSON.stringify([props.instanceId, props.identity, shown()?.value]), () => true)
+  let previousIdentity: string | undefined
+  let previousValue: string | undefined
+  // A new target or value starts at its first page; a body's later slices arriving do not.
+  createEffect(() => {
+    const identity = props.identity, value = shown()?.value
+    if (identity === previousIdentity && (value === undefined || previousValue === undefined || value === previousValue)) {
+      previousValue ??= value
+      return
+    }
+    previousIdentity = identity; previousValue = value
+    setPage(0); setCopyStatus(""); setRemoteCount(undefined); setCopying(false)
+  })
+  const content = createMemo(() => {
+    if (props.pagination) return props.pagination.content
+    const value = shown()
+    return value && missionBodyCovers(value.text, value.characters, page(), READER_PAGE_SIZE)
+      ? missionMarkdownPage(value.text, page(), READER_PAGE_SIZE) : undefined
+  })
+  let copyView: (() => boolean) | undefined
+  // A Copy retries a failed read it needs; a read failing meanwhile ends that Copy.
+  const copy = () => {
+    copyView = captureCopy()
+    const read = status()
+    if (read?.failed) read.onRetry()
+    setCopyStatus(""); setCopying(true)
   }
+  // Copies the whole value once read (at once for a section's own text), within its view.
+  createEffect(() => {
+    if (!copying()) return
+    const value = shown()
+    if (status()?.failed) { setCopying(false); setCopyStatus(t("markdown.codeBlock.copy.failed")); return }
+    if (!value || value.text.length < value.characters) return
+    setCopying(false)
+    const current = copyView
+    if (!current?.()) return
+    void copyToClipboard(value.text).then(success => {
+      if (current()) setCopyStatus(t(success ? "markdown.codeBlock.copy.copied" : "markdown.codeBlock.copy.failed"))
+    })
+  })
   return <article ref={article}>
     <h3>{t(props.label)}</h3>
     <Show when={pageCount() > 1 || props.pagination || props.source}>
@@ -80,10 +131,15 @@ export function MissionReaderSection(props: { text: string; raw?: boolean; ident
         <span role="status">{copyStatus()}</span>
       </div>
     </Show>
-    <Show when={props.source} fallback={<Show when={props.raw || content().markdownText === null}
-      fallback={<Markdown part={{ type: "text", text: content().markdownText! }} escapeRawHtml instanceId={props.instanceId} />}>
-      <pre>{content().sourceText}</pre>
-    </Show>}>{source => <MissionPassageSectionContent instanceId={props.instanceId} source={source()} page={page()} raw={props.raw}
+    <Show when={props.source} fallback={<>
+      <Show when={content()}>{shownPage => <Show when={props.raw || shownPage().markdownText === null}
+        fallback={<Markdown part={{ type: "text", text: shownPage().markdownText! }} escapeRawHtml instanceId={props.instanceId} />}>
+        <pre>{shownPage().sourceText}</pre>
+      </Show>}</Show>
+      <Show when={!content() || status()?.failed}>
+        <MissionBodyPending failed={status()?.failed ?? false} onRetry={() => status()?.onRetry()} />
+      </Show>
+    </>}>{source => <MissionPassageSectionContent instanceId={props.instanceId} source={source()} page={page()} raw={props.raw}
       onPageCount={setRemoteCount} />}</Show>
   </article>
 }
@@ -177,16 +233,47 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       updateMissionProjectView(scope, { reader: undefined })
     })
   }
-  const sections = createMemo<Array<{ label: string; text: string; raw?: boolean; taskKeys?: string[] }>>(() => {
+  // A one-time mission's bodies come from the content route; a passage's from its own map.
+  const oneTime = () => Boolean(target()) && !target()!.recurrence && target()!.kind !== "recurrence" && target()!.kind !== "playbook"
+  const reading = { instanceId: () => props.instanceId, mission, oneTime }
+  const readerBody = (selector: MissionContentSelector, fallback: string | undefined) => missionReaderBody(props.instanceId, mission(), oneTime(), selector, fallback)
+  const changeObjective = useReaderValue<MissionPlanChange["objective"]>({ ...reading, local: () => change()?.objective,
+    selector: () => target()?.kind === "change" && change()?.objective ? { kind: "change", change: change()!.revision, field: "objective" } : undefined })
+  const changeNotes = useReaderValue<MissionPlanChange["notes"]>({ ...reading, local: () => change()?.notes,
+    selector: () => target()?.kind === "change" && change()?.notes ? { kind: "change", change: change()!.revision, field: "notes" } : undefined })
+  const reportBodies = useReportBodies({ ...reading, report: () => target()?.kind === "report" ? report() : undefined })
+  const overview = () => target()?.kind === "overview" ? mission() : undefined
+  const briefed = () => Boolean(overview()?.briefing && !overview()?.summary)
+  const briefing = useReaderValue<MissionBriefing>({ ...reading, local: () => mission()?.briefing,
+    selector: () => briefed() ? { kind: "mission", field: "briefing" } : undefined })
+  // The overview's latest recorded results and open obstacles, each task's report read whole.
+  const progress = createMemo(() => {
+    const value = overview()
+    if (!value || value.summary || briefed()) return { recorded: [], blockers: [] }
+    const current = missionProgress(value)
+    return { recorded: current.tasks.filter(task => missionTaskReport(value, task)?.outcome === "completed")
+      .sort((a, b) => b.report!.createdAt - a.report!.createdAt).slice(0, 3),
+      blockers: value.status === "active" ? current.blockers.slice(0, 3) : [] }
+  })
+  // Each is its task's current result, read as the task's own copy (shared with its task reader).
+  const results = useReaderValues<MissionReport>({ ...reading, items: () => [...progress().recorded, ...progress().blockers].map(task => ({
+    selector: { kind: "task" as const, taskKey: task.key, field: "report" }, local: () => task.report })) })
+  const resultReads = { value: () => undefined, settled: () => results.read().settled, read: results.read }
+  /** A section formatted from a body read whole: present as the map records it, shown once read. */
+  const whole = <T,>(read: { value: () => T | undefined; settled: () => boolean; read: () => MissionBodyRead },
+    present: boolean, format: (value: T | undefined) => string) => ({ present, text: read.settled() ? format(read.value()) : "", read: read.read() })
+  const sections = createMemo<Array<{ label: string; text: string; present?: boolean; raw?: boolean; taskKeys?: string[]; body?: MissionReaderBody
+    read?: MissionBodyRead }>>(() => {
     if (target()?.kind === "recurrence" || playbook()) return []
     if (target()?.kind === "change") {
       const value = change()
       const taskName = (key: string) => mission()?.tasks.find(task => task.key === key)?.title ?? key
       const difference = (before: string, after: string) => `### ${t("missions.control.history.before")}\n\n${before || "—"}\n\n### ${t("missions.control.history.after")}\n\n${after || "—"}`
       return value ? [
-        { label: "missions.control.summary", text: value.reason ?? t("missions.control.edit") },
-        { label: "missions.control.objective", text: value.objective ? difference(value.objective.before, value.objective.after) : "" },
-        { label: "missions.control.notes", text: value.notes ? difference(value.notes.before ?? "", value.notes.after ?? "") : "" },
+        { label: "missions.control.summary", text: value.reason ?? t("missions.control.edit"),
+          body: value.reason === undefined ? undefined : readerBody({ kind: "change", change: value.revision, field: "reason" }, value.reason) },
+        { label: "missions.control.objective", ...whole(changeObjective, Boolean(value.objective), objective => objective ? difference(objective.before, objective.after) : "") },
+        { label: "missions.control.notes", ...whole(changeNotes, Boolean(value.notes), notes => notes ? difference(notes.before ?? "", notes.after ?? "") : "") },
         { label: "missions.control.route.title", text: value.addedTaskKeys.map(taskName).join("\n\n") },
         { label: "missions.control.task.status.superseded", text: value.retiredTasks.map(task => `${taskName(task.taskKey)}${task.replacementTaskKey ? ` → ${taskName(task.replacementTaskKey)}` : ""}`).join("\n\n") },
         { label: "missions.control.task.details", text: value.dependencyUpdates.map(task => `## ${taskName(task.taskKey)}\n\n${difference(task.before.map(taskName).join(", "), task.after.map(taskName).join(", "))}`).join("\n\n") },
@@ -196,34 +283,36 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     if (target()?.kind === "report") {
       const value = report()
       return value ? [
-        { label: "missions.control.summary", text: value.summary },
-        { label: "missions.control.report.next", text: value.next.join("\n\n") },
-        { label: "missions.control.report.evidence", text: value.evidence.join("\n\n") },
+        { label: "missions.control.summary", present: Boolean(value.summary), ...reportBodies.summary() },
+        { label: "missions.control.report.next", ...whole(reportBodies.next, value.next.length > 0, next => (next ?? []).join("\n\n")) },
+        { label: "missions.control.report.evidence", ...whole(reportBodies.evidence, value.evidence.length > 0, evidence => (evidence ?? []).join("\n\n")) },
       ] : []
     }
     const value = mission()
-    if (value?.briefing && !value.summary) return [
-      { label: "missions.control.summary", text: value.briefing.summary },
-      ...(["achieved", "ongoing", "obstacles", "next"] as const).map(section => ({
-        label: `missions.briefing.${section}`, text: value.briefing![section].map(item => item.text).join("\n\n"),
-        taskKeys: [...new Set(value.briefing![section].flatMap(item => item.taskKeys))],
-      })),
-      { label: "missions.control.objective", text: value.objective },
-      { label: "missions.control.notes", text: value.notes ?? "" },
-    ]
-    const current = value ? missionProgress(value) : undefined
-    const recorded = current?.tasks.filter(task => missionTaskReport(value!, task)?.outcome === "completed")
-      .sort((a, b) => b.report!.createdAt - a.report!.createdAt).slice(0, 3) ?? []
-    const blockers = value?.status === "active" ? current?.blockers.slice(0, 3) ?? [] : []
-    return value ? [
-      { label: "missions.control.summary", text: value.summary ?? "" },
+    if (!value) return []
+    const objective = { label: "missions.control.objective", text: value.objective, body: readerBody({ kind: "mission", field: "objective" }, value.objective) }
+    const notes = { label: "missions.control.notes", text: value.notes ?? "", body: value.notes === undefined ? undefined : readerBody({ kind: "mission", field: "notes" }, value.notes) }
+    if (briefed()) {
+      const recorded = value.briefing!, shown = briefing.value()
+      return [
+        { label: "missions.control.summary", ...whole(briefing, Boolean(recorded.summary), shown => shown?.summary ?? "") },
+        ...(["achieved", "ongoing", "obstacles", "next"] as const).map(section => ({
+          label: `missions.briefing.${section}`, ...whole(briefing, recorded[section].some(item => item.text), shown => shown?.[section].map(item => item.text).join("\n\n") ?? ""),
+          taskKeys: shown ? [...new Set(shown[section].flatMap(item => item.taskKeys))] : [],
+        })),
+        objective, notes,
+      ]
+    }
+    const { recorded, blockers } = progress(), summaries = results.values()
+    const composed = (tasks: typeof recorded, from: number) => tasks.map((task, index) => `${task.title}\n\n${summaries[from + index]?.summary ?? ""}`).join("\n\n")
+    return [
+      { label: "missions.control.summary", text: value.summary ?? "", body: value.summary === undefined ? undefined : readerBody({ kind: "mission", field: "summary" }, value.summary) },
       ...(!value.summary ? [
-        { label: "missions.tracking.recorded", text: recorded.map(task => `${task.title}\n\n${task.report!.summary}`).join("\n\n"), taskKeys: recorded.map(task => task.key) },
-        { label: "missions.tracking.obstacles", text: blockers.map(task => `${task.title}\n\n${task.report!.summary}`).join("\n\n"), taskKeys: blockers.map(task => task.key) },
+        { label: "missions.tracking.recorded", ...whole(resultReads, recorded.length > 0, () => composed(recorded, 0)), taskKeys: recorded.map(task => task.key) },
+        { label: "missions.tracking.obstacles", ...whole(resultReads, blockers.length > 0, () => composed(blockers, recorded.length)), taskKeys: blockers.map(task => task.key) },
       ] : []),
-      { label: "missions.control.objective", text: value.objective },
-      { label: "missions.control.notes", text: value.notes ?? "" },
-    ] : []
+      objective, notes,
+    ]
   })
   let body: HTMLDivElement | undefined
   let root: HTMLElement | undefined
@@ -303,8 +392,9 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
         <Show when={sections().length} fallback={<p>{t(missionStore.state(props.instanceId).status === "loading" ? "missions.control.loading" : "missions.control.reader.missing")}</p>}>
         <For each={sections().map(section => section.label)}>{label => {
           const section = () => sections().find(section => section.label === label)!
-          return <Show when={section().text}><MissionReaderSection label={label} text={section().text}
-            raw={section().raw} identity={JSON.stringify([props.instanceId, props.scope, target()])} instanceId={props.instanceId} source={sectionSource(label)} />
+          return <Show when={section().present ?? section().text}><MissionReaderSection label={label} text={section().text} body={section().body}
+            read={section().read} raw={section().raw} identity={JSON.stringify([props.instanceId, props.scope, target()])} instanceId={props.instanceId}
+            source={sectionSource(label)} />
             <Show when={section().taskKeys?.length}><div class="mission-briefing-sources"><For each={section().taskKeys}>{key => {
               const source = () => mission()?.tasks.find(task => task.key === key)
               return <Show when={source()}>{task => <button type="button" class="window-text-button"
@@ -325,13 +415,13 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       <Show when={target()?.kind === "overview" && mission()}>{value =>
         <MissionOverviewDetails instanceId={props.instanceId} scope={props.scope} mission={value()} recurrence={target()?.recurrence} />}</Show>
       <Show when={target()?.kind === "report" && report()}>{value => <>
-        <MissionComparisonReport artifact={value().artifact} profiles={mission()?.profiles} identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />
-        <Show when={mission()}>{map => <MissionDecisionReport mission={map()} report={value()}
+        <MissionComparisonReport artifact={reportBodies.artifact.value()} profiles={mission()?.profiles} identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />
+        <Show when={mission()}>{map => <MissionDecisionReport mission={map()} report={value()} artifact={reportBodies.artifact.value()}
           identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />}</Show>
         <details class="mission-report-technical"><summary>{t("missions.control.task.details")}</summary>
           <MissionReportNotification report={value()} />
-          <Show when={value().artifact !== undefined}><MissionReaderSection label="missions.control.artifact"
-            text={JSON.stringify(value().artifact, null, 2)} raw
+          <Show when={value().artifact !== undefined}><MissionReaderSection label="missions.control.artifact" raw
+            text={reportBodies.artifact.settled() ? JSON.stringify(reportBodies.artifact.value(), null, 2) : ""} read={reportBodies.artifact.read()}
             identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} source={sectionSource("artifact")} /></Show>
         </details>
       </>}</Show>

@@ -188,7 +188,7 @@ Ist **Erstellen** unbestätigt, behält das Fenster die übermittelte Anfrage un
 
 ## Unterhaltungen bearbeiten, löschen und bereinigen {#cleanup}
 
-Verwenden Sie **Ausgewählte Mission bearbeiten** für eine bearbeitbare einmalige Mission; schließen/öffnen Sie bei Konflikten den Editor, um die aktuelle Revision zu laden, statt sie zu überschreiben. Tägliche Zeitpläne bieten keine Bearbeiten-/Löschen-Steuerung.
+Verwenden Sie **Ausgewählte Mission bearbeiten** für eine bearbeitbare einmalige Mission; schließen/öffnen Sie bei Konflikten den Editor, um die aktuelle Revision zu laden, statt sie zu überschreiben. Ändern sich Ziel oder Notizen, während das Formular noch lädt, meldet es, dass sich die Mission seit dem Öffnen geändert hat, statt sie einzutragen; wählen Sie **Erneut öffnen**, um die aktuelle Fassung zu bearbeiten. Tägliche Zeitpläne bieten keine Bearbeiten-/Löschen-Steuerung.
 
 1. Wählen Sie für eine nicht mehr benötigte einmalige Mission **Ausgewählte Mission löschen…** und prüfen Sie die Bestätigung.
 2. Wählen Sie optional vor dem Bestätigen **Auch die für diese Mission erstellten Fachunterhaltungen löschen**.

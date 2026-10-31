@@ -32,9 +32,19 @@ const location = {
   additionalProperties: false,
 } as const
 
+// Body descriptors (`describeMissionBodies`), keyed by body field.
+const bodies = {
+  type: "object",
+  additionalProperties: {
+    type: "object", properties: { characters: { type: "integer", minimum: 0 }, digest: { type: "string", minLength: 43, maxLength: 43 } },
+    required: ["characters", "digest"], additionalProperties: false,
+  },
+} as const
+
 const report = {
   type: "object",
   properties: {
+    bodies,
     id: { type: "string" },
     taskKey: { type: "string" },
     sessionId: { type: "string" },
@@ -122,6 +132,7 @@ const mission = {
           report,
           lateReports: { type: "array", items: report },
           outstandingExecution: { type: "boolean" },
+          bodies,
         },
         required: ["id", "key", "title", "brief", "role", "blockedBy", "status", "createdAt", "updatedAt", "outstandingExecution"],
         additionalProperties: false,
@@ -139,12 +150,14 @@ const mission = {
           retiredTasks: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, replacementTaskKey: { type: "string" } }, required: ["taskKey"], additionalProperties: false } },
           dependencyUpdates: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, before: stringArray, after: stringArray }, required: ["taskKey", "before", "after"], additionalProperties: false } },
           createdAt: { type: "number" },
+          bodies,
         },
         required: ["revision", "addedTaskKeys", "retiredTasks", "dependencyUpdates", "createdAt"],
         additionalProperties: false,
       },
     },
     historyTruncated: { type: "boolean" },
+    bodies,
     frontier: stringArray,
     claims: stringArray,
     createdAt: { type: "number" },

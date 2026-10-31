@@ -724,6 +724,12 @@ export const serverApi = {
   fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
     return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
   },
+  /** One slice of a mission body, for display only; it shares the secondary read budget. */
+  fetchMissionContent(instanceId: string, missionId: string, input: Omit<import("../../../server/src/missions/mission-content-wire").MissionContentRequest, "missionID">,
+    signal: AbortSignal): Promise<import("../../../server/src/missions/mission-content-wire").MissionContentResponse> {
+    const params = new URLSearchParams(Object.entries(input).filter(([, value]) => value !== undefined).map(([key, value]) => [key, String(value)]))
+    return secondaryRead(signal, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/content?${params}`, { signal }))
+  },
   /** This backend's playbook definitions, as its Missions prompts are built from them. */
   fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
     return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)

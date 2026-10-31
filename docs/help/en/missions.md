@@ -188,7 +188,7 @@ If **Create** is unconfirmed, the window retains the submitted request and disab
 
 ## Edit, delete and clean up conversations {#cleanup}
 
-Use **Edit selected mission** on an editable one-time mission; on a conflict, close/reopen the editor to load the current revision rather than overwrite it. Daily schedules do not offer edit/delete controls.
+Use **Edit selected mission** on an editable one-time mission; on a conflict, close/reopen the editor to load the current revision rather than overwrite it. If the objective or notes change while the form is still loading, it says the mission changed since you opened it instead of filling them; choose **Reopen** to edit the current version. Daily schedules do not offer edit/delete controls.
 
 1. For a one-time mission you no longer need, choose **Delete selected mission…** and review the confirmation.
 2. Optionally select **Also delete specialist conversations created for this mission** before confirming.

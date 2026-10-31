@@ -3,6 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
+import { missionContentFixture } from "./mission-content-fixture"
 import { chromium, type Browser, type Page, type Locator } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 
@@ -33,14 +34,16 @@ async function setup(value = mission()) {
   page.on("pageerror", error => errors.push(error.message))
   let current = value
   await page.addInitScript("Object.defineProperty(navigator,'clipboard',{value:{writeText:async text=>{window.copiedText=text}}})")
-  await page.route("**/api/**", route => route.fulfill({ json: route.request().method() === "GET"
+  await page.route("**/api/**", route => route.fulfill({ json: missionContentFixture(route.request().url(), route.request().method(), [current])
+    ?? (route.request().method() === "GET"
     && new URL(route.request().url()).pathname === "/workspaces/track3/instance/api/shell" ? { location: { directory: "/fixture" }, data: [] }
     : route.request().url().includes("/missions")
     ? { available: true, missions: [current], generatedAt: 1, discardedEvents: 0 }
-    : route.request().method() === "PATCH" ? route.request().postDataJSON() : {} }))
+    : route.request().method() === "PATCH" ? route.request().postDataJSON() : {}) }))
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).track3))
-  return { page, errors, replace: (next: MissionMap) => { current = next } }
+  // Like every journal write, a replaced map has a newer revision.
+  return { page, errors, replace: (next: MissionMap) => { current = { ...next, revision: current.revision + 1 } } }
 }
 const show = (page: Page, kind = "overview", itemId?: string) => page.evaluate(({ kind, itemId }) => (window as any).track3.show(kind, itemId), { kind, itemId })
 async function readPages(article: Locator) {

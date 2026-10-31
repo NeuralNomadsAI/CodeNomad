@@ -10,6 +10,7 @@ import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPi
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 
 import { borrowFixture } from "./fixture-borrow"
+import { isMissionContentRequest, serveMissionContent } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -49,6 +50,7 @@ async function setup(page: Page, windowContext: "local" | "remote" = "local") {
   `)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } }))
+  await serveMissionContent(page)
 }
 const fixtureCall = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
 /** Polls a condition on test-process state, such as what a route handler recorded. */
@@ -623,6 +625,7 @@ test("reader toggles highlight the exact visible content and toggle it off witho
     const value = mission("toggle"), writes: string[] = []
     value.history = [{ revision: 1, source: "user", reason: "Scope clarified", createdAt: 1, addedTaskKeys: [], retiredTasks: [], dependencyUpdates: [] }]
     await page.route("**/api/workspaces/fixture/missions**", route => {
+      if (isMissionContentRequest(route.request().url())) return route.fallback()
       if (route.request().method() !== "GET") writes.push(route.request().method())
       return route.fulfill({ json: { available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0 } })
     })
@@ -703,6 +706,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     const value: MissionMap = { ...mission("journey"), objective: "Ship reliable desktop navigation", tasks: [], reports: [], runState: "prepared" }
     let activity: Array<{ sessionId: string; state: "running" | "idle-without-report" }> = []
     await page.route("**/api/workspaces/fixture/missions**", route => {
+      if (isMissionContentRequest(route.request().url())) return route.fallback()
       if (route.request().method() !== "GET") mutations.push(route.request().method())
       return route.fulfill({ json: { available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0,
         activity: { generatedAt: value.revision, missions: [{ missionId: value.id, actors: activity }] } } })
@@ -924,6 +928,7 @@ test("one Play control starts and resumes; partial Pause survives remount and St
     let failPause = true
     let failMap = false
     await page.route("**/api/workspaces/fixture/missions**", async route => {
+      if (isMissionContentRequest(route.request().url())) return route.fallback()
       if (route.request().method() === "GET") return failMap
         ? route.fulfill({ status: 503, json: { error: "Map unavailable" } })
         : route.fulfill({ json: { available: true, missions: [current], generatedAt: 1, discardedEvents: 0 } })
@@ -1039,6 +1044,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
     let list = [mission("one")]
     let cleanups: any[] = []
     await page.route("**/api/workspaces/fixture/missions**", async route => {
+      if (isMissionContentRequest(route.request().url())) return route.fallback()
       const request = route.request(), body = request.postDataJSON()
       if (request.method() === "POST") {
         creates.push(body)
