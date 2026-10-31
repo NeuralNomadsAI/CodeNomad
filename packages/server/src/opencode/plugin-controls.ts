@@ -94,8 +94,8 @@ export class PluginControls {
     logger: Logger
   }) {}
 
-  async read(workspaceId: string, location: PluginControlLocation): Promise<PluginControlsSnapshot> {
-    const context = await this.readContext(workspaceId, location)
+  async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
+    const context = await this.readContext(workspaceId, location, signal)
     return buildSnapshot(context)
   }
 

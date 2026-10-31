@@ -23,5 +23,6 @@ export interface PluginSourceMutationResponse {
 }
 
 /** `duplicate`: the package is already declared in an effective scope; `plugin-id`: the spec names
- * a plugin ID or activation selector; `stale`: the entry changed since it was displayed. */
-export type PluginSourceErrorCode = "invalid-spec" | "local-path" | "duplicate" | "plugin-id" | "stale"
+ * a plugin ID or activation selector; `stale`: the entry changed since it was displayed;
+ * `timeout`: OpenCode did not answer within the add deadline. */
+export type PluginSourceErrorCode = "invalid-spec" | "local-path" | "duplicate" | "plugin-id" | "stale" | "timeout"

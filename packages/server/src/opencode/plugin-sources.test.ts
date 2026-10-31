@@ -17,13 +17,16 @@ async function fixture(options: { sameScopes?: boolean } = {}) {
   await mkdir(project, { recursive: true })
   const globalFile = path.join(global, "opencode.jsonc")
   const projectFile = path.join(project, ".opencode", "opencode.jsonc")
-  const state = { runtime: [] as unknown[], hideProject: false, current: true }
+  const state = { runtime: [] as unknown[], hideProject: false, current: true, gate: undefined as Promise<void> | undefined }
   const documentEntry = async (file: string) => readFile(file, "utf8").then(text => [{ type: "document", path: file, info: parse(text) }], () => [])
   const connection: any = {
     assertCurrent: () => { if (!state.current) throw new Error("replaced connection") },
     client: {
-      config: { get: async () => [{ type: "directory", path: global }, ...await documentEntry(globalFile),
-        ...(options.sameScopes || state.hideProject ? [] : await documentEntry(projectFile))] },
+      config: { get: async () => {
+        await state.gate
+        return [{ type: "directory", path: global }, ...await documentEntry(globalFile),
+          ...(options.sameScopes || state.hideProject ? [] : await documentEntry(projectFile))]
+      } },
       plugin: { list: async () => ({ data: state.runtime }) },
     },
   }
@@ -91,6 +94,26 @@ describe("plugin source mutations", () => {
       assert.equal((results[1] as PromiseRejectedResult).reason.code, "duplicate")
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["race-plugin@1"])
       await assert.rejects(readFile(f.projectFile), "the refused scope is never written")
+    } finally { await f.cleanup() }
+  })
+
+  it("refuses an add whose OpenCode reads stall, releases the queue, and never writes it later", async () => {
+    const f = await fixture()
+    try {
+      await writeFile(f.globalFile, "{}")
+      const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any, addTimeoutMs: 50 })
+      let release!: () => void
+      f.state.gate = new Promise<void>(resolve => { release = resolve })
+      const stalled = sources.add("w", { location: f.location, scope: "global", spec: "stalled-plugin" })
+      // Let the queued turn start its daemon reads before later reads stop stalling.
+      await new Promise(resolve => setTimeout(resolve, 10))
+      f.state.gate = undefined
+      const next = sources.add("w2", { location: f.location, scope: "global", spec: "next-plugin" })
+      await assert.rejects(stalled, code("timeout", "unavailable"))
+      await next
+      release()
+      await new Promise(resolve => setTimeout(resolve, 50))
+      assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["next-plugin"], "the abandoned add never writes")
     } finally { await f.cleanup() }
   })
 

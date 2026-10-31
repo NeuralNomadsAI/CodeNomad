@@ -13,7 +13,7 @@ CodeNomad writes the declaration and OpenCode resolves, installs and loads it.
 one string entry at the end of the scope's `plugins`; `DELETE` (`{ location,
 scope, target, entryIndex }`) removes one entry. Both routes are strict, map
 errors like the activation route and add a stable `code` (`invalid-spec`,
-`local-path`, `plugin-id`, `duplicate`, `stale`).
+`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`).
 
 - **Accepted specs** match OpenCode's own `plugin add`: registry versions, ranges,
   tags and `npm:` aliases, and remote Git specs, parsed with `npm-package-arg`.
@@ -27,7 +27,13 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   documents for writes not yet reloaded) is refused. Identity is the
   case-insensitive registry name, both sides of an alias, whatever the version,
   range or tag, object `{ package }` entries included, and the Git repository
-  without committish.
+  without committish (host and path for hosts other than GitHub, GitLab and
+  Bitbucket). Specs are printable ASCII only. The check spans both scopes while
+  the document lock covers one file, so adds share one server-wide queue (every
+  workspace shares the Global document). Each turn has a
+  `PLUGIN_SOURCE_ADD_TIMEOUT_MS` (20 s) deadline: an unresponsive service is
+  refused as `timeout` (503), releases the queue, and its abandoned turn never
+  writes afterwards.
 - **Removal** requires, under the document primitive, that `plugins[entryIndex]`
   still declares `target` (a string, or an object's `package`); otherwise `stale`
   (409). The result must parse to the original minus exactly that element.
