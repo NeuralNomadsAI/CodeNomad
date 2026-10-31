@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import type { MissionInspection } from "./control-types"
-import type { MissionMap, MissionReport, MissionTask } from "./model"
+import type { MissionMap, MissionPlanChange, MissionReport, MissionTask } from "./model"
 
 /** Characters of every `mission.inspect` result as the tool serializes it (two-space
  * indented JSON), its page metadata and omission markers included. A result within it
@@ -21,8 +21,11 @@ type ContentSource = MissionInspectSelector | { kind: "catalog" }
 /** A content read. `digest` names the exact serialized value its slices are cut from:
  * values read afresh on each call (the catalog, native conversations, human answers)
  * can change without a new revision, so a slice of a value that now reads differently
- * is refused and slices never join two observations. */
-export type MissionInspectContent = ((MissionInspectSelector & { revision: number }) | { kind: "catalog" }) & { digest: string; offset: number }
+ * is refused and slices never join two observations. A `receipt` read names, by its
+ * digest alone, the whole original result of a `mission.interrupt` call too large for
+ * one result, as the plugin holds it. Catalog and receipt reads name no mission. */
+export type MissionInspectContent = ((MissionInspectSelector & { revision: number }) | { kind: "catalog" } | { kind: "receipt" })
+  & { digest: string; offset: number }
 const CATALOG = { kind: "catalog" } as const
 
 /** Task fields of the `taskKey` view computed outside the map; the plugin supplies them. */
@@ -144,19 +147,26 @@ export function boundedMissionList(missions: ReadonlyArray<Owner & { missionID: 
  * `MISSION_TASK_VIEW_FIELDS` and the catalog are the plugin's. */
 export function inspectionContentValue(inspection: MissionInspection, read: MissionInspectContent): unknown {
   const mission = inspection.mission
-  if (!mission || read.kind === "catalog") throw contentUnavailable()
+  if (!mission || read.kind === "catalog" || read.kind === "receipt") throw contentUnavailable()
   if (read.revision !== mission.revision) throw new Error("Mission changed since this page: read it again from its first page")
+  if (read.kind !== "inspection") return missionContentValue(mission, read)
+  if (read.field === "mission" || !Object.prototype.hasOwnProperty.call(inspection, read.field)) throw contentUnavailable()
+  return (inspection as unknown as Owner)[read.field]
+}
+
+/** The value a map selector names in `mission`: a map field, a task's own field (and
+ * `reports`, its reports each once), any report by ID (current, earlier or late), a
+ * plan change by revision among `changes` (the map's `history` unless given). Throws
+ * `Mission content unavailable` when it names none. */
+export function missionContentValue(mission: MissionMap, read: Exclude<MissionInspectSelector, { kind: "inspection" }>,
+  changes: readonly MissionPlanChange[] = mission.history): unknown {
   const field = (owner: object | undefined) => {
     if (!owner || !Object.prototype.hasOwnProperty.call(owner, read.field)) throw contentUnavailable()
     return (owner as Owner)[read.field]
   }
-  if (read.kind === "inspection") {
-    if (read.field === "mission") throw contentUnavailable()
-    return field(inspection)
-  }
   if (read.kind === "mission") return field(mission)
   if (read.kind === "report") return field(mission.reports.find(report => report.id === read.reportId))
-  if (read.kind === "change") return field(mission.history.find(change => change.revision === read.change))
+  if (read.kind === "change") return field(changes.find(change => change.revision === read.change))
   const task = mission.tasks.find(task => task.key === read.taskKey)
   return field(task && { ...pagedTask(task), reports: mission.reports.filter(report => report.taskKey === task.key) })
 }
@@ -164,26 +174,49 @@ export function inspectionContentValue(inspection: MissionInspection, read: Miss
 /** One slice of a value: the string itself, or the value's JSON, from `read.offset`,
  * as long as the whole result fits; `next` repeats the read from where it stopped.
  * `value` is read afresh and must be the one `read.digest` names. `missionID` is the
- * mission of map reads; catalog reads name none. */
+ * mission of map reads; catalog and receipt reads name none. */
 export function inspectionContent(missionID: string | undefined, read: MissionInspectContent, value: unknown): unknown {
-  const json = typeof value !== "string", text = serialized(value)
+  const json = typeof value !== "string", text = contentText(value)
   if (contentDigest(text) !== read.digest) throw new Error("This value changed since its first slice: inspect again for its current read")
   if (read.offset > text.length) throw new Error("Mission content offset is past its end")
-  if (read.kind !== "catalog" && !missionID) throw contentUnavailable()
-  const owner = read.kind === "catalog" ? {} : { missionID }
-  const result = (end: number) => ({ ...(read.kind === "catalog" ? {} : { mission: { id: missionID, revision: read.revision } }),
+  const missionless = read.kind === "catalog" || read.kind === "receipt"
+  if (!missionless && !missionID) throw contentUnavailable()
+  const owner = missionless ? {} : { missionID }
+  const result = (end: number) => ({ ...(read.kind === "catalog" || read.kind === "receipt" ? {} : { mission: { id: missionID, revision: read.revision } }),
     content: { ...read, characters: text.length, ...(json ? { json: true } : {}), text: text.slice(read.offset, end),
       ...(end < text.length ? { next: { ...owner, content: { ...read, offset: end } } } : {}) }, note: CONTENT_NOTE })
-  const fits = (end: number) => size(result(end)) <= MISSION_INSPECT_OUTPUT_LIMIT
-  let low = Math.min(text.length, read.offset + (isHighSurrogate(text, read.offset) ? 2 : 1)), high = text.length
+  return checked(result(sliceEnd(text, read.offset, result)))
+}
+
+/** Where the longest slice of `text` from `offset` ends such that `envelope(end)`, as
+ * two-space JSON, stays within `MISSION_INSPECT_OUTPUT_LIMIT`; a slice never splits a
+ * surrogate pair, and at least one character (or the empty remainder) always fits. */
+export function sliceEnd(text: string, offset: number, envelope: (end: number) => unknown): number {
+  const fits = (end: number) => size(envelope(end)) <= MISSION_INSPECT_OUTPUT_LIMIT
+  let low = Math.min(text.length, offset + (isHighSurrogate(text, offset) ? 2 : 1)), high = text.length
   if (!fits(low)) throw outOfBounds()
-  // The longest slice that fits, never splitting a surrogate pair.
   while (low < high) {
     const middle = Math.ceil((low + high) / 2)
     if (fits(middle)) low = middle
     else high = middle - 1
   }
-  return checked(result(isHighSurrogate(text, low - 1) && low > read.offset + 1 ? low - 1 : low))
+  return isHighSurrogate(text, low - 1) && low > offset + 1 ? low - 1 : low
+}
+
+/** Whether `value`, as two-space JSON, stays within `MISSION_INSPECT_OUTPUT_LIMIT`. */
+export function withinInspectBound(value: unknown): boolean {
+  return size(value) <= MISSION_INSPECT_OUTPUT_LIMIT
+}
+
+/** A result within `MISSION_INSPECT_OUTPUT_LIMIT`, the named values of `value` replaced,
+ * largest first, by `{ omittedCharacters, read }` naming their exact `mission.inspect`
+ * read of `mission`'s revision until it fits. Throws when it cannot. */
+export function boundedResult<T extends Owner>(value: T, mission: Pick<MissionMap, "id" | "revision">,
+  replaceable: ReadonlyArray<{ key: keyof T & string; selector: MissionInspectSelector }>): T {
+  if (size(value) <= MISSION_INSPECT_OUTPUT_LIMIT) return value
+  const result: Owner = { ...value }
+  if (!fit(() => result, replaceable.map(({ key, selector }) => ({ owner: result, key, selector, tier: 0 as const })), mission)) throw outOfBounds()
+  return checked(result) as T
 }
 
 /** A task as pages show it: its own values, each report in it once. */
@@ -216,7 +249,7 @@ function reportSlots(report: Owner): Slot[] {
  * once: a replacement changes its exact size by the difference of the two values' texts
  * at the value's indentation, so fitting stays linear in the envelope. */
 function fit(envelope: () => unknown, slots: Slot[], mission?: Pick<MissionMap, "id" | "revision">): boolean {
-  const open = slots.filter(slot => slot.owner[slot.key] !== undefined).map(slot => ({ ...slot, text: serialized(slot.owner[slot.key]) }))
+  const open = slots.filter(slot => slot.owner[slot.key] !== undefined).map(slot => ({ ...slot, text: contentText(slot.owner[slot.key]) }))
   let total = size(envelope())
   for (const tier of [0, 1] as const) {
     if (total <= MISSION_INSPECT_OUTPUT_LIMIT) return true
@@ -270,13 +303,13 @@ function omission(mission: Pick<MissionMap, "id" | "revision"> | undefined, sele
 }
 
 /** The text a content read slices: the string itself, or the value's JSON. */
-function serialized(value: unknown): string {
+export function contentText(value: unknown): string {
   return typeof value === "string" ? value : JSON.stringify(value) ?? "null"
 }
 
 /** SHA-256 of the text's UTF-16 code units, so strings differing only in unpaired
  * surrogates (which UTF-8 encodes alike) keep distinct digests. */
-function contentDigest(text: string): string {
+export function contentDigest(text: string): string {
   return createHash("sha256").update(text, "utf16le").digest("base64url")
 }
 

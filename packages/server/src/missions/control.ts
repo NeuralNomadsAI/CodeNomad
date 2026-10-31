@@ -4,9 +4,11 @@ import type { JsonValue, SessionMetadata } from "@opencode/client"
 
 import { MissionJournal, stableToken, type MissionStorage, type MissionView } from "./journal"
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
+import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
 import {
   MISSION_SCHEMA_VERSION,
+  missionPlanChanges,
   type MissionActor,
   type MissionEvent,
   type MissionList,
@@ -178,6 +180,14 @@ export class MissionControl {
     const damage = projectDamage(aggregate, [view])
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
       ...(view.mission ? { mission: stampDamage(view.mission, damage) } : {}), cleanups: view.cleanups ?? [], ...damage }
+  }
+
+  /** One mission body for display, in slices (`readMissionContent`): one read of that
+   * mission's range alone, never the index or another range (read-mostly: never a
+   * write's authority). */
+  async content(request: MissionContentRequest): Promise<MissionContentResult> {
+    const { mission, events } = await this.journal.missionView(request.missionID)
+    return readMissionContent(this.options.project.id, request, mission, () => missionPlanChanges(events, request.missionID))
   }
 
   /** `hintedMissions` for one session's selection: exactly `missionID`'s range, else the missions naming the session. */
@@ -884,8 +894,10 @@ export class MissionControl {
     return taskObservationSchema.parse(await this.options.transport.observeTask(mission.coordinatorSessionId, { missionID: mission.id, taskKey }))
   }
 
-  /** Stops a retired native task's own conversations and their families; the plan is unchanged. */
-  async interruptTask(sessionID: string, input: { missionID?: string; taskKey: string }): Promise<MissionTaskInterruption & { note?: string }> {
+  /** Stops a retired native task's own conversations and their families; the plan is unchanged.
+   * `target` is the mission and task it resolved, whether the caller named the mission or not. */
+  async interruptTask(sessionID: string, input: { missionID?: string; taskKey: string }): Promise<MissionTaskInterruption & { note?: string
+    target: { missionID: string; taskKey: string } }> {
     await this.ownedRootSession(sessionID)
     const mission = this.selectMission(await this.snapshot(), sessionID, input.missionID)
     if (!mission) throw new MissionControlError("No mission is associated with this session", "mission-not-found")
@@ -901,7 +913,8 @@ export class MissionControl {
     }
     if (!this.options.transport?.interruptTask) throw new MissionControlError(BACKEND_ACTION_UNAVAILABLE, "interrupt-unavailable")
     const result = taskInterruptionSchema.parse(await this.options.transport.interruptTask(sessionID, { missionID: mission.id, taskKey: task.key }))
-    return result.sessions.length ? result : { ...result, note: NO_TASK_CONVERSATION }
+    const target = { missionID: mission.id, taskKey: task.key }
+    return result.sessions.length ? { ...result, target } : { ...result, note: NO_TASK_CONVERSATION, target }
   }
 
   /** Answered native questions that qualify a native Wayfinder decision task, each verified by the gate. */

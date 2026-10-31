@@ -5,6 +5,7 @@ import type { OpenCodeClient } from "@opencode/client"
 import type { MissionActivityProjection, MissionList, MissionListResponse, MissionListUnavailableResponse, MissionMap, MissionRead,
   MissionReadResponse, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
 import { MISSION_LIST_MAX_INCLUDE } from "../../missions/mission-summary"
+import { missionContentRequestSchema, type MissionContentResponse, type MissionContentResult } from "../../missions/mission-content"
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
@@ -46,6 +47,12 @@ const ListQuerySchema = z.object({
     .pipe(z.array(z.string().min(1).max(100)).max(MISSION_LIST_MAX_INCLUDE)).optional(),
   summaries: z.string().min(1).max(64).optional(),
 })
+// A content request's selector, digest and offset (`missionContentRequestSchema` checks the rest).
+const IntegerQuery = z.string().regex(/^\d{1,15}$/).transform(Number)
+const ContentQuerySchema = z.object({
+  kind: z.string().max(16), field: z.string().max(64), taskKey: z.string().max(64).optional(), reportId: z.string().max(240).optional(),
+  change: IntegerQuery.optional(), digest: z.string().max(43).optional(), offset: IntegerQuery,
+}).strict()
 const RequestID = z.string().trim().min(1).max(128)
 const UpdateSchema = z.object({
   objective: z.string().trim().min(1).max(20_000), notes: z.string().max(20_000).optional(),
@@ -93,6 +100,20 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
       }
       if (read.projectID !== projectID) return foreign()
       return { available: true, ...read }
+    })
+  })
+
+  // One mission body for display, in digest-pinned slices of one range read
+  // (`MissionControl.content`); never authority. A plugin without `content` is unavailable.
+  app.get<{ Params: { id: string; missionID: string }; Querystring: Record<string, unknown> }>("/api/workspaces/:id/missions/:missionID/content", async (request, reply) => {
+    const params = MissionReadParamsSchema.safeParse(request.params)
+    const query = ContentQuerySchema.safeParse(request.query ?? {})
+    const input = params.success && query.success ? missionContentRequestSchema.safeParse({ missionID: params.data.missionID, ...query.data }) : undefined
+    if (!input?.success) return reply.code(400).send({ error: "Invalid mission content request" })
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionContentResponse> => {
+      const result = await rpc.content(input.data, call) as MissionContentResult
+      if (result.projectID !== projectID || result.missionID !== input.data.missionID) return foreign()
+      return { available: true, ...result }
     })
   })
 

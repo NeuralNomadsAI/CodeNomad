@@ -168,6 +168,11 @@ const mutationMissionResult = {
 } as const
 
 const requestID = { type: "string", minLength: 1, maxLength: 128 } as const
+const contentSelector = {
+  kind: { type: "string", enum: ["mission", "task", "report", "change"] }, field: { type: "string", minLength: 1, maxLength: 64 },
+  taskKey: { type: "string", minLength: 2, maxLength: 64 }, reportId: { type: "string", minLength: 1, maxLength: 240 },
+  change: { type: "integer", minimum: 1 },
+} as const
 
 const snapshotProperties = {
   version: { type: "number", const: 1 },
@@ -306,6 +311,22 @@ export const CODENOMAD_MISSIONS_RPC = {
         cleanups: snapshotProperties.cleanups, cleanupUnavailable: { type: "boolean" }, controlUnavailable: { type: "boolean" },
         notificationUnavailable: { type: "boolean" },
       }, required: ["version", "projectID", "generatedAt", "cleanups"], additionalProperties: false },
+    },
+    // One mission body for display, in digest-pinned slices (`MissionControl.content`).
+    // Kind-specific identities are checked by `missionContentRequestSchema`.
+    content: {
+      input: { type: "object", properties: {
+        missionID: { type: "string", minLength: 1, maxLength: 100 }, ...contentSelector,
+        digest: { type: "string", minLength: 43, maxLength: 43 }, offset: { type: "integer", minimum: 0 },
+      }, required: ["missionID", "kind", "field", "offset"], additionalProperties: false },
+      output: { type: "object", properties: {
+        version: { type: "integer", const: 1 }, projectID: { type: "string" }, missionID: { type: "string" }, revision: { type: "integer", minimum: 1 },
+        content: { type: "object", properties: { ...contentSelector, digest: { type: "string", minLength: 43, maxLength: 43 },
+          offset: { type: "integer", minimum: 0 }, characters: { type: "integer", minimum: 0 }, json: { type: "boolean", const: true },
+          text: { type: "string" }, next: { type: "integer", minimum: 1 } },
+          required: ["kind", "field", "digest", "offset", "characters", "text"], additionalProperties: false },
+        refused: { type: "string", enum: ["mission-not-found", "content-not-found", "content-changed"] },
+      }, required: ["version", "projectID", "missionID"], additionalProperties: false },
     },
     create: {
       errors: missionMutationErrors,
