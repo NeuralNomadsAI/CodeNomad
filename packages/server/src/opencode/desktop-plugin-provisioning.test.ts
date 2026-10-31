@@ -1,5 +1,9 @@
 import assert from "node:assert/strict"
+import { randomUUID } from "node:crypto"
+import { mkdtemp, rm, writeFile } from "node:fs/promises"
 import { createServer, type ServerResponse } from "node:http"
+import os from "node:os"
+import path from "node:path"
 import type { AddressInfo } from "node:net"
 import test from "node:test"
 import type { OpenCodeClient } from "@opencode/client"
@@ -106,4 +110,24 @@ test("a failure repeated by every reconnection is logged as an error once, until
   failure = "another failure"
   assert.equal(await provision(), false)
   assert.equal(calls.at(-1)?.level, "error", "a success re-arms the error")
+})
+
+test("a persistent filesystem failure naming a fresh lease or temporary file each time is still logged once", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-provisioning-failure-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const reported = new Set<string>()
+  const { calls, logger } = recordingLogger()
+  // A real filesystem error, carrying a new generated name on every attempt, as lease writes do.
+  const install = (directory: string) => async () => {
+    await writeFile(path.join(root, directory, "presence", `${randomUUID()}.lease.${randomUUID()}.tmp`), "")
+  }
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    assert.equal(await provisionDesktopPlugins({ connection: { assertCurrent() {} }, logger, reported,
+      resolvePaths: async () => ({ config: root }), install: install("missing") }), false)
+  }
+  assert.deepEqual(calls.map(call => call.level), ["error", "debug", "debug"])
+  assert.equal(reported.size, 1)
+  assert.equal(await provisionDesktopPlugins({ connection: { assertCurrent() {} }, logger, reported,
+    resolvePaths: async () => ({ config: root }), install: install("elsewhere") }), false)
+  assert.equal(calls.at(-1)?.level, "error", "a failure at another destination is a different problem")
 })

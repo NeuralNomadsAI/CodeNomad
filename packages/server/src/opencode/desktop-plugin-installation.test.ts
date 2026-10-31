@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createHash } from "node:crypto"
-import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { installDesktopPluginPresence } from "./desktop-plugin-installation"
@@ -45,6 +45,57 @@ test("installers sharing one data directory never observe each other's partial p
     installDesktopPluginPresence("missions", bundle, { config: path.join(root, `config-${index}`), data })))
   for (const result of results) if (result.status === "fulfilled") await result.value()
   assert.deepEqual(results.map((result) => result.status === "rejected" ? String(result.reason) : "ok"), ["ok", "ok", "ok", "ok"])
+})
+
+test("a damaged payload held open by another reader is repaired by the same installation once the reader lets go", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-locked-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const bundle = Buffer.from("trusted"), hash = createHash("sha256").update(bundle).digest("hex")
+  const directory = path.join(paths.data, "missions"), payload = path.join(directory, `${hash}.mjs`)
+  await mkdir(directory, { recursive: true })
+  await writeFile(payload, "damaged")
+  // On Windows an open reader makes replacing the name fail with EPERM until it closes.
+  const reader = await open(payload, "r")
+  const released = new Promise<void>((resolve) => setTimeout(() => { void reader.close().then(resolve) }, 500))
+  try {
+    const stop = await installDesktopPluginPresence("missions", bundle, paths)
+    await stop()
+  } finally { await released }
+  assert.deepEqual(await readFile(payload), bundle)
+})
+
+test("a directory link at the payload name is replaced without touching its target", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-junction-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const bundle = Buffer.from("trusted"), hash = createHash("sha256").update(bundle).digest("hex")
+  const directory = path.join(paths.data, "missions"), payload = path.join(directory, `${hash}.mjs`)
+  await mkdir(directory, { recursive: true })
+  const target = path.join(root, "target")
+  await mkdir(target)
+  await writeFile(path.join(target, "sentinel"), "keep")
+  await symlink(target, payload, "junction")
+  const stop = await installDesktopPluginPresence("missions", bundle, paths)
+  await stop()
+  assert.equal((await lstat(payload)).isFile(), true)
+  assert.deepEqual(await readFile(payload), bundle)
+  assert.equal(await readFile(path.join(target, "sentinel"), "utf8"), "keep")
+})
+
+test("an ordinary directory at the payload name is refused at once and left intact", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-directory-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const bundle = Buffer.from("trusted"), hash = createHash("sha256").update(bundle).digest("hex")
+  const payload = path.join(paths.data, "missions", `${hash}.mjs`)
+  await mkdir(payload, { recursive: true })
+  await writeFile(path.join(payload, "sentinel"), "keep")
+  const started = Date.now()
+  await assert.rejects(installDesktopPluginPresence("missions", bundle, paths), /is a directory/)
+  assert(Date.now() - started < 1_000, "a permanent problem is not retried")
+  assert.equal(await readFile(path.join(payload, "sentinel"), "utf8"), "keep")
+  await assert.rejects(readFile(path.join(paths.config, "plugins", "codenomad-missions.ts")), { code: "ENOENT" })
 })
 
 test("a digest-named Missions bundle that is a symlink is replaced without touching its target", async (t) => {

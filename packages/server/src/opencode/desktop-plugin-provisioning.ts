@@ -12,6 +12,19 @@ interface DesktopPluginProvisioning<Paths> {
 const CONSEQUENCE = "Until this succeeds, CodeNomad cannot list questions and permissions that were already waiting, "
   + "and Missions and automation are unavailable. Each new OpenCode connection retries; identical failures are logged once."
 
+// Leases and temporary copies get fresh UUID names on every attempt.
+const GENERATED_ID = /[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}/gi
+
+/**
+ * What stays the same while one problem repeats: a filesystem error's code, operation
+ * and path without generated names, else its message without them.
+ */
+function failureIdentity(error: unknown): string {
+  const { code, syscall, path: file } = (error ?? {}) as NodeJS.ErrnoException
+  if (typeof code === "string") return [code, syscall ?? "", (file ?? "").replace(GENERATED_ID, "*")].join("\n")
+  return (error instanceof Error ? error.message : String(error)).replace(GENERATED_ID, "*")
+}
+
 /**
  * Provisions the bundled plugins for one OpenCode connection. Replacing a
  * connection aborts its in-flight requests (`OpenCodeSharedService.clear`), so a
@@ -27,7 +40,7 @@ export async function provisionDesktopPlugins<Paths>(options: DesktopPluginProvi
       options.logger.debug({ err: error }, "Bundled plugin provisioning was superseded by a newer OpenCode connection")
       return
     }
-    const key = `${message}\n${error instanceof Error ? error.message : String(error)}`
+    const key = `${message}\n${failureIdentity(error)}`
     if (options.reported?.has(key)) {
       options.logger.debug({ err: error }, `${message} (repeated)`)
       return

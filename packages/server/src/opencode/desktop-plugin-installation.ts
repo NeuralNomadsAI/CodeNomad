@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
 import { constants } from "node:fs"
-import { lstat, mkdir, open, readFile, rename, rm, stat, writeFile, utimes } from "node:fs/promises"
+import { lstat, mkdir, open, readFile, rename, rm, rmdir, stat, unlink, writeFile, utimes } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -69,24 +69,40 @@ async function writeLease(lease: string, content: string) {
   } finally { await rm(temporary, { force: true }) }
 }
 
-// Concurrent installers publishing the same bytes can each move the name once.
-const BUNDLE_REPAIR_ATTEMPTS = 4
+// Waits before each verify-and-publish pass (about 3 s in all). Concurrent installers of
+// the same bytes converge within the first passes; the later ones outlast short Windows
+// sharing violations from a reader or an antivirus scan.
+const BUNDLE_REPAIR_DELAYS_MS = [0, 25, 50, 100, 200, 400, 800, 1600]
+// Sharing violations and locks Windows reports while another process holds the file.
+const TRANSIENT_LOCK_CODES = new Set(["EPERM", "EBUSY", "EACCES"])
+
+function errorCode(error: unknown): string | undefined {
+  const code = (error as NodeJS.ErrnoException | undefined)?.code
+  return typeof code === "string" ? code : undefined
+}
+
+async function lstatOrUndefined(file: string) {
+  return lstat(file).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return undefined
+    throw error
+  })
+}
 
 /**
  * The identity of `plugin` when it is one regular file holding exactly `bundle`,
  * read through a single handle; undefined when it is absent or holds anything else.
  */
 async function verifiedBundle(plugin: string, bundle: Uint8Array, hash: string): Promise<{ dev: number; ino: number } | undefined> {
+  // Links (including Windows junctions) and directories are never opened or followed.
+  const before = await lstatOrUndefined(plugin)
+  if (!before?.isFile()) return undefined
   const handle = await open(plugin, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ENOENT" || error.code === "ELOOP") return undefined
+    if (error.code === "ENOENT" || error.code === "ELOOP" || error.code === "EISDIR") return undefined
     throw error
   })
   if (!handle) return undefined
   try {
-    const info = await handle.stat(), named = await lstat(plugin).catch((error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return undefined
-      throw error
-    })
+    const info = await handle.stat(), named = await lstatOrUndefined(plugin)
     if (!named || !info.isFile() || !named.isFile() || named.isSymbolicLink() || info.nlink !== 1
       || info.dev !== named.dev || info.ino !== named.ino || info.size !== bundle.byteLength) return undefined
     const actual = createHash("sha256"), chunk = Buffer.alloc(64 * 1024)
@@ -101,8 +117,29 @@ async function verifiedBundle(plugin: string, bundle: Uint8Array, hash: string):
   } finally { await handle.close() }
 }
 
-/** Renames a complete private copy over `plugin`, replacing the name itself (never a link's target). */
+/**
+ * Renames a complete private copy over `plugin`, replacing the name itself, never a
+ * link's target. Windows cannot rename a file over a directory link (a junction or a
+ * directory symlink), so such a link is removed first, without recursion; an ordinary
+ * directory is never removed.
+ */
 async function publishBundle(plugin: string, bundle: Uint8Array) {
+  const named = await lstatOrUndefined(plugin)
+  if (named?.isDirectory()) {
+    throw new Error(`Managed plugin bundle path is a directory, which CodeNomad never removes: ${plugin}. Delete it, then reconnect.`)
+  }
+  if (named?.isSymbolicLink()) {
+    // unlink removes a file link; rmdir removes only a directory link, never its target.
+    await unlink(plugin).catch(async (error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return
+      if (error.code !== "EPERM" && error.code !== "EISDIR") throw error
+      const current = await lstatOrUndefined(plugin)
+      if (!current) return
+      // Another process replaced the name meanwhile: leave whatever is there now.
+      if (!current.isSymbolicLink() || current.ino !== named.ino || current.dev !== named.dev) return
+      await rmdir(plugin)
+    })
+  }
   const temporary = `${plugin}.${randomUUID()}.tmp`
   try {
     await writeFile(temporary, bundle, { flag: "wx" })
@@ -156,12 +193,24 @@ export async function installDesktopPluginPresence(
   // A payload is only ever published whole, by renaming a complete temporary copy, and a
   // name holding other bytes (cut short by a killed process, or not a single regular file)
   // is replaced the same way: the entry only ever points at verified bytes.
-  let identity = await verifiedBundle(plugin, bundle, hash)
+  // Transient Windows locks (a reader, an antivirus scan) back off within the bounded
+  // passes; any other failure is final at once.
+  let identity: { dev: number; ino: number } | undefined
   let failure: unknown
-  for (let attempt = 0; !identity && attempt < BUNDLE_REPAIR_ATTEMPTS; attempt += 1) {
+  for (const wait of BUNDLE_REPAIR_DELAYS_MS) {
+    if (wait) await delay(wait, undefined, { ref: false })
     assertCurrent()
-    failure = await publishBundle(plugin, bundle).then(() => undefined, (error: unknown) => error)
-    identity = await verifiedBundle(plugin, bundle, hash)
+    try {
+      identity = await verifiedBundle(plugin, bundle, hash)
+      if (identity) break
+      assertCurrent()
+      await publishBundle(plugin, bundle)
+      identity = await verifiedBundle(plugin, bundle, hash)
+      if (identity) break
+    } catch (error) {
+      if (!TRANSIENT_LOCK_CODES.has(errorCode(error) ?? "")) throw error
+      failure = error
+    }
   }
   if (!identity) {
     // The server compiles against a library without `Error.cause`.
