@@ -48,6 +48,7 @@ export const exemptions: Record<string, string> = {
   "mission-recurrence-predispatch.test.ts": "no fixture page of its own",
   "native-mission-integration.qualification.ts": "qualification harness with capture middleware on its own server",
   "notification-icon-badge.test.ts": "Vite config diverges from the canonical daemon config",
+  "notification-routing.test.ts": "served by a harness that borrows from the daemon",
   "panel-extension-api4.test.ts": "served by a harness that borrows from the daemon",
   "panel-extensions.test.ts": "Vite config diverges: stateful /api proxy to an app the test drives",
   "plugin-packages.test.ts": "served by a harness that borrows from the daemon",
