@@ -111,7 +111,7 @@ export const SessionView: Component<SessionViewProps> = (props) => {
   // contains has nothing to show: release the central surface to the transcript.
   createEffect(() => {
     const target = missionReader()
-    if (!target || target.kind === "recurrence" || target.recurrence) return
+    if (!target || target.kind === "recurrence" || target.kind === "playbook" || target.recurrence) return
     const state = missionStore.state(props.instanceId)
     if ((state.status === "ready" || state.status === "unavailable") && !state.summaries.some(row => row.id === target.missionId))
       updateMissionProjectView(props.instanceFolder, { reader: undefined })

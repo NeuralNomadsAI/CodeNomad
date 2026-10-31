@@ -14,7 +14,7 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 ### Guiones {#playbooks}
 
-El selector **Guion** muestra justo debajo una descripción de una frase del guion seleccionado.
+El selector **Guion** muestra justo debajo una descripción de una frase del guion seleccionado. **Ver detalles** abre el guion seleccionado en el lector central: sus pasos, sus roles y, plegadas al final, las instrucciones exactas en inglés que reciben sus agentes. [Guiones](playbooks.md) explica los pasos, roles y preguntas de cada guion, y lo que CodeNomad comprueba.
 
 | Guion | Trabajo previsto |
 | --- | --- |

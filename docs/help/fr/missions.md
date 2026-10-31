@@ -14,7 +14,7 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 
 ### Scénarios {#playbooks}
 
-Le sélecteur **Scénario** affiche juste en dessous une description en une phrase du scénario sélectionné.
+Le sélecteur **Scénario** affiche juste en dessous une description en une phrase du scénario sélectionné. **Voir les détails** ouvre le scénario sélectionné dans le lecteur central : ses étapes, ses rôles et, repliées à la fin, les instructions exactes en anglais que reçoivent ses agents. [Scénarios](playbooks.md) explique les étapes, les rôles et les questions de chaque scénario, ainsi que ce que CodeNomad vérifie.
 
 | Scénario | Travail prévu |
 | --- | --- |

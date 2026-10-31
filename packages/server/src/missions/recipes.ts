@@ -1,5 +1,6 @@
 import type { MissionMap, MissionTask, MissionTemplateId } from "./model"
 import type { MissionTaskMode } from "./task-execution-mode"
+import type { MissionPlaybookDetails } from "./playbook-details"
 
 export interface MissionRoleGuide {
   id: string
@@ -293,6 +294,17 @@ export function missionRecipeCatalog(): Array<Pick<MissionRecipe, "id" | "title"
     sequence: recipe.sequence,
     roles: recipe.roles.map((role) => role.id),
   }))
+}
+
+/** The read-only playbook definitions the prompts below are assembled from, for the human details view. */
+export function missionPlaybookDetails(taskMode: MissionTaskMode = "native"): MissionPlaybookDetails {
+  return {
+    taskMode,
+    playbooks: Object.values(recipes).map(recipe => structuredClone(getMissionRecipe(recipe.id, taskMode))),
+    coordinator: [USER_FACING_TEXT, AUTOMATIC_BRIEFINGS],
+    oneTimeCoordinator: COMPLETED_FINAL_ONLY,
+    task: [NATIVE_WORK, SAFETY],
+  }
 }
 
 export function buildAssignmentPrompt(mission: MissionMap, task: MissionTask): string {

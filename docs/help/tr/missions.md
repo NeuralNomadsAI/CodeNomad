@@ -14,7 +14,7 @@ Görevler, kalıcı bir proje planını OpenCode'un kendi konuşmalarıyla birle
 
 ### İş akışı rehberleri {#playbooks}
 
-**Rehber** seçicisinin hemen altında seçili rehberin tek cümlelik açıklaması gösterilir.
+**Rehber** seçicisinin hemen altında seçili rehberin tek cümlelik açıklaması gösterilir. **Ayrıntıları gör**, seçili rehberi merkezi okuyucuda açar: adımlarını, rollerini ve sonda katlanmış olarak, ajanlarının aldığı tam İngilizce talimatları. [İş akışı rehberleri](playbooks.md) her rehberin adımlarını, rollerini ve sorularını ve CodeNomad'in neleri denetlediğini açıklar.
 
 | Rehber | Amaçlanan çalışma |
 | --- | --- |

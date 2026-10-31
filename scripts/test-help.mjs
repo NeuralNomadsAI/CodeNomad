@@ -150,7 +150,7 @@ test("declared help pages have translations, stable heading ids, links, images a
   const site = await readSite(content)
   assert.deepEqual(site.locales, LOCALES, "help must support the app's ten locales")
   assert.deepEqual(site.sections.map((section) => section.pages), [
-    ["index", "download", "install", "server"], ["projects", "conversations", "history", "files", "permissions", "missions"],
+    ["index", "download", "install", "server"], ["projects", "conversations", "history", "files", "permissions", "missions", "playbooks"],
     ["opencode", "providers", "integrations"], ["remote-control", "remote-access", "security", "mobile"],
     ["settings", "shortcuts", "voice"], ["extensions"], ["desktop", "browser-sidecars", "updates"], ["troubleshooting", "support", "sponsor"],
   ], "all approved pages must remain reachable in their eight groups")

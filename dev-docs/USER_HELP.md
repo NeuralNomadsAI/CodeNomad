@@ -9,7 +9,7 @@ to the official V2 docs for native configuration details.
 
 - `docs/help/site.json`: the ten app locales and the ordered section/page list.
   Section ids are `start`, `workflows`, `opencode-setup`, `remote-access`,
-  `customize`, `extensions`, `desktop`, `help`. The approved 27 pages each appear once; `index` comes first,
+  `customize`, `extensions`, `desktop`, `help`. The approved 28 pages each appear once; `index` comes first,
   then `download`, which the header **Download** link (`download.label`) opens on every page. The `help`
   section ends with `support` (bug reports and source builds) and `sponsor` (**Support CodeNomad**:
   why and how to fund development).

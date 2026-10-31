@@ -14,7 +14,7 @@ Missions pair a durable project plan with native OpenCode conversations. The coo
 
 ### Playbooks {#playbooks}
 
-The **Playbook** selector shows the selected playbook's one-sentence description directly below it.
+The **Playbook** selector shows the selected playbook's one-sentence description directly below it. **See details** opens the selected playbook in the central reader: its steps, its roles and, folded at the end, the exact English instructions its agents receive. [Playbooks](playbooks.md) explains each playbook's steps, roles and questions, and what CodeNomad checks.
 
 | Playbook | Intended work |
 | --- | --- |

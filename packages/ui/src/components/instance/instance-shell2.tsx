@@ -895,8 +895,9 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
   // Keep action items stable so unrelated updates do not rebuild their icon DOM.
   const headerActionMenuItems = createMemo(() => buildHeaderActionMenuItems())
 
-  const readingRecurrence = () => Boolean(props.isActiveInstance)
-    && missionProjectView(props.instance.folder).reader?.kind === "recurrence"
+  // Readers that need no conversation: schedules and playbook details.
+  const readingWithoutConversation = () => Boolean(props.isActiveInstance)
+    && ["recurrence", "playbook"].includes(missionProjectView(props.instance.folder).reader?.kind ?? "")
   const activeSessionTitle = createMemo(() => {
     if (showingInfoView()) return null
     const title = activeSessionForInstance()?.title?.trim()
@@ -1204,7 +1205,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                       onSidebarToggle={() => setLeftOpen(true)}
                       forceCompactStatusLayout={showEmbeddedSidebarToggle()}
                     />
-                    <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+                    <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
                     </div>
 
                     <Show when={draftAttachments().length > 0}>
@@ -1256,7 +1257,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
                 active={Boolean(props.isActiveInstance) && showingInfoView()}
                 onBackToConversation={handleBackToConversation}
               />
-              <Show when={readingRecurrence()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
+              <Show when={readingWithoutConversation()}><MissionReader instanceId={props.instance.id} scope={props.instance.folder} /></Show>
             </div>
           </Show>
           <For each={mountedSessionIds()}>
