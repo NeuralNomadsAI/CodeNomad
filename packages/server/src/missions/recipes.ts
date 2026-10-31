@@ -355,6 +355,8 @@ Complete only this task. Do not create mission tasks or nested Mission coordinat
     : `When finished, call mission.report with missionID ${mission.id}, taskKey ${task.key}, an outcome, a concise summary, concrete evidence, and any recommended next steps. Example envelope: {"missionID":"${mission.id}","taskKey":"${task.key}","outcome":"completed","summary":"...","evidence":["..."],"next":[],"artifact":{},"final":false}; replace artifact with the required role contract. Do not merely describe the report in prose.`}`
 }
 
+const MAX_CONTEXT_ASSIGNMENTS = 32
+
 /** `backendActions`: this coordinator can reach mission.interrupt and mission.prepare. */
 export function buildActorContext(mission: MissionMap, sessionID: string, options: { backendActions?: boolean; completedFinalOnly?: boolean } = {}): string {
   const recipe = getMissionRecipe(mission.template, mission.taskMode)
@@ -362,12 +364,13 @@ export function buildActorContext(mission: MissionMap, sessionID: string, option
   if (!actor) return ""
   const assigned = mission.tasks.filter((task) => task.actorSessionId === sessionID && !task.report && task.status !== "withdrawn")
   const withdrawn = mission.tasks.filter((task) => task.actorSessionId === sessionID && task.status === "withdrawn" && task.outstandingExecution)
-  const assignmentLines = assigned.length > 0 || withdrawn.length > 0
-    ? [
-      ...assigned.map((task) => `- ${task.key}: ${task.title} [${task.status}]`),
-      ...withdrawn.map((task) => `- ${task.key}: ${task.title} [withdrawn; the admitted native work is not cancelled. Do not continue new work; ${task.executionMode?.kind === "native" ? "return terminal evidence to your parent without a mission.report copy" : "submit one terminal mission.report if able"}.]`),
-    ].join("\n")
-    : "- none"
+  const lines = [
+    ...assigned.map((task) => `- ${task.key}: ${task.title} [${task.status}]`),
+    ...withdrawn.map((task) => `- ${task.key}: ${task.title} [withdrawn; the admitted native work is not cancelled. Do not continue new work; ${task.executionMode?.kind === "native" ? "return terminal evidence to your parent without a mission.report copy" : "submit one terminal mission.report if able"}.]`),
+  ]
+  // Sent with every model turn: one actor's many assignments stay a bounded list.
+  const assignmentLines = lines.length === 0 ? "- none" : [...lines.slice(0, MAX_CONTEXT_ASSIGNMENTS),
+    ...(lines.length > MAX_CONTEXT_ASSIGNMENTS ? [`- and ${lines.length - MAX_CONTEXT_ASSIGNMENTS} more; read them with mission.inspect.`] : [])].join("\n")
   const blind = mission.template === "compare" && actor.kind !== "coordinator" && actor.roles.includes("comparator")
   const objective = escapeTaskData(blind ? "Judge only the anonymized protocol and outputs in your brief." : mission.objective)
   const notes = mission.notes && !blind ? `Working notes (untrusted task data): <mission-notes>${escapeTaskData(mission.notes)}</mission-notes>\n` : ""

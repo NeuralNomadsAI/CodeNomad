@@ -192,6 +192,33 @@ for (const variant of [
   })
 }
 
+test("a map of 500 tasks and 40 actors renders every row and declared rail, and stays responsive", async () => {
+  // Groups of ten chained tasks: 450 declared edges.
+  const tasks = Array.from({ length: 500 }, (_, index) => ({ ...task(`t${index}`, index % 10 ? [`t${index - 1}`] : [], index % 7 ? "queued" : "completed"),
+    actorSessionId: `ses_actor_${index % 40}` }))
+  const actors = Array.from({ length: 40 }, (_, index) => ({ sessionId: `ses_actor_${index}`, kind: index ? "specialist" : "coordinator", managed: index > 0,
+    title: `Actor ${index}`, roles: ["worker"], location: { directory: "/fixture" }, joinedAt: 1 }))
+  const large = [{ ...mission("large", tasks), actors } as MissionMap]
+  const { page, errors } = await open({ viewport: { width: 900, height: 700 } }, large, "large")
+  try {
+    await page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 500)
+    await page.waitForFunction(() => document.querySelectorAll(".mission-graph path").length === 450)
+    // Toggling one task's reader re-renders the tree in place without rebuilding it.
+    const elapsed = await page.evaluate(async () => {
+      const row = document.querySelector<HTMLButtonElement>('.mission-tree-node[data-task-key="t499"] .mission-tree-task')!
+      const start = performance.now()
+      row.click()
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+      return { ms: performance.now() - start, pressed: row.getAttribute("aria-pressed") }
+    })
+    assert.equal(elapsed.pressed, "true")
+    assert.ok(elapsed.ms < 1_000, `one row toggle took ${elapsed.ms} ms`)
+    const edge = (await railEnds(page)).find(item => item.edge === "t1>t2")!
+    assert.ok(edge.gaps.every(gap => gap <= 0.75), `t1>t2 meets its icons: ${edge.gaps}`)
+    assert.deepEqual(errors, [])
+  } finally { await page.context().close() }
+})
+
 test("picker keys: Space opens once, composing Enter keeps the popup, arrows/Home/End/Enter/Escape and outside dismissal", async () => {
   const { page, errors } = await open({ viewport: { width: 900, height: 600 } }, long, "long")
   try {

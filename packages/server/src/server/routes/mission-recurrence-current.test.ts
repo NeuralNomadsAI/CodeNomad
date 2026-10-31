@@ -94,6 +94,19 @@ test("current recurrence route exposes real bounded native ancestry and exact-re
   } finally { await f.app.close() }
 })
 
+test("current recurrence route serves a passage of many actors and tasks", async () => {
+  const f = await fixture()
+  try {
+    const coordinator = f.mission.actors[0]
+    f.mission.actors.push(...Array.from({ length: 11 }, (_, index) => ({ ...coordinator, sessionId: `ses_actor_${index}`, kind: "specialist" as const, roles: ["worker"] })))
+    f.mission.tasks.push(...Array.from({ length: 100 }, (_, index) => ({ id: `tsk_${index}`, key: `task-${index}`, title: "Task", brief: "Brief",
+      role: "worker", blockedBy: [], status: "ready" as const, createdAt: 1, updatedAt: 1, outstandingExecution: false })))
+    const response = await f.app.inject({ method: "GET", url: f.url })
+    assert.equal(response.statusCode, 200)
+    assert.deepEqual([response.json().mission.actors.length, response.json().mission.tasks.length], [12, 100])
+  } finally { await f.app.close() }
+})
+
 for (const kind of ["available", "connected", "plugin", "owned", "foreignProject", "foreignSchedule", "invalidate", "advance"] as const) {
   test(`current recurrence route fences ${kind}`, async () => {
     const f = await fixture()

@@ -7,6 +7,10 @@ import { controlOperationID, controlReceiptID, recurrenceMessageID } from "./rec
 import type { MissionLifecycleInput, MissionControlRequestedEvent } from "./lifecycle-model"
 import { MISSION_SCHEMA_VERSION, type MissionMap, type MissionSnapshot } from "./model"
 
+/** Targets controlled at once. Each one is a bridge call that walks and interrupts a
+ * whole native family, so a mission with many actors controls them in waves. */
+export const MISSION_CONTROL_CONCURRENCY = 8
+
 // Explicit user actions only. Report recovery never calls this module.
 // The caller owns the same project lock used by dispatch and report admission.
 export async function controlMission(input: MissionLifecycleInput, options: {
@@ -79,7 +83,7 @@ export async function controlMission(input: MissionLifecycleInput, options: {
       || !isDeepStrictEqual(fresh.control.targets, operation.targets)) throw new Error("Mission control authority changed")
     return fresh
   }
-  const results = await Promise.allSettled(operation.pending.map(async sessionID => {
+  const results = await settleBounded(operation.pending, MISSION_CONTROL_CONCURRENCY, async sessionID => {
     const before = await journal.snapshot()
     const fresh = currentMission(before)
     if (!fresh.control!.pending.includes(sessionID)) return
@@ -104,9 +108,23 @@ export async function controlMission(input: MissionLifecycleInput, options: {
       throw new Error("Journal cannot retain native control acknowledgement")
     }
     await journal.append(receipt, () => { if (options.isActive?.() === false) throw new Error("Mission controls unavailable") })
-  }))
+  })
   mission = (await journal.snapshot()).missions.find(mission => mission.id === input.missionID)!
   await options.changed(mission.id, mission.revision)
   if (results.some(result => result.status === "rejected")) throw new MissionControlError("Mission state saved; retry the remaining native controls", "control-pending")
   return { mission }
+}
+
+/** `Promise.allSettled` over at most `limit` running calls. */
+async function settleBounded<T>(items: readonly T[], limit: number, run: (item: T) => Promise<void>): Promise<PromiseSettledResult<void>[]> {
+  const results: PromiseSettledResult<void>[] = []
+  let next = 0
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++
+      results[index] = await run(items[index]).then(value => ({ status: "fulfilled" as const, value }),
+        (reason: unknown) => ({ status: "rejected" as const, reason }))
+    }
+  }))
+  return results
 }

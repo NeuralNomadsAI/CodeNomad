@@ -166,9 +166,10 @@ test("registers seven tools, typed snapshot RPC, and role context", async () => 
   assert.deepEqual(nativeMutations, { create: 0, prompt: 0, synthetic: 0 })
   const replay = JSON.parse((await delegate.execute(declaration, call("replay"))).content)
   assert.deepEqual(replay, { ...declared, disposition: "existing" }, "context response does not mutate the canonical generation or execution")
-  // The exact prompt is rereadable without the declaration's response or the full map.
+  // The exact prompt is rereadable without the declaration's response or the full map,
+  // with the task's reports (none yet).
   const { disposition: _disposition, ...declaredView } = declared
-  assert.deepEqual(JSON.parse((await inspect.execute({ taskKey: "native-work" }, call("reread"))).content), declaredView)
+  assert.deepEqual(JSON.parse((await inspect.execute({ taskKey: "native-work" }, call("reread"))).content), { ...declaredView, reports: [] })
   await assert.rejects(inspect.execute({ taskKey: "missing-work" }, call("missing")), /task not found: missing-work/)
   await assert.rejects(delegate.execute({ ...declaration, brief: "Replace the saved scope" }, call("conflict")), /different contract/)
   const blocked = JSON.parse((await delegate.execute({ taskKey: "blocked-work", title: "Blocked", brief: "Wait for actual evidence", role: "specialist", blockedBy: [declaration.taskKey] }, call("blocked"))).content)

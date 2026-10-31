@@ -268,3 +268,12 @@ test("withdrawn native assignments return terminal evidence without duplicate bu
   const root = buildActorContext({ ...mission, actors: [actor], tasks: [{ ...withdrawn, executionMode: undefined }] }, actor.sessionId)
   assert.match(root, /submit one terminal mission.report if able/)
 })
+
+test("an actor's per-turn context lists a bounded number of its assignments", () => {
+  const actor = { ...mission.actors[0], sessionId: "ses_busy", kind: "specialist" as const }
+  const tasks: MissionTask[] = Array.from({ length: 300 }, (_, index) => ({ ...task, id: `tsk_${index}`, key: `task-${index}`,
+    actorSessionId: actor.sessionId, status: "queued" }))
+  const context = buildActorContext({ ...mission, actors: [actor], tasks }, actor.sessionId)
+  assert.equal(context.match(/^- task-\d+:/gm)?.length, 32)
+  assert.match(context, /- and 268 more; read them with mission.inspect\./)
+})

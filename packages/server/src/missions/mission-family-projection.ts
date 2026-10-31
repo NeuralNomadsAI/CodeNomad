@@ -1,7 +1,7 @@
 import type { SessionInfo } from "@opencode/client"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionTaskExecutionEvidence } from "./execution-evidence"
-import { MISSION_MAX_ACTORS, MISSION_MAX_TASKS, type MissionActivityProjection, type MissionMap } from "./model"
+import type { MissionActivityProjection, MissionMap } from "./model"
 import { MAX_MISSION_DESCENDANTS, type NativeMissionFamilyTree } from "./native-session-family"
 
 type FamilyProjection = NonNullable<MissionActivityProjection["missions"][number]["family"]>
@@ -12,15 +12,19 @@ export function projectMissionFamily(input: {
   mission: MissionMap
   trees: ReadonlyMap<string, NativeMissionFamilyTree>
   observed: boolean
+  /** Declared actors this refresh did not read (its actor budget): the family is partial without them. */
+  unread?: ReadonlySet<string>
 }): FamilyProjection {
   const unknown: FamilyProjection = { state: "unknown", members: [] }
   const { mission, trees } = input
-  if (!input.observed || !mission.actors.length || mission.actors.length > MISSION_MAX_ACTORS
-    || mission.tasks.length > MISSION_MAX_TASKS) return unknown
+  if (!input.observed || !mission.actors.length) return unknown
   const declared = new Map(mission.actors.map(actor => [actor.sessionId, actor]))
   if (declared.size !== mission.actors.length) return unknown
+  // Every read actor needs its observed tree; any failure still clears the whole membership.
+  const read = mission.actors.filter(actor => !input.unread?.has(actor.sessionId))
+  if (!read.length) return unknown
   const sessions = new Map<string, SessionInfo>()
-  for (const actor of mission.actors) {
+  for (const actor of read) {
     const tree = trees.get(actor.sessionId), root = tree?.get(actor.sessionId)
     if (!tree || !root || tree.size > MAX_MISSION_DESCENDANTS + 1 || root.id !== actor.sessionId
       || root.projectID !== mission.projectID || !sameLocation(root.location, actor.location)) return unknown
@@ -44,7 +48,7 @@ export function projectMissionFamily(input: {
   }
   // A declared child fetched independently must also occur in its observed
   // parent's complete catalog; its saved actor row cannot fill a missing edge.
-  for (const actor of mission.actors) {
+  for (const actor of read) {
     const tree = trees.get(actor.sessionId)!
     for (const session of sessions.values()) {
       if (session.parentID && tree.has(session.parentID) && !tree.has(session.id)) return unknown
@@ -61,7 +65,7 @@ export function projectMissionFamily(input: {
     }
   }
   const contexts = new Map<string, string | undefined>()
-  for (const actor of mission.actors) {
+  for (const actor of read) {
     const candidates = mission.tasks.filter(task => task.actorSessionId === actor.sessionId).map(task => ({
       task, evidence: missionTaskExecutionEvidence(task),
     }))
@@ -84,5 +88,5 @@ export function projectMissionFamily(input: {
     members.push({ sessionId: session.id, ...(session.parentID ? { parentSessionId: session.parentID } : {}),
       actorSessionId: ancestor.id, ...(taskKey ? { taskKey } : {}), kind: declared.has(session.id) ? "declared" : "ordinary" })
   }
-  return { state: "observed", members }
+  return { state: read.length < mission.actors.length ? "partial" : "observed", members }
 }

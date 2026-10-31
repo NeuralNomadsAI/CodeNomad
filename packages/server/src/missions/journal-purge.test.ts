@@ -3,7 +3,7 @@ import test from "node:test"
 import { MissionControl, MissionControlError } from "./control"
 import type { MissionDeleteInput, MissionInputTransport, MissionSessionAdapter, NativeMissionSession } from "./control-types"
 import { MissionJournal, MISSION_JOURNAL_STORAGE_PREFIX, stableToken, type MissionStorage } from "./journal"
-import { MISSION_DELETION_RESERVE, MISSION_MAX_EVENTS, type MissionEvent, type MissionJsonValue, type MissionMap } from "./model"
+import { MISSION_MAX_EVENTS, missionLifecycleReserve, type MissionEvent, type MissionJsonValue, type MissionMap } from "./model"
 import { cleanupReceiptID } from "./cleanup-projection"
 import { controlOperationID, controlReceiptID } from "./receipt-identity"
 
@@ -77,8 +77,9 @@ function fixture(options: { removable?: boolean } = {}) {
   const records = () => [...values.keys()].filter(key => key.startsWith(`${MISSION_JOURNAL_STORAGE_PREFIX}/deleted/${journal.projectToken}/`))
   // Raw durable entries, as an earlier build or a long history left them.
   const seed = (event: MissionEvent) => values.set(`${prefix}/${event.missionID}/${event.id}`, structuredClone(event) as unknown as MissionJsonValue)
-  const fill = (missionID: string) => {
-    for (let index = 0; entries(missionID).length < MISSION_MAX_EVENTS; index++) seed({ version: 1, id: `evt_filler_${index}`, type: "mission.updated",
+  // Up to the mission's ordinary capacity: the lifecycle reserve of its actors stays free.
+  const fill = (missionID: string, actors: number) => {
+    for (let index = 0; entries(missionID).length < MISSION_MAX_EVENTS - missionLifecycleReserve(actors); index++) seed({ version: 1, id: `evt_filler_${index}`, type: "mission.updated",
       missionID, projectID: "project-1", requestID: `filler-${index}`, expectedRevision: 1, notesSpecified: false, objective: "Filler", createdAt: 2_000 + index })
   }
   return { values, storage, withoutRemoval, native, nativeRemoved, failing, removed, control, journal, prefix, create, delegate, deletion, entries, records, seed, fill,
@@ -234,7 +235,7 @@ for (const removable of [true, false]) {
     const f = fixture({ removable })
     const crowded = await f.delegate(await f.create("crowded"), "worker")
     const other = await f.create("other")
-    f.fill(crowded.id)
+    f.fill(crowded.id, crowded.actors.length)
     const current = (await f.control().snapshot()).missions.find(mission => mission.id === crowded.id)!
     await assert.rejects(f.control().update({ missionID: crowded.id, requestID: "refused", expectedRevision: current.revision, objective: "Refused" }),
       /2000-event safety limit of this mission/)
@@ -243,7 +244,7 @@ for (const removable of [true, false]) {
     await f.control().update({ missionID: other.id, requestID: "other-update", expectedRevision: other.revision, objective: "Other" })
     await f.control().delete(f.deletion(current, true))
     const own = f.entries(crowded.id).length
-    assert.ok(own > MISSION_MAX_EVENTS && own <= MISSION_MAX_EVENTS + MISSION_DELETION_RESERVE, `${own}`)
+    assert.ok(own > MISSION_MAX_EVENTS - missionLifecycleReserve(crowded.actors.length) && own <= MISSION_MAX_EVENTS, `${own}`)
     assert.deepEqual(f.nativeRemoved, [specialist(crowded)])
     // The settled deletion stays as recent cleanup history: purging is retention, never room-making.
     assert.equal(f.records().length, 0)

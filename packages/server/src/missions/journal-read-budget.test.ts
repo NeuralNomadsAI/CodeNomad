@@ -4,7 +4,7 @@ import Fastify from "fastify"
 
 import { fixture, type HistoryFixture } from "./journal-history-fixture"
 import { MISSION_INDEX_STALE_AFTER_MS, MissionJournalIndex } from "./journal-index"
-import { MISSION_MAX_STORED_EVENTS, type MissionJsonValue } from "./model"
+import { MISSION_MAX_EVENTS, type MissionJsonValue } from "./model"
 import { setupMissionsPlugin } from "../opencode/missions-plugin"
 import { hintsShowWork, retainMissionWork } from "../opencode/missions/lifetime"
 import { registerMissionRoutes } from "../server/routes/missions"
@@ -142,7 +142,7 @@ test("GET /missions over the plugin observes and loads only open and selected mi
 
 test("a project far beyond one mission's bound reads, creates, appends, deletes and purges", async () => {
   const { f, mission } = await liveMission(8)
-  assert.ok(HISTORY > 4 * MISSION_MAX_STORED_EVENTS)
+  assert.ok(HISTORY > 4 * MISSION_MAX_EVENTS)
   await f.control().declare(mission.coordinatorSessionId, { missionID: mission.id, taskKey: "more", title: "More", brief: "Bounded", role: "research", blockedBy: [] })
   const snapshot = await f.journal.snapshot()
   assert.deepEqual([snapshot.discardedEvents, snapshot.missions.length], [0, HISTORY_MISSIONS + 1])

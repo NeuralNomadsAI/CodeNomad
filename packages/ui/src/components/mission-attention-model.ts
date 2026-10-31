@@ -11,10 +11,11 @@ import type { MissionActivityProjection } from "../../../server/src/api-types"
 
 export type MissionObservedFamily = NonNullable<MissionActivityProjection["missions"][number]["family"]>
 
-/** Display correlation only. No local catalogue/tree inference or actor admission. */
+/** Display correlation only. No local catalogue/tree inference or actor admission.
+ * A partial family lists the members of the actors one refresh read. */
 export function selectMissionFamilyMembers(actors: readonly MissionAttentionActor[], family?: MissionObservedFamily): MissionObservedFamily["members"] {
-  // The server bounds eight declared roots to 32 descendants apiece.
-  if (family?.state !== "observed" || family.members.length > 8 * 33) return []
+  // The server bounds each declared root to 32 descendants.
+  if ((family?.state !== "observed" && family?.state !== "partial") || family.members.length > actors.length * 33) return []
   const declared = new Set(actors.map(actor => actor.sessionId))
   const members = new Map(family.members.map(member => [member.sessionId, member]))
   if (members.size !== family.members.length) return []

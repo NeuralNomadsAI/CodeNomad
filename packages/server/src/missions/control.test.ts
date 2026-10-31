@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { MISSION_MAX_ACTORS, MISSION_MAX_EVENTS, type MissionJsonValue } from "./model"
+import { MISSION_MAX_EVENTS, type MissionJsonValue } from "./model"
 
 import {
   MissionControl,
@@ -215,28 +215,28 @@ test("a project keeps creating missions past twenty, all listed", async () => {
   assert.ok(replay.mission)
 })
 
-test("rejects new explicit actors at capacity but permits reuse and retry", async () => {
+test("admits explicit actors without a count limit and keeps reuse and retry", async () => {
   const { create, sessions } = harness()
   const control = create()
-  await control.inspect("ses_coordinator", { start: { objective: "Bound actors", template: "custom" } }, "start")
+  await control.inspect("ses_coordinator", { start: { objective: "Many actors", template: "custom" } }, "start")
   const assignment = (index: number, targetSessionID: string) => ({
-    taskKey: `task-${index}`, title: `Task ${index}`, brief: "A bounded assignment", role: "specialist",
+    taskKey: `task-${index}`, title: `Task ${index}`, brief: "An assignment", role: "specialist",
     blockedBy: [], delivery: "queue" as const, targetSessionID,
   })
-  for (let index = 0; index < MISSION_MAX_ACTORS; index++) {
+  const actors = 12
+  for (let index = 0; index < actors; index++) {
     const id = `ses_actor_${index}`
     sessions.sessions.set(id, { ...sessions.sessions.get("ses_coordinator")!, id })
-    if (index < MISSION_MAX_ACTORS - 1) await control.delegate("ses_coordinator", assignment(index, id))
-    else await assert.rejects(control.delegate("ses_coordinator", assignment(index, id)),
-      (error: unknown) => error instanceof MissionControlError && error.code === "actor-limit")
+    await control.delegate("ses_coordinator", assignment(index, id))
   }
   const before = (await create().snapshot()).missions[0]!
-  assert.equal(before.actors.length, MISSION_MAX_ACTORS)
-  assert.equal(before.tasks.at(-1)?.status, "ready")
+  assert.equal(before.actors.length, actors + 1)
   assert.equal((await create().snapshot()).discardedEvents, 0)
-  const retried = await control.delegate("ses_coordinator", assignment(MISSION_MAX_ACTORS - 1, "ses_actor_0"))
-  assert.equal(retried.disposition, "dispatched")
-  assert.equal(retried.mission.actors.length, MISSION_MAX_ACTORS)
+  const reused = await control.delegate("ses_coordinator", assignment(actors, "ses_actor_0"))
+  assert.equal(reused.disposition, "dispatched")
+  assert.equal(reused.mission.actors.length, actors + 1)
+  const retried = await control.delegate("ses_coordinator", assignment(actors, "ses_actor_0"))
+  assert.equal(retried.disposition, "existing")
 })
 
 test("delegates between root sessions, queues reports, and restores the durable map", async () => {

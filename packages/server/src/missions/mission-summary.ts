@@ -21,6 +21,8 @@ export interface MissionSummary {
   /** Declared actors: the native requests a row counts. */
   actorSessionIds: string[]
   updatedAt: number
+  /** The map's `finishSequence`: the project-wide order of its finish. */
+  finishSequence?: number
   revision: number
 }
 
@@ -29,7 +31,8 @@ export function missionSummary(mission: MissionMap): MissionSummary {
     id: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }),
     objective: Array.from(mission.objective.trim().replace(/\s+/g, run => run.includes("\n") ? "\n" : " ")).slice(0, MISSION_SUMMARY_OBJECTIVE).join(""),
     status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }),
-    coordinatorSessionId: mission.coordinatorSessionId, actorSessionIds: mission.actors.map(actor => actor.sessionId), updatedAt: mission.updatedAt, revision: mission.revision,
+    coordinatorSessionId: mission.coordinatorSessionId, actorSessionIds: mission.actors.map(actor => actor.sessionId), updatedAt: mission.updatedAt,
+    ...(mission.finishSequence === undefined ? {} : { finishSequence: mission.finishSequence }), revision: mission.revision,
   }
 }
 
@@ -40,6 +43,6 @@ export const missionSummarySchema = {
     status: { type: "string", enum: ["active", "completed", "failed", "stopped"] },
     runState: { type: "string", enum: ["prepared", "running", "paused", "stopped"] },
     coordinatorSessionId: { type: "string" }, actorSessionIds: { type: "array", items: { type: "string" } },
-    updatedAt: { type: "number" }, revision: { type: "number" },
+    updatedAt: { type: "number" }, finishSequence: { type: "integer", minimum: 1 }, revision: { type: "number" },
   }, required: ["id", "objective", "status", "coordinatorSessionId", "actorSessionIds", "updatedAt", "revision"], additionalProperties: false,
 } as const

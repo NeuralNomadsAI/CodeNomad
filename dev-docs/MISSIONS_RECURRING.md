@@ -133,6 +133,10 @@ Resume is only ever an explicit user action. Stopped schedules cannot be played,
 A schedule document keeps at most 64 control records. Admitting a new control
 evicts the oldest completed record; unresolved records are never evicted, and an
 evicted request's exact status reads unknown, which never authorizes a resend.
+Pause/Stop freeze every actor of the pending passage as targets, however many it
+has (`missions/recurrence-store.ts` `recordControl`); a record keeps its targets only
+until it completes, when every one was acknowledged, so only the single unresolved
+Pause/Stop a schedule admits lists them and the document stays within its 256 KiB.
 `evictedControlRevision` bounds every evicted record's revision; a document without
 it starts from its current revision as the bound.
 A Play/Resume/Check whose Job or observer start stayed unknown is resolved by a
@@ -302,6 +306,15 @@ Native permissions govern every other tool: read, shell, ordinary subagents and
 business tools run under those permissions alone. Preserve frozen profiles and taskMode.
 Both native descendants and passage-owned independent actors must be accounted
 for without inventing ancestry from task dependencies.
+
+The current-passage reader (`opencode/missions/native-recurrence-current.ts`, behind
+`recurrenceCurrent` and `recurrenceCurrentContent`) is read-only and takes one
+`missionView(passage.missionID)` observation of the passage's isolated journal: the
+map, the range's damage flags and the creation event that must carry the passage ID
+come from the same events, followed by the schedule re-read that refuses a changed
+passage. Its scans count the entries' canonical bytes against 32 MiB, so one read of
+a journal up to that size serves the full map; a larger passage journal answers
+`Current passage journal capacity`.
 
 ## Settlement, result and watched cursors
 

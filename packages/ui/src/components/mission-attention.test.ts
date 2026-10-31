@@ -60,7 +60,26 @@ it("rejects ambiguous, cyclic, incomplete and wrong-nearest-actor ancestry", () 
   for (const parentSessionId of ["child", "missing"]) assert.deepEqual(selectMissionFamilyMembers(actors,
     { ...family, members: [{ ...child, parentSessionId }] }), [])
   assert.deepEqual(selectMissionFamilyMembers(actors, { ...family, members: [{ ...child, actorSessionId: "ses-active" }] }), [])
-  assert.deepEqual(selectMissionFamilyMembers(actors, { ...family, members: Array.from({ length: 265 }, (_, n) => ({ ...child, sessionId: `child-${n}` })) }), [])
+  assert.deepEqual(selectMissionFamilyMembers(actors, { ...family, members: Array.from({ length: actors.length * 33 + 1 }, (_, n) => ({ ...child, sessionId: `child-${n}` })) }), [])
+})
+
+it("selects the observed family of a mission with many declared actors", () => {
+  const actors = Array.from({ length: 40 }, (_, n) => ({ sessionId: `root-${n}` }))
+  const members = actors.flatMap(({ sessionId }) => [
+    { sessionId, actorSessionId: sessionId, kind: "declared" as const },
+    ...Array.from({ length: 7 }, (_, child) => ({ sessionId: `${sessionId}-child-${child}`, parentSessionId: sessionId,
+      actorSessionId: sessionId, kind: "ordinary" as const })),
+  ])
+  assert.equal(selectMissionFamilyMembers(actors, { state: "observed", members }).length, 280)
+  assert.equal(missionIncludesSession(actors, "root-39-child-6", { state: "observed", members }), true)
+})
+
+it("a partial family correlates the members of the actors one refresh read", () => {
+  const partial: MissionObservedFamily = { state: "partial", members: family.members.filter(member => member.actorSessionId === "ses-background") }
+  const input = source({ family: partial, forms: [form("child-question", "grandchild"), form("actor", "ses-active")] })
+  assert.deepEqual(selectMissionAttention(input).map(item => [item.sessionId, item.actorSessionId]),
+    [["grandchild", "ses-background"], ["ses-active", "ses-active"]])
+  assert.equal(missionIncludesSession(input.actors, "child", partial), true)
 })
 
 /** The selector only reads a task's identity and, when present, its report. */

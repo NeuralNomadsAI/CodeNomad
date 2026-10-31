@@ -52,16 +52,20 @@ export function MissionGraph(props: { tasks: MissionTask[]; list: HTMLUListEleme
     onCleanup(() => { observer.disconnect(); cancelAnimationFrame(frame) })
   })
   const edges = () => {
+    // Keyed lookups keep hundreds of rows and their edges linear.
+    const byKey = new Map(points().map(point => [point.key, point]))
     const links = props.tasks.flatMap(task => task.blockedBy.flatMap(key => {
-      const from = points().find(point => point.key === key)
-      const to = points().find(point => point.key === task.key)
+      const from = byKey.get(key)
+      const to = byKey.get(task.key)
       return from && to ? [{ from, to }] : []
     }))
-    const sources = points().filter(point => links.some(link => link.from.key === point.key))
+    const lastTarget = new Map<string, number>()
+    for (const link of links) lastTarget.set(link.from.key, Math.max(lastTarget.get(link.from.key) ?? -Infinity, link.to.y))
+    const sources = points().filter(point => lastTarget.has(point.key))
     const ends: number[] = []
     const lanes = new Map<string, number>()
     for (const source of sources) {
-      const last = Math.max(...links.filter(link => link.from.key === source.key).map(link => link.to.y))
+      const last = lastTarget.get(source.key)!
       // A lane ending at this very row belongs to an edge into this source: chains stay on one straight rail.
       const free = ends.findIndex(end => end <= source.y)
       const lane = free < 0 ? ends.length : free
