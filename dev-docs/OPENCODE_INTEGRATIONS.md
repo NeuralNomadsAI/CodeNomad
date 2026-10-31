@@ -41,8 +41,8 @@ blob IDs (`git rev-parse <revision>:<source>`), adapt `contract.ts` and extend t
 
 OpenCode imports RPC definitions through Effect's JSON Schema import, which refuses `pattern` ("Patterns may block
 validation and are disabled"; OpenCode 2.2.5): a call whose declared output schema has a pattern fails with
-`rpc.invalid_output`. Integration packages register their definitions without `pattern` and validate their own
-inputs; CodeNomad revalidates every output with `contract.ts`.
+`rpc.invalid_output`. Integration packages register their definitions without `pattern` and validate every input
+themselves; readers revalidate outputs with `contract.ts`.
 
 ## Test fixtures
 
@@ -51,17 +51,23 @@ inputs; CodeNomad revalidates every output with `contract.ts`.
   every other name. Its `url` is the `registry` option of `withProductRuntime`.
 - `scripts/fixtures/fake-integration/core.mjs`: the native contract of a fake integration, dependency-free because
   it is copied into the package. `createOfferRegistry({ now, hello, newOfferID })` implements the offer rules of
-  the handshake (hello validation, 15 s lease renewed by the same announcement, replacement only after a new hello,
-  16 offers, `busy`/`gone`/`refused` attachment) on the injected clock; `createFakeIntegrationRpc` adds `status`,
-  `installHost` and the event relay; `sharedOfferRegistry` keeps one registry per daemon process.
+  the handshake (hello checked against `host.schema.json`, 15 s lease renewed by the same announcement, replacement
+  only after a new hello, 16 offers and one per offer key under concurrent announcements, validated
+  `attachHost`/`detachHost` IDs, `busy`/`gone`/`refused` attachment, at most 10,000 bindings) on the injected clock;
+  host part compatibility is derived for the fake's own range `^0.1.0` only, prereleases included.
+  `createFakeIntegrationRpc` adds `status`, `installHost` and the event relay; `sharedOfferRegistry` keeps one
+  registry per daemon process.
 - `scripts/fixtures/fake-integration/index.mjs`: `writeFakeIntegrationPackage`/`packFakeIntegration` write or
   pack `@neuralnomads/opencode-<id>` (default `fixture`) with options `markerMismatch` (`status` reports
   `<id>-other`), `hostPart` (`absent` or installed) and `installOutcome`; `startFakeHost` is a loopback host whose
   token and script handle are the `FAKE_INTEGRATION_SENTINELS` (`leaky` puts its script handle in the document and
-  its port in the application version); `findSentinels`/`assertNoSentinels` scan any value for them.
+  its port in the application version, `helloOverride` rewrites its hello); `findSentinels`/`assertNoSentinels`
+  scan any value for them.
 - `scripts/fixtures/fake-integration/python-host.py` runs the vendored reference client (`Service.discover`, then
-  `advertise_all` or `withdraw_all`) under an audit hook and reports every file and network access outside the
-  Python installation.
+  `advertise_all` or `withdraw_all`) under an audit hook. It reports every opened, listed or written path outside
+  the Python installation, every name resolution and connection, and any child process, raw socket, `ctypes` or
+  `shutil` use, which escapes the hook and fails the check. Metadata reads (`os.stat`, `os.path.exists`) raise no
+  audit event; the fixture environment keeps the home, profile and XDG folders they resolve inside the fixture.
 - `writeFixtureServiceRegistration(env, registration)` (`scripts/native-product-fixture.mjs`) writes the fixture
   daemon's `service.json` under the fixture's `XDG_STATE_HOME`; `withProductRuntime` passes its `env` to `run`.
 
@@ -71,9 +77,10 @@ Commands:
 - `node --import tsx --test scripts/fixtures/fake-integration/fake-integration.test.mjs`
 - `node --import tsx scripts/test-integration-fixtures-native.mjs <absolute-cli>`: installs the fake package and
   its marker-mismatch variant through the fake registry, checks every output against `contract.ts`, runs the
-  Python client against the fixture's own registration (advertise, attach, detach, withdraw) and proves that it
-  reads, writes and reaches nothing outside the fixture, then checks the daemon log for the sentinels. In CI it
-  requires Python 3.
+  Python client against the fixture's own registration (advertise, attach, detach, withdraw), checks that its
+  audited accesses stay inside the fixture and reach only the fixture daemon and that it prints neither the host
+  token nor the daemon password, then checks the daemon log for the sentinels. In CI it requires Python 3; a
+  local run without Python 3 skips that part and says so.
 
 ## Agent conventions
 

@@ -8,7 +8,8 @@ export async function startFakeNpmRegistry() {
   const packages = new Map(), tarballs = new Map(), requested = []
   let url
   const server = createServer((req, res) => {
-    const pathname = decodeURIComponent(req.url.split("?")[0])
+    let pathname
+    try { pathname = decodeURIComponent(req.url.split("?")[0]) } catch { res.writeHead(400); res.end(); return }
     requested.push(pathname)
     const archive = tarballs.get(pathname)
     if (archive) { res.writeHead(200, { "Content-Type": "application/octet-stream" }); res.end(archive); return }

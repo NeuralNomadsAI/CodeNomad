@@ -2,7 +2,7 @@
 // fixtures): the loopback fake registry installs the fake integration package, its native RPC contract answers
 // within the zod contract, a marker-mismatch package reports another ID, and the reference Python discovery
 // client advertises a fake host through the fixture's own registration. No host secret reaches an RPC output or
-// the daemon log, and the Python client reads, writes and reaches nothing outside the fixture.
+// the daemon log, and every audited Python access stays inside the fixture and reaches only the fixture daemon.
 import assert from "node:assert/strict"
 import { spawn, spawnSync } from "node:child_process"
 import { readFile, writeFile } from "node:fs/promises"
@@ -63,13 +63,16 @@ try {
         const result = await runPython(python, PYTHON_HOST, { env, cwd: root,
           input: JSON.stringify({ action, rpc_id: "neuralnomads.fixture", offer: host.advertiseInput(), config_dir: env.OPENCODE_CONFIG_DIR }) })
         assert.equal(result.status, 0, result.stderr)
-        assert.doesNotMatch(result.stdout + result.stderr, new RegExp(FAKE_INTEGRATION_SENTINELS.token), "The Python client prints no token")
+        for (const secret of [FAKE_INTEGRATION_SENTINELS.token, connection.endpoint.auth.password])
+          assert(!(result.stdout + result.stderr).includes(secret), "The Python client prints neither the host token nor the daemon password")
         const report = JSON.parse(result.stdout)
         assert.deepEqual(report.services, [connection.endpoint.url], "Discovery finds the fixture daemon only")
         for (const access of report.accesses) {
-          if (access.kind === "connect") assert.match(access.address, new RegExp(`^127\\.0\\.0\\.1:${daemon.port}$`), "Python reaches the fixture daemon only")
+          if (access.kind === "forbidden") assert.fail(`Python escapes the audit hook through ${access.event}`)
+          else if (access.kind === "connect") assert.match(access.address, new RegExp(`^127\\.0\\.0\\.1:${daemon.port}$`), "Python reaches the fixture daemon only")
+          else if (access.kind === "resolve") assert.equal(access.address, "127.0.0.1", "Python resolves the fixture daemon only")
           else assert(!path.relative(root, access.path).startsWith("..") && !path.isAbsolute(path.relative(root, access.path)),
-            `Python ${access.kind}s inside the fixture only: ${access.path}`)
+            `Python ${access.event ?? access.kind}s inside the fixture only: ${access.path}`)
         }
         assert(report.accesses.some(access => access.kind === "list" && path.resolve(access.path) === path.join(env.XDG_STATE_HOME, "opencode")),
           "Discovery reads the fixture's XDG_STATE_HOME")

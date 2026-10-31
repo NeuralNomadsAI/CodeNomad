@@ -41,13 +41,15 @@ const DEFAULT_CAPABILITIES = { methods: ["context", "apply"], operations: [{ nam
 
 /**
  * A loopback host of protocol 1 answering `hello` with the sentinel token and script handle. `leaky` puts the
- * script handle in its document and its port in its application version, which a plugin must not copy (HST-11).
+ * script handle in its document and its port in its application version, which a plugin must not copy (HST-11);
+ * `helloOverride` rewrites the hello it answers, for out-of-schema answers.
  */
 export async function startFakeHost({ token = FAKE_INTEGRATION_SENTINELS.token, scriptHandle = FAKE_INTEGRATION_SENTINELS.scriptHandle,
-  protocol = 1, hostVersion = "0.1.0", appVersion = "1.0.0", document = "fixture-scene.dat", leaky = false, capabilities = DEFAULT_CAPABILITIES } = {}) {
+  protocol = 1, hostVersion = "0.1.0", appVersion = "1.0.0", document = "fixture-scene.dat", leaky = false, capabilities = DEFAULT_CAPABILITIES,
+  helloOverride = value => value } = {}) {
   const requests = [], sockets = new Set()
   let port = 0
-  const hello = () => ({ protocol, host_version: hostVersion, app_version: leaky ? `${appVersion} build ${port}` : appVersion,
+  const hello = () => helloOverride({ protocol, host_version: hostVersion, app_version: leaky ? `${appVersion} build ${port}` : appVersion,
     capabilities, capability_hash: capabilityHash(capabilities), script_handle: scriptHandle, revision: 0, document: leaky ? scriptHandle : document })
   const server = net.createServer(socket => {
     sockets.add(socket)

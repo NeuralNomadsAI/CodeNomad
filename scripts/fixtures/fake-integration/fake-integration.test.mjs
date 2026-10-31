@@ -6,7 +6,7 @@ import { after, describe, it } from "node:test"
 import { integrationMarkerSchema, integrationRpcSchemas } from "../../../packages/server/src/opencode/integrations/contract.ts"
 import { startFakeNpmRegistry } from "../fake-npm-registry.mjs"
 import { assertNoSentinels, createFakeIntegrationRpc, createOfferRegistry, FAKE_INTEGRATION_SENTINELS, fakeIntegrationMarker, findSentinels,
-  MAX_OFFERS, OFFER_LEASE_MS, packFakeIntegration, sharedOfferRegistry, startFakeHost, writeFakeIntegrationPackage } from "./index.mjs"
+  MAX_BINDINGS, MAX_OFFERS, OFFER_LEASE_MS, packFakeIntegration, sharedOfferRegistry, startFakeHost, writeFakeIntegrationPackage } from "./index.mjs"
 
 const cleanups = []
 after(async () => { for (const cleanup of cleanups.reverse()) await cleanup() })
@@ -167,6 +167,57 @@ describe("fake offer registry", () => {
     assert.deepEqual(await call("advertise", host.advertiseInput({ offer_key: "one-more" })), { outcome: "refused" })
   })
 
+  it("keeps the cap and one offer per key under concurrent announcements", async () => {
+    const host = await fakeHost()
+    // Every hello resolves only once all announcements are in flight.
+    let release
+    const gate = new Promise(resolve => { release = resolve })
+    const registry = createOfferRegistry({ protocol: 1, hello: async () => { await gate; return host.hello() } })
+    const many = Array.from({ length: MAX_OFFERS + 4 }, (_, index) => registry.advertise(host.advertiseInput({ offer_key: `k${index}` })))
+    const same = [registry.advertise(host.advertiseInput({ offer_key: "same" })), registry.advertise(host.advertiseInput({ offer_key: "same" }))]
+    release()
+    await Promise.all([...many, ...same])
+    const { offers } = registry.hosts()
+    assert.equal(offers.length, MAX_OFFERS)
+    assert(integrationRpcSchemas["hosts.output"].safeParse({ offers }).success)
+    const second = createOfferRegistry({ protocol: 1, hello: async () => { await new Promise(resolve => setTimeout(resolve, 5)); return host.hello() } })
+    await Promise.all([second.advertise(host.advertiseInput({ offer_key: "same" })), second.advertise(host.advertiseInput({ offer_key: "same" }))])
+    assert.equal(second.hosts().offers.length, 1, "one offer per offer key")
+  })
+
+  it("refuses a hello outside host.schema.json and reports a 0.1.0 prerelease as outdated", async () => {
+    const { call } = harness()
+    const broken = [
+      hello => { const { revision: _, ...rest } = hello; return rest },
+      hello => ({ ...hello, host_version: "not-a-version" }),
+      hello => ({ ...hello, app_version: "C:\\Blender" }),
+      hello => ({ ...hello, document: "/home/a/scene" }),
+      hello => ({ ...hello, capabilities: { ...hello.capabilities, extra: true } }),
+      hello => ({ ...hello, capability_hash: "0".repeat(64) }),
+    ]
+    for (const [index, helloOverride] of broken.entries()) {
+      const host = await fakeHost({ helloOverride })
+      assert.deepEqual(await call("advertise", host.advertiseInput({ offer_key: `broken-${index}` })), { outcome: "refused" }, `hello variant ${index}`)
+    }
+    const prerelease = await fakeHost({ hostVersion: "0.1.0-dev.1" })
+    assert.deepEqual(await call("advertise", prerelease.advertiseInput()), { outcome: "accepted" })
+    assert.deepEqual((await call("status")).host, { state: "outdated", partVersion: "0.1.0-dev.1", expectedRange: "^0.1.0", appVersion: "1.0.0", action: "update" })
+  })
+
+  it("validates attachHost and detachHost IDs itself and bounds the bindings", async () => {
+    const host = await fakeHost()
+    const { call, registry } = harness()
+    await call("advertise", host.advertiseInput())
+    const { offers: [offer] } = await call("hosts")
+    assert.deepEqual(await call("attachHost", { offerID: offer.offerID, sessionID: "ses.dotted" }), { outcome: "refused" })
+    assert.deepEqual(await call("attachHost", { offerID: "short", sessionID: "ses_a" }), { outcome: "gone" })
+    assert.deepEqual(await call("attachHost", null), { outcome: "refused" })
+    assert.deepEqual(await call("detachHost", { sessionID: "s".repeat(129) }), { outcome: "none" })
+    for (let index = 0; index < MAX_BINDINGS; index++) registry.attach(offer.offerID, `ses_${index}`)
+    assert.deepEqual(await call("attachHost", { offerID: offer.offerID, sessionID: "ses_extra" }), { outcome: "refused" })
+    assert.equal((await call("status")).connection.attachedSessions, MAX_BINDINGS)
+  })
+
   it("shares one registry per integration across module evaluations", () => {
     const marker = fakeIntegrationMarker("shared")
     const first = sharedOfferRegistry(marker)
@@ -193,6 +244,7 @@ describe("fake npm registry", () => {
     assert.equal(await tarball.text(), "tarball")
     assert.match(packument.versions["0.1.0"].dist.integrity, /^sha512-/)
     assert.equal((await fetch(`${registry.url}/@neuralnomads/opencode-unknown`)).status, 404)
+    assert.equal((await fetch(`${registry.url}/%E0%A4%A`)).status, 400, "a malformed escape answers 400")
     assert.ok(registry.requested.includes("/@neuralnomads/opencode-unknown"))
   })
 })

@@ -1,8 +1,9 @@
 """Drives the reference discovery client the way a headless native host does, inside a fixture.
 
 Run with `python -I` and the fixture environment. Reads {"action", "rpc_id", "offer", "config_dir"} on stdin,
-then prints the discovered service URLs, the advertise or withdraw results and every file and network access
-made after start-up, so the caller can prove that nothing outside the fixture was read, written or reached.
+then prints the discovered service URLs, the advertise or withdraw results and every audited file, name
+resolution and connection made after start-up, plus any audit event that escapes the hook (child processes, raw
+sockets, ctypes, shutil), so the caller can check that they all stay inside the fixture.
 The token arrives on stdin and is never printed.
 """
 
@@ -15,16 +16,34 @@ VENDOR = os.path.join(HERE, "vendor")
 sys.path.insert(0, VENDOR)
 
 accesses = []
+# Audit events whose string arguments are paths. Metadata reads (os.stat, os.path.exists) raise no audit event:
+# the fixture environment keeps the home, profile and XDG folders those would resolve inside the fixture.
+PATH_EVENTS = {"open": "open", "os.listdir": "list", "os.scandir": "list"}
+WRITE_EVENTS = ("os.mkdir", "os.rmdir", "os.remove", "os.rename", "os.replace", "os.chmod", "os.chown", "os.utime",
+                "os.truncate", "os.link", "os.symlink", "os.chdir", "os.chflags", "os.lchflags", "os.removexattr", "os.setxattr")
+# A child process or raw socket use escapes this hook, so either fails the check outright.
+FORBIDDEN_PREFIXES = ("subprocess.", "os.system", "os.exec", "os.posix_spawn", "os.spawn", "os.startfile", "os.fork",
+                      "_winapi.CreateProcess", "ctypes.", "socket.bind", "socket.sendto", "socket.sendmsg", "shutil.")
+
+
+def strings(args):
+    return [os.fsdecode(arg) for arg in args if isinstance(arg, (str, bytes))]
 
 
 def audit(event, args):
-    if event == "open" and isinstance(args[0], (str, bytes)):
-        accesses.append({"kind": "open", "path": os.fsdecode(args[0]), "mode": str(args[1])})
-    elif event in ("os.listdir", "os.scandir") and isinstance(args[0], (str, bytes)):
-        accesses.append({"kind": "list", "path": os.fsdecode(args[0])})
-    elif event == "socket.connect":
+    if event in PATH_EVENTS:
+        for path in strings(args[:1]):
+            accesses.append({"kind": PATH_EVENTS[event], "path": path})
+    elif event in WRITE_EVENTS:
+        for path in strings(args):
+            accesses.append({"kind": "write", "event": event, "path": path})
+    if event == "socket.connect":
         address = args[1]
         accesses.append({"kind": "connect", "address": "%s:%s" % (address[0], address[1]) if isinstance(address, tuple) else str(address)})
+    elif event == "socket.getaddrinfo":
+        accesses.append({"kind": "resolve", "address": str(args[0])})
+    if event.startswith(FORBIDDEN_PREFIXES):
+        accesses.append({"kind": "forbidden", "event": event})
 
 
 request = json.load(sys.stdin)
@@ -35,7 +54,7 @@ prefixes = tuple(os.path.normcase(os.path.realpath(prefix)) for prefix in {sys.b
 
 
 def outside_python(access):
-    if access["kind"] == "connect":
+    if "path" not in access:
         return True
     path = os.path.normcase(os.path.realpath(access["path"]))
     return not any(path == prefix or path.startswith(prefix + os.sep) for prefix in prefixes)

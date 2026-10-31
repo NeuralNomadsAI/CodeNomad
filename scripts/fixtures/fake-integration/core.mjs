@@ -20,8 +20,13 @@ export function fakeIntegrationMarker(id = "fixture") {
   }
 }
 
+// status.output bounds `attachedSessions`.
+export const MAX_BINDINGS = 10_000
+
 const TOKEN = /^[0-9a-f]{64}$/
 const OFFER_KEY = /^[A-Za-z0-9._:-]{1,64}$/
+const OFFER_ID = /^[A-Za-z0-9_-]{8,64}$/
+const SESSION_ID = /^[A-Za-z0-9_-]{1,128}$/
 const DISPLAY = /^[^/\\\p{Cc}]+$/u
 const HANDLE = /^[^\p{Cc}]+$/u
 const length = value => [...value].length
@@ -57,14 +62,35 @@ export function canonicalJson(value) {
 }
 export const capabilityHash = capabilities => createHash("sha256").update(canonicalJson(capabilities)).digest("hex")
 
+const SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/
+const METHOD = /^[a-z][a-z0-9_.]{0,63}$/
+const isNames = (value, max) => Array.isArray(value) && value.length <= max && value.every(name => isText(name, METHOD, 64))
+
+// hello of host.schema.json: an answer outside it is refused (HST-11).
+function isHello(value) {
+  if (!isObject(value) || !isObject(value.capabilities)) return false
+  const { capabilities } = value
+  return isInteger(value.protocol, 1, 1000) && isText(value.host_version, SEMVER, 64) && isText(value.app_version, DISPLAY, 64)
+    && hasOnly(capabilities, ["methods", "operations", "undo", "background"]) && isNames(capabilities.methods, 512)
+    && new Set(capabilities.methods).size === capabilities.methods.length
+    && Array.isArray(capabilities.operations) && capabilities.operations.length <= 512 && capabilities.operations.every(operation =>
+      isObject(operation) && hasOnly(operation, ["name", "undoable", "network"]) && isText(operation.name, METHOD, 64)
+      && typeof operation.undoable === "boolean" && (operation.network === undefined || typeof operation.network === "boolean"))
+    && ["transactional", "grouped_best_effort", "none"].includes(capabilities.undo) && typeof capabilities.background === "boolean"
+    && isText(value.capability_hash, TOKEN, 64) && isText(value.script_handle, HANDLE, 200) && isInteger(value.revision, 0, Number.MAX_SAFE_INTEGER)
+    && (value.document === undefined || isText(value.document, DISPLAY, 120))
+}
+
 const versionParts = value => (String(value).match(/^(\d+)(?:\.(\d+))?(?:\.(\d+))?/) ?? []).slice(1).map(part => Number(part ?? 0))
 const compare = (a, b) => a.map((part, index) => part - b[index]).find(delta => delta !== 0) ?? 0
 
-// HST-3 for the fake's own marker: protocol equal, application >=1.0, host part in ^0.1.0.
+// HST-3 for the fake's own marker: protocol equal, application >=1.0, host part in ^0.1.0 (>=0.1.0 <0.2.0-0, so a
+// prerelease of 0.1.0 is outdated and any 0.2.0 prerelease is incompatible).
 function compatibility(hello) {
   if (!versionParts(hello.app_version).length || versionParts(hello.app_version)[0] < 1) return "incompatible"
   const part = versionParts(hello.host_version)
-  if (compare(part, [0, 1, 0]) < 0) return "outdated"
+  const toLower = compare(part, [0, 1, 0])
+  if (toLower < 0 || (toLower === 0 && SEMVER.exec(hello.host_version)[4])) return "outdated"
   return compare(part, [0, 2, 0]) >= 0 ? "incompatible" : "ok"
 }
 
@@ -106,8 +132,7 @@ export function createOfferRegistry({ protocol = 1, now = Date.now, hello = endp
     if (changed) emit()
   }
   const byKey = key => [...offers.values()].find(offer => offer.key === key)
-  const validHello = (value, input) => isObject(value) && value.protocol === protocol && value.script_handle === input.script_handle
-    && typeof value.host_version === "string" && typeof value.app_version === "string" && isObject(value.capabilities)
+  const validHello = (value, input) => isHello(value) && value.protocol === protocol && value.script_handle === input.script_handle
     && value.capability_hash === capabilityHash(value.capabilities)
   const display = (value, input, max) => typeof value === "string" && isText(value, DISPLAY, max) && !revealsSecret(value, input) ? value : undefined
 
@@ -125,7 +150,11 @@ export function createOfferRegistry({ protocol = 1, now = Date.now, hello = endp
       let answer
       try { answer = await hello({ host: input.host, port: input.port, token: input.token }) } catch { return { outcome: "refused" } }
       if (!validHello(answer, input)) return { outcome: "refused" }
-      if (existing) remove(existing.offerID)
+      // Other announcements may have landed during the hello: recheck the key and the cap.
+      sweep()
+      const current = byKey(input.offer_key)
+      if (!current && offers.size >= MAX_OFFERS) return { outcome: "refused" }
+      if (current) remove(current.offerID)
       const offerID = mint()
       offers.set(offerID, { offerID, key: input.offer_key, token: input.token, port: input.port, scriptHandle: input.script_handle,
         label: input.label, document: display(answer.document, input, 120), appVersion: display(answer.app_version, input, 64),
@@ -149,17 +178,19 @@ export function createOfferRegistry({ protocol = 1, now = Date.now, hello = endp
     },
     attach(offerID, sessionID) {
       sweep()
-      const offer = offers.get(offerID)
+      if (!isText(sessionID, SESSION_ID, 128)) return { outcome: "refused" }
+      const offer = isText(offerID, OFFER_ID, 64) ? offers.get(offerID) : undefined
       if (!offer) return { outcome: "gone" }
       if (offer.compatibility === "incompatible") return { outcome: "refused" }
       const bound = bindings.get(sessionID)
       if (bound && bound !== offerID && offers.has(bound)) return { outcome: "busy" }
+      if (!bound && bindings.size >= MAX_BINDINGS) return { outcome: "refused" }
       bindings.set(sessionID, offerID)
       for (const listener of listeners) listener("status")
       return { outcome: "attached" }
     },
     detach(sessionID) {
-      if (!bindings.delete(sessionID)) return { outcome: "none" }
+      if (!isText(sessionID, SESSION_ID, 128) || !bindings.delete(sessionID)) return { outcome: "none" }
       for (const listener of listeners) listener("status")
       return { outcome: "detached" }
     },
@@ -216,8 +247,9 @@ export function createFakeIntegrationRpc({ marker, version = FAKE_INTEGRATION_VE
       return { outcome: installOutcome }
     },
     hosts: async () => registry.hosts(),
-    attachHost: async input => registry.attach(input.offerID, input.sessionID),
-    detachHost: async input => registry.detach(input.sessionID),
+    // OpenCode enforces no pattern in the registered definitions: the registry checks both IDs.
+    attachHost: async input => registry.attach(input?.offerID, input?.sessionID),
+    detachHost: async input => registry.detach(input?.sessionID),
     advertise: input => registry.advertise(input),
     withdraw: async input => registry.withdraw(input),
   }
