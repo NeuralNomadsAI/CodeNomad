@@ -27,15 +27,22 @@ export interface IntegrationCatalogView {
   catalog: IntegrationCatalog
 }
 
-interface KnownCatalog { catalog: IntegrationCatalog; fetchedAt: string; tag: string }
-interface Release { tag: string; assetUrl: string }
+/** `revision` names the release tag and its asset's ID and update time: a re-uploaded asset is a new revision. */
+interface KnownCatalog { catalog: IntegrationCatalog; fetchedAt: string; revision: string }
+interface Release { revision: string; assetUrl: string }
 
 export class IntegrationCatalogError extends Error {
-  constructor(readonly reason: "network" | "status" | "too-large" | "invalid" | "no-release") {
+  constructor(readonly reason: "network" | "status" | "rate-limited" | "too-large" | "invalid" | "no-release", readonly retryAt?: number) {
     super(`Integration catalog unavailable (${reason})`)
     this.name = "IntegrationCatalogError"
   }
 }
+
+/** Release list pages read per refresh: the repository's integration releases share the list. */
+export const INTEGRATION_CATALOG_MAX_PAGES = 5
+/** Longest wait a GitHub rate-limit answer can impose before the next refresh. */
+const RATE_LIMIT_MAX_WAIT_MS = 60 * 60 * 1000
+const REVISION = /^catalog-v(?:0|[1-9][0-9]{0,8})#[0-9]{1,20}@[^\s]{1,64}$/
 
 export interface IntegrationCatalogSourceOptions {
   releasesUrl?: string
@@ -56,9 +63,11 @@ export interface IntegrationCatalogSourceOptions {
 export class IntegrationCatalogSource {
   private known?: KnownCatalog
   private loaded?: Promise<void>
-  private attempt?: { at: number; ok: boolean }
+  /** `until`: a rate-limit answer defers the next refresh to GitHub's reset time. */
+  private attempt?: { at: number; ok: boolean; until?: number }
   private refreshing?: Promise<void>
-  // Conditional requests: a 304 answer reuses the selected release and costs no GitHub rate limit.
+  // Conditional first-page requests: an unchanged list (304) reuses the selected release without reading the
+  // pages again. Unauthenticated 304 answers still count against GitHub's rate limit.
   private listTag?: { etag: string; release: Release | null }
   private readonly releasesUrl: string
   private readonly fetch: typeof fetch
@@ -72,7 +81,8 @@ export class IntegrationCatalogSource {
 
   async read(): Promise<IntegrationCatalogView> {
     await (this.loaded ??= this.loadPersisted())
-    const fresh = this.attempt !== undefined && this.now() - this.attempt.at < (this.options.cacheMs ?? INTEGRATION_CATALOG_CACHE_MS)
+    const attempt = this.attempt
+    const fresh = attempt !== undefined && this.now() < Math.max(attempt.at + (this.options.cacheMs ?? INTEGRATION_CATALOG_CACHE_MS), attempt.until ?? 0)
     if (!fresh) await (this.refreshing ??= this.refresh().finally(() => { this.refreshing = undefined }))
     return this.view()
   }
@@ -87,30 +97,39 @@ export class IntegrationCatalogSource {
     try {
       const release = await this.newestRelease(signal)
       if (!release) throw new IntegrationCatalogError("no-release")
-      if (this.known?.tag !== release.tag) {
+      if (this.known?.revision !== release.revision) {
         const catalog = parseCatalog(await this.download(release.assetUrl, "application/octet-stream", INTEGRATION_CATALOG_MAX_BYTES, signal))
-        this.known = { catalog, fetchedAt: new Date(this.now()).toISOString(), tag: release.tag }
+        this.known = { catalog, fetchedAt: new Date(this.now()).toISOString(), revision: release.revision }
         await this.persist(this.known)
       }
       this.attempt = { at: this.now(), ok: true }
     } catch (error) {
-      this.attempt = { at: this.now(), ok: false }
+      const retryAt = error instanceof IntegrationCatalogError ? error.retryAt : undefined
+      this.attempt = { at: this.now(), ok: false, ...(retryAt !== undefined ? { until: Math.min(retryAt, this.now() + RATE_LIMIT_MAX_WAIT_MS) } : {}) }
       // The reason only: a refused document is never echoed.
       this.options.logger?.debug({ reason: error instanceof IntegrationCatalogError ? error.reason : "network" }, "Integration catalog refresh failed")
     }
   }
 
+  // Releases list newest first, so the page holding the first catalog release holds the newest one. Later pages
+  // are followed through `Link: rel="next"` on the same origin, at most INTEGRATION_CATALOG_MAX_PAGES.
   private async newestRelease(signal: AbortSignal): Promise<Release | null> {
+    const origin = new URL(this.releasesUrl).origin
     const headers: Record<string, string> = { accept: "application/vnd.github+json", "user-agent": "CodeNomad", "x-github-api-version": "2022-11-28" }
-    if (this.listTag) headers["if-none-match"] = this.listTag.etag
-    const response = await this.request(this.releasesUrl, headers, signal)
-    if (response.status === 304 && this.listTag) {
-      await response.body?.cancel()
-      return this.listTag.release
+    let url: string | undefined = this.releasesUrl
+    let etag: string | null = null
+    let release: Release | null = null
+    for (let page = 0; url && page < INTEGRATION_CATALOG_MAX_PAGES && !release; page++) {
+      const conditional: Record<string, string> = page === 0 && this.listTag ? { "if-none-match": this.listTag.etag } : {}
+      const response = await this.request(url, { ...headers, ...conditional }, signal)
+      if (response.status === 304 && page === 0 && this.listTag) {
+        await response.body?.cancel()
+        return this.listTag.release
+      }
+      if (page === 0) etag = response.headers.get("etag")
+      release = selectCatalogRelease(parseJson(await readBounded(response, RELEASE_LIST_MAX_BYTES)), origin)
+      url = nextPage(response.headers.get("link"), origin)
     }
-    const body = await readBounded(response, RELEASE_LIST_MAX_BYTES)
-    const release = selectCatalogRelease(parseJson(body), new URL(this.releasesUrl).origin)
-    const etag = response.headers.get("etag")
     this.listTag = etag ? { etag, release } : undefined
     return release
   }
@@ -128,7 +147,8 @@ export class IntegrationCatalogSource {
     }
     if (response.status !== 200 && response.status !== 304) {
       await response.body?.cancel().catch(() => undefined)
-      throw new IntegrationCatalogError("status")
+      const retryAt = rateLimitRetryAt(response, this.now())
+      throw retryAt === undefined ? new IntegrationCatalogError("status") : new IntegrationCatalogError("rate-limited", retryAt)
     }
     return response
   }
@@ -137,12 +157,12 @@ export class IntegrationCatalogSource {
     const file = this.options.stateFile
     if (!file) return
     try {
-      const raw = JSON.parse(await readFile(file, "utf8")) as { tag?: unknown; fetchedAt?: unknown; catalog?: unknown }
+      const raw = JSON.parse(await readFile(file, "utf8")) as { revision?: unknown; fetchedAt?: unknown; catalog?: unknown }
       const catalog = integrationCatalogSchema.safeParse(raw.catalog)
-      if (catalog.success && typeof raw.tag === "string" && CATALOG_TAG.test(raw.tag)
+      if (catalog.success && typeof raw.revision === "string" && REVISION.test(raw.revision)
         && typeof raw.fetchedAt === "string" && !Number.isNaN(Date.parse(raw.fetchedAt))
         && Buffer.byteLength(JSON.stringify(catalog.data)) <= INTEGRATION_CATALOG_MAX_BYTES) {
-        this.known ??= { catalog: catalog.data, fetchedAt: raw.fetchedAt, tag: raw.tag }
+        this.known ??= { catalog: catalog.data, fetchedAt: raw.fetchedAt, revision: raw.revision }
       }
     } catch {
       // No or unreadable state: start without a known catalog.
@@ -155,7 +175,7 @@ export class IntegrationCatalogSource {
     try {
       await mkdir(path.dirname(file), { recursive: true })
       const temporary = `${file}.${process.pid}.${Math.random().toString(36).slice(2)}.tmp`
-      await writeFile(temporary, `${JSON.stringify({ version: 1, tag: known.tag, fetchedAt: known.fetchedAt, catalog: known.catalog })}\n`, { mode: 0o600 })
+      await writeFile(temporary, `${JSON.stringify({ version: 1, revision: known.revision, fetchedAt: known.fetchedAt, catalog: known.catalog })}\n`, { mode: 0o600 })
       await rename(temporary, file)
     } catch (error) {
       this.options.logger?.warn({ err: error }, "Unable to keep the integration catalog")
@@ -175,14 +195,33 @@ export function selectCatalogRelease(list: unknown, apiOrigin: string): Release 
     const release = item as { tag_name?: unknown; draft?: unknown; prerelease?: unknown; assets?: unknown }
     const tag = typeof release.tag_name === "string" ? CATALOG_TAG.exec(release.tag_name) : null
     if (!tag || release.draft !== false || release.prerelease !== false || !Array.isArray(release.assets)) continue
-    const asset = (release.assets as Array<{ name?: unknown; url?: unknown; size?: unknown } | null>)
+    const asset = (release.assets as Array<{ name?: unknown; url?: unknown; size?: unknown; id?: unknown; updated_at?: unknown } | null>)
       .find(candidate => candidate?.name === INTEGRATION_CATALOG_ASSET)
     if (!asset || typeof asset.url !== "string" || !sameOrigin(asset.url, apiOrigin)) continue
     if (typeof asset.size === "number" && asset.size > INTEGRATION_CATALOG_MAX_BYTES) continue
+    if (!Number.isSafeInteger(asset.id) || typeof asset.updated_at !== "string") continue
+    const revision = `${release.tag_name as string}#${asset.id as number}@${asset.updated_at}`
+    if (!REVISION.test(revision)) continue
     const number = Number(tag[1])
-    if (!best || number > best.number) best = { number, release: { tag: release.tag_name as string, assetUrl: asset.url } }
+    if (!best || number > best.number) best = { number, release: { revision, assetUrl: asset.url } }
   }
   return best?.release ?? null
+}
+
+/** The `rel="next"` page of a GitHub `Link` header, on the API origin only. */
+function nextPage(link: string | null, origin: string): string | undefined {
+  const next = link?.split(",").map(part => /^\s*<([^>]+)>\s*;\s*rel="next"\s*$/.exec(part)?.[1]).find(Boolean)
+  return next && sameOrigin(next, origin) ? next : undefined
+}
+
+/** When GitHub allows the next request after a rate-limit answer (403/429 with `retry-after` or an exhausted quota). */
+function rateLimitRetryAt(response: Response, now: number): number | undefined {
+  if (response.status !== 403 && response.status !== 429) return undefined
+  const retryAfter = Number(response.headers.get("retry-after"))
+  if (response.headers.has("retry-after") && Number.isFinite(retryAfter) && retryAfter >= 0) return now + retryAfter * 1000
+  const reset = Number(response.headers.get("x-ratelimit-reset"))
+  if (response.headers.get("x-ratelimit-remaining") === "0" && Number.isFinite(reset)) return reset * 1000
+  return response.status === 429 ? now + INTEGRATION_CATALOG_CACHE_MS * 2 : undefined
 }
 
 /** A catalog document: UTF-8 JSON within `integrationCatalogSchema` (bounds and uniqueness included). */

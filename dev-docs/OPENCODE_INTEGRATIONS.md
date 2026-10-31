@@ -56,12 +56,18 @@ specification refuses is refused by the reader.
 reviewed catalog from `INTEGRATION_CATALOG_RELEASES_URL`, the only remote source: the GitHub release list of
 `NeuralNomadsAI/opencode-integrations`, never its "latest" release. The newest published `catalog-v<n>` release
 (highest `n`; drafts, prereleases and other tags ignored) gives the `catalog.json` asset, downloaded through the API
-origin only. The list is read within 1 MiB, the asset within 256 KiB (the transfer is cancelled past it), the whole
-refresh within 10 s; the asset must be UTF-8 JSON within `integrationCatalogSchema`.
+origin only. The list is read newest first, following `Link: rel="next"` on the API origin up to
+`INTEGRATION_CATALOG_MAX_PAGES` (5) pages of 100 until a page holds a catalog release. Each page is read within
+1 MiB, the asset within 256 KiB (the transfer is cancelled past it), the whole refresh within 10 s; the asset must be
+UTF-8 JSON within `integrationCatalogSchema`.
 
 - Two reads within 30 s (`INTEGRATION_CATALOG_CACHE_MS`) share one remote request, whatever its outcome, and a
-  refresh runs alone, so an older answer never replaces a newer one. Later list requests are conditional
-  (`If-None-Match`); an unchanged release is not downloaded again.
+  refresh runs alone, so an older answer never replaces a newer one. The first list page is requested with
+  `If-None-Match`; an unchanged list reuses the selected release. The catalog is downloaded again only for a new
+  revision: release tag, asset ID and asset update time (a re-uploaded asset is a new revision).
+- Requests are unauthenticated (60 per hour per address, 304 answers included). A 403 or 429 rate-limit answer
+  defers the next refresh to its `retry-after` or `x-ratelimit-reset` time (at most one hour), while the last valid
+  catalog is served as `stale`.
 - `fresh`: the last read succeeded. `stale`: it failed (unreachable, refused status, oversized, not JSON, outside the
   schema, no catalog release) and the last valid catalog is served with its `fetchedAt`. `unavailable`: no valid
   catalog is known, with an empty list. No catalog is bundled; the last valid one persists in
@@ -95,10 +101,15 @@ Adding a plugin source (`opencode/plugin-sources.ts`) uses the same catalog: a r
 refused in Project (`global-only`, D18), and specs of one recognised integration, or of one whose plugin already
 loaded, are duplicates whatever their form (registry or Git). With the catalog unavailable nothing is recognised.
 
-The UI reads through `stores/integrations-store.ts` (`lib/integrations-api.ts`): demand reads; the instance's
-`rpc.neuralnomads.<app>.status_changed`/`hosts_changed`, `plugin.updated` and `config.updated` events are
-coalesced over 300 ms into one read per demanded Location, with one trailing follow-up while a read runs. Nothing
-reads on a timer.
+`createIntegrationsStore` (`stores/integrations-store.ts`, reading through `lib/integrations-api.ts`) is the read
+model for UI surfaces that show integrations. `demand(instance, directory)` reads that Location until its release,
+whose last call aborts the read. `applyEvent(instance, type)` takes the instance's native event types:
+`rpc.neuralnomads.<app>.status_changed`/`hosts_changed`, `plugin.updated` and `config.updated` schedule one read of
+the instance's demanded Locations 300 ms after the first of them, with one trailing follow-up while a read runs;
+`refreshDemanded` re-reads after a reconnect and `clearInstance` forgets a stopped instance. It has no timer of its
+own. A surface that mounts it forwards its instance's `instance.event`, reconnection and `workspace.stopped`
+events, like `stores/session-goal.ts`. The event relay delivers an integration event only when it is published in a
+Location the workspace owns.
 
 ## Test fixtures
 
@@ -133,7 +144,8 @@ Commands:
 - `node --import tsx --test packages/server/src/opencode/integrations/contract.test.ts`
 - `node --import tsx --test scripts/fixtures/fake-integration/fake-integration.test.mjs`
 - `node --import tsx --test packages/server/src/opencode/integrations/catalog.test.ts` (local release server:
-  selection, 30 s cache, conditional list, refusals keeping the previous catalog, persistence, timeout),
+  selection, 30 s cache, conditional list, refusals keeping the previous catalog, persistence, re-uploaded asset,
+  later pages, rate-limit wait, timeout),
   `recognition.test.ts` (three ways, ambiguity, every state, timeout and concurrency), `server/routes/integrations.test.ts`
   and `packages/ui/src/stores/integrations-store.test.ts` (event coalescing, no polling).
   `catalog-fixture.ts` builds conforming catalog entries and plugin snapshots.

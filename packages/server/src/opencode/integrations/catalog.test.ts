@@ -23,13 +23,22 @@ function releaseServer() {
     etag: "\"list-1\"",
     requests: [] as Array<{ url: string; headers: IncomingMessage["headers"] }>,
     hang: false,
+    /** Later pages of the list, linked from the previous one. */
+    pages: [] as unknown[][],
+    /** Status and headers answered instead of the list. */
+    refuse: undefined as { status: number; headers: Record<string, string> } | undefined,
   }
   const server: Server = createServer((request, response) => {
     state.requests.push({ url: request.url ?? "", headers: request.headers })
     if (state.hang) return
     if (request.url?.startsWith("/repos/NeuralNomadsAI/opencode-integrations/releases?")) {
+      if (state.refuse) return void response.writeHead(state.refuse.status, state.refuse.headers).end("{}")
       if (request.headers["if-none-match"] === state.etag) return void response.writeHead(304).end()
-      response.writeHead(200, { "content-type": "application/json", etag: state.etag }).end(JSON.stringify(state.releases))
+      const page = Number(new URL(request.url, "http://local").searchParams.get("page") ?? "1")
+      const body = page === 1 ? state.releases : state.pages[page - 2] ?? []
+      const host = `http://${request.headers.host}`
+      const link = page <= state.pages.length ? { link: `<${host}/repos/NeuralNomadsAI/opencode-integrations/releases?per_page=100&page=${page + 1}>; rel="next"` } : {}
+      response.writeHead(200, { "content-type": "application/json", ...(page === 1 ? { etag: state.etag } : {}), ...link }).end(JSON.stringify(body))
       return
     }
     const asset = /^\/assets\/(\w+)$/.exec(request.url ?? "")
@@ -47,9 +56,9 @@ function releaseServer() {
   }
 }
 
-function release(origin: string, tag: string, assetId: string, extra: Record<string, unknown> = {}) {
+function release(origin: string, tag: string, assetId: string, extra: Record<string, unknown> = {}, updatedAt = "2026-10-31T00:00:00Z") {
   return { tag_name: tag, draft: false, prerelease: false,
-    assets: [{ name: INTEGRATION_CATALOG_ASSET, url: `${origin}/assets/${assetId}`, size: 100 }], ...extra }
+    assets: [{ name: INTEGRATION_CATALOG_ASSET, url: `${origin}/assets/${assetId}`, size: 100, id: assetId.length, updated_at: updatedAt }], ...extra }
 }
 
 describe("integration catalog", () => {
@@ -73,6 +82,8 @@ describe("integration catalog", () => {
     fixture.state.requests = []
     fixture.state.etag = `"list-${Math.random()}"`
     fixture.state.hang = false
+    fixture.state.pages = []
+    fixture.state.refuse = undefined
   }
 
   it("names the real repository's releases and never its latest release", () => {
@@ -146,13 +157,53 @@ describe("integration catalog", () => {
     reset([release(origin, "catalog-v3", "three")], { three: JSON.stringify(catalog) })
     const fresh = await new IntegrationCatalogSource({ releasesUrl: url, stateFile }).read()
     assert.equal(fresh.state, "fresh")
-    assert.match(await readFile(stateFile, "utf8"), /"tag":"catalog-v3"/)
+    assert.match(await readFile(stateFile, "utf8"), /"revision":"catalog-v3#5@2026-10-31T00:00:00Z"/)
     const unreachable = new IntegrationCatalogSource({ releasesUrl: "http://127.0.0.1:9/releases", stateFile })
     assert.deepEqual(await unreachable.read(), { state: "stale", fetchedAt: fresh.fetchedAt, catalog })
     reset([release(origin, "catalog-v3", "three")], {})
     const restarted = await new IntegrationCatalogSource({ releasesUrl: url, stateFile }).read()
     assert.equal(restarted.state, "fresh", "the same release is not downloaded again")
     assert.equal(fixture.state.requests.length, 1)
+  })
+
+  it("downloads a catalog asset re-uploaded under the same release tag", async () => {
+    reset([release(origin, "catalog-v4", "four")], { four: JSON.stringify(catalogOf(catalogEntry("fixture"))) })
+    let now = 0
+    const source = new IntegrationCatalogSource({ releasesUrl: url, now: () => now })
+    await source.read()
+    const replaced = catalogOf(catalogEntry("fixture"), catalogEntry("other"))
+    reset([release(origin, "catalog-v4", "four", {}, "2026-11-01T00:00:00Z")], { four: JSON.stringify(replaced) })
+    now += INTEGRATION_CATALOG_CACHE_MS
+    assert.deepEqual((await source.read()).catalog, replaced)
+    assert.deepEqual(fixture.state.requests.map(request => request.url.split("?")[0]), ["/repos/NeuralNomadsAI/opencode-integrations/releases", "/assets/four"])
+  })
+
+  it("finds the newest catalog release on a later page of the release list", async () => {
+    const catalog = catalogOf(catalogEntry("fixture"))
+    reset(Array.from({ length: 3 }, (_, index) => release(origin, `blender-v0.${index}.0`, "app")), { seven: JSON.stringify(catalog) })
+    fixture.state.pages = [[release(origin, "blender-v0.0.1", "app")], [release(origin, "catalog-v7", "seven"), release(origin, "catalog-v6", "six")]]
+    const view = await new IntegrationCatalogSource({ releasesUrl: url }).read()
+    assert.equal(view.state, "fresh")
+    assert.deepEqual(view.catalog, catalog)
+    assert.deepEqual(fixture.state.requests.map(request => new URL(request.url, origin).searchParams.get("page")), [null, "2", "3", null])
+  })
+
+  it("waits for GitHub's rate-limit reset before asking again, serving the last valid catalog", async () => {
+    const catalog = catalogOf(catalogEntry("fixture"))
+    reset([release(origin, "catalog-v1", "one")], { one: JSON.stringify(catalog) })
+    let now = 1_000_000
+    const source = new IntegrationCatalogSource({ releasesUrl: url, now: () => now })
+    await source.read()
+    fixture.state.refuse = { status: 403, headers: { "x-ratelimit-remaining": "0", "x-ratelimit-reset": String((now + 600_000) / 1000) } }
+    now += INTEGRATION_CATALOG_CACHE_MS
+    assert.equal((await source.read()).state, "stale")
+    const refused = fixture.state.requests.length
+    now += 300_000
+    assert.deepEqual(await source.read(), { state: "stale", fetchedAt: new Date(1_000_000).toISOString(), catalog })
+    assert.equal(fixture.state.requests.length, refused, "no request before the reset")
+    fixture.state.refuse = undefined
+    now += 300_000
+    assert.equal((await source.read()).state, "fresh")
   })
 
   it("bounds a hanging refresh by its timeout", async () => {
