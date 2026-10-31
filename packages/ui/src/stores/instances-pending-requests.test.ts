@@ -568,15 +568,31 @@ test("a refused batch shows each folder's real reason and leaves excluded histor
   } finally { h.cleanup() }
 })
 
-test("an unavailable recovery plugin is named rather than reported as a generic failure", async () => {
+test("an unavailable recovery plugin is one notice across reconnects and projects until recovery succeeds", async () => {
+  const unsupportedNotices = () => getToastHistory().filter((item) => item.title === tGlobal("interruption.recoveryUnsupported.title"))
+  const before = unsupportedNotices().length
+  const failTwice = async (id: string) => {
+    serverApi.getPendingRequests = async () => ({ supported: false })
+    await assert.rejects(syncPendingRequests(id))
+    await assert.rejects(syncPendingRequests(id))
+  }
+  // The reported storm: each reconnect re-adds the project and recovery fails again.
+  for (let reconnect = 0; reconnect < 8; reconnect += 1) {
+    const h = harness()
+    try { await failTwice(h.id) } finally { h.cleanup() }
+  }
+  const other = "other-project"
+  addInstance({ id: other, folder: "/other-project", port: 0, pid: 0, proxyPath: "", status: "ready", client: {} as OpenCodeClient })
+  try { await failTwice(other) } finally { removeInstance(other, { authoritative: false }) }
+  assert.equal(unsupportedNotices().length, before + 1)
+  assert.equal(unsupportedNotices()[0]?.message, tGlobal("interruption.recoveryCause.unsupported"))
+
   const h = harness()
   try {
-    serverApi.getPendingRequests = async () => ({ supported: false })
-    const before = recoveryWarnings().length
-    await assert.rejects(syncPendingRequests(h.id))
-    await assert.rejects(syncPendingRequests(h.id))
-    assert.equal(recoveryWarnings().length, before + 1)
-    assert.equal(recoveryWarnings()[0]?.message, tGlobal("interruption.recoveryCause.unsupported", { detail: "" }))
+    serverApi.getPendingRequests = async (_id, directories) => ({ supported: true, directories: directories.map((directory) => ({ directory, status: "ok" as const, locations: [emptyLocation(directory)] })) })
+    await syncPendingRequests(h.id)
+    await failTwice(h.id)
+    assert.equal(unsupportedNotices().length, before + 2, "a working plugin re-arms the notice")
   } finally { h.cleanup() }
 })
 
