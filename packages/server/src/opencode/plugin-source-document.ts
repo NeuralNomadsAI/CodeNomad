@@ -29,9 +29,10 @@ export function pluginEntryTarget(entry: PluginConfigEntry): string {
  * activation selectors are refused before any file is touched.
  */
 export function validatePluginSourceSpec(spec: string): npa.Result {
-  // Inner spaces belong to valid ranges (`foo@>=1 <2`, `foo@^1 || ^2`); npm-package-arg rejects the rest.
+  // Printable ASCII only: inner spaces belong to valid ranges (`foo@>=1 <2`, `foo@^1 || ^2`), while control,
+  // separator and bidirectional-format characters could make the stored spec read differently from the shown one.
   if (spec.length === 0 || spec.length > PLUGIN_SOURCE_MAX_SPEC_LENGTH || spec !== spec.trim()
-    || /[\u0000-\u001f\u007f-\u009f]/.test(spec)) {
+    || /[^\x20-\x7e]/.test(spec)) {
     throw new PluginSourceSpecError("Plugin package spec is invalid", "invalid-spec")
   }
   if (/\{(?:env|file):/i.test(spec)) throw new PluginSourceSpecError("Configuration variables are not accepted in a plugin spec", "invalid-spec")

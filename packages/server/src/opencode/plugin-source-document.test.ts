@@ -30,7 +30,8 @@ describe("plugin source specs", () => {
       ["https://example.com/plugin.tgz", "invalid-spec"], ["foo@{env:VERSION}", "invalid-spec"], ["{file:./spec}", "invalid-spec"],
       ["-foo", "plugin-id"], ["foo.*", "plugin-id"], ["*", "plugin-id"], ["opencode.builtin", "plugin-id"],
       ["foo\u0007", "invalid-spec"], ["foo@1\n", "invalid-spec"], ["foo@\t1", "invalid-spec"], [" foo", "invalid-spec"], ["foo ", "invalid-spec"],
-      ["a b", "invalid-spec"], ["", "invalid-spec"], ["x".repeat(513), "invalid-spec"], ["\\\\server\\share\\plugin", "local-path"],
+      ["a b", "invalid-spec"], ["foo@1 x", "invalid-spec"], ["github:u/r#v1‮", "invalid-spec"], ["foo@1 ", "invalid-spec"],
+      ["foo@^1　||　^2", "invalid-spec"], ["plügin", "invalid-spec"], ["", "invalid-spec"], ["x".repeat(513), "invalid-spec"], ["\\\\server\\share\\plugin", "local-path"],
     ]
     for (const [spec, code] of cases) {
       assert.throws(() => validatePluginSourceSpec(spec), (error: unknown) => error instanceof PluginSourceSpecError && error.code === code, spec)

@@ -28,7 +28,7 @@ async function fixture(options: { sameScopes?: boolean } = {}) {
     },
   }
   const manager: any = {
-    get: (id: string) => id === "w" ? {} : undefined,
+    get: (id: string) => id === "w" || id === "w2" ? {} : undefined,
     getSharedServiceConnection: async () => connection,
     getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
     ownsLocation: async () => true,
@@ -82,9 +82,10 @@ describe("plugin source mutations", () => {
     const f = await fixture()
     try {
       await writeFile(f.globalFile, "{}")
+      // Two workspaces share the Global document: the queue spans the whole server.
       const results = await Promise.allSettled([
         f.sources.add("w", { location: f.location, scope: "global", spec: "race-plugin@1" }),
-        f.sources.add("w", { location: f.location, scope: "project", spec: "race-plugin@2" }),
+        f.sources.add("w2", { location: f.location, scope: "project", spec: "race-plugin@2" }),
       ])
       assert.deepEqual(results.map(result => result.status), ["fulfilled", "rejected"])
       assert.equal((results[1] as PromiseRejectedResult).reason.code, "duplicate")

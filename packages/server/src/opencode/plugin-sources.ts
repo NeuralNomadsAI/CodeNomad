@@ -32,7 +32,8 @@ type Documents = Pick<PluginControls, "read" | "readConfigDocuments" | "editConf
  * The package cache is never touched; OpenCode reloads the watched document.
  */
 export class PluginSources {
-  private readonly addTails = new Map<string, Promise<void>>()
+  // One queue for the whole server: the Global document is shared by every workspace.
+  private addTail: Promise<void> = Promise.resolve()
 
   constructor(private readonly options: { documents: Documents; logger: Logger }) {}
 
@@ -43,12 +44,9 @@ export class PluginSources {
       return Promise.reject(error instanceof PluginSourceSpecError ? new PluginSourcesError(error.message, "invalid", error.code) : error)
     }
     // The duplicate check spans both scopes while the document lock covers one file:
-    // serialize this workspace's adds so a concurrent add in the other scope is visible.
-    const tail = this.addTails.get(workspaceId) ?? Promise.resolve()
-    const result = tail.then(() => this.addSerialized(workspaceId, request))
-    const tracked = result.then(() => undefined, () => undefined)
-    this.addTails.set(workspaceId, tracked)
-    void tracked.then(() => { if (this.addTails.get(workspaceId) === tracked) this.addTails.delete(workspaceId) })
+    // serialize adds so a concurrent add in the other scope, from any workspace, is visible.
+    const result = this.addTail.then(() => this.addSerialized(workspaceId, request))
+    this.addTail = result.then(() => undefined, () => undefined)
     return result
   }
 
