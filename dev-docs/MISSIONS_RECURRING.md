@@ -1,9 +1,52 @@
-# Recurring Missions — simple native contract
+# Recurring Missions
 
 The Wayfinder UI-answer mark below applies to both one-time and recurring Missions.
 Acceptance status: `MISSIONS_RECURRING_QUALIFICATION.md`.
 
-## Product boundary
+## Unified native schedules
+
+Unified documents use `launch-policy.ts` for immediate, absolute/relative one-shot,
+elapsed Every, cron and up to eight cron calendars. A source condition uses its
+qualified reader. Native schedule rows own future dates and civil-time behavior;
+Missions owns admission, non-overlap, frozen inputs, launch counts and settlement.
+
+The authenticated product seam is `POST /api/workspaces/:id/missions/scheduled`
+for paused creation, and `GET|POST /api/workspaces/:id/missions/:missionID/schedule`
+for status and explicit controls. Requests pin the native directory, human principal,
+profile source, request ID and document revision through the existing signed bridge.
+`scheduleRead({missionID,requestID})` reads an exact retained control receipt;
+missing or evicted proof stays unknown. Passive reads send no controls.
+
+The native calendar owner records create intents and reverse carrier ownership
+before native effects. It acknowledges the reconciliation calendar before arming
+principals. Temporal edits preserve retired proofs until cleanup, while relative
+origins, the first Play and admitted counts remain durable. A first Play on a
+calendar-backed policy requires ready settings activation. Creation remains paused.
+
+Each technical wake enters an exact-file, own-process HTTP RPC with an eight-second
+deadline. A read-only preflight freezes complete fan-in coverage before a dispatch
+claim. Technical high-water advances at durable reservation; the pending business
+reference remains separate, so auxiliary observation can reconcile the last passage.
+Native persisted schedules load their owning Location on wake after service startup.
+Pause/Stop, failures, unqualified observations and uncertain effects retain their
+admission barriers. Never resend an attempted original whose proof is missing.
+
+Context hooks and tool execution use the fixed-method internal business bridge;
+its receiving RPC acquires fresh Session/Database/Location services. Each business
+mutation takes the document exclusion before the existing journal writer. Native
+permissions, original message identities and whole-family H11 settlement apply.
+Technical carriers use the reserved `ses_cn_schedule_` namespace, local provider,
+local title/compaction hooks and authoritative ordinary-input guards.
+
+Implementation contracts and isolated qualification commands:
+[native contracts](MISSIONS_NATIVE_CONTRACTS.md) and
+[schedule transport](MISSIONS_NATIVE_SCHEDULE_TRANSPORT.md).
+
+## Daily document product boundary
+
+Daily documents use `NativeMissionRecurrenceStore` and the daily controls below.
+Journal-only missions keep their existing execution path. Storage representation
+selects the owning adapter; reads and reconnects preserve it.
 
 Creation stores a paused schedule, never starts work or arms a timer, and is never
 resent; Play requests carry the then-current revision so CAS refuses a duplicate.

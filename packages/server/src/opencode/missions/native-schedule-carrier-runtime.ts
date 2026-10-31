@@ -6,7 +6,7 @@ import type { SqlClient } from "effect/sql"
 import { missionDocumentChanges } from "../../missions/mission-document-state"
 import { acquireNativeMissionDocumentStore } from "./native-mission-document-storage"
 import { nativeInvocation } from "./native-invocation"
-import { nativeScheduleCarrierHooks, nativeScheduleCarrierWakes, NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
+import { nativeScheduleCarrierHooks, nativeScheduleCarrierWakes, nativeScheduleCarrierNonWakeMessageIDs, NATIVE_SCHEDULE_CARRIER_MODEL } from "./native-schedule-carrier"
 import { assertNativeScheduleCarrierArtifacts, claimNativeScheduleCarrierWake, closeNativeScheduleCarrierClaim, nativeScheduleClaimKey,
   NATIVE_SCHEDULE_CARRIER_MARKER, NATIVE_SCHEDULE_CARRIER_SIGNAL, readNativeScheduleCarrierBinding,
   type NativeScheduleCarrierInstallation } from "./native-schedule-carrier-binding"
@@ -156,7 +156,7 @@ export function registerNativeScheduleCarrierFoundation(ctx: Plugin.Context, opt
       const nativeWindow = yield* ctx.session.context({ sessionID: event.sessionID }).pipe(Effect.orDie)
       if (nativeWindow.length > 128 || Buffer.byteLength(JSON.stringify(nativeWindow)) > 1024 * 1024) throw new Error("schedule-carrier-coverage")
       const compactions = nativeWindow.filter(message => message.type === "compaction" && message.status === "completed").map(message => message.id)
-      const wakes: NativeScheduleWake[] = nativeScheduleCarrierWakes(mapping, binding.calendar.highWater, event.messages, compactions)
+      const wakes: NativeScheduleWake[] = nativeScheduleCarrierWakes(mapping, binding.calendar.highWater, event.messages, nativeScheduleCarrierNonWakeMessageIDs(nativeWindow))
       // Only public context closures survive this hook. RPC reacquires its own
       // Core graph; never reuse the plugin setup or a completed HTTP Scope.
       const run = <A>(effect: Effect.Effect<A, unknown>) => Effect.runPromise(effect)

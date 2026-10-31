@@ -8,6 +8,7 @@ import { canonicalAuthority } from "../../missions/authority-protocol"
 import { RECURRENCE_STORAGE_PREFIX, parseRecurrenceDocument, recurrenceDispatchAllowed, type RecurrenceDocument } from "../../missions/recurrence-contract"
 import { stableToken } from "../../missions/journal"
 import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
+import type { MissionNativeRunner } from "./native-service-adapter"
 
 const tag = (name: string) => Context.Service<never, unknown>(name)
 const databaseTag = tag("@opencode/storage/Database"), locationTag = tag("@opencode/Location")
@@ -65,7 +66,7 @@ export const qualifyNativePassageStorage = Effect.fn("missions.qualifyPassageSto
 
 /** Read-only native contracts, not signed authority or event replay. Unknown
  * coverage fails closed. SQL only observes durable inbox/claim and ancestry. */
-export const acquireNativePassageObservation = Effect.fn("missions.acquirePassageObservation")(function* (startedAt = serviceStartedAt) {
+export const acquireNativePassageObservation = Effect.fn("missions.acquirePassageObservation")(function* (startedAt = serviceStartedAt, invocationRun?: MissionNativeRunner) {
   const graph = yield* Effect.context<never>()
   const get = (key: typeof databaseTag) => {
     const value = Context.getOption(graph, key)
@@ -79,9 +80,9 @@ export const acquireNativePassageObservation = Effect.fn("missions.acquirePassag
   if (!Predicate.isFunction(database.db?.$client?.unsafe) || !Effect.isEffect(sessions.active)
     || !Predicate.isFunction(forms.list) || !Predicate.isFunction(permissions.list) || !Predicate.isFunction(shells.list))
     throw new Error("Native passage contracts unavailable")
-  const query = (sql: string, params: readonly unknown[]) => Effect.runPromise(database.db!.$client!.unsafe(sql, params)
-    .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows)), Effect.provide(graph)))
-  const run = (effect: NativeEffect) => Effect.runPromise(effect.pipe(Effect.provide(graph)))
+  const run: MissionNativeRunner = invocationRun ?? (effect => Effect.runPromise(effect.pipe(Effect.provide(graph))))
+  const query = (sql: string, params: readonly unknown[]) => run(database.db!.$client!.unsafe(sql, params)
+    .withoutTransform.pipe(Effect.flatMap(Schema.decodeUnknownEffect(rows))))
   const activeSet = (value: unknown): ReadonlySet<unknown> => {
     if (!(value instanceof Set) || value.size > 4096) throw new Error("Native execution coverage unavailable")
     return value

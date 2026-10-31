@@ -4,6 +4,7 @@ import Fastify from "fastify"
 
 import { registerMissionRoutes } from "./missions"
 import { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
+import { prepareMissionMapMutation } from "./mission-map-mutation"
 
 const routes = [
   { method: "PATCH", url: "/api/workspaces/workspace-1/missions/msn_1", rpc: "update", payload: { objective: "Edited", expectedRevision: 1, requestId: "edit" } },
@@ -117,4 +118,24 @@ test("deletion admission is held until the dispatched native mutation settles, a
     await new Promise(resolve => setTimeout(resolve, 5))
     assert.equal(deletionRan, true)
   }
+})
+
+test("scheduled retention transfers the original permit and a failed registration keeps normal cleanup", async () => {
+  const h = harness(), signal = new AbortController().signal
+  const owned = await prepareMissionMapMutation({ manager: h.manager as never, fence: h.state.fence, workspaceID: "workspace-1", signal })
+  let release!: () => void
+  await assert.rejects(owned.run(async () => {
+    owned.retain(original => { release = original })
+    throw new Error("Unknown native effect")
+  }), /Unknown/)
+  let deleted = false
+  const deletion = h.state.fence.run("/owned/repo", ["/owned/repo"], async () => { deleted = true })
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.equal(deleted, false)
+  release(); await deletion
+  assert.equal(deleted, true)
+
+  const other = harness(), next = await prepareMissionMapMutation({ manager: other.manager as never, fence: other.state.fence, workspaceID: "workspace-1", signal })
+  await assert.rejects(next.run(async () => { next.retain(() => { throw new Error("Capacity exhausted") }) }), /Capacity/)
+  await other.state.fence.run("/owned/repo", ["/owned/repo"], async () => {})
 })

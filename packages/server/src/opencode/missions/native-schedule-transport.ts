@@ -4,7 +4,7 @@ import { Service } from "@opencode/client/service"
 import type { NativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import { nativeScheduleIncarnationGuard, readNativeScheduleIncarnation, sameNativeScheduleIncarnation } from "./native-schedule-transport-identity"
 import { assertNativeScheduleWake, NativeScheduleTransportRpc, nativeScheduleWakeIdentity, nativeScheduleWakeKey } from "./native-schedule-transport-contract"
-import type { NativeScheduleTransportReply, NativeScheduleWake } from "./native-schedule-transport-contract"
+import type { NativeScheduleTransportReply, NativeScheduleWake, NativeSchedulePreflight } from "./native-schedule-transport-contract"
 
 export const NATIVE_SCHEDULE_TRANSPORT_TIMEOUT_MS = 8_000
 export const NATIVE_SCHEDULE_TRANSPORT_RESPONSE_BYTES = 1024 * 1024
@@ -18,6 +18,7 @@ type Request = {
   directory: string
   wake: NativeScheduleWake
   signal?: AbortSignal
+  preflight?: NativeSchedulePreflight
 }
 type Mutation = Request & {
   /** Durable CAS, under the same Mission exclusion as controls: persist the exact
@@ -33,7 +34,7 @@ const laneSymbol = Symbol.for("codenomad.missions.native-schedule-transport.lane
 const host = globalThis as typeof globalThis & { [laneSymbol]?: Set<string> }
 const lanes = host[laneSymbol] ??= new Set<string>()
 
-async function boundedResponse(response: Response, signal: AbortSignal): Promise<Response> {
+export async function boundedNativeScheduleResponse(response: Response, signal: AbortSignal): Promise<Response> {
   const reader = response.body?.getReader(), chunks: Uint8Array[] = []
   const cancel = () => { void reader?.cancel().catch(() => {}) }
   signal.addEventListener("abort", cancel, { once: true })
@@ -64,6 +65,7 @@ export function createNativeScheduleTransport(overrides: Partial<Dependencies> =
   const invoke = async (mode: "wake" | "status", request: Request, claim?: Mutation["claim"]): Promise<NativeScheduleTransportResult> => {
     // Snapshot mutable caller inputs before the first await.
     const { registrationFile, directory } = request, wake = nativeScheduleWakeIdentity({ ...request.wake })
+    const preflight = request.preflight && { ...request.preflight }
     let dispatched = false
     const failure = (reason: FailureReason): NativeScheduleTransportResult => ({ state: dispatched ? "uncertain" : "not-dispatched", reason })
     try {
@@ -116,20 +118,25 @@ export function createNativeScheduleTransport(overrides: Partial<Dependencies> =
             // A request can continue remotely after cancellation; receiver must fence
             // incarnation and durable Mission state again before every effect.
             dispatched = true
-            return boundedResponse(await deps.fetch(input, { ...init, signal, redirect: "error" }), signal)
+            return boundedNativeScheduleResponse(await deps.fetch(input, { ...init, signal, redirect: "error" }), signal)
           } })
         check(); guard(); check()
         if (mode === "wake" && (!claim || !await claim(checked.identity))) return failure("held")
         check(); guard(); check()
-        const raw = await client.rpc(NativeScheduleTransportRpc)[mode]({ wake, incarnation: checked.identity, registrationFile },
+        const raw = await client.rpc(NativeScheduleTransportRpc)[mode]({ wake, incarnation: checked.identity, registrationFile, ...(preflight ? { preflight } : {}) },
           { location: { directory }, signal })
         check(); guard(); check()
         const reply = raw as NativeScheduleTransportReply
         if (!reply || reply.key !== nativeScheduleWakeKey(wake)
           || !["applied", "pending", "rejected", "unknown"].includes(reply.state)
-          || reply.messagePresent !== undefined && typeof reply.messagePresent !== "boolean") throw new Error("schedule-rpc-reply")
+          || reply.messagePresent !== undefined && typeof reply.messagePresent !== "boolean"
+          || reply.ready !== undefined && typeof reply.ready !== "boolean"
+          || reply.preflight !== undefined && (!Number.isSafeInteger(reply.preflight.cutoff) || reply.preflight.cutoff < 0
+            || !Number.isSafeInteger(reply.preflight.issuedAt) || reply.preflight.issuedAt < 0
+            || !/^[a-f0-9]{64}$/.test(reply.preflight.signature))) throw new Error("schedule-rpc-reply")
         return { state: "received", reply: { key: reply.key, state: reply.state,
-          ...(reply.messagePresent === undefined ? {} : { messagePresent: reply.messagePresent }) } }
+          ...(reply.messagePresent === undefined ? {} : { messagePresent: reply.messagePresent }),
+          ...(reply.ready === undefined ? {} : { ready: reply.ready }), ...(reply.preflight ? { preflight: { ...reply.preflight } } : {}) } }
       } catch { return failure(signal.aborted ? "deadline" : "unavailable") }
     })()
     // A timed-out discovery remains a read, and keeps its lane until it actually ends.

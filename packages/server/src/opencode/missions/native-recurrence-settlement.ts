@@ -4,6 +4,7 @@ import { recurrencePassage } from "../../missions/recurrence-passage"
 import { MAX_CONTROL_FAMILY_SESSIONS } from "../../missions/native-session-family"
 import { isMissionTaskSession } from "../../missions/session-identity"
 import { passageSourceCursors, passageStartInput, type PassageSource } from "../../missions/recurrence-input"
+import type { MissionMap } from "../../missions/model"
 import { samePassageObservation, type NativePassageObservation, type PassageSessionObservation } from "./native-passage-observation"
 
 export type PassageOutcome = "completed" | "failed" | "ended-without-report"
@@ -34,9 +35,29 @@ export async function observeNativePassageSettlement(input: {
   if (snapshot.missions.length !== 1 || snapshot.discardedEvents || snapshot.controlUnavailable || snapshot.notificationUnavailable
     || !mission || mission.id !== passage.missionID || mission.coordinatorSessionId !== passage.coordinatorSessionID)
     throw new Error("Passage journal unavailable")
+  const frozen = await input.storage.get(passage.inputKey) as unknown as { sources: PassageSource[]; input: ReturnType<typeof passageStartInput> } | undefined
+  if (!frozen || !samePassageObservation(frozen.input, passageStartInput(doc, passage, frozen.sources)))
+    throw new Error("Passage frozen input unavailable")
+  const settled = await observePassageFamilySettlement({ ...input, projectID: doc.projectID, mission,
+    coordinatorSessionID: passage.coordinatorSessionID, messageID: passage.messageID })
+  if (!settled) return undefined
+  const result = { passageID: passage.passageID, messageID: passage.messageID, missionID: passage.missionID,
+    conversationID: passage.coordinatorSessionID, outcome: settled.outcome, ...(settled.interrupted ? { reason: "interrupted" as const } : {}), artifactMessageIDs: [],
+    cursors: settled.outcome === "completed" ? passageSourceCursors(frozen.sources) : [] }
+  return { result, expectedRevision: doc.revision }
+}
+
+/** Shared native H11 proof. Callers supply their own typed durable document and
+ * archive CAS; every original input, claim, family and background delivery is covered. */
+export async function observePassageFamilySettlement(input: {
+  projectID: string; mission: MissionMap; coordinatorSessionID: string; messageID: string;
+  native: Pick<NativePassageObservation, "session" | "children" | "requests" | "assertCurrent">;
+  directory: string; workspaceID?: string; signal: AbortSignal; current(): true; uncertain?(): void
+}) {
+  const { native, mission, signal } = input
   const actorIDs = mission.actors.map(actor => actor.sessionId)
-  const originalInputs = new Map([[passage.coordinatorSessionID, passage.messageID]])
-  const roots = await passageFamilyRoots(native, passage.coordinatorSessionID, actorIDs)
+  const originalInputs = new Map([[input.coordinatorSessionID, input.messageID]])
+  const roots = await passageFamilyRoots(native, input.coordinatorSessionID, actorIDs)
   for (const id of roots.slice(1)) {
     // Fresh managed roots and all their descendants belong to this passage. A
     // reused external root needs separate input/family provenance qualification.
@@ -54,7 +75,7 @@ export async function observeNativePassageSettlement(input: {
     if (seen.has(next.id)) throw new Error("Passage family moved")
     seen.add(next.id)
     const session = await native.session(next.id, originalInputs.get(next.id))
-    if (session.projectID !== doc.projectID || session.directory !== input.directory || session.workspaceID !== input.workspaceID
+    if (session.projectID !== input.projectID || session.directory !== input.directory || session.workspaceID !== input.workspaceID
       || session.parentID !== next.parentID) throw new Error("Passage family moved")
     // Every claim blocks, including old claims absent from process-local active:
     // native restart recovery can resume them after this asynchronous read.
@@ -79,9 +100,6 @@ export async function observeNativePassageSettlement(input: {
   if (mission.control?.pending.length) return undefined
   const outcome: PassageOutcome = mission.status === "completed" ? "completed"
     : family.some(session => session.failed) || mission.status === "failed" ? "failed" : "ended-without-report"
-  const frozen = await input.storage.get(passage.inputKey) as unknown as { sources: PassageSource[]; input: ReturnType<typeof passageStartInput> } | undefined
-  if (!frozen || !samePassageObservation(frozen.input, passageStartInput(doc, passage, frozen.sources)))
-    throw new Error("Passage frozen input unavailable")
   // Recheck after the asynchronous journal and request reads. Unknown changes
   // park the same pending passage; they never admit another turn.
   for (const session of family) {
@@ -91,11 +109,6 @@ export async function observeNativePassageSettlement(input: {
   if (await native.requests([...seen])) return undefined
   signal.throwIfAborted(); input.current(); native.assertCurrent()
   const interrupted = outcome === "ended-without-report" && family.some(session => session.terminal?.outcome === "interrupted")
-  const result = { passageID: passage.passageID, messageID: passage.messageID, missionID: passage.missionID,
-    conversationID: passage.coordinatorSessionID, outcome, ...(interrupted ? { reason: "interrupted" as const } : {}), artifactMessageIDs: [],
-    cursors: outcome === "completed" ? passageSourceCursors(frozen.sources) : [] }
-  // The archive must be published with `finish(..., expectedRevision)`: any document
-  // change since this awaited observation is a CAS conflict, re-observed next wake.
-  return { result, expectedRevision: doc.revision }
+  return { outcome, interrupted }
 }
 

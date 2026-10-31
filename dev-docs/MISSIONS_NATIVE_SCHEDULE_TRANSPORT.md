@@ -1,16 +1,13 @@
-# Native schedule transport foundation
+# Native schedule transport
 
-`opencode/missions/native-schedule-transport*` and `native-schedule-carrier*`
-provide isolated integration primitives. The recurring daily runtime keeps its
-own admission path. These primitives are available for the durable native
-schedule adapter to compose with its mapping, controls and CAS.
+`native-mission-schedule-runtime.ts` registers the product carrier hooks, local
+provider, receiving wake/status RPC, after-idle maintenance and fixed business
+bridge. Its durable calendar owner and passage engine share the project document
+exclusion. The daily document runtime keeps its own admission and control path.
 
-`registerNativeScheduleCarrierFoundation` is the reusable native registration.
-The owning durable calendar adapter controls installation; product availability
-stays gated until that owner and ordinary-input boundary are integrated. The
-included no-business-effect handler advances a reconciliation calendar only when
-its document has no pending passage. Principal wakes and pending observation
-return pending for CORE to resolve.
+`native-schedule-transport*` and `native-schedule-carrier*` supply the shared
+transport/local-language primitives. `registerNativeScheduleCarrierFoundation`
+provides a separate no-business-effect qualification composition.
 
 ## Transport contract
 
@@ -102,6 +99,24 @@ transport discovery and internal RPC themselves use loopback HTTP.
 
 ## Native document composition and packaging
 
+The production `native-mission-schedule-runtime.ts` composes the provider and exact
+local hooks with its fresh wake/status receivers. Context-side dispatch first
+reads signed native readiness and freezes a fan-in cutoff; its outer eight-second
+deadline spans both preflight and wake. Incomplete coverage and prior uncertain
+dispatches retain their original durable preparations and stay read-only. The
+receiver consumes and closes auxiliary technical claims before owner and pending
+business reconciliation, then reapplies owner cleanup after settlement. Its
+business bridge is registered once by `registerNativeScheduledBusinessRpc`.
+
+The principal preparation is written by the prompt hook before native inbox
+admission, serialized with Pause and temporal replacement. Context reads the
+persisted original and native ACK before transport. A separate fixed maintenance
+RPC receives bounded public terminal hints from learned pure carrier/installation
+data. It rechecks native quiescence in a new HTTP graph before cleaning a carrier
+that was active during its own wake. It never uses status reads as mutations or
+resends a prior dispatch claim. The subscription, its maximum 128 pending hints
+and temporary debounce fibers belong to the plugin Scope.
+
 The registered runtime resolves the exact session marker into its point-read
 unified Mission document and current calendar, checks its project/Location/local
 model, and rejects stale generations. It keeps one native KV dispatch claim per
@@ -111,13 +126,33 @@ the single slot. `closeNativeScheduleCarrierClaim` persists a monotone
 `settled: { revision, highWater }` receipt on the exact claim under the same
 project document-mutation exclusion. Its proof is the matching session/schedule/
 time-generation mapping in the current or retiring calendars, with high-water
-covering that run. The runtime closes after its committed auxiliary CAS; a calendar
-replacement owner closes before discarding retiring mappings. A closure receipt
-survives temporal replacement and lets the next generation use the single slot.
-Missing/pruned proof, a pending run, a lost dispatch acknowledgement or an elapsed
-deadline keep an unclosed claim held. Read-only status remains mutation-free.
+covering that run. Principal reservation consumes its technical occurrence in the
+same CAS: high-water advances to its run while `pendingWake` retains the exact
+business reference. This permits closing the principal claim while business stays
+pending and admits the auxiliary claim. Later ignored contiguous occurrences keep
+that pending reference and may advance high-water; settlement preserves its maximum.
+The runtime closes after the committed technical CAS; a calendar replacement owner
+closes before discarding retiring mappings. A closure receipt survives temporal
+replacement and lets the next generation use the single slot. Missing/pruned proof,
+an unreserved uncertain run, a lost dispatch acknowledgement or an elapsed deadline
+keep an unclosed claim held. Read-only status remains mutation-free.
+During incomplete arm/replacement, the current auxiliary has its own durable
+partial mapping. A lost auxiliary-create ACK uses read-only exact native-row
+preflight against its verified current intent; the optional trusted claim
+resolver carries that binding across the own-process RPC boundary. The claimed
+receiver adopts the existing auxiliary, consumes its technical occurrence and
+closes its claim before owner reconciliation. Complete synchronization preserves
+the partial mapping's progress. Principal admission keeps its control barriers.
 Native document publication uses
 `acquireNativeMissionDocumentStore` and its real SQL revision CAS.
+
+`nativeScheduleCarrierLookupKey` point-reads the reverse ownership record under
+`documents-v1/carriers/<projectToken>/<sessionID>`, including current, retiring and
+pending-cleanup descriptors. The owner writes it before session creation and
+removes it after confirmed native session removal. Ordinary-route protection uses
+ownership even when marker/model verification fails; technical execution requires
+verified current ownership. New technical roots use
+`ses_cn_schedule_<40 lowercase hex>` and keep their indices during uncertain cleanup.
 
 The receiver rereads exact native session/message/schedule rows around publication
 in its current RPC graph. Its transaction guard checks incarnation and installed
@@ -127,10 +162,12 @@ Never acquire another root SQL lease inside the document transaction's synchrono
 guard. Keep required Core work in the current invocation and join it before graph
 release.
 
-Native compaction projects a checkpoint as a user-role model message. A bounded
-public native `session.context` read classifies completed compaction IDs; the
-model-context selector can ignore only those exact IDs when they have no schedule
-metadata. Checkpoint prose never supplies wake authority. New scheduled users keep
+Native compaction checkpoints and restart notices project as user-role model
+messages. A bounded public native `session.context` read classifies completed
+compactions and synthetic messages carrying native `metadata.notice:"restart"`.
+The model-context selector ignores their exact IDs only when schedule metadata is
+absent and the ID is outside the current deterministic wake namespace. Prose and
+description matching supply no classification. New scheduled users keep
 their exact metadata and are point-read again by the RPC receiver. Automatic
 compaction can also serialize the current wake into the checkpoint: when context
 has no candidate, the hook first asks read-only `status` for the next deterministic
@@ -177,8 +214,14 @@ restarts and processes the next original slot. Only the tick's native Effect
 Clock is controlled; OS time is unchanged. That mode measures maintenance and
 phase/end preservation, while ordinary cold autonomy uses the natural-wake mode.
 
-It installs the actual reusable registration/provider against the native unified
-document adapter in a private service. The fixture owns its paths, credentials,
-network spy, calendar and daemon processes. Product activation/arm/adopt, fan-in,
-passage reservation, launched budgets, source conditions, pending-family settlement,
-calendar cleanup and tombstones remain CORE integration requirements.
+It installs the reusable registration/provider against the native unified document
+adapter in a private service. The fixture owns its paths, credentials, network spy,
+calendar and daemon processes.
+
+Product qualification uses `scripts/test-native-mission-schedule-product.mjs` with
+an absolute isolated CLI and fresh approved scratch child. It drives the real
+authenticated creation/settings/control routes and retained product bundle, then
+closes the backend and restarts only its owned managed service. Native SQL reads
+observe the cold no-client window. `--controlled-settlement` supplies an Effect
+Clock only to the qualification tick; the natural wake/restart window uses wall
+time. Additional fault-injection and platform gates belong in delivery evidence.

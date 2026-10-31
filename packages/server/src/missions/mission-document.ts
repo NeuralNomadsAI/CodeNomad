@@ -3,6 +3,7 @@ import { canonicalAuthority } from "./authority-protocol"
 import { stableToken, controlOperationID, controlResumeAdmissionID } from "./receipt-identity"
 import { missionCoordinatorSessionID } from "./session-identity"
 import { parseMissionNativeAcknowledgement } from "./lifecycle-schema"
+import { missionCalendarOwnerSchema } from "./mission-calendar-owner-state"
 import {
   documentCounter, documentID, documentTimestamp, nativeDocumentID, missionConfigurationSchema,
   missionLaunchLimit, missionSlotEndsAt, MISSION_DOCUMENT_MAX_BYTES, type MissionConfiguration,
@@ -64,6 +65,9 @@ const origin = z.union([
 const pending = z.object({ id: documentID, missionID: documentID, coordinatorSessionID: nativeDocumentID, messageID: nativeDocumentID,
   configurationGeneration: generation, timeGeneration: generation, createdAt: documentTimestamp, dueAt: documentTimestamp,
   origin, configuration: missionConfigurationSchema, checkpoints, admittedAt: documentTimestamp.nullable(),
+  manualAllowed: z.boolean().optional().default(false),
+  admissionAttempted: z.boolean().optional().default(false),
+  manualExpectedRevision: documentCounter.optional(),
 }).strict()
 export type MissionDocumentPending = z.infer<typeof pending>
 const receipt = pending.omit({ configuration: true, checkpoints: true }).extend({ configurationDigest: digest,
@@ -77,7 +81,11 @@ const document = z.object({ version: z.literal(1), id: documentID, projectID: na
   firstPlayedAt: documentTimestamp.nullable(), oneShotAt: documentTimestamp.nullable(), slotEndsAt: documentTimestamp.nullable(),
   launchedCount: documentCounter, settledCount: documentCounter, everCreatedTask: z.boolean(),
   blocked: z.enum(["failed", "ended-without-report", "unknown"]).nullable(),
+  creation: z.object({ requestID, digest }).strict().optional(),
   oneTime: oneTime.nullable(), scheduleActivation: missionScheduleActivationSchema.nullable(),
+  calendarOwner: missionCalendarOwnerSchema.nullable().default(null),
+  fanIn: z.object({ incarnation: z.string().min(1).max(240), cutoff: documentTimestamp, timeGeneration: generation,
+    principalIDs: z.array(nativeDocumentID).max(8).refine(ids => new Set(ids).size === ids.length), completed: z.boolean(), suppress: z.boolean() }).strict().nullable().default(null),
   calendars: z.array(calendar).max(9),
   synchronization: z.object({ requestID: documentID, kind: z.enum(["arm", "replace", "disarm", "delete"]),
     retiredCalendars: z.array(calendar).max(9) }).strict().nullable(),
@@ -110,11 +118,14 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
     || new Set(doc.calendars.map(item => item.sessionID)).size !== doc.calendars.length) fail()
   for (const item of [...doc.calendars, ...(doc.synchronization?.retiredCalendars ?? [])]) {
     if (item.timeGeneration > doc.timeGeneration || item.role === "reconciliation" && item.slot !== 0) fail()
-    for (const wake of [item.pendingWake, item.wakePreparing]) {
-      if (wake && (wake.scheduleID !== item.scheduleID || wake.run !== item.highWater + 1)) fail()
-    }
+    if (item.pendingWake && (item.pendingWake.scheduleID !== item.scheduleID || item.pendingWake.run > item.highWater)) fail()
+    if (item.wakePreparing && (item.wakePreparing.scheduleID !== item.scheduleID || item.wakePreparing.run !== item.highWater + 1)) fail()
   }
   if (doc.calendars.some(item => item.timeGeneration !== doc.timeGeneration)) fail()
+  if (doc.calendarOwner && (doc.calendarOwner.operation.expectedRevision > doc.revision
+    || doc.calendarOwner.slots.some(item => item.timeGeneration !== doc.timeGeneration)
+    || doc.calendarOwner.retired.some(item => item.descriptor.timeGeneration > doc.timeGeneration))) fail()
+  if (doc.fanIn && (doc.fanIn.timeGeneration > doc.timeGeneration || !doc.fanIn.completed && doc.fanIn.timeGeneration !== doc.timeGeneration)) fail()
   const passages = [...doc.history, ...(doc.pending ? [doc.pending] : [])]
   if (new Set(passages.map(item => item.id)).size !== passages.length) fail()
   let previousSettledAt = doc.createdAt
@@ -126,7 +137,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
       || passage.coordinatorSessionID !== missionCoordinatorSessionID(passage.missionID, passage.createdAt)
       || passage.messageID !== `msg_${stableToken(`${passage.id}\0start`, 40)}`
       || passage.dueAt !== (passage.origin.kind === "wake" ? Math.max(...passage.origin.wakes.map(wake => wake.dueAt)) : passage.createdAt)
-      || passage.admittedAt !== null && passage.admittedAt < passage.createdAt) fail()
+      || passage.admittedAt !== null && passage.admittedAt < passage.createdAt
+      || passage.manualExpectedRevision !== undefined && passage.origin.kind !== "manual") fail()
     if ("settledAt" in passage) {
       if (passage.settledAt < Math.max(previousSettledAt, passage.createdAt, passage.admittedAt ?? 0)
         || (passage.reason === "not-started") !== (passage.admittedAt === null)
@@ -137,7 +149,8 @@ export function parseMissionDocument(input: unknown, identity: Pick<MissionDocum
   if (doc.pending) {
     const active = doc.pending
     if (active.createdAt < previousSettledAt || active.configurationGeneration !== doc.configurationGeneration
-      || active.timeGeneration !== doc.timeGeneration || doc.firstPlayedAt === null) fail()
+      || active.timeGeneration !== doc.timeGeneration || doc.firstPlayedAt === null
+      || active.manualAllowed && active.origin.kind !== "manual") fail()
     if (active.origin.kind === "wake" && active.origin.wakes.some(wake => !doc.calendars.some(item =>
       item.role === "principal" && item.scheduleID === wake.scheduleID && canonicalAuthority(item.pendingWake) === canonicalAuthority(wake)))) fail()
   }
@@ -193,10 +206,10 @@ export function parseMissionTombstoneRegistry(input: unknown) {
 
 export function projectMissionDocument(doc: MissionDocument) {
   const limit = missionLaunchLimit(doc.configuration.launch)
-  const lock = doc.deletion ? "deleted" : doc.synchronization || doc.blocked === "unknown"
+  const lock = doc.deletion ? "deleted" : doc.synchronization || doc.calendarOwner?.operation.pending || doc.fanIn && !doc.fanIn.completed || doc.blocked === "unknown"
     || doc.scheduleActivation && doc.scheduleActivation.state !== "ready" ? "uncertain"
     : doc.state === "stopped" ? "terminal" : doc.pending ? "passage" : doc.state === "finished" ? "terminal"
-      : doc.firstPlayedAt !== null && !["every", "cron", "multi"].includes(doc.configuration.launch.timing.kind) ? "launched-once" : null
+      : (doc.oneTime?.firstPlay || doc.launchedCount > 0 && !["every", "cron", "multi"].includes(doc.configuration.launch.timing.kind)) ? "launched-once" : null
   return { id: doc.id, revision: doc.revision, state: doc.state, launch: doc.configuration.launch,
     firstPlayedAt: doc.firstPlayedAt, slotEndsAt: doc.slotEndsAt, launchedCount: doc.launchedCount,
     remaining: limit === null ? null : Math.max(0, limit - doc.launchedCount), reserved: !!doc.pending && doc.pending.admittedAt === null,

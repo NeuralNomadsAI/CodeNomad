@@ -46,22 +46,36 @@ export function nativeScheduleCarrierHooks(owns: (sessionID: string) => boolean)
 export type NativeScheduleCarrierMapping = Omit<NativeScheduleWake, "run" | "messageID">
 export type NativeScheduleCarrierCandidate = NativeScheduleWake & { dueAt: number; late: boolean }
 
+/** Classify non-wake IDs from the bounded native message window, never from
+ * model-facing prose. Native restart synthetics lose their metadata in that
+ * projection, just as completed compaction checkpoints become user messages. */
+export function nativeScheduleCarrierNonWakeMessageIDs(messages: readonly unknown[]): string[] {
+  if (messages.length > 128 || Buffer.byteLength(JSON.stringify(messages), "utf8") > 1024 * 1024) throw new Error("schedule-carrier-coverage")
+  return messages.flatMap(raw => {
+    if (!raw || typeof raw !== "object") throw new Error("schedule-carrier-coverage")
+    const message = raw as { id?: unknown; type?: unknown; status?: unknown; metadata?: { schedule?: unknown; notice?: unknown } }
+    if (typeof message.id !== "string" || !message.id.length || message.id.length > 1024) throw new Error("schedule-carrier-coverage")
+    return message.metadata?.schedule === undefined && (message.type === "compaction" && message.status === "completed"
+      || message.type === "synthetic" && message.metadata?.notice === "restart") ? [message.id] : []
+  })
+}
+
 /** Bounded model-context hints only. RPC must point-read the native user message,
  * revalidate mapping/Location/state, and reserve/advance high-water under CAS. */
 export function nativeScheduleCarrierWakes(mapping: NativeScheduleCarrierMapping, highWater: number,
-  messages: readonly unknown[], completedCompactionIDs: readonly string[] = []): NativeScheduleCarrierCandidate[] {
+  messages: readonly unknown[], nativeNonWakeIDs: readonly string[] = []): NativeScheduleCarrierCandidate[] {
   if (!Number.isSafeInteger(highWater) || highWater < 0 || messages.length > 128
-    || completedCompactionIDs.length > 128 || Buffer.byteLength(JSON.stringify(messages), "utf8") > 1024 * 1024) throw new Error("schedule-carrier-coverage")
+    || nativeNonWakeIDs.length > 128 || Buffer.byteLength(JSON.stringify(messages), "utf8") > 1024 * 1024) throw new Error("schedule-carrier-coverage")
   const candidates = new Map<number, NativeScheduleCarrierCandidate>()
   for (const raw of messages) {
     if (!raw || typeof raw !== "object") throw new Error("schedule-carrier-context")
     const message = raw as { role?: unknown; id?: unknown; metadata?: { schedule?: unknown } }
     if (message.role !== "user") continue
     const schedule = message.metadata?.schedule as { id?: unknown; run?: unknown; dueAt?: unknown; late?: unknown } | undefined
-    // Native compaction projects a user-role checkpoint. Only the exact IDs
-    // classified by a bounded native context read may be ignored here; prose
-    // and self-declared markers never supply that classification or wake authority.
-    if (schedule === undefined && typeof message.id === "string" && completedCompactionIDs.includes(message.id)) continue
+    // A native notice/checkpoint can be omitted from wake hints. Even a caller's
+    // allowlist cannot hide a partial deterministic wake or schedule metadata.
+    if (schedule === undefined && typeof message.id === "string" && !message.id.startsWith(`msg_${mapping.scheduleID}_`)
+      && nativeNonWakeIDs.includes(message.id)) continue
     if (!schedule || schedule.id !== mapping.scheduleID || !Number.isSafeInteger(schedule.run)
       || Number(schedule.run) < 1 || !Number.isSafeInteger(schedule.dueAt) || Number(schedule.dueAt) < 0
       || typeof schedule.late !== "boolean" || typeof message.id !== "string") throw new Error("schedule-carrier-wake")

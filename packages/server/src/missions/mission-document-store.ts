@@ -13,12 +13,14 @@ import type { MissionJsonValue } from "./model"
 export type MissionDocumentStorage = Pick<MissionStorage, "get"> & {
   compareAndSet(key: string, value: MissionJsonValue, expectedRevision: number | null, current: () => true): Promise<void>
 }
+export type MissionDocumentMutation = NativeMissionDocumentStore
 
 /** Point reads/writes use their own namespace. Passage journals retain their
  * existing ranges, per-mission capacity, deletion reserve and activation index. */
 export class NativeMissionDocumentStore {
   readonly projectToken: string
   private readonly prefix: string
+  private borrowed?: () => true
   constructor(private readonly storage: MissionDocumentStorage, readonly projectID: string, readonly projectCanonical: string) {
     if (!projectID || !projectCanonical) throw new Error("Invalid Mission document project")
     this.projectToken = stableToken(`${projectID}\0${projectCanonical}`, 24)
@@ -26,7 +28,9 @@ export class NativeMissionDocumentStore {
   }
 
   async read(id: string): Promise<MissionDocument | MissionDocumentTombstone | undefined> {
+    this.borrowed?.()
     const input = await this.storage.get(this.key(id))
+    this.borrowed?.()
     if (input === undefined) return undefined
     if (input && typeof input === "object" && "deletedAt" in input) {
       const result = missionTombstoneSchema.parse(input)
@@ -37,20 +41,41 @@ export class NativeMissionDocumentStore {
     return parseMissionDocument(input, { id, projectID: this.projectID, projectCanonical: this.projectCanonical })
   }
 
-  create(id: string, configuration: MissionConfiguration, now: number, current: () => true, oneTime: MissionDocument["oneTime"] = null): Promise<MissionDocument> {
+  create(id: string, configuration: MissionConfiguration, now: number, current: () => true, oneTime: MissionDocument["oneTime"] = null,
+    creation?: MissionDocument["creation"]): Promise<MissionDocument> {
     return this.exclusive(async () => {
       if (await this.read(id) || (await this.registry()).entries.some(item => item.id === id)) throw new Error("Mission document already exists or deleted")
       const doc: MissionDocument = { version: 1, id, projectID: this.projectID, projectCanonical: this.projectCanonical,
         revision: 0, configurationGeneration: 1, timeGeneration: 1, createdAt: now,
         configuration: missionConfigurationSchema.parse(configuration), state: "paused", firstPlayedAt: null,
         oneShotAt: null, slotEndsAt: null, launchedCount: 0, settledCount: 0, everCreatedTask: false, blocked: null,
-        calendars: [], synchronization: null, deletion: null, checkpoints: [], pending: null, history: [], oneTime, scheduleActivation: null }
+        calendars: [], synchronization: null, deletion: null, checkpoints: [], pending: null, history: [], oneTime, scheduleActivation: null, calendarOwner: null, fanIn: null,
+        ...(creation === undefined ? {} : { creation }) }
       return this.publish(doc, null, current)
     })
   }
 
   change(id: string, expectedRevision: number, current: () => true, update: (document: MissionDocument) => void): Promise<MissionDocument> {
+    return this.exclusive(() => this.changeUnlocked(id, expectedRevision, current, update))
+  }
+
+  /** Hold only the project mutation exclusion across native I/O. Each change
+   * keeps its own short SQL CAS. Always use the supplied view inside this scope. */
+  withExclusion<T>(operation: (locked: NativeMissionDocumentStore) => Promise<T>): Promise<T> {
     return this.exclusive(async () => {
+      let active = true
+      const locked = new NativeMissionDocumentStore(this.storage, this.projectID, this.projectCanonical)
+      locked.borrowed = (): true => { this.borrowed?.(); if (!active) throw new Error("Mission document exclusion ended"); return true }
+      try { return await operation(locked) } finally { active = false }
+    })
+  }
+  assertActive(): true {
+    if (!this.borrowed) throw new Error("Mission document exclusion is not owned")
+    return this.borrowed()
+  }
+
+  private async changeUnlocked(id: string, expectedRevision: number, current: () => true, update: (document: MissionDocument) => void): Promise<MissionDocument> {
+      assertSynchronousAuthorityGuard(current, "policy-unqualified")
       const doc = await this.required(id)
       if (!Number.isSafeInteger(expectedRevision) || doc.revision !== expectedRevision) throw new Error("Mission document revision conflict")
       const previous = structuredClone(doc)
@@ -62,8 +87,11 @@ export class NativeMissionDocumentStore {
         return previous
       }
       if (doc.id !== previous.id || doc.projectID !== previous.projectID || doc.projectCanonical !== previous.projectCanonical
+        || canonicalAuthority(doc.creation ?? null) !== canonicalAuthority(previous.creation ?? null)
         || doc.createdAt !== previous.createdAt || previous.firstPlayedAt !== null && doc.firstPlayedAt !== previous.firstPlayedAt
         || doc.launchedCount < previous.launchedCount || doc.settledCount < previous.settledCount
+         || previous.pending?.admissionAttempted && doc.pending?.id === previous.pending.id && doc.pending.admissionAttempted !== true
+         || previous.pending && doc.pending?.id === previous.pending.id && doc.pending.manualExpectedRevision !== previous.pending.manualExpectedRevision
         || doc.configurationGeneration < previous.configurationGeneration || doc.timeGeneration < previous.timeGeneration
         || previous.everCreatedTask && !doc.everCreatedTask || previous.deletion && canonicalAuthority(doc.deletion) !== canonicalAuthority(previous.deletion)
         || previous.oneTime?.firstPlay?.acknowledgement && canonicalAuthority(previous.oneTime.firstPlay.acknowledgement, MISSION_DOCUMENT_MAX_BYTES)
@@ -75,21 +103,25 @@ export class NativeMissionDocumentStore {
         throw new Error("Mission document progress is monotone")
       doc.revision = expectedRevision + 1
       return this.publish(doc, expectedRevision, current)
-    })
   }
 
   /** Native cleanup must first reconcile every mapping/preparation/control. A
    * full registry keeps the complete stopped document visible; barriers never evict. */
   reserveDeletion(id: string, expectedRevision: number, current: () => true): Promise<void> {
-    return this.exclusive(async () => {
+    return this.exclusive(() => this.reserveDeletionUnlocked(id, expectedRevision, current))
+  }
+  private async reserveDeletionUnlocked(id: string, expectedRevision: number, current: () => true): Promise<void> {
+      assertSynchronousAuthorityGuard(current, "policy-unqualified")
       const doc = await this.required(id)
       if (doc.revision !== expectedRevision || !doc.deletion || doc.state !== "stopped") throw new Error("Mission deletion reconciliation pending")
       await this.reserveDeletionSlot(doc, current)
-    })
   }
 
   compact(id: string, expectedRevision: number, now: number, current: () => true): Promise<MissionDocumentTombstone> {
-    return this.exclusive(async () => {
+    return this.exclusive(() => this.compactUnlocked(id, expectedRevision, now, current))
+  }
+  private async compactUnlocked(id: string, expectedRevision: number, now: number, current: () => true): Promise<MissionDocumentTombstone> {
+      assertSynchronousAuthorityGuard(current, "policy-unqualified")
       const existing = await this.read(id)
       if (existing && "deletedAt" in existing && existing.revision === expectedRevision + 1) return existing
       const doc = await this.required(id)
@@ -103,7 +135,6 @@ export class NativeMissionDocumentStore {
         deleteManagedSessions: doc.deletion.deleteManagedSessions, deletedAt: reservation.deletedAt, timeGeneration: doc.timeGeneration })
       await this.commit(this.key(id), tombstone, expectedRevision, current)
       return tombstone
-    })
   }
 
   private async reserveDeletionSlot(doc: MissionDocument, current: () => true) {
@@ -132,14 +163,20 @@ export class NativeMissionDocumentStore {
     return parseMissionTombstoneRegistry(input ?? { version: 1, revision: 0, entries: [] })
   }
   private key(id: string) { return `${this.prefix}/missions/${documentID.parse(id)}` }
-  private exclusive<T>(work: () => Promise<T>): Promise<T> { return runMissionExclusive(`document-mutation:${this.projectToken}`, work) }
+  private exclusive<T>(work: () => Promise<T>): Promise<T> {
+    if (this.borrowed) {
+      try { this.borrowed(); return work().then(value => { this.borrowed!(); return value }) }
+      catch (error) { return Promise.reject(error) }
+    }
+    return runMissionExclusive(`document-mutation:${this.projectToken}`, work)
+  }
   private async publish(doc: MissionDocument, expected: number | null, current: () => true) {
     const parsed = parseMissionDocument(doc, { id: doc.id, projectID: this.projectID, projectCanonical: this.projectCanonical })
     await this.commit(this.key(doc.id), parsed, expected, current)
     return parsed
   }
   private async commit(key: string, input: unknown, expected: number | null, current: () => true, maxBytes = MISSION_DOCUMENT_MAX_BYTES) {
-    const bytes = canonicalAuthority(input, maxBytes), fence = () => assertSynchronousAuthorityGuard(current, "policy-unqualified")
+    const bytes = canonicalAuthority(input, maxBytes), fence = () => { this.borrowed?.(); return assertSynchronousAuthorityGuard(current, "policy-unqualified") }
     fence()
     await this.storage.compareAndSet(key, JSON.parse(bytes) as MissionJsonValue, expected, fence)
     const saved = await this.storage.get(key)

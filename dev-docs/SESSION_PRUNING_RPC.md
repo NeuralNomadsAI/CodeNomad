@@ -56,6 +56,10 @@ fence. It pins `codenomad.session-pruning`, the method and runtime location; the
 instance proxy blocks arbitrary RPC. Server authentication middleware protects
 these routes.
 
+Ordinary single-message and batch pruning apply the shared Mission schedule input
+guard before native content writes. Technical carrier sessions stay read-only
+through these brokers; their preview and history reads remain available.
+
 After commit the caller re-reads native history, never a synthesized remainder.
 `rpc.codenomad.session-pruning.pruned` contains session/message IDs and the content
 revision. The UI invalidates both message-load authority and its native SDK transcript,

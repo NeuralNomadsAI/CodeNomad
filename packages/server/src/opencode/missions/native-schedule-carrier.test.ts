@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { createNativeScheduleCarrierProvider, nativeScheduleCarrierHooks, nativeScheduleCarrierWakes,
+import { createNativeScheduleCarrierProvider, nativeScheduleCarrierHooks, nativeScheduleCarrierWakes, nativeScheduleCarrierNonWakeMessageIDs,
   NATIVE_SCHEDULE_CARRIER_MODEL, NATIVE_SCHEDULE_CARRIER_TITLE } from "./native-schedule-carrier"
 import { nativeScheduleWakeKey } from "./native-schedule-transport-contract"
 
@@ -98,4 +98,26 @@ test("wrong mapping, forged/missing metadata, run gaps and context bounds fail c
   assert.throws(() => nativeScheduleCarrierWakes(mapping, 0, Array.from({ length: 33 }, (_, index) => message(index + 1))), /coverage/)
   assert.throws(() => nativeScheduleCarrierWakes(mapping, 0, Array(129).fill({ role: "assistant" })), /coverage/)
   assert.throws(() => nativeScheduleCarrierWakes(mapping, 0, [{ role: "assistant", content: "x".repeat(1024 * 1024) }]), /coverage/)
+})
+
+test("native restart notices do not poison later exact wakes; model prose and partial wakes still fail closed", () => {
+  const notice = { id: "msg_18a887377001lkZ72OqxlMaUdw", role: "user", content: [{ type: "text",
+    text: "The server restarted while you were working. Continue from where you left off without repeating completed work." }] }
+  const native = { id: notice.id, type: "synthetic", metadata: { notice: "restart" }, description: "Continuing after restart" }
+  const ids = nativeScheduleCarrierNonWakeMessageIDs([native])
+  const context = [message(1), notice, { role: "assistant", content: [] }, message(2)]
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 1, context, ids).map(item => item.run), [2])
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 2, context, ids), [])
+  assert.deepEqual(nativeScheduleCarrierWakes(mapping, 0, [notice], ids), [])
+  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, context), /carrier-wake/)
+  for (const forged of [{ ...native, type: "user" }, { ...native, metadata: {} }, { ...native, metadata: { notice: "other" } },
+    { ...native, metadata: { notice: "restart", schedule: {} } }]) {
+    const invalidIDs = nativeScheduleCarrierNonWakeMessageIDs([forged])
+    assert.deepEqual(invalidIDs, [])
+    assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, context, invalidIDs), /carrier-wake/)
+  }
+  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [{ ...notice, metadata: { schedule: { run: 2 } } }, message(2)], ids), /carrier-wake/)
+  const partial = { ...message(2), metadata: {} }
+  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [partial], [partial.id]), /carrier-wake/)
+  assert.throws(() => nativeScheduleCarrierWakes(mapping, 1, [notice, message(3)], ids), /coverage/)
 })

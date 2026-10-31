@@ -11,6 +11,12 @@ Recurring passages run in the OpenCode service with CodeNomad closed; never run 
 through a persistent CodeNomad backend. Native qualification: §Validation and
 `MISSIONS_RECURRING_QUALIFICATION.md`.
 
+Unified native schedule controls and passage admission are described in
+[Recurring Missions](MISSIONS_RECURRING.md#unified-native-schedules). Their technical
+schedule RPC and business bridge stay registered independently of desktop presence.
+The calendar owner shares project document exclusion with admission and controls;
+the execution journal retains its task, report and lifecycle contracts.
+
 ## Ownership
 
 | Concern | Owner |

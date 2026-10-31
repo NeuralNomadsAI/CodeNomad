@@ -6,7 +6,7 @@ import { Session } from "@opencode/schema/session"
 import { SessionInbox } from "@opencode/schema/session-inbox"
 import { SessionMessage } from "@opencode/schema/session-message"
 import type { PassageSource } from "../../missions/recurrence-input"
-import type { NativeMissionSession } from "../../missions/control-types"
+import type { MissionSessionAdapter, NativeMissionSession } from "../../missions/control-types"
 import { canonicalAuthority, rejectAuthority } from "../../missions/authority-protocol"
 import { matchesExecution } from "../../missions/execution"
 import { RECURRENCE_SOURCE_REFERENCE_RESERVE } from "../../missions/recurrence-read-budget"
@@ -18,19 +18,20 @@ import type { AutonomousMissionCommand } from "./autonomous-contract"
 const sessionTag = Context.Service<never, unknown>("@opencode/Session")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
 type NativeEffect = Effect.Effect<unknown, unknown>
+export type MissionNativeRunner = <A>(effect: Effect.Effect<A, unknown>) => Promise<A>
 type NativeSessionService = {
   get(id: string): NativeEffect
   create(input: NativeCreateInput): NativeEffect
   environment(input: { sessionID: string; variables: Record<string, string> }): NativeEffect
-  prompt(input: AutonomousMissionCommand["input"]): NativeEffect
-  synthetic(input: AutonomousMissionCommand["input"] | NativeRecurrenceLifecycleCommand["input"]): NativeEffect
+  prompt(input: AutonomousMissionCommand["input"] | NativeDocumentPassageCommand["input"]): NativeEffect
+  synthetic(input: AutonomousMissionCommand["input"] | NativeRecurrenceLifecycleCommand["input"] | NativeDocumentPassageCommand["input"]): NativeEffect
   inbox(id: string): NativeEffect
   cancelInbox?(input: { sessionID: string; inboxID: string }): NativeEffect
   messages?(input: { sessionID: string; order: "asc"; limit: number; cursor?: { id: string; direction: "next" } }): NativeEffect
   message?(input: { sessionID: string; messageID: string }): NativeEffect
 }
 export type NativeSourceReadInput = { sessionID: string; directory: string; workspaceID?: string;
-  afterMessageID: string | null; limit: number; contextLimit: number }
+  afterMessageID: string | null; afterNativeDigest?: string; limit: number; contextLimit: number }
 export type NativeCreateInput = {
   id: string; title: string; location: { directory: string }; metadata: Record<string, unknown>
   agent: string; model: { providerID: string; id: string; variant?: string }
@@ -44,6 +45,12 @@ export type NativeRecurrenceLifecycleCommand = { kind: "synthetic"; input: {
     taskMode: "native" | "independent";
     recurrence: { grantID?: string; passageID: string; messageID: string; coordinatorSessionID: string } } }
 } }
+export type NativeDocumentPassageCommand = { kind: "prompt" | "synthetic";
+  input: Parameters<MissionSessionAdapter["prompt"]>[0] & { description?: string } }
+
+export function nativePassageMessageDigest(value: typeof SessionMessage.Info.Type): string {
+  return createHash("sha256").update(canonicalAuthority(Schema.encodeSync(SessionMessage.Info)(value), 256 * 1024)).digest("hex")
+}
 const method = Schema.declare<(input: never) => NativeEffect>((value): value is (input: never) => NativeEffect => Predicate.isFunction(value))
 const serviceShape = Schema.Struct({ get: method, create: method, environment: method, prompt: method, synthetic: method, inbox: method })
 const variablesShape = Schema.Record(Schema.String, Schema.String)
@@ -54,7 +61,8 @@ const variablesShape = Schema.Record(Schema.String, Schema.String)
  * not a human authorization or protected grant; the admission helper supplies those.
   * Existing Session.create/environment/get/inbox/prompt/synthetic contracts are validated
  * by shape and result codecs, not the runtime version or an invented ctx field. */
-export const acquireMissionNativeService = Effect.fn("missions.acquireNativeService")(function* (locationCurrent?: () => true) {
+export const acquireMissionNativeService = Effect.fn("missions.acquireNativeService")(function* (locationCurrent?: () => true,
+  invocationRun?: MissionNativeRunner, beforeMutation?: () => Effect.Effect<void, unknown>) {
   const found = yield* Effect.serviceOption(sessionTag)
   const origin = yield* Effect.serviceOption(locationTag)
   if (Option.isNone(found) || Option.isNone(origin)) return yield* Effect.fail(new Error("Native Missions service unavailable"))
@@ -74,7 +82,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
     return true as const
   }
   const run = <A>(operation: () => NativeEffect, decode: Schema.Codec<A, unknown>,
-    options: { signal?: AbortSignal } | undefined, current: () => true, expected?: NativeRootPlacement) => {
+    options: { signal?: AbortSignal } | undefined, current: () => true, expected?: NativeRootPlacement, mutation = false) => {
     const pinned = expected && structuredClone(expected)
     const effect = Effect.gen(function* () {
       // The native get is preparation; a moved/retargeted root is rejected in
@@ -82,6 +90,11 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       const session = pinned ? yield* Schema.decodeUnknownEffect(Schema.toType(Session.Info))(yield* service.get(pinned.id)) : undefined
       const prepared = yield* Effect.sync(operation)
       if (!Effect.isEffect(prepared)) rejectAuthority("effect-unavailable")
+      if (mutation && beforeMutation) {
+        const qualification = beforeMutation()
+        if (!Effect.isEffect(qualification)) rejectAuthority("effect-unavailable")
+        yield* qualification
+      }
       // Native methods construct lazy Effects. Recheck AFTER construction and
       // consume the one-use fence in the suspension evaluated immediately
       // before the native Effect, with no intervening asynchronous codec read.
@@ -98,7 +111,7 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       })
       return yield* Schema.decodeUnknownEffect(decode)(result)
     })
-    return Effect.runPromise(Effect.provide(effect, graph), { signal: options?.signal })
+    return invocationRun ? invocationRun(effect) : Effect.runPromise(Effect.provide(effect, graph), { signal: options?.signal })
   }
   return {
     location,
@@ -115,9 +128,13 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
     },
     inbox: (sessionID: string, options?: { signal?: AbortSignal }) =>
       run(() => service.inbox(sessionID), Schema.Array(Schema.toType(SessionInbox.Info)).check(Schema.isMaxLength(1024)), options, assertCurrent),
+    message: async (input: { sessionID: string; messageID: string }, options?: { signal?: AbortSignal }) => {
+      if (!Predicate.isFunction(service.message)) rejectAuthority("effect-unavailable")
+      return run(() => service.message!({ ...input }), Schema.UndefinedOr(Schema.toType(SessionMessage.Info)), options, assertCurrent)
+    },
     cancelInbox: (input: { sessionID: string; inboxID: string }, current: () => true, expected: NativeRootPlacement) => {
       if (!Predicate.isFunction(service.cancelInbox)) rejectAuthority("effect-unavailable")
-      return run(() => service.cancelInbox!({ ...input }), Schema.Void, undefined, current, expected)
+      return run(() => service.cancelInbox!({ ...input }), Schema.Void, undefined, current, expected, true)
     },
     sourceMessages: async (input: NativeSourceReadInput, options: { signal?: AbortSignal }, current: () => true,
       placementCurrent: () => true): Promise<PassageSource["messages"]> => {
@@ -125,7 +142,8 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       if (!Predicate.isFunction(service.messages) || !Predicate.isFunction(service.message)
         || !Number.isSafeInteger(request.limit) || request.limit < 1 || request.limit > 32
         || !Number.isSafeInteger(request.contextLimit) || request.contextLimit < RECURRENCE_SOURCE_REFERENCE_RESERVE
-        || request.contextLimit > 16_384) rejectAuthority("effect-unavailable")
+        || request.contextLimit > 16_384 || request.afterNativeDigest !== undefined
+          && (!request.afterMessageID || !/^[a-f0-9]{64}$/.test(request.afterNativeDigest))) rejectAuthority("effect-unavailable")
       const messages = service.messages, message = service.message
       const nativeBytes = (value: unknown) => canonicalAuthority(Schema.encodeSync(SessionMessage.Info)(
         Schema.decodeUnknownSync(Schema.toType(SessionMessage.Info))(value)), 256 * 1024)
@@ -147,6 +165,8 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
           // Native messages silently returns [] for a deleted cursor: never interpret that as no change.
           if (!anchor || !Predicate.hasProperty(anchor, "id") || anchor.id !== request.afterMessageID) rejectAuthority("observation-unavailable")
           anchorBytes = nativeBytes(anchor)
+          if (request.afterNativeDigest !== undefined && createHash("sha256").update(anchorBytes).digest("hex") !== request.afterNativeDigest)
+            rejectAuthority("observation-unavailable")
         }
         const prepared = messages({ sessionID: request.sessionID, order: "asc", limit: request.limit,
           ...(request.afterMessageID === null ? {} : { cursor: { id: request.afterMessageID, direction: "next" } }) })
@@ -200,11 +220,11 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
         if (canonicalAuthority(projected, 64 * 1024).length > request.contextLimit) rejectAuthority("capacity")
         return projected
       })
-      return Effect.runPromise(Effect.provide(operation, graph), { signal: options.signal })
+      return invocationRun ? invocationRun(operation) : Effect.runPromise(Effect.provide(operation, graph), { signal: options.signal })
     },
     create: async (input: NativeCreateInput, options: { signal?: AbortSignal }, current: () => true) => {
       const request = structuredClone(input)
-      const session = await run(() => service.create(request), Schema.toType(Session.Info), options, current)
+      const session = await run(() => service.create(request), Schema.toType(Session.Info), options, current, undefined, true)
       if (session.id !== request.id || session.parentID || session.projectID !== location.project.id
         || session.location.directory !== request.location.directory || session.location.workspaceID !== location.workspaceID
         || !matchesExecution(request, session)
@@ -215,16 +235,16 @@ export const acquireMissionNativeService = Effect.fn("missions.acquireNativeServ
       options: { signal?: AbortSignal }, current: () => true, expected?: NativeRootPlacement) => {
       const variables = { ...input.variables }
       if (expected && input.sessionID !== expected.id) rejectAuthority("binding-mismatch")
-      const result = await run(() => service.environment({ sessionID: input.sessionID, variables }), variablesShape, options, current, expected)
+      const result = await run(() => service.environment({ sessionID: input.sessionID, variables }), variablesShape, options, current, expected, true)
       if (!isDeepStrictEqual(result, variables)) rejectAuthority("effect-unavailable")
     },
-    admit: async (command: AutonomousMissionCommand | NativeRecurrenceLifecycleCommand, options: { signal?: AbortSignal },
+    admit: async (command: AutonomousMissionCommand | NativeRecurrenceLifecycleCommand | NativeDocumentPassageCommand, options: { signal?: AbortSignal },
       current: () => true, expected?: NativeRootPlacement) => {
       const input = structuredClone(command.input)
       if (expected && input.sessionID !== expected.id) rejectAuthority("binding-mismatch")
-      const receipt = await run(() => command.kind === "prompt" ? service.prompt(input as AutonomousMissionCommand["input"])
+      const receipt = await run(() => command.kind === "prompt" ? service.prompt(input)
         : service.synthetic(input),
-        Schema.toType(SessionInbox.Info), options, current, expected)
+        Schema.toType(SessionInbox.Info), options, current, expected, true)
       if (receipt.id !== input.id || receipt.sessionID !== input.sessionID
         || receipt.type !== (command.kind === "prompt" ? "user" : "synthetic")) rejectAuthority("effect-unavailable")
       return receipt

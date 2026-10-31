@@ -18,6 +18,7 @@ import { recurrenceScheduleChangedSchema } from "./recurrence-events"
 import { recurrenceNativeControlWire, recurrenceSnapshotOutput, recurrenceControlStatusWire, recurrenceControlRequestWire } from "./recurrence-control-contract"
 import { RECURRENCE_RUN_NOW_STATUS_INPUT, RECURRENCE_RUN_NOW_STATUS_REQUEST, RECURRENCE_RUN_NOW_OUTPUT } from "./recurrence-manual-rpc"
 import { missionDocumentSummaryWire, missionScheduleActivationWire } from "./mission-document-wire"
+import { missionScheduleRpcMethods } from "./mission-schedule-contract"
 
 export const CODENOMAD_MISSIONS_RPC_ID = "codenomad.missions"
 export const CODENOMAD_MISSIONS_CHANGED_EVENT = `rpc.${CODENOMAD_MISSIONS_RPC_ID}.changed`
@@ -273,6 +274,7 @@ const snapshotProperties = {
 export const CODENOMAD_MISSIONS_RPC = {
   id: CODENOMAD_MISSIONS_RPC_ID,
   methods: {
+    ...missionScheduleRpcMethods,
     documentCapabilities: {
       input: { type: "object", properties: {}, additionalProperties: false },
       output: { type: "object", properties: { version: { type: "integer", const: 1 } }, required: ["version"], additionalProperties: false },

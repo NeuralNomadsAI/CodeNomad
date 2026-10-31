@@ -324,7 +324,7 @@ export function missionPlaybookDetails(taskMode: MissionTaskMode = "native"): Mi
   }) }
 }
 
-export function buildAssignmentPrompt(mission: MissionMap, task: MissionTask): string {
+export function buildAssignmentPrompt(mission: Pick<MissionMap, "id" | "template" | "taskMode" | "objective">, task: MissionTask): string {
   const recipe = getMissionRecipe(mission.template, mission.taskMode)
   const role = recipe.roles.find((candidate) => candidate.id === task.role) ?? custom.roles[0]
   const blockers = task.blockedBy.length > 0 ? task.blockedBy.join(", ") : "none"

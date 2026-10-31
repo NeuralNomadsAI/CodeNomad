@@ -11,9 +11,15 @@ import { hintsShowWork, retainMissionWork } from "./lifetime"
 import type { NativeHumanAnswerGate } from "../../missions/human-answer"
 import type { MissionDocumentAccess } from "../../missions/mission-document-one-time"
 
+export interface NativeDocumentBusiness {
+  select(sessionID: string): Promise<MissionBusinessRoute | undefined>
+  prepare(sessionID: string): Promise<boolean>
+}
+
 /** One-time Missions only: the `codenomad-missions/v2` journal. Setup never
  * reads, creates or repairs the retired `authority-v2` namespace. */
-export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate, documents?: MissionDocumentAccess): Plugin.Plugin {
+export function desktopPlugin(presenceDirectory: string | readonly string[], humanGate?: NativeHumanAnswerGate, documents?: MissionDocumentAccess,
+  documentBusiness?: NativeDocumentBusiness): Plugin.Plugin {
   return {
     id: "codenomad.missions",
     setup: async ctx => {
@@ -22,8 +28,11 @@ export function desktopPlugin(presenceDirectory: string | readonly string[], hum
       const journal = new MissionJournal(ctx.storage, ctx.location.project.id, ctx.location.project.canonical, undefined, index)
       let ordinary: MissionBusinessRoute | undefined
       const disposeBusiness = await setupMissionsBusiness(ctx, async sessionID =>
-        await selectNativePassageBusiness(ctx, sessionID, humanGate) ?? (ordinary && { ...ordinary, readSessionID: sessionID }))
-      const promptHook = await ctx.session.hook("prompt", event => prepareNativePassageSession(ctx, event.sessionID, humanGate))
+        await documentBusiness?.select(sessionID) ?? await selectNativePassageBusiness(ctx, sessionID, humanGate)
+          ?? (ordinary && { ...ordinary, readSessionID: sessionID }))
+      const promptHook = await ctx.session.hook("prompt", async event => {
+        if (!await documentBusiness?.prepare(event.sessionID)) await prepareNativePassageSession(ctx, event.sessionID, humanGate)
+      })
         .catch(async error => { await disposeBusiness(); throw error })
       let disposePresence: (() => Promise<void>) | undefined
       try { disposePresence = await followPresence(presenceDirectory, async () => {

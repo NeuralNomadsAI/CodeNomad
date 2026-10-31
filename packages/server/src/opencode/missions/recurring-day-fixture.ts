@@ -275,7 +275,10 @@ export class RecurringDayFixture {
     const unusedDomains = Object.fromEntries(["agent", "aisdk", "command", "credential", "experimental", "generate", "model", "provider",
       "integration", "mcp", "plugin", "permission", "reference", "skill", "vcs", "websearch", "worktree", "shell"]
       .map(name => [name, unsupported(name)]))
-    const host = new Proxy({ ...unusedDomains, location, storage, rpc, session: { ...native,
+    const host = new Proxy({ ...unusedDomains, location, storage, rpc,
+      // This daily-only fixture registers the real product hooks; no technical
+      // model is resolved in these journeys, so AISDK only owns registration.
+      aisdk: { hook: () => Effect.sync(registration) }, session: { ...native,
       instructions: unsupported("session.instructions"),
       get: (input: { sessionID: string }) => native.get(input.sessionID),
       interrupt: (input: { sessionID: string }) => Effect.sync(() => { this.idle(input.sessionID); return { interrupted: true } }),

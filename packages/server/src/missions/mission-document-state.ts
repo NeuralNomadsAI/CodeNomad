@@ -9,7 +9,7 @@ import { missionDocumentDeletionIdentitySchema } from "./mission-document"
 
 const same = (a: unknown, b: unknown) => canonicalAuthority(a) === canonicalAuthority(b)
 function available(doc: MissionDocument) {
-  if (doc.deletion || doc.synchronization || doc.blocked || doc.state !== "running") throw new Error("Mission admission blocked")
+  if (doc.deletion || doc.synchronization || doc.calendarOwner?.operation.pending || doc.blocked || doc.state !== "running") throw new Error("Mission admission blocked")
   const limit = missionLaunchLimit(doc.configuration.launch)
   if (limit !== null && doc.launchedCount >= limit) throw new Error("Mission launch budget exhausted")
 }
@@ -43,15 +43,17 @@ export const missionDocumentChanges = {
     if (doc.everCreatedTask && config.template !== doc.configuration.template) throw new Error("Mission template locked")
     const temporal = (value: MissionConfiguration) => ({ timing: value.launch.timing, at: value.launch.ends.at, afterMs: value.launch.ends.afterMs })
     const changedTime = !same(temporal(config), temporal(doc.configuration))
+    const changedTiming = !same(config.launch.timing, doc.configuration.launch.timing)
     if (doc.firstPlayedAt !== null && !same(config.launch.condition, doc.configuration.launch.condition))
       throw new Error("Mission condition baseline reconciliation required")
     if (doc.calendars.some(item => item.pendingWake || item.wakePreparing)) throw new Error("Mission wake unresolved")
     doc.configuration = config
     doc.configurationGeneration++
     if (changedTime) {
+      doc.fanIn = null
       doc.timeGeneration++
       if (doc.firstPlayedAt !== null) {
-        doc.oneShotAt = oneShotAt(config, now)
+        if (changedTiming) doc.oneShotAt = oneShotAt(config, now)
         doc.synchronization = { requestID: `edit_${doc.revision + 1}`, kind: "replace", retiredCalendars: doc.calendars }
         doc.calendars = []
       }
@@ -77,13 +79,17 @@ export const missionDocumentChanges = {
   synchronized(doc: MissionDocument, requestID: string, calendars: MissionCalendar[]) {
     if (!doc.synchronization || doc.synchronization.requestID !== requestID) throw new Error("Mission synchronization conflict")
     if (doc.synchronization.retiredCalendars.some(item => item.wakePreparing || item.pendingWake)) throw new Error("Mission retired wake unresolved")
-    const running = doc.state === "running" && requiresMissionCalendar(doc.configuration.launch)
+    const running = (doc.state === "running" || doc.state === "paused" && doc.firstPlayedAt !== null) && requiresMissionCalendar(doc.configuration.launch)
     const count = doc.configuration.launch.timing.kind === "multi" ? doc.configuration.launch.timing.calendars.length : 1
     if (running && (calendars.filter(item => item.role === "principal").length !== count
       || calendars.filter(item => item.role === "reconciliation").length !== 1)
       || !running && calendars.length) throw new Error("Mission calendar coverage incomplete")
-    if (calendars.some(item => item.highWater !== 0 || item.pendingWake || item.wakePreparing
-      || doc.synchronization!.retiredCalendars.some(old => old.scheduleID === item.scheduleID || old.sessionID === item.sessionID)))
+    if (running && doc.calendars.some(old => old.role !== "reconciliation" || !calendars.some(item => same(item, old)))
+      || calendars.some(item => {
+        if (doc.synchronization!.retiredCalendars.some(old => old.scheduleID === item.scheduleID || old.sessionID === item.sessionID)) return true
+        const current = doc.calendars.find(old => old.scheduleID === item.scheduleID || old.sessionID === item.sessionID)
+        return current ? item.role !== "reconciliation" || !same(item, current) : item.highWater !== 0 || !!item.pendingWake || !!item.wakePreparing
+      }))
       throw new Error("Mission replacement calendar identity reused")
     doc.calendars = calendars
     doc.synchronization = null
@@ -96,7 +102,6 @@ export const missionDocumentChanges = {
   },
   processWake(doc: MissionDocument, input: MissionWake) {
     const wake = missionWakeSchema.parse(input), calendar = exactCalendar(doc, wake)
-    if (calendar.pendingWake) throw new Error("Mission wake still pending")
     // Caller proves this exact technical occurrence was ignored/consumed, even
     // when paused or overlapping; a gap is never a license to skip ahead.
     calendar.highWater = wake.run
@@ -115,6 +120,7 @@ export const missionDocumentChanges = {
         if (calendar.role !== "principal" || !same(calendar.wakePreparing, wake)) throw new Error("Mission wake not prepared")
         calendar.pendingWake = wake
         calendar.wakePreparing = null
+        calendar.highWater = wake.run
       }
     } else {
       documentID.parse(origin.requestID)
@@ -128,7 +134,7 @@ export const missionDocumentChanges = {
     const id = missionDocumentPassageID(doc, doc.configurationGeneration, origin), missionID = `msn_${stableToken(`${doc.projectID}\0${id}`, 24)}`
     doc.pending = { id, missionID, coordinatorSessionID: missionCoordinatorSessionID(missionID, now),
       messageID: `msg_${stableToken(`${id}\0start`, 40)}`, origin, configurationGeneration: doc.configurationGeneration,
-      timeGeneration: doc.timeGeneration, createdAt: now, dueAt, configuration: structuredClone(doc.configuration), checkpoints: proof, admittedAt: null }
+      timeGeneration: doc.timeGeneration, createdAt: now, dueAt, configuration: structuredClone(doc.configuration), checkpoints: proof, admittedAt: null, manualAllowed: false, admissionAttempted: false }
   },
   admitted(doc: MissionDocument, passageID: string, now: number) {
     const pending = exactPending(doc, passageID)
@@ -155,7 +161,7 @@ export const missionDocumentChanges = {
     else doc.blocked = outcome
     if (pending.origin.kind === "wake") for (const wake of pending.origin.wakes) {
       const calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)!
-      calendar.highWater = wake.run
+      calendar.highWater = Math.max(calendar.highWater, wake.run)
       calendar.pendingWake = null
     }
     doc.pending = null
@@ -175,8 +181,7 @@ export const missionDeletionSynchronizationID = (requestID: string) => `del_${st
 
 function exactCalendar(doc: MissionDocument, wake: MissionWake) {
   const calendar = doc.calendars.find(item => item.scheduleID === wake.scheduleID)
-  if (!calendar || calendar.timeGeneration !== doc.timeGeneration || wake.run !== calendar.highWater + 1
-    || calendar.pendingWake && !same(calendar.pendingWake, wake)) throw new Error("Mission stale or gapped wake")
+  if (!calendar || calendar.timeGeneration !== doc.timeGeneration || wake.run !== calendar.highWater + 1) throw new Error("Mission stale or gapped wake")
   return calendar
 }
 function exactPending(doc: MissionDocument, passageID: string) {

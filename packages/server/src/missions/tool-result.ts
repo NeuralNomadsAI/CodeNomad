@@ -82,7 +82,7 @@ export function compactMissionTask(task: MissionTask) {
 }
 
 /** What a coordinator acts on next: the current revision and frontier. Callers add the affected tasks. */
-export function compactMission(mission: MissionMap) {
+export function compactMission(mission: Pick<MissionMap, "id" | "revision" | "status" | "runState" | "frontier">) {
   return {
     missionID: mission.id, revision: mission.revision, status: mission.status,
     ...(mission.runState === undefined ? {} : { runState: mission.runState }),
@@ -90,12 +90,12 @@ export function compactMission(mission: MissionMap) {
   }
 }
 
-export function compactMissionTasks(mission: MissionMap, taskKeys: readonly string[]) {
+export function compactMissionTasks(mission: Pick<MissionMap, "tasks">, taskKeys: readonly string[]) {
   return mission.tasks.filter(task => taskKeys.includes(task.key)).map(compactMissionTask)
 }
 
 /** The exact current canonical prompt of a live native task; withdrawn work is never relaunched. */
-export function nativeAssignment(mission: MissionMap, task: MissionTask) {
+export function nativeAssignment(mission: Pick<MissionMap, "id" | "template" | "taskMode" | "objective">, task: MissionTask) {
   if (task.executionMode?.kind !== "native" || task.status === "withdrawn" || !Number.isSafeInteger(task.contractGeneration)) return {}
   return {
     contract: { missionID: mission.id, taskKey: task.key, generation: task.contractGeneration! },

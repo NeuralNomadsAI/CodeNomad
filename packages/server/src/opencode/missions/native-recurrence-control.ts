@@ -1,7 +1,7 @@
 import type { Plugin } from "@opencode/plugin/effect"
 import { Cause, Effect, Schema } from "effect"
 import { verifyRecurrenceBridge } from "../automation-plugin"
-import { assertRecurrenceProofFresh, recurrenceControlRequestDigest } from "../../missions/recurrence-control-proof"
+import { assertRecurrenceProofFresh, recurrenceControlRequestDigest, type RecurrenceControlProofBody } from "../../missions/recurrence-control-proof"
 import { recurrenceControlRequestSchema } from "../../missions/recurrence-control-contract"
 import { cancelNativeRecurrenceClock, observeNativeRecurrenceScheduleOnly, readNativeRecurrenceClock, readNativeRecurrenceClockStatus,
   startNativeRecurrenceClock } from "./native-service-clock"
@@ -20,7 +20,7 @@ export const nativeRecurrenceControlInputSchema = Schema.Struct({ sessionID: Sch
 export type NativeRecurrenceControlInput = typeof nativeRecurrenceControlInputSchema.Type
 
 /** Transport authentication only. It does not mint a grant or authorize a model tool. */
-export async function assertRecurrenceBridgeProof(input: NativeRecurrenceControlInput) {
+export async function assertRecurrenceBridgeProof(input: RecurrenceControlProofBody & { proof: string; retry?: boolean }) {
   const { proof, retry: _retry, ...body } = input
   assertRecurrenceProofFresh(input.issuedAt)
   if (!/^[a-f0-9]{64}$/.test(proof) || input.sessionID === "auth-disabled" || !input.sessionID
