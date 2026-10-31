@@ -36,9 +36,11 @@ try {
   }, async ({ client, root, env, connection }) => {
     const call = async (rpcID, method, input = {}, directory = root) => {
       const { output } = await client.rpc.call({ rpcID, method, input, location: { directory } })
-      assert(readIntegrationRpcOutput(`${method}.output`, output).ok, `${rpcID}.${method} answers within the contract: ${JSON.stringify(output)}`)
+      // The raw output is scanned too, so a secret in a field the reader drops is still caught.
       assertNoSentinels(output, secrets, `${rpcID}.${method}`)
-      return output
+      const read = readIntegrationRpcOutput(`${method}.output`, output)
+      assert(read.ok, `${rpcID}.${method} answers within the contract`)
+      return read.value
     }
     let status
     for (const deadline = Date.now() + 90_000; !status; await delay(250)) {
