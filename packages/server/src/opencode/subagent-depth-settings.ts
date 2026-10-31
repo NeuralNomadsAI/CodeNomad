@@ -8,7 +8,9 @@ import { editNativeSetting, readNativeSetting, removeEmptyNativeObject, withEdit
 import { readRuntimeContract } from "./compatibility/negotiate"
 import { imageSettingsCapability } from "./image-settings"
 import { maskedBy, samePath } from "./experimental-layers"
-import { NESTING_AGENT, hasNestingRule, nestingEffect, nestingToolHidden, withNestingRule, withoutNestingRule } from "./subagent-nesting"
+import {
+  NESTING_AGENT, nestingEffect, nestingRuleSkipped, nestingToolHidden, withNestingRule, withoutNestingRule,
+} from "./subagent-nesting"
 import type { ServiceConnection } from "../workspaces/opencode-service"
 
 const keys = ["experimental", "subagent_depth"]
@@ -101,10 +103,12 @@ export class SubagentDepthSettings {
     // OpenCode's resolved rules decide; it matches permissions case-insensitively on Windows execution hosts.
     const ignoreCase = this.manager.getServicePathStyle(workspaceId) === "win32"
     const effect = context.rules && nestingEffect(context.rules, ignoreCase)
+    const projectDepth = project ? depth(readNativeSetting(project.document, keys)) : null
     return { location: context.location, capability: context.capability, effectiveDepth,
       nesting: effect ? { effect, ...(nestingToolHidden(context.rules!, ignoreCase) ? { hidden: true as const } : {}) } : null,
-      project: project ? { path: project.path, depth: depth(readNativeSetting(project.document, keys)),
+      project: project ? { path: project.path, depth: projectDepth,
         expectation: expectation(project.document),
+        ...(projectDepth !== null && nestingRuleSkipped(project.document) ? { nestingSkipped: true as const } : {}),
         ...(withoutRedundantExperimental(project.document, this.exposedMediaStorage(context, project.path)) === undefined
           ? {} : { emptyExperimental: true }) } : null }
   }
@@ -132,7 +136,7 @@ export class SubagentDepthSettings {
       const edited = withEditedText(document, text)
       if (value === null) return withoutNestingRule(edited) ?? text
       // Without a General block that can take it (see `withNestingRule`), only the depth is saved.
-      return hasNestingRule(edited) ? text : withNestingRule(edited) ?? text
+      return withNestingRule(edited) ?? text
     })
     context.connection.assertCurrent()
   }

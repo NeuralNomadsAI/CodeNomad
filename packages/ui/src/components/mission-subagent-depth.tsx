@@ -98,9 +98,9 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
     if (!nesting || effective == null) return undefined
     // Below 2, OpenCode's own depth limit stops nesting whatever General may do.
     if (effective < 2) return t("missions.depth.nesting.limited")
-    // The effect concerns General launching General; other targets may still be allowed unless the tool is hidden.
+    // The effect concerns General launching General; a visible tool leaves other targets to their own rules.
     if (nesting.hidden) return t("missions.depth.nesting.blocked")
-    return t(nesting.effect === "allow" ? "missions.depth.nesting.allowed" : nesting.effect === "ask" ? "missions.depth.nesting.ask" : "missions.depth.nesting.some")
+    return t(nesting.effect === "allow" ? "missions.depth.nesting.allowed" : nesting.effect === "ask" ? "missions.depth.nesting.ask" : "missions.depth.nesting.generalDenied")
   }
   // Reads and writes only lock the field (read-only keeps keyboard focus); it is disabled when unusable.
   const locked = () => busy() || refreshPending()
@@ -151,6 +151,7 @@ export function MissionSubagentDepth(props: { instanceId: string; directory?: st
         else if (event.key === "Escape" && state().dirty && !locked()) { event.preventDefault(); event.stopPropagation(); discard() }
       }} ref={field} /></label>
     <p class="mission-depth-rule">{t("missions.depth.nesting.rule")}</p>
+    <Show when={state().snapshot?.project?.depth != null && state().snapshot?.project?.nestingSkipped}><p role="alert">{t("missions.depth.nesting.skipped")}</p></Show>
     <span id={description} class="sr-only">{t("missions.depth.hint")}</span>
     <div class="window-actions">
       {/* Pressing the button keeps focus in the field, so leaving it cannot first save the typed value.

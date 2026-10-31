@@ -419,14 +419,16 @@ test("Inherit repairs an existing empty project experimental block that hides th
 test("the depth editor states the nesting rule and whether General subagents can nest, per OpenCode's resolved rules", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   // Each saved value selects the native state the next read reports.
-  const states: Record<string, { effectiveDepth: number; depth: number | null; nesting: unknown }> = {
+  const states: Record<string, { effectiveDepth: number; depth: number | null; nesting: unknown; nestingSkipped?: boolean }> = {
     initial: { effectiveDepth: 1, depth: null, nesting: { effect: "deny", hidden: true } },
     "3": { effectiveDepth: 3, depth: 3, nesting: { effect: "allow" } },
     "2": { effectiveDepth: 2, depth: 2, nesting: { effect: "ask" } },
     "4": { effectiveDepth: 4, depth: 4, nesting: { effect: "deny", hidden: true } },
     null: { effectiveDepth: 5, depth: null, nesting: { effect: "deny", hidden: true } },
-    // General may not launch General, but the tool stays for other agents.
+    // General may not launch General; the tool stays, so other agents follow their own rules.
     "6": { effectiveDepth: 6, depth: 6, nesting: { effect: "deny" } },
+    // The project's legacy General block could not take the rule: only the depth was saved.
+    "7": { effectiveDepth: 7, depth: 7, nesting: { effect: "deny", hidden: true }, nestingSkipped: true },
     // The rule is written with a depth of 1 too, but OpenCode's depth limit still stops nesting.
     "1": { effectiveDepth: 1, depth: 1, nesting: { effect: "allow" } },
     // 0 keeps OpenCode's meaning: no subagents at all.
@@ -440,7 +442,8 @@ test("the depth editor states the nesting rule and whether General subagents can
     await page.route("**/api/workspaces/fixture/subagent-depth*", route => {
       if (route.request().method() === "GET") return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 },
         effectiveDepth: state.effectiveDepth, nesting: state.nesting,
-        project: { path: "fixture/opencode.jsonc", depth: state.depth, expectation: `e${state.depth}` } } })
+        project: { path: "fixture/opencode.jsonc", depth: state.depth, expectation: `e${state.depth}`,
+          ...(state.nestingSkipped ? { nestingSkipped: true } : {}) } } })
       writes.push(route.request().postDataJSON())
       state = states[String(route.request().postDataJSON().depth)]
       return route.fulfill({ status: 204, body: "" })
@@ -463,7 +466,10 @@ test("the depth editor states the nesting rule and whether General subagents can
     await save("4", 4)
     assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest.")
     await save("6", 6)
-    assert.equal(await note.innerText(), "General subagents can launch some subagents here, but not other General subagents.")
+    assert.equal(await note.innerText(), "General subagents cannot launch other General subagents here; launching other agents depends on their permissions.")
+    assert.equal(await controls.getByText("Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.", { exact: true }).count(), 0, "the rule was written")
+    await save("7", 7)
+    assert.equal(await controls.getByRole("alert").filter({ hasText: "Only the depth was saved" }).innerText(), "Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.")
     await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
     await controls.getByRole("button", { name: "Inherit", exact: true }).click()
     await controls.getByText("OpenCode effective depth: 5", { exact: true }).waitFor()
@@ -473,7 +479,8 @@ test("the depth editor states the nesting rule and whether General subagents can
       "General may launch subagents, but a depth of 1 still stops nesting")
     await save("0", 0)
     assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.")
-    assert.deepEqual(writes.map(write => (write as { depth: number | null }).depth), [3, 2, 4, 6, null, 1, 0], "only depth writes")
+    assert.deepEqual(writes.map(write => (write as { depth: number | null }).depth), [3, 2, 4, 6, 7, null, 1, 0], "only depth writes")
+    assert.equal(await controls.getByText("Only the depth was saved: this project's legacy General `permission` is a single value or already uses both `task` and `subagent`, so CodeNomad did not add the nesting rule. Allow subagents for General in that file yourself.", { exact: true }).count(), 0, "no warning without the depth-only save")
   } finally { await page.close() }
 })
 

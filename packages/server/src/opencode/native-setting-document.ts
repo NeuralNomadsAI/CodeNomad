@@ -169,7 +169,13 @@ export function removeNativeProperty(document: PluginControlDocument, keys: stri
 
 /** Removes `members[index]` (a list element or an object property) with one adjacent comma. */
 function removeMember(document: PluginControlDocument, members: JsonNode[], index: number, path: (string | number)[]) {
-  const text = document.text, member = members[index], end = member.offset + member.length
+  const text = document.text, member = members[index], end = member.offset + member.length, container = member.parent
+  // A container holding only this member and whitespace becomes empty again, as an append into `{}` or `[]` found it.
+  if (members.length === 1 && container && [text.slice(container.offset + 1, member.offset),
+    text.slice(end, container.offset + container.length - 1)].every(part => /^[\s,]*$/.test(part))) {
+    const collapsed = removal(document, [{ offset: container.offset + 1, length: container.length - 2, content: "" }], path)
+    if (collapsed !== undefined) return collapsed
+  }
   const following = nextToken(text, end)
   const previous = index > 0 ? nextToken(text, members[index - 1].offset + members[index - 1].length) : undefined
   const comma = following.kind === SyntaxKind.CommaToken ? following.offset

@@ -3,7 +3,7 @@ import test from "node:test"
 import { parse as parseJsonc, type ParseError } from "jsonc-parser"
 import type { PluginControlDocument } from "./plugin-control-document"
 import {
-  hasNestingRule, nestingEffect, nestingToolHidden, withNestingRule, withoutNestingRule,
+  hasNestingRule, nestingEffect, nestingRuleSkipped, nestingToolHidden, withNestingRule, withoutNestingRule,
 } from "./subagent-nesting"
 
 const bom = String.fromCharCode(0xfeff)
@@ -82,7 +82,7 @@ test("removal prunes only the containers the added rule leaves empty", () => {
   const compact = withNestingRule(document(`{"agents":{"general":{"permissions":[]}}}`))!
   assert.match(compact, /\/\/ Added by CodeNomad|\/\* Added by CodeNomad/)
   assert.equal(hasNestingRule(document(compact)), true)
-  assert.deepEqual(parse(withoutNestingRule(document(compact))!), {})
+  assert.deepEqual(parse(withoutNestingRule(document(compact))!), { agents: { general: { permissions: [] } } }, "a list CodeNomad did not create stays")
 })
 
 test("unreadable rule locations are never treated as CodeNomad's", () => {
@@ -122,4 +122,41 @@ test("a legacy General block takes the rule as a permission property, never shad
   assert.deepEqual(parse(withoutNestingRule(document(mode))!), { agent: { general: { steps: 3 } }, mode: { general: { steps: 5 } } })
   // A legacy rule the user changed is the user's.
   assert.equal(hasNestingRule(document(added.replace('"*": "allow"', '"*": "ask"'))), false)
+})
+
+test("only containers CodeNomad created are pruned: pre-existing empty ones stay", () => {
+  for (const original of [`{ "agent": { "general": { "permission": {} } } }\n`, `{ "agents": { "general": {} } }\n`, `{ "agents": {} }\n`]) {
+    const added = withNestingRule(document(original))!
+    assert.equal(hasNestingRule(document(added)), true, original)
+    assert.deepEqual(parse(withoutNestingRule(document(added))!), parse(original), original)
+  }
+  // An appended member only (no container created) leaves the exact text, `{}` included.
+  const legacy = `{ "agent": { "general": { "permission": {} } } }\n`
+  assert.equal(withoutNestingRule(document(withNestingRule(document(legacy))!)), legacy)
+  assert.match(withNestingRule(document(`{}`))!, /Inherit removes it with \`agents\`\./)
+  assert.match(withNestingRule(document(`{ "agents": {} }`))!, /Inherit removes it with \`general\`\./)
+  assert.match(withNestingRule(document(`{ "agents": { "general": { "permissions": [] } } }`))!, /Inherit removes it\./)
+})
+
+test("the rule follows the winning General block: a rule left in a superseded block moves", () => {
+  // Saved while the legacy block was the only one, then the user adds a native General entry.
+  const legacy = withNestingRule(document(`{ "agent": { "general": { "steps": 3, "permission": {} } } }`))!
+  const superseded = legacy.replace(/\{ "agent"/, '{ "agents": { "general": { "permissions": [{ "action": "subagent", "resource": "*", "effect": "deny" }] } }, "agent"')
+  const moved = withNestingRule(document(superseded))!
+  const value = parse(moved)
+  assert.deepEqual(value.agents.general.permissions, [rule("subagent", "*", "deny"), allow], "the winning block takes the rule")
+  assert.deepEqual(value.agent.general, { steps: 3, permission: {} }, "the superseded block keeps everything else")
+  assert.equal(withNestingRule(document(moved)), moved, "the winning block's rule is not added twice")
+  assert.deepEqual(parse(withoutNestingRule(document(moved))!), parse(superseded.replace(/,?\s*"subagent": \{[^}]*\}/, "")))
+  // Inherit removes every rule CodeNomad left, superseded ones included.
+  assert.deepEqual(parse(withoutNestingRule(document(superseded))!).agent.general, { steps: 3, permission: {} })
+})
+
+test("a General block that cannot take the rule is reported as a depth-only save", () => {
+  for (const text of [`{ "agent": { "general": { "permission": "deny" } } }`,
+    `{ "agent": { "general": { "tools": { "task": false }, "permission": { "subagent": "deny" } } } }`])
+    assert.equal(nestingRuleSkipped(document(text)), true, text)
+  for (const text of [`{}`, `{ "agent": { "general": { "permission": { "task": "deny" } } } }`, withNestingRule(document(`{}`))!,
+    `{ "agents": { "general": { "permissions": {} } } }`])
+    assert.equal(nestingRuleSkipped(document(text)), false, text)
 })

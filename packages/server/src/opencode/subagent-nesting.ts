@@ -17,8 +17,9 @@ const RULE = { action: "subagent", resource: "*", effect: "allow" }
 const LEGACY_RULE = { "*": "allow" }
 /** Legacy permission keys OpenCode reads as the `subagent` action. */
 const LEGACY_KEYS = ["subagent", "task"]
-/** Written inside the rule CodeNomad adds: only a rule carrying it is CodeNomad's to remove. */
-const MARKER = "Added by CodeNomad with the project subagent depth; Inherit removes it."
+/** Written inside the rule CodeNomad adds: only a rule carrying it is CodeNomad's to remove. It ends with
+ * the outermost container CodeNomad created for the rule, the only ones Inherit may prune. */
+const MARKER = "Added by CodeNomad with the project subagent depth; Inherit removes it"
 
 /** Where one document can define General, in the order OpenCode lets them win within it (`config/normalize.ts`):
  * a native `agents` entry replaces the whole migrated legacy entry, and a legacy `mode` entry replaces `agent`. */
@@ -56,66 +57,104 @@ export function nestingToolHidden(rules: readonly Rule[], ignoreCase: boolean): 
 }
 
 const object = (value: unknown): value is Record<string, unknown> => Boolean(value) && typeof value === "object" && !Array.isArray(value)
-const marked = (document: PluginControlDocument, keys: (string | number)[], rule: unknown) => {
-  const node = findNodeAtLocation(parseTree(document.text, [], { allowTrailingComma: true })!, keys)
+type Location = (typeof LOCATIONS)[number]
+type Owned = { location: Location; path: (string | number)[]; created?: string }
+const full = (document: PluginControlDocument) => `${document.byteOrderMark ? String.fromCharCode(0xfeff) : ""}${document.text}`
+
+/** The marked rule's source at `path` when it is CodeNomad's, unchanged. */
+const marked = (document: PluginControlDocument, path: (string | number)[], rule: unknown) => {
+  const node = findNodeAtLocation(parseTree(document.text, [], { allowTrailingComma: true })!, path)
   const source = node ? document.text.slice(node.offset, node.offset + node.length) : ""
-  return source.includes(MARKER) && isDeepStrictEqual(parse(source, [], { allowTrailingComma: true }), rule)
+  return source.includes(MARKER) && isDeepStrictEqual(parse(source, [], { allowTrailingComma: true }), rule) ? source : undefined
 }
 
-/** The path of the rule CodeNomad added in any General block of the document. */
-function findNestingRule(document: PluginControlDocument): (string | number)[] | undefined {
-  for (const { keys, legacy } of LOCATIONS) {
+/** CodeNomad's rules in every General block of the document, with the outermost container each created. */
+function ownedRules(document: PluginControlDocument): Owned[] {
+  return LOCATIONS.flatMap(location => {
+    const { keys, legacy } = location
     try {
-      if (!legacy) {
-        const rules = readNativeSetting(document, [...keys, "permissions"])
-        const index = Array.isArray(rules) ? rules.findIndex((_, index) => marked(document, [...keys, "permissions", index], RULE)) : -1
-        if (index >= 0) return [...keys, "permissions", index]
-        continue
-      }
-      const permission = readNativeSetting(document, [...keys, "permission"])
-      const name = object(permission) ? LEGACY_KEYS.find(key => marked(document, [...keys, "permission", key], LEGACY_RULE)) : undefined
-      if (name) return [...keys, "permission", name]
-    } catch { continue }
+      const container = [...keys, legacy ? "permission" : "permissions"], value = readNativeSetting(document, container)
+      const members: (string | number)[] = legacy ? (object(value) ? LEGACY_KEYS : []) : Array.isArray(value) ? value.map((_, index) => index) : []
+      return members.flatMap(member => {
+        const source = marked(document, [...container, member], legacy ? LEGACY_RULE : RULE)
+        return source === undefined ? [] : [{ location, path: [...container, member], created: /removes it with `(\w+)`/.exec(source)?.[1] }]
+      })
+    } catch { return [] }
+  })
+}
+
+/** The General block OpenCode uses in this document; a new one is native. */
+function winning(document: PluginControlDocument): Location {
+  return LOCATIONS.find(location => readNativeSetting(document, [...location.keys]) !== undefined) ?? LOCATIONS[0]
+}
+
+/** The text without one owned rule and the containers up to the one it created, while they are empty. */
+function removeOwned(document: PluginControlDocument, owned: Owned): string | undefined {
+  const container = owned.path.slice(0, 3) as string[], member = owned.path[3]
+  const removed = typeof member === "number" ? removeNativeListElement(document, container, member)
+    : removeNativeProperty(document, [...container, member])
+  if (removed === undefined) return undefined
+  let text = removed
+  for (let length = 3; owned.created !== undefined && length >= 1; length--) {
+    const keys = container.slice(0, length), current = withEditedText(document, text)
+    const pruned = removeEmptyNativeList(current, keys) ?? removeEmptyNativeObject(current, keys)
+    if (pruned === undefined) break
+    text = pruned
+    if (keys.at(-1) === owned.created) break
   }
-  return undefined
+  return text
 }
 
-export function hasNestingRule(document: PluginControlDocument): boolean {
-  return findNestingRule(document) !== undefined
-}
-
-/** The text with CodeNomad's rule allowing General to launch subagents, in the General block the document
- * already uses, so no new block replaces it: native rules last in `agents.general.permissions`, or a legacy
+/** The rule appended to the winning block: native rules last in `agents.general.permissions`, or a legacy
  * `permission` property (`subagent`, else `task`) that no earlier `tools` or `permission` key holds, so it
- * stays last. `undefined` when that needs rewriting the user's own value (a string `permission`, both keys
- * taken). */
-export function withNestingRule(document: PluginControlDocument): string | undefined {
-  const { keys, legacy } = LOCATIONS.find(location => readNativeSetting(document, [...location.keys]) !== undefined) ?? LOCATIONS[0]
-  if (!legacy) return appendNativeSetting(document, [...keys, "permissions"], RULE, MARKER)
-  const permission = readNativeSetting(document, [...keys, "permission"]), tools = readNativeSetting(document, [...keys, "tools"])
+ * stays last. The marker names the outermost container it creates. `undefined` when that needs rewriting the
+ * user's own value (a string `permission`, both keys taken). */
+function addRule(document: PluginControlDocument, { keys, legacy }: Location): string | undefined {
+  const container = [...keys, legacy ? "permission" : "permissions"]
+  const created = container.find((_, index) => readNativeSetting(document, container.slice(0, index + 1)) === undefined)
+  const marker = created === undefined ? `${MARKER}.` : `${MARKER} with \`${created}\`.`
+  if (!legacy) return appendNativeSetting(document, container, RULE, marker)
+  const permission = readNativeSetting(document, container), tools = readNativeSetting(document, [...keys, "tools"])
   if (permission !== undefined && !object(permission)) return undefined
   const taken = new Set([...Object.keys(permission ?? {}), ...Object.keys(object(tools) ? tools : {})])
   const name = LEGACY_KEYS.find(key => !taken.has(key))
-  return name === undefined ? undefined : appendNativeProperty(document, [...keys, "permission"], name, LEGACY_RULE, MARKER)
+  return name === undefined ? undefined : appendNativeProperty(document, container, name, LEGACY_RULE, marker)
 }
 
-/** The text without CodeNomad's rule and the containers it leaves empty; `undefined` without one. */
-export function withoutNestingRule(document: PluginControlDocument): string | undefined {
-  const path = findNestingRule(document)
-  if (!path) return undefined
-  const container = path.slice(0, 3) as string[], member = path[3]
-  const native = typeof member === "number"
-  const removed = native ? removeNativeListElement(document, container, member) : removeNativeProperty(document, [...container, member])
-  if (removed === undefined) return undefined
-  // A legacy General block is the user's: only the permission object CodeNomad may have created goes.
-  const prune: [string[], (document: PluginControlDocument, keys: string[]) => string | undefined][] = native
-    ? [[container, removeEmptyNativeList], [["agents", NESTING_AGENT], removeEmptyNativeObject], [["agents"], removeEmptyNativeObject]]
-    : [[container, removeEmptyNativeObject]]
-  let text = removed
-  for (const [keys, remove] of prune) {
-    const pruned = remove(withEditedText(document, text), keys)
-    if (pruned === undefined) break
-    text = pruned
+/** The text with CodeNomad's rule in the General block the document uses, so no new block replaces it, and
+ * without its rules in superseded blocks; `undefined` when the winning block cannot take it (`addRule`). */
+export function withNestingRule(document: PluginControlDocument): string | undefined {
+  const winner = winning(document)
+  let current = document
+  for (let stale = ownedRules(current).find(owned => owned.location !== winner); stale; stale = ownedRules(current).find(owned => owned.location !== winner)) {
+    const removed = removeOwned(current, stale)
+    if (removed === undefined) break
+    current = withEditedText(document, removed)
   }
-  return text
+  return ownedRules(current).some(owned => owned.location === winner) ? full(current) : addRule(current, winner)
+}
+
+/** Whether a project override saved only the depth: the winning General block has no CodeNomad rule and
+ * cannot take one without rewriting the user's value. */
+export function nestingRuleSkipped(document: PluginControlDocument): boolean {
+  try {
+    const winner = winning(document)
+    return !ownedRules(document).some(owned => owned.location === winner) && addRule(document, winner) === undefined
+  } catch { return false }
+}
+
+/** The text without any of CodeNomad's rules and the containers they created; `undefined` without one. */
+export function withoutNestingRule(document: PluginControlDocument): string | undefined {
+  let current = document, changed = false
+  for (let owned = ownedRules(current)[0]; owned; owned = ownedRules(current)[0]) {
+    const removed = removeOwned(current, owned)
+    if (removed === undefined) break
+    current = withEditedText(document, removed)
+    changed = true
+  }
+  return changed ? full(current) : undefined
+}
+
+export function hasNestingRule(document: PluginControlDocument): boolean {
+  return ownedRules(document).length > 0
 }
