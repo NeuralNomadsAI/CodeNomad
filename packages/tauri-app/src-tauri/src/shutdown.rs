@@ -545,12 +545,7 @@ fn finish_local_close(app: AppHandle, label: String, window_id: String, generati
 }
 
 fn renderer_labels(app: &AppHandle) -> Vec<String> {
-    let mut labels = app
-        .state::<LocalWindows>()
-        .records()
-        .into_iter()
-        .map(|record| record.label)
-        .collect::<Vec<_>>();
+    let mut labels = app.state::<LocalWindows>().user_window_labels();
     if app.get_webview_window(crate::preferences_window::LABEL).is_some()
         && app.state::<crate::preferences_window::PreferencesWindow>().renderer_ready()
     {

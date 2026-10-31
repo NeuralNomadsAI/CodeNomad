@@ -28,7 +28,7 @@ import { CliProcessManager, setBackendProfileScope } from "./process-manager"
 import { loadNewRemoteWindow, navigateRemoteWindow, RemoteWindowRegistry } from "./remote-window-registry"
 import { resolveConfiguredRendererOrigins } from "./renderer-origin"
 import { SerializedLifecycle } from "./serialized-lifecycle"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, normalizeConfigIdentity, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveSelectedConfig, resolveStorageScope, startPrimaryInstance, type LaunchIntent, type LaunchProfile, type StorageScope } from "./startup"
 import { InvalidProfileError } from "./data-profile"
 import { stripPrivateRelaunchEnvironment, sweepSelectionFolders } from "./profile-selection-cleanup"
 import { clampWindowBounds, DEFAULT_WINDOW_HEIGHT, DEFAULT_WINDOW_WIDTH, MIN_WINDOW_WIDTH, installWindowSizeConstraints, installWindowZoomInput, setWindowZoomLevel, zoomedWindowMinimum, restoreWindowState, WindowStateTracker } from "./window-state"
@@ -179,7 +179,16 @@ function runPrimary(firstIntent: LaunchIntent) {
     request.end()
   })
   const preferencesWindows = new PreferencesWindowRegistry()
-  let pendingPreferencesRestore = clientState.preferences
+  // A connect-only launch restores the saved Preferences window only if it falls back to a normal start.
+  const preferencesRestore = new DeferredRestore(clientState.preferences, isConnectOnlyLaunch(firstIntent))
+  const restorePendingPreferences = () => {
+    const request = preferencesRestore.take()
+    if (!request) return
+    void openPreferences(request).catch((error) => {
+      preferencesRestore.retry(request)
+      console.warn("[electron] failed to restore Preferences", error)
+    })
+  }
   let preferencesNavigation: ClientStateNavigationController | null = null
   let preferencesTracker: WindowStateTracker | null = null
   let preferencesTransition: { id: number; key: string; run: () => void } | undefined
@@ -197,10 +206,13 @@ function runPrimary(firstIntent: LaunchIntent) {
       const icon = count ? nativeImage.createFromBitmap(notificationBadgeBitmap(count), { width: 32, height: 32 }) : null
       for (const window of windows) window.setOverlayIcon(icon, count ? String(count) : "")
     })
+  // Hidden windows a `--connect-server` launch owns (its local window, a remote window still loading).
+  const launchWindows = new WeakSet<BrowserWindow>()
   lifecycle = new MultiwindowLifecycle({
     app, clientStateManager: clientState, cliManager: cli,
     getLocalWindows: () => registry.all(), getAllWindows: () => BrowserWindow.getAllWindows(),
     isSupportWindow: (window) => preferencesWindows.current() === window,
+    isLaunchWindow: (window) => launchWindows.has(window),
     flushSupportWindows: async () => {
       const window = preferencesWindows.current()
       if (window && preferencesWindows.isReady(window)) {
@@ -269,14 +281,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       for (const record of registry.all()) void navigateBackend(record, url)
       const preferences = preferencesWindows.current()
       if (preferences) void navigatePreferences(preferences, url)
-      else if (pendingPreferencesRestore) {
-        const request = pendingPreferencesRestore
-        pendingPreferencesRestore = undefined
-        void openPreferences(request).catch((error) => {
-          pendingPreferencesRestore = request
-          console.warn("[electron] failed to restore Preferences", error)
-        })
-      }
+      else restorePendingPreferences()
     },
     (error) => console.error("[cli] bootstrap token exchange failed", error),
   )
@@ -299,6 +304,7 @@ function runPrimary(firstIntent: LaunchIntent) {
       },
     })
     if (!isMac) window.setMenuBarVisibility(false)
+    if (connectOnly) launchWindows.add(window)
     const nativeWindowId = window.id
     const webContentsId = window.webContents.id
     const navigation = new ClientStateNavigationController(window, {
@@ -393,6 +399,8 @@ function runPrimary(firstIntent: LaunchIntent) {
   }
   const restoreNormalStart = async () => {
     for (const id of clientState.windowIds) if (!registry.get(id)) createWindow(id)
+    preferencesRestore.release()
+    if (backendTargetUrl && !preferencesWindows.current()) restorePendingPreferences()
     return registry.focus(clientState.activeWindowId)
       ?? registry.all().find((record) => !record.connectOnly && !record.window.isDestroyed())
       ?? await createNewWindow()
@@ -401,7 +409,7 @@ function runPrimary(firstIntent: LaunchIntent) {
     registry,
     restoreNormalStart,
     close: (record) => { if (!record.window.isDestroyed()) record.window.close() },
-    show: (record) => { registry.focus(record.id) },
+    show: (record) => { launchWindows.delete(record.window); registry.focus(record.id) },
   }
   const reportLaunchConnectionError = (error: unknown) => console.error("[electron-startup] launch connection failed", error)
   const abandonLaunchWindows = () => {
@@ -565,6 +573,7 @@ function runPrimary(firstIntent: LaunchIntent) {
         ...(payload.requireLoad ? { show: false } : {}),
         webPreferences: { session: remoteSession, preload: getPreloadPath(), contextIsolation: true, nodeIntegration: false, spellcheck: !isMac, additionalArguments: ["--codenomad-window-context=remote"] },
       })
+      if (payload.requireLoad) launchWindows.add(window)
       const nativeWindowId = window.id
       const webContentsId = window.webContents.id
       const allowedOrigins = new Set([base.origin, target.origin])
@@ -587,6 +596,7 @@ function runPrimary(firstIntent: LaunchIntent) {
           await (loading.url ? window.loadURL(loading.url) : window.loadFile(loading.file!))
         },
         payload.requireLoad === true)
+      launchWindows.delete(window)
       if (!window.isDestroyed() && !window.isVisible()) window.show()
     })
   }

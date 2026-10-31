@@ -276,6 +276,32 @@ export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
   return { newWindow, folders: [...new Set(folders)], ...(connectServer !== undefined ? { connectServer } : {}) }
 }
 
+/**
+ * A saved window request (Preferences) restored once the backend is ready. A connect-only launch
+ * defers it: only a fallback to the normal start releases it, and it is never discarded meanwhile.
+ */
+export class DeferredRestore<T> {
+  constructor(private pending: T | undefined, private deferred: boolean) {}
+
+  /** The request to restore now, or nothing while deferred or already taken. */
+  take(): T | undefined {
+    if (this.deferred) return undefined
+    const request = this.pending
+    this.pending = undefined
+    return request
+  }
+
+  /** A restore that failed keeps its request for the next backend navigation. */
+  retry(request: T): void {
+    this.pending = request
+  }
+
+  /** The launch started normally: the request restores like any startup restore. */
+  release(): void {
+    this.deferred = false
+  }
+}
+
 const MAX_FORWARDED_FOLDERS = 64
 const MAX_CONNECT_SERVER_LENGTH = 2048
 

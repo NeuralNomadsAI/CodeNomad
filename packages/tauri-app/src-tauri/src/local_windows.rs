@@ -173,12 +173,7 @@ impl Registry {
         if self.records.contains_key(&label) {
             return Err("Local window is already registered".to_string());
         }
-        let user_windows = self
-            .records
-            .values()
-            .filter(|record| !record.connect_only)
-            .count();
-        if !connect_only && user_windows >= MAX_LOCAL_WINDOWS {
+        if !connect_only && !self.has_user_window_capacity() {
             return Err("Too many local windows".to_string());
         }
         let record = LocalWindowRecord {
@@ -195,6 +190,15 @@ impl Registry {
         self.records.insert(label.clone(), record.clone());
         self.mark_focused(&label);
         Ok(record)
+    }
+
+    /// The 16-window limit counts user windows only: hidden launch windows hold no slot.
+    fn has_user_window_capacity(&self) -> bool {
+        self.records
+            .values()
+            .filter(|record| !record.connect_only)
+            .count()
+            < MAX_LOCAL_WINDOWS
     }
 
     fn remove(&mut self, label: &str) -> Option<LocalWindowRecord> {
@@ -224,9 +228,26 @@ impl Registry {
 #[derive(Default)]
 pub(crate) struct LocalWindows {
     registry: Mutex<Registry>,
+    /// A connect-only launch defers the saved Preferences window until it falls back to a normal start.
+    startup_restore_deferred: std::sync::atomic::AtomicBool,
 }
 
 impl LocalWindows {
+    pub(crate) fn defer_startup_restore(&self) {
+        self.startup_restore_deferred
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) fn startup_restore_deferred(&self) -> bool {
+        self.startup_restore_deferred
+            .load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn release_startup_restore(&self) {
+        self.startup_restore_deferred
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+    }
+
     pub(crate) fn records(&self) -> Vec<LocalWindowRecord> {
         self.registry
             .lock()
@@ -426,7 +447,22 @@ impl LocalWindows {
         }
     }
 
-    fn connect_only_labels(&self) -> Vec<String> {
+    pub(crate) fn has_user_window_capacity(&self) -> bool {
+        self.registry
+            .lock()
+            .is_ok_and(|registry| registry.has_user_window_capacity())
+    }
+
+    /// The windows whose renderer state a shutdown preserves: hidden launch windows hold none.
+    pub(crate) fn user_window_labels(&self) -> Vec<String> {
+        self.records()
+            .into_iter()
+            .filter(|record| !record.connect_only)
+            .map(|record| record.label)
+            .collect()
+    }
+
+    pub(crate) fn connect_only_labels(&self) -> Vec<String> {
         self.records()
             .into_iter()
             .filter(|record| record.connect_only)
@@ -663,7 +699,7 @@ pub(crate) fn create_new_window(app: &AppHandle) -> Result<LocalWindowRecord, St
     {
         return create_local_window(app, id, state.is_primary_process());
     }
-    if app.state::<LocalWindows>().records().len() >= MAX_LOCAL_WINDOWS {
+    if !app.state::<LocalWindows>().has_user_window_capacity() {
         return Err("Too many local windows".to_string());
     }
     let id = uuid::Uuid::new_v4().to_string();
@@ -767,6 +803,10 @@ fn restore_normal_start(app: &AppHandle) -> Result<String, String> {
         Some(label) => label,
         None => create_new_window(app)?.label,
     };
+    windows.release_startup_restore();
+    if windows.backend_target().is_some() {
+        crate::preferences_window::navigate_backend(app);
+    }
     focus(app, &label);
     Ok(label)
 }

@@ -45,6 +45,41 @@ fn registry_enforces_maximum_and_lowercase_labels() {
 }
 
 #[test]
+fn new_window_admission_ignores_hidden_launch_windows() {
+    let windows = LocalWindows::default();
+    {
+        let mut registry = windows.registry.lock().unwrap();
+        registry.add_window(id(99), false, true).unwrap();
+        for value in 0..MAX_LOCAL_WINDOWS - 1 {
+            registry.add(id(value as u8), true).unwrap();
+        }
+    }
+    // create_new_window's preflight: sixteen records, fifteen of them user windows.
+    assert_eq!(windows.records().len(), MAX_LOCAL_WINDOWS);
+    assert!(windows.has_user_window_capacity());
+    windows.registry.lock().unwrap().add(id(98), true).unwrap();
+    assert!(!windows.has_user_window_capacity());
+    assert_eq!(
+        windows.connect_only_labels(),
+        vec![local_window_label(&id(99)).unwrap()]
+    );
+    // Shutdown asks only user windows' renderers to persist their state.
+    let user_labels = windows.user_window_labels();
+    assert_eq!(user_labels.len(), MAX_LOCAL_WINDOWS);
+    assert!(!user_labels.contains(&local_window_label(&id(99)).unwrap()));
+}
+
+#[test]
+fn connect_only_launches_defer_the_preferences_restore_until_a_normal_start() {
+    let windows = LocalWindows::default();
+    assert!(!windows.startup_restore_deferred());
+    windows.defer_startup_restore();
+    assert!(windows.startup_restore_deferred());
+    windows.release_startup_restore();
+    assert!(!windows.startup_restore_deferred());
+}
+
+#[test]
 fn hidden_launch_windows_hold_no_slot_and_are_never_launch_targets() {
     let mut registry = Registry::default();
     let launch = registry.add_window(id(99), false, true).unwrap();

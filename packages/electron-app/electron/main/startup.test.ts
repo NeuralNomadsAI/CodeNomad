@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import test from "node:test"
-import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance } from "./startup"
+import { allocateLocalWindowIdentity, BackendBootstrapCoordinator, createLaunchIntentQueue, DeferredRestore, forwardedLaunchData, isConnectOnlyLaunch, isPinnedLaunch, isRemoteCertificateAllowed, parseLaunchIntent, prepareSecondLaunchIntent, readForwardedLaunchIntent, resolveLaunchProfile, resolveRemoteSessionPartition, resolveStorageScope, startPrimaryInstance } from "./startup"
 import { stripPrivateRelaunchEnvironment } from "./profile-selection-cleanup"
 import type { TransitionResult } from "./profile-transition"
 
@@ -175,6 +175,20 @@ test("a second launch forwards its own parsed intent, which Chromium's reordered
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+test("a connect-only launch holds the saved Preferences window until it starts normally", () => {
+  const saved = { section: "general" }
+  const connectOnly = new DeferredRestore(saved, isConnectOnlyLaunch({ newWindow: false, folders: [], connectServer: "prod" }))
+  assert.equal(connectOnly.take(), undefined, "the backend becoming ready restores nothing")
+  assert.equal(connectOnly.take(), undefined)
+  connectOnly.release()
+  assert.equal(connectOnly.take(), saved, "a fallback to the normal start restores it")
+  assert.equal(connectOnly.take(), undefined)
+  connectOnly.retry(saved)
+  assert.equal(connectOnly.take(), saved, "a failed restore stays pending")
+  const ordinary = new DeferredRestore(saved, isConnectOnlyLaunch({ newWindow: false, folders: [] }))
+  assert.equal(ordinary.take(), saved)
 })
 
 test("a malformed singleton payload falls back to the forwarded argv, and forwarded folders must exist", () => {

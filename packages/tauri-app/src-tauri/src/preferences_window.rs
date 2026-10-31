@@ -407,6 +407,13 @@ fn open_preferences(
 
 pub(crate) fn navigate_backend(app: &AppHandle) {
     if app.get_webview_window(LABEL).is_none() {
+        // A connect-only launch keeps the saved request pending; its normal-start fallback restores it.
+        if app
+            .state::<crate::local_windows::LocalWindows>()
+            .startup_restore_deferred()
+        {
+            return;
+        }
         if let Some(request) = app
             .try_state::<crate::client_state::ClientState>()
             .and_then(|state| state.preferences())

@@ -99,21 +99,10 @@ pub(crate) fn parse_windows_forwarded_launch_intent(
     let mut index = 0;
     while index < arguments.len() {
         let value = &arguments[index];
-        if let Some((mut target, consumed)) = connect_server_argument(arguments, index) {
-            index += consumed;
-            // The plugin joins arguments with `|` and splits them again, so a value containing `|`
-            // arrives as several fragments: join the ones that follow it back together.
-            if !target.trim().is_empty() {
-                while let Some(fragment) = arguments
-                    .get(index + 1)
-                    .filter(|fragment| !fragment.starts_with('-'))
-                {
-                    target.push('|');
-                    target.push_str(fragment);
-                    index += 1;
-                }
-            }
+        if let Some((target, consumed)) = connect_server_argument(arguments, index) {
+            // `pipe_argument_error` refuses `|` before forwarding, so this value is exact.
             intent.connect_server = Some(target.trim().to_string());
+            index += consumed;
         } else if value == "--new-window" {
             intent.new_window = true;
         } else if value == "--folder" {
@@ -141,9 +130,22 @@ pub(crate) fn parse_windows_forwarded_launch_intent(
     }
     if unknown_fragment {
         intent.folders.clear();
-        intent.connect_server = None;
     }
     intent
+}
+
+/// The Windows single-instance plugin forwards `args.join("|")` split on `|`, so an argument
+/// containing `|` would reach the running instance as other arguments (another server, a flag).
+/// Every Windows launch refuses such an argument before the plugin can forward it.
+pub(crate) fn pipe_argument_error(arguments: &[String]) -> Option<String> {
+    arguments
+        .iter()
+        .any(|argument| argument.contains('|'))
+        .then(|| {
+            "CodeNomad cannot start: launch arguments cannot contain \"|\" on Windows. \
+         Use the saved server's URL, or rename the server without \"|\"."
+                .to_string()
+        })
 }
 
 #[derive(Deserialize)]
@@ -282,35 +284,40 @@ mod tests {
     }
 
     #[test]
-    fn windows_forwarding_rejoins_connection_values_the_plugin_split_on_pipes() {
+    fn windows_launches_refuse_pipes_so_forwarding_keeps_argument_boundaries() {
         let root = tempfile::tempdir().unwrap();
+        let args = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        };
         // The single-instance plugin sends `args.join("|")` and splits it again on `|`.
-        let forward = |command_line: &str| {
-            let arguments = command_line
+        let forward = |values: &[String]| {
+            let arguments = values
+                .join("|")
                 .split('|')
                 .map(str::to_string)
                 .collect::<Vec<_>>();
             parse_windows_forwarded_launch_intent(&arguments, root.path())
         };
+        // `Lab|--new-window` would arrive as server `Lab` plus a new-window flag: refused at the source.
+        assert!(pipe_argument_error(&args(&["--connect-server", "Lab|--new-window"])).is_some());
+        assert!(pipe_argument_error(&args(&["--connect-server=a|b"])).is_some());
+        let plain = args(&["--connect-server", "Build box", "--new-window"]);
+        assert!(pipe_argument_error(&plain).is_none());
+        let forwarded = forward(&plain);
+        assert_eq!(forwarded.connect_server, Some("Build box".to_string()));
+        assert!(forwarded.new_window);
+        // A positional argument after the value is never glued onto it; Windows forwarding still
+        // ignores positional folders, as it always has.
+        let positional = forward(&args(&["--connect-server", "prod", "packages"]));
+        assert_eq!(positional.connect_server, Some("prod".to_string()));
+        assert!(positional.folders.is_empty());
         assert_eq!(
-            forward("--connect-server|Build box").connect_server,
-            Some("Build box".to_string())
-        );
-        assert_eq!(
-            forward("--connect-server|Lab | east|--new-window").connect_server,
-            Some("Lab | east".to_string())
-        );
-        let inline = forward("--connect-server=a|b");
-        assert_eq!(inline.connect_server, Some("a|b".to_string()));
-        assert!(inline.is_connect_only());
-        assert_eq!(
-            forward("--connect-server|--new-window").connect_server,
+            forward(&args(&["--connect-server", "--new-window"])).connect_server,
             Some(String::new())
         );
-        // A stray fragment elsewhere still refuses the whole forwarded launch.
-        assert!(forward("--folder|workspace|stray|--connect-server|prod")
-            .connect_server
-            .is_none());
     }
 
     #[test]
