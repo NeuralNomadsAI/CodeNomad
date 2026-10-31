@@ -375,8 +375,9 @@ as "Human decision required: the user must answer this question from the CodeNom
 interface", with the gate's cause as a detail.
 The gate also proves the asking conversation natively. The coordinator asks from its
 own root conversation (`coordinator-form-answer`): the Form's session must be that
-mission's coordinator and a root, and one Form field settles at most one live decision
-task. A decision conversation's own question (`native-form-answer`, missions whose
+mission's coordinator and a root, the question the human read must name the cited
+decision task with its `questionTag`, the answer must postdate the task's declaration,
+and one Form field settles at most one live decision task. A decision conversation's own question (`native-form-answer`, missions whose
 decision workers asked themselves) needs a fresh child of the expected parent's exact
 `subagent` call whose prompt carries the declared assignment. Answers
 and execution failures are read from durable message projections (completed question

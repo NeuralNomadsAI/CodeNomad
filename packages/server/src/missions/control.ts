@@ -36,8 +36,9 @@ import { matchesExecution, sameExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-input"
 import { MissionControlError, MissionCreateNoEffectError, humanDecisionRequired } from "./control-error"
-import { claimedDecisionFields, coordinatorAskedAnswer, coordinatorDecision, decisionInvocationUnavailable, decisionOutcomeRequired, receiptMatches,
-  type CoordinatorAskedAnswer, type MissionDecisionProof } from "./decision-gate"
+import { claimedDecisionFields, coordinatorAskedAnswer, coordinatorDecision, decisionInvocationUnavailable, decisionOutcomeRequired,
+  decisionQuestionUnbound, receiptMatches, type CoordinatorAskedAnswer, type MissionDecisionProof } from "./decision-gate"
+import { decisionQuestionTag } from "./decision-question-tag"
 import { claimsDecisionMaker } from "./decision-artifact"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
@@ -193,12 +194,14 @@ export class MissionControl {
     return { decidedBy: "human", receipt: await this.verifyHumanDecision(mission, task, artifact) }
   }
 
-  /** The human answered the coordinator's own question: its root conversation, a Form field no other live decision uses. */
+  /** The human answered the coordinator's own question about exactly this task: asked from its root conversation,
+   * naming this mission's task (`decisionQuestionTag`), answered after the task was declared, and settling no other task. */
   private async verifyCoordinatorQuestion(mission: MissionMap, task: import("./model").MissionTask,
     asked: CoordinatorAskedAnswer): Promise<import("./human-answer").HumanDecisionMark> {
-    const cited = asked.provenance
+    const cited = asked.provenance, tag = decisionQuestionTag(mission.id, task.key)
     if (task.contractGeneration === undefined || cited.sessionID !== mission.coordinatorSessionId || cited.contract.missionID !== mission.id
-      || cited.contract.taskKey !== task.key || cited.contract.generation !== task.contractGeneration) throw decisionInvocationUnavailable()
+      || cited.contract.taskKey !== task.key || cited.contract.generation !== task.contractGeneration) throw decisionInvocationUnavailable(tag)
+    if (!asked.question.includes(tag)) throw decisionQuestionUnbound(tag)
     if (claimedDecisionFields(mission, task.key).some(field => field.formID === cited.formID && field.fieldKey === cited.fieldKey))
       throw new MissionControlError("This answer already settles another decision task; ask the human about this decision", "policy-unqualified")
     const session = await this.ownedSession(cited.sessionID)
@@ -209,6 +212,8 @@ export class MissionControl {
     catch (error) { this.assertActive(); throw humanDecisionRequired(error) }
     this.assertActive()
     if (!receiptMatches(receipt, cited.sessionID, cited, asked.answer)) throw humanDecisionRequired()
+    // An answer given before this task existed was not an answer to it.
+    if (!(receipt.answeredAt >= task.createdAt)) throw decisionQuestionUnbound(tag)
     return receipt
   }
 
@@ -901,11 +906,11 @@ export class MissionControl {
     const mission = this.selectMission(await this.hintedSelection(sessionID, missionID), sessionID, missionID)
     const task = mission?.tasks.find(task => task.key === taskKey)
     if (!mission || !task || mission.template !== "wayfinder" || task.role !== "decision") return undefined
-    return this.discoverDecisions(mission, task, true)
+    return this.discoverDecisions(mission, task)
   }
 
-  /** `coordinator`: also the coordinator's own answered questions not settling another decision task. */
-  private async discoverDecisions(mission: MissionMap, task: import("./model").MissionTask, coordinator = false): Promise<HumanDecisionDiscovery | undefined> {
+  /** The decision task's own conversations and the coordinator's answered questions that name this task. */
+  private async discoverDecisions(mission: MissionMap, task: import("./model").MissionTask): Promise<HumanDecisionDiscovery | undefined> {
     const mode = task.executionMode
     const parent = mode?.kind !== "native" ? undefined : mode.parentTaskKey === null ? mission.coordinatorSessionId
       : mission.tasks.find(candidate => candidate.key === mode.parentTaskKey)?.actorSessionId
@@ -915,16 +920,16 @@ export class MissionControl {
     this.assertActive()
     return discover({ contract: { missionID: mission.id, taskKey: task.key, generation: task.contractGeneration! }, parentSessionID: parent,
       assignmentPrompt: buildAssignmentPrompt(mission, task), projectID: mission.projectID, directory: session.location.directory,
-      ...(coordinator ? { coordinatorSessionID: mission.coordinatorSessionId, exclude: claimedDecisionFields(mission, task.key) } : {}) })
+      coordinatorSessionID: mission.coordinatorSessionId })
   }
 
-  /** A readout without an artifact uses the single qualifying answer of a complete discovery of the
-   * decision task's own conversations; the gate still verifies it. A coordinator-asked answer is never
-   * chosen automatically: the coordinator passes it explicitly, so no unrelated answer settles a decision. */
+  /** A readout without an artifact uses the single qualifying answer of a complete discovery; every
+   * candidate already answers this exact task, and the gate still verifies it. Anything else asks the
+   * coordinator to choose explicitly. */
   private async discoveredDecision(mission: MissionMap, task: import("./model").MissionTask): Promise<import("./model").MissionJsonValue> {
     const { candidates, complete } = await this.discoverDecisions(mission, task) ?? { candidates: [], complete: true }
     if (complete && candidates.length === 1) return structuredClone(candidates[0].artifact) as unknown as import("./model").MissionJsonValue
-    if (complete && !candidates.length) throw decisionOutcomeRequired()
+    if (complete && !candidates.length) throw decisionOutcomeRequired(decisionQuestionTag(mission.id, task.key))
     throw new MissionControlError(complete ? "Several answered questions qualify; pass the chosen one's artifact from mission.inspect({ taskKey })"
       : "Not every answered question could be checked; pass the chosen artifact from mission.inspect({ taskKey })", "policy-unqualified")
   }
@@ -1172,7 +1177,7 @@ export class MissionControl {
       let decision: MissionDecisionProof | undefined
       if (mission.template === "wayfinder" && declared.role === "decision" && input.outcome === "completed") {
         if (input.artifact === undefined) {
-          if (!this.options.humanGate?.discover) throw decisionOutcomeRequired()
+          if (!this.options.humanGate?.discover) throw decisionOutcomeRequired(decisionQuestionTag(mission.id, declared.key))
           input = { ...input, artifact: await this.discoveredDecision(mission, declared) }
         }
         decision = await this.settleDecision(mission, declared, input.artifact)

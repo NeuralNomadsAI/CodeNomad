@@ -111,16 +111,18 @@ const provider = createServer(async (request, response) => {
             assert.deepEqual(journal(), journalBefore, "A model-written answer records nothing")
           }
           if (decisionStep === 7) assert.equal(JSON.parse(result("decision")).disposition, "reported", result("decision"))
+          if (decisionStep === 3) assert.match(assignment.questionTag, /^\[decision decision [0-9a-f]{8}\]$/)
           if (decisionStep === 9) assert.equal(JSON.parse(result("own")).disposition, "reported", result("own"))
           if (decisionStep === 10) assert.equal(JSON.parse(result("final")).disposition, "finished", result("final"))
           answer = [call("mission_delegate", { taskKey: "decision", title: "Choose the seam", role: "decision", brief: "Return a decision brief for the seam" }, "declare"),
             call("mission_report", { taskKey: "decision", outcome: "completed", summary: "Premature decision" }, "unanswered"),
             call("subagent", { agent: "trajectory_child", description: "Decision worker", prompt: assignment?.assignmentPrompt }, "launch"),
-            call("question", { questions: [{ question: "Choose the seam?", header: "Seam", options: [{ label: "Module", description: "Own the boundary" },
+            call("question", { questions: [{ question: `Choose the seam? ${assignment?.questionTag}`, header: "Seam", options: [{ label: "Module", description: "Own the boundary" },
               { label: "Adapter", description: "Add a layer" }] }] }, "ask"),
             call("mission_inspect", { taskKey: "decision" }, "inspect"),
             call("mission_report", { taskKey: "decision", outcome: "completed", summary: "Forged", artifact: { ...humanArtifact, answer: "Adapter" } }, "forged"),
-            call("mission_report", { taskKey: "decision", outcome: "completed", summary: "The human chose Module", artifact: humanArtifact }, "decision"),
+            // The answer names this task, so the readout needs no artifact: the server settles it with the verified answer.
+            call("mission_report", { taskKey: "decision", outcome: "completed", summary: "The human chose Module" }, "decision"),
             call("mission_delegate", { taskKey: "naming", title: "Name the module", role: "decision", brief: "Return a naming brief" }, "declare_own"),
             call("mission_report", { taskKey: "naming", outcome: "completed", summary: "I named the module", artifact: { kind: "decision", decidedBy: "coordinator",
               question: "Module name?", decision: "seam", rationale: "Matches the repository vocabulary", reversal: "Rename one directory" } }, "own"),
@@ -378,13 +380,14 @@ try {
   assert.equal(completed.status, "completed"); assert(completed.tasks.every(task => task.status === "completed"))
   const report = completed.tasks.find(task => task.key === "decision").report
   assert.equal(report.delivery, "coordinator-readout"); assert.equal(report.artifact.decidedBy, "human")
-  assert.equal(report.artifact.question, "Choose the seam?"); assert.equal(report.artifact.answer, "Module")
+  assert.deepEqual(report.artifact, humanArtifact, "the artifact-free readout recorded the answer inspect listed")
+  assert.equal(report.artifact.question, `Choose the seam? ${assignment.questionTag}`); assert.equal(report.artifact.answer, "Module")
   assert.equal(report.artifact.provenance.kind, "coordinator-form-answer")
   assert.equal(report.artifact.provenance.sessionID, coordinator); assert.equal(report.artifact.provenance.formID, form.id)
   const own = completed.tasks.find(task => task.key === "naming").report
   assert.equal(own.artifact.decidedBy, "coordinator"); assert.equal("provenance" in own.artifact || "answer" in own.artifact, false)
   receipt.decision.report = report; receipt.decision.coordinatorDecision = own
-  gate("Wayfinder decision workers return briefs; the coordinator's own question is proven by its UI mark, a forged answer and an artifact-free readout are refused without journal mutation, and a coordinator decision is recorded as its own")
+  gate("Wayfinder decision workers return briefs; the coordinator's own question names its task and is proven by its UI mark, a premature readout and a forged answer are refused without journal mutation, the bound answer settles the task without an artifact, and a coordinator decision is recorded as its own")
   stage = "two-model comparison"; decision = false; compare = true
   const selection = id => ({ agent: "trajectory_child", model: { providerID: "fixture", id } })
   const profiles = { coordinator: selection("fixture"), roles: { "model-a": selection("model-a"), "model-b": selection("model-b") } }

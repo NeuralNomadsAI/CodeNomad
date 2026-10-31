@@ -76,12 +76,11 @@ export type NativeHumanAnswerGate = ((request: HumanDecisionRequest) => Promise<
 export interface HumanDecisionDiscovery { candidates: HumanDecisionCandidate[]; complete: boolean }
 
 /** A decision task's own conversations: fresh children of `parentSessionID` born from this exact assignment.
- * With `coordinatorSessionID`, also the coordinator's own answered questions, except the `exclude`d
- * Form fields that already settle another decision task. */
+ * With `coordinatorSessionID`, also the coordinator's own answered questions that name this decision task
+ * (`decisionQuestionTag`). */
 export const humanDecisionDiscoverySchema = z.object({ contract: nativeDecisionProvenance.shape.contract, parentSessionID: id,
   assignmentPrompt: z.string().min(1).max(128 * 1024), projectID: id, directory: z.string().min(1).max(4096),
-  coordinatorSessionID: id.optional(),
-  exclude: z.array(z.object({ formID: id, fieldKey: nativeDecisionProvenance.shape.fieldKey }).strict()).max(96).optional() }).strict()
+  coordinatorSessionID: id.optional() }).strict()
 export type HumanDecisionDiscoveryRequest = z.infer<typeof humanDecisionDiscoverySchema>
 /** One native question the human answered in the CodeNomad interface, shaped as the readout artifact.
  * `askedBy` names the conversation that asked: the decision task's own, or the coordinator's. */

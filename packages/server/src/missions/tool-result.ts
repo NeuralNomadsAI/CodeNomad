@@ -1,5 +1,6 @@
 import type { MissionMap, MissionTask } from "./model"
 import { WAYFINDER_DECISION_REQUIREMENT, buildAssignmentPrompt } from "./recipes"
+import { decisionQuestionTag } from "./decision-question-tag"
 
 /** Bounded task view for model-facing mission_* results; mission.inspect keeps the full map. */
 export function compactMissionTask(task: MissionTask) {
@@ -34,6 +35,7 @@ export function nativeAssignment(mission: MissionMap, task: MissionTask) {
   return {
     contract: { missionID: mission.id, taskKey: task.key, generation: task.contractGeneration! },
     assignmentPrompt: buildAssignmentPrompt(mission, task),
-    ...(mission.template === "wayfinder" && task.role === "decision" ? { requirement: WAYFINDER_DECISION_REQUIREMENT } : {}),
+    ...(mission.template === "wayfinder" && task.role === "decision"
+      ? { requirement: WAYFINDER_DECISION_REQUIREMENT, questionTag: decisionQuestionTag(mission.id, task.key) } : {}),
   }
 }

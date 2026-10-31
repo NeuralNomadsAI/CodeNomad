@@ -2,10 +2,11 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { MissionControl } from "./control"
 import type { MissionSessionAdapter, NativeMissionSession } from "./control-types"
-import type { HumanDecisionDiscoveryRequest, HumanDecisionMark, NativeHumanAnswerGate } from "./human-answer"
-import type { MissionStorage } from "./journal"
+import type { HumanDecisionCandidate, HumanDecisionDiscoveryRequest, HumanDecisionMark, NativeHumanAnswerGate } from "./human-answer"
+import { MissionJournal, type MissionStorage } from "./journal"
 import type { MissionJsonValue, MissionMap } from "./model"
 import { missionDecisionMaker } from "./decision-artifact"
+import { decisionQuestionTag } from "./decision-question-tag"
 
 class MemoryStorage implements MissionStorage {
   readonly values = new Map<string, MissionJsonValue>()
@@ -22,8 +23,11 @@ class MemoryStorage implements MissionStorage {
 
 const coordinator = "ses_coordinator"
 const question = "Which seam?"
+/** After every task declaration of these fixtures (their clock starts at 1000). */
+const LATER = 1_000_000
 
-/** Confirmed UI marks keyed by session and Form; the gate refuses anything else, like the native one. */
+/** Confirmed UI marks keyed by session and Form, holding the question the human read. Like the native gate,
+ * this one checks the exact question and answer, and that a coordinator question names the cited decision. */
 function fixture() {
   const sessions = new Map<string, NativeMissionSession>([[coordinator,
     { id: coordinator, projectID: "project-1", title: "Coordinator", location: { directory: "/repo" } }],
@@ -32,29 +36,45 @@ function fixture() {
     get: async ({ sessionID }) => { const session = sessions.get(sessionID); if (!session) throw new Error("not found"); return session },
     create: async () => { throw new Error("No roots") }, prompt: async () => {}, synthetic: async () => {},
   }
-  const marks = new Map<string, HumanDecisionMark>(), requests: Parameters<NativeHumanAnswerGate>[0][] = []
+  const marks = new Map<string, HumanDecisionMark & { question: string }>(), requests: Parameters<NativeHumanAnswerGate>[0][] = []
   const discoveries: HumanDecisionDiscoveryRequest[] = []
   const gate: NativeHumanAnswerGate = Object.assign(async (request: Parameters<NativeHumanAnswerGate>[0]) => {
     requests.push(request)
     const mark = marks.get(`${request.sessionID}/${request.formID}`)
-    if (!mark || mark.answer[request.fieldKey] !== request.answer) throw new Error("Exact native human mark unavailable")
-    return structuredClone(mark)
-  }, { discover: async (request: HumanDecisionDiscoveryRequest) => { discoveries.push(request); return { candidates: [], complete: true } } })
+    if (!mark || mark.question !== request.question || mark.answer[request.fieldKey] !== request.answer) throw new Error("Exact native human mark unavailable")
+    if (request.kind === "coordinator-form-answer" && !request.question.includes(decisionQuestionTag(request.contract.missionID, request.contract.taskKey)))
+      throw new Error("Coordinator question does not name this decision task")
+    const { question: _question, ...receipt } = mark
+    return structuredClone(receipt)
+  }, { discover: async (request: HumanDecisionDiscoveryRequest) => {
+    discoveries.push(request)
+    const tag = decisionQuestionTag(request.contract.missionID, request.contract.taskKey)
+    const candidates: HumanDecisionCandidate[] = [...marks.values()].filter(mark => mark.sessionID === request.coordinatorSessionID && mark.question.includes(tag))
+      .map(mark => ({ question: mark.question, answer: mark.answer.q0 as string, askedBy: "coordinator" as const, artifact: { kind: "decision", decidedBy: "human",
+        question: mark.question, answer: mark.answer.q0 as string, provenance: { kind: "coordinator-form-answer", contract: request.contract,
+          sessionID: mark.sessionID, formID: mark.formID, messageID: `msg_${mark.formID}`, toolCallID: `call_${mark.formID}`, fieldKey: "q0" } } }))
+    return { candidates, complete: true }
+  } })
   let now = 1_000
+  const storage = new MemoryStorage()
   const control = new MissionControl({ project: { id: "project-1", canonical: "/repo", location: { directory: "/repo" } },
-    storage: new MemoryStorage(), sessions: adapter, humanGate: gate, now: () => now++ })
-  const answer = (sessionID: string, formID: string, value: string) => marks.set(`${sessionID}/${formID}`, { formID, sessionID, answeredAt: 1, via: "ui",
-    answer: { q0: value }, form: { metadata: { kind: "question", tool: { messageID: `msg_${formID}`, id: `call_${formID}` } } } as never })
+    storage, sessions: adapter, humanGate: gate, now: () => now++ })
+  const answer = (sessionID: string, formID: string, value: string, text = question, answeredAt = LATER) => marks.set(`${sessionID}/${formID}`,
+    { formID, sessionID, answeredAt, via: "ui", question: text, answer: { q0: value },
+      form: { metadata: { kind: "question", tool: { messageID: `msg_${formID}`, id: `call_${formID}` } } } as never })
   const start = async () => (await control.inspect(coordinator, { start: { objective: "Chart the pilot", template: "wayfinder" } }, "start")).mission!
   const declare = (taskKey: string) => control.declare(coordinator, { taskKey, title: `Task ${taskKey}`, brief: "Bounded decision", role: "decision", blockedBy: [] })
   const current = async () => (await control.snapshot()).missions.find(mission => mission.coordinatorSessionId === coordinator)!
   const readout = (taskKey: string, artifact?: MissionJsonValue) => control.report(coordinator, { taskKey, outcome: "completed",
     summary: "Settled the seam.", evidence: [], next: [], final: false, ...(artifact === undefined ? {} : { artifact }) })
-  return { control, marks, requests, discoveries, answer, start, declare, current, readout }
+  const finish = () => control.report(coordinator, { outcome: "completed", summary: "Route clear.", evidence: [], next: [], final: true })
+  return { control, storage, marks, requests, discoveries, answer, start, declare, current, readout, finish }
 }
 
-const asked = (mission: MissionMap, taskKey: string, value: string, formID = "frm_1", sessionID = coordinator): MissionJsonValue => ({
-  kind: "decision", decidedBy: "human", question, answer: value, provenance: { kind: "coordinator-form-answer",
+/** The question the coordinator asks about `taskKey`, naming it with its tag. */
+const about = (mission: MissionMap, taskKey: string) => `${question} ${decisionQuestionTag(mission.id, taskKey)}`
+const asked = (mission: MissionMap, taskKey: string, value: string, formID = "frm_1", sessionID = coordinator, text = about(mission, taskKey)): MissionJsonValue => ({
+  kind: "decision", decidedBy: "human", question: text, answer: value, provenance: { kind: "coordinator-form-answer",
     contract: { missionID: mission.id, taskKey, generation: 1 }, sessionID, formID, messageID: `msg_${formID}`, toolCallID: `call_${formID}`, fieldKey: "q0" } })
 const own = { kind: "decision", decidedBy: "coordinator", question, decision: "Module", rationale: "The repository already isolates modules.",
   reversal: "Swap the adapter in one file." }
@@ -70,9 +90,9 @@ test("a human-claimed decision without a confirmed UI mark is refused and record
   await assert.rejects(f.readout("choose", asked(mission, "choose", "Module")), /Human decision required: the user must answer/)
   // A model-written answer without a cited native question never passes as the human's.
   await assert.rejects(f.readout("choose", { kind: "decision", question, answer: "Module" }), /Wayfinder decision evidence unavailable/)
-  f.answer(coordinator, "frm_1", "Adapter")
+  f.answer(coordinator, "frm_1", "Adapter", about(mission, "choose"))
   await assert.rejects(f.readout("choose", asked(mission, "choose", "Module")), /Human decision required/, "the mark holds another answer")
-  f.answer("ses_decision", "frm_child", "Module")
+  f.answer("ses_decision", "frm_child", "Module", about(mission, "choose"))
   await assert.rejects(f.readout("choose", asked(mission, "choose", "Module", "frm_child", "ses_decision")), /Wayfinder decision evidence unavailable/,
     "a coordinator-asked answer lives in the coordinator's own conversation")
   await assert.rejects(f.readout("choose", { ...asked(mission, "choose", "Adapter") as object, decidedBy: "coordinator" } as MissionJsonValue),
@@ -93,34 +113,74 @@ test("a coordinator decision needs no human proof and is labelled as the coordin
   const mission = await f.current()
   assert.equal(maker(mission, "choose"), "coordinator")
   assert.deepEqual(mission.tasks[0].report?.artifact, own)
-  const finished = await f.control.report(coordinator, { outcome: "completed", summary: "Route clear.", evidence: [], next: [], final: true })
-  assert.equal(finished.disposition, "finished")
+  assert.equal((await f.finish()).disposition, "finished")
   assert.equal(f.requests.length, 0, "the final report accepts the coordinator decision as such")
 })
 
-test("the human's answer to the coordinator's own question passes with its confirmed UI mark, once per decision", async () => {
+test("the coordinator's own question settles only the decision task it names", async () => {
   const f = fixture()
   const mission = await f.start()
-  await f.declare("choose"); await f.declare("schema")
-  f.answer(coordinator, "frm_1", "Module")
+  await f.declare("choose"); await f.declare("schema"); await f.declare("naming")
+  assert.match(decisionQuestionTag(mission.id, "choose"), /^\[decision choose [0-9a-f]{8}\]$/)
+  f.answer(coordinator, "frm_1", "Module", about(mission, "choose"))
   await f.control.decisionCandidates(coordinator, mission.id, "choose")
-  assert.deepEqual(f.discoveries.at(-1)?.coordinatorSessionID, coordinator, "inspect lists the coordinator's answered questions")
-  assert.deepEqual(f.discoveries.at(-1)?.exclude, [])
-  // An artifact-free readout discovers only the decision task's own conversations: a coordinator answer is passed explicitly.
-  await assert.rejects(f.readout("choose"), /Decision outcome required/)
-  assert.equal(f.discoveries.at(-1)?.coordinatorSessionID, undefined)
-  assert.equal((await f.readout("choose", asked(mission, "choose", "Module"))).disposition, "reported")
+  assert.equal(f.discoveries.at(-1)?.coordinatorSessionID, coordinator, "inspect lists the coordinator's answered questions")
+  // Relabelling the answer to another task: its question names "choose", so it never settles "schema".
+  await assert.rejects(f.readout("schema", asked(mission, "schema", "Module", "frm_1", coordinator, about(mission, "choose"))),
+    /does not settle this decision task: the human must answer a question that names it with \[decision schema /)
+  assert.deepEqual((await f.control.decisionCandidates(coordinator, mission.id, "schema"))?.candidates, [], "not offered to another task")
+  // Every candidate answers this exact task, so an artifact-free readout takes the single one.
+  assert.equal((await f.readout("choose")).disposition, "reported")
   assert.equal(maker(await f.current(), "choose"), "human")
-  await assert.rejects(f.readout("schema", asked(mission, "schema", "Module")), /already settles another decision task/)
-  await f.control.decisionCandidates(coordinator, mission.id, "schema")
-  assert.deepEqual(f.discoveries.at(-1)?.exclude, [{ formID: "frm_1", fieldKey: "q0" }], "a used answer is not offered again")
-  await assert.rejects(f.readout("schema", asked(mission, "choose", "Module", "frm_2")), /Wayfinder decision evidence unavailable/,
-    "the cited contract names this task")
-  f.answer(coordinator, "frm_2", "Versioned")
-  assert.equal((await f.readout("schema", asked(mission, "schema", "Versioned", "frm_2"))).disposition, "reported")
+  // One question may name two decisions, but each answered field settles only one of them.
+  const both = `${about(mission, "schema")} ${about(mission, "naming")}`
+  f.answer(coordinator, "frm_both", "Versioned", both)
+  assert.equal((await f.readout("schema", asked(mission, "schema", "Versioned", "frm_both", coordinator, both))).disposition, "reported")
+  await assert.rejects(f.readout("naming", asked(mission, "naming", "Versioned", "frm_both", coordinator, both)), /already settles another decision task/)
+  f.answer(coordinator, "frm_2", "Short", about(mission, "naming"))
+  assert.equal((await f.readout("naming", asked(mission, "naming", "Short", "frm_2"))).disposition, "reported")
   const before = f.requests.length
-  assert.equal((await f.control.report(coordinator, { outcome: "completed", summary: "Route clear.", evidence: [], next: [], final: true })).disposition, "finished")
-  assert.equal(f.requests.length - before, 2, "the final report re-verifies both human answers")
+  assert.equal((await f.finish()).disposition, "finished")
+  assert.equal(f.requests.length - before, 3, "the final report re-verifies every human answer")
+})
+
+test("an answer given before the task existed or in another mission on the same coordinator never settles it", async () => {
+  const f = fixture()
+  const mission = await f.start()
+  // Answered before the task was declared, even with the right tag.
+  f.answer(coordinator, "frm_early", "Delete", about(mission, "delete-production"), 1)
+  await f.declare("delete-production")
+  await assert.rejects(f.readout("delete-production", asked(mission, "delete-production", "Delete", "frm_early")),
+    /asked after the task was declared/)
+  // A reused coordinator root: the earlier mission's question names that mission, not this one.
+  const elsewhere = `${question} ${decisionQuestionTag("msn_earlier_mission", "delete-production")}`
+  f.answer(coordinator, "frm_old_mission", "Delete", elsewhere)
+  await assert.rejects(f.readout("delete-production", asked(mission, "delete-production", "Delete", "frm_old_mission", coordinator, elsewhere)),
+    /does not settle this decision task/)
+  // An untagged answer, such as consent asked for something else, is never offered nor accepted.
+  f.answer(coordinator, "frm_untagged", "Yes", "May I proceed?")
+  assert.deepEqual((await f.control.decisionCandidates(coordinator, mission.id, "delete-production"))?.candidates.map(item => item.artifact.provenance.formID),
+    ["frm_early"], "discovery lists only questions naming the task; the gate still refuses the early one")
+  await assert.rejects(f.readout("delete-production", asked(mission, "delete-production", "Yes", "frm_untagged", coordinator, "May I proceed?")),
+    /does not settle this decision task/)
+  await assert.rejects(f.readout("delete-production"), /asked after the task was declared/, "the early answer is not auto-filled into a settlement")
+  assert.equal((await f.current()).reports.length, 0)
+})
+
+test("the final report re-checks the binding of a stored coordinator-asked answer", async () => {
+  const f = fixture()
+  const mission = await f.start()
+  await f.declare("choose")
+  // A readout an unbound build accepted: the answer's question never named this task.
+  f.answer(coordinator, "frm_unbound", "Module", "Choose the seam?")
+  const current = await f.current()
+  const artifact = asked(mission, "choose", "Module", "frm_unbound", coordinator, "Choose the seam?")
+  await new MissionJournal(f.storage, "project-1", "/repo").append({ version: 1, id: "evt_unbound_readout", type: "task.reported", missionID: mission.id,
+    projectID: "project-1", createdAt: current.updatedAt + 1, report: { id: "rpt_unbound", taskKey: "choose", sessionId: coordinator, outcome: "completed",
+      summary: "Unbound answer", evidence: [], next: [], artifact, delivery: "coordinator-readout", createdAt: current.updatedAt + 1 } })
+  assert.equal((await f.current()).tasks[0].status, "completed")
+  await assert.rejects(f.finish(), /does not settle this decision task/)
+  assert.equal((await f.current()).status, "active")
 })
 
 test("the decision conversation's own answer (missions started before coordinator-asked decisions) still passes", async () => {
@@ -136,6 +196,7 @@ test("the decision conversation's own answer (missions started before coordinato
   assert.equal((await f.readout("choose", legacy)).disposition, "reported")
   assert.equal(f.requests.at(-1)?.kind, "native-form-answer")
   assert.equal(maker(await f.current(), "choose"), "human")
+  assert.equal((await f.finish()).disposition, "finished")
 })
 
 test("only gated reports name who decided", () => {

@@ -13,6 +13,7 @@ import { HUMAN_MARK_STORAGE_PREFIX, humanAnswerBindingInputSchema, humanAnswerBi
 import { nativeDatabaseStorageID } from "./native-database-identity"
 import { verifyHumanAnswerBridge } from "../automation-plugin"
 import { isLocalNativeTool } from "../../missions/native-call-observation"
+import { decisionQuestionTag } from "../../missions/decision-question-tag"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -146,8 +147,11 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
           || tool.messageID !== request.messageID || tool.id !== request.toolCallID) throw new Error("Human mark Form binding mismatch")
         const actor = yield* session(request.sessionID)
         if (request.kind === "coordinator-form-answer") {
-          // The coordinator asked from its own root conversation: there is no delegation to prove.
+          // The coordinator asked from its own root conversation: there is no delegation to prove,
+          // and the question the human read names the one decision task its answer settles.
           if (actor.parent_id !== null && actor.parent_id !== undefined) throw new Error("Coordinator question outside a root conversation")
+          if (!request.question.includes(decisionQuestionTag(request.contract.missionID, request.contract.taskKey)))
+            throw new Error("Coordinator question does not name this decision task")
         } else {
           const delegation = yield* question(request.nativeCall.parentSessionID, request.nativeCall.parentMessageID,
             request.nativeCall.toolCallID, request.delegationToolName)
@@ -184,16 +188,18 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
       const request = humanDecisionDiscoverySchema.parse(raw)
       if (request.projectID !== location.project.id || request.directory !== location.directory) throw new Error("Human decision Location mismatch")
       const candidates: HumanDecisionCandidate[] = []
-      const excluded = new Set((request.exclude ?? []).map(item => `${item.formID}\0${item.fieldKey}`))
       // Every bound reached or unverifiable confirmed answer leaves the discovery incomplete.
       let complete = true
       const bounded = <T>(rows: readonly T[], limit: number) => { if (rows.length > limit) complete = false; return rows.slice(0, limit) }
-      /** One asking conversation's confirmed answers; false once the answer bound is reached. */
+      /** One asking conversation's confirmed answers; false once the answer bound is reached. With `tag`, only the
+       * marks whose question names this decision: an exact lookup, so unrelated history never spends the bound. */
       const answersOf = async (sessionID: string, askedBy: HumanDecisionCandidate["askedBy"], markLimit: number,
-        provenanceOf: (form: { id: string }, tool: { messageID: string; id: string }, fieldKey: string) => HumanDecisionCandidate["artifact"]["provenance"]) => {
+        provenanceOf: (form: { id: string }, tool: { messageID: string; id: string }, fieldKey: string) => HumanDecisionCandidate["artifact"]["provenance"],
+        tag?: string) => {
         const prefix = nativeKey(`${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/${sessionID}/`)
-        const marks = bounded(await run(query("SELECT value FROM kv WHERE key>=? AND key<? LIMIT ?",
-          [prefix, `${prefix.slice(0, -1)}0`, markLimit + 1])), markLimit)
+        const range = [prefix, `${prefix.slice(0, -1)}0`]
+        const marks = bounded(await run(tag === undefined ? query("SELECT value FROM kv WHERE key>=? AND key<? LIMIT ?", [...range, markLimit + 1])
+          : query("SELECT value FROM kv WHERE key>=? AND key<? AND instr(value,?)>0 LIMIT ?", [...range, tag, markLimit + 1])), markLimit)
         for (const row of marks) {
           const stored = (() => { try { return parse(row.value) } catch { return undefined } })()
           const form = (() => { try { return Schema.decodeUnknownSync(Schema.toType(Form.Info))(object(stored) ? stored.form : undefined) } catch { return undefined } })()
@@ -206,7 +212,7 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
             || !form || !object(tool) || typeof tool.messageID !== "string" || typeof tool.id !== "string") { complete = false; continue }
           for (const field of form.fields) {
             const answer = stored.answer[field.key]
-            if (excluded.has(`${form.id}\0${field.key}`) || typeof field.description !== "string" || !(typeof answer === "string" && answer
+            if (typeof field.description !== "string" || tag !== undefined && !field.description.includes(tag) || !(typeof answer === "string" && answer
               || Array.isArray(answer) && answer.length && answer.every(item => typeof item === "string" && item))) continue
             const provenance = provenanceOf(form, { messageID: tool.messageID, id: tool.id }, field.key)
             try {
@@ -245,10 +251,11 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
           nativeCall: { generation: request.contract.generation, parentSessionID: request.parentSessionID, ...exact },
           sessionID: child.id as string, formID: form.id, messageID: tool.messageID, toolCallID: tool.id, fieldKey }))) return { candidates, complete }
       }
+      // The coordinator's answers carry this task's contract only when their question names this task.
       const coordinator = request.coordinatorSessionID
       if (coordinator !== undefined) await answersOf(coordinator, "coordinator", MAX_DISCOVERED_COORDINATOR_MARKS, (form, tool, fieldKey) => ({
         kind: "coordinator-form-answer", contract: request.contract, sessionID: coordinator,
-        formID: form.id, messageID: tool.messageID, toolCallID: tool.id, fieldKey }))
+        formID: form.id, messageID: tool.messageID, toolCallID: tool.id, fieldKey }), decisionQuestionTag(request.contract.missionID, request.contract.taskKey))
       return { candidates, complete }
     },
     reply: async (raw: unknown) => {

@@ -240,7 +240,9 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
         q.delegated = JSON.parse(raw.slice(start, raw.lastIndexOf("}") + 1))
         return { calls: [{ name: "subagent", id: q.subagentCall = id("call_qsub"), args: { agent: "fixture-worker", description: "Decision worker", prompt: q.delegated.assignmentPrompt } }] }
       }
-      if (!turn.calls.includes("question")) return { calls: [{ name: "question", id: q.questionCall = id("call_qask"), args: { questions: [QUESTION] } }] }
+      // The question names the decision task it answers (its questionTag).
+      q.question ??= { ...QUESTION, question: `${QUESTION.question} ${q.delegated.questionTag}` }
+      if (!turn.calls.includes("question")) return { calls: [{ name: "question", id: q.questionCall = id("call_qask"), args: { questions: [q.question] } }] }
       const decision = callOf(turn, call => call.function.name === "mission_report" && JSON.parse(call.function.arguments).taskKey === "decision")
       if (!decision) {
         // The UI run cites the answer artifact inspect lists; the ordinary run cites the same exact question without a mark.
@@ -253,7 +255,7 @@ const timer = setInterval(() => { if (!existsSync("e-shell-release")) return
         } else {
           const asked = (await messages(turn.sessionID)).find(m => m.type === "assistant" && m.content?.some(p => p.type === "tool" && p.id === q.questionCall))
           const contract = q.delegated.contract
-          artifact = { kind: "decision", decidedBy: "human", question: QUESTION.question, answer: "Module", provenance: { kind: "coordinator-form-answer",
+          artifact = { kind: "decision", decidedBy: "human", question: q.question.question, answer: "Module", provenance: { kind: "coordinator-form-answer",
             contract: { missionID: contract.missionID, taskKey: contract.taskKey, generation: contract.generation },
             sessionID: turn.sessionID, formID: q.formID, messageID: asked.id, toolCallID: q.questionCall, fieldKey: "q0" } }
         }

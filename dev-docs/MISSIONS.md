@@ -65,18 +65,17 @@ refuse otherwise. Only one-time coordinators are offered and told about
   nothing created.
 
 The human-answer gate's `discover` finds fresh children of the expected parent
-whose `subagent` call carried the exact assignment prompt and, for
-`inspect({ taskKey })`, the coordinator's own conversation; it reads their
-confirmed UI marks and keeps only answers its own `verify` accepts, skipping
-coordinator Form fields that already settle another live decision task. Each
-candidate names who asked (`askedBy`). A reached bound, a pending mark or a
-confirmed answer that fails verification makes the discovery incomplete.
-`inspect({ taskKey })` lists the candidates as ready artifacts with their
-completeness. A native decision readout may omit its artifact only when the
-decision task's own conversations yield a complete discovery with exactly one
-candidate; a coordinator-asked answer is always passed explicitly, so an
-unrelated answer (consent, a credential) never settles a decision. Never infer
-candidates from text, titles or timing.
+whose `subagent` call carried the exact assignment prompt, and the coordinator's
+answered questions that name this task with its `questionTag`
+(`missions/decision-question-tag.ts`): an exact lookup of the marks holding that
+tag, so unrelated or older answers never spend its bound. It keeps only answers
+its own `verify` accepts; each candidate names who asked (`askedBy`). A reached
+bound, a pending mark or a confirmed answer that fails verification makes the
+discovery incomplete. `inspect({ taskKey })` lists the candidates as ready
+artifacts with their completeness. A native decision readout may omit its
+artifact when the discovery is complete with exactly one candidate; every
+candidate answers this exact task, and the gate still verifies it. Never infer
+candidates from free text, titles or timing.
 `mission.briefing` treats requestID `"auto"` as `auto:<revision>` and may omit
 `basedOnRevision`: the server then uses the current revision, or refuses a
 different summary when the latest automatic briefing is still the last event. One replacement task may merge several retired tasks; it names one
@@ -106,11 +105,16 @@ A completed native Wayfinder `decision` readout is settled by `settleDecision`
   that is cheap to reverse; it never counts as the human's answer or consent.
 - **Human answer**: `{ kind: "decision", decidedBy?: "human", question, answer,
   provenance }`. A `coordinator-form-answer` provenance cites the coordinator's own
-  question (its root conversation, no delegation to prove; one Form field settles at
-  most one live decision task); a `native-form-answer` provenance cites the decision
-  conversation's question, kept for missions whose decision workers asked
+  question, bound to exactly one decision task: asked from its root conversation
+  (no delegation to prove), its question names the task with the task's
+  `questionTag` (`[decision <taskKey> <code>]`, the code derived from the mission
+  and task, returned with the declaration and by `inspect({ taskKey })`), answered
+  after the task was declared, and its Form field settles no other live decision
+  task. The human reads the tag, so an answer cannot be rebound to another task,
+  mission or reused coordinator root. A `native-form-answer` provenance cites the
+  decision conversation's question, kept for missions whose decision workers asked
   themselves. Both need the confirmed UI mark (`MISSIONS_RECURRING.md`, "Wayfinder
-  human decision mark"), re-verified by the final report.
+  human decision mark"); the final report re-verifies them, binding included.
 
 A task actor's report never claims who decided: a `decidedBy` field or a
 coordinator-asked provenance from a non-coordinator is refused. The coordinator can
@@ -478,7 +482,7 @@ This transport reuses only the automation bridge discovery; automation keeps its
 
 ## Validation
 
-`node scripts/test-missions-native-trajectory.mjs <absolute-isolated-opencode-cli>` also checks the one-time Wayfinder decision flow: an artifact-free readout and a forged answer refused without journal mutation, a decision worker that returns a brief, the coordinator's own question answered through the authenticated UI route and cited from `inspect({ taskKey })`, and a coordinator decision recorded as its own. The invocation unit tests cover graph isolation, missing/stale invocations, interruption joining and per-check deadlines.
+`node scripts/test-missions-native-trajectory.mjs <absolute-isolated-opencode-cli>` also checks the one-time Wayfinder decision flow: an artifact-free readout and a forged answer refused without journal mutation, a decision worker that returns a brief, the coordinator's own question naming the task's `questionTag`, answered through the authenticated UI route, listed by `inspect({ taskKey })` and settling the task without an artifact, and a coordinator decision recorded as its own. The invocation unit tests cover graph isolation, missing/stale invocations, interruption joining and per-check deadlines.
 
 Each complete one-time human-gate call (acquisition plus its nested SQL/Form/storage reads) shares one 10-second deadline, matching `missions/native-human-evidence.ts`, combined with invocation cancellation. The check aborts and joins only its own runtimes and clears its timer on settlement; later checks get a fresh budget, excluding intervening session/authority work. The invocation joins all pending checks/reads before graph release. A raw Promise that ignores abort may remain pending, but cannot resume its cancelled Effect into the graph, and later reads through that expired check are refused. A stuck native finalizer or uninterruptible read is joined before its graph is released: never abandon such work with a Promise race, and keep reads interruptible and cleanup finite. Recurring gates use their own runners.
 

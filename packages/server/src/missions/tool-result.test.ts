@@ -3,7 +3,8 @@ import test from "node:test"
 import type { MissionMap, MissionTask } from "./model"
 import { COORDINATOR_DECISION_SHAPE, WAYFINDER_DECISION_REQUIREMENT, buildActorContext, buildAssignmentPrompt, getMissionRecipe } from "./recipes"
 import { compactMission, compactMissionTask, nativeAssignment } from "./tool-result"
-import { decisionInvocationUnavailable, decisionOutcomeRequired } from "./decision-gate"
+import { decisionInvocationUnavailable, decisionOutcomeRequired, decisionQuestionUnbound } from "./decision-gate"
+import { decisionQuestionTag } from "./decision-question-tag"
 import { coordinatorDecisionArtifact } from "./decision-artifact"
 
 const task: MissionTask = { id: "task", key: "choose", title: "Choose the seam", brief: "Long brief ".repeat(500), role: "decision",
@@ -26,25 +27,32 @@ test("live native tasks expose their exact prompt; Wayfinder decisions also stat
     contract: { missionID: "mission", taskKey: "choose", generation: 2 },
     assignmentPrompt: buildAssignmentPrompt(mission, task),
     requirement: WAYFINDER_DECISION_REQUIREMENT,
+    questionTag: decisionQuestionTag("mission", "choose"),
   })
-  assert.equal("requirement" in nativeAssignment(mission, { ...task, role: "research" }), false)
-  assert.equal("requirement" in nativeAssignment({ ...mission, template: "custom" }, task), false)
+  assert.match(decisionQuestionTag("mission", "choose"), /^\[decision choose [0-9a-f]{8}\]$/)
+  assert.notEqual(decisionQuestionTag("mission", "choose"), decisionQuestionTag("other-mission", "choose"), "a reused coordinator's missions differ")
+  for (const other of [nativeAssignment(mission, { ...task, role: "research" }), nativeAssignment({ ...mission, template: "custom" }, task)]) {
+    assert.equal("requirement" in other, false); assert.equal("questionTag" in other, false)
+  }
   assert.deepEqual(nativeAssignment(mission, { ...task, status: "withdrawn" }), {}, "withdrawn work is never relaunched")
   assert.deepEqual(nativeAssignment(mission, { ...task, executionMode: { kind: "independent", reason: "lifetime", explanation: "Own root" } }), {})
 })
 
 test("decision refusals show the exact coordinator-decision shape the gate accepts and how to cite a human answer", () => {
-  for (const error of [decisionInvocationUnavailable(), decisionOutcomeRequired()]) {
+  const tag = decisionQuestionTag("mission", "choose")
+  for (const error of [decisionInvocationUnavailable(tag), decisionOutcomeRequired(tag), decisionQuestionUnbound(tag)]) {
     assert.equal(error.code, "policy-unqualified")
     const shape = error.message.slice(error.message.indexOf("{"), error.message.indexOf("}") + 1)
     const filled = Object.fromEntries(Object.entries(JSON.parse(shape)).map(([key, value]) => [key, value === "..." ? "Filled" : value]))
     assert.equal(coordinatorDecisionArtifact.safeParse(filled).success, true, "the shown shape is the accepted coordinator decision")
-    assert.match(error.message, /ask the human from your own conversation with the native question tool/)
-    assert.match(error.message, /pass the answer artifact that mission\.inspect\(\{ taskKey \}\) lists, unchanged/)
+    assert.ok(error.message.includes(`ask the human from your own conversation with the native question tool, writing ${tag} in the question`))
+    assert.match(error.message, /when several answers qualify, pass the one mission\.inspect\(\{ taskKey \}\) lists, unchanged/)
     assert.match(error.message, /retire the task with mission\.revise and keep the question in the notes/)
   }
+  assert.match(decisionInvocationUnavailable().message, /writing the task's questionTag in the question/)
   assert.match(decisionInvocationUnavailable().message, /^Wayfinder decision evidence unavailable: /)
   assert.match(decisionOutcomeRequired().message, /^Decision outcome required: /)
+  assert.match(decisionQuestionUnbound(tag).message, /^This answer does not settle this decision task: .*asked after the task was declared/)
 })
 
 test("the Wayfinder decision requirement routes every decision through the coordinator", () => {
@@ -59,7 +67,8 @@ test("the Wayfinder decision requirement routes every decision through the coord
   assert.ok(WAYFINDER_DECISION_REQUIREMENT.includes(COORDINATOR_DECISION_SHAPE))
   assert.match(WAYFINDER_DECISION_REQUIREMENT, /Defer it when it is not needed yet: retire the task through mission\.revise and keep the question in the notes as fog/)
   assert.match(WAYFINDER_DECISION_REQUIREMENT, /ask the human yourself through the native question tool, batching pending decisions into one call/)
-  assert.match(WAYFINDER_DECISION_REQUIREMENT, /pass the answer artifact that mission\.inspect\(\{ taskKey \}\) lists, unchanged/)
+  assert.match(WAYFINDER_DECISION_REQUIREMENT, /write each decision's questionTag \(returned with its declaration and by mission\.inspect\(\{ taskKey \}\)\) in its question: an answer settles only the decision its question names/)
+  assert.match(WAYFINDER_DECISION_REQUIREMENT, /report the task completed without an artifact; when several answers qualify, pass the one mission\.inspect\(\{ taskKey \}\) lists, unchanged/)
   assert.match(WAYFINDER_DECISION_REQUIREMENT, /Never write the human's answer yourself or present your decision as theirs/)
   assert.ok(recipe.coordinator.includes(WAYFINDER_DECISION_REQUIREMENT))
   const independent = getMissionRecipe("wayfinder", "independent").coordinator

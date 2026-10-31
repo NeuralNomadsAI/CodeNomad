@@ -6,22 +6,30 @@ import type { HumanDecisionMark } from "./human-answer"
 import type { MissionMap } from "./model"
 import { COORDINATOR_DECISION_SHAPE } from "./recipes"
 
-/** How a coordinator settles a Wayfinder decision task; shared by the refusals below. */
-const DECISION_OPTIONS = `Settle it yourself: when the evidence suffices and the choice is cheap to reverse, pass your own decision as artifact ${COORDINATOR_DECISION_SHAPE}; `
-  + "otherwise ask the human from your own conversation with the native question tool and, once they answer in the CodeNomad interface, "
-  + "pass the answer artifact that mission.inspect({ taskKey }) lists, unchanged. To defer the decision, retire the task with mission.revise "
-  + "and keep the question in the notes."
+/** How a coordinator settles a Wayfinder decision task; shared by the refusals below. `tag`: the task's `decisionQuestionTag`. */
+function decisionOptions(tag?: string) {
+  return `Settle it yourself: when the evidence suffices and the choice is cheap to reverse, pass your own decision as artifact ${COORDINATOR_DECISION_SHAPE}; `
+    + `otherwise ask the human from your own conversation with the native question tool, writing ${tag ?? "the task's questionTag"} in the question, and, `
+    + "once they answer in the CodeNomad interface, report the task again (when several answers qualify, pass the one mission.inspect({ taskKey }) lists, unchanged). "
+    + "To defer the decision, retire the task with mission.revise and keep the question in the notes."
+}
 
 /** Model-facing refusal when a Wayfinder decision cites a human answer whose native question cannot be identified exactly. */
-export function decisionInvocationUnavailable() {
+export function decisionInvocationUnavailable(tag?: string) {
   return new MissionControlError("Wayfinder decision evidence unavailable: the cited human answer does not name an exact native question "
-    + `asked in this mission for this task. ${DECISION_OPTIONS}`, "policy-unqualified")
+    + `asked in this mission for this task. ${decisionOptions(tag)}`, "policy-unqualified")
 }
 
 /** Model-facing refusal of a completed decision readout that names neither a coordinator decision nor a human answer. */
-export function decisionOutcomeRequired() {
-  return new MissionControlError(`Decision outcome required: no answered question qualifies for this decision task yet. ${DECISION_OPTIONS}`,
+export function decisionOutcomeRequired(tag?: string) {
+  return new MissionControlError(`Decision outcome required: no answered question qualifies for this decision task yet. ${decisionOptions(tag)}`,
     "policy-unqualified")
+}
+
+/** Model-facing refusal of a coordinator-asked answer that is not bound to this exact decision task. */
+export function decisionQuestionUnbound(tag: string) {
+  return new MissionControlError(`This answer does not settle this decision task: the human must answer a question that names it with ${tag}, `
+    + `asked after the task was declared. ${decisionOptions(tag)}`, "policy-unqualified")
 }
 
 /** How a completed native Wayfinder decision readout is settled: the coordinator's own
