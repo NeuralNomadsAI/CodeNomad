@@ -416,6 +416,63 @@ test("Inherit repairs an existing empty project experimental block that hides th
   } finally { await page.close() }
 })
 
+test("the depth editor states the nesting rule and whether General subagents can nest, per OpenCode's resolved rules", async () => {
+  const page = await browser.newPage({ locale: "en-US" })
+  // Each saved value selects the native state the next read reports.
+  const states: Record<string, { effectiveDepth: number; depth: number | null; nesting: unknown }> = {
+    initial: { effectiveDepth: 1, depth: null, nesting: { effect: "deny" } },
+    "3": { effectiveDepth: 3, depth: 3, nesting: { effect: "allow" } },
+    "2": { effectiveDepth: 2, depth: 2, nesting: { effect: "ask" } },
+    "4": { effectiveDepth: 4, depth: 4, nesting: { effect: "deny" } },
+    null: { effectiveDepth: 5, depth: null, nesting: { effect: "deny" } },
+    // The rule is written with a depth of 1 too, but OpenCode's depth limit still stops nesting.
+    "1": { effectiveDepth: 1, depth: 1, nesting: { effect: "allow" } },
+    // 0 keeps OpenCode's meaning: no subagents at all.
+    "0": { effectiveDepth: 0, depth: 0, nesting: { effect: "allow" } },
+  }
+  let state = states.initial
+  const writes: unknown[] = []
+  try {
+    await setup(page, "remote")
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/subagent-depth*", route => {
+      if (route.request().method() === "GET") return route.fulfill({ json: { location: { directory: "fixture" }, capability: { minimum: 0 },
+        effectiveDepth: state.effectiveDepth, nesting: state.nesting,
+        project: { path: "fixture/opencode.jsonc", depth: state.depth, expectation: `e${state.depth}` } } })
+      writes.push(route.request().postDataJSON())
+      state = states[String(route.request().postDataJSON().depth)]
+      return route.fulfill({ status: 204, body: "" })
+    })
+    await page.goto(url); await fixtureCall(page, "connectCatalog")
+    await openMissionSettings(page)
+    const controls = page.locator(".mission-depth"), input = controls.locator("input"), note = controls.locator(".mission-depth-nesting")
+    const save = async (value: string, effective: number) => {
+      await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+      await input.fill(value); await input.press("Enter")
+      await controls.getByText(`OpenCode effective depth: ${effective}`, { exact: true }).waitFor()
+    }
+    await controls.getByText("OpenCode effective depth: 1", { exact: true }).waitFor()
+    assert.equal(await controls.locator(".mission-depth-rule").innerText(), "Setting a project depth also lets subagents launch their own subagents in this project, up to that depth; at 1, OpenCode's own limit still stops nesting. This project rule takes precedence over General's restrictions from other config files.")
+    assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.")
+    await save("3", 3)
+    assert.equal(await note.innerText(), "General subagents can launch their own subagents here, so they nest up to this depth.")
+    await save("2", 2)
+    assert.equal(await note.innerText(), "General subagents ask before launching subagents here.")
+    await save("4", 4)
+    assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest.")
+    await page.waitForFunction(() => !document.querySelector<HTMLInputElement>(".mission-depth input")?.readOnly)
+    await controls.getByRole("button", { name: "Inherit", exact: true }).click()
+    await controls.getByText("OpenCode effective depth: 5", { exact: true }).waitFor()
+    assert.equal(await note.innerText(), "General subagents cannot launch subagents here, so they do not nest.")
+    await save("1", 1)
+    assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.",
+      "General may launch subagents, but a depth of 1 still stops nesting")
+    await save("0", 0)
+    assert.equal(await note.innerText(), "At this depth, OpenCode's own depth limit stops nesting.")
+    assert.deepEqual(writes.map(write => (write as { depth: number | null }).depth), [3, 2, 4, null, 1, 0], "only depth writes")
+  } finally { await page.close() }
+})
+
 test("a depth read only makes the field read-only; only a write announces Saving", async () => {
   const page = await browser.newPage({ locale: "en-US" })
   const read = Promise.withResolvers<void>(), write = Promise.withResolvers<void>(), reading = Promise.withResolvers<void>(), writing = Promise.withResolvers<void>()

@@ -212,6 +212,10 @@ jobs:
             # native config schema and production JSONC document admission.
             node --import tsx scripts/test-subagent-depth-settings-native.mjs $cli
             if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            # Real nested General subagents: the built-in denial, the rule a saved
+            # depth adds to the project and its removal by Inherit.
+            node --import tsx scripts/test-subagent-nesting-native.mjs $cli
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
           }
           # Settings → Providers → Images: default-on generation, native acceptance
           # and hot reload of the written values.

@@ -472,10 +472,14 @@ export interface ImageSettingsMutation {
 }
 
 export interface SubagentDepthCapability { minimum: number; maximum?: number; default?: number }
+export type SubagentNestingEffect = "allow" | "ask" | "deny"
 export interface SubagentDepthSnapshot {
   location: PluginControlLocation
   capability: SubagentDepthCapability | null
   effectiveDepth: number | null
+  /** Whether OpenCode's General subagent may launch General per its resolved rules, which nesting needs:
+   * `null` when unknown. */
+  nesting: { effect: SubagentNestingEffect } | null
   /** `emptyExperimental`: the project holds an `experimental` object without properties, which
    * hides every inherited experimental setting; Inherit removes it. */
   project: { path: string; depth: number | null; expectation: string; emptyExperimental?: boolean } | null

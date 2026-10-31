@@ -118,6 +118,103 @@ test("owned depth editing preserves JSONC, inherited settings and original draft
   } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
 })
 
+/** A project and Global document under a simulated native runtime whose General rules resolve as OpenCode
+ * does: the base policy and the built-in denial, every document's top-level rules, then every document's
+ * General rules. */
+async function nestingFixture(run: (fixture: {
+  app: ReturnType<typeof Fastify>; project: string; projectFile: string; globalFile: string; native: { agents: boolean }
+  save: (value: number | null) => Promise<void>; saved: () => Promise<any>; nesting: () => Promise<unknown>
+}) => Promise<void>) {
+  const root = await mkdtemp(path.join(os.tmpdir(), "subagent-depth-nesting-"))
+  const app = Fastify()
+  try {
+    const global = path.join(root, "global"), project = path.join(root, "project")
+    await mkdir(global); await mkdir(project)
+    const globalFile = path.join(global, "opencode.jsonc"), projectFile = path.join(project, "opencode.jsonc")
+    await writeFile(globalFile, "{}"); await writeFile(projectFile, '{\n  // kept\n  "shell": "keep"\n}\n')
+    const native = { agents: true }
+    const entries = async () => [{ type: "document", path: globalFile, info: parse(await readFile(globalFile, "utf8")) },
+      { type: "directory", path: global }, { type: "document", path: projectFile, info: parse(await readFile(projectFile, "utf8")) }]
+    const resolve = async () => {
+      const documents = (await entries()).filter((entry: any) => entry.type === "document") as any[]
+      return [{ action: "*", resource: "*", effect: "allow" }, { action: "question", resource: "*", effect: "deny" },
+        { action: "subagent", resource: "*", effect: "deny" }, ...documents.flatMap(entry => entry.info.permissions ?? []),
+        ...documents.flatMap(entry => entry.info.agents?.general?.permissions ?? [])]
+    }
+    const connection: any = { endpoint: { url: "http://127.0.0.1:1234", auth: { type: "basic", username: "fixture", password: "private" } },
+      assertCurrent: () => {}, fetch: async () => Response.json(contract({ type: "integer", minimum: 0, default: 1 })),
+      client: { config: { get: entries }, plugin: { list: async () => ({ data: [] }) }, agent: { list: async () => {
+        if (!native.agents) throw new Error("unavailable")
+        return { data: [{ id: "build", permissions: [] }, { id: "general", permissions: await resolve() }] }
+      } } },
+    }
+    const manager: any = {
+      get: () => ({}), getSharedServiceConnection: async () => connection,
+      getServiceDirectoryForPath: async (_id: string, directory: string) => directory === project ? directory : undefined,
+      ownsLocation: async () => true, getWorktreeIdentityForPath: async () => "owned",
+      getServicePathStyle: () => process.platform === "win32" ? "win32" : "posix",
+      getServiceWslDistro: () => undefined, getHostPathForServicePath: async (_id: string, value: string) => value,
+    }
+    const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} }, logger: {} as any })
+    const settings = new SubagentDepthSettings(controls, manager), location = { directory: project }
+    registerSubagentDepthSettingsRoutes(app, settings)
+    await run({ app, project, projectFile, globalFile, native,
+      save: async value => settings.update("w", location, value, (await settings.read("w", location)).project!.expectation),
+      saved: async () => parse(await readFile(projectFile, "utf8")),
+      nesting: async () => (await settings.read("w", location)).nesting })
+  } finally { await app.close(); await rm(root, { recursive: true, force: true }) }
+}
+const rule = (action: string, resource: string, effect: string) => ({ action, resource, effect })
+const allowRule = { general: { permissions: [rule("subagent", "*", "allow")] } }
+
+test("any project depth override writes CodeNomad's marked rule once, and Inherit removes only that rule", () => nestingFixture(async ({
+  app, project, projectFile, save, saved, nesting,
+}) => {
+  const original = await readFile(projectFile, "utf8")
+  assert.deepEqual(await nesting(), { effect: "deny" }, "OpenCode's built-in rule stops General")
+  for (const value of [1, 0, 3]) {
+    await save(value)
+    assert.deepEqual((await saved()).agents, allowRule, `depth ${value} writes the rule once`)
+    assert.equal((await saved()).experimental.subagent_depth, value)
+  }
+  assert.match(await readFile(projectFile, "utf8"), /\/\/ kept[\s\S]*\/\/ Added by CodeNomad with the project subagent depth; Inherit removes it\./)
+  assert.deepEqual(await nesting(), { effect: "allow" })
+  const reply = await app.inject({ method: "GET", url: `/api/workspaces/w/subagent-depth?directory=${encodeURIComponent(project)}` })
+  assert.deepEqual(reply.json().nesting, { effect: "allow" })
+  await save(null)
+  assert.equal(await readFile(projectFile, "utf8"), original, "Inherit removes the depth and the rule, restoring the file")
+  assert.deepEqual(await nesting(), { effect: "deny" })
+}))
+
+test("the override writes the rule whatever else decides, and Inherit leaves every other rule", () => nestingFixture(async ({
+  projectFile, globalFile, native, save, saved, nesting,
+}) => {
+  // A Global General denial stays; the project rule, resolved after it, wins.
+  const denial = JSON.stringify({ agents: { general: { permissions: [rule("subagent", "*", "deny")] } } })
+  await writeFile(globalFile, denial)
+  await save(2)
+  assert.deepEqual((await saved()).agents, allowRule)
+  assert.deepEqual(await nesting(), { effect: "allow" })
+  assert.equal(await readFile(globalFile, "utf8"), denial, "the Global document is never edited")
+  await save(null)
+  assert.deepEqual(await nesting(), { effect: "deny" })
+  await writeFile(globalFile, "{}")
+  // An unreadable agent list reports nothing and changes nothing written.
+  native.agents = false
+  await save(2)
+  assert.deepEqual((await saved()).agents, allowRule)
+  assert.equal(await nesting(), null)
+  native.agents = true
+  await save(null)
+  // The user's own identical rule is not CodeNomad's: an override adds the marked one, Inherit removes only that.
+  const own = '{ "agents": { "general": { "permissions": [{ "action": "subagent", "resource": "*", "effect": "allow" }] } } }\n'
+  await writeFile(projectFile, own)
+  await save(3)
+  assert.equal((await saved()).agents.general.permissions.length, 2)
+  await save(null)
+  assert.deepEqual(await saved(), parse(own))
+}))
+
 test("Inherit removes a block left with only the Global image storage, only when that is certain", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "subagent-depth-media-"))
   try {
