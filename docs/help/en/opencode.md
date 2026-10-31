@@ -20,7 +20,7 @@ The installed executable and the running service can have different versions. Co
 | Classification | Current requirement | Meaning |
 | --- | --- | --- |
 | Minimum | OpenCode **2.2.3** | The image generation tool used by the **Images** settings and the Design extension, alongside correct JavaScript job ordering in Code Mode and the native replay and compaction format; conversations saved by earlier versions stay readable after updating. |
-| Recommended | OpenCode **2.2.3** | Qualified target; the same version as the technical minimum. |
+| Recommended | OpenCode **2.2.5** | Qualified target, distinct from the technical minimum. |
 | Unverified | A newer or custom version not fully validated | Not rejected merely for being untested; the connected service's actual API contracts are checked. |
 
 The required session, permission, Form, inbox and session-environment contracts must also be available. An executable version alone does not prove that the connected service supports them. If setup reports an unsupported running service, select/install a supported CLI and use the explicit shared-service restart when ready.

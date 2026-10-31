@@ -8,7 +8,7 @@ La misma interfaz admite [varias pestañas de proyecto y worktrees](projects.md)
 
 1. Instala Node.js 24 LTS y npm; el entorno de compilación fijado por el repositorio es 24.20.0. Los paquetes de escritorio incluyen Node/npm.
 2. Pon Git en el **PATH del proceso del backend**. Git solo dentro de WSL no satisface a un backend Windows.
-3. Instala o selecciona OpenCode: **2.2.3** es a la vez el mínimo requerido y el objetivo recomendado de verificación. Las compilaciones más nuevas o personalizadas pasan comprobaciones de compatibilidad, no una lista de versiones probadas permitidas. Consulta [configuración de OpenCode](opencode.md).
+3. Instala o selecciona OpenCode: **2.2.3** es el mínimo requerido y **2.2.5**, el objetivo recomendado de verificación. Las compilaciones más nuevas o personalizadas pasan comprobaciones de compatibilidad, no una lista de versiones probadas permitidas. Consulta [configuración de OpenCode](opencode.md).
 4. Elige la carpeta desde la que iniciar el servidor o pasa `--workspace-root` explícitamente.
 
 Sin Git, las conversaciones siguen disponibles solo en la carpeta física abierta explícitamente; las operaciones Git y worktree fallan. Instala Git y reinicia el backend tras cambiar PATH. Una raíz de espacio de trabajo limita la apertura/exploración, no la ejecución del agente: consulta [Seguridad](security.md).
