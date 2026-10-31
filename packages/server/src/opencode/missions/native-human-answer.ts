@@ -13,6 +13,7 @@ import { HUMAN_MARK_STORAGE_PREFIX, humanAnswerBindingInputSchema, humanAnswerBi
 import { nativeDatabaseStorageID } from "./native-database-identity"
 import { verifyHumanAnswerBridge } from "../automation-plugin"
 import { isLocalNativeTool } from "../../missions/native-call-observation"
+import { decisionQuestionTag, fieldDecisionTag } from "../../missions/decision-question-tag"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -31,6 +32,8 @@ type StoredMark = HumanDecisionMark & { state: "pending" | "confirmed"; attemptI
 /** Discovery bounds: a decision task's own children, marks per child and returned answers. */
 const MAX_DISCOVERED_CHILDREN = 64
 const MAX_DISCOVERED_MARKS = 16
+/** The coordinator asks for the whole mission, so its own conversation holds more answered Forms. */
+const MAX_DISCOVERED_COORDINATOR_MARKS = 32
 const MAX_DISCOVERED_ANSWERS = 16
 const MAX_DELEGATION_MESSAGES = 8
 type NativeForms = { get(id: string): Effect.Effect<unknown, unknown>; state(id: string): Effect.Effect<unknown, unknown>;
@@ -143,15 +146,24 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
         if (form.id !== request.formID || form.sessionID !== request.sessionID || !object(tool)
           || tool.messageID !== request.messageID || tool.id !== request.toolCallID) throw new Error("Human mark Form binding mismatch")
         const actor = yield* session(request.sessionID)
-        const delegation = yield* question(request.nativeCall.parentSessionID, request.nativeCall.parentMessageID,
-          request.nativeCall.toolCallID, request.delegationToolName)
-        if (actor.parent_id !== request.nativeCall.parentSessionID || !object(delegation.state.metadata)
-          || delegation.state.metadata.sessionID !== request.sessionID) throw new Error("Human decision native delegation mismatch")
-        // Without a published binding, only a fresh child born from this exact declared
-        // assignment qualifies; a continuation reuses a child born for other work.
-        if (request.assignmentPrompt !== undefined && (delegation.input.sessionID !== undefined
-          || typeof delegation.input.prompt !== "string" || !delegation.input.prompt.includes(request.assignmentPrompt)))
-          throw new Error("Human decision delegation is not this assignment")
+        if (request.kind === "coordinator-form-answer") {
+          // The coordinator asked from its own root conversation: there is no delegation to prove,
+          // and the cited field's own question names exactly the one decision task its answer settles.
+          if (actor.parent_id !== null && actor.parent_id !== undefined) throw new Error("Coordinator question outside a root conversation")
+          if (fieldDecisionTag(form.fields.find(field => field.key === request.fieldKey) ?? {})
+            !== decisionQuestionTag(request.contract.missionID, request.contract.taskKey))
+            throw new Error("Coordinator question does not name this decision task")
+        } else {
+          const delegation = yield* question(request.nativeCall.parentSessionID, request.nativeCall.parentMessageID,
+            request.nativeCall.toolCallID, request.delegationToolName)
+          if (actor.parent_id !== request.nativeCall.parentSessionID || !object(delegation.state.metadata)
+            || delegation.state.metadata.sessionID !== request.sessionID) throw new Error("Human decision native delegation mismatch")
+          // Without a published binding, only a fresh child born from this exact declared
+          // assignment qualifies; a continuation reuses a child born for other work.
+          if (request.assignmentPrompt !== undefined && (delegation.input.sessionID !== undefined
+            || typeof delegation.input.prompt !== "string" || !delegation.input.prompt.includes(request.assignmentPrompt)))
+            throw new Error("Human decision delegation is not this assignment")
+        }
         // The durable message projection is the native record of the answered call:
         // `serve` (as of the minimum supported OpenCode) does not persist Bus events, so the event table stays empty.
         const observed = yield* question(request.sessionID, request.messageID, request.toolCallID)
@@ -170,8 +182,9 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
       }), { behavior: "immediate" }))
     },
     /** Exact native structure only: a child of the expected parent whose fresh `subagent`
-     * call carried this assignment, its confirmed UI marks, and the gate's own verify.
-     * Nothing is inferred from text, titles, timing or the model's assertion. */
+     * call carried this assignment and, when asked, the coordinator's own conversation;
+     * their confirmed UI marks; and the gate's own verify. Nothing is inferred from
+     * text, titles, timing or the model's assertion. */
     discover: async (raw: unknown): Promise<HumanDecisionDiscovery> => {
       const request = humanDecisionDiscoverySchema.parse(raw)
       if (request.projectID !== location.project.id || request.directory !== location.directory) throw new Error("Human decision Location mismatch")
@@ -179,6 +192,50 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
       // Every bound reached or unverifiable confirmed answer leaves the discovery incomplete.
       let complete = true
       const bounded = <T>(rows: readonly T[], limit: number) => { if (rows.length > limit) complete = false; return rows.slice(0, limit) }
+      /** One asking conversation's confirmed answers; false once the answer bound is reached. With `tag`, only the
+       * marks with a question field (its question or header) holding this decision's tag: an exact lookup, so unrelated
+       * history, answers or options quoting the tag never spend the bound. Unreadable marks still count (fail closed). */
+      const answersOf = async (sessionID: string, askedBy: HumanDecisionCandidate["askedBy"], markLimit: number,
+        provenanceOf: (form: { id: string }, tool: { messageID: string; id: string }, fieldKey: string) => HumanDecisionCandidate["artifact"]["provenance"],
+        tag?: string) => {
+        const prefix = nativeKey(`${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/${sessionID}/`)
+        const range = [prefix, `${prefix.slice(0, -1)}0`]
+        const marks = bounded(await run(tag === undefined ? query("SELECT value FROM kv WHERE key>=? AND key<? LIMIT ?", [...range, markLimit + 1])
+          // `kv.value` is qualified: json_each has its own `value` column.
+          : query(`SELECT kv.value AS value FROM kv WHERE kv.key>=? AND kv.key<? AND CASE WHEN json_valid(kv.value)
+              THEN EXISTS (SELECT 1 FROM json_each(kv.value,'$.form.fields') AS field WHERE instr(coalesce(json_extract(field.value,'$.description'),''),?)>0
+                OR instr(coalesce(json_extract(field.value,'$.title'),''),?)>0)
+              ELSE instr(kv.value,?)>0 END LIMIT ?`, [...range, tag, tag, tag, markLimit + 1])), markLimit)
+        for (const row of marks) {
+          const stored = (() => { try { return parse(row.value) } catch { return undefined } })()
+          const form = (() => { try { return Schema.decodeUnknownSync(Schema.toType(Form.Info))(object(stored) ? stored.form : undefined) } catch { return undefined } })()
+          // Answers to other kinds of Forms are not decision candidates.
+          if (form && form.metadata?.kind !== "question") continue
+          const tool = form?.metadata?.tool
+          // A pending attempt never qualifies but its outcome is unknown; an unreadable or
+          // mis-bound confirmed mark cannot be excluded either. Both leave discovery incomplete.
+          if (!object(stored) || stored.state !== "confirmed" || stored.via !== "ui" || stored.sessionID !== sessionID || !object(stored.answer)
+            || !form || !object(tool) || typeof tool.messageID !== "string" || typeof tool.id !== "string") { complete = false; continue }
+          for (const field of form.fields) {
+            const answer = stored.answer[field.key]
+            if (typeof field.description !== "string" || tag !== undefined && fieldDecisionTag(field) !== tag || !(typeof answer === "string" && answer
+              || Array.isArray(answer) && answer.length && answer.every(item => typeof item === "string" && item))) continue
+            const provenance = provenanceOf(form, { messageID: tool.messageID, id: tool.id }, field.key)
+            try {
+              await api.verify(provenance.kind === "coordinator-form-answer"
+                ? { ...provenance, question: field.description, answer, projectID: request.projectID, directory: request.directory }
+                : { ...provenance, question: field.description, answer, projectID: request.projectID, directory: request.directory,
+                  delegationToolName: "subagent", assignmentPrompt: request.assignmentPrompt })
+            } catch { complete = false; continue }
+            if (candidates.length >= MAX_DISCOVERED_ANSWERS) { complete = false; return false }
+            const value = answer as string | string[]
+            // Coordinator answers name the human explicitly; task answers keep their established shape.
+            candidates.push({ question: field.description, answer: value, askedBy, artifact: { kind: "decision",
+              ...(askedBy === "coordinator" ? { decidedBy: "human" as const } : {}), question: field.description, answer: value, provenance } })
+          }
+        }
+        return true
+      }
       const children = bounded(await run(query("SELECT id FROM session_v2 WHERE parent_id=? AND project_id=? ORDER BY id LIMIT ?",
         [request.parentSessionID, location.project.id, MAX_DISCOVERED_CHILDREN + 1])), MAX_DISCOVERED_CHILDREN)
       for (const child of children) {
@@ -195,36 +252,16 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
           if (object(part) && typeof message.id === "string" && typeof part.id === "string") { call = { parentMessageID: message.id, toolCallID: part.id }; break }
         }
         if (!call) continue
-        const prefix = nativeKey(`${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/${child.id}/`)
-        const marks = bounded(await run(query("SELECT value FROM kv WHERE key>=? AND key<? LIMIT ?",
-          [prefix, `${prefix.slice(0, -1)}0`, MAX_DISCOVERED_MARKS + 1])), MAX_DISCOVERED_MARKS)
-        for (const row of marks) {
-          const stored = (() => { try { return parse(row.value) } catch { return undefined } })()
-          const form = (() => { try { return Schema.decodeUnknownSync(Schema.toType(Form.Info))(object(stored) ? stored.form : undefined) } catch { return undefined } })()
-          // Answers to other kinds of Forms are not decision candidates.
-          if (form && form.metadata?.kind !== "question") continue
-          const tool = form?.metadata?.tool
-          // A pending attempt never qualifies but its outcome is unknown; an unreadable or
-          // mis-bound confirmed mark cannot be excluded either. Both leave discovery incomplete.
-          if (!object(stored) || stored.state !== "confirmed" || stored.via !== "ui" || stored.sessionID !== child.id || !object(stored.answer)
-            || !form || !object(tool) || typeof tool.messageID !== "string" || typeof tool.id !== "string") { complete = false; continue }
-          for (const field of form.fields) {
-            const answer = stored.answer[field.key]
-            if (typeof field.description !== "string" || !(typeof answer === "string" && answer
-              || Array.isArray(answer) && answer.length && answer.every(item => typeof item === "string" && item))) continue
-            const provenance = { kind: "native-form-answer" as const, contract: request.contract,
-              nativeCall: { generation: request.contract.generation, parentSessionID: request.parentSessionID, ...call },
-              sessionID: child.id, formID: form.id, messageID: tool.messageID, toolCallID: tool.id, fieldKey: field.key }
-            try {
-              await api.verify({ ...provenance, question: field.description, answer, projectID: request.projectID, directory: request.directory,
-                delegationToolName: "subagent", assignmentPrompt: request.assignmentPrompt })
-            } catch { complete = false; continue }
-            if (candidates.length >= MAX_DISCOVERED_ANSWERS) return { candidates, complete: false }
-            const value = answer as string | string[]
-            candidates.push({ question: field.description, answer: value, artifact: { kind: "decision", question: field.description, answer: value, provenance } })
-          }
-        }
+        const exact = call
+        if (!await answersOf(child.id, "decision-task", MAX_DISCOVERED_MARKS, (form, tool, fieldKey) => ({ kind: "native-form-answer", contract: request.contract,
+          nativeCall: { generation: request.contract.generation, parentSessionID: request.parentSessionID, ...exact },
+          sessionID: child.id as string, formID: form.id, messageID: tool.messageID, toolCallID: tool.id, fieldKey }))) return { candidates, complete }
       }
+      // The coordinator's answers carry this task's contract only when their question names this task.
+      const coordinator = request.coordinatorSessionID
+      if (coordinator !== undefined) await answersOf(coordinator, "coordinator", MAX_DISCOVERED_COORDINATOR_MARKS, (form, tool, fieldKey) => ({
+        kind: "coordinator-form-answer", contract: request.contract, sessionID: coordinator,
+        formID: form.id, messageID: tool.messageID, toolCallID: tool.id, fieldKey }), decisionQuestionTag(request.contract.missionID, request.contract.taskKey))
       return { candidates, complete }
     },
     reply: async (raw: unknown) => {

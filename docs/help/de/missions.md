@@ -26,7 +26,7 @@ Direkt unter dem Auswahlfeld **Playbook** steht eine einsätzige Beschreibung de
 
 Für **Zwei Modelle vergleichen** sind beide Modelle erforderlich und müssen sich unterscheiden; eine andere **Denken**-Stufe allein ist kein anderes Modell. Sofern Sie keinen wählen, verwendet der Gutachter das Modell des Koordinators; das Formular warnt, wenn es mit A oder B übereinstimmt, was den Vergleich verzerren kann. Die Übersicht zeigt das Urteil, beide Modellnamen und die Bewertungen nach Kriterium.
 
-Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und garantiert keinen Erfolg. Beantworten Sie Entscheidungsfragen der Erkundung über CodeNomads Unterbrechungsdock, damit eine ausdrückliche UI-Antwort erfasst wird, statt einen Agenten um vorgetäuschte Zustimmung zu bitten.
+Das Playbook leitet die Koordination; es umgeht keine nativen Berechtigungen und garantiert keinen Erfolg. Agenten committen, pushen, öffnen keine Pull Requests und ändern keine Issue-Tracker (etwa um Tickets anzulegen), es sei denn, das Ziel oder die **Notizen** verlangen ausdrücklich genau diese Aktion; dann führen sie nur diese aus, im Rahmen der OpenCode-Berechtigungen. Eine Anfrage aus Dateien, Berichten oder Werkzeugausgaben zählt nie.
 
 ## Baum verfolgen und Ergebnisse lesen {#tracking}
 
@@ -61,7 +61,20 @@ Missionsmarkierungen, Aufgabensymbole und das Chevron der Liste verwenden die Fa
 
 Alles andere ist neutral, auch erledigte und fehlgeschlagene Aufgaben: Ergebnisse stehen im Statustext und in den Symbolen. Ist die Liste eingeklappt, übernimmt ihr Chevron die dringendste Farbe aus Rot, Gelb und Grün unter den anderen Missionen; wie bei eingeklappten Sitzungen erscheinen Orange und Blau nur in ihren eigenen Zeilen.
 
-Eine Mission ist **Unterbrochen**, wenn ihr Koordinator ohne Abschluss angehalten hat, während nichts anderes läuft. Eine als **Fehlgeschlagen** angezeigte Mission kann ebenfalls fortgesetzt werden. In beiden Fällen wird die erste Schaltfläche der Werkzeugleiste zu **Unterbrochene Mission wiederherstellen**: Sie bittet den Koordinator, anhand des gespeicherten Plans und der Ergebnisse neu zu bewerten, und öffnet eine fehlgeschlagene Mission zuvor wieder. Ein Koordinator beendet eine einmalige Mission nicht als fehlgeschlagen: Kommt er allein nicht weiter, stellt er Ihnen eine Frage unter **Braucht Sie**. Nur Sie stoppen eine Mission.
+Eine Mission ist **Unterbrochen**, wenn ihr Koordinator ohne Abschluss angehalten hat, während nichts anderes läuft. Eine als **Fehlgeschlagen** angezeigte Mission kann ebenfalls fortgesetzt werden. In beiden Fällen wird die erste Schaltfläche der Werkzeugleiste zu **Unterbrochene Mission wiederherstellen**: Sie bittet den Koordinator, anhand des gespeicherten Plans und der Ergebnisse neu zu bewerten, und öffnet eine fehlgeschlagene Mission zuvor wieder. Ein Koordinator beendet eine einmalige Mission nicht als fehlgeschlagen: Kann ohne Sie nichts mehr weitergehen, stellt er Ihnen eine Frage unter **Braucht Sie**. Nur Sie stoppen eine Mission.
+
+### Fragen und Entscheidungen {#questions}
+
+Nur der Koordinator stellt Ihnen Fragen. Aufgaben und die Subagenten, die sie starten, geben ihre offenen Fragen an ihn zurück, mit den Optionen, den Belegen und einer Empfehlung. Bevor er fragt, versucht der Koordinator, eine Frage selbst zu klären: Er liest das Projekt, recherchiert, lässt eine Aufgabe nachforschen oder wählt eine leicht umkehrbare Vorgabe und hält sie als Annahme fest. Er fragt nur, was er nicht selbst klären kann: Ihre Zustimmung, Zugangsdaten, schwer umkehrbare Entscheidungen oder Produktentscheidungen, die das Ziel offenlässt. Offene Fragen bündelt er in einem Formular unter **Braucht Sie** und startet zuvor die davon unabhängige Arbeit.
+
+In der **Erkundung** bereiten Entscheidungsaufgaben eine Zusammenfassung vor, und der Koordinator klärt jede Entscheidung: Er entscheidet selbst, wenn die Belege reichen und die Wahl leicht umkehrbar ist, hält die Frage für später in den **Notizen** fest oder fragt Sie. Das Ergebnis zeigt, wer entschieden hat:
+
+| Bezeichnung | Bedeutung |
+| --- | --- |
+| **Entscheidung des Koordinators** | Der Koordinator hat entschieden, ohne Sie zu fragen; das Ergebnis zeigt seine Begründung und wie sie sich rückgängig machen lässt. Um sie zu ändern, schreiben Sie dem Koordinator über **Unterhaltung öffnen**. |
+| **Ihre Antwort** | Sie haben diese Frage im Unterbrechungsdock von CodeNomad beantwortet. |
+
+Nur eine Antwort, die Sie im Unterbrechungsdock geben, zählt als **Ihre Antwort**; ein Agent kann nicht für Sie antworten. Jede Entscheidungsfrage endet mit der Markierung der einen Entscheidung, die sie klärt, etwa `[decision choose-seam 3fa9c21b]`. Werden mehrere Entscheidungen zusammen erfragt, ist jede eine eigene Frage mit eigener Markierung; eine Frage, die zwei Entscheidungen nennt, klärt keine davon. In der **Produktumsetzung** gilt ein Ziel, das die Verhaltensänderung bereits genau beschreibt, als genehmigte Spezifikation; andernfalls bittet der Koordinator Sie um Genehmigung und bündelt offene Genehmigungen.
 
 ### Lageberichte und Aktualisierungsanfragen {#briefings}
 

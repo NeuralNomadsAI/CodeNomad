@@ -3,7 +3,7 @@ import { z } from "zod"
 import { canonicalAuthority } from "./authority-protocol"
 import type { FormAnswer } from "@opencode/client"
 import type { Form } from "@opencode/schema/form"
-import { nativeDecisionProvenance } from "./contracts"
+import { coordinatorDecisionProvenance, nativeDecisionProvenance, type HumanDecisionArtifact } from "./decision-artifact"
 
 export const HUMAN_ANSWER_HEADER = "x-codenomad-human-answer"
 /** Simple UI-answer marks; independent of the retired `authority-v2` namespace. */
@@ -30,11 +30,17 @@ export const humanAnswerResultSchema = z.object({ status: z.literal("answered") 
  * of a root without Mission metadata (an attached existing coordinator). */
 export const humanAnswerBindingInputSchema = z.object({ sessionID: id, formID: id, profileID: id, executionHost: id,
   rootSessionID: id.optional() }).strict()
-export const humanDecisionRequestSchema = nativeDecisionProvenance.extend({ question: z.string().min(1).max(20000),
+const decidedAnswer = { question: z.string().min(1).max(20000),
   answer: z.union([z.string().min(1).max(20000), z.array(z.string().min(1).max(20000)).min(1).max(32)]),
-  projectID: id, directory: z.string().min(1).max(4096), delegationToolName: z.enum(["subagent", "task"]),
-  /** Required when no binding was published: the fresh delegation call's prompt must carry this exact assignment. */
-  assignmentPrompt: z.string().min(1).max(128 * 1024).optional() }).strict()
+  projectID: id, directory: z.string().min(1).max(4096) }
+export const humanDecisionRequestSchema = z.discriminatedUnion("kind", [
+  nativeDecisionProvenance.extend({ ...decidedAnswer, delegationToolName: z.enum(["subagent", "task"]),
+    /** Required when no binding was published: the fresh delegation call's prompt must carry this exact assignment. */
+    assignmentPrompt: z.string().min(1).max(128 * 1024).optional() }).strict(),
+  /** The coordinator's own question: its root conversation asked, with no delegation to prove. */
+  coordinatorDecisionProvenance.extend(decidedAnswer).strict(),
+])
+export type HumanDecisionRequest = z.infer<typeof humanDecisionRequestSchema>
 export const HUMAN_ANSWER_RPC = { id: "codenomad.missions.human-answer", methods: {
   binding: { input: humanAnswerBindingInputSchema, output: humanAnswerBindingSchema.nullable() },
   reply: { input: humanAnswerRpcInputSchema, output: humanAnswerResultSchema },
@@ -63,21 +69,26 @@ export interface HumanDecisionMark {
   form: Form.Info; answer: FormAnswer
 }
 /** `discover` lists qualifying answers for a decision task, each already verified by the gate. */
-export type NativeHumanAnswerGate = ((request: import("./native-human-evidence").NativeDecisionEvidenceRequest) => Promise<HumanDecisionMark>)
+export type NativeHumanAnswerGate = ((request: HumanDecisionRequest) => Promise<HumanDecisionMark>)
   & { discover?(request: HumanDecisionDiscoveryRequest): Promise<HumanDecisionDiscovery> }
 /** `complete` is false when a bound was reached or a confirmed answer could not be verified:
  * a missing candidate cannot then be excluded, so no single answer may be chosen automatically. */
 export interface HumanDecisionDiscovery { candidates: HumanDecisionCandidate[]; complete: boolean }
 
-/** A decision task's own conversations: fresh children of `parentSessionID` born from this exact assignment. */
+/** A decision task's own conversations: fresh children of `parentSessionID` born from this exact assignment.
+ * With `coordinatorSessionID`, also the coordinator's own answered questions that name this decision task
+ * (`decisionQuestionTag`). */
 export const humanDecisionDiscoverySchema = z.object({ contract: nativeDecisionProvenance.shape.contract, parentSessionID: id,
-  assignmentPrompt: z.string().min(1).max(128 * 1024), projectID: id, directory: z.string().min(1).max(4096) }).strict()
+  assignmentPrompt: z.string().min(1).max(128 * 1024), projectID: id, directory: z.string().min(1).max(4096),
+  coordinatorSessionID: id.optional() }).strict()
 export type HumanDecisionDiscoveryRequest = z.infer<typeof humanDecisionDiscoverySchema>
-/** One native question the human answered in the CodeNomad interface, shaped as the readout artifact. */
+/** One native question the human answered in the CodeNomad interface, shaped as the readout artifact.
+ * `askedBy` names the conversation that asked: the decision task's own, or the coordinator's. */
 export interface HumanDecisionCandidate {
   question: string
   answer: string | string[]
-  artifact: { kind: "decision"; question: string; answer: string | string[]; provenance: z.infer<typeof nativeDecisionProvenance> }
+  askedBy: "decision-task" | "coordinator"
+  artifact: HumanDecisionArtifact & { kind: "decision"; question: string; answer: string | string[] }
 }
 
 /** The Form and durable question INPUT must be the same exact native call.

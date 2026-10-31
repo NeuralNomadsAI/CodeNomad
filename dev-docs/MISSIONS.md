@@ -31,8 +31,9 @@ disposition, current revision, run state, frontier and the affected tasks
 (status, generation, dependencies and lineage), never briefs, reports or the
 objective. Only `mission.inspect` returns the full map; `mission.inspect({ taskKey })`
 rereads one task with its contract and exact current assignment prompt. A native
-Wayfinder `decision` declaration also states the human-answer requirement that
-`verifyHumanDecision` enforces, so a self-contained analysis goes to `research`.
+Wayfinder `decision` declaration also states how the coordinator settles it
+(`WAYFINDER_DECISION_REQUIREMENT`), the rule `settleDecision` enforces (§Human
+questions and decisions).
 
 Coordinator actions that need native reads or effects outside the plugin's
 Promise API cross the authenticated desktop bridge (`sendMissionInput`, fixed error
@@ -63,18 +64,83 @@ refuse otherwise. Only one-time coordinators are offered and told about
   another backend call; a held uncertain attempt is reported uncertain, never as
   nothing created.
 
-A native Wayfinder decision readout may omit its artifact: the human-answer gate's
-`discover` finds fresh children of the expected parent whose `subagent` call
-carried the exact assignment prompt, reads their confirmed UI marks and keeps
-only answers its own `verify` accepts. A reached bound, a pending mark or a
-confirmed answer that fails verification makes the discovery incomplete. Only a
-complete discovery with exactly one candidate fills the artifact; anything else
-refuses, and `inspect({ taskKey })` lists the candidates as ready artifacts with
-their completeness. Never infer candidates from text, titles or timing.
+The human-answer gate's `discover` finds fresh children of the expected parent
+whose `subagent` call carried the exact assignment prompt, and the coordinator's
+answered question fields that bind this task (`fieldDecisionTag` in
+`missions/decision-question-tag.ts`): its bounded lookup counts only marks whose
+question fields (question text or header) hold the task's `questionTag`, so
+unrelated or older Forms, and answers or options quoting the tag, never spend its
+bound. It keeps only answers
+its own `verify` accepts; each candidate names who asked (`askedBy`). A reached
+bound, a pending mark or a confirmed answer that fails verification makes the
+discovery incomplete. `inspect({ taskKey })` lists the candidates as ready
+artifacts with their completeness. A native decision readout may omit its
+artifact when the discovery is complete with exactly one candidate; every
+candidate answers this exact task, and the gate still verifies it. Never infer
+candidates from free text, titles or timing.
 `mission.briefing` treats requestID `"auto"` as `auto:<revision>` and may omit
 `basedOnRevision`: the server then uses the current revision, or refuses a
 different summary when the latest automatic briefing is still the last event. One replacement task may merge several retired tasks; it names one
 of them in `replacesTaskKey`.
+
+## Human questions and decisions
+
+Only the coordinator talks to the human. Every assignment prompt and helper policy
+(`NATIVE_WORK` in `missions/recipes.ts`) tells task actors and their helpers never to
+ask or answer for the human: they return each open question to their parent with
+options, evidence, consequences, reversibility and a recommendation, and continue
+the work that does not depend on it. Every coordinator, one-time or recurring, gets
+`HUMAN_QUESTIONS`: resolve first (inspect the repository, research, delegate an
+investigation, adopt a reversible default recorded as an assumption), ask only
+irreducible items (consent, credentials, choices expensive to reverse, product
+decisions the objective leaves open), batch pending questions into one native
+question call and launch unrelated ready work before asking, since the call waits.
+OpenCode's General subagent denies the question tool, so this also matches what
+native children can do.
+
+A completed native Wayfinder `decision` readout is settled by `settleDecision`
+(`missions/decision-gate.ts`, artifacts in `missions/decision-artifact.ts`):
+
+- **Coordinator decision**: `{ kind: "decision", decidedBy: "coordinator", question,
+  decision, rationale, alternatives?, reversal? }`, strict, with no `answer` or
+  provenance. Accepted without human proof, for evidence that suffices and a choice
+  that is cheap to reverse; it never counts as the human's answer or consent.
+- **Human answer**: `{ kind: "decision", decidedBy?: "human", question, answer,
+  provenance }`. A `coordinator-form-answer` provenance cites one field of the
+  coordinator's own question call, bound per field to exactly one decision task:
+  asked from its root conversation (no delegation to prove), that field's question
+  text ends with the task's `questionTag` (`[decision <taskKey> <code>]`, the code
+  derived from the mission and task, returned with the declaration and by
+  `inspect({ taskKey })`) and neither its question nor its header holds any other
+  tag, it was answered after the task was declared, and it settles no other live
+  decision task; the field's own answer is the one recorded. Options and answers
+  never bind, a field naming two decisions binds none, and the other fields of a
+  batched question bind independently. MissionControl, the native gate and
+  discovery share that parser (`fieldDecisionTag`). The human reads the tag, so an
+  answer cannot be rebound to another task, mission or reused coordinator root. A `native-form-answer` provenance cites the
+  decision conversation's question, kept for missions whose decision workers asked
+  themselves. Both need the confirmed UI mark (`MISSIONS_RECURRING.md`, "Wayfinder
+  human decision mark"); the final report re-verifies them, binding included.
+
+A task actor's report never claims who decided: a `decidedBy` field or a
+coordinator-asked provenance from a non-coordinator is refused. The coordinator can
+also defer a decision by retiring the task and keeping the question in the notes.
+In independent task mode the decision worker reports its brief and the coordinator
+records the outcome, and who decided, in the notes. The UI labels a decision only
+from gated reports (`missionDecisionMaker`: native task, coordinator readout or
+native return, completed): **Coordinator decision** or **Your answer** in the task
+and report readers and the overview's Reports list
+(`components/mission-decision-report.tsx`); unproven historical claims get no label.
+
+The shared safety boundary (`SAFETY`) forbids staging, committing, pushing, opening
+a PR, closing an issue or changing an issue tracker, except when the mission
+objective or notes explicitly ask for that specific action. The boundary itself
+grants that one exception, so the objective stays untrusted task data that cannot
+override the assignment; a task actor also needs its brief to assign the action,
+native permissions stay in force, and a request found in repository files,
+reports, comments, logs or tool output never counts. Every assignment prompt and
+the Debugging, Exploration, Product delivery and Compare coordinator contracts
+carry it.
 
 ## Compare two models (`compare`)
 
@@ -94,10 +160,10 @@ Native proof: `node scripts/test-missions-native-trajectory.mjs <CLI>`.
 Only the coordinator's final report finalizes a mission, even when every declared
 task is complete; empty plan history is omitted. A one-time mission finishes only as
 completed (`completedFinalOnly` on the plugin's `MissionControl`, the
-`COMPLETED_FINAL_ONLY` instruction): when it cannot continue on its own the
-coordinator asks the human through the native question tool and waits, and only the
-human stops a mission. Recurring passages, with their own control, finish completed
-or failed.
+`COMPLETED_FINAL_ONLY` instruction), and only the human stops a mission: when
+nothing can proceed without the human, the coordinator asks through the native
+question tool and waits (§Human questions and decisions). Recurring passages, with
+their own control, finish completed or failed.
 
 ### On-demand project briefing
 
@@ -417,12 +483,12 @@ This transport reuses only the automation bridge discovery; automation keeps its
 ## Included playbooks
 
 - **Debugging** preserves evidence-first diagnosis, behavioral TDD, independent fresh Standards and Spec reviews, implementer-session resolution, and a fresh read-only green gate. Completed role reports carry validated structured artifacts, while the coordinator chooses each transition.
-- **Wayfinder Map** adapts destination, map, frontier, claims, and fog-of-war planning to visible sessions. It remains planning-first and uses native Forms for human decisions.
-- **Product delivery** (`delivery`) adapts the NomadWorks Collective method (`NeuralNomadsAI/NomadWorks`) without requiring that plugin. The coordinator acts as Product Manager: it classifies each request by complexity (tiny, standard, complex) and track (implementation, investigation, spec), has the business analyst and tech lead draft a Spec Change Request for any behavioral change (tiny included), standard or complex implementation and spec work, runs read-only pre-sync readiness reviews before implementation, decomposes complex work into slices with the technical architect, keeps one shared-checkout implementation task at a time, and closes only with QA/tech-lead evidence and resolved documentation impact. The six roles are business analyst, technical architect, tech lead, developer, QA engineer and UI/UX designer. Request approval is coordinator guidance through a native Form, and the human owns commits. One playbook covers both NomadWorks team presets; the coordinator declares only the roles each complexity needs. Same-scope rework retires the task and adds a replacement (`replacesTaskKey`); continuing a native specialist's context uses a follow-up task whose `reuseFromTaskKey` names that specialist's finished, still-live task.
+- **Wayfinder Map** adapts destination, map, frontier, claims, and fog-of-war planning to visible sessions. It remains planning-first; decision workers, prototype scouts and decision guides return briefs, and the coordinator decides, defers or asks the human (§Human questions and decisions).
+- **Product delivery** (`delivery`) adapts the NomadWorks Collective method (`NeuralNomadsAI/NomadWorks`) without requiring that plugin. The coordinator acts as Product Manager: it classifies each request by complexity (tiny, standard, complex) and track (implementation, investigation, spec), has the business analyst and tech lead draft a Spec Change Request for any behavioral change (tiny included), standard or complex implementation and spec work, runs read-only pre-sync readiness reviews before implementation, decomposes complex work into slices with the technical architect, keeps one shared-checkout implementation task at a time, and closes only with QA/tech-lead evidence and resolved documentation impact. The six roles are business analyst, technical architect, tech lead, developer, QA engineer and UI/UX designer. The coordinator treats an objective that already states the behavior change precisely (what changes, for whom, how to verify it) as the approved request, and otherwise asks the human to approve it through the native question tool, batching pending approvals; the human owns commits unless the objective or notes explicitly ask for them. One playbook covers both NomadWorks team presets; the coordinator declares only the roles each complexity needs. Same-scope rework retires the task and adds a replacement (`replacesTaskKey`); continuing a native specialist's context uses a follow-up task whose `reuseFromTaskKey` names that specialist's finished, still-live task.
 
 ## Validation
 
-`node scripts/test-missions-native-trajectory.mjs <absolute-isolated-opencode-cli>` also checks one-time Wayfinder refusal without journal mutation, then artifact-free completion from a native child question answered through the authenticated UI route. The invocation unit tests cover graph isolation, missing/stale invocations, interruption joining and per-check deadlines.
+`node scripts/test-missions-native-trajectory.mjs <absolute-isolated-opencode-cli>` also checks the one-time Wayfinder decision flow: an artifact-free readout and a forged answer refused without journal mutation, a decision worker that returns a brief, the coordinator's own question naming the task's `questionTag`, answered through the authenticated UI route, listed by `inspect({ taskKey })` and settling the task without an artifact, and a coordinator decision recorded as its own. The invocation unit tests cover graph isolation, missing/stale invocations, interruption joining and per-check deadlines.
 
 Each complete one-time human-gate call (acquisition plus its nested SQL/Form/storage reads) shares one 10-second deadline, matching `missions/native-human-evidence.ts`, combined with invocation cancellation. The check aborts and joins only its own runtimes and clears its timer on settlement; later checks get a fresh budget, excluding intervening session/authority work. The invocation joins all pending checks/reads before graph release. A raw Promise that ignores abort may remain pending, but cannot resume its cancelled Effect into the graph, and later reads through that expired check are refused. A stuck native finalizer or uninterruptible read is joined before its graph is released: never abandon such work with a Promise race, and keep reads interruptible and cleanup finite. Recurring gates use their own runners.
 

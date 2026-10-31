@@ -134,6 +134,66 @@ test("a current one-line remote summary has no Page 1 of 11 illusion and aligns 
   } finally { await page.close() }
 })
 
+test("decision readers name who decided: the coordinator's own decision, never shown as the human's answer", async () => {
+  const page = await browser.newPage(), value = snapshot(), mutations: string[] = [], errors: string[] = []
+  page.on("pageerror", error => errors.push(error.message))
+  const mission = value.missions[0], base = mission.tasks[0].lateReports![0]
+  mission.template = "wayfinder"
+  const decision = (key: string, artifact: MissionReport["artifact"]): MissionTask => ({ ...mission.tasks[0], id: key, key, title: `Decide ${key}`,
+    role: "decision", status: "completed", executionMode: { kind: "native", parentTaskKey: null }, lateReports: [],
+    report: { ...base, id: `report-${key}`, taskKey: key, late: false, delivery: "coordinator-readout", summary: `Settled ${key}`, artifact } })
+  mission.tasks = [
+    decision("seam", { kind: "decision", decidedBy: "coordinator", question: "Which seam?", decision: "Module seam",
+      rationale: "The repository already isolates modules.", reversal: "Swap the adapter in one file." }),
+    decision("store", { kind: "decision", decidedBy: "human", question: "Which store?", answer: "Journal", provenance: { kind: "coordinator-form-answer",
+      contract: { missionID: "mission", taskKey: "store", generation: 1 }, sessionID: "coordinator", formID: "frm_1", messageID: "msg_1", toolCallID: "call_1", fieldKey: "q0" } }),
+    // An unproven model-written claim gets no decision label at all.
+    decision("legacy", { kind: "decision", question: "Which format?", humanAnswer: true }),
+  ]
+  mission.reports = []
+  try {
+    await page.route("**/api/**", route => {
+      if (route.request().method() !== "GET") mutations.push(route.request().url())
+      return route.fulfill({ json: route.request().url().endsWith("/missions") ? value
+        : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
+    })
+    await page.goto(url)
+    await page.waitForFunction(() => Boolean((window as any).resultReader))
+    const reader = page.locator(".mission-reader")
+    for (const [kind, id] of [["task", "seam"], ["report", "report-seam"]]) {
+      await page.evaluate(([kind, id]) => (window as any).resultReader.show(kind, id), [kind, id])
+      const label = reader.locator('[data-decided-by="coordinator"]')
+      await label.getByRole("heading", { name: en["missions.decision.coordinator"], exact: true }).waitFor()
+      await label.getByText(en["missions.decision.coordinator.detail"], { exact: true }).waitFor()
+      assert.equal(await reader.locator('[data-decided-by="human"]').count(), 0, "a coordinator decision is never presented as the human's")
+      assert.equal(await reader.getByRole("heading", { name: en["missions.decision.answer"], exact: true }).count(), 0)
+      for (const [heading, text] of [["question", "Which seam?"], ["decision", "Module seam"], ["rationale", "The repository already isolates modules."],
+        ["reversal", "Swap the adapter in one file."]]) {
+        const section = reader.locator("article").filter({ has: page.getByRole("heading", { name: en[`missions.decision.${heading}` as keyof typeof en], exact: true }) })
+        await section.getByText(text, { exact: true }).waitFor()
+      }
+      await captureMissionView(page, `decision-${kind}-desktop`)
+    }
+    await page.evaluate(() => (window as any).resultReader.show("task", "store"))
+    await reader.locator('[data-decided-by="human"]').getByRole("heading", { name: en["missions.decision.human"], exact: true }).waitFor()
+    await reader.getByText(en["missions.decision.human.detail"], { exact: true }).waitFor()
+    await reader.locator("article").filter({ has: page.getByRole("heading", { name: en["missions.decision.answer"], exact: true }) }).getByText("Journal", { exact: true }).waitFor()
+    assert.equal(await reader.locator('[data-decided-by="coordinator"]').count(), 0)
+    await page.evaluate(() => (window as any).resultReader.show("task", "legacy"))
+    await reader.getByText("Settled legacy", { exact: true }).waitFor()
+    assert.equal(await reader.locator("[data-decided-by]").count(), 0, "an unproven claim carries no decision label")
+    await page.evaluate(() => (window as any).resultReader.show("overview"))
+    await reader.getByText(en["missions.control.reports.title"], { exact: true }).click()
+    const rows = reader.locator(".mission-reader-links li")
+    await rows.filter({ hasText: "Decide seam" }).locator('[data-decided-by="coordinator"]').getByText(en["missions.decision.coordinator"], { exact: true }).waitFor()
+    await rows.filter({ hasText: "Decide store" }).locator('[data-decided-by="human"]').getByText(en["missions.decision.human"], { exact: true }).waitFor()
+    assert.equal(await rows.filter({ hasText: "Decide legacy" }).locator("[data-decided-by]").count(), 0)
+    await captureMissionView(page, "decision-reader-desktop")
+    assert.deepEqual(mutations, [], "reading a decision never mutates the mission")
+    assert.deepEqual(errors, [])
+  } finally { await page.close() }
+})
+
 test("comparison task and direct readers show verdict, model names and bounded criterion scores", async () => {
   const page = await browser.newPage(), value = snapshot(), mutations: string[] = [], errors: string[] = []
   page.on("pageerror", error => errors.push(error.message))

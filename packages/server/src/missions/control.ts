@@ -35,7 +35,11 @@ import { runMissionExclusive } from "./exclusive"
 import { matchesExecution, sameExecution } from "./execution"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-input"
-import { MissionControlError, MissionCreateNoEffectError, decisionInvocationUnavailable, humanDecisionRequired } from "./control-error"
+import { MissionControlError, MissionCreateNoEffectError, humanDecisionRequired } from "./control-error"
+import { claimedDecisionFields, coordinatorAskedAnswer, coordinatorDecision, decisionInvocationUnavailable, decisionOutcomeRequired,
+  decisionQuestionUnbound, receiptMatches, type CoordinatorAskedAnswer, type MissionDecisionProof } from "./decision-gate"
+import { decisionQuestionTag, fieldDecisionTag } from "./decision-question-tag"
+import { claimsDecisionMaker } from "./decision-artifact"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
 import { missionIsRunning, missionPausedInstruction, type MissionLifecycleInput } from "./lifecycle-model"
@@ -183,10 +187,46 @@ export class MissionControl {
     return this.hintedMissions(hints => missionID ? [missionID] : hints.refs(sessionID).map(ref => ref.missionID))
   }
 
+  /** A completed native decision readout: the coordinator's own decision, or the human's proven answer. */
+  private async settleDecision(mission: MissionMap, task: import("./model").MissionTask,
+    artifact: import("./model").MissionJsonValue | undefined): Promise<MissionDecisionProof> {
+    if (coordinatorDecision(artifact)) return { decidedBy: "coordinator" }
+    return { decidedBy: "human", receipt: await this.verifyHumanDecision(mission, task, artifact) }
+  }
+
+  /** The human answered the coordinator's own question about exactly this task: asked from its root conversation,
+   * the cited field's own question binding this mission's task alone (`fieldDecisionTag`), answered after the task
+   * was declared, and settling no other task. */
+  private async verifyCoordinatorQuestion(mission: MissionMap, task: import("./model").MissionTask,
+    asked: CoordinatorAskedAnswer): Promise<import("./human-answer").HumanDecisionMark> {
+    const cited = asked.provenance, tag = decisionQuestionTag(mission.id, task.key)
+    if (task.contractGeneration === undefined || cited.sessionID !== mission.coordinatorSessionId || cited.contract.missionID !== mission.id
+      || cited.contract.taskKey !== task.key || cited.contract.generation !== task.contractGeneration) throw decisionInvocationUnavailable(tag)
+    if (fieldDecisionTag({ description: asked.question }) !== tag) throw decisionQuestionUnbound(tag)
+    if (claimedDecisionFields(mission, task.key).some(field => field.formID === cited.formID && field.fieldKey === cited.fieldKey))
+      throw new MissionControlError("This answer already settles another decision task; ask the human about this decision", "policy-unqualified")
+    const session = await this.ownedSession(cited.sessionID)
+    this.assertActive()
+    let receipt: import("./human-answer").HumanDecisionMark
+    try { receipt = await this.options.humanGate!({ ...cited, question: asked.question, answer: asked.answer,
+      projectID: mission.projectID, directory: session.location.directory }) }
+    catch (error) { this.assertActive(); throw humanDecisionRequired(error) }
+    this.assertActive()
+    if (!receiptMatches(receipt, cited.sessionID, cited, asked.answer)) throw humanDecisionRequired()
+    // The confirmed Form's own field (question and header) binds this task alone; an answer given
+    // before this task existed was not an answer to it.
+    if (fieldDecisionTag(receipt.form.fields.find(field => field.key === cited.fieldKey) ?? {}) !== tag
+      || !(receipt.answeredAt >= task.createdAt)) throw decisionQuestionUnbound(tag)
+    return receipt
+  }
+
   private async verifyHumanDecision(mission: MissionMap, task: import("./model").MissionTask,
     artifact: import("./model").MissionJsonValue | undefined,
     exact?: { call: import("./model").MissionNativeBinding; sessionID: string }): Promise<import("./human-answer").HumanDecisionMark> {
     if (!this.options.humanGate) throw new MissionControlError("Durable native human-decision evidence unavailable", "policy-unqualified")
+    const asked = coordinatorAskedAnswer(artifact)
+    // A decision conversation's own report never cites the coordinator's question.
+    if (asked) { if (exact) throw decisionInvocationUnavailable(); return this.verifyCoordinatorQuestion(mission, task, asked) }
     const bound = exact?.call ?? task.nativeExecution?.binding, unavailable = decisionInvocationUnavailable
     let call: import("./model").MissionNativeBinding, sessionID: string, assignmentPrompt: string | undefined
     if (exact) { call = exact.call; sessionID = exact.sessionID }
@@ -219,11 +259,7 @@ export class MissionControl {
       directory: session.location.directory, delegationToolName: "subagent", ...(assignmentPrompt === undefined ? {} : { assignmentPrompt }) }) }
     catch (error) { this.assertActive(); throw humanDecisionRequired(error) }
     this.assertActive()
-    const tool = receipt.form.metadata?.tool as { messageID?: unknown; id?: unknown } | undefined
-    if (receipt.via !== "ui" || receipt.sessionID !== sessionID
-      || receipt.formID !== provenance.formID || tool?.messageID !== provenance.messageID
-      || tool?.id !== provenance.toolCallID || !isDeepStrictEqual(receipt.answer[provenance.fieldKey], provenance.answer))
-      throw humanDecisionRequired()
+    if (!receiptMatches(receipt, sessionID, provenance, provenance.answer)) throw humanDecisionRequired()
     return receipt
   }
 
@@ -876,6 +912,7 @@ export class MissionControl {
     return this.discoverDecisions(mission, task)
   }
 
+  /** The decision task's own conversations and the coordinator's answered questions that name this task. */
   private async discoverDecisions(mission: MissionMap, task: import("./model").MissionTask): Promise<HumanDecisionDiscovery | undefined> {
     const mode = task.executionMode
     const parent = mode?.kind !== "native" ? undefined : mode.parentTaskKey === null ? mission.coordinatorSessionId
@@ -885,15 +922,17 @@ export class MissionControl {
     const session = await this.ownedSession(parent)
     this.assertActive()
     return discover({ contract: { missionID: mission.id, taskKey: task.key, generation: task.contractGeneration! }, parentSessionID: parent,
-      assignmentPrompt: buildAssignmentPrompt(mission, task), projectID: mission.projectID, directory: session.location.directory })
+      assignmentPrompt: buildAssignmentPrompt(mission, task), projectID: mission.projectID, directory: session.location.directory,
+      coordinatorSessionID: mission.coordinatorSessionId })
   }
 
-  /** A readout without an artifact uses the single qualifying answer of a complete discovery;
-   * the gate still verifies it. Anything else asks the coordinator to choose explicitly. */
+  /** A readout without an artifact uses the single qualifying answer of a complete discovery; every
+   * candidate already answers this exact task, and the gate still verifies it. Anything else asks the
+   * coordinator to choose explicitly. */
   private async discoveredDecision(mission: MissionMap, task: import("./model").MissionTask): Promise<import("./model").MissionJsonValue> {
     const { candidates, complete } = await this.discoverDecisions(mission, task) ?? { candidates: [], complete: true }
     if (complete && candidates.length === 1) return structuredClone(candidates[0].artifact) as unknown as import("./model").MissionJsonValue
-    if (complete && !candidates.length) throw humanDecisionRequired(new Error("No answered native question qualifies for this decision task yet"))
+    if (complete && !candidates.length) throw decisionOutcomeRequired(decisionQuestionTag(mission.id, task.key))
     throw new MissionControlError(complete ? "Several answered questions qualify; pass the chosen one's artifact from mission.inspect({ taskKey })"
       : "Not every answered question could be checked; pass the chosen artifact from mission.inspect({ taskKey })", "policy-unqualified")
   }
@@ -1099,8 +1138,8 @@ export class MissionControl {
         for (const task of mission.tasks.filter(task => task.role === "decision" && task.executionMode?.kind === "native" && task.status === "completed")) {
           const report = task.report
           if (report?.nativeCall) await this.verifyHumanDecision(mission, task, report.artifact, { call: report.nativeCall, sessionID: report.sessionId })
-          // A readout re-verifies through its published binding or, without one, its exact assignment call.
-          else if (report?.delivery === "coordinator-readout") await this.verifyHumanDecision(mission, task, report.artifact)
+          // A readout is the coordinator's own decision, or re-verifies the human answer it cites.
+          else if (report?.delivery === "coordinator-readout") await this.settleDecision(mission, task, report.artifact)
           else throw decisionInvocationUnavailable()
         }
       }
@@ -1138,12 +1177,15 @@ export class MissionControl {
 
     const declared = input.taskKey && mission.tasks.find(task => task.key === input.taskKey)
     if (!native && sessionID === mission.coordinatorSessionId && declared && declared.executionMode?.kind === "native") {
-      let humanReceipt: import("./human-answer").HumanDecisionMark | undefined
+      let decision: MissionDecisionProof | undefined
       if (mission.template === "wayfinder" && declared.role === "decision" && input.outcome === "completed") {
-        if (input.artifact === undefined && this.options.humanGate?.discover) input = { ...input, artifact: await this.discoveredDecision(mission, declared) }
-        humanReceipt = await this.verifyHumanDecision(mission, declared, input.artifact)
+        if (input.artifact === undefined) {
+          if (!this.options.humanGate?.discover) throw decisionOutcomeRequired(decisionQuestionTag(mission.id, declared.key))
+          input = { ...input, artifact: await this.discoveredDecision(mission, declared) }
+        }
+        decision = await this.settleDecision(mission, declared, input.artifact)
       }
-      const readout = coordinatorReadout(snapshot, mission, declared, input, this.timestamp(snapshot), humanReceipt)
+      const readout = coordinatorReadout(snapshot, mission, declared, input, this.timestamp(snapshot), decision)
       if (readout.existing) return { disposition: "existing", mission, taskKey: declared.key }
       const fresh = await this.ownedRootSession(sessionID)
       if (!sameLocation(fresh.location, caller.location)) throw new MissionControlError("Coordinator moved during readout", "foreign-session")
@@ -1158,6 +1200,9 @@ export class MissionControl {
       return { disposition: "reported", mission, taskKey: declared.key }
     }
     const task = this.reportTask(mission, sessionID, input.taskKey)
+    // Only the coordinator settles a decision or asks the human; a task actor's report never claims either.
+    if (mission.template === "wayfinder" && task.role === "decision" && claimsDecisionMaker(input.artifact))
+      throw new MissionControlError("Only the coordinator records who settled a decision: return the decision brief to it", "invalid-report-contract")
     if (native) {
       const mode = task.executionMode
       const parentSessionID = mode?.kind === "native" && mode.parentTaskKey !== null
