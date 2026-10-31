@@ -376,7 +376,7 @@ fn open_preferences(
     crate::menu_bar::hide(&preferences_window.as_ref().window());
 
     if let Err(error) =
-        crate::client_state::setup_local_window(app, &preferences_window, LABEL, true)
+        crate::client_state::setup_local_window(app, &preferences_window, LABEL, true, true)
     {
         let _ = preferences_window.destroy();
         return Err(error);

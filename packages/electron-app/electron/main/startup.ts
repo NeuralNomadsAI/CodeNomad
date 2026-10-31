@@ -276,6 +276,26 @@ export function parseLaunchIntent(argv: string[], cwd: string): LaunchIntent {
   return { newWindow, folders: [...new Set(folders)], ...(connectServer !== undefined ? { connectServer } : {}) }
 }
 
+const MAX_FORWARDED_FOLDERS = 64
+const MAX_CONNECT_SERVER_LENGTH = 2048
+
+/** The singleton payload a second launch sends: its own parse of its own, unreordered arguments. */
+export function forwardedLaunchData(intent: LaunchIntent): { codenomadLaunchIntent: LaunchIntent } {
+  return { codenomadLaunchIntent: intent }
+}
+
+/** Validates a second launch's singleton payload; anything malformed falls back to parsing the forwarded argv. */
+export function readForwardedLaunchIntent(data: unknown): LaunchIntent | undefined {
+  const intent = (data as { codenomadLaunchIntent?: unknown } | null | undefined)?.codenomadLaunchIntent as Partial<LaunchIntent> | undefined
+  if (!intent || typeof intent !== "object" || typeof intent.newWindow !== "boolean" || !Array.isArray(intent.folders)
+    || intent.folders.length > MAX_FORWARDED_FOLDERS || !intent.folders.every((folder) => typeof folder === "string")
+    || (intent.connectServer !== undefined && (typeof intent.connectServer !== "string" || intent.connectServer.length > MAX_CONNECT_SERVER_LENGTH))) {
+    return undefined
+  }
+  const folders = intent.folders.filter((folder) => isAbsolute(folder) && existingDirectory(folder, folder) === resolve(folder))
+  return { newWindow: intent.newWindow, folders: [...new Set(folders)], ...(intent.connectServer !== undefined ? { connectServer: intent.connectServer.trim() } : {}) }
+}
+
 export function prepareSecondLaunchIntent(intent: LaunchIntent, configPath: string): LaunchIntent {
   // A connection runs in an existing window; a new window would be left empty beside the remote one.
   if (isConnectOnlyLaunch(intent)) return intent

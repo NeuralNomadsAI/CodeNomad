@@ -17,12 +17,13 @@ export function useDesktopConnectionLaunch(): void {
   const { ensureLoaded, remoteServers } = useConfig()
   const { saveServer } = useRemoteServerProfiles()
 
-  const connect = async (value: string) => {
+  const connect = async (value: string, { interactive }: { interactive: boolean }) => {
     await ensureLoaded()
     const target = resolveLaunchConnectTarget(value, remoteServers())
     if (target.kind === "error") throw new Error(t(`folderSelection.servers.launch.error.${target.reason}`, { value: value.trim() }))
-    if (target.kind === "saved") await saveServer(target.server, true)
-    else await saveServer({ name: target.name, baseUrl: target.baseUrl, skipTlsVerify: false }, true)
+    const options = { interactive, requireLoad: true }
+    if (target.kind === "saved") await saveServer(target.server, true, options)
+    else await saveServer({ name: target.name, baseUrl: target.baseUrl, skipTlsVerify: false }, true, options)
   }
   const reportFailure = (message: string) => {
     showAlertDialog(message, { title: t("folderSelection.servers.errorTitle"), variant: "warning" })
@@ -43,7 +44,7 @@ export function useDesktopConnectionLaunch(): void {
       if (disposed) { unlisten(); return }
       const uninstall = installDesktopConnectionLaunchHandler({
         nextPendingConnection: () => invoke<PendingConnection | null>("desktop_launch_next_connection"),
-        acknowledgePendingConnection: (target, failure) => invoke("desktop_launch_acknowledge_connection", { target, failure }),
+        acknowledgePendingConnection: (target, failure, handOff) => invoke("desktop_launch_acknowledge_connection", { target, failure, handOff }),
         onPendingConnections: (callback) => { notify = callback; return () => { notify = () => {} } },
       }, connect, reportFailure, reportError)
       cleanup = () => { uninstall(); unlisten() }

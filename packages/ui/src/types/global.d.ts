@@ -58,7 +58,7 @@ declare global {
     acknowledgePendingFolder?: (folder: string, opened: boolean) => Promise<{ ok: true }>
     onPendingFolders?: (callback: () => void) => () => void
     nextPendingConnection?: () => Promise<import("../lib/desktop-connection-queue").PendingConnection | null>
-    acknowledgePendingConnection?: (target: string, failure: string | null) => Promise<{ ok: true }>
+    acknowledgePendingConnection?: (target: string, failure: string | null, handOff: boolean) => Promise<{ ok: true }>
     onPendingConnections?: (callback: () => void) => () => void
     onMenuAction?: (callback: (action: string) => void) => () => void
     showTitlebarMenu?: (menu: "file" | "edit" | "view" | "window" | "help", x: number, y: number) => Promise<unknown>
@@ -94,6 +94,7 @@ declare global {
       entryUrl?: string
       proxySessionId?: string
       skipTlsVerify: boolean
+      requireLoad?: boolean
     }) => Promise<{ ok: boolean }>
     openPreferences?: (section: SettingsSectionId, context?: { instanceId?: string; workspacePath?: string; location?: LocationRef }, toggle?: boolean, resume?: boolean) => Promise<unknown>
     getPreferencesRequest?: () => Promise<unknown>

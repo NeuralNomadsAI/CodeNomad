@@ -17,12 +17,12 @@ interface CliIPCDependencies {
   resolveLocal(sender: IpcMainInvokeEvent["sender"]): LocalSender | undefined
   resolvePreferences?(sender: IpcMainInvokeEvent["sender"]): BrowserWindow | undefined
   getAllowedOrigins(window: BrowserWindow): string[]
-  openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }): Promise<void>
+  openRemoteWindow(payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }): Promise<void>
   newWindow(): Promise<unknown>
   nextFolder(windowId: string): string | null
   acknowledgeFolder(windowId: string, folder: string, opened: boolean): void
-  nextConnection(windowId: string): { target: string; failure?: string; deferFailure: boolean } | null
-  acknowledgeConnection(windowId: string, target: string, failure: string | null): void
+  nextConnection(windowId: string): { target: string; failure?: string; hidden: boolean } | null
+  acknowledgeConnection(windowId: string, target: string, failure: string | null, handOff: boolean): void
   browserController: BrowserController
 }
 
@@ -102,10 +102,10 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     return { ok: true }
   })
   ipcMain.handle("window:nextConnection", async (event) => dependencies.nextConnection(local(event).id))
-  ipcMain.handle("window:ackConnection", async (event, target: unknown, failure: unknown) => {
+  ipcMain.handle("window:ackConnection", async (event, target: unknown, failure: unknown, handOff: unknown) => {
     const { id } = local(event)
-    if (typeof target !== "string" || (failure !== null && typeof failure !== "string")) throw new Error("Invalid connection acknowledgement")
-    dependencies.acknowledgeConnection(id, target, failure)
+    if (typeof target !== "string" || (failure !== null && typeof failure !== "string") || typeof handOff !== "boolean") throw new Error("Invalid connection acknowledgement")
+    dependencies.acknowledgeConnection(id, target, failure, handOff)
     return { ok: true }
   })
   ipcMain.handle("menu:popup", async (event, menu: unknown, x: unknown, y: unknown) => {
@@ -215,12 +215,12 @@ export function setupCliIPC(cliManager: CliProcessManager, dependencies: CliIPCD
     anyTrusted(event)
     return { granted: await requestMicrophoneAccess() }
   })
-  ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean }) => {
+  ipcMain.handle("remote:openWindow", async (event, payload: { id: string; name: string; baseUrl: string; entryUrl?: string; proxySessionId?: string; skipTlsVerify: boolean; requireLoad?: boolean }) => {
     settings(event)
     if (!payload || typeof payload.id !== "string" || !payload.id.trim() || typeof payload.name !== "string" || typeof payload.baseUrl !== "string"
       || (payload.entryUrl !== undefined && typeof payload.entryUrl !== "string")
       || (payload.proxySessionId !== undefined && typeof payload.proxySessionId !== "string")
-      || typeof payload.skipTlsVerify !== "boolean") {
+      || typeof payload.skipTlsVerify !== "boolean" || (payload.requireLoad !== undefined && typeof payload.requireLoad !== "boolean")) {
       throw new Error("Invalid remote window request")
     }
     requireHttpUrl(payload.baseUrl, "baseUrl")

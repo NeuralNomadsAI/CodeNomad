@@ -43,7 +43,7 @@ const localElectronAPI = {
     return () => ipcRenderer.removeListener("window:folders-pending", handler)
   },
   nextPendingConnection: () => ipcRenderer.invoke("window:nextConnection"),
-  acknowledgePendingConnection: (target, failure) => ipcRenderer.invoke("window:ackConnection", target, typeof failure === "string" ? failure : null),
+  acknowledgePendingConnection: (target, failure, handOff) => ipcRenderer.invoke("window:ackConnection", target, typeof failure === "string" ? failure : null, handOff === true),
   onPendingConnections: (callback) => {
     const handler = () => callback()
     ipcRenderer.on("window:connections-pending", handler)

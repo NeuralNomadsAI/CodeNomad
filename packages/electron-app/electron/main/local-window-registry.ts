@@ -12,7 +12,10 @@ export interface LocalWindowRecord {
   backendUrl: string | null
   pendingFolders: PendingFolder[]
   pendingConnections?: PendingConnection[]
-  /** Opened only to run a `--connect-server` launch: the host closes it once that connection settles. */
+  /**
+   * Hidden window opened only to run a `--connect-server` launch. It holds no user window slot, is never
+   * an MRU or launch target, and closes once its connections settle.
+   */
   connectOnly?: boolean
 }
 
@@ -20,6 +23,15 @@ interface PendingFolder { path: string; attempts: number }
 
 /** A `--connect-server` request for the renderer; `failure` is another window's message to show here. */
 export interface PendingConnection { target: string; failure?: string }
+
+/** What settling a connection asks of its window. */
+export type ConnectionSettlement =
+  | { kind: "keep" }
+  | { kind: "close" }
+  /** The hidden launch could not finish: start normally and run or report these connections there. */
+  | { kind: "start-normally"; connections: PendingConnection[] }
+
+export const MAX_LOCAL_WINDOWS = 16
 
 const MAX_FOLDER_ATTEMPTS = 3
 
@@ -33,11 +45,17 @@ export class LocalWindowRegistry {
   add(record: LocalWindowRecord): void {
     const id = record.id.toLowerCase()
     if (this.records.has(id)) throw new Error("Local window is already registered")
-    if (this.records.size >= 16) throw new RangeError("Too many local windows")
+    if (!record.connectOnly && this.userWindowCount() >= MAX_LOCAL_WINDOWS) throw new RangeError("Too many local windows")
     record.id = id
     this.records.set(id, record)
     this.webContentsIds.set(record.window.webContents.id, id)
-    this.mru = [id, ...this.mru.filter((candidate) => candidate !== id)]
+    if (!record.connectOnly) this.mru = [id, ...this.mru.filter((candidate) => candidate !== id)]
+  }
+
+  private userWindowCount(): number {
+    let count = 0
+    for (const record of this.records.values()) if (!record.connectOnly) count++
+    return count
   }
 
   get(id: string): LocalWindowRecord | undefined {
@@ -55,7 +73,7 @@ export class LocalWindowRegistry {
 
   focus(id: string): LocalWindowRecord | undefined {
     const record = this.get(id)
-    if (!record || record.window.isDestroyed()) return undefined
+    if (!record || record.connectOnly || record.window.isDestroyed()) return undefined
     this.markFocused(record.id)
     if (record.window.isMinimized()) record.window.restore()
     record.window.show()
@@ -65,7 +83,7 @@ export class LocalWindowRegistry {
 
   markFocused(id: string): void {
     const record = this.get(id)
-    if (!record) return
+    if (!record || record.connectOnly) return
     this.mru = [record.id, ...this.mru.filter((candidate) => candidate !== record.id)]
     if (!record.persisted) return
     try {
@@ -126,21 +144,43 @@ export class LocalWindowRegistry {
     }
   }
 
-  nextConnection(id: string): (PendingConnection & { deferFailure: boolean }) | null {
+  nextConnection(id: string): (PendingConnection & { hidden: boolean }) | null {
     const record = this.get(id)
     if (!record) throw new Error("Unknown local window")
     const pending = record.pendingConnections?.[0]
-    return pending ? { ...pending, deferFailure: Boolean(record.connectOnly && !pending.failure) } : null
+    return pending ? { ...pending, hidden: Boolean(record.connectOnly) } : null
   }
 
-  /** Removes the delivered connection; the caller decides what a failure in a connect-only window means. */
-  acknowledgeConnection(id: string, target: string): { record: LocalWindowRecord; connection: PendingConnection } {
+  /**
+   * Settles the delivered connection. A hidden launch window closes once nothing is left to connect;
+   * a failure or hand-off there starts normally with this connection and every one still queued.
+   */
+  acknowledgeConnection(id: string, target: string, outcome: { failure?: string; handOff?: boolean }): ConnectionSettlement {
     const record = this.get(id)
     if (!record) throw new Error("Unknown local window")
     const pending = record.pendingConnections?.[0]
     if (pending?.target !== target) throw new Error("Pending connection acknowledgement is out of order")
     record.pendingConnections!.shift()
-    return { record, connection: pending }
+    if (!record.connectOnly) return { kind: "keep" }
+    if (outcome.failure === undefined && !outcome.handOff) return record.pendingConnections!.length ? { kind: "keep" } : { kind: "close" }
+    const settled = outcome.handOff ? { target } : { target, failure: outcome.failure }
+    return { kind: "start-normally", connections: [settled, ...record.pendingConnections!.splice(0)] }
+  }
+
+  /** Takes every connection a hidden launch window still holds, to run in a visible window instead. */
+  abandonConnections(id: string): PendingConnection[] {
+    const record = this.get(id)
+    if (!record?.connectOnly) return []
+    return record.pendingConnections?.splice(0) ?? []
+  }
+
+  /** Turns a hidden launch window into an ordinary one, the last resort when a normal start fails. */
+  promote(id: string): LocalWindowRecord | undefined {
+    const record = this.get(id)
+    if (!record) return undefined
+    record.connectOnly = false
+    this.mru = [record.id, ...this.mru.filter((candidate) => candidate !== record.id)]
+    return record
   }
 
   remove(id: string): LocalWindowRecord | undefined {

@@ -45,14 +45,33 @@ fn registry_enforces_maximum_and_lowercase_labels() {
 }
 
 #[test]
-fn connect_only_windows_defer_failures_and_settle_by_outcome() {
+fn hidden_launch_windows_hold_no_slot_and_are_never_launch_targets() {
     let mut registry = Registry::default();
-    let launch = registry.add(id(1), false).unwrap();
-    registry
-        .records
-        .get_mut(&launch.label)
-        .unwrap()
-        .connect_only = true;
+    let launch = registry.add_window(id(99), false, true).unwrap();
+    assert_eq!(
+        registry.mru_label(),
+        None,
+        "folder launches never land in it"
+    );
+    assert_eq!(registry.mark_focused(&launch.label), None);
+    assert_eq!(registry.mru_label(), None);
+    for value in 0..MAX_LOCAL_WINDOWS {
+        registry.add(id(value as u8), true).unwrap();
+    }
+    assert_eq!(
+        registry.add(id(98), true).unwrap_err(),
+        "Too many local windows",
+        "all sixteen saved windows restore beside the hidden one"
+    );
+    assert_ne!(registry.mru_label(), Some(launch.label.clone()));
+    registry.promote(&launch.label);
+    assert_eq!(registry.mru_label(), Some(launch.label));
+}
+
+#[test]
+fn hidden_launch_windows_settle_by_outcome() {
+    let mut registry = Registry::default();
+    let launch = registry.add_window(id(1), false, true).unwrap();
     registry
         .queue_connection(&launch.label, "prod".into(), None)
         .unwrap();
@@ -61,12 +80,12 @@ fn connect_only_windows_defer_failures_and_settle_by_outcome() {
         Some(PendingConnectionPayload {
             target: "prod".into(),
             failure: None,
-            defer_failure: true,
+            hidden: true,
         })
     );
     assert_eq!(
         registry
-            .acknowledge_connection(&launch.label, "prod", false)
+            .acknowledge_connection(&launch.label, "prod", None, false)
             .unwrap(),
         ConnectionSettlement::Close
     );
@@ -78,23 +97,45 @@ fn connect_only_windows_defer_failures_and_settle_by_outcome() {
         .queue_connection(&launch.label, "later".into(), None)
         .unwrap();
     assert!(registry
-        .acknowledge_connection(&launch.label, "later", false)
+        .acknowledge_connection(&launch.label, "later", None, false)
         .unwrap_err()
         .contains("out of order"));
-    let ConnectionSettlement::StartNormally(remaining) = registry
-        .acknowledge_connection(&launch.label, "missing", true)
-        .unwrap()
-    else {
-        panic!("a failed connect-only launch starts normally");
-    };
     assert_eq!(
-        remaining
-            .into_iter()
-            .map(|pending| pending.target)
-            .collect::<Vec<_>>(),
-        vec!["later".to_string()]
+        registry
+            .acknowledge_connection(&launch.label, "missing", Some("unknown".into()), false)
+            .unwrap(),
+        ConnectionSettlement::StartNormally(VecDeque::from([
+            PendingConnection {
+                target: "missing".into(),
+                failure: Some("unknown".into()),
+            },
+            PendingConnection {
+                target: "later".into(),
+                failure: None,
+            },
+        ]))
     );
     assert_eq!(registry.next_connection(&launch.label).unwrap(), None);
+
+    registry
+        .queue_connection(&launch.label, "self-signed".into(), None)
+        .unwrap();
+    assert_eq!(
+        registry
+            .acknowledge_connection(&launch.label, "self-signed", None, true)
+            .unwrap(),
+        ConnectionSettlement::StartNormally(VecDeque::from([PendingConnection {
+            target: "self-signed".into(),
+            failure: None,
+        }])),
+        "a connection that needs a prompt runs in a visible window"
+    );
+
+    registry
+        .queue_connection(&launch.label, "slow".into(), None)
+        .unwrap();
+    assert_eq!(registry.abandon_connections(&launch.label).len(), 1);
+    assert!(registry.abandon_connections(&launch.label).is_empty());
 }
 
 #[test]
@@ -116,21 +157,22 @@ fn ordinary_windows_report_their_own_failures_and_stay_open() {
         Some(PendingConnectionPayload {
             target: "missing".into(),
             failure: Some("No saved server".into()),
-            defer_failure: false,
+            hidden: false,
         })
     );
     assert_eq!(
         registry
-            .acknowledge_connection(&local.label, "missing", false)
+            .acknowledge_connection(&local.label, "missing", None, false)
             .unwrap(),
         ConnectionSettlement::Keep
     );
     assert_eq!(
         registry
-            .acknowledge_connection(&local.label, "down", true)
+            .acknowledge_connection(&local.label, "down", Some("unreachable".into()), false)
             .unwrap(),
         ConnectionSettlement::Keep
     );
+    assert!(registry.abandon_connections(&local.label).is_empty());
 }
 
 #[test]

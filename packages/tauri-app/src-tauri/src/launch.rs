@@ -23,7 +23,7 @@ impl LaunchIntent {
 fn connect_server_argument(arguments: &[String], index: usize) -> Option<(String, usize)> {
     let value = &arguments[index];
     if let Some(inline) = value.strip_prefix("--connect-server=") {
-        return Some((inline.trim().to_string(), 0));
+        return Some((inline.to_string(), 0));
     }
     if value != "--connect-server" {
         return None;
@@ -33,7 +33,7 @@ fn connect_server_argument(arguments: &[String], index: usize) -> Option<(String
             .get(index + 1)
             .filter(|target| !target.starts_with('-'))
         {
-            Some(target) => (target.trim().to_string(), 1),
+            Some(target) => (target.to_string(), 1),
             None => (String::new(), 0),
         },
     )
@@ -55,7 +55,7 @@ pub(crate) fn parse_launch_intent(arguments: &[String], cwd: &Path) -> LaunchInt
     while index < arguments.len() {
         let value = &arguments[index];
         if let Some((target, consumed)) = connect_server_argument(arguments, index) {
-            intent.connect_server = Some(target);
+            intent.connect_server = Some(target.trim().to_string());
             index += consumed;
         } else if value == "--new-window" {
             intent.new_window = true;
@@ -99,9 +99,21 @@ pub(crate) fn parse_windows_forwarded_launch_intent(
     let mut index = 0;
     while index < arguments.len() {
         let value = &arguments[index];
-        if let Some((target, consumed)) = connect_server_argument(arguments, index) {
-            intent.connect_server = Some(target);
+        if let Some((mut target, consumed)) = connect_server_argument(arguments, index) {
             index += consumed;
+            // The plugin joins arguments with `|` and splits them again, so a value containing `|`
+            // arrives as several fragments: join the ones that follow it back together.
+            if !target.trim().is_empty() {
+                while let Some(fragment) = arguments
+                    .get(index + 1)
+                    .filter(|fragment| !fragment.starts_with('-'))
+                {
+                    target.push('|');
+                    target.push_str(fragment);
+                    index += 1;
+                }
+            }
+            intent.connect_server = Some(target.trim().to_string());
         } else if value == "--new-window" {
             intent.new_window = true;
         } else if value == "--folder" {
@@ -270,23 +282,35 @@ mod tests {
     }
 
     #[test]
-    fn windows_forwarding_keeps_connections_unless_the_arguments_were_fragmented() {
+    fn windows_forwarding_rejoins_connection_values_the_plugin_split_on_pipes() {
         let root = tempfile::tempdir().unwrap();
-        let forwarded = parse_windows_forwarded_launch_intent(
-            &["--connect-server".into(), "Build box".into()],
-            root.path(),
+        // The single-instance plugin sends `args.join("|")` and splits it again on `|`.
+        let forward = |command_line: &str| {
+            let arguments = command_line
+                .split('|')
+                .map(str::to_string)
+                .collect::<Vec<_>>();
+            parse_windows_forwarded_launch_intent(&arguments, root.path())
+        };
+        assert_eq!(
+            forward("--connect-server|Build box").connect_server,
+            Some("Build box".to_string())
         );
-        assert_eq!(forwarded.connect_server, Some("Build box".to_string()));
-        assert!(parse_windows_forwarded_launch_intent(
-            &[
-                "--connect-server".into(),
-                "Build".into(),
-                "pipe-fragment".into()
-            ],
-            root.path(),
-        )
-        .connect_server
-        .is_none());
+        assert_eq!(
+            forward("--connect-server|Lab | east|--new-window").connect_server,
+            Some("Lab | east".to_string())
+        );
+        let inline = forward("--connect-server=a|b");
+        assert_eq!(inline.connect_server, Some("a|b".to_string()));
+        assert!(inline.is_connect_only());
+        assert_eq!(
+            forward("--connect-server|--new-window").connect_server,
+            Some(String::new())
+        );
+        // A stray fragment elsewhere still refuses the whole forwarded launch.
+        assert!(forward("--folder|workspace|stray|--connect-server|prod")
+            .connect_server
+            .is_none());
     }
 
     #[test]
