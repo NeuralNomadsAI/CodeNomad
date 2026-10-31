@@ -56,6 +56,8 @@ import { ForgeWorkItems } from "../forge/work-items"
 import type { PanelExtensionStore } from "../panel-extensions/store"
 import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
+import { PluginSources } from "../opencode/plugin-sources"
+import { registerPluginSourceRoutes } from "./routes/plugin-sources"
 import { WebSearchSettings } from "../opencode/websearch-settings"
 import { ServiceUsage } from "../opencode/service-usage"
 import { registerServiceUsageRoutes } from "./routes/service-usage"
@@ -339,6 +341,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerTemporaryWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, eventBus: deps.eventBus })
   const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
   registerPluginControlRoutes(app, { controls: configurationControls })
+  registerPluginSourceRoutes(app, { sources: new PluginSources({ documents: configurationControls, logger: apiLogger }) })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
   const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)

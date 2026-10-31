@@ -92,7 +92,8 @@ reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI
   releases. Test hosts that spread the Promise plugin context must declare the
   `credential` domain. `%ProgramData%\opencode` is discovered after the global
   plugin root that `config.get` consumers take first; native fixtures redirect
-  `ProgramData`.
+  `ProgramData`. Package-install fixtures pass `withProductRuntime`'s `registry`
+  option (a loopback fake npm registry, [Plugin controls](PLUGIN_CONTROLS.md#validation)).
 - Relied-on upstream behaviors keep their regressions:
   `test-output-limit-native.mjs` (an output-length stop settles failed/idle with
   one user prompt) and `test-promise-tool-failure-native.mjs` (rejected Promise

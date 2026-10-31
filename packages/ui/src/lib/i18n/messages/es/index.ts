@@ -15,6 +15,7 @@ import { missionRecoveryMessages } from "./mission-recovery"
 import { missionsPanelMessages } from "./missions-panel"
 import { missionCreateMessages } from "./missions-create"
 import { permissionReceiptMessages } from "./permission-receipts"
+import { pluginSourceMessages } from "./plugin-sources"
 import { remoteAccessMessages } from "./remoteAccess"
 import { remoteControlMessages } from "./remoteControl"
 import { sessionMessages } from "./session"
@@ -43,6 +44,7 @@ export const esMessages = mergeMessageParts(
   toolCallMessages,
   markdownMessages,
   settingsMessages,
+  pluginSourceMessages,
   remoteAccessMessages,
   remoteControlMessages,
   commandMessages,

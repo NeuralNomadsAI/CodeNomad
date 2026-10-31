@@ -82,8 +82,9 @@ export async function readPluginControlDocument(
   return { requestedPath, writePath, exists, mode, text, byteOrderMark, plugins: parsed }
 }
 
+/** Appends one string entry (an activation rule or a source spec) at the end of `plugins`. */
 export function appendPluginControlRule(document: PluginControlDocument, rule: string): string {
-  const formattingOptions = inferFormatting(document.text)
+  const formattingOptions = inferPluginControlFormatting(document.text)
   const editPath = document.plugins.length > 0 || hasPluginsProperty(document.text)
     ? ["plugins", document.plugins.length]
     : ["plugins"]
@@ -362,7 +363,7 @@ function hasPluginsProperty(text: string): boolean {
   return Boolean(root?.children?.some((property) => property.children?.[0]?.value === "plugins"))
 }
 
-function inferFormatting(text: string): FormattingOptions {
+export function inferPluginControlFormatting(text: string): FormattingOptions {
   const eol = text.includes("\r\n") ? "\r\n" : "\n"
   const indentation = text.match(/(?:^|\r?\n)([\t ]+)\S/)
   const whitespace = indentation?.[1] ?? "  "

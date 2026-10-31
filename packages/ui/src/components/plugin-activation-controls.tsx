@@ -1,9 +1,10 @@
 import { For, Show, createEffect, createMemo, createSignal, createUniqueId, onCleanup, type Component } from "solid-js"
 import { Tooltip } from "@kobalte/core/tooltip"
-import { RefreshCw } from "lucide-solid"
+import { Loader2, RefreshCw } from "lucide-solid"
 import Switch from "@suid/material/Switch"
 import type {
   PluginActivationControl,
+  PluginConfiguredSource,
   PluginControlLocation,
   PluginControlScope,
   PluginRuntimeInventoryEntry,
@@ -14,7 +15,9 @@ import { getLogger } from "../lib/logger"
 import { showToastNotification } from "../lib/notifications"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { pluginControlsCache } from "../stores/plugin-controls"
-import { PluginPackageAction } from "./plugin-package-action"
+import { pluginSourcesStore, removableSources } from "../stores/plugin-sources"
+import { PluginRowActions } from "./plugin-row-actions"
+import { PluginSourceAdd } from "./plugin-source-add"
 import "../stores/plugin-controls-events"
 
 interface PluginActivationControlsProps {
@@ -62,6 +65,24 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return packages
   })
   const packageTargets = createMemo(() => [...packagesByTarget().keys()])
+  // Declarations and just-added specs the inventory does not report yet: installing,
+  // disabled, or never confirmed. Their rows carry no switch (no plugin ID is known).
+  const sourceTargets = createMemo(() => {
+    const loaded = new Set((snapshot()?.runtime ?? []).flatMap(entry => entry.source.type === "package" ? [entry.source.target] : []))
+    const targets = new Set<string>()
+    const configured = new Set<string>()
+    for (const source of snapshot()?.configured.sources ?? []) {
+      configured.add(source.target)
+      if (!source.pluginId && !loaded.has(source.target)) targets.add(source.target)
+    }
+    // An added spec removed elsewhere stops being shown once its pending window closes.
+    for (const added of pluginSourcesStore.addedSpecs(props.instanceId, requestLocation())) {
+      if (loaded.has(added.spec)) continue
+      if (configured.has(added.spec) || pluginSourcesStore.state(props.instanceId, requestLocation(), added.spec) === "pending") targets.add(added.spec)
+    }
+    return [...targets]
+  })
+  const projectAvailable = () => snapshot()?.targets.some((target) => target.scope === "project") === true
   let currentIdentity: string | undefined
   let locationGeneration = 0
   // The admitted write may finish after a project tab or visibility wrapper
@@ -119,24 +140,51 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return t("instanceServiceStatus.plugins.source.sdk")
   }
 
+  // Version, update availability, failure and its native log reference, for any plugin row.
+  const runtimeLines = (entry: PluginRuntimeInventoryEntry | undefined): string[] => {
+    if (!entry) return []
+    const lines = [sourceLabel(entry.source)]
+    if (entry.source.type === "package" && entry.source.version) {
+      lines.push(t("instanceServiceStatus.plugins.sources.version", { version: entry.source.version }))
+    }
+    if (entry.source.type === "package" && entry.source.outdated) lines.push(t("instanceServiceStatus.plugins.sources.outdated"))
+    if (entry.state.status === "failed") {
+      lines.push(`${t("instanceServiceStatus.plugins.runtime.failed")} — ${entry.state.error}`)
+      if (entry.state.ref) lines.push(t("instanceServiceStatus.plugins.sources.failureRef", { ref: entry.state.ref }))
+    }
+    return lines
+  }
+
+  // A desktop-app (GUI) package loads those parts only from Global configuration.
+  const guiNotice = (entry: PluginRuntimeInventoryEntry | undefined, declaredIn: readonly { scope: string }[]): string[] => (
+    entry?.features.gui && declaredIn.some(source => source.scope !== "global")
+      ? [t("instanceServiceStatus.plugins.sources.guiGlobalOnly")] : []
+  )
+
+  const declarationsFor = (matches: (source: PluginConfiguredSource) => boolean) => (
+    snapshot()?.configured.sources.filter(matches) ?? []
+  )
+  const refresh = () => void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })
+
   const renderControl = (pluginId: string) => {
     // Key rows by ID, but read every displayed value from the current snapshot.
     // Passive refreshes must not replace the focused row's DOM.
     const control = createMemo(() => controlsById().get(pluginId))
     const failed = () => control()?.runtime?.state.status === "failed"
-    const failureMessage = () => {
-      const state = control()?.runtime?.state
-      return state?.status === "failed" ? state.error : undefined
-    }
     const overridden = () => Boolean(control() && control()?.project !== "default")
     const isAvailable = (scope: PluginControlScope): boolean =>
       snapshot()?.targets.some((target) => target.scope === scope) === true
+    const matchesControl = (source: PluginConfiguredSource) => {
+      const runtime = control()?.runtime?.source
+      return source.pluginId === pluginId || (runtime?.type === "package" && runtime.target === source.target)
+    }
+    const removable = createMemo(() => removableSources(snapshot(), matchesControl), [], {
+      equals: (left, right) => left.length === right.length && left.every((source, index) => sameSource(source, right[index]!)),
+    })
     const details = () => {
       const current = control()
-      const lines = [pluginId]
-      if (current?.runtime) lines.push(sourceLabel(current.runtime.source))
-      if (failed()) lines.push(`${t("instanceServiceStatus.plugins.runtime.failed")} — ${failureMessage() ?? ""}`)
-      else if (overridden()) lines.push(t("instanceServiceStatus.plugins.globalOverridden"))
+      const lines = [pluginId, ...runtimeLines(current?.runtime), ...guiNotice(current?.runtime, declarationsFor(matchesControl))]
+      if (!failed() && overridden()) lines.push(t("instanceServiceStatus.plugins.globalOverridden"))
       for (const target of snapshot()?.targets ?? []) {
         lines.push(`${scopeLabel(target.scope)} — ${target.path}`)
       }
@@ -194,22 +242,26 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Portal>
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
-        </Tooltip><PluginPackageAction instanceId={props.instanceId} location={requestLocation()} source={control()?.runtime?.source} active={props.active} /></div>
+        </Tooltip><PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
+          source={control()?.runtime?.source} removable={removable()} active={props.active} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
     )
   }
 
+  const removableFor = (target: string) => createMemo(() => removableSources(snapshot(), source => source.target === target), [], {
+    equals: (left, right) => left.length === right.length && left.every((source, index) => sameSource(source, right[index]!)),
+  })
+
   const renderPackage = (target: string) => {
     const entry = () => packagesByTarget().get(target)
     const nameId = createUniqueId()
+    const removable = removableFor(target)
     const details = () => {
       const current = entry()
-      const lines = [current ? sourceLabel(current.source) : target]
-      if (current?.state.status === "failed") {
-        lines.push(`${t("instanceServiceStatus.plugins.runtime.failed")} — ${current.state.error}`)
-      }
+      const lines = current ? runtimeLines(current) : [target]
+      lines.push(...guiNotice(current, declarationsFor(source => source.target === target)))
       return lines.map(bidi).join("\n")
     }
     return <div class="plugin-control-row" data-package-target={target} role="group" aria-labelledby={nameId}>
@@ -218,7 +270,38 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{target}</bdi></Tooltip.Trigger>
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
-        <PluginPackageAction instanceId={props.instanceId} location={requestLocation()} source={entry()?.source} active={props.active} />
+        <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
+          removable={removable()} active={props.active} />
+      </div>
+    </div>
+  }
+
+  // Configured or just-added sources absent from the inventory. Pending rows stay busy until
+  // `plugin.list` reports the target (it then becomes an ordinary row) or the window closes.
+  const renderSource = (target: string) => {
+    const nameId = createUniqueId()
+    const removable = removableFor(target)
+    const state = () => pluginSourcesStore.state(props.instanceId, requestLocation(), target)
+    const details = () => [
+      t("instanceServiceStatus.plugins.source.package", { source: target }),
+      t(state() === "pending" ? "instanceServiceStatus.plugins.sources.pending" : "instanceServiceStatus.plugins.sources.unconfirmed"),
+      ...declarationsFor(source => source.target === target).map(source => source.scope === "global" || source.scope === "project"
+        ? `${scopeLabel(source.scope)} — ${source.path ?? ""}` : source.path ?? ""),
+    ].map(bidi).join("\n")
+    return <div class="plugin-control-row" data-source-target={target} data-source-state={state()} role="group" aria-labelledby={nameId}
+      aria-busy={state() === "pending"}>
+      <div class="plugin-control-identity">
+        <Tooltip placement="top-start" openDelay={300}>
+          <Tooltip.Trigger as="span" tabindex="0" id={nameId} class="plugin-control-name"><bdi>{target}</bdi></Tooltip.Trigger>
+          <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
+        </Tooltip>
+        <Show when={state() === "pending"} fallback={<span class="plugin-source-state" role="status">{t("instanceServiceStatus.plugins.sources.unconfirmedLabel")}</span>}>
+          <span class="plugin-source-state" role="status">
+            <Loader2 class="h-3 w-3 animate-spin" aria-hidden="true" />{t("instanceServiceStatus.plugins.sources.pendingLabel")}
+          </span>
+        </Show>
+        <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} removable={removable()}
+          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} />
       </div>
     </div>
   }
@@ -233,17 +316,22 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
       </Show>
 
       <div class="plugin-controls-header">
-        <button
-          type="button"
-          class="icon-button-compact"
-          title={t("instanceServiceStatus.plugins.refresh")}
-          aria-label={t("instanceServiceStatus.plugins.refresh")}
-          aria-busy={state().loading || state().refreshing}
-          disabled={state().loading || state().refreshing}
-          onClick={() => void pluginControlsCache.load(props.instanceId, requestLocation(), { force: true })}
-        >
-          <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": state().loading || state().refreshing }} aria-hidden="true" />
-        </button>
+        <div class="plugin-controls-header-actions">
+          <button
+            type="button"
+            class="icon-button-compact"
+            title={t("instanceServiceStatus.plugins.refresh")}
+            aria-label={t("instanceServiceStatus.plugins.refresh")}
+            aria-busy={state().loading || state().refreshing}
+            disabled={state().loading || state().refreshing}
+            onClick={refresh}
+          >
+            <RefreshCw class="h-3.5 w-3.5" classList={{ "animate-spin": state().loading || state().refreshing }} aria-hidden="true" />
+          </button>
+          <Show when={snapshot()}>
+            <PluginSourceAdd instanceId={props.instanceId} location={requestLocation()} projectAvailable={projectAvailable()} active={props.active} />
+          </Show>
+        </div>
         <span id={globalLabelId} class="plugin-control-scope-label">{scopeLabel("global")}</span>
         <span id={projectLabelId} class="plugin-control-scope-label">{scopeLabel("project")}</span>
       </div>
@@ -257,10 +345,11 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
               : t("instanceServiceStatus.plugins.loading")}</p>
         </div>
       }>
-        <Show when={controlIds().length + packageTargets().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.empty")}</p>}>
+        <Show when={controlIds().length + packageTargets().length + sourceTargets().length > 0} fallback={<p class="right-panel-empty-text">{t("instanceServiceStatus.plugins.empty")}</p>}>
           <div class="plugin-control-list">
             <For each={controlIds()}>{renderControl}</For>
             <For each={packageTargets()}>{renderPackage}</For>
+            <For each={sourceTargets()}>{renderSource}</For>
           </div>
         </Show>
       </Show>
@@ -271,6 +360,10 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return t(`instanceServiceStatus.plugins.scope.${value}`)
   }
 
+}
+
+function sameSource(left: PluginConfiguredSource, right: PluginConfiguredSource): boolean {
+  return left.scope === right.scope && left.target === right.target && left.entryIndex === right.entryIndex && left.path === right.path
 }
 
 function scopeChecked(control: PluginActivationControl, scope: PluginControlScope): boolean {

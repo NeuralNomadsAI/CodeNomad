@@ -35,7 +35,7 @@ Start with [README](../README.md) for installation and usage, then
 - [Questions and permissions](NATIVE_INTERRUPTION_UX.md): permissions/Forms dock, drafts and pending-request recovery.
 - [Keyboard shortcuts](HOTKEYS.md): the shortcut catalog, recording and dispatch.
 - [Provider accounts](PROVIDER_ACCOUNTS.md): native account selection, usage credentials and bounded quota/rotation policy.
-- [Plugin controls](PLUGIN_CONTROLS.md): explicit Global/Project activation and native package check/update.
+- [Plugin controls](PLUGIN_CONTROLS.md): adding and removing plugin sources, explicit Global/Project activation, versions and native package check/update.
 - [Panel extensions](PANEL_EXTENSIONS.md): distribution, trust, consent and sandbox/API boundaries.
 - [Palette sources](PALETTE_SOURCES.md): color provenance and validation.
 

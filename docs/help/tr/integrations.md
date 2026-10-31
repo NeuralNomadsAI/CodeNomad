@@ -7,7 +7,7 @@ CodeNomad OpenCode'un MCP bağlantılarını, eklenti etkinleştirmesini, beceri
 | Entegrasyon | Nerede hareket edilmeli | Denetim neyi değiştirir? |
 | --- | --- | --- |
 | MCP sunucusu | **Durum → MCP Sunucuları** | Görüntülenen Location'de yerel bağlantı; sunucu kurmaz. |
-| Yerel eklenti | **Durum → Eklentiler** | Kalıcı **Genel** veya **Proje** etkinleştirme kuralı; paket eklentisi için o paketin açıkça denetlenmesi veya güncellenmesi. Paket kurmaz veya kaldırmaz. |
+| Yerel eklenti | **Durum → Eklentiler** | Bir paket bildirimini ekler veya kaldırır ve kalıcı **Genel** veya **Proje** etkinleştirme kuralı belirler; paket eklentisi için o paketin açıkça denetlenmesi veya güncellenmesi. |
 | Beceri | İleti düzenleyicisinin `@` menüsü | Konuşmanın Location bağlamında sonraki isteme açıkça eklenen ek. |
 | Özel komut | İleti düzenleyicisinin `/` menüsü | OpenCode'un o Location için sunduğu komutu çalıştırır. |
 
@@ -25,7 +25,7 @@ Hiçbir sunucu görünmüyorsa etkin Location bağlamını ve yerel yapılandır
 
 ## Eklentileri Genel veya Proje kapsamında etkinleştirin {#plugins}
 
-1. Yerel eklentiyi OpenCode ile yükleyin/bildirin; daha sonra **Durum → Eklentiler** öğesini açın.
+1. [Eklentiyi ekleyin](#plugin-sources) veya OpenCode yapılandırmasında bildirin; daha sonra **Durum → Eklentiler** öğesini açın.
 2. Kaynağı, çalışma zamanı hatasını ve yapılandırma hedefi ayrıntılarını incelemek için adının üzerine gelin veya odaklanın.
 3. **Genel** veya **Proje** öğesini bilinçli olarak değiştirin. Yazmayı bekleyin ve durum belirsizse **Plugin denetimlerini yenile** öğesini kullanın.
 4. Bir paketten kurulmuş eklenti için adının yanındaki simgeyi kullanın. Menüsü tam işlemi adlandırır: paket için **… güncellemelerini denetle** veya daha yeni bir sürüm bulunduğunda **… güncelle**.
@@ -37,6 +37,19 @@ Bu anahtarlar kaynak bildirimlerini ve ilgisiz yapılandırmayı koruyarak tam e
 Paket güncellemesi, araç ipucunda belirtildiği gibi, o paketi kullanan her Location için OpenCode'un paylaşılan önbelleğindeki paketi değiştirir; etkinleştirme kurallarını değiştirmez, OpenCode'u yeniden başlatmaz veya yapılandırmayı yeniden yüklemez. Yerel, yerleşik ve SDK tarafından sağlanan eklentilerin paket eylemi yoktur. Eklenti kimliğini bildirmeden önce başarısız olan bir paket, paket adıyla listelenir; hatası araç ipucunda yer alır ve denetleme/güncelleme eylemleri vardır, ancak etkinleştirme anahtarları yoktur. Başarısız bir denetleme veya güncelleme bildirilir ve asla otomatik olarak yeniden denenmez.
 
 Yüzey, gizliyken son anlık görüntüsünü korur ve gösterildiğinde, yerel değişikliklerde/yeniden bağlanmada ve açık yenilemede yeniden doğrulanır. Kaydedilmiş bir kural ile canlı çalışma zamanının kullanılabilirliği kısa süreliğine farklılık gösterebilir. Bir eklenti kullanılamıyorsa **OpenCode yapılandırmasını yeniden yükle** öğesini seçmeden önce eklentinin ipucunu ve yerel yapılandırmasını inceleyin; bu eylem yalnızca bu eklentiyi değil, yüklenen tüm Konumları etkiler. Hatalı biçimlendirilmiş yapılandırmanın veya eşzamanlı düzenlemenin üzerine sessizce yazılmaz: sorunu çözün, yenileyin ve açıkça yeniden deneyin.
+
+## Eklenti ekleyin veya kaldırın {#plugin-sources}
+
+1. **Durum → Eklentiler** içinde **Eklenti ekle** öğesini seçin (**Plugin denetimlerini yenile** yanındaki artı simgesi).
+2. npm kayıt defterinden bir paket (`name`, `name@1.2.3`, `@scope/name@^1`) veya bir Git deposu (`github:owner/repo`, `git+https://…`) girin.
+3. Eklenti yalnızca bu projede çalışmayacaksa **Genel** seçili kalsın, ardından **Ekle** öğesini seçin.
+4. Yeni satır, OpenCode bildirene kadar **Kuruluyor** gösterir. Ardından anahtarlarıyla sıradan bir eklenti satırına veya başarısız bir satıra dönüşür.
+
+Bir eklentiyi kaldırmak için adının yanındaki menüyü açıp **Genel kapsamından kaldır** veya **Proje kapsamından kaldır** öğesini seçin. Yalnızca o kapsamın yapılandırma dosyasındaki bildirim silinir; **Genel**/**Proje** etkinleştirme kuralları kural olarak kalır ve OpenCode'un paket önbelleği yerinde kalır.
+
+Eklentinin kodu OpenCode içinde sizin izinlerinizle çalışır. Bir **Proje** girdisi, o klasör OpenCode'da her açıldığında çalışır ve OpenCode masaüstü uygulaması bölümleri olan paketler bunları yalnızca **Genel** kapsamdan yükler; böyle bir paket başka yerde bildirildiğinde araç ipucu bunu belirtir. Yerel yollar, yapılandırma değişkenleri ve eklenti kimlikleri burada reddedilir: yerel eklentileri yapılandırma dosyasında bildirin. Bu Location için geçerli bir yapılandırmada zaten bildirilmiş bir paket, sürümü, aralığı veya biçimi ne olursa olsun reddedilir.
+
+Bir eklentinin sürümünü, **Güncelleme mevcut** bilgisini ve başarısız bir kurulumda hatayı OpenCode günlüğündeki referansıyla görmek için adının üzerine gelin veya odaklanın. OpenCode'un iki dakika sonra hâlâ bildirmediği bir satır, **Plugin denetimlerini yenile** işlemiyle birlikte **Onaylanmadı** gösterir: eklenti devre dışı olabilir veya kurulumu hiç tamamlanmamış olabilir (bkz. [Sorun giderme](troubleshooting.md#providers-and-addons)).
 
 ## Becerileri ekleyin {#skills}
 

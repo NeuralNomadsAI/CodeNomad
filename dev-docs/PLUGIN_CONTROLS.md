@@ -1,8 +1,54 @@
-# OpenCode V2 plugin activation controls
+# OpenCode V2 plugin controls
 
-The Plugins surface toggles plugin activation per scope and runs native package
-check/update (`stores/plugin-package-actions.ts`); installation, removal and
-plugin options stay in OpenCode configuration and the CLI.
+The Plugins surface adds and removes plugin source declarations
+(`opencode/plugin-sources.ts`, `stores/plugin-sources.ts`), toggles plugin
+activation per scope, shows each plugin's version and update availability, and
+runs native package check/update (`stores/plugin-package-actions.ts`). Plugin
+options, local-path sources and package installation itself stay with OpenCode:
+CodeNomad writes the declaration and OpenCode resolves, installs and loads it.
+
+## Source declarations
+
+`POST /api/workspaces/:id/plugin-sources` (`{ location, scope, spec }`) appends
+one string entry at the end of the scope's `plugins`; `DELETE` (`{ location,
+scope, target, entryIndex }`) removes one entry. Both routes are strict, map
+errors like the activation route and add a stable `code` (`invalid-spec`,
+`local-path`, `plugin-id`, `duplicate`, `stale`).
+
+- **Accepted specs** match OpenCode's own `plugin add`: registry versions, ranges,
+  tags and `npm:` aliases, and remote Git specs, parsed with `npm-package-arg`.
+  Local paths (relative, absolute, `~`, `file:`, `git+file:`), tarball URLs,
+  `{env:`/`{file:` variables, control characters and activation selectors
+  (`-id`, wildcards, `opencode.*`, or any known plugin ID or rule selector) are
+  refused before any file is touched. Existing local entries stay displayable and
+  removable.
+- **Duplicates**: a package already declared in any effective scope (the
+  daemon's documents, including inherited and inline ones, plus the raw target
+  documents for writes not yet reloaded) is refused. Identity is the
+  case-insensitive registry name, both sides of an alias, whatever the version,
+  range or tag, object `{ package }` entries included, and the Git repository
+  without committish.
+- **Removal** requires, under the document primitive, that `plugins[entryIndex]`
+  still declares `target` (a string, or an object's `package`); otherwise `stale`
+  (409). The result must parse to the original minus exactly that element.
+  Activation rules (`id`/`-id`) are left in place, and OpenCode's package cache is
+  never touched.
+- **Scope**: Global is the default. Project shows a warning that the entry runs
+  whenever the folder is opened and that GUI parts load only from Global. Whether
+  a package has GUI parts (`features.gui`) is known only once OpenCode has loaded
+  it, so a Project-declared GUI package is flagged in its tooltip afterwards.
+- **States**: the response publishes only the durable configured state
+  (`reloadPending`). A just-added spec is `pending` (busy row, **Installing**)
+  until `plugin.list` reports its exact target, which turns it into an ordinary
+  active or failed row (`error` and native `ref` in the tooltip).
+  `PLUGIN_SOURCE_PENDING_TIMEOUT_MS` (120 s) bounds that window: a source still
+  absent afterwards, like any configured source the inventory never reports, is
+  `unconfirmed` (**Not confirmed**, with a Refresh action), since a disabled
+  package and a never-installed one look the same to `plugin.list`.
+- **Correlation**: snapshot sources carry `pluginId` when the runtime inventory
+  loaded them, so Remove items attach to the plugin row. A row offers removal only
+  for declarations in a scope's own write target; inherited, inline and other
+  documents are shown, never edited.
 
 ## V2 contract
 
@@ -83,16 +129,20 @@ commands without a generic metadata round-trip.
 ## Mutation guarantees
 
 `packages/server/src/opencode/plugin-control-document.ts` owns the file
-operation:
+operation. Activation rules and source declarations use the same primitive:
+source add/remove runs through `PluginControls.editConfigDocument`, whose
+callback edits the freshly read document (`plugin-source-document.ts` holds the
+spec validation, package identity and removal edit).
 
 1. Read at most 4 MiB and require valid UTF-8 JSON/JSONC with one array-valued
    `plugins` key.
 2. Resolve physical file destinations, including symlinked parent directories,
    and fail closed on malformed content, invalid plugin entries, circular links,
    or filesystem errors.
-3. Append only the requested exact `id` or `-id` entry with `jsonc-parser`.
-   Comments, source objects, options, unknown keys, ordering, indentation, line
-   endings, and a UTF-8 BOM are retained.
+3. Edit with `jsonc-parser`: append only the requested exact `id`/`-id` rule or
+   source spec string, or delete exactly one verified element. Comments, source
+   objects, options, unknown keys, ordering, indentation, line endings, and a
+   UTF-8 BOM are retained.
 4. Serialize in-process mutations and hold a per-target interprocess lock across
    the final source verification and atomic rename. The lock carries an owner
    nonce verified immediately before the rename, so a stalled owner fails with
@@ -155,9 +205,23 @@ guessed paths.
 
 - JSONC preservation, malformed input, optimistic conflict, and atomic replace:
   `plugin-control-document.test.ts`
-- native WSL path operations and permission retention:
-  `plugin-control-document-wsl.test.ts` (set
+- spec validation, package identity, append and exact removal (comments, CRLF,
+  BOM, object entries, stale index): `plugin-source-document.test.ts`
+- source add/remove ownership, scope availability, duplicates across scopes,
+  rule retention, inventory correlation and the strict route:
+  `plugin-sources.test.ts`
+- native WSL path operations and permission retention, including source
+  add/remove: `plugin-control-document-wsl.test.ts` (set
   `CODENOMAD_TEST_WSL_PLUGIN_CONTROLS` to a distro for the native fixture)
+- real daemon loading: `node --import tsx scripts/test-plugin-sources-native.mjs
+  <absolute-cli>` adds a registry spec (active, version), an unknown package
+  (failed with `ref`), refuses a duplicate and a stale removal, and removes the
+  source (unloaded, cache kept). `withProductRuntime(..., { registry })` points
+  the isolated daemon's installs at a loopback fake npm registry through
+  `npm_config_registry`; it answers 404 for unknown names, so package fixtures
+  never reach the public registry.
+- pending window, removal tracking and removable targets:
+  `packages/ui/src/stores/plugin-sources.test.ts`
 - ownership, WSL/host path authority, precedence, visibility of disabled IDs,
   serialization, and scope mutations: `plugin-controls.test.ts`
 - strict CodeNomad route and error mapping: `plugin-controls.test.ts` beside
@@ -170,9 +234,14 @@ guessed paths.
   `packages/ui/tests/browser/plugin-controls.test.ts`
 - package check/update menus, one native request per target and pending state
   across hiding: `packages/ui/tests/browser/plugin-packages.test.ts`
+- Add window (Global default, Project warning, refusals), Installing until the
+  inventory reports, version/update/ref tooltips, Remove items, the pending
+  timeout with an injected clock and the GUI notice:
+  `packages/ui/tests/browser/plugin-sources.test.ts`
 
 ## Agent conventions
 
 - Present Global and Project as separate per-plugin columns so every mutation has an explicit scope. Cache display snapshots by instance and worktree directory, and refresh them only while the plugin surface is visible.
-- Keep the Plugins surface minimal: plugin names, a compact package check/update icon when applicable, and Global/Project switches. Activating the icon opens a menu that names the exact package operation (check or update with its native target); put source/status/target details and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary. The compact Refresh icon occupies the name-column header and spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and menu chrome is shared with `action-overflow-menu`.
+- Keep the Plugins surface minimal: plugin names, one compact row-action icon when applicable, and Global/Project switches. The row menu (`components/plugin-row-actions.tsx`, memoized item descriptors) names each exact operation: package check or update with its native target, **Remove from Global/Project** per removable declaration, and Refresh for unconfirmed sources; a single package item keeps its package icon. Put source/status/version/target details, failure `ref`s and the shared-cache effect of package updates in hover/focus tooltips. Do not add general descriptions, inline explanations, target footers or success commentary; source rows carry only a short state label (**Installing**/**Not confirmed**). The compact Refresh and Add icons occupy the name-column header; Refresh spins during loading and refresh; automatic display updates follow native events, reconnects and visible demand. Package writes use native inventory-validated targets, never plugin IDs; styles live in `styles/components/plugin-package-action.css` and `plugin-source-add.css`, and menu chrome is shared with `action-overflow-menu`.
+- The Add window (`components/plugin-source-add.tsx`) is a transient `.window-*` popover without a close button: a `--surface-field` spec input, the native scope select (Global default, Project disabled when unavailable), the trust sentence and the Project warning. It closes on success and keeps refusals inline; it never announces an active plugin.
 - Plugin packages that fail before exporting an ID remain visible by their native target with check/update actions and failure details in the name tooltip. Do not fabricate plugin IDs or activation switches for these entries; reconcile them into ordinary rows once native loading succeeds.
