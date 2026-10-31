@@ -9,7 +9,8 @@ import { COORDINATOR_DECISION_SHAPE } from "./recipes"
 /** How a coordinator settles a Wayfinder decision task; shared by the refusals below. `tag`: the task's `decisionQuestionTag`. */
 function decisionOptions(tag?: string) {
   return `Settle it yourself: when the evidence suffices and the choice is cheap to reverse, pass your own decision as artifact ${COORDINATOR_DECISION_SHAPE}; `
-    + `otherwise ask the human from your own conversation with the native question tool, writing ${tag ?? "the task's questionTag"} in the question, and, `
+    + `otherwise ask the human from your own conversation with the native question tool, ending the question with ${tag ?? "the task's questionTag"} `
+    + "and naming no other decision in it (batch several decisions as separate questions, one tag each), and, "
     + "once they answer in the CodeNomad interface, report the task again (when several answers qualify, pass the one mission.inspect({ taskKey }) lists, unchanged). "
     + "To defer the decision, retire the task with mission.revise and keep the question in the notes."
 }
@@ -28,8 +29,8 @@ export function decisionOutcomeRequired(tag?: string) {
 
 /** Model-facing refusal of a coordinator-asked answer that is not bound to this exact decision task. */
 export function decisionQuestionUnbound(tag: string) {
-  return new MissionControlError(`This answer does not settle this decision task: the human must answer a question that names it with ${tag}, `
-    + `asked after the task was declared. ${decisionOptions(tag)}`, "policy-unqualified")
+  return new MissionControlError(`This answer does not settle this decision task: the human must answer a question that ends with ${tag} `
+    + `and names no other decision, asked after the task was declared. ${decisionOptions(tag)}`, "policy-unqualified")
 }
 
 /** How a completed native Wayfinder decision readout is settled: the coordinator's own

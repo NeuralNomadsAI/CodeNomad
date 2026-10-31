@@ -38,7 +38,7 @@ import { missionRecoveryInput, type MissionRecoveryInput } from "./recovery-inpu
 import { MissionControlError, MissionCreateNoEffectError, humanDecisionRequired } from "./control-error"
 import { claimedDecisionFields, coordinatorAskedAnswer, coordinatorDecision, decisionInvocationUnavailable, decisionOutcomeRequired,
   decisionQuestionUnbound, receiptMatches, type CoordinatorAskedAnswer, type MissionDecisionProof } from "./decision-gate"
-import { decisionQuestionTag } from "./decision-question-tag"
+import { decisionQuestionTag, fieldDecisionTag } from "./decision-question-tag"
 import { claimsDecisionMaker } from "./decision-artifact"
 import { deleteMission, missionCleanupTarget } from "./session-cleanup"
 import { controlMission } from "./lifecycle"
@@ -195,13 +195,14 @@ export class MissionControl {
   }
 
   /** The human answered the coordinator's own question about exactly this task: asked from its root conversation,
-   * naming this mission's task (`decisionQuestionTag`), answered after the task was declared, and settling no other task. */
+   * the cited field's own question binding this mission's task alone (`fieldDecisionTag`), answered after the task
+   * was declared, and settling no other task. */
   private async verifyCoordinatorQuestion(mission: MissionMap, task: import("./model").MissionTask,
     asked: CoordinatorAskedAnswer): Promise<import("./human-answer").HumanDecisionMark> {
     const cited = asked.provenance, tag = decisionQuestionTag(mission.id, task.key)
     if (task.contractGeneration === undefined || cited.sessionID !== mission.coordinatorSessionId || cited.contract.missionID !== mission.id
       || cited.contract.taskKey !== task.key || cited.contract.generation !== task.contractGeneration) throw decisionInvocationUnavailable(tag)
-    if (!asked.question.includes(tag)) throw decisionQuestionUnbound(tag)
+    if (fieldDecisionTag({ description: asked.question }) !== tag) throw decisionQuestionUnbound(tag)
     if (claimedDecisionFields(mission, task.key).some(field => field.formID === cited.formID && field.fieldKey === cited.fieldKey))
       throw new MissionControlError("This answer already settles another decision task; ask the human about this decision", "policy-unqualified")
     const session = await this.ownedSession(cited.sessionID)
@@ -212,8 +213,10 @@ export class MissionControl {
     catch (error) { this.assertActive(); throw humanDecisionRequired(error) }
     this.assertActive()
     if (!receiptMatches(receipt, cited.sessionID, cited, asked.answer)) throw humanDecisionRequired()
-    // An answer given before this task existed was not an answer to it.
-    if (!(receipt.answeredAt >= task.createdAt)) throw decisionQuestionUnbound(tag)
+    // The confirmed Form's own field (question and header) binds this task alone; an answer given
+    // before this task existed was not an answer to it.
+    if (fieldDecisionTag(receipt.form.fields.find(field => field.key === cited.fieldKey) ?? {}) !== tag
+      || !(receipt.answeredAt >= task.createdAt)) throw decisionQuestionUnbound(tag)
     return receipt
   }
 

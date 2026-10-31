@@ -74,7 +74,7 @@ Dans **Exploration**, les tâches de décision préparent une synthèse et le co
 | **Décision du coordinateur** | Le coordinateur a décidé sans vous demander ; le résultat montre sa justification et comment revenir dessus. Pour la modifier, écrivez au coordinateur depuis **Ouvrir la conversation**. |
 | **Votre réponse** | Vous avez répondu à cette question dans le dock d’interruption de CodeNomad. |
 
-Seule une réponse donnée dans le dock d’interruption compte comme **Votre réponse** ; un agent ne peut pas répondre à votre place. Une question de décision nomme sa décision par une étiquette comme `[decision choose-seam 3fa9c21b]`, et votre réponse ne tranche que cette décision. Dans **Livraison produit**, un objectif qui décrit déjà précisément le changement de comportement vaut spécification approuvée ; sinon, le coordinateur vous demande de l’approuver, en regroupant les approbations en attente.
+Seule une réponse donnée dans le dock d’interruption compte comme **Votre réponse** ; un agent ne peut pas répondre à votre place. Chaque question de décision se termine par l’étiquette de la seule décision qu’elle tranche, par exemple `[decision choose-seam 3fa9c21b]`. Quand plusieurs décisions sont demandées ensemble, chacune forme une question distincte avec sa propre étiquette ; une question qui nomme deux décisions n’en tranche aucune. Dans **Livraison produit**, un objectif qui décrit déjà précisément le changement de comportement vaut spécification approuvée ; sinon, le coordinateur vous demande de l’approuver, en regroupant les approbations en attente.
 
 ### Points de situation et demandes de mise à jour {#briefings}
 

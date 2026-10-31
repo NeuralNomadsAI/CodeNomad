@@ -74,7 +74,7 @@ Size yalnızca koordinatör soru sorar. Görevler ve başlattıkları alt ajanla
 | **Koordinatör kararı** | Koordinatör size sormadan karar verdi; sonuç gerekçesini ve nasıl geri alınacağını gösterir. Değiştirmek için **Konuşmayı aç** üzerinden koordinatöre yazın. |
 | **Yanıtınız** | Bu soruyu CodeNomad'in istek panelinde siz yanıtladınız. |
 
-Yalnızca istek panelinde verdiğiniz yanıt **Yanıtınız** sayılır; bir ajan sizin yerinize yanıt veremez. Bir karar sorusu kararını `[decision choose-seam 3fa9c21b]` gibi bir etiketle belirtir ve yanıtınız yalnızca o kararı sonuçlandırır. **Ürün teslimi** akışında, davranış değişikliğini zaten kesin olarak tanımlayan bir hedef onaylanmış belirtim sayılır; aksi halde koordinatör bekleyen onayları toplayarak sizden onay ister.
+Yalnızca istek panelinde verdiğiniz yanıt **Yanıtınız** sayılır; bir ajan sizin yerinize yanıt veremez. Her karar sorusu, sonuçlandırdığı tek kararın etiketiyle biter; örneğin `[decision choose-seam 3fa9c21b]`. Birkaç karar birlikte sorulduğunda her biri kendi etiketine sahip ayrı bir sorudur; iki kararı anan bir soru hiçbirini sonuçlandırmaz. **Ürün teslimi** akışında, davranış değişikliğini zaten kesin olarak tanımlayan bir hedef onaylanmış belirtim sayılır; aksi halde koordinatör bekleyen onayları toplayarak sizden onay ister.
 
 ### Durum özetleri ve güncelleme istekleri {#briefings}
 

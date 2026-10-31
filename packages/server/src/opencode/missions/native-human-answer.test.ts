@@ -23,8 +23,10 @@ import { acquireNativeHumanAnswers, nativeHumanAnswerGate } from "./native-human
 import { attachRemoteDevice, markRemoteSocket } from "../../remote-control/request-origin"
 
 const encode = (key: string) => `plugin:${Array.from("codenomad.missions").map(c => c.charCodeAt(0).toString(16).padStart(4, "0")).join("")}:${key}`
-/** `asker`: the conversation holding the question; `ses_root` is the coordinator asking from its own conversation. */
-async function fixture(asker: "ses_child" | "ses_root" = "ses_child", question = "Choose the seam?") {
+/** `asker`: the conversation holding the question; `ses_root` is the coordinator asking from its own conversation.
+ * `questions`: one native question call's questions, one Form field each (`q0`, `q1`…). */
+async function fixture(asker: "ses_child" | "ses_root" = "ses_child", questions: string | string[] = "Choose the seam?") {
+  const asked = Array.isArray(questions) ? questions : [questions], question = asked[0]
   const temporaryRoot = path.join(tmpdir(), "opencode")
   await mkdir(temporaryRoot, { recursive: true })
   const directory = await mkdtemp(path.join(temporaryRoot, "human-mark-"))
@@ -47,11 +49,11 @@ async function fixture(asker: "ses_child" | "ses_root" = "ses_child", question =
     return { id: row.id, projectID: "project", location: { directory: path.normalize(row.directory) }, metadata: JSON.parse(row.metadata), title: "Decision", agent: "worker",
       model: { providerID: "provider", id: "model" }, ...(row.parent_id ? { parentID: row.parent_id } : {}) }
   }
-  const input = { questions: [{ question, header: "Seam", options: [{ label: "Module", description: "Own the boundary" }] }] }
+  const input = { questions: asked.map(text => ({ question: text, header: "Seam", options: [{ label: "Module", description: "Own the boundary" }] })) }
   const form = { id: "frm_actual", sessionID: asker, title: "Questions", metadata: { kind: "question", tool: { messageID: "msg_question", id: "call_question" } },
-    fields: [{ key: "q0", type: "string", title: "Seam", description: question, custom: true,
-      options: [{ value: "Module", label: "Module", description: "Own the boundary" }] }] }
-  let state: { status: string; answer?: { q0: string } } = { status: "pending" }, replies = 0, expired = false, failReply = false, loseReply = false, complete = true
+    fields: asked.map((text, index) => ({ key: `q${index}`, type: "string", title: "Seam", description: text, custom: true,
+      options: [{ value: "Module", label: "Module", description: "Own the boundary" }] })) }
+  let state: { status: string; answer?: Record<string, string> } = { status: "pending" }, replies = 0, expired = false, failReply = false, loseReply = false, complete = true
   const part = { type: "tool", name: "question", id: "call_question", executed: false, state: { status: "running", input } }
   const message = () => db.prepare("INSERT OR REPLACE INTO session_message VALUES(?,?,?,?)").run("msg_question", asker, "assistant", JSON.stringify({ content: [part] }))
   message()
@@ -61,12 +63,12 @@ async function fixture(asker: "ses_child" | "ses_root" = "ses_child", question =
     JSON.stringify({ sessionID: asker, assistantMessageID: "msg_question", id: "call_question", executed: false, ...data as object }))
   event("event_called", 1, "session.tool.called.1", { input })
   const finish = () => {
-    const metadata = { answers: [[state.answer!.q0]] }, content = [{ type: "text", text: "Native question answer" }]
+    const metadata = { answers: form.fields.map(field => [state.answer![field.key]]) }, content = [{ type: "text", text: "Native question answer" }]
     Object.assign(part.state, { status: "completed", metadata, content }); message()
     event("event_success", 2, "session.tool.success.2", { metadata, content })
   }
   const cache = <T>(value: () => T) => expired ? Effect.fail({ _tag: "Form.NotFoundError", id: form.id }) : Effect.sync(value)
-  const forms = { get: () => cache(() => form), state: () => cache(() => state), reply: (value: { id: string; answer: { q0: string } }) => Effect.sync(() => {
+  const forms = { get: () => cache(() => form), state: () => cache(() => state), reply: (value: { id: string; answer: Record<string, string> }) => Effect.sync(() => {
     assert.equal(value.id, form.id); assert.equal(state.status, "pending")
     // The write-ahead mark is already committed when native forwarding begins.
     assert.ok(get(markKey) || ordinary, "UI mark committed before native reply")
@@ -142,8 +144,9 @@ async function fixture(asker: "ses_child" | "ses_root" = "ses_child", question =
     secrets: [cookie.id, registration.token],
     counts: () => replies, journalScans: () => journalScans, expire: () => { expired = true }, fail: (value = true) => { failReply = value }, lose: () => { loseReply = true }, defer: () => { complete = false },
     changeState: (status: string) => { state.status = status },
-    submit: (human = true, answer = "Module", cookieID = cookie.id) => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/${asker}/form/${form.id}/reply`,
-      headers: { cookie: `${auth.getCookieName()}=${encodeURIComponent(cookieID)}`, ...(human ? { "x-codenomad-human-answer": "1" } : {}) }, payload: { answer: { q0: answer } } }),
+    submit: (human = true, answer: string | Record<string, string> = "Module", cookieID = cookie.id) => app.inject({ method: "POST", url: `/workspaces/workspace/instance/api/session/${asker}/form/${form.id}/reply`,
+      headers: { cookie: `${auth.getCookieName()}=${encodeURIComponent(cookieID)}`, ...(human ? { "x-codenomad-human-answer": "1" } : {}) },
+      payload: { answer: typeof answer === "string" ? { q0: answer } : answer } }),
     devices,
     /** The dock's actual call: the generated client against the proxy, which enforces the native success status. */
     submitClient: (human = true) => OpenCode.make({ baseUrl: `${baseUrl}/workspaces/workspace/instance`,
@@ -365,30 +368,87 @@ test("an answer to a question naming one task cannot be relabelled to another ta
   } finally { await f.dispose() }
 })
 
-test("more than 32 earlier coordinator Forms never hide the answer to this decision; many answers to it stay fail-closed", async () => {
+/** Confirmed, internally consistent earlier coordinator Forms that sort before `frm_actual`: one question each,
+ * whose text is `question(index)`; `answer` and `option` may quote decision tags, which never bind. Call after `submit`. */
+function history(f: Awaited<ReturnType<typeof fixture>>, indexes: Iterable<number>,
+  { question = (index: number) => `Earlier question ${index}?`, answer = "Earlier answer", option = "Own the boundary" } = {}) {
+  for (const index of indexes) {
+    const formID = `frm_${String(index).padStart(3, "0")}`, messageID = `msg_old_${index}`, text = question(index)
+    const mark = structuredClone(f.get(f.markKey))
+    mark.formID = formID; mark.form.id = formID; mark.form.metadata.tool.messageID = messageID
+    mark.form.fields = [{ ...mark.form.fields[0], key: "q0", description: text, options: [{ value: "Module", label: "Module", description: option }] }]
+    mark.answer = { q0: answer }
+    f.put(f.markKey.replace("frm_actual", formID), mark)
+    const part = structuredClone(f.part)
+    part.state.input.questions = [{ ...part.state.input.questions[0], question: text, options: [{ label: "Module", description: option }] }]
+    ;(part.state as { metadata?: unknown }).metadata = { answers: [[answer]] }
+    f.db.prepare("INSERT INTO session_message VALUES(?,?,?,?)").run(messageID, "ses_root", "assistant", JSON.stringify({ content: [part] }))
+  }
+}
+
+test("40 earlier coordinator Forms quoting the tag only in answers or options never hide this decision's answer; many bound answers stay fail-closed", async () => {
   const { requestID, missionID } = coordinatorMission("review-history")
-  const question = `Choose the seam? ${decisionQuestionTag(missionID, "decision")}`
+  const tag = decisionQuestionTag(missionID, "decision"), question = `Choose the seam? ${tag}`
   const f = await fixture("ses_root", question)
   try {
     const { control, readout, candidates } = await wayfinderOnRoot(f, requestID, "decision")
     assert.equal((await f.submit()).statusCode, 204)
     f.expire()
-    const copy = (index: number, text: string) => {
-      const formID = `frm_${String(index).padStart(3, "0")}`, messageID = `msg_old_${index}`, mark = structuredClone(f.get(f.markKey))
-      mark.formID = formID; mark.form.id = formID; mark.form.metadata.tool.messageID = messageID; mark.form.fields[0].description = text
-      f.put(f.markKey.replace("frm_actual", formID), mark)
-      f.db.prepare("INSERT INTO session_message SELECT ?,session_id,type,data FROM session_message WHERE id='msg_question'").run(messageID)
-    }
-    // 40 answered Forms about other matters sort before this decision's Form.
-    for (let index = 0; index < 40; index++) copy(index, `Earlier question ${index}?`)
+    // Unrelated questions whose answers and options mention the tag as a background reference.
+    history(f, Array.from({ length: 40 }, (_, index) => index), { answer: `Background reference: ${tag}`, option: `See ${tag}` })
     const found = (await candidates())!
     assert.deepEqual(found.candidates.map(item => item.artifact.provenance.formID), ["frm_actual"])
     assert.equal(found.complete, true)
     assert.equal((await control.report("ses_root", readout)).disposition, "reported")
-    // Beyond the bound, answers that name this decision leave the discovery incomplete rather than picking one.
-    for (let index = 100; index < 140; index++) copy(index, question)
-    const many = (await candidates())!
-    assert.equal(many.complete, false)
+    // Beyond the bound, questions that do bind this decision leave the discovery incomplete rather than picking one.
+    history(f, Array.from({ length: 40 }, (_, index) => 100 + index), { question: () => question, answer: "Module" })
+    assert.equal((await candidates())!.complete, false)
+  } finally { await f.dispose() }
+})
+
+test("a question quoting a second decision's tag settles neither decision, even at final verification", async () => {
+  const { requestID, missionID } = coordinatorMission("review-r2-quoted-tag")
+  const seam = decisionQuestionTag(missionID, "choose-seam"), deletion = decisionQuestionTag(missionID, "delete-production")
+  const question = `Which module seam? ${seam} Background only, NOT a deletion approval: the blocked task is "${deletion}".`
+  const f = await fixture("ses_root", question)
+  try {
+    const { control, readout } = await wayfinderOnRoot(f, requestID, "choose-seam")
+    await control.declare("ses_root", { taskKey: "delete-production", title: "Approve deleting production", brief: "Ask for deletion consent", role: "decision", blockedBy: [] })
+    assert.equal((await f.submit()).statusCode, 204)
+    for (const taskKey of ["delete-production", "choose-seam"]) {
+      assert.deepEqual(await control.decisionCandidates("ses_root", missionID, taskKey), { candidates: [], complete: true }, `${taskKey} is not offered`)
+      await assert.rejects(control.report("ses_root", { ...readout, taskKey }), /Decision outcome required/)
+      await assert.rejects(control.report("ses_root", { ...readout, taskKey, artifact: relabelled(missionID, taskKey, question) }), /does not settle this decision task/)
+      const { nativeCall: _call, delegationToolName: _name, ...request } = f.decision
+      await assert.rejects(f.native.verify({ ...request, kind: "coordinator-form-answer", sessionID: "ses_root",
+        contract: { missionID, taskKey, generation: 1 } }), /does not name this decision task/, "the gate refuses the ambiguous field itself")
+    }
+    assert.equal((await control.snapshot()).missions[0].reports.length, 0)
+  } finally { await f.dispose() }
+})
+
+test("one batched question call settles two decisions, each from its own field, behind history quoting both tags", async () => {
+  const { requestID, missionID } = coordinatorMission("review-r2-batch")
+  const seam = decisionQuestionTag(missionID, "choose-seam"), deletion = decisionQuestionTag(missionID, "delete-production")
+  const f = await fixture("ses_root", [`Which module seam? ${seam}`, `May we delete the production database? ${deletion}`])
+  try {
+    const { control, readout } = await wayfinderOnRoot(f, requestID, "choose-seam")
+    await control.declare("ses_root", { taskKey: "delete-production", title: "Approve deleting production", brief: "Ask for deletion consent", role: "decision", blockedBy: [] })
+    assert.equal((await f.submit(true, { q0: "Module", q1: "Not yet" })).statusCode, 204)
+    f.expire()
+    history(f, Array.from({ length: 40 }, (_, index) => index), { answer: `About ${seam} and ${deletion}`, option: `${seam} ${deletion}` })
+    for (const [taskKey, fieldKey, answer] of [["choose-seam", "q0", "Module"], ["delete-production", "q1", "Not yet"]]) {
+      const found = (await control.decisionCandidates("ses_root", missionID, taskKey))!
+      assert.equal(found.complete, true, taskKey)
+      assert.deepEqual(found.candidates.map(item => [item.artifact.provenance.formID, item.artifact.provenance.fieldKey, item.answer]), [["frm_actual", fieldKey, answer]])
+      assert.equal((await control.report("ses_root", { ...readout, taskKey })).disposition, "reported")
+    }
+    const tasks = (await control.snapshot()).missions[0].tasks
+    assert.deepEqual(tasks.map(task => [task.key, (task.report?.artifact as { answer?: string }).answer]), [["choose-seam", "Module"], ["delete-production", "Not yet"]])
+    // A field never settles the other task, even relabelled.
+    await assert.rejects(control.report("ses_root", { ...readout, taskKey: "delete-production",
+      artifact: { ...relabelled(missionID, "delete-production", `Which module seam? ${seam}`), answer: "Module" } }), /already has different|does not settle/)
+    assert.equal((await control.report("ses_root", { ...readout, final: true })).disposition, "finished", "both fields re-verify")
   } finally { await f.dispose() }
 })
 

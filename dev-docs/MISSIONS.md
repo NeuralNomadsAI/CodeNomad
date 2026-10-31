@@ -66,9 +66,11 @@ refuse otherwise. Only one-time coordinators are offered and told about
 
 The human-answer gate's `discover` finds fresh children of the expected parent
 whose `subagent` call carried the exact assignment prompt, and the coordinator's
-answered questions that name this task with its `questionTag`
-(`missions/decision-question-tag.ts`): an exact lookup of the marks holding that
-tag, so unrelated or older answers never spend its bound. It keeps only answers
+answered question fields that bind this task (`fieldDecisionTag` in
+`missions/decision-question-tag.ts`): its bounded lookup counts only marks whose
+question fields (question text or header) hold the task's `questionTag`, so
+unrelated or older Forms, and answers or options quoting the tag, never spend its
+bound. It keeps only answers
 its own `verify` accepts; each candidate names who asked (`askedBy`). A reached
 bound, a pending mark or a confirmed answer that fails verification makes the
 discovery incomplete. `inspect({ taskKey })` lists the candidates as ready
@@ -104,14 +106,18 @@ A completed native Wayfinder `decision` readout is settled by `settleDecision`
   provenance. Accepted without human proof, for evidence that suffices and a choice
   that is cheap to reverse; it never counts as the human's answer or consent.
 - **Human answer**: `{ kind: "decision", decidedBy?: "human", question, answer,
-  provenance }`. A `coordinator-form-answer` provenance cites the coordinator's own
-  question, bound to exactly one decision task: asked from its root conversation
-  (no delegation to prove), its question names the task with the task's
-  `questionTag` (`[decision <taskKey> <code>]`, the code derived from the mission
-  and task, returned with the declaration and by `inspect({ taskKey })`), answered
-  after the task was declared, and its Form field settles no other live decision
-  task. The human reads the tag, so an answer cannot be rebound to another task,
-  mission or reused coordinator root. A `native-form-answer` provenance cites the
+  provenance }`. A `coordinator-form-answer` provenance cites one field of the
+  coordinator's own question call, bound per field to exactly one decision task:
+  asked from its root conversation (no delegation to prove), that field's question
+  text ends with the task's `questionTag` (`[decision <taskKey> <code>]`, the code
+  derived from the mission and task, returned with the declaration and by
+  `inspect({ taskKey })`) and neither its question nor its header holds any other
+  tag, it was answered after the task was declared, and it settles no other live
+  decision task; the field's own answer is the one recorded. Options and answers
+  never bind, a field naming two decisions binds none, and the other fields of a
+  batched question bind independently. MissionControl, the native gate and
+  discovery share that parser (`fieldDecisionTag`). The human reads the tag, so an
+  answer cannot be rebound to another task, mission or reused coordinator root. A `native-form-answer` provenance cites the
   decision conversation's question, kept for missions whose decision workers asked
   themselves. Both need the confirmed UI mark (`MISSIONS_RECURRING.md`, "Wayfinder
   human decision mark"); the final report re-verifies them, binding included.

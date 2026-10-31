@@ -74,7 +74,7 @@ En **Exploración**, las tareas de decisión preparan un resumen y el coordinado
 | **Decisión del coordinador** | El coordinador decidió sin preguntarte; el resultado muestra su justificación y cómo revertirla. Para cambiarla, escribe al coordinador desde **Abrir conversación**. |
 | **Tu respuesta** | Respondiste esta pregunta en el panel de interrupciones de CodeNomad. |
 
-Solo una respuesta que des en el panel de interrupciones cuenta como **Tu respuesta**; un agente no puede responder por ti. Una pregunta de decisión nombra su decisión con una etiqueta como `[decision choose-seam 3fa9c21b]`, y tu respuesta solo resuelve esa decisión. En **Entrega de producto**, un objetivo que ya describe con precisión el cambio de comportamiento cuenta como especificación aprobada; si no, el coordinador te pide que la apruebes y agrupa las aprobaciones pendientes.
+Solo una respuesta que des en el panel de interrupciones cuenta como **Tu respuesta**; un agente no puede responder por ti. Cada pregunta de decisión termina con la etiqueta de la única decisión que resuelve, por ejemplo `[decision choose-seam 3fa9c21b]`. Cuando se preguntan varias decisiones juntas, cada una es una pregunta aparte con su propia etiqueta; una pregunta que nombra dos decisiones no resuelve ninguna. En **Entrega de producto**, un objetivo que ya describe con precisión el cambio de comportamiento cuenta como especificación aprobada; si no, el coordinador te pide que la apruebes y agrupa las aprobaciones pendientes.
 
 ### Informes de situación y solicitudes de actualización {#briefings}
 

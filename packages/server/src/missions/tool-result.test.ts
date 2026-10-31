@@ -45,14 +45,15 @@ test("decision refusals show the exact coordinator-decision shape the gate accep
     const shape = error.message.slice(error.message.indexOf("{"), error.message.indexOf("}") + 1)
     const filled = Object.fromEntries(Object.entries(JSON.parse(shape)).map(([key, value]) => [key, value === "..." ? "Filled" : value]))
     assert.equal(coordinatorDecisionArtifact.safeParse(filled).success, true, "the shown shape is the accepted coordinator decision")
-    assert.ok(error.message.includes(`ask the human from your own conversation with the native question tool, writing ${tag} in the question`))
+    assert.ok(error.message.includes(`ask the human from your own conversation with the native question tool, ending the question with ${tag} `
+      + "and naming no other decision in it (batch several decisions as separate questions, one tag each)"))
     assert.match(error.message, /when several answers qualify, pass the one mission\.inspect\(\{ taskKey \}\) lists, unchanged/)
     assert.match(error.message, /retire the task with mission\.revise and keep the question in the notes/)
   }
-  assert.match(decisionInvocationUnavailable().message, /writing the task's questionTag in the question/)
+  assert.match(decisionInvocationUnavailable().message, /ending the question with the task's questionTag/)
   assert.match(decisionInvocationUnavailable().message, /^Wayfinder decision evidence unavailable: /)
   assert.match(decisionOutcomeRequired().message, /^Decision outcome required: /)
-  assert.match(decisionQuestionUnbound(tag).message, /^This answer does not settle this decision task: .*asked after the task was declared/)
+  assert.match(decisionQuestionUnbound(tag).message, /^This answer does not settle this decision task: the human must answer a question that ends with .* and names no other decision, asked after the task was declared/)
 })
 
 test("the Wayfinder decision requirement routes every decision through the coordinator", () => {
@@ -67,7 +68,7 @@ test("the Wayfinder decision requirement routes every decision through the coord
   assert.ok(WAYFINDER_DECISION_REQUIREMENT.includes(COORDINATOR_DECISION_SHAPE))
   assert.match(WAYFINDER_DECISION_REQUIREMENT, /Defer it when it is not needed yet: retire the task through mission\.revise and keep the question in the notes as fog/)
   assert.match(WAYFINDER_DECISION_REQUIREMENT, /ask the human yourself through the native question tool, batching pending decisions into one call/)
-  assert.match(WAYFINDER_DECISION_REQUIREMENT, /write each decision's questionTag \(returned with its declaration and by mission\.inspect\(\{ taskKey \}\)\) in its question: an answer settles only the decision its question names/)
+  assert.match(WAYFINDER_DECISION_REQUIREMENT, /batching pending decisions into one call as separate questions, and end each question with its own decision's questionTag \(returned with its declaration and by mission\.inspect\(\{ taskKey \}\)\): one tag per question, never another decision's tag in it, since an answer settles only the one decision its question names and a question naming two settles neither/)
   assert.match(WAYFINDER_DECISION_REQUIREMENT, /report the task completed without an artifact; when several answers qualify, pass the one mission\.inspect\(\{ taskKey \}\) lists, unchanged/)
   assert.match(WAYFINDER_DECISION_REQUIREMENT, /Never write the human's answer yourself or present your decision as theirs/)
   assert.ok(recipe.coordinator.includes(WAYFINDER_DECISION_REQUIREMENT))

@@ -13,7 +13,7 @@ import { HUMAN_MARK_STORAGE_PREFIX, humanAnswerBindingInputSchema, humanAnswerBi
 import { nativeDatabaseStorageID } from "./native-database-identity"
 import { verifyHumanAnswerBridge } from "../automation-plugin"
 import { isLocalNativeTool } from "../../missions/native-call-observation"
-import { decisionQuestionTag } from "../../missions/decision-question-tag"
+import { decisionQuestionTag, fieldDecisionTag } from "../../missions/decision-question-tag"
 
 const databaseTag = Context.Service<never, unknown>("@opencode/storage/Database")
 const locationTag = Context.Service<never, unknown>("@opencode/Location")
@@ -148,9 +148,10 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
         const actor = yield* session(request.sessionID)
         if (request.kind === "coordinator-form-answer") {
           // The coordinator asked from its own root conversation: there is no delegation to prove,
-          // and the question the human read names the one decision task its answer settles.
+          // and the cited field's own question names exactly the one decision task its answer settles.
           if (actor.parent_id !== null && actor.parent_id !== undefined) throw new Error("Coordinator question outside a root conversation")
-          if (!request.question.includes(decisionQuestionTag(request.contract.missionID, request.contract.taskKey)))
+          if (fieldDecisionTag(form.fields.find(field => field.key === request.fieldKey) ?? {})
+            !== decisionQuestionTag(request.contract.missionID, request.contract.taskKey))
             throw new Error("Coordinator question does not name this decision task")
         } else {
           const delegation = yield* question(request.nativeCall.parentSessionID, request.nativeCall.parentMessageID,
@@ -192,14 +193,19 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
       let complete = true
       const bounded = <T>(rows: readonly T[], limit: number) => { if (rows.length > limit) complete = false; return rows.slice(0, limit) }
       /** One asking conversation's confirmed answers; false once the answer bound is reached. With `tag`, only the
-       * marks whose question names this decision: an exact lookup, so unrelated history never spends the bound. */
+       * marks with a question field (its question or header) holding this decision's tag: an exact lookup, so unrelated
+       * history, answers or options quoting the tag never spend the bound. Unreadable marks still count (fail closed). */
       const answersOf = async (sessionID: string, askedBy: HumanDecisionCandidate["askedBy"], markLimit: number,
         provenanceOf: (form: { id: string }, tool: { messageID: string; id: string }, fieldKey: string) => HumanDecisionCandidate["artifact"]["provenance"],
         tag?: string) => {
         const prefix = nativeKey(`${HUMAN_MARK_STORAGE_PREFIX}/${stableToken(`${location.project.id}\0${location.project.canonical}`, 24)}/${sessionID}/`)
         const range = [prefix, `${prefix.slice(0, -1)}0`]
         const marks = bounded(await run(tag === undefined ? query("SELECT value FROM kv WHERE key>=? AND key<? LIMIT ?", [...range, markLimit + 1])
-          : query("SELECT value FROM kv WHERE key>=? AND key<? AND instr(value,?)>0 LIMIT ?", [...range, tag, markLimit + 1])), markLimit)
+          // `kv.value` is qualified: json_each has its own `value` column.
+          : query(`SELECT kv.value AS value FROM kv WHERE kv.key>=? AND kv.key<? AND CASE WHEN json_valid(kv.value)
+              THEN EXISTS (SELECT 1 FROM json_each(kv.value,'$.form.fields') AS field WHERE instr(coalesce(json_extract(field.value,'$.description'),''),?)>0
+                OR instr(coalesce(json_extract(field.value,'$.title'),''),?)>0)
+              ELSE instr(kv.value,?)>0 END LIMIT ?`, [...range, tag, tag, tag, markLimit + 1])), markLimit)
         for (const row of marks) {
           const stored = (() => { try { return parse(row.value) } catch { return undefined } })()
           const form = (() => { try { return Schema.decodeUnknownSync(Schema.toType(Form.Info))(object(stored) ? stored.form : undefined) } catch { return undefined } })()
@@ -212,7 +218,7 @@ export const acquireNativeHumanAnswers = Effect.fn("missions.acquireNativeHumanA
             || !form || !object(tool) || typeof tool.messageID !== "string" || typeof tool.id !== "string") { complete = false; continue }
           for (const field of form.fields) {
             const answer = stored.answer[field.key]
-            if (typeof field.description !== "string" || tag !== undefined && !field.description.includes(tag) || !(typeof answer === "string" && answer
+            if (typeof field.description !== "string" || tag !== undefined && fieldDecisionTag(field) !== tag || !(typeof answer === "string" && answer
               || Array.isArray(answer) && answer.length && answer.every(item => typeof item === "string" && item))) continue
             const provenance = provenanceOf(form, { messageID: tool.messageID, id: tool.id }, field.key)
             try {

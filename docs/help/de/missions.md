@@ -74,7 +74,7 @@ In der **Erkundung** bereiten Entscheidungsaufgaben eine Zusammenfassung vor, un
 | **Entscheidung des Koordinators** | Der Koordinator hat entschieden, ohne Sie zu fragen; das Ergebnis zeigt seine Begründung und wie sie sich rückgängig machen lässt. Um sie zu ändern, schreiben Sie dem Koordinator über **Unterhaltung öffnen**. |
 | **Ihre Antwort** | Sie haben diese Frage im Unterbrechungsdock von CodeNomad beantwortet. |
 
-Nur eine Antwort, die Sie im Unterbrechungsdock geben, zählt als **Ihre Antwort**; ein Agent kann nicht für Sie antworten. Eine Entscheidungsfrage nennt ihre Entscheidung mit einer Markierung wie `[decision choose-seam 3fa9c21b]`, und Ihre Antwort klärt nur diese Entscheidung. In der **Produktumsetzung** gilt ein Ziel, das die Verhaltensänderung bereits genau beschreibt, als genehmigte Spezifikation; andernfalls bittet der Koordinator Sie um Genehmigung und bündelt offene Genehmigungen.
+Nur eine Antwort, die Sie im Unterbrechungsdock geben, zählt als **Ihre Antwort**; ein Agent kann nicht für Sie antworten. Jede Entscheidungsfrage endet mit der Markierung der einen Entscheidung, die sie klärt, etwa `[decision choose-seam 3fa9c21b]`. Werden mehrere Entscheidungen zusammen erfragt, ist jede eine eigene Frage mit eigener Markierung; eine Frage, die zwei Entscheidungen nennt, klärt keine davon. In der **Produktumsetzung** gilt ein Ziel, das die Verhaltensänderung bereits genau beschreibt, als genehmigte Spezifikation; andernfalls bittet der Koordinator Sie um Genehmigung und bündelt offene Genehmigungen.
 
 ### Lageberichte und Aktualisierungsanfragen {#briefings}
 
