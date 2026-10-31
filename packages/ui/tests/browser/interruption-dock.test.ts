@@ -114,10 +114,12 @@ test("ordinary question answers settle through the ordinary reply; the human hea
   } finally { await page.close() }
 })
 
-/** Recovery warnings of any cause in the history (one title for all causes); a question
- *  asked meanwhile adds its own "needs your answer" entry. */
+/** Recovery warnings of any cause in the history: a project's own title, or the single
+ *  connection-wide title of an unavailable plugin; a question asked meanwhile adds its
+ *  own "needs your answer" entry. */
 const recoveryWarnings = (page: Page) => page.evaluate(() => (window as any).fixture.notifications()
-  .filter((item: { title?: string }) => /questions and permissions not fully recovered/.test(item.title ?? "")).length)
+  .filter((item: { title?: string }) => /questions and permissions not fully recovered|^Some waiting questions may be missing$/.test(item.title ?? "")).length)
+const unsupportedNotice = /^CodeNomad could not reach its helper in OpenCode, so questions and permission requests that were already waiting may not appear\./
 
 test("removed idle worktree inventory heals before warning while real-event questions keep their draft", async () => {
   const { page, errors } = await fixture()
@@ -162,14 +164,16 @@ test("persistently incomplete recovery uses existing notifications once until re
   const { page, errors } = await fixture(393)
   try {
     await page.evaluate(() => (window as any).fixture.recover("empty"))
-    const warning = page.getByText(/^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./)
+    const warning = page.getByText(unsupportedNotice)
+    const title = page.getByText("Some waiting questions may be missing", { exact: true })
     // A single transient failure is retried by the liveness pass without a warning.
     assert.equal(await recoveryWarnings(page), 0)
     await page.evaluate(() => (window as any).fixture.recover("unsupported"))
     await warning.waitFor()
     assert.equal(await warning.count(), 1)
+    assert.equal(await title.count(), 1, "the plugin notice names no project")
     assert.equal(await recoveryWarnings(page), 1)
-    assert.equal(await page.getByRole("button", { name: /^The CodeNomad plugin that lists pending questions is unavailable in OpenCode\./ }).count(), 0)
+    assert.equal(await page.getByRole("button", { name: unsupportedNotice }).count(), 0)
     await page.getByRole("button", { name: "Close", exact: true }).click()
     await warning.waitFor({ state: "detached" })
     assert.equal(await page.locator(".interruption-dock").count(), 0)
