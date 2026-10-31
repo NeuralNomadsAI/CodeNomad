@@ -9,8 +9,11 @@
 .mission-playbook-roles > dt { font-weight: var(--font-weight-semibold); }
 .mission-playbook-roles > dd { margin: 0 0 var(--space-sm); color: var(--text-secondary); }
 .mission-playbook-instructions > summary { font-size: var(--font-size-base); }
-.mission-reader .mission-playbook-prompt { margin-block: var(--space-md); }
-.mission-playbook-prompt > h4 { margin-block: 0 var(--space-xs); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+/* One fold per recipient, each holding the complete text it receives. */
+.mission-playbook-prompt { margin-block: var(--space-sm); }
+.mission-playbook-prompt > summary { cursor: pointer; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.mission-playbook-prompt[open] > summary { margin-block-end: var(--space-xs); }
+.mission-playbook-prompt > h4 { margin-block: var(--space-sm) var(--space-xs); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
 .mission-playbook-prompt > pre {
   margin: 0;
   padding: var(--space-sm);

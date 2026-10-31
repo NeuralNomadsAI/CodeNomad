@@ -401,9 +401,10 @@ export function MissionEditor(props: {
           </select>
         </label>
         <p id={ids.templateDescription}>{t(`missions.control.template.${template()}.description`)}</p>
-        {/* Steps, roles and the exact instructions open in the central reader. */}
+        {/* Steps, roles and the exact instructions open in the central reader. On narrow layouts that
+            closes the panel, ending the view a request in flight completes in, so wait for it. */}
         <Show when={props.onShowPlaybook}>
-          <button type="button" class="window-text-button" aria-describedby={ids.templateDescription}
+          <button type="button" class="window-text-button" aria-describedby={ids.templateDescription} disabled={pending() || creationPending()}
             onClick={() => props.onShowPlaybook?.(template(), taskMode() ?? "native")}>{t("missions.playbook.details")}</button>
         </Show>
       </div>

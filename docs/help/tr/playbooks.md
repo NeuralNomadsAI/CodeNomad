@@ -2,7 +2,7 @@
 
 Rehber, bir görevin koordinatörünün izlediği çalışma yöntemidir: adımlar, işlere verebileceği roller ve her ajanın aldığı talimatlar. Bu sayfa her rehberi, CodeNomad'in kendisinin neyi zorunlu kıldığını ve neyin modelden uyması istenen bir talimat olarak kaldığını açıklar.
 
-Bir rehberin tam tanımını okumak için görev oluşturma formunda **Seçenekler** bölümünü açın, bir **Rehber** seçin ve açıklamasının altındaki **Ayrıntıları gör** seçeneğini seçin. Merkezi okuyucu adımlarını ve rollerini gösterir; **Ajanların aldığı talimatlar (İngilizce istem metni)** bölümü, seçili **Görev oturumları** politikası için koordinatöre ve her role gönderilen tam metni katlanmış olarak içerir. CodeNomad bu metnin çevresine hedefi, notları, her işin başlığını ve özetini ve tanımlayıcıları ekler. Bu talimatlarda Keşif *Wayfinder Map* olarak adlandırılır.
+Bir rehberin tam tanımını okumak için görev oluşturma formunda **Seçenekler** bölümünü açın, bir **Rehber** seçin ve açıklamasının altındaki **Ayrıntıları gör** seçeneğini seçin. Merkezi okuyucu adımlarını ve rollerini gösterir; **Ajanların aldığı talimatlar (İngilizce istem metni)** bölümü, seçili **Görev oturumları** politikası için koordinatörün her turda aldığı metnin tamamını ve her rolün atama mesajının tamamını (**Bağımsız oturumlar** ile, işin oturumunun her turunun eklediği bağlamı da) katlanmış olarak içerir. [objective] gibi köşeli parantez içindeki alanlar her görevin kendi verilerini temsil eder; ayrı mesajlar görevi başlatır veya sürdürür ve iş sonuçlarını iletir. Bu talimatlarda Keşif *Wayfinder Map* olarak adlandırılır.
 
 ## Rehber seçin {#choose}
 
@@ -20,14 +20,14 @@ Bir rehber koordinatöre yol gösterir; sabit bir işlem hattı çalıştırmaz.
 
 ### Koordinatör ve işler {#coordinator}
 
-Koordinatör görevin ana konuşmasıdır. İşleri bildiren, başlatan, planı değiştiren, iş sonuçlarını kaydeden ve görevi bitiren yalnızca odur. Her turda hedefi, notları ve rehber talimatlarını alır ve ihtiyaç duyduğunda planı okur. İşler kendi atamalarını alır: hedef, başlıkları ve özetleri, rollerinin talimatları ve bağlı oldukları şeyler ([Bağlam bir görevde nasıl akar](missions.md#context-flow) bölümüne bakın).
+Koordinatör görevin ana konuşmasıdır. İşleri bildiren, başlatan, planı değiştiren ve görevi bitiren yalnızca odur. Her turda hedefi, notları ve rehber talimatlarını alır ve ihtiyaç duyduğunda planı okur. İşler kendi atamalarını alır: hedef, başlıkları ve özetleri, rollerinin talimatları ve bağlı oldukları şeyler ([Bağlam bir görevde nasıl akar](missions.md#context-flow) bölümüne bakın). Sonuçlar **Görev oturumları** seçimine göre geri gelir: **Yerel alt ajanlar** ile bir iş sonucunu onu başlatan konuşmaya döndürür ve koordinatör bunu işin raporu olarak kaydeder; **Bağımsız oturumlar** ile her iş kendi raporunu kaydeder ve CodeNomad bunu koordinatöre iletir.
 
 Koordinatöre şu talimatlar verilir:
 
 - yalnızca zaten net olan işi bildirmek ve istediğiniz her iş kolunu kapsamak, hâlâ belirsiz olanı notlara yazmak;
 - hazır bağımsız işleri birbiri ardına değil paralel başlatmak ve bağımlılıkları yalnızca gerçek ön koşullar için kullanmak;
 - bir iş kolunda araç ya da yanıt eksik olduğunda veya o kol başarısız olduğunda ilgisiz işi sürdürmek;
-- bir sonraki adıma karar vermeden önce her işin gerçek sonucunu okumak ve işin raporu olarak kaydetmek.
+- bir sonraki adıma karar vermeden önce her işin gerçek sonucunu okumak ve Yerel alt ajanlar ile bunu işin raporu olarak kaydetmek.
 
 İşler, yerel izinler ve yapılandırılmış iç içe geçme derinliği içinde, gerekirse paralel olarak kendi yardımcı alt ajanlarını başlatabilir. Kapsamı ve güvenlik kurallarını yardımcılarına iletmeli ve yalnızca gerçekten elde ettikleri sonuçları döndürmelidir.
 
@@ -62,7 +62,7 @@ Son rapor neyin teslim edildiğini, neyin kaldığını ve neyin sizin kararın�
 - İş bildirmek, planı değiştirmek ve görevi bitirmek yalnızca koordinatör konuşmasının yapabileceği şeylerdir.
 - Bir işin rolü rehbere ait olmalıdır; Esnek görev hariç.
 - Bağımlılıklar mevcut işleri göstermeli ve döngü oluşturamaz. Bekleyen bir iş asla otomatik başlatılmaz ve bir işin sonucu yalnızca bağlı olduğu işler tamamlandıktan sonra kaydedilir.
-- Bitirmek için tüm iş konuşmaları sona ermiş olmalı ve önceden başlamış geri çekilmiş bir iş son raporunu göndermiş olmalıdır. Başarılı bir bitiş ayrıca her işin tamamlanmış veya geri çekilmiş olmasını gerektirir. Tek seferlik bir görev başarısız olarak bitemez.
+- CodeNomad'in kaydettiği yerel bir iş çağrısının sona erdiği henüz görülmemişken veya çalışması kabul edilmiş geri çekilmiş bir iş ne son raporunu göndermiş ne de sona erdiği görülmüşken bitirme reddedilir. Bu denetimler yalnızca CodeNomad'in kaydettiği çağrıları ve kabulleri kapsar: koordinatöre gerçek sonuçları beklemesi talimatı verilir, ancak onun kaydettiği bir rapor işin konuşmasının durduğunu kanıtlamaz. Başarılı bir bitiş ayrıca her işin tamamlanmış veya geri çekilmiş olmasını gerektirir. Tek seferlik bir görev başarısız olarak bitemez.
 - Her iş, oluşturma sırasında rolü için seçilen ajanı ve modeli ister; koordinatör projenin kataloğundan başka birini belirtirse hariç.
 
 Bir rehberin **CodeNomad'in denetledikleri** bölümü aksini söylemedikçe bu sayfadaki diğer her şey modele verilen bir talimattır.
@@ -118,7 +118,7 @@ Yalnızca [her görevin denetimleri](#common-checks). İş rolleri serbesttir: k
 
 ### Koordinatör ve sorular {#debug-coordinator}
 
-Koordinatör her sonucu okur, iki inceleme eksenini ayrı tutar ve bir adımı ancak bağlı olduğu kanıt mevcut olduğunda başlatır. Her iki inceleyici ve doğrulayıcı için yeni konuşmalar kullanır, çözüm için uygulayıcının kendi konuşmasını sürdürür ve her rolün yapılandırılmış raporunu işin döndürdüğü şeyden kaydeder. Asla denetim uydurmaz ve son kanıtı en son uygulamayı kapsamalıdır.
+Koordinatör her sonucu okur, iki inceleme eksenini ayrı tutar ve bir adımı ancak bağlı olduğu kanıt mevcut olduğunda başlatır. Her iki inceleyici ve doğrulayıcı için yeni konuşmalar kullanır, çözüm için uygulayıcının kendi konuşmasını sürdürür. **Yerel alt ajanlar** ile her rolün yapılandırılmış raporunu işin döndürdüğü şeyden kaydeder; **Bağımsız oturumlar** ile her rol kendi raporunu gönderir. Asla denetim uydurmaz ve son kanıtı en son uygulamayı kapsamalıdır.
 
 Başarısız bir yeniden üretim kurulamadığında tanı uzmanı tahmin etmek yerine neyin eksik olduğunu bildirir; koordinatör bunları kendisi elde edemezse, örneğin tam adımları, verileri veya ortamı size sorar.
 

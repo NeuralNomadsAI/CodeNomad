@@ -2,7 +2,7 @@
 
 Un scénario est la méthode de travail que suit le coordinateur d’une mission : les étapes, les rôles qu’il peut attribuer aux tâches et les instructions que reçoit chaque agent. Cette page décrit chaque scénario, ce que CodeNomad impose lui-même et ce qui reste une instruction que le modèle doit suivre.
 
-Pour lire la définition exacte d’un scénario, ouvrez **Options** dans le formulaire de création de mission, choisissez un **Scénario** et sélectionnez **Voir les détails** sous sa description. Le lecteur central affiche ses étapes et ses rôles ; **Instructions reçues par les agents (texte du prompt en anglais)** replie le texte exact envoyé au coordinateur et à chaque rôle pour la politique **Sessions des tâches** choisie. CodeNomad ajoute autour de ce texte l’objectif, les notes, le titre et les consignes de chaque tâche, ainsi que des identifiants. Dans ces instructions, Exploration s’appelle *Wayfinder Map*.
+Pour lire la définition exacte d’un scénario, ouvrez **Options** dans le formulaire de création de mission, choisissez un **Scénario** et sélectionnez **Voir les détails** sous sa description. Le lecteur central affiche ses étapes et ses rôles ; **Instructions reçues par les agents (texte du prompt en anglais)** replie, pour la politique **Sessions des tâches** choisie, le texte complet que reçoit le coordinateur à chaque tour et le message d’affectation complet de chaque rôle (avec **Sessions indépendantes**, aussi le contexte qu’ajoute chaque tour de la session de la tâche). Les champs entre crochets, comme [objective], représentent les données propres à chaque mission ; des messages distincts démarrent ou reprennent la mission et transmettent les résultats des tâches. Dans ces instructions, Exploration s’appelle *Wayfinder Map*.
 
 ## Choisir un scénario {#choose}
 
@@ -20,14 +20,14 @@ Un scénario guide le coordinateur ; il n’exécute pas un pipeline fixe. CodeN
 
 ### Coordinateur et tâches {#coordinator}
 
-Le coordinateur est la conversation principale de la mission. Lui seul déclare les tâches, les lance, modifie le plan, enregistre les résultats des tâches et termine la mission. Il reçoit l’objectif, les notes et les instructions du scénario à chaque tour et lit le plan quand il en a besoin. Les tâches reçoivent leur affectation : l’objectif, leur titre et leurs consignes, les instructions de leur rôle et ce dont elles dépendent (voir [Comment le contexte circule dans une mission](missions.md#context-flow)).
+Le coordinateur est la conversation principale de la mission. Lui seul déclare les tâches, les lance, modifie le plan et termine la mission. Il reçoit l’objectif, les notes et les instructions du scénario à chaque tour et lit le plan quand il en a besoin. Les tâches reçoivent leur affectation : l’objectif, leur titre et leurs consignes, les instructions de leur rôle et ce dont elles dépendent (voir [Comment le contexte circule dans une mission](missions.md#context-flow)). Les résultats reviennent selon **Sessions des tâches** : avec **Sous-agents natifs**, une tâche renvoie son résultat à la conversation qui l’a lancée et le coordinateur l’enregistre comme rapport de la tâche ; avec **Sessions indépendantes**, chaque tâche enregistre son propre rapport, que CodeNomad transmet au coordinateur.
 
 Le coordinateur a pour instruction de :
 
 - ne déclarer que le travail déjà clair et couvrir chaque volet demandé, en notant ce qui reste flou dans les notes ;
 - lancer en parallèle les tâches indépendantes prêtes plutôt que l’une après l’autre, et n’utiliser les dépendances que pour de vrais prérequis ;
 - faire avancer le travail sans lien quand un volet manque d’un outil, d’une réponse ou échoue ;
-- lire le résultat réel de chaque tâche avant de décider de l’étape suivante, et l’enregistrer comme rapport de la tâche.
+- lire le résultat réel de chaque tâche avant de décider de l’étape suivante et, avec Sous-agents natifs, l’enregistrer comme rapport de la tâche.
 
 Les tâches peuvent lancer leurs propres sous-agents d’aide, en parallèle si c’est utile, dans les limites des autorisations natives et de la profondeur d’imbrication configurée. Elles doivent transmettre le périmètre et les règles de sécurité à leurs aides et ne rapporter que les résultats réellement obtenus.
 
@@ -62,7 +62,7 @@ Le rapport final indique ce qui a été livré, ce qui reste à faire et ce qui 
 - Seule la conversation du coordinateur peut déclarer des tâches, modifier le plan et terminer la mission.
 - Le rôle d’une tâche doit appartenir au scénario, sauf dans Mission flexible.
 - Les dépendances doivent désigner des tâches existantes et ne peuvent pas former de cycle. Une tâche en attente n’est jamais démarrée automatiquement, et le résultat d’une tâche n’est enregistré qu’une fois terminées les tâches dont elle dépend.
-- Pour terminer, toutes les conversations de tâches doivent être finies, et une tâche retirée déjà démarrée doit avoir envoyé son rapport final. Une fin réussie exige en plus que chaque tâche soit terminée ou retirée. Une mission ponctuelle ne peut pas se terminer en échec.
+- La fin est refusée tant qu’un appel natif de tâche enregistré par CodeNomad n’a pas été vu se terminer, ou qu’une tâche retirée dont le travail avait été admis n’a ni envoyé de rapport final ni été vue se terminer. Ces vérifications ne portent que sur les appels et admissions que CodeNomad a enregistrés : le coordinateur a pour instruction d’attendre les résultats réels, mais un rapport qu’il enregistre ne prouve pas que la conversation de la tâche s’est arrêtée. Une fin réussie exige en plus que chaque tâche soit terminée ou retirée. Une mission ponctuelle ne peut pas se terminer en échec.
 - Chaque tâche demande l’agent et le modèle choisis pour son rôle à la création, sauf si le coordinateur en désigne un autre dans le catalogue du projet.
 
 Tout le reste de cette page est une instruction au modèle, sauf indication contraire dans la section **Ce que CodeNomad vérifie** d’un scénario.
@@ -118,7 +118,7 @@ Les preuves d’abord : prouver le bogue et sa cause, le corriger en commençant
 
 ### Coordinateur et questions {#debug-coordinator}
 
-Le coordinateur lit chaque résultat, garde séparés les deux axes de revue et ne lance une étape qu’une fois disponibles les preuves dont elle dépend. Il utilise de nouvelles conversations pour les deux réviseurs et le validateur, poursuit la propre conversation de l’implémenteur pour la résolution et enregistre le rapport structuré de chaque rôle à partir de ce que la tâche a renvoyé. Il n’invente jamais de vérification, et ses preuves finales doivent couvrir la dernière implémentation.
+Le coordinateur lit chaque résultat, garde séparés les deux axes de revue et ne lance une étape qu’une fois disponibles les preuves dont elle dépend. Il utilise de nouvelles conversations pour les deux réviseurs et le validateur, poursuit la propre conversation de l’implémenteur pour la résolution. Avec **Sous-agents natifs**, il enregistre le rapport structuré de chaque rôle à partir de ce que la tâche a renvoyé ; avec **Sessions indépendantes**, chaque rôle soumet le sien. Il n’invente jamais de vérification, et ses preuves finales doivent couvrir la dernière implémentation.
 
 Quand aucune reproduction en échec ne peut être construite, le diagnosticien signale ce qui manque au lieu de deviner ; le coordinateur vous le demande alors, par exemple les étapes exactes, les données ou l’environnement, s’il ne peut pas les obtenir lui-même.
 

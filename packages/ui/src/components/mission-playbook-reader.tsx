@@ -1,4 +1,4 @@
-import { For, Show, createEffect, createSignal, onCleanup } from "solid-js"
+import { For, Show, createEffect, createSignal, onCleanup, type JSX } from "solid-js"
 import type { MissionTemplateId } from "../../../server/src/missions/model"
 import type { MissionPlaybookDetails } from "../../../server/src/missions/playbook-details"
 import type { MissionTaskMode } from "../../../server/src/missions/task-execution-mode"
@@ -7,8 +7,8 @@ import { openExternalUrl } from "../lib/external-url"
 import { helpUrl } from "../lib/help-url"
 import { useI18n } from "../lib/i18n"
 
-/** One playbook as this backend defines it: steps and roles, then, folded, the
- * English instructions its agents receive. Read from the server's recipes, never copied. */
+/** One playbook as this backend defines it: steps and roles, then, folded, the complete English
+ * texts its coordinator and task actors receive. Read from the server's recipes, never copied. */
 export function MissionPlaybookReader(props: { playbook: MissionTemplateId; taskMode: MissionTaskMode }) {
   const { t, locale } = useI18n()
   const [details, setDetails] = createSignal<MissionPlaybookDetails>()
@@ -31,9 +31,11 @@ export function MissionPlaybookReader(props: { playbook: MissionTemplateId; task
   }
   const guideUrl = () => `${helpUrl(locale(), "playbooks")}#${props.playbook}`
   const openGuide = async () => { setHelpFailed(false); setHelpFailed(!await openExternalUrl(guideUrl(), "help")) }
-  const prompt = (title: string, text: string) => <article class="mission-playbook-prompt">
-    <h4>{title}</h4><pre lang="en" dir="ltr">{text}</pre>
-  </article>
+  const text = (value: string) => <pre lang="en" dir="ltr">{value}</pre>
+  // One fold per recipient: each holds the complete text it receives.
+  const prompt = (title: string, body: JSX.Element) => <details class="mission-playbook-prompt">
+    <summary>{title}</summary>{body}
+  </details>
 
   return <div class="mission-playbook-reader">
     <p>{t(`missions.control.template.${props.playbook}.description`)}</p>
@@ -60,13 +62,15 @@ export function MissionPlaybookReader(props: { playbook: MissionTemplateId; task
       <details class="mission-report-technical mission-playbook-instructions">
         <summary>{t("missions.playbook.instructions")}</summary>
         <p class="mission-playbook-note">{t("missions.playbook.instructionsNote", { mode: t(`missions.taskMode.${shown()!.taskMode}`) })}</p>
-        {prompt(t("missions.control.profiles.role.coordinator"), [value().coordinator, ...shown()!.coordinator].join("\n\n"))}
-        {prompt(t("missions.playbook.oneTime"), shown()!.oneTimeCoordinator)}
-        <For each={value().roles}>{role => <>
-          {prompt(roleLabel(role.id, role.title), role.instructions)}
-          <Show when={role.reportContract}>{contract => prompt(t("missions.playbook.reportContract", { role: roleLabel(role.id, role.title) }), contract())}</Show>
-        </>}</For>
-        {prompt(t("missions.playbook.everyTask"), shown()!.task.join("\n\n"))}
+        {prompt(t("missions.playbook.coordinatorOnce"), text(value().prompts.coordinator.once))}
+        {prompt(t("missions.playbook.coordinatorDaily"), text(value().prompts.coordinator.daily))}
+        <For each={value().roles}>{role => {
+          const received = () => value().prompts.roles[role.id]
+          return prompt(roleLabel(role.id, role.title), <Show when={received().session} fallback={text(received().assignment)}>{session => <>
+            <h4>{t("missions.playbook.assignment")}</h4>{text(received().assignment)}
+            <h4>{t("missions.playbook.session")}</h4>{text(session())}
+          </>}</Show>)
+        }}</For>
       </details>
     </>}</Show>
   </div>

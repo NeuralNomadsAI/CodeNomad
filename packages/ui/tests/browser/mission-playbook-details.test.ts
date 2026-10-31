@@ -50,7 +50,10 @@ async function open(options: { fail?: number } = {}) {
 const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 const reader = (page: Page) => page.locator(".mission-reader")
 const instructions = (page: Page) => reader(page).locator("details.mission-playbook-instructions")
-const prompt = (page: Page, title: string) => instructions(page).locator(".mission-playbook-prompt").filter({ has: page.locator("h4", { hasText: new RegExp(`^${title}$`) }) }).locator("pre")
+/** One recipient's fold inside the instructions. */
+const prompt = (page: Page, title: string) => instructions(page).locator("details.mission-playbook-prompt")
+  .filter({ has: page.locator(":scope > summary", { hasText: new RegExp(`^${title}$`) }) })
+const promptText = async (page: Page, title: string) => (await prompt(page, title).locator("pre").allTextContents())
 
 test("See details opens the selected playbook's steps and roles, with its exact instructions folded", async () => {
   const { page, errors, reads, opened } = await open()
@@ -68,17 +71,21 @@ test("See details opens the selected playbook's steps and roles, with its exact 
     assert.equal(await form.isVisible(), true)
     await page.screenshot({ path: screenshotPath("mission-playbook-details") })
 
-    // The English prompt text is folded until asked for, and is exactly the server's.
+    // The complete English texts are folded until asked for, and are exactly the server's.
     assert.equal(await instructions(page).evaluate(element => (element as HTMLDetailsElement).open), false)
-    assert.equal(await prompt(page, "Coordinator").isVisible(), false)
+    assert.equal(await prompt(page, "Coordinator, one-time missions").isVisible(), false)
     await instructions(page).locator(":scope > summary").click()
-    const shared = missionPlaybookDetails("native")
-    assert.equal(await prompt(page, "Coordinator").textContent(), [debug.coordinator, ...shared.coordinator].join("\n\n"))
-    assert.equal(await prompt(page, "Coordinator, one-time missions only").textContent(), shared.oneTimeCoordinator)
-    assert.equal(await prompt(page, "Diagnostician").textContent(), debug.roles[0].instructions)
-    assert.equal(await prompt(page, "Diagnostician: report format").textContent(), debug.roles[0].reportContract)
-    assert.equal(await prompt(page, "Every task assignment").textContent(), shared.task.join("\n\n"))
-    assert.equal(await prompt(page, "Coordinator").getAttribute("lang"), "en")
+    assert.deepEqual(await instructions(page).locator(":scope > details > summary").allInnerTexts(),
+      ["Coordinator, one-time missions", "Coordinator, daily runs", "Diagnostician", "Implementer", "Standards reviewer", "Specification reviewer",
+        "Implementer continuation", "Fresh validator"])
+    assert.equal(await prompt(page, "Diagnostician").evaluate(element => (element as HTMLDetailsElement).open), false)
+    assert.deepEqual(await promptText(page, "Coordinator, one-time missions"), [debug.prompts.coordinator.once])
+    assert.deepEqual(await promptText(page, "Coordinator, daily runs"), [debug.prompts.coordinator.daily])
+    // A native task's whole assignment, its reporting epilogue included; no independent session context.
+    assert.deepEqual(await promptText(page, "Diagnostician"), [debug.prompts.roles.diagnostician.assignment])
+    assert.match(debug.prompts.roles.diagnostician.assignment, /Complete only this task\..*ordinary native subagent result/s)
+    await prompt(page, "Diagnostician").locator(":scope > summary").click()
+    assert.equal(await prompt(page, "Diagnostician").locator("pre").getAttribute("lang"), "en")
     await reader(page).getByText("As sent with Native subagents.", { exact: false }).waitFor()
     await page.screenshot({ path: screenshotPath("mission-playbook-instructions") })
 
@@ -94,8 +101,12 @@ test("See details opens the selected playbook's steps and roles, with its exact 
     await instructions(page).waitFor()
     if (!await instructions(page).evaluate(element => (element as HTMLDetailsElement).open)) await instructions(page).locator(":scope > summary").click()
     const wayfinder = missionPlaybookDetails("independent").playbooks.find(playbook => playbook.id === "wayfinder")!
-    assert.match(await prompt(page, "Coordinator").textContent() ?? "", /persisted user-selected taskMode is independent/)
-    assert.equal((await prompt(page, "Coordinator").textContent())?.startsWith(wayfinder.coordinator), true)
+    assert.deepEqual(await promptText(page, "Coordinator, one-time missions"), [wayfinder.prompts.coordinator.once])
+    assert.match(wayfinder.prompts.coordinator.once, /persisted user-selected taskMode is independent/)
+    // An independent task: its assignment, which reports through mission.report, and its per-turn session context.
+    assert.deepEqual(await prompt(page, "Decision worker").locator("h4").allTextContents(), ["Assignment message", "Every turn of its independent session"])
+    assert.deepEqual(await promptText(page, "Decision worker"), [wayfinder.prompts.roles.decision.assignment, wayfinder.prompts.roles.decision.session])
+    assert.match(wayfinder.prompts.roles.decision.assignment, /When finished, call mission\.report/)
     assert.deepEqual(reads, ["native", "independent"])
 
     await reader(page).getByRole("button", { name: "Back to chat", exact: true }).click()
@@ -103,6 +114,43 @@ test("See details opens the selected playbook's steps and roles, with its exact 
     assert.equal(await form.isVisible(), true)
     assert.deepEqual(errors, [])
   } finally { await page.close() }
+})
+
+// Revealing the reader can close a narrow panel, which ends the view a creation completes in.
+for (const status of [200, 400] as const) test(`See details waits for an in-flight creation, whose delayed ${status === 200 ? "success closes" : "rejection reopens"} the form`, async () => {
+  const { page, errors } = await open()
+  let release!: () => void
+  const held = new Promise<void>(resolve => { release = resolve })
+  const reached = new Promise<void>(resolve => {
+    void page.route("**/api/workspaces/fixture/missions", async route => {
+      if (route.request().method() !== "POST") return route.fallback()
+      const body = route.request().postDataJSON()
+      resolve(); await held
+      return status === 400 ? route.fulfill({ status, json: { error: "Invalid mission creation request" } })
+        : route.fulfill({ json: { mission: { version: 1, id: "msn_created", projectID: "project", projectCanonical: "fixture", objective: body.objective,
+          template: "custom", status: "active", runState: "prepared", coordinatorSessionId: "ses_coordinator", revision: 1, createdAt: 1, updatedAt: 1,
+          history: [], historyTruncated: false, frontier: [], claims: [], actors: [], tasks: [], reports: [] } } })
+    })
+  })
+  try {
+    const form = page.locator("form.mission-editor"), details = form.getByRole("button", { name: "See details", exact: true })
+    await form.locator("textarea").first().fill("Delayed creation")
+    await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+    await form.getByRole("button", { name: "Create", exact: true }).click()
+    await reached
+    assert.equal(await details.isDisabled(), true)
+    // A programmatic click on the disabled button must not open the reader or end the creation's view.
+    await details.evaluate(button => (button as HTMLButtonElement).click())
+    release()
+    if (status === 200) await form.waitFor({ state: "detached" })
+    else {
+      await form.getByRole("alert").filter({ hasText: /./ }).waitFor()
+      await page.waitForFunction(() => !(document.querySelector('form.mission-editor button[type="submit"]') as HTMLButtonElement)?.disabled)
+      assert.equal(await details.isDisabled(), false)
+    }
+    assert.equal(await reader(page).count(), 0)
+    assert.deepEqual(errors, [])
+  } finally { release(); await page.close() }
 })
 
 test("an unavailable playbook read is reported and retried only on request", async () => {

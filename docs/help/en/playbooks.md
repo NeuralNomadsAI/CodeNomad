@@ -2,7 +2,7 @@
 
 A playbook is the working method a mission's coordinator follows: the steps, the roles it can give tasks, and the instructions each agent receives. This page describes each playbook, what CodeNomad itself enforces and what remains an instruction the model is asked to follow.
 
-To read a playbook's exact definition, open **Options** in the mission creation form, choose a **Playbook** and select **See details** under its description. The central reader shows its steps and roles; **Instructions the agents receive (English prompt text)** folds the exact text sent to the coordinator and to each role for the selected **Task sessions** policy. CodeNomad adds the objective, notes, each task's title and brief, and identifiers around that text. In those instructions, Exploration is called *Wayfinder Map*.
+To read a playbook's exact definition, open **Options** in the mission creation form, choose a **Playbook** and select **See details** under its description. The central reader shows its steps and roles; **Instructions the agents receive (English prompt text)** folds, for the selected **Task sessions** policy, the complete text the coordinator receives on every turn and each role's complete assignment message (with **Independent sessions**, also the context each turn of the task's session adds). Bracketed fields such as [objective] stand for each mission's own data; separate messages start or resume the mission and deliver task results. In those instructions, Exploration is called *Wayfinder Map*.
 
 ## Choose a playbook {#choose}
 
@@ -20,14 +20,14 @@ A playbook guides the coordinator; it does not run a fixed pipeline. CodeNomad n
 
 ### Coordinator and tasks {#coordinator}
 
-The coordinator is the mission's main conversation. Only it declares tasks, starts them, changes the plan, records task results and finishes the mission. It receives the objective, notes and playbook instructions on every turn and reads the plan whenever it needs to. Tasks receive their assignment: the objective, their title and brief, their role's instructions and what they depend on (see [How context flows through a mission](missions.md#context-flow)).
+The coordinator is the mission's main conversation. Only it declares tasks, starts them, changes the plan and finishes the mission. It receives the objective, notes and playbook instructions on every turn and reads the plan whenever it needs to. Tasks receive their assignment: the objective, their title and brief, their role's instructions and what they depend on (see [How context flows through a mission](missions.md#context-flow)). Results come back according to **Task sessions**: with **Native subagents**, a task returns its result to the conversation that launched it and the coordinator records it as the task's report; with **Independent sessions**, each task records its own report, which CodeNomad delivers to the coordinator.
 
 The coordinator is told to:
 
 - declare only work that is already clear and cover every workstream you asked for, recording what is still unclear in the notes;
 - launch independent ready tasks in parallel instead of one after another, and use dependencies only for real prerequisites;
 - keep unrelated work moving when one workstream lacks a tool, an answer or fails;
-- read each task's actual result before deciding the next step, and record it as the task's report.
+- read each task's actual result before deciding the next step and, with Native subagents, record it as the task's report.
 
 Tasks may launch their own helper subagents, in parallel when useful, within native permissions and the configured nesting depth. They must pass the scope and safety rules to their helpers and return only results they actually obtained.
 
@@ -62,7 +62,7 @@ The final report states what was delivered, what remains and what needs your dec
 - Only the coordinator conversation can declare tasks, change the plan and finish the mission.
 - A task's role must belong to the playbook, except in Flexible mission.
 - Dependencies must name existing tasks and cannot form a cycle. A waiting task is never started automatically, and a task's result is recorded only once the tasks it depends on are complete.
-- Finishing needs every task conversation to have ended, and a retired task that had already started to have sent its final report. A green finish also needs every task complete or retired. A one-time mission cannot finish as failed.
+- Finishing is refused while a native task call that CodeNomad recorded has not been seen to end, or while a retired task whose work had been admitted has neither sent a final report nor been seen to end. These checks cover only the calls and admissions CodeNomad recorded: the coordinator is told to wait for real results, but a report it records does not prove that the task's conversation has stopped. A green finish also needs every task complete or retired. A one-time mission cannot finish as failed.
 - Each task requests the agent and model chosen for its role at creation, unless the coordinator names another one from the project's catalog.
 
 Everything else on this page is an instruction to the model unless a playbook's **What CodeNomad checks** section says otherwise.
@@ -118,7 +118,7 @@ Evidence first: prove the bug and its cause, fix it test-first, have two indepen
 
 ### Coordinator and questions {#debug-coordinator}
 
-The coordinator reads every result, keeps the two review axes separate and launches a step only once the evidence it depends on exists. It uses fresh conversations for both reviewers and the validator, continues the implementer's own conversation for the resolution, and records each role's structured report from what the task returned. It never invents checks, and its final evidence must cover the latest implementation.
+The coordinator reads every result, keeps the two review axes separate and launches a step only once the evidence it depends on exists. It uses fresh conversations for both reviewers and the validator, continues the implementer's own conversation for the resolution. With **Native subagents** it records each role's structured report from what the task returned; with **Independent sessions** each role submits its own. It never invents checks, and its final evidence must cover the latest implementation.
 
 When no failing reproduction can be built, the diagnostician reports what is missing rather than guessing; the coordinator then asks you for it, for example the exact steps, data or environment, if it cannot obtain them itself.
 

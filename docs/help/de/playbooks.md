@@ -2,7 +2,7 @@
 
 Ein Playbook ist die Arbeitsmethode, der der Koordinator einer Mission folgt: die Schritte, die Rollen, die er Aufgaben geben kann, und die Anweisungen, die jeder Agent erhält. Diese Seite beschreibt jedes Playbook, was CodeNomad selbst durchsetzt und was eine Anweisung bleibt, der das Modell folgen soll.
 
-Um die genaue Definition eines Playbooks zu lesen, öffnen Sie im Formular zur Missionserstellung **Optionen**, wählen ein **Playbook** und wählen unter seiner Beschreibung **Details anzeigen**. Der zentrale Leser zeigt Schritte und Rollen; **Anweisungen, die die Agenten erhalten (englischer Prompt-Text)** klappt den genauen Text ein, der für die gewählte Einstellung **Aufgabensitzungen** an den Koordinator und jede Rolle gesendet wird. CodeNomad fügt um diesen Text das Ziel, die Notizen, Titel und Auftrag jeder Aufgabe sowie Kennungen hinzu. In diesen Anweisungen heißt Erkundung *Wayfinder Map*.
+Um die genaue Definition eines Playbooks zu lesen, öffnen Sie im Formular zur Missionserstellung **Optionen**, wählen ein **Playbook** und wählen unter seiner Beschreibung **Details anzeigen**. Der zentrale Leser zeigt Schritte und Rollen; **Anweisungen, die die Agenten erhalten (englischer Prompt-Text)** klappt für die gewählte Einstellung **Aufgabensitzungen** den vollständigen Text ein, den der Koordinator in jeder Runde erhält, und die vollständige Zuweisungsnachricht jeder Rolle (mit **Unabhängige Sitzungen** auch den Kontext, den jede Runde der Aufgabensitzung hinzufügt). Felder in eckigen Klammern wie [objective] stehen für die eigenen Daten jeder Mission; eigene Nachrichten starten die Mission oder setzen sie fort und liefern Aufgabenergebnisse. In diesen Anweisungen heißt Erkundung *Wayfinder Map*.
 
 ## Ein Playbook wählen {#choose}
 
@@ -20,14 +20,14 @@ Ein Playbook leitet den Koordinator; es führt keine feste Pipeline aus. CodeNom
 
 ### Koordinator und Aufgaben {#coordinator}
 
-Der Koordinator ist die Hauptunterhaltung der Mission. Nur er erklärt Aufgaben, startet sie, ändert den Plan, erfasst Aufgabenergebnisse und beendet die Mission. Er erhält in jeder Runde Ziel, Notizen und Playbook-Anweisungen und liest den Plan, wann immer er ihn braucht. Aufgaben erhalten ihre Zuweisung: das Ziel, ihren Titel und Auftrag, die Anweisungen ihrer Rolle und das, wovon sie abhängen (siehe [Wie Kontext durch eine Mission fließt](missions.md#context-flow)).
+Der Koordinator ist die Hauptunterhaltung der Mission. Nur er erklärt Aufgaben, startet sie, ändert den Plan und beendet die Mission. Er erhält in jeder Runde Ziel, Notizen und Playbook-Anweisungen und liest den Plan, wann immer er ihn braucht. Aufgaben erhalten ihre Zuweisung: das Ziel, ihren Titel und Auftrag, die Anweisungen ihrer Rolle und das, wovon sie abhängen (siehe [Wie Kontext durch eine Mission fließt](missions.md#context-flow)). Ergebnisse kommen je nach **Aufgabensitzungen** zurück: Mit **Native Unteragenten** gibt eine Aufgabe ihr Ergebnis an die Unterhaltung zurück, die sie gestartet hat, und der Koordinator erfasst es als Bericht der Aufgabe; mit **Unabhängige Sitzungen** erfasst jede Aufgabe ihren eigenen Bericht, den CodeNomad dem Koordinator zustellt.
 
 Der Koordinator ist angewiesen,
 
 - nur bereits klare Arbeit zu erklären und jeden gewünschten Arbeitsstrang abzudecken, Unklares hält er in den Notizen fest;
 - unabhängige bereite Aufgaben parallel statt nacheinander zu starten und Abhängigkeiten nur für echte Voraussetzungen zu nutzen;
 - unabhängige Arbeit weiterlaufen zu lassen, wenn einem Strang ein Werkzeug oder eine Antwort fehlt oder er scheitert;
-- das tatsächliche Ergebnis jeder Aufgabe zu lesen, bevor er den nächsten Schritt wählt, und es als Bericht der Aufgabe zu erfassen.
+- das tatsächliche Ergebnis jeder Aufgabe zu lesen, bevor er den nächsten Schritt wählt, und es mit Native Unteragenten als Bericht der Aufgabe zu erfassen.
 
 Aufgaben dürfen eigene Hilfs-Unteragenten starten, bei Bedarf parallel, innerhalb der nativen Berechtigungen und der konfigurierten Verschachtelungstiefe. Sie müssen Umfang und Sicherheitsregeln an ihre Helfer weitergeben und dürfen nur tatsächlich erzielte Ergebnisse zurückgeben.
 
@@ -62,7 +62,7 @@ Der Abschlussbericht nennt, was geliefert wurde, was bleibt und was Ihre Entsche
 - Nur die Koordinator-Unterhaltung kann Aufgaben erklären, den Plan ändern und die Mission beenden.
 - Die Rolle einer Aufgabe muss zum Playbook gehören, außer bei Flexible Mission.
 - Abhängigkeiten müssen bestehende Aufgaben nennen und dürfen keinen Zyklus bilden. Eine wartende Aufgabe wird nie automatisch gestartet, und das Ergebnis einer Aufgabe wird erst erfasst, wenn die Aufgaben, von denen sie abhängt, abgeschlossen sind.
-- Zum Beenden müssen alle Aufgaben-Unterhaltungen beendet sein, und eine zurückgezogene, bereits gestartete Aufgabe muss ihren Abschlussbericht gesendet haben. Ein erfolgreicher Abschluss verlangt zusätzlich, dass jede Aufgabe abgeschlossen oder zurückgezogen ist. Eine einmalige Mission kann nicht als fehlgeschlagen enden.
+- Das Beenden wird abgelehnt, solange ein von CodeNomad erfasster nativer Aufgabenaufruf nicht als beendet beobachtet wurde oder eine zurückgezogene Aufgabe, deren Arbeit bereits angenommen war, weder einen Abschlussbericht gesendet hat noch als beendet beobachtet wurde. Diese Prüfungen erfassen nur die Aufrufe und Annahmen, die CodeNomad aufgezeichnet hat: Der Koordinator ist angewiesen, auf echte Ergebnisse zu warten, doch ein Bericht, den er erfasst, beweist nicht, dass die Unterhaltung der Aufgabe beendet ist. Ein erfolgreicher Abschluss verlangt zusätzlich, dass jede Aufgabe abgeschlossen oder zurückgezogen ist. Eine einmalige Mission kann nicht als fehlgeschlagen enden.
 - Jede Aufgabe fordert den bei der Erstellung für ihre Rolle gewählten Agenten und das Modell an, sofern der Koordinator keinen anderen aus dem Katalog des Projekts nennt.
 
 Alles andere auf dieser Seite ist eine Anweisung an das Modell, sofern der Abschnitt **Was CodeNomad prüft** eines Playbooks nichts anderes sagt.
@@ -118,7 +118,7 @@ Belege zuerst: Fehler und Ursache beweisen, testgetrieben beheben, die Korrektur
 
 ### Koordinator und Fragen {#debug-coordinator}
 
-Der Koordinator liest jedes Ergebnis, hält die beiden Prüfachsen getrennt und startet einen Schritt erst, wenn die Belege vorliegen, von denen er abhängt. Er nutzt neue Unterhaltungen für beide Prüfer und den Validator, setzt für die Auflösung die eigene Unterhaltung des Implementierers fort und erfasst den strukturierten Bericht jeder Rolle aus dem, was die Aufgabe zurückgegeben hat. Er erfindet nie Prüfungen, und seine abschließenden Belege müssen die neueste Implementierung abdecken.
+Der Koordinator liest jedes Ergebnis, hält die beiden Prüfachsen getrennt und startet einen Schritt erst, wenn die Belege vorliegen, von denen er abhängt. Er nutzt neue Unterhaltungen für beide Prüfer und den Validator, setzt für die Auflösung die eigene Unterhaltung des Implementierers fort. Mit **Native Unteragenten** erfasst er den strukturierten Bericht jeder Rolle aus dem, was die Aufgabe zurückgegeben hat; mit **Unabhängige Sitzungen** reicht jede Rolle ihren eigenen ein. Er erfindet nie Prüfungen, und seine abschließenden Belege müssen die neueste Implementierung abdecken.
 
 Lässt sich keine fehlschlagende Reproduktion bauen, meldet der Diagnostiker, was fehlt, statt zu raten; der Koordinator fragt Sie dann danach, etwa nach den genauen Schritten, Daten oder der Umgebung, wenn er sie nicht selbst beschaffen kann.
 

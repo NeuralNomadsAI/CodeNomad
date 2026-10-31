@@ -2,7 +2,7 @@
 
 Un guion es el método de trabajo que sigue el coordinador de una misión: los pasos, los roles que puede asignar a las tareas y las instrucciones que recibe cada agente. Esta página describe cada guion, lo que CodeNomad impone por sí mismo y lo que sigue siendo una instrucción que se pide al modelo que siga.
 
-Para leer la definición exacta de un guion, abre **Opciones** en el formulario de creación de misiones, elige un **Guion** y selecciona **Ver detalles** bajo su descripción. El lector central muestra sus pasos y roles; **Instrucciones que reciben los agentes (texto del prompt en inglés)** pliega el texto exacto enviado al coordinador y a cada rol para la política de **Sesiones de tareas** elegida. CodeNomad añade alrededor de ese texto el objetivo, las notas, el título y el encargo de cada tarea, e identificadores. En esas instrucciones, Exploración se llama *Wayfinder Map*.
+Para leer la definición exacta de un guion, abre **Opciones** en el formulario de creación de misiones, elige un **Guion** y selecciona **Ver detalles** bajo su descripción. El lector central muestra sus pasos y roles; **Instrucciones que reciben los agentes (texto del prompt en inglés)** pliega, para la política de **Sesiones de tareas** elegida, el texto completo que recibe el coordinador en cada turno y el mensaje de asignación completo de cada rol (con **Sesiones independientes**, también el contexto que añade cada turno de la sesión de la tarea). Los campos entre corchetes, como [objective], representan los datos propios de cada misión; mensajes aparte inician o reanudan la misión y entregan los resultados de las tareas. En esas instrucciones, Exploración se llama *Wayfinder Map*.
 
 ## Elegir un guion {#choose}
 
@@ -20,14 +20,14 @@ Un guion orienta al coordinador; no ejecuta una secuencia fija. CodeNomad nunca 
 
 ### Coordinador y tareas {#coordinator}
 
-El coordinador es la conversación principal de la misión. Solo él declara tareas, las inicia, cambia el plan, registra los resultados de las tareas y termina la misión. Recibe el objetivo, las notas y las instrucciones del guion en cada turno y lee el plan cuando lo necesita. Las tareas reciben su asignación: el objetivo, su título y encargo, las instrucciones de su rol y aquello de lo que dependen (consulta [Cómo circula el contexto en una misión](missions.md#context-flow)).
+El coordinador es la conversación principal de la misión. Solo él declara tareas, las inicia, cambia el plan y termina la misión. Recibe el objetivo, las notas y las instrucciones del guion en cada turno y lee el plan cuando lo necesita. Las tareas reciben su asignación: el objetivo, su título y encargo, las instrucciones de su rol y aquello de lo que dependen (consulta [Cómo circula el contexto en una misión](missions.md#context-flow)). Los resultados vuelven según **Sesiones de tareas**: con **Subagentes nativos**, una tarea devuelve su resultado a la conversación que la lanzó y el coordinador lo registra como informe de la tarea; con **Sesiones independientes**, cada tarea registra su propio informe, que CodeNomad entrega al coordinador.
 
 El coordinador tiene instrucciones para:
 
 - declarar solo el trabajo que ya está claro y cubrir cada línea de trabajo que pediste, anotando en las notas lo que sigue sin aclarar;
 - lanzar en paralelo las tareas independientes listas en lugar de una tras otra, y usar dependencias solo para requisitos reales;
 - mantener en marcha el trabajo no relacionado cuando a una línea le falta una herramienta o una respuesta, o falla;
-- leer el resultado real de cada tarea antes de decidir el siguiente paso y registrarlo como informe de la tarea.
+- leer el resultado real de cada tarea antes de decidir el siguiente paso y, con Subagentes nativos, registrarlo como informe de la tarea.
 
 Las tareas pueden lanzar sus propios subagentes auxiliares, en paralelo si es útil, dentro de los permisos nativos y la profundidad de anidamiento configurada. Deben transmitir el alcance y las reglas de seguridad a sus auxiliares y devolver solo resultados obtenidos de verdad.
 
@@ -62,7 +62,7 @@ El informe final indica lo entregado, lo que queda y lo que requiere tu decisió
 - Solo la conversación del coordinador puede declarar tareas, cambiar el plan y terminar la misión.
 - El rol de una tarea debe pertenecer al guion, salvo en Misión flexible.
 - Las dependencias deben nombrar tareas existentes y no pueden formar un ciclo. Una tarea en espera nunca se inicia automáticamente, y el resultado de una tarea solo se registra cuando han terminado las tareas de las que depende.
-- Para terminar, todas las conversaciones de tareas deben haber acabado, y una tarea retirada que ya había empezado debe haber enviado su informe final. Un final correcto exige además que cada tarea esté completada o retirada. Una misión única no puede terminar como fallida.
+- Terminar se rechaza mientras una llamada nativa de tarea registrada por CodeNomad no se haya visto terminar, o mientras una tarea retirada cuyo trabajo ya se había admitido no haya enviado un informe final ni se haya visto terminar. Estas comprobaciones solo abarcan las llamadas y admisiones que CodeNomad registró: el coordinador tiene instrucciones de esperar resultados reales, pero un informe que registra no demuestra que la conversación de la tarea se haya detenido. Un final correcto exige además que cada tarea esté completada o retirada. Una misión única no puede terminar como fallida.
 - Cada tarea solicita el agente y el modelo elegidos para su rol al crear la misión, salvo que el coordinador indique otro del catálogo del proyecto.
 
 Todo lo demás de esta página es una instrucción al modelo, salvo que la sección **Lo que CodeNomad comprueba** de un guion diga lo contrario.
@@ -118,7 +118,7 @@ Primero la evidencia: demostrar el error y su causa, corregirlo empezando por un
 
 ### Coordinador y preguntas {#debug-coordinator}
 
-El coordinador lee cada resultado, mantiene separados los dos ejes de revisión y lanza un paso solo cuando existe la evidencia de la que depende. Usa conversaciones nuevas para ambos revisores y el validador, continúa la propia conversación del implementador para la resolución y registra el informe estructurado de cada rol a partir de lo que devolvió la tarea. Nunca inventa comprobaciones, y su evidencia final debe cubrir la implementación más reciente.
+El coordinador lee cada resultado, mantiene separados los dos ejes de revisión y lanza un paso solo cuando existe la evidencia de la que depende. Usa conversaciones nuevas para ambos revisores y el validador, continúa la propia conversación del implementador para la resolución. Con **Subagentes nativos** registra el informe estructurado de cada rol a partir de lo que devolvió la tarea; con **Sesiones independientes** cada rol envía el suyo. Nunca inventa comprobaciones, y su evidencia final debe cubrir la implementación más reciente.
 
 Cuando no se puede construir una reproducción que falle, el diagnosticador informa de lo que falta en lugar de adivinar; el coordinador te lo pide entonces, por ejemplo los pasos exactos, los datos o el entorno, si no puede obtenerlos él mismo.
 

@@ -96,9 +96,10 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     if (open) settleMissionEditor(open)
   }
   const openPreferences = () => void openSettings("missions")
-  // Playbook details need no Mission or conversation; the editor stays open beside them.
+  // Playbook details need no Mission or conversation; the editor stays open beside them. Reading is
+  // not a panel intent: the editor's operation stays current, and the reader change itself fences
+  // in-flight conversation navigation (conversationEpoch).
   const showPlaybook = (template: MissionMap["template"], taskMode: "native" | "independent") => {
-    intent++
     batch(() => {
       showSessionChatFor(props.activeSessionId() ?? "", scope())
       updateMissionProjectView(scope(), { reader: { missionId: template, kind: "playbook", taskMode } })
