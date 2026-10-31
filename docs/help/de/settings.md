@@ -32,6 +32,8 @@ Werden Farben schwer lesbar, wählen Sie eine integrierte Palette oder setzen di
 
 ## Panels und Statusabschnitte {#panels-status}
 
+Ziehen Sie am inneren Rand eines angedockten Panels, um seine Größe zu ändern. Der Griff bleibt während des Ziehens hervorgehoben und behält die Zeigererfassung, auch wenn der Zeiger den Rand verlässt. Lassen Sie los, um abzuschließen.
+
 1. Verwenden Sie **Linke Seitenleiste** und **Rechte Seitenleiste** an den äußeren Kopfecken oder deren Menüpunkte unter **Ansicht** zum Ein-/Ausblenden.
 2. Öffnen Sie **Rechtes Panel anpassen** im rechten Panel. Wählen Sie integrierte Tabs und Statusabschnitte per Kontrollkästchen; mindestens ein Statusabschnitt bleibt sichtbar. Ziehen Sie über diese Kontrollkästchen, um mehrere auf einmal einzustellen.
 3. Ziehen Sie rechte Panel-Tabs zum Umordnen. **Zurücksetzen** stellt integrierte Layoutauswahlen wieder her.

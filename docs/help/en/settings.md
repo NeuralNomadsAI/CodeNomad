@@ -32,6 +32,8 @@ If colors become hard to read, select a built-in palette or reset the edited one
 
 ## Panels and Status sections {#panels-status}
 
+Drag a docked panel's inner edge to resize it. The handle stays highlighted and retains the pointer throughout the drag, including when the pointer moves beyond its edge. Release to finish.
+
 1. Use **Left panel** and **Right panel** at the outer header corners, or their **View** menu items, to show or hide each panel.
 2. Open **Customize right panel** in the right panel. Use checkboxes to choose built-in tabs and Status sections; at least one Status section remains visible. Drag across these checkboxes to set several at once.
 3. Drag right-panel tabs to reorder them. Use **Reset** to restore built-in layout choices.
