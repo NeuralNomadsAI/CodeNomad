@@ -63,7 +63,8 @@ export class MultiwindowLifecycle {
           this.dependencies.app.quit()
           return
         }
-        await this.flushWindow(record)
+        // A hidden launch window holds no user state: dispose it even when its renderer never started.
+        if (!this.dependencies.isLaunchWindow?.(record.window)) await this.flushWindow(record)
         if (record.persisted !== false && !await this.dependencies.removeWindowState(record.id)) {
           closing = false
           this.pendingWindowCloses.delete(record.window)

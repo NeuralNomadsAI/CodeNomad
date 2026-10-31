@@ -462,6 +462,10 @@ impl LocalWindows {
             .collect()
     }
 
+    pub(crate) fn is_connect_only(&self, label: &str) -> bool {
+        self.record(label).is_some_and(|record| record.connect_only)
+    }
+
     pub(crate) fn connect_only_labels(&self) -> Vec<String> {
         self.records()
             .into_iter()

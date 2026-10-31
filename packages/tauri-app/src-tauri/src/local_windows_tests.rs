@@ -63,6 +63,8 @@ fn new_window_admission_ignores_hidden_launch_windows() {
         windows.connect_only_labels(),
         vec![local_window_label(&id(99)).unwrap()]
     );
+    assert!(windows.is_connect_only(&local_window_label(&id(99)).unwrap()));
+    assert!(!windows.is_connect_only(&local_window_label(&id(0)).unwrap()));
     // Shutdown asks only user windows' renderers to persist their state.
     let user_labels = windows.user_window_labels();
     assert_eq!(user_labels.len(), MAX_LOCAL_WINDOWS);

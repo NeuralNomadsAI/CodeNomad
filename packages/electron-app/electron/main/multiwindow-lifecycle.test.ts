@@ -116,21 +116,42 @@ test("a hidden launch window never keeps the last remote window from quitting", 
   assert.deepEqual(calls, ["prevent", "quit"])
 })
 
-test("a launch window closing beside its remote window is an ordinary unpersisted close", async () => {
+test("a launch window still on its loading page is disposed without a renderer flush", async () => {
   const calls: string[] = []
-  const launch = { ...windowRecord("launch", calls), persisted: false }
-  const remote = { isDestroyed: () => false }
+  const launch = { ...windowRecord("launch", calls), persisted: false, tracker: null }
+  // A backend startup failure hands the connection off before the App installs its flush callback.
+  launch.window.webContents.executeJavaScript = async () => { calls.push("renderer:launch"); throw new Error("Renderer client-state flush callback is unavailable") }
+  const fallback = { isDestroyed: () => false }
   const lifecycle = new MultiwindowLifecycle({
     app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
     clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
-    getLocalWindows: () => [launch], getAllWindows: () => [launch.window, remote as never],
+    getLocalWindows: () => [launch], getAllWindows: () => [launch.window, fallback as never],
     isLaunchWindow: (window) => window === launch.window,
     removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
   })
   lifecycle.attach(launch)
   launch.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
   await tick()
-  assert.deepEqual(calls, ["prevent", "renderer:launch", "native:launch", "close:launch"])
+  assert.deepEqual(calls, ["prevent", "close:launch"], "only the fallback window remains")
+})
+
+test("an ordinary unpersisted window still flushes its renderer before closing", async () => {
+  const calls: string[] = []
+  // It may hold user work: only launch-owned windows skip the persistence safeguard.
+  const ephemeral = { ...windowRecord("ephemeral", calls), persisted: false }
+  const launch = { isDestroyed: () => false }
+  const remote = { isDestroyed: () => false }
+  const lifecycle = new MultiwindowLifecycle({
+    app: { on: () => {}, quit: () => calls.push("quit"), exit: () => calls.push("exit") } as never,
+    clientStateManager: { isPrimary: true } as never, cliManager: { shutdown: async () => calls.push("stop") } as never,
+    getLocalWindows: () => [ephemeral], getAllWindows: () => [ephemeral.window, launch as never, remote as never],
+    isLaunchWindow: (window) => window === (launch as never),
+    removeWindowState: async (id) => { calls.push(`remove:${id}`); return true }, getAllowedRendererOrigins: () => ["http://localhost"], isTrustedRendererOrigin: () => true,
+  })
+  lifecycle.attach(ephemeral)
+  ephemeral.events.get("close")?.({ preventDefault: () => calls.push("prevent") })
+  await tick()
+  assert.deepEqual(calls, ["prevent", "renderer:ephemeral", "native:ephemeral", "close:ephemeral"])
 })
 
 test("closing every window quits, Remote Control included", () => {

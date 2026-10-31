@@ -1709,7 +1709,16 @@ enum LocalCloseEventAction {
     Continue,
 }
 
-fn local_close_event_action(consumed: Option<bool>, in_flight: bool) -> LocalCloseEventAction {
+/// A hidden `--connect-server` launch window holds no user state: it closes at once, without the
+/// renderer flush whose acknowledgement a renderer that never started cannot send.
+fn local_close_event_action(
+    consumed: Option<bool>,
+    in_flight: bool,
+    launch_window: bool,
+) -> LocalCloseEventAction {
+    if launch_window {
+        return LocalCloseEventAction::Allow;
+    }
     match consumed {
         Some(true) => LocalCloseEventAction::Allow,
         Some(false) => LocalCloseEventAction::Prevent,
@@ -2269,7 +2278,10 @@ fn main() {
                 if local_window {
                     let consumed = shutdown::consume_local_window_close(&app_handle, &label);
                     let in_flight = shutdown::local_window_close_in_flight(&app_handle, &label);
-                    match local_close_event_action(consumed, in_flight) {
+                    let launch_window = app_handle
+                        .state::<local_windows::LocalWindows>()
+                        .is_connect_only(&label);
+                    match local_close_event_action(consumed, in_flight, launch_window) {
                         LocalCloseEventAction::Allow => return,
                         LocalCloseEventAction::Prevent => {
                             api.prevent_close();
@@ -2727,17 +2739,28 @@ mod menu_tests {
     #[test]
     fn approved_local_close_wins_over_its_in_flight_marker() {
         assert_eq!(
-            local_close_event_action(Some(true), true),
+            local_close_event_action(Some(true), true, false),
             LocalCloseEventAction::Allow
         );
         assert_eq!(
-            local_close_event_action(None, true),
+            local_close_event_action(None, true, false),
             LocalCloseEventAction::Prevent
         );
         assert_eq!(
-            local_close_event_action(None, false),
+            local_close_event_action(None, false, false),
             LocalCloseEventAction::Continue
         );
+    }
+
+    #[test]
+    fn hidden_launch_windows_close_without_a_renderer_flush() {
+        // Continue would request the flush that a launch window still on loading.html never acknowledges.
+        for (consumed, in_flight) in [(None, false), (None, true), (Some(false), false)] {
+            assert_eq!(
+                local_close_event_action(consumed, in_flight, true),
+                LocalCloseEventAction::Allow
+            );
+        }
     }
 
     #[test]
