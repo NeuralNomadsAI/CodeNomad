@@ -83,6 +83,14 @@ Es una solicitud de modelo independiente que usa el contexto de la sesión. No e
 
 Cerrar cancela la solicitud aparte pendiente sin interrumpir la sesión principal. Salir de la conversación activa borra esta ventana efímera; copia primero lo que necesites. Las respuestas vacías/con error aparecen aquí en lugar de convertirse en mensajes de la transcripción.
 
+## Seguir trabajando hacia un objetivo con /goal {#goal}
+
+1. Envía `/goal` seguido de un objetivo, por ejemplo `/goal Make every test pass`. La sesión sigue trabajando, turno tras turno, hasta que el revisor de objetivos de OpenCode decide que el objetivo se ha cumplido.
+2. Mientras la conversación tiene un objetivo, **Estado** lo muestra en una línea encima de **Tokens**: su estado (**Activo**, **En pausa** o **Cumplido**), el objetivo y las rondas usadas sobre el máximo permitido. Pasa el puntero por el objetivo o dale el foco para leerlo completo, con el motivo del último cambio, como por qué el objetivo se pausó o se cumplió.
+3. Usa **Pausar objetivo** o **Reanudar objetivo** en esa línea, o envía `/goal pause` o `/goal resume`. Usa **Borrar objetivo** o `/goal clear` para quitar el objetivo.
+
+Un objetivo pertenece a su conversación: las subsesiones y las bifurcaciones empiezan sin ninguno. OpenCode también pausa un objetivo por sí mismo cuando detienes la sesión, cuando una ejecución falla, cuando deja de avanzar, al llegar a su límite de rondas o cuando el servicio se reinicia; reanúdalo para continuar. Pausar o borrar no deshace el trabajo ya hecho. Un comando que no aplica, como pausar sin un objetivo activo, muestra el mensaje de OpenCode. Sin objetivo, o con un servicio de OpenCode sin soporte de objetivos, la línea no aparece.
+
 ## Bifurcar, deshacer y recuperar una ejecución fallida {#fork-errors}
 
 1. En un mensaje, elige **Bifurcar después de este mensaje** para crear una conversación después de ese punto sin reemplazar la original.

@@ -83,6 +83,14 @@ Dies ist eine separate Modellanfrage mit dem Sitzungskontext. Sie führt keine W
 
 Schließen bricht die wartende Nebenanfrage ab, ohne die Hauptsitzung zu unterbrechen. Das Verlassen der aktiven Unterhaltung leert dieses flüchtige Fenster; kopieren Sie benötigte Inhalte vorher. Leere Antworten/Fehler erscheinen hier, nicht als Verlaufsnachrichten.
 
+## Mit /goal auf ein Ziel hinarbeiten {#goal}
+
+1. Senden Sie `/goal` gefolgt von einem Ziel, zum Beispiel `/goal Make every test pass`. Die Sitzung arbeitet Runde um Runde weiter, bis der Zielprüfer von OpenCode das Ziel als erreicht beurteilt.
+2. Solange die Unterhaltung ein Ziel hat, zeigt **Status** es in einer Zeile über **Tokens**: seinen Zustand (**Aktiv**, **Pausiert** oder **Erreicht**), das Ziel und die verbrauchten Runden vom erlaubten Maximum. Zeigen Sie auf das Ziel oder fokussieren Sie es, um es vollständig zu lesen, mit dem Grund der letzten Änderung, etwa warum das Ziel pausiert oder erreicht wurde.
+3. Verwenden Sie **Ziel pausieren** oder **Ziel fortsetzen** in dieser Zeile oder senden Sie `/goal pause` oder `/goal resume`. Mit **Ziel entfernen** oder `/goal clear` entfernen Sie das Ziel.
+
+Ein Ziel gehört zu seiner Unterhaltung: Untersitzungen und Abzweigungen beginnen ohne Ziel. OpenCode pausiert ein Ziel auch selbst, wenn Sie die Sitzung stoppen, ein Lauf fehlschlägt, kein Fortschritt mehr entsteht, das Rundenlimit erreicht ist oder der Dienst neu startet; setzen Sie es fort, um weiterzumachen. Pausieren oder Entfernen macht bereits erledigte Arbeit nicht rückgängig. Ein Befehl, der nicht passt, etwa Pausieren ohne aktives Ziel, zeigt die Meldung von OpenCode. Ohne Ziel oder mit einem OpenCode-Dienst ohne Zielunterstützung erscheint die Zeile nicht.
+
 ## Abzweigen, rückgängig machen und Fehler beheben {#fork-errors}
 
 1. Wählen Sie an einer Nachricht **Nach dieser Nachricht abzweigen (Fork)**, um nach diesem Punkt eine Unterhaltung anzulegen, ohne das Original zu ersetzen.

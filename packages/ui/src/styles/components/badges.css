@@ -10,8 +10,26 @@
     .settings-scope-badge,
     .tool-call-todo-status,
     .tool-call-todo-tag,
-    .git-change-section-count) {
+    .git-change-section-count,
+    .session-goal-badge) {
   border-radius: var(--chip-radius);
+}
+
+/* A session goal's status (components/session/session-goal-line.tsx). */
+.session-goal-badge {
+  @apply inline-flex shrink-0 items-center px-1.5 py-0.5 text-xs font-medium;
+  background-color: var(--badge-neutral-bg);
+  color: var(--badge-neutral-text);
+}
+
+.session-goal-badge[data-status="paused"] {
+  background-color: var(--status-starting-bg);
+  color: var(--status-starting-fg);
+}
+
+.session-goal-badge[data-status="complete"] {
+  background-color: var(--status-ready-bg);
+  color: var(--status-ready-fg);
 }
 
 .neutral-badge {

@@ -19,6 +19,7 @@ import type { Session } from "../../../../../types/session"
 
 import ContextUsagePanel from "../../../../session/context-usage-panel"
 import ProviderUsagePanel from "../../../../session/provider-usage-panel"
+import SessionGoalLine from "../../../../session/session-goal-line"
 import InstanceServiceStatus from "../../../../instance-service-status"
 import { togglePermissionAutoAcceptForSession } from "../../../../../stores/instances"
 import { isPermissionAutoAcceptEnabled } from "../../../../../stores/permission-auto-accept"
@@ -276,6 +277,9 @@ const StatusTab: Component<StatusTabProps> = (props) => {
 
   return (
     <div class="status-tab-container">
+      <Show when={props.activeSession()?.id}>
+        {(sessionId) => <SessionGoalLine instanceId={props.instanceId} sessionId={sessionId()} active={props.isActive()} />}
+      </Show>
       <Accordion.Root
         class="right-panel-accordion"
         collapsible

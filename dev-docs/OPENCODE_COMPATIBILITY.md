@@ -50,6 +50,28 @@ environment, transcript and inbox stay untouched, and closing aborts only that
 request. `scripts/test-session-aside-native.mjs` (private daemon, local
 provider) runs in the minimum/latest CI matrix.
 
+### Session goal (`/goal`)
+
+The Status tab's goal line consumes OpenCode's built-in goal plugin
+(`@opencode/schema/goal`): the `opencode.goal` RPC's `get({ sessionID })`, which
+answers the Session's own `Goal.State` or null, and its `changed` event
+(`rpc.opencode.goal.changed`, `{ sessionID, goal }`), published in the Session's
+Location on every write. The instance proxy refuses plugin RPCs, so
+`GET /api/workspaces/:id/sessions/:sessionId/goal` (`server/routes/session-goal.ts`)
+is the read path: it reads the Session, checks its Location's ownership, calls the
+fixed method in that Location and returns only the displayed fields
+(`opencode/goal-contract.ts`). An `RpcError` of type `rpc.unavailable` or
+`rpc.method_not_found` answers `unsupported`; any other failure or unreadable state
+answers `unavailable`, and the line shows nothing for either. Pause, Resume and
+Clear run the native `goal` command with `pause`, `resume` or `clear` through the
+composer's command path (`executeCustomCommand`: session admission, instructions,
+profile environment at the proxy); a refused command (`No active goal to pause.`)
+shows its message in a notice. The relay routes plugin RPC events to the workspace
+owning their Location, so the UI applies `changed` directly and reads only on
+demand, on reconnect and after its own commands ([refresh rules](CACHE_REFRESH_CONVENTIONS.md)).
+`scripts/test-session-goal-native.mjs` (private daemon, local provider whose plain
+reply the goal reviewer rejects, pausing the goal) runs in the minimum/latest CI matrix.
+
 ### Contract notes
 
 - Generated client URLs keep their `baseUrl` prefix and pass through unchanged;

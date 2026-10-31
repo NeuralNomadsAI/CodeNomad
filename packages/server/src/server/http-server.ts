@@ -29,6 +29,7 @@ import { registerPermissionReceiptRoutes } from "./routes/permission-receipts"
 import type { PermissionReceipts } from "../permissions/receipts"
 import { registerSessionPruningRoutes } from "./routes/session-pruning"
 import { registerImagesConversationRoute } from "./routes/images-conversation"
+import { registerSessionGoalRoute } from "./routes/session-goal"
 import { registerSessionMediaRoutes } from "./routes/session-media"
 import { registerWorktreeRoutes } from "./routes/worktrees"
 import { registerPendingRequestRoutes } from "./routes/pending-requests"
@@ -417,6 +418,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   if (deps.permissionReceipts) registerPermissionReceiptRoutes(app, deps.permissionReceipts)
   registerSessionPruningRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
   registerImagesConversationRoute(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence })
+  registerSessionGoalRoute(app, { workspaceManager: deps.workspaceManager })
   registerSessionMediaRoutes(app, { workspaceManager: deps.workspaceManager })
   registerInstanceProxyRoutes(app, { workspaceManager: deps.workspaceManager, logger: proxyLogger, worktreeDeletionFence, accounts, permissionReceipts: deps.permissionReceipts,
     humanAnswers: { auth: deps.authManager, manager: deps.workspaceManager, settings: deps.settings, bridgeToken: deps.automationBridgeToken,
