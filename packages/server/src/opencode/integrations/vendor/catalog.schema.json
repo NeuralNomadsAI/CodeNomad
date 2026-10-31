@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/spec/schemas/catalog.schema.json",
+  "title": "Reviewed integration catalog",
+  "description": "catalog.json, published as the asset of a `catalog-v<n>` release. At most 256 KiB (262144 bytes) and 64 integrations. Readers and packages/conformance also reject two entries sharing an `id`, `package`, `plugin` or `rpc`, which JSON Schema cannot express.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "integrations"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "integrations": {
+      "type": "array",
+      "maxItems": 64,
+      "items": { "$ref": "#/$defs/entry" }
+    }
+  },
+  "$defs": {
+    "integrationId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+    "neuralnomadsId": { "type": "string", "pattern": "^neuralnomads\\.[a-z][a-z0-9-]{0,31}$" },
+    "range": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[0-9xX*^~<>=|. -]+$" },
+    "summary": {
+      "type": "object",
+      "required": ["en"],
+      "propertyNames": { "pattern": "^[a-z]{2}(-[A-Z][A-Za-z]{1,3})?$" },
+      "maxProperties": 16,
+      "additionalProperties": { "type": "string", "minLength": 1, "maxLength": 300 }
+    },
+    "entry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "package",
+        "range",
+        "displayName",
+        "family",
+        "plugin",
+        "rpc",
+        "summary",
+        "app",
+        "docs",
+        "status"
+      ],
+      "properties": {
+        "id": { "$ref": "#/$defs/integrationId" },
+        "package": { "type": "string", "pattern": "^@neuralnomads/opencode-[a-z][a-z0-9-]{0,31}$" },
+        "range": { "$ref": "#/$defs/range" },
+        "displayName": { "type": "string", "pattern": "^OpenCode for \\S.*$", "maxLength": 60 },
+        "family": { "enum": ["native", "vendor-mcp", "api"] },
+        "plugin": { "$ref": "#/$defs/neuralnomadsId" },
+        "rpc": { "$ref": "#/$defs/neuralnomadsId" },
+        "summary": { "$ref": "#/$defs/summary" },
+        "app": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1, "maxLength": 60 },
+            "versions": { "$ref": "#/$defs/range" }
+          }
+        },
+        "host": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["protocol", "range"],
+          "properties": {
+            "protocol": { "type": "integer", "minimum": 1 },
+            "range": { "$ref": "#/$defs/range" }
+          }
+        },
+        "vendor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["server"],
+          "properties": {
+            "server": { "type": "string", "minLength": 1, "maxLength": 80 },
+            "minAppVersion": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+){0,2}$" }
+          }
+        },
+        "docs": {
+          "type": "string",
+          "maxLength": 300,
+          "pattern": "^https://github\\.com/NeuralNomadsAI/opencode-integrations/"
+        },
+        "status": { "enum": ["preview", "stable", "deprecated"] },
+        "sources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "git": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "string",
+                "maxLength": 200,
+                "pattern": "^github:NeuralNomadsAI/opencode-integrations#"
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "family": { "const": "native" } }, "required": ["family"] },
+          "then": { "required": ["host"] },
+          "else": { "not": { "required": ["host"] } }
+        },
+        {
+          "if": { "properties": { "family": { "const": "vendor-mcp" } }, "required": ["family"] },
+          "else": { "not": { "required": ["vendor"] } }
+        }
+      ]
+    }
+  },
+  "examples": [
+    {
+      "schemaVersion": 1,
+      "integrations": [
+        {
+          "id": "blender",
+          "package": "@neuralnomads/opencode-blender",
+          "range": "^0.1",
+          "displayName": "OpenCode for Blender",
+          "family": "native",
+          "plugin": "neuralnomads.blender",
+          "rpc": "neuralnomads.blender",
+          "summary": {
+            "en": "Edit Blender scenes from OpenCode.",
+            "fr": "Modifier des scènes Blender depuis OpenCode."
+          },
+          "app": { "name": "Blender", "versions": ">=5.2" },
+          "host": { "protocol": 1, "range": "^0.1.0" },
+          "docs": "https://github.com/NeuralNomadsAI/opencode-integrations/tree/main/integrations/blender",
+          "status": "preview",
+          "sources": { "git": ["github:NeuralNomadsAI/opencode-integrations#"] }
+        }
+      ]
+    }
+  ]
+}

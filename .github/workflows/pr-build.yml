@@ -221,6 +221,11 @@ jobs:
           # with a native ref, duplicate and stale refusals, unload with cache kept.
           node --import tsx scripts/test-plugin-sources-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # OpenCode integration fixtures: fake package through the fake registry,
+          # RPC outputs within the zod contract, marker mismatch, isolated Python
+          # discovery advertising a fake host, no host secret in outputs or log.
+          node --import tsx scripts/test-integration-fixtures-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Design agent and skills copied into a project's .opencode/: native
           # discovery, notices kept out of model text, skills unlisted but loadable.
           node --import tsx scripts/test-design-content-native.mjs $cli
@@ -520,6 +525,9 @@ jobs:
 
       - name: Test Stats restoration and connection fences explicitly
         run: node --import tsx --test packages/server/src/opencode/service-usage.test.ts
+
+      - name: Test the fake OpenCode integration and npm registry fixtures
+        run: node --import tsx --test scripts/fixtures/fake-integration/fake-integration.test.mjs
 
       - name: Prepare Tauri test resources
         run: >-

@@ -1,0 +1,208 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/spec/schemas/rpc.schema.json",
+  "title": "RPC status contract of an OpenCode integration (contract 1, draft 0.1)",
+  "description": "One definition per method input and output (`<method>.input`, `<method>.output`) and per event (`<event>.event`), each self-contained. Output definitions are reader schemas: unknown properties are allowed and ignored by readers; producers of this repository emit only the properties named here (packages/conformance checks the strict form). `advertise.input` and `withdraw.input` are validated by the plugin itself, which answers `refused` or `none` instead of an RPC validation error. Rules that need the marker (family-specific fields, marker equality) are enforced by packages/conformance.",
+  "$defs": {
+    "status.input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "status.output": {
+      "type": "object",
+      "required": ["contract", "integration"],
+      "properties": {
+        "contract": { "const": 1 },
+        "integration": {
+          "type": "object",
+          "required": ["id", "version", "family", "spec"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+            "version": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+            },
+            "family": { "enum": ["native", "vendor-mcp", "api"] },
+            "spec": { "const": 0 }
+          }
+        },
+        "host": {
+          "type": "object",
+          "required": ["state"],
+          "properties": {
+            "state": { "enum": ["absent", "incompatible", "outdated", "ok", "unknown", "unsupported"] },
+            "partVersion": {
+              "type": "string",
+              "maxLength": 64,
+              "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+            },
+            "expectedRange": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[0-9xX*^~<>=|. -]+$" },
+            "appVersion": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[^/\\\\\\p{Cc}]+$"
+            },
+            "action": { "enum": ["install", "update"] }
+          }
+        },
+        "connection": {
+          "type": "object",
+          "required": ["state"],
+          "properties": {
+            "state": { "enum": ["none", "available", "attached", "connected", "signed_out", "error"] },
+            "offers": { "type": "integer", "minimum": 0, "maximum": 16 },
+            "attachedSessions": { "type": "integer", "minimum": 0, "maximum": 10000 }
+          }
+        },
+        "notices": {
+          "type": "array",
+          "maxItems": 8,
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,31}$" }
+        }
+      }
+    },
+    "installHost.input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "target": { "const": "default" }
+      }
+    },
+    "installHost.output": {
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": { "enum": ["installed", "updated", "unchanged", "refused", "failed"] },
+        "detail": { "type": "string", "minLength": 1, "maxLength": 300, "pattern": "^[^/\\\\\\p{Cc}]+$" }
+      }
+    },
+    "hosts.input": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "hosts.output": {
+      "type": "object",
+      "required": ["offers"],
+      "properties": {
+        "offers": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "type": "object",
+            "required": ["offerID", "label", "protocol"],
+            "properties": {
+              "offerID": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,64}$" },
+              "label": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "pattern": "^[^/\\\\\\p{Cc}]+$"
+              },
+              "document": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120,
+                "pattern": "^[^/\\\\\\p{Cc}]+$"
+              },
+              "appVersion": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 64,
+                "pattern": "^[^/\\\\\\p{Cc}]+$"
+              },
+              "protocol": { "enum": ["ok", "incompatible"] }
+            }
+          }
+        }
+      }
+    },
+    "attachHost.input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offerID", "sessionID"],
+      "properties": {
+        "offerID": { "type": "string", "pattern": "^[A-Za-z0-9_-]{8,64}$" },
+        "sessionID": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" }
+      }
+    },
+    "attachHost.output": {
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": { "enum": ["attached", "busy", "gone", "refused"] }
+      }
+    },
+    "detachHost.input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sessionID"],
+      "properties": {
+        "sessionID": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,128}$" }
+      }
+    },
+    "detachHost.output": {
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": { "enum": ["detached", "none"] }
+      }
+    },
+    "advertise.input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host", "port", "token", "script_handle", "label", "protocol", "offer_key"],
+      "properties": {
+        "host": { "const": "127.0.0.1" },
+        "port": { "type": "integer", "minimum": 1, "maximum": 65535 },
+        "token": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "script_handle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\p{Cc}]+$"
+        },
+        "label": { "type": "string", "minLength": 1, "maxLength": 120, "pattern": "^[^/\\\\\\p{Cc}]+$" },
+        "protocol": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "offer_key": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" }
+      }
+    },
+    "advertise.output": {
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": { "enum": ["accepted", "renewed", "refused"] }
+      }
+    },
+    "withdraw.input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["offer_key", "token"],
+      "properties": {
+        "offer_key": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,64}$" },
+        "token": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "withdraw.output": {
+      "type": "object",
+      "required": ["outcome"],
+      "properties": {
+        "outcome": { "enum": ["withdrawn", "none"] }
+      }
+    },
+    "status_changed.event": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "hosts_changed.event": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    }
+  }
+}

@@ -59,6 +59,21 @@ edits are the developer's own signal to restart the run.
   travel from spawner to borrower through the environment, so the same code
   runs on every platform the suite runs on.
 
+## Native fixtures
+
+Native product fixtures (`scripts/test-*-native.mjs`) run an isolated OpenCode daemon through
+`withProductRuntime` in `scripts/native-product-fixture.mjs`: a private home, profile, temp, XDG and npm tree,
+an allowlisted environment (`fixtureEnvironment`) that every fixture-owned child also receives, and a loopback
+synthetic provider.
+
+- Package installs go to a loopback fake npm registry, `scripts/fixtures/fake-npm-registry.mjs`, passed as the
+  `registry` option (`npm_config_registry`); it serves what a test publishes and answers 404 for every other name.
+- The fake OpenCode integration, `scripts/fixtures/fake-integration/`, is an installable plugin package with the
+  integration marker, the native RPC contract on an injectable clock, a marker-mismatch mode and a fake host with
+  sentinel secrets; its Python driver runs the reference discovery client against the fixture's own service
+  registration (`writeFixtureServiceRegistration`). [OpenCode integrations](OPENCODE_INTEGRATIONS.md#test-fixtures)
+  describes their options and commands.
+
 ## Agent conventions
 
 - A new browser test either borrows via `borrowFixture({ name, routes })` or

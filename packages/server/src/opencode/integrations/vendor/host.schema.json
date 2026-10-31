@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/spec/schemas/host.schema.json",
+  "title": "Host wire protocol 1 of a native OpenCode integration (draft 0.1)",
+  "description": "Newline-delimited JSON over a loopback TCP connection: one request line, one response line. `hello` is the result of the `hello` method. Rules that need the marker (protocol equality, host and application version ranges) and the capability hash are enforced by the plugin and by packages/conformance.",
+  "$defs": {
+    "request": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "token", "method", "params"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+        "token": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "method": { "type": "string", "pattern": "^[a-z][a-z0-9_.]{0,63}$" },
+        "params": { "type": "object" }
+      }
+    },
+    "response": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["id", "ok", "result"],
+          "properties": {
+            "id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{1,64}$" },
+            "ok": { "const": true },
+            "result": {}
+          }
+        },
+        {
+          "type": "object",
+          "required": ["id", "ok", "error"],
+          "properties": {
+            "id": { "type": "string", "maxLength": 64 },
+            "ok": { "const": false },
+            "error": {
+              "type": "object",
+              "required": ["code"],
+              "properties": {
+                "code": {
+                  "enum": [
+                    "unauthorized",
+                    "invalid_request",
+                    "method_not_found",
+                    "method_disabled",
+                    "invalid_args",
+                    "stale_handle",
+                    "stale_revision",
+                    "expectation_failed",
+                    "mode_conflict",
+                    "busy",
+                    "quarantined",
+                    "permission_denied",
+                    "internal"
+                  ]
+                },
+                "message": { "type": "string", "maxLength": 300 }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "hello": {
+      "type": "object",
+      "required": [
+        "protocol",
+        "host_version",
+        "app_version",
+        "capabilities",
+        "capability_hash",
+        "script_handle",
+        "revision"
+      ],
+      "properties": {
+        "protocol": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "host_version": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(-[0-9A-Za-z.-]+)?(\\+[0-9A-Za-z.-]+)?$"
+        },
+        "app_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[^/\\\\\\p{Cc}]+$"
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["methods", "operations", "undo", "background"],
+          "properties": {
+            "methods": {
+              "type": "array",
+              "maxItems": 512,
+              "uniqueItems": true,
+              "items": { "type": "string", "pattern": "^[a-z][a-z0-9_.]{0,63}$" }
+            },
+            "operations": {
+              "type": "array",
+              "maxItems": 512,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "undoable"],
+                "properties": {
+                  "name": { "type": "string", "pattern": "^[a-z][a-z0-9_.]{0,63}$" },
+                  "undoable": { "type": "boolean" },
+                  "network": { "type": "boolean" }
+                }
+              }
+            },
+            "undo": { "enum": ["transactional", "grouped_best_effort", "none"] },
+            "background": { "type": "boolean" }
+          }
+        },
+        "capability_hash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "script_handle": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200,
+          "pattern": "^[^\\p{Cc}]+$"
+        },
+        "revision": { "type": "integer", "minimum": 0 },
+        "document": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "pattern": "^[^/\\\\\\p{Cc}]+$"
+        }
+      }
+    }
+  }
+}

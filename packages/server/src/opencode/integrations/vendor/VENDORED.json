@@ -1,0 +1,12 @@
+{
+  "repository": "https://github.com/NeuralNomadsAI/opencode-integrations",
+  "revision": "dac13a74860232464d75c4a5840449d40a1b7bbf",
+  "draft": "0.1",
+  "files": {
+    "packages/server/src/opencode/integrations/vendor/catalog.schema.json": { "source": "spec/schemas/catalog.schema.json", "blob": "425f7fbe16c8ada6ba2600058c7e843c3e973ddf" },
+    "packages/server/src/opencode/integrations/vendor/host.schema.json": { "source": "spec/schemas/host.schema.json", "blob": "07a52ccc7352dd1c0b878c88c31a0ce711941045" },
+    "packages/server/src/opencode/integrations/vendor/marker.schema.json": { "source": "spec/schemas/marker.schema.json", "blob": "c0b7d954a34769d1895815e0f2df380b1277c99b" },
+    "packages/server/src/opencode/integrations/vendor/rpc.schema.json": { "source": "spec/schemas/rpc.schema.json", "blob": "db1fa06d7d6e81ce28a2ebd6c978ba8942dbaa86" },
+    "scripts/fixtures/fake-integration/vendor/opencode_service.py": { "source": "packages/integration-kit/python/opencode_service.py", "blob": "7ad95a4e44b3277db381549e27ccefe719c05ead" }
+  }
+}

@@ -55,6 +55,16 @@ export function assertFixtureEnvironment(env) {
   assert(Object.keys(env).every(key => !/^(GIT_|CLOUDSDK_|GOOGLE_|AWS_|AZURE_)|_API_KEY$/i.test(key)), "No Git, cloud or provider credential variable reaches a fixture child")
 }
 
+/** Registers the fixture daemon where host-side discovery looks (`$XDG_STATE_HOME/opencode/service[-<name>].json`
+ * of the fixture `env`), so a fixture host child finds this daemon and never the user's shared service. */
+export async function writeFixtureServiceRegistration(env, { url, pid, version, password }, name) {
+  const directory = path.join(env.XDG_STATE_HOME, "opencode")
+  await mkdir(directory, { recursive: true })
+  const file = path.join(directory, name ? `service-${name}.json` : "service.json")
+  await writeFile(file, JSON.stringify({ url, pid, version, password }))
+  return file
+}
+
 // Shared by product-contract fixtures. Explicit owned process, random password,
 // private discovery/database/home, and a loopback synthetic provider only.
 // `projectConfig` lets the daemon read a fixture project's own `.opencode/` folder. Project discovery
@@ -62,6 +72,7 @@ export function assertFixtureEnvironment(env) {
 // (`CODENOMAD_NATIVE_FIXTURE_PARENT`), or it would read the user's own agents and skills.
 // `registry` points the daemon's package installs at a loopback fake npm registry
 // (`npm_config_registry`), so package fixtures never reach the public registry.
+// `run` also receives the daemon's `env`, the environment of every other fixture-owned child.
 export async function withProductRuntime(cli, prepare, run, { projectConfig = false, registry } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
   assert(!registry || /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(registry), "A fixture registry must be loopback")
@@ -110,7 +121,7 @@ export async function withProductRuntime(cli, prepare, run, { projectConfig = fa
     const boundedFetch = (url, init) => fetch(url, { ...init, signal: AbortSignal.any([...(init?.signal ? [init.signal] : []), AbortSignal.timeout(30_000)]) })
     const client = OpenCode.make({ baseUrl: endpoint.url,
       headers: { authorization: `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}` }, fetch: boundedFetch })
-    await run({ client, root, requests, connection: { endpoint, client, fetch: boundedFetch, assertCurrent() {} } })
+    await run({ client, root, requests, env, connection: { endpoint, client, fetch: boundedFetch, assertCurrent() {} } })
     if (providerError) throw providerError
   } finally {
     try { await stopFixtureChild(child, stopped) } finally {

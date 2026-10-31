@@ -36,6 +36,7 @@ Start with [README](../README.md) for installation and usage, then
 - [Keyboard shortcuts](HOTKEYS.md): the shortcut catalog, recording and dispatch.
 - [Provider accounts](PROVIDER_ACCOUNTS.md): native account selection, usage credentials and bounded quota/rotation policy.
 - [Plugin controls](PLUGIN_CONTROLS.md): adding and removing plugin sources, explicit Global/Project activation, versions and native package check/update.
+- [OpenCode integrations](OPENCODE_INTEGRATIONS.md): the integration marker, catalog and RPC contract, its parity with the vendored specification, and the fake registry and integration fixtures.
 - [Panel extensions](PANEL_EXTENSIONS.md): distribution, trust, consent and sandbox/API boundaries.
 - [Palette sources](PALETTE_SOURCES.md): color provenance and validation.
 
@@ -48,7 +49,7 @@ Start with [README](../README.md) for installation and usage, then
 ## Desktop automation and validation
 
 - [Desktop instrumentation and browser automation](BROWSER_AUTOMATION.md): always-available automation tools, authenticated transport, owned native previews and targeting.
-- [Browser test suite](BROWSER_TESTING.md): the runner-owned fixture daemon, tiered local runner, CI shards, logs and cleanup, and exemption map.
+- [Browser test suite](BROWSER_TESTING.md): the runner-owned fixture daemon, tiered local runner, CI shards, logs and cleanup, exemption map, and the native fixtures' fake registry and integration.
 - [Device emulation](BROWSER_DEVICE_EMULATION.md): touch profiles and sizing contracts.
 - [Desktop data profiles](DESKTOP_DATA_PROFILES.md): profile resolution, isolation and cleanup.
 - [Tauri updates](TAURI_UPDATER.md): signed updates, the update feed and Linux AppImage distribution.

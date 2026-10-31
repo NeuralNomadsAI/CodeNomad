@@ -1,0 +1,92 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/NeuralNomadsAI/opencode-integrations/blob/main/spec/schemas/marker.schema.json",
+  "title": "opencodeIntegration marker",
+  "description": "Static marker under the `opencodeIntegration` key of an integration package.json. Draft 0.x: `spec` is 0. Rules that need the package itself (ID derived from the package name, payload digest, uniqueness across the repository) are enforced by packages/conformance.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["spec", "id", "displayName", "family", "plugin", "rpc"],
+  "properties": {
+    "spec": { "const": 0 },
+    "id": { "$ref": "#/$defs/integrationId" },
+    "displayName": {
+      "type": "string",
+      "pattern": "^OpenCode for \\S.*$",
+      "maxLength": 60
+    },
+    "family": { "enum": ["native", "vendor-mcp", "api"] },
+    "plugin": { "$ref": "#/$defs/neuralnomadsId" },
+    "rpc": { "$ref": "#/$defs/neuralnomadsId" },
+    "host": { "$ref": "#/$defs/host" },
+    "vendor": { "$ref": "#/$defs/vendor" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "family": { "const": "native" } }, "required": ["family"] },
+      "then": { "required": ["host"] },
+      "else": { "not": { "required": ["host"] } }
+    },
+    {
+      "if": { "properties": { "family": { "const": "vendor-mcp" } }, "required": ["family"] },
+      "else": { "not": { "required": ["vendor"] } }
+    }
+  ],
+  "$defs": {
+    "integrationId": { "type": "string", "pattern": "^[a-z][a-z0-9-]{0,31}$" },
+    "neuralnomadsId": { "type": "string", "pattern": "^neuralnomads\\.[a-z][a-z0-9-]{0,31}$" },
+    "range": { "type": "string", "minLength": 1, "maxLength": 64, "pattern": "^[0-9xX*^~<>=|. -]+$" },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["app", "protocol", "range", "appVersions", "payload", "sha256"],
+      "properties": {
+        "app": { "$ref": "#/$defs/integrationId" },
+        "protocol": { "type": "integer", "minimum": 1 },
+        "range": { "$ref": "#/$defs/range" },
+        "appVersions": { "$ref": "#/$defs/range" },
+        "payload": {
+          "type": "string",
+          "maxLength": 200,
+          "pattern": "^host/[a-z][a-z0-9-]*/[A-Za-z0-9._-]+$"
+        },
+        "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+      }
+    },
+    "vendor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["server"],
+      "properties": {
+        "server": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "minAppVersion": { "type": "string", "pattern": "^[0-9]+(\\.[0-9]+){0,2}$" }
+      }
+    }
+  },
+  "examples": [
+    {
+      "spec": 0,
+      "id": "blender",
+      "displayName": "OpenCode for Blender",
+      "family": "native",
+      "plugin": "neuralnomads.blender",
+      "rpc": "neuralnomads.blender",
+      "host": {
+        "app": "blender",
+        "protocol": 1,
+        "range": "^0.1.0",
+        "appVersions": ">=5.2",
+        "payload": "host/blender/opencode_link-0.1.0.zip",
+        "sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "spec": 0,
+      "id": "resolve",
+      "displayName": "OpenCode for DaVinci Resolve",
+      "family": "vendor-mcp",
+      "plugin": "neuralnomads.resolve",
+      "rpc": "neuralnomads.resolve",
+      "vendor": { "server": "ResolveMCP", "minAppVersion": "21.1" }
+    }
+  ]
+}

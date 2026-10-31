@@ -229,9 +229,10 @@ guessed paths.
   <absolute-cli>` adds a registry spec (active, version), an unknown package
   (failed with `ref`), refuses a duplicate and a stale removal, and removes the
   source (unloaded, cache kept). `withProductRuntime(..., { registry })` points
-  the isolated daemon's installs at a loopback fake npm registry through
-  `npm_config_registry`; it answers 404 for unknown names, so package fixtures
-  never reach the public registry.
+  the isolated daemon's installs at the loopback fake npm registry of
+  `scripts/fixtures/fake-npm-registry.mjs` through `npm_config_registry`; it
+  answers 404 for unknown names, so package fixtures never reach the public
+  registry.
 - pending window, removal tracking and removable targets:
   `packages/ui/src/stores/plugin-sources.test.ts`
 - ownership, WSL/host path authority, precedence, visibility of disabled IDs,
