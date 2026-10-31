@@ -6,7 +6,7 @@ import { createRuntimeFetch } from "./transport"
 import { modernContractFixture } from "./contract-fixture"
 
 test("current and future supported releases preserve info, authentication and bounded negotiation", async () => {
-  const reviewed = ["2.2.3"]
+  const reviewed = ["2.2.3", "2.2.5"]
   for (const version of [...reviewed, "2.2.4", "2.3.0", "2.2.100", "3.0.0", "2.2.0-dev.1", "custom-build"]) {
     const endpoint = { url: "http://127.0.0.1:4321", auth: { type: "basic" as const, username: "opencode", password: "fixture" } }
     rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })

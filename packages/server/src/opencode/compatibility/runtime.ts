@@ -25,6 +25,6 @@ export function contractProfile(identity: RuntimeIdentity | undefined): Contract
   // Publication contract reviewed and exercised by the isolated native suites
   // (minimum and qualification target). Unlisted versions still negotiate their
   // authenticated schema.
-  if (identity.version === "2.2.3") return "modern"
+  if (identity.version === "2.2.3" || identity.version === "2.2.5") return "modern"
   return "unknown"
 }

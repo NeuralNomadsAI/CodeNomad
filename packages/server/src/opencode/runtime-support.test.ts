@@ -7,8 +7,8 @@ import { OpenCodeSharedService } from "../workspaces/opencode-service"
 
 test("native plugin runtime minimum does not become an allowlist of tested labels", () => {
   assert.equal(MINIMUM_OPENCODE_VERSION, "2.2.3")
-  assert.equal(RECOMMENDED_OPENCODE_VERSION, "2.2.3")
-  for (const version of ["2.2.3", "2.2.3+custom", "2.2.4", "2.3.0", "2.2.0-dev.1", "3.0.0", "custom-build"]) {
+  assert.equal(RECOMMENDED_OPENCODE_VERSION, "2.2.5")
+  for (const version of ["2.2.3", "2.2.3+custom", "2.2.4", "2.2.5", "2.3.0", "2.2.0-dev.1", "3.0.0", "custom-build"]) {
     assert.equal(isBelowOpenCodeMinimum(version), false, version)
   }
   for (const version of ["2.0.0", "2.0.32", "2.1.0", "2.1.2", "2.1.4", "2.2.0", "2.2.1", "2.2.2", "2.2.2+custom", "0.0.0-beta-19507"]) assert.equal(isBelowOpenCodeMinimum(version), true, version)

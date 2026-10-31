@@ -459,21 +459,21 @@ test("beta version comparison remains numeric", () => {
 })
 
 test("the native contract floor admits current and newer runtimes without a tested-version allowlist", async () => {
-  for (const version of ["2.2.3", "2.2.4", "2.3.0", "3.0.0"]) {
+  for (const version of ["2.2.3", "2.2.4", "2.2.5", "2.3.0", "3.0.0"]) {
     const endpoint: Endpoint = { url: "http://127.0.0.1:9876" }
     rememberRuntime(endpoint, { version, pid: 123, discovery: "info" })
     const service = new OpenCodeUpdateService(deps({
-      probeBinary: () => ({ valid: true, version }), resolveLatestVersion: async () => "2.2.4",
+      probeBinary: () => ({ valid: true, version }), resolveLatestVersion: async () => "2.2.5",
       lifecycle: async () => ({ discover: async () => endpoint, ensure: async () => { throw new Error("must retain daemon") } }),
     }))
     const status = await service.start()
     assert.equal(status.minimumVersion, "2.2.3")
-    assert.equal(status.recommendedVersion, "2.2.3")
+    assert.equal(status.recommendedVersion, "2.2.5")
     assert.equal(status.state, "ready")
     assert.equal(status.serviceState, "ready")
-    assert.equal(status.versionAssessment, version === "2.2.3" ? "tested" : "untested", "only the current recommendation is release-qualified")
+    assert.equal(status.versionAssessment, version === "2.2.5" ? "tested" : "untested", "only the current recommendation is release-qualified")
     assert.equal(status.incompatibilityReason, undefined)
-    assert.equal(status.canUpgrade, version === "2.2.3", "offer an optional upgrade below the latest release; never downgrade current or newer runtimes")
+    assert.equal(status.canUpgrade, version === "2.2.3" || version === "2.2.4", "offer an optional upgrade below the latest release; never downgrade current or newer runtimes")
     assert.equal(status.canRestart, false)
   }
 })
