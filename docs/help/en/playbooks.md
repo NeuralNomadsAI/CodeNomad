@@ -88,7 +88,7 @@ Only the [checks every mission has](#common-checks). Task roles are free: the co
 
 ### Result and pitfalls {#custom-result}
 
-You get the task reports and a final report; code changes stay uncommitted in your working copy unless your objective asks for a commit. Pitfalls:
+You get the task reports and a final report; code changes stay uncommitted in your working copy unless your objective or **Notes** explicitly ask for a commit. Pitfalls:
 
 - A vague objective produces a vague plan: state the outcome and how to verify it, and put constraints in **Notes**.
 - The safety boundary is only in the task assignments, not in this coordinator's instructions; native permissions still apply to everyone.
@@ -132,7 +132,7 @@ Instructions only: the quality of the diagnosis, the reviewers and the validator
 
 ### Result and pitfalls {#debug-result}
 
-You get the diagnosis, the fix and its regression test in your working copy (uncommitted unless your objective asks for a commit), two reviews, the resolution, the validation and a final report. Pitfalls:
+You get the diagnosis, the fix and its regression test in your working copy (uncommitted unless your objective or **Notes** explicitly ask for a commit), two reviews, the resolution, the validation and a final report. Pitfalls:
 
 - Give a reproducible symptom: the command, input or steps that show the bug. Without one, the mission stops at diagnosis and asks you.
 - A check that already fails for an unrelated reason prevents a green validation, so the mission cannot finish green; the coordinator asks you how to proceed.
@@ -163,18 +163,21 @@ A planning playbook for when the destination is clear but the route is not. The 
 
 Workers never ask you; they return briefs and ready questions to the coordinator. The coordinator settles each decision in one of three ways:
 
-- **Decides itself** when the evidence suffices and the choice is cheap to reverse. The task's result is labelled **Coordinator decision** and shows its rationale and how to reverse it.
+- **Decides itself** when the evidence suffices and the choice is cheap to reverse.
 - **Defers** a decision not needed yet: it retires the task and keeps the question in the notes as fog.
-- **Asks you**. Pending decisions go into one form under **Needs you**, one question per decision, each ending with that decision's tag, such as `[decision choose-seam 3fa9c21b]`. The task's result is labelled **Your answer**.
+- **Asks you**, grouping pending decisions into one form under **Needs you**.
 
-It never writes your answer itself or presents its own decision as yours. [Questions and decisions](missions.md#questions) describes both labels.
+It never writes your answer itself or presents its own decision as yours. Where you read the outcome depends on **Task sessions**:
+
+- With **Native subagents**, each question in the form settles one decision and ends with that decision's tag, such as `[decision choose-seam 3fa9c21b]`. The decision task's result is labelled **Coordinator decision**, with its rationale and any reversal guidance the coordinator supplied, or **Your answer**; [Questions and decisions](missions.md#questions) describes both labels.
+- With **Independent sessions**, the coordinator records each outcome in the **Notes**, stating whether it or you decided.
 
 ### What CodeNomad checks {#wayfinder-checks}
 
 - Only the five Exploration roles are accepted.
 - A decision task completes only with the coordinator's own decision or your answer. A coordinator decision states the question, the decision and its rationale, and is never recorded as your answer.
 - Your answer counts only when you gave it in CodeNomad's interface. CodeNomad binds it to a task by the question's tag: the question was asked from the coordinator's conversation, its text ends with that task's tag and names no other decision, it was answered after the task was declared, and it has not settled another decision. Each question of a batched form binds on its own; a question naming two decisions settles neither. An answer to a question asked from the decision task's own conversation is also accepted.
-- A task's own report cannot claim who decided, and finishing the mission checks every completed decision again, tags included.
+- A task's own report cannot claim who decided. Before a mission or daily run finishes as completed, CodeNomad checks every completed decision again, tags included.
 - These checks apply with **Native subagents**. With **Independent sessions**, decision workers report their briefs themselves and the coordinator records each outcome in the notes, stating who decided; CodeNomad does not verify it.
 
 Instructions only: when a choice counts as cheap to reverse, the quality of briefs and research, and keeping to planning.
@@ -185,7 +188,7 @@ You get a map: the destination, recorded decisions with who made them, research 
 
 - Exploration plans; it does not build the destination. Use another playbook, or the prepared follow-up, to implement.
 - Answer under **Needs you**, not in the chat: only an answer given in the interruption dock counts as yours.
-- Read the results labelled **Coordinator decision**; to change one, write to the coordinator from **Open conversation**.
+- With **Native subagents**, read the results labelled **Coordinator decision**; with **Independent sessions**, read the outcomes in the **Notes**. To change a decision, write to the coordinator from **Open conversation**.
 - A destination stated vaguely leaves most of the map in fog.
 
 ## Product delivery {#delivery}
@@ -227,7 +230,7 @@ Only the six Product delivery roles are accepted, plus the [checks every mission
 
 ### Result and pitfalls {#delivery-result}
 
-You get Spec Change Requests, readiness reviews, the implementation in your working copy (uncommitted unless your objective asks for a commit), tests, QA and tech lead verification, updated documentation and a final report. Pitfalls:
+You get Spec Change Requests, readiness reviews, the implementation in your working copy (uncommitted unless your objective or **Notes** explicitly ask for a commit), tests, QA and tech lead verification, updated documentation and a final report. Pitfalls:
 
 - An objective that leaves the behavior open leads to an approval question before any code: state what changes, for whom and how to verify it if you want delivery to start directly.
 - Even a tiny behavior change needs a Spec Change Request.

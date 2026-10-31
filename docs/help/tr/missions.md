@@ -67,14 +67,14 @@ Koordinatörü sonuca varmadan durduğunda ve başka hiçbir şey çalışmıyor
 
 Size yalnızca koordinatör soru sorar. Görevler ve başlattıkları alt ajanlar açık sorularını seçenekler, kanıtlar ve bir öneriyle birlikte ona geri verir. Sormadan önce koordinatör soruyu kendisi çözmeye çalışır: projeyi okur, araştırır, bir göreve inceleme yaptırır veya kolayca geri alınabilen bir varsayılanı benimseyip varsayım olarak kaydeder. Yalnızca kendisinin çözemediği şeyleri sorar: onayınız, kimlik bilgileri, geri alınması pahalı seçimler veya hedefin açık bıraktığı ürün kararları. Bekleyen soruları **Yanıtınız gerekiyor** altında tek bir formda toplar ve ilgisiz işleri önce başlatır.
 
-**Keşif** akışında karar görevleri bir özet hazırlar ve koordinatör her kararı sonuçlandırır: kanıt yeterli ve seçim kolayca geri alınabiliyorsa kendisi karar verir, soruyu sonrası için **Notlar** içinde tutar ya da size sorar. Sonuç kimin karar verdiğini gösterir:
+**Keşif** akışında karar görevleri bir özet hazırlar ve koordinatör her kararı sonuçlandırır: kanıt yeterli ve seçim kolayca geri alınabiliyorsa kendisi karar verir, soruyu sonrası için **Notlar** içinde tutar ya da size sorar. **Yerel alt ajanlar** ile karar görevinin sonucu kimin karar verdiğini gösterir:
 
 | Etiket | Anlamı |
 | --- | --- |
-| **Koordinatör kararı** | Koordinatör size sormadan karar verdi; sonuç gerekçesini ve nasıl geri alınacağını gösterir. Değiştirmek için **Konuşmayı aç** üzerinden koordinatöre yazın. |
+| **Koordinatör kararı** | Koordinatör size sormadan karar verdi; sonuç gerekçesini ve verdiyse geri alma yönergesini gösterir. Değiştirmek için **Konuşmayı aç** üzerinden koordinatöre yazın. |
 | **Yanıtınız** | Bu soruyu CodeNomad'in istek panelinde siz yanıtladınız. |
 
-Yalnızca istek panelinde verdiğiniz yanıt **Yanıtınız** sayılır; bir ajan sizin yerinize yanıt veremez. Her karar sorusu, sonuçlandırdığı tek kararın etiketiyle biter; örneğin `[decision choose-seam 3fa9c21b]`. Birkaç karar birlikte sorulduğunda her biri kendi etiketine sahip ayrı bir sorudur; iki kararı anan bir soru hiçbirini sonuçlandırmaz. **Ürün teslimi** akışında, davranış değişikliğini zaten kesin olarak tanımlayan bir hedef onaylanmış belirtim sayılır; aksi halde koordinatör bekleyen onayları toplayarak sizden onay ister.
+Yalnızca istek panelinde verdiğiniz yanıt **Yanıtınız** sayılır; bir ajan sizin yerinize yanıt veremez. **Yerel alt ajanlar** ile her karar sorusu, sonuçlandırdığı tek kararın etiketiyle biter; örneğin `[decision choose-seam 3fa9c21b]`. Birkaç karar birlikte sorulduğunda her biri kendi etiketine sahip ayrı bir sorudur; iki kararı anan bir soru hiçbirini sonuçlandırmaz. **Bağımsız oturumlar** ile koordinatör bunun yerine her sonucu, kararı kendisinin mi sizin mi verdiğini belirterek **Notlar** içine kaydeder. **Ürün teslimi** akışında, davranış değişikliğini zaten kesin olarak tanımlayan bir hedef onaylanmış belirtim sayılır; aksi halde koordinatör bekleyen onayları toplayarak sizden onay ister.
 
 ### Durum özetleri ve güncelleme istekleri {#briefings}
 

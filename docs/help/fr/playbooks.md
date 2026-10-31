@@ -88,7 +88,7 @@ Uniquement les [vérifications de toute mission](#common-checks). Les rôles des
 
 ### Résultat et pièges {#custom-result}
 
-Vous obtenez les rapports des tâches et un rapport final ; les modifications de code restent non commitées dans votre copie de travail, sauf si votre objectif demande un commit. Pièges :
+Vous obtenez les rapports des tâches et un rapport final ; les modifications de code restent non commitées dans votre copie de travail, sauf si votre objectif ou vos **Notes** demandent explicitement un commit. Pièges :
 
 - Un objectif vague produit un plan vague : indiquez le résultat attendu et comment le vérifier, et mettez les contraintes dans **Notes**.
 - La limite de sécurité figure seulement dans les affectations de tâches, pas dans les instructions de ce coordinateur ; les autorisations natives s’appliquent quand même à tous.
@@ -132,7 +132,7 @@ Simples instructions : la qualité du diagnostic, le fait que les réviseurs et 
 
 ### Résultat et pièges {#debug-result}
 
-Vous obtenez le diagnostic, la correction et son test de régression dans votre copie de travail (non commités, sauf si votre objectif demande un commit), deux revues, la résolution, la validation et un rapport final. Pièges :
+Vous obtenez le diagnostic, la correction et son test de régression dans votre copie de travail (non commités, sauf si votre objectif ou vos **Notes** demandent explicitement un commit), deux revues, la résolution, la validation et un rapport final. Pièges :
 
 - Donnez un symptôme reproductible : la commande, l’entrée ou les étapes qui montrent le bogue. Sans cela, la mission s’arrête au diagnostic et vous interroge.
 - Une vérification qui échoue déjà pour une raison sans rapport empêche une validation au vert, donc la mission ne peut pas se terminer au vert ; le coordinateur vous demande comment poursuivre.
@@ -163,18 +163,21 @@ Un scénario de planification pour quand la destination est claire mais pas le c
 
 Les responsables ne vous interrogent jamais ; ils renvoient au coordinateur des notes et des questions prêtes. Le coordinateur tranche chaque décision de l’une de trois façons :
 
-- **Il décide lui-même** quand les preuves suffisent et que le choix est peu coûteux à annuler. Le résultat de la tâche porte le libellé **Décision du coordinateur** et montre sa justification et comment revenir dessus.
+- **Il décide lui-même** quand les preuves suffisent et que le choix est peu coûteux à annuler.
 - **Il reporte** une décision dont on n’a pas encore besoin : il retire la tâche et garde la question dans les notes comme brouillard.
-- **Il vous la pose**. Les décisions en attente vont dans un seul formulaire sous **Votre réponse est attendue**, une question par décision, chacune se terminant par l’étiquette de sa décision, par exemple `[decision choose-seam 3fa9c21b]`. Le résultat de la tâche porte le libellé **Votre réponse**.
+- **Il vous la pose**, en regroupant les décisions en attente dans un seul formulaire sous **Votre réponse est attendue**.
 
-Il n’écrit jamais votre réponse lui-même et ne présente jamais sa propre décision comme la vôtre. [Questions et décisions](missions.md#questions) décrit les deux libellés.
+Il n’écrit jamais votre réponse lui-même et ne présente jamais sa propre décision comme la vôtre. L’endroit où lire l’issue dépend de **Sessions des tâches** :
+
+- Avec **Sous-agents natifs**, chaque question du formulaire tranche une seule décision et se termine par l’étiquette de cette décision, par exemple `[decision choose-seam 3fa9c21b]`. Le résultat de la tâche de décision porte le libellé **Décision du coordinateur**, avec sa justification et les éventuelles indications pour revenir dessus que le coordinateur a fournies, ou **Votre réponse** ; [Questions et décisions](missions.md#questions) décrit les deux libellés.
+- Avec **Sessions indépendantes**, le coordinateur consigne chaque issue dans les **Notes**, en précisant qui, de lui ou de vous, a décidé.
 
 ### Ce que CodeNomad vérifie {#wayfinder-checks}
 
 - Seuls les cinq rôles d’Exploration sont acceptés.
 - Une tâche de décision ne se termine qu’avec la décision propre du coordinateur ou avec votre réponse. Une décision du coordinateur énonce la question, la décision et sa justification, et n’est jamais enregistrée comme votre réponse.
 - Votre réponse ne compte que si vous l’avez donnée dans l’interface de CodeNomad. CodeNomad la rattache à une tâche par l’étiquette de la question : la question a été posée depuis la conversation du coordinateur, son texte se termine par l’étiquette de cette tâche et ne nomme aucune autre décision, la réponse est venue après la déclaration de la tâche et n’a pas tranché une autre décision. Chaque question d’un formulaire groupé est rattachée séparément ; une question qui nomme deux décisions n’en tranche aucune. Une réponse à une question posée depuis la propre conversation de la tâche de décision est aussi acceptée.
-- Le rapport propre d’une tâche ne peut pas indiquer qui a décidé, et terminer la mission revérifie chaque décision terminée, étiquettes comprises.
+- Le rapport propre d’une tâche ne peut pas indiquer qui a décidé. Avant qu’une mission ou une exécution quotidienne se termine avec succès, CodeNomad revérifie chaque décision terminée, étiquettes comprises.
 - Ces vérifications s’appliquent avec **Sous-agents natifs**. Avec **Sessions indépendantes**, les responsables de décision rapportent eux-mêmes leurs notes et le coordinateur consigne chaque issue dans les notes en précisant qui a décidé ; CodeNomad ne le vérifie pas.
 
 Simples instructions : quand un choix est considéré comme peu coûteux à annuler, la qualité des notes et des recherches, et le fait de s’en tenir à la planification.
@@ -185,7 +188,7 @@ Vous obtenez une carte : la destination, les décisions enregistrées avec leur 
 
 - Exploration planifie ; elle ne construit pas la destination. Utilisez un autre scénario, ou la mission de suite préparée, pour implémenter.
 - Répondez sous **Votre réponse est attendue**, pas dans le chat : seule une réponse donnée dans le dock d’interruption compte comme la vôtre.
-- Lisez les résultats libellés **Décision du coordinateur** ; pour en modifier un, écrivez au coordinateur depuis **Ouvrir la conversation**.
+- Avec **Sous-agents natifs**, lisez les résultats libellés **Décision du coordinateur** ; avec **Sessions indépendantes**, lisez les issues dans les **Notes**. Pour modifier une décision, écrivez au coordinateur depuis **Ouvrir la conversation**.
 - Une destination formulée vaguement laisse l’essentiel de la carte dans le brouillard.
 
 ## Livraison produit {#delivery}
@@ -227,7 +230,7 @@ Seuls les six rôles de Livraison produit sont acceptés, en plus des [vérifica
 
 ### Résultat et pièges {#delivery-result}
 
-Vous obtenez les demandes de changement de spécification, les revues de préparation, l’implémentation dans votre copie de travail (non commitée, sauf si votre objectif demande un commit), les tests, la vérification QA et du responsable technique, la documentation mise à jour et un rapport final. Pièges :
+Vous obtenez les demandes de changement de spécification, les revues de préparation, l’implémentation dans votre copie de travail (non commitée, sauf si votre objectif ou vos **Notes** demandent explicitement un commit), les tests, la vérification QA et du responsable technique, la documentation mise à jour et un rapport final. Pièges :
 
 - Un objectif qui laisse le comportement ouvert entraîne une question d’approbation avant tout code : indiquez ce qui change, pour qui et comment le vérifier si vous voulez que la livraison démarre directement.
 - Même un changement de comportement minime exige une demande de changement de spécification.

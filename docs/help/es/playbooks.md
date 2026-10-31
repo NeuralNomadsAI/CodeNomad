@@ -88,7 +88,7 @@ Solo las [comprobaciones de toda misión](#common-checks). Los roles de las tare
 
 ### Resultado y errores frecuentes {#custom-result}
 
-Obtienes los informes de las tareas y un informe final; los cambios de código quedan sin confirmar en tu copia de trabajo, salvo que tu objetivo pida un commit. Errores frecuentes:
+Obtienes los informes de las tareas y un informe final; los cambios de código quedan sin confirmar en tu copia de trabajo, salvo que tu objetivo o tus **Notas** pidan explícitamente un commit. Errores frecuentes:
 
 - Un objetivo vago produce un plan vago: indica el resultado y cómo verificarlo, y pon las restricciones en **Notas**.
 - El límite de seguridad solo está en las asignaciones de tareas, no en las instrucciones de este coordinador; los permisos nativos se aplican igualmente a todos.
@@ -132,7 +132,7 @@ Solo instrucciones: la calidad del diagnóstico, que los revisores y el validado
 
 ### Resultado y errores frecuentes {#debug-result}
 
-Obtienes el diagnóstico, la corrección y su prueba de regresión en tu copia de trabajo (sin confirmar, salvo que tu objetivo pida un commit), dos revisiones, la resolución, la validación y un informe final. Errores frecuentes:
+Obtienes el diagnóstico, la corrección y su prueba de regresión en tu copia de trabajo (sin confirmar, salvo que tu objetivo o tus **Notas** pidan explícitamente un commit), dos revisiones, la resolución, la validación y un informe final. Errores frecuentes:
 
 - Aporta un síntoma reproducible: el comando, la entrada o los pasos que muestran el error. Sin él, la misión se detiene en el diagnóstico y te pregunta.
 - Una comprobación que ya falla por otro motivo impide una validación en verde, así que la misión no puede terminar en verde; el coordinador te pregunta cómo seguir.
@@ -163,18 +163,21 @@ Un guion de planificación para cuando el destino está claro pero el camino no.
 
 Los responsables nunca te preguntan; devuelven informes y preguntas listas al coordinador. El coordinador resuelve cada decisión de una de tres maneras:
 
-- **Decide él mismo** cuando la evidencia basta y la elección es fácil de revertir. El resultado de la tarea lleva la etiqueta **Decisión del coordinador** y muestra su justificación y cómo revertirla.
+- **Decide él mismo** cuando la evidencia basta y la elección es fácil de revertir.
 - **Aplaza** una decisión que aún no hace falta: retira la tarea y conserva la pregunta en las notas como niebla.
-- **Te pregunta**. Las decisiones pendientes van a un solo formulario en **Te necesita**, una pregunta por decisión, cada una terminada con la etiqueta de su decisión, por ejemplo `[decision choose-seam 3fa9c21b]`. El resultado de la tarea lleva la etiqueta **Tu respuesta**.
+- **Te pregunta**, agrupando las decisiones pendientes en un solo formulario en **Te necesita**.
 
-Nunca escribe tu respuesta por sí mismo ni presenta su propia decisión como tuya. [Preguntas y decisiones](missions.md#questions) describe ambas etiquetas.
+Nunca escribe tu respuesta por sí mismo ni presenta su propia decisión como tuya. Dónde lees el resultado depende de **Sesiones de tareas**:
+
+- Con **Subagentes nativos**, cada pregunta del formulario resuelve una sola decisión y termina con la etiqueta de esa decisión, por ejemplo `[decision choose-seam 3fa9c21b]`. El resultado de la tarea de decisión lleva la etiqueta **Decisión del coordinador**, con su justificación y las indicaciones para revertirla que el coordinador haya dado, o **Tu respuesta**; [Preguntas y decisiones](missions.md#questions) describe ambas etiquetas.
+- Con **Sesiones independientes**, el coordinador registra cada resultado en las **Notas**, indicando si decidió él o tú.
 
 ### Lo que CodeNomad comprueba {#wayfinder-checks}
 
 - Solo se aceptan los cinco roles de Exploración.
 - Una tarea de decisión solo se completa con la decisión propia del coordinador o con tu respuesta. Una decisión del coordinador indica la pregunta, la decisión y su justificación, y nunca se registra como tu respuesta.
 - Tu respuesta solo cuenta si la diste en la interfaz de CodeNomad. CodeNomad la vincula a una tarea por la etiqueta de la pregunta: la pregunta se hizo desde la conversación del coordinador, su texto termina con la etiqueta de esa tarea y no nombra otra decisión, se respondió después de declararse la tarea y no ha resuelto otra decisión. Cada pregunta de un formulario agrupado se vincula por separado; una pregunta que nombra dos decisiones no resuelve ninguna. También se acepta una respuesta a una pregunta hecha desde la propia conversación de la tarea de decisión.
-- El informe propio de una tarea no puede afirmar quién decidió, y al terminar la misión se vuelve a comprobar cada decisión completada, etiquetas incluidas.
+- El informe propio de una tarea no puede afirmar quién decidió. Antes de que una misión o una ejecución diaria termine con éxito, CodeNomad vuelve a comprobar cada decisión completada, etiquetas incluidas.
 - Estas comprobaciones se aplican con **Subagentes nativos**. Con **Sesiones independientes**, los responsables de decisión envían sus informes ellos mismos y el coordinador registra cada resultado en las notas indicando quién decidió; CodeNomad no lo verifica.
 
 Solo instrucciones: cuándo una elección se considera fácil de revertir, la calidad de los informes y la investigación, y limitarse a planificar.
@@ -185,7 +188,7 @@ Obtienes un mapa: el destino, decisiones registradas con quién las tomó, halla
 
 - Exploración planifica; no construye el destino. Usa otro guion, o la misión de seguimiento preparada, para implementar.
 - Responde en **Te necesita**, no en el chat: solo una respuesta dada en el panel de interrupciones cuenta como tuya.
-- Lee los resultados con la etiqueta **Decisión del coordinador**; para cambiar uno, escribe al coordinador desde **Abrir conversación**.
+- Con **Subagentes nativos**, lee los resultados con la etiqueta **Decisión del coordinador**; con **Sesiones independientes**, lee los resultados en las **Notas**. Para cambiar una decisión, escribe al coordinador desde **Abrir conversación**.
 - Un destino formulado de forma vaga deja la mayor parte del mapa en la niebla.
 
 ## Entrega de producto {#delivery}
@@ -227,7 +230,7 @@ Solo se aceptan los seis roles de Entrega de producto, además de las [comprobac
 
 ### Resultado y errores frecuentes {#delivery-result}
 
-Obtienes solicitudes de cambio de especificación, revisiones de preparación, la implementación en tu copia de trabajo (sin confirmar, salvo que tu objetivo pida un commit), pruebas, la verificación de QA y del líder técnico, documentación actualizada y un informe final. Errores frecuentes:
+Obtienes solicitudes de cambio de especificación, revisiones de preparación, la implementación en tu copia de trabajo (sin confirmar, salvo que tu objetivo o tus **Notas** pidan explícitamente un commit), pruebas, la verificación de QA y del líder técnico, documentación actualizada y un informe final. Errores frecuentes:
 
 - Un objetivo que deja abierto el comportamiento lleva a una pregunta de aprobación antes de cualquier código: indica qué cambia, para quién y cómo verificarlo si quieres que la entrega empiece directamente.
 - Incluso un cambio de comportamiento mínimo necesita una solicitud de cambio de especificación.

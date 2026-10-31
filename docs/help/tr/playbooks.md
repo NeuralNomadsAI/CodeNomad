@@ -88,7 +88,7 @@ Yalnızca [her görevin denetimleri](#common-checks). İş rolleri serbesttir: k
 
 ### Sonuç ve tuzaklar {#custom-result}
 
-İş raporlarını ve bir son rapor alırsınız; hedefiniz commit istemedikçe kod değişiklikleri çalışma kopyanızda commit edilmeden kalır. Tuzaklar:
+İş raporlarını ve bir son rapor alırsınız; hedefiniz veya **Notlar** açıkça commit istemedikçe kod değişiklikleri çalışma kopyanızda commit edilmeden kalır. Tuzaklar:
 
 - Belirsiz bir hedef belirsiz bir plan üretir: sonucu ve nasıl doğrulanacağını yazın, kısıtları **Notlar** içine koyun.
 - Güvenlik sınırı yalnızca iş atamalarındadır, bu koordinatörün talimatlarında değildir; yerel izinler yine de herkese uygulanır.
@@ -132,7 +132,7 @@ Yalnızca talimat olanlar: tanının kalitesi, inceleyicilerin ve doğrulayıcı
 
 ### Sonuç ve tuzaklar {#debug-result}
 
-Tanıyı, çalışma kopyanızda düzeltmeyi ve regresyon testini (hedefiniz commit istemedikçe commit edilmemiş), iki incelemeyi, çözümü, doğrulamayı ve bir son raporu alırsınız. Tuzaklar:
+Tanıyı, çalışma kopyanızda düzeltmeyi ve regresyon testini (hedefiniz veya **Notlar** açıkça commit istemedikçe commit edilmemiş), iki incelemeyi, çözümü, doğrulamayı ve bir son raporu alırsınız. Tuzaklar:
 
 - Yeniden üretilebilir bir belirti verin: hatayı gösteren komut, girdi veya adımlar. Bu olmadan görev tanıda durur ve size sorar.
 - İlgisiz bir nedenle zaten başarısız olan bir denetim yeşil doğrulamayı engeller, bu yüzden görev yeşil bitemez; koordinatör nasıl devam edileceğini size sorar.
@@ -163,18 +163,21 @@ Varış noktası net ama yol net değilken kullanılan bir planlama rehberi. Koo
 
 Sorumlular size asla sormaz; özetleri ve hazır soruları koordinatöre döndürür. Koordinatör her kararı üç yoldan biriyle sonuçlandırır:
 
-- Kanıt yeterli ve seçimin geri alınması ucuzsa **kendisi karar verir**. İşin sonucu **Koordinatör kararı** etiketini taşır ve gerekçesini ve nasıl geri alınacağını gösterir.
+- Kanıt yeterli ve seçimin geri alınması ucuzsa **kendisi karar verir**.
 - Henüz gerekmeyen bir kararı **erteler**: işi geri çeker ve soruyu notlarda sis olarak tutar.
-- **Size sorar**. Bekleyen kararlar **Yanıtınız gerekiyor** altında tek bir forma girer; her karar için bir soru vardır ve her biri kendi kararının etiketiyle biter, örneğin `[decision choose-seam 3fa9c21b]`. İşin sonucu **Yanıtınız** etiketini taşır.
+- **Size sorar**; bekleyen kararları **Yanıtınız gerekiyor** altında tek bir formda toplar.
 
-Yanıtınızı asla kendisi yazmaz ve kendi kararını sizinki gibi sunmaz. İki etiket [Sorular ve kararlar](missions.md#questions) bölümünde açıklanır.
+Yanıtınızı asla kendisi yazmaz ve kendi kararını sizinki gibi sunmaz. Sonucu nerede okuyacağınız **Görev oturumları** ayarına bağlıdır:
+
+- **Yerel alt ajanlar** ile formdaki her soru tek bir kararı sonuçlandırır ve o kararın etiketiyle biter, örneğin `[decision choose-seam 3fa9c21b]`. Karar işinin sonucu, gerekçesi ve koordinatör verdiyse geri alma yönergesiyle **Koordinatör kararı** ya da **Yanıtınız** etiketini taşır; iki etiket [Sorular ve kararlar](missions.md#questions) bölümünde açıklanır.
+- **Bağımsız oturumlar** ile koordinatör her sonucu, kararı kendisinin mi sizin mi verdiğini belirterek **Notlar** içine kaydeder.
 
 ### CodeNomad'in denetledikleri {#wayfinder-checks}
 
 - Yalnızca Keşif'in beş rolü kabul edilir.
 - Bir karar işi yalnızca koordinatörün kendi kararıyla veya sizin yanıtınızla tamamlanır. Koordinatör kararı soruyu, kararı ve gerekçesini belirtir ve asla sizin yanıtınız olarak kaydedilmez.
 - Yanıtınız yalnızca CodeNomad arayüzünde verdiyseniz sayılır. CodeNomad onu sorunun etiketiyle bir işe bağlar: soru koordinatörün konuşmasından sorulmuştur, metni o işin etiketiyle biter ve başka bir karar anmaz, iş bildirildikten sonra yanıtlanmıştır ve başka bir kararı sonuçlandırmamıştır. Toplu bir formun her sorusu ayrı bağlanır; iki kararı anan bir soru hiçbirini sonuçlandırmaz. Karar işinin kendi konuşmasından sorulan bir sorunun yanıtı da kabul edilir.
-- Bir işin kendi raporu kimin karar verdiğini iddia edemez ve görevi bitirmek, tamamlanan her kararı etiketleri dahil yeniden denetler.
+- Bir işin kendi raporu kimin karar verdiğini iddia edemez. Bir görev veya günlük çalıştırma başarıyla bitmeden önce CodeNomad, tamamlanan her kararı etiketleri dahil yeniden denetler.
 - Bu denetimler **Yerel alt ajanlar** ile geçerlidir. **Bağımsız oturumlar** ile karar sorumluları özetlerini kendileri bildirir ve koordinatör her sonucu kimin karar verdiğini belirterek notlara kaydeder; CodeNomad bunu doğrulamaz.
 
 Yalnızca talimat olanlar: bir seçimin ne zaman geri alınması ucuz sayılacağı, özetlerin ve araştırmanın kalitesi ve planlamayla sınırlı kalmak.
@@ -185,7 +188,7 @@ Bir harita alırsınız: varış noktası, kimin verdiğiyle birlikte kayıtlı 
 
 - Keşif planlar; varış noktasını inşa etmez. Uygulamak için başka bir rehber veya hazırlanan devam görevini kullanın.
 - Sohbette değil, **Yanıtınız gerekiyor** altında yanıtlayın: yalnızca istek panelinde verilen yanıt sizinki sayılır.
-- **Koordinatör kararı** etiketli sonuçları okuyun; birini değiştirmek için **Konuşmayı aç** üzerinden koordinatöre yazın.
+- **Yerel alt ajanlar** ile **Koordinatör kararı** etiketli sonuçları, **Bağımsız oturumlar** ile **Notlar** içindeki sonuçları okuyun. Bir kararı değiştirmek için **Konuşmayı aç** üzerinden koordinatöre yazın.
 - Belirsiz ifade edilmiş bir varış noktası haritanın çoğunu siste bırakır.
 
 ## Ürün teslimi {#delivery}
@@ -227,7 +230,7 @@ Yalnızca Ürün teslimi'nin altı rolü kabul edilir, ayrıca [her görevin den
 
 ### Sonuç ve tuzaklar {#delivery-result}
 
-Şartname değişikliği isteklerini, hazırlık incelemelerini, çalışma kopyanızdaki uygulamayı (hedefiniz commit istemedikçe commit edilmemiş), testleri, QA ve teknik lider doğrulamasını, güncellenmiş belgeleri ve bir son raporu alırsınız. Tuzaklar:
+Şartname değişikliği isteklerini, hazırlık incelemelerini, çalışma kopyanızdaki uygulamayı (hedefiniz veya **Notlar** açıkça commit istemedikçe commit edilmemiş), testleri, QA ve teknik lider doğrulamasını, güncellenmiş belgeleri ve bir son raporu alırsınız. Tuzaklar:
 
 - Davranışı açık bırakan bir hedef, herhangi bir koddan önce bir onay sorusuna yol açar: teslimin doğrudan başlamasını istiyorsanız neyin, kimin için değiştiğini ve nasıl doğrulanacağını yazın.
 - Küçük bir davranış değişikliği bile şartname değişikliği isteği gerektirir.

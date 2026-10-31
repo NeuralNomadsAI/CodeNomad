@@ -20,8 +20,8 @@ before(async () => {
 })
 after(async () => { await browser?.close() })
 
-/** A local desktop window whose playbook route answers with the server's real recipe definitions. */
-async function open(options: { fail?: number } = {}) {
+/** A local desktop window whose playbook route answers, after `delay` ms, with the server's real recipe definitions. */
+async function open(options: { fail?: number; delay?: number } = {}) {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1200, height: 850 } })
   page.setDefaultTimeout(15_000)
   page.setDefaultNavigationTimeout(60_000)
@@ -35,9 +35,10 @@ async function open(options: { fail?: number } = {}) {
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } }))
   await page.route("**/api/workspaces/fixture/missions**", route => route.fulfill({ json: { available: true, missions: [], generatedAt: 1, discardedEvents: 0 } }))
   let failures = options.fail ?? 0
-  await page.route("**/api/missions/playbooks*", route => {
+  await page.route("**/api/missions/playbooks*", async route => {
     const taskMode = new URL(route.request().url()).searchParams.get("taskMode") as "native" | "independent"
     reads.push(taskMode)
+    if (options.delay) await new Promise(resolve => setTimeout(resolve, options.delay))
     if (failures-- > 0) return route.fulfill({ status: 503, json: { error: "unavailable" } })
     return route.fulfill({ json: missionPlaybookDetails(taskMode) })
   })
@@ -49,19 +50,23 @@ async function open(options: { fail?: number } = {}) {
 
 const screenshotPath = (name: string) => path.join(os.tmpdir(), "opencode", `${name}-${process.env.CODENOMAD_MISSION_CAPTURE_TAG ?? "updated"}.png`)
 const reader = (page: Page) => page.locator(".mission-reader")
+/** Steps, roles and instructions render together once the read for the shown task mode answers. */
+const loaded = (page: Page) => reader(page).locator(".mission-playbook-steps > li").first().waitFor()
 const instructions = (page: Page) => reader(page).locator("details.mission-playbook-instructions")
 /** One recipient's fold inside the instructions. */
 const prompt = (page: Page, title: string) => instructions(page).locator("details.mission-playbook-prompt")
   .filter({ has: page.locator(":scope > summary", { hasText: new RegExp(`^${title}$`) }) })
 const promptText = async (page: Page, title: string) => (await prompt(page, title).locator("pre").allTextContents())
 
-test("See details opens the selected playbook's steps and roles, with its exact instructions folded", async () => {
-  const { page, errors, reads, opened } = await open()
+// The heading renders from the selected target at once; the steps, roles and instructions arrive with the read.
+for (const delay of [0, 750] as const) test(`See details opens the selected playbook's steps and roles, with its exact instructions folded${delay ? `, after a ${delay} ms read` : ""}`, async () => {
+  const { page, errors, reads, opened } = await open({ delay })
   try {
     const form = page.locator("form.mission-editor")
     await form.getByRole("combobox", { name: "Playbook", exact: true }).selectOption("debug")
     await form.getByRole("button", { name: "See details", exact: true }).click()
     await reader(page).getByRole("heading", { name: "Playbook: Debugging", exact: true }).waitFor()
+    await loaded(page)
     const debug = missionPlaybookDetails("native").playbooks.find(playbook => playbook.id === "debug")!
     assert.deepEqual(await reader(page).locator(".mission-playbook-steps > li").allInnerTexts(), debug.sequence)
     assert.deepEqual(await reader(page).locator(".mission-playbook-roles > dt").allInnerTexts(),
@@ -98,7 +103,7 @@ test("See details opens the selected playbook's steps and roles, with its exact 
     await form.getByRole("combobox", { name: "Task sessions", exact: true }).selectOption("independent")
     await form.getByRole("button", { name: "See details", exact: true }).click()
     await reader(page).getByRole("heading", { name: "Playbook: Exploration", exact: true }).waitFor()
-    await instructions(page).waitFor()
+    await loaded(page)
     if (!await instructions(page).evaluate(element => (element as HTMLDetailsElement).open)) await instructions(page).locator(":scope > summary").click()
     const wayfinder = missionPlaybookDetails("independent").playbooks.find(playbook => playbook.id === "wayfinder")!
     assert.deepEqual(await promptText(page, "Coordinator, one-time missions"), [wayfinder.prompts.coordinator.once])

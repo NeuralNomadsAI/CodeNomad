@@ -67,14 +67,14 @@ A mission is **Interrupted** when its coordinator stopped without concluding whi
 
 Only the coordinator asks you questions. Tasks and the sub-agents they launch return their open questions to it, with the options, the evidence and a recommendation. Before asking, the coordinator tries to settle a question itself: it reads the project, researches, has a task investigate, or adopts a default that is easy to undo and records it as an assumption. It asks only what it cannot settle: your consent, credentials, choices that are costly to undo, or product decisions the objective leaves open. It groups pending questions into one form under **Needs you** and starts unrelated work first.
 
-In **Exploration**, decision tasks prepare a brief and the coordinator settles each decision: it decides itself when the evidence is enough and the choice is easy to undo, keeps the question in **Notes** for later, or asks you. The result says who decided:
+In **Exploration**, decision tasks prepare a brief and the coordinator settles each decision: it decides itself when the evidence is enough and the choice is easy to undo, keeps the question in **Notes** for later, or asks you. With **Native subagents**, the decision task's result says who decided:
 
 | Label | Meaning |
 | --- | --- |
-| **Coordinator decision** | The coordinator decided without asking you; the result shows its rationale and how to reverse it. To change it, write to the coordinator from **Open conversation**. |
+| **Coordinator decision** | The coordinator decided without asking you; the result shows its rationale and any reversal guidance it supplied. To change it, write to the coordinator from **Open conversation**. |
 | **Your answer** | You answered this question in CodeNomad's interruption dock. |
 
-Only an answer you give in the interruption dock counts as **Your answer**; an agent cannot answer for you. Each decision question ends with the tag of the one decision it settles, such as `[decision choose-seam 3fa9c21b]`. When several decisions are asked together, each is a separate question with its own tag; a question naming two decisions settles neither. In **Product delivery**, an objective that already describes the behavior change precisely counts as the approved specification; otherwise the coordinator asks you to approve it, grouping pending approvals.
+Only an answer you give in the interruption dock counts as **Your answer**; an agent cannot answer for you. With **Native subagents**, each decision question ends with the tag of the one decision it settles, such as `[decision choose-seam 3fa9c21b]`. When several decisions are asked together, each is a separate question with its own tag; a question naming two decisions settles neither. With **Independent sessions**, the coordinator records each outcome in **Notes** instead, stating whether it or you decided. In **Product delivery**, an objective that already describes the behavior change precisely counts as the approved specification; otherwise the coordinator asks you to approve it, grouping pending approvals.
 
 ### Briefings and update requests {#briefings}
 

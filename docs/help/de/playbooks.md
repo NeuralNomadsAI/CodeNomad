@@ -88,7 +88,7 @@ Nur die [Prüfungen jeder Mission](#common-checks). Aufgabenrollen sind frei: De
 
 ### Ergebnis und Fallstricke {#custom-result}
 
-Sie erhalten die Aufgabenberichte und einen Abschlussbericht; Codeänderungen bleiben unkommittiert in Ihrer Arbeitskopie, sofern Ihr Ziel keinen Commit verlangt. Fallstricke:
+Sie erhalten die Aufgabenberichte und einen Abschlussbericht; Codeänderungen bleiben unkommittiert in Ihrer Arbeitskopie, sofern Ihr Ziel oder Ihre **Notizen** nicht ausdrücklich einen Commit verlangen. Fallstricke:
 
 - Ein vages Ziel ergibt einen vagen Plan: Nennen Sie das Ergebnis und wie es zu prüfen ist, und schreiben Sie Vorgaben in **Notizen**.
 - Die Sicherheitsgrenze steht nur in den Aufgabenzuweisungen, nicht in den Anweisungen dieses Koordinators; native Berechtigungen gelten trotzdem für alle.
@@ -132,7 +132,7 @@ Nur Anweisungen: die Qualität der Diagnose, dass Prüfer und Validator keine Da
 
 ### Ergebnis und Fallstricke {#debug-result}
 
-Sie erhalten die Diagnose, die Korrektur und ihren Regressionstest in Ihrer Arbeitskopie (unkommittiert, sofern Ihr Ziel keinen Commit verlangt), zwei Prüfungen, die Auflösung, die Validierung und einen Abschlussbericht. Fallstricke:
+Sie erhalten die Diagnose, die Korrektur und ihren Regressionstest in Ihrer Arbeitskopie (unkommittiert, sofern Ihr Ziel oder Ihre **Notizen** nicht ausdrücklich einen Commit verlangen), zwei Prüfungen, die Auflösung, die Validierung und einen Abschlussbericht. Fallstricke:
 
 - Geben Sie ein reproduzierbares Symptom an: den Befehl, die Eingabe oder die Schritte, die den Fehler zeigen. Ohne das endet die Mission bei der Diagnose und fragt Sie.
 - Eine Prüfung, die bereits aus einem anderen Grund fehlschlägt, verhindert eine grüne Validierung, sodass die Mission nicht grün enden kann; der Koordinator fragt Sie, wie es weitergehen soll.
@@ -163,18 +163,21 @@ Ein Planungs-Playbook für den Fall, dass das Ziel klar ist, der Weg aber nicht.
 
 Die Bearbeiter fragen Sie nie; sie geben Papiere und fertige Fragen an den Koordinator zurück. Der Koordinator trifft jede Entscheidung auf eine von drei Arten:
 
-- **Er entscheidet selbst**, wenn die Belege genügen und die Wahl leicht umkehrbar ist. Das Ergebnis der Aufgabe trägt die Bezeichnung **Entscheidung des Koordinators** und zeigt seine Begründung und wie sie sich rückgängig machen lässt.
+- **Er entscheidet selbst**, wenn die Belege genügen und die Wahl leicht umkehrbar ist.
 - **Er stellt zurück**, was noch nicht nötig ist: Er zieht die Aufgabe zurück und hält die Frage als Nebel in den Notizen.
-- **Er fragt Sie**. Offene Entscheidungen kommen in ein Formular unter **Braucht Sie**, eine Frage je Entscheidung, und jede endet mit der Markierung ihrer Entscheidung, etwa `[decision choose-seam 3fa9c21b]`. Das Ergebnis der Aufgabe trägt die Bezeichnung **Ihre Antwort**.
+- **Er fragt Sie** und bündelt offene Entscheidungen in einem Formular unter **Braucht Sie**.
 
-Er schreibt Ihre Antwort nie selbst und gibt seine eigene Entscheidung nie als Ihre aus. [Fragen und Entscheidungen](missions.md#questions) beschreibt beide Bezeichnungen.
+Er schreibt Ihre Antwort nie selbst und gibt seine eigene Entscheidung nie als Ihre aus. Wo Sie das Ergebnis lesen, hängt von **Aufgabensitzungen** ab:
+
+- Mit **Native Unteragenten** klärt jede Frage im Formular genau eine Entscheidung und endet mit deren Markierung, etwa `[decision choose-seam 3fa9c21b]`. Das Ergebnis der Entscheidungsaufgabe trägt die Bezeichnung **Entscheidung des Koordinators**, mit seiner Begründung und gegebenenfalls seinen Hinweisen zum Rückgängigmachen, oder **Ihre Antwort**; [Fragen und Entscheidungen](missions.md#questions) beschreibt beide Bezeichnungen.
+- Mit **Unabhängige Sitzungen** hält der Koordinator jedes Ergebnis in den **Notizen** fest und nennt, ob er oder Sie entschieden haben.
 
 ### Was CodeNomad prüft {#wayfinder-checks}
 
 - Nur die fünf Rollen der Erkundung werden akzeptiert.
 - Eine Entscheidungsaufgabe wird nur mit der eigenen Entscheidung des Koordinators oder mit Ihrer Antwort abgeschlossen. Eine Entscheidung des Koordinators nennt die Frage, die Entscheidung und ihre Begründung und wird nie als Ihre Antwort erfasst.
 - Ihre Antwort zählt nur, wenn Sie sie in der CodeNomad-Oberfläche gegeben haben. CodeNomad ordnet sie über die Markierung der Frage einer Aufgabe zu: Die Frage wurde aus der Unterhaltung des Koordinators gestellt, ihr Text endet mit der Markierung dieser Aufgabe und nennt keine andere Entscheidung, sie wurde nach der Erklärung der Aufgabe beantwortet und hat keine andere Entscheidung geklärt. Jede Frage eines gebündelten Formulars wird für sich zugeordnet; eine Frage, die zwei Entscheidungen nennt, klärt keine davon. Eine Antwort auf eine Frage aus der eigenen Unterhaltung der Entscheidungsaufgabe wird ebenfalls akzeptiert.
-- Der eigene Bericht einer Aufgabe kann nicht angeben, wer entschieden hat, und beim Beenden der Mission wird jede abgeschlossene Entscheidung erneut geprüft, Markierungen eingeschlossen.
+- Der eigene Bericht einer Aufgabe kann nicht angeben, wer entschieden hat. Bevor eine Mission oder ein täglicher Lauf erfolgreich endet, prüft CodeNomad jede abgeschlossene Entscheidung erneut, Markierungen eingeschlossen.
 - Diese Prüfungen gelten mit **Native Unteragenten**. Mit **Unabhängige Sitzungen** melden Entscheidungsbearbeiter ihre Papiere selbst, und der Koordinator hält jedes Ergebnis in den Notizen fest und nennt, wer entschieden hat; CodeNomad prüft das nicht.
 
 Nur Anweisungen: wann eine Wahl als leicht umkehrbar gilt, die Qualität von Papieren und Recherche und das Beschränken auf Planung.
@@ -185,7 +188,7 @@ Sie erhalten eine Karte: das Ziel, erfasste Entscheidungen mit ihrem Urheber, Re
 
 - Erkundung plant; sie baut das Ziel nicht. Nutzen Sie zum Umsetzen ein anderes Playbook oder die vorbereitete Folgemission.
 - Antworten Sie unter **Braucht Sie**, nicht im Chat: Nur eine Antwort aus dem Unterbrechungsdock zählt als Ihre.
-- Lesen Sie die Ergebnisse mit der Bezeichnung **Entscheidung des Koordinators**; um eines zu ändern, schreiben Sie dem Koordinator über **Unterhaltung öffnen**.
+- Lesen Sie mit **Native Unteragenten** die Ergebnisse mit der Bezeichnung **Entscheidung des Koordinators** und mit **Unabhängige Sitzungen** die Ergebnisse in den **Notizen**. Um eine Entscheidung zu ändern, schreiben Sie dem Koordinator über **Unterhaltung öffnen**.
 - Ein vage formuliertes Ziel lässt den größten Teil der Karte im Nebel.
 
 ## Produktumsetzung {#delivery}
@@ -227,7 +230,7 @@ Nur die sechs Rollen der Produktumsetzung werden akzeptiert, dazu die [Prüfunge
 
 ### Ergebnis und Fallstricke {#delivery-result}
 
-Sie erhalten Spezifikationsänderungsanträge, Bereitschaftsprüfungen, die Implementierung in Ihrer Arbeitskopie (unkommittiert, sofern Ihr Ziel keinen Commit verlangt), Tests, die Verifizierung durch QA und Tech Lead, aktualisierte Dokumentation und einen Abschlussbericht. Fallstricke:
+Sie erhalten Spezifikationsänderungsanträge, Bereitschaftsprüfungen, die Implementierung in Ihrer Arbeitskopie (unkommittiert, sofern Ihr Ziel oder Ihre **Notizen** nicht ausdrücklich einen Commit verlangen), Tests, die Verifizierung durch QA und Tech Lead, aktualisierte Dokumentation und einen Abschlussbericht. Fallstricke:
 
 - Ein Ziel, das das Verhalten offenlässt, führt vor jedem Code zu einer Genehmigungsfrage: Nennen Sie, was sich ändert, für wen und wie es zu prüfen ist, wenn die Lieferung direkt beginnen soll.
 - Auch eine winzige Verhaltensänderung braucht einen Spezifikationsänderungsantrag.
