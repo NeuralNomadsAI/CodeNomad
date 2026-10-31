@@ -19,6 +19,7 @@ import { MissionBriefPicker, MissionBriefSave } from "./mission-model-library"
 import { MissionProfileSummary } from "./mission-profile-summary"
 import { MissionTaskModeControls } from "./mission-task-mode-controls"
 import { MissionSubagentDepth } from "./mission-subagent-depth"
+import { missionPanelScroll } from "./mission-panel-scroll"
 import { holdRecurrence, uncertainRecurrence } from "../stores/mission-recurrence"
 import { HttpResponseError } from "../lib/retryable-file-search"
 import { MISSION_LIFECYCLE_TEXT_LIMIT, recurrenceStartText } from "../../../server/src/missions/lifecycle-input"
@@ -452,11 +453,15 @@ export function MissionEditor(props: {
 
   const createDisabled = () => locked() || !isActive() || !objective().trim() || Boolean(compareError())
     || mode() === "recurring" && (!zoneValid() || !sourceLocationReady() || !sourceInputBudget().sufficient)
+  // In the panel, creation's body scrolls above a fixed footer unless the panel is too short (mission-create.css).
+  let body: HTMLDivElement | undefined
+  const panelScrolls = kind === "create" ? missionPanelScroll(() => body) : () => false
 
-  return <form class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}>
+  return <form class="mission-editor window-shell" classList={{ "mission-create": kind === "create" }} onSubmit={save} aria-label={t(`missions.control.${kind}`)}
+    data-scroller={panelScrolls() ? "panel" : undefined}>
     {/* Creation is headed by the panel's own Create button; edit/delete keep their title. */}
     <Show when={kind !== "create"}><header class="window-header"><h3 class="window-title">{t(`missions.control.${kind}`)}</h3></header></Show>
-    <div class="window-body">
+    <div class="window-body" ref={body}>
       <Show when={kind === "create"} fallback={<Show when={kind !== "delete"} fallback={<>
         <p>{t("missions.control.delete.detail")}</p>
         <label class="mission-delete-sessions"><input type="checkbox" checked={deleteManagedSessions()} disabled={pending() || deleteAttempted()}

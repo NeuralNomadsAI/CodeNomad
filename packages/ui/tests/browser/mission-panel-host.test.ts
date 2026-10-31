@@ -175,6 +175,66 @@ test("the chevron's inline list persists across selection and remount", async ()
   } finally { await f.close() }
 })
 
+/** Whether a user sees the focused control once layout settles (a scroller switch lands a
+ * frame after a resize): the point at its centre reaches it. */
+const focusVisible = (page: Page) => page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(() => requestAnimationFrame(resolve)))).then(() => {
+  const focused = document.activeElement as HTMLElement, box = focused.getBoundingClientRect()
+  const hit = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)
+  return { label: `${focused.tagName} "${focused.getAttribute("aria-label") ?? focused.textContent?.trim().slice(0, 40)}" (centre hits ${hit?.tagName ?? "nothing"})`,
+    visible: Boolean(hit && focused.contains(hit)) }
+}))
+const openCreation = async (page: Page) => {
+  await missionGeneralAction(page, "Create mission").click()
+  await page.locator("form.mission-editor").getByLabel("What should the mission do?", { exact: true }).fill("Survey the panel geometry")
+  await page.waitForFunction(() => !document.querySelector<HTMLButtonElement>('form.mission-editor button[type="submit"]')?.disabled)
+  await page.locator("form.mission-editor summary").filter({ hasText: /^Options$/ }).click()
+  await page.locator("form.mission-editor details.mission-create-options[open]").waitFor()
+}
+
+test("keyboard focus in the creation form is never under its footer, with the brief name prompt open, tall or short", async () => {
+  for (const viewport of [{ width: 1000, height: 600 }, { width: 260, height: 300 }]) {
+    const f = await open({ viewport })
+    try {
+      await openCreation(f.page)
+      const form = f.page.locator("form.mission-editor")
+      await form.getByRole("button", { name: "Save as brief", exact: true }).click()
+      await form.getByRole("textbox", { name: "Brief name", exact: true }).waitFor()
+      await form.locator("summary").filter({ hasText: /^Agents and models$/ }).focus()
+      await f.page.keyboard.press("Tab")
+      assert.equal(await form.getByRole("textbox", { name: "Notes", exact: true }).evaluate(element => element === document.activeElement), true, "Tab reached Notes")
+      // Every control from Notes to Create, the brief prompt's included, is seen when Tab reaches it.
+      for (let step = 0; step < 8; step++) {
+        const focus = await focusVisible(f.page)
+        assert.equal(focus.visible, true, `${focus.label} is visible when focused at ${viewport.width}×${viewport.height}`)
+        if (await form.locator('button[type="submit"]').evaluate(element => element === document.activeElement)) break
+        await f.page.keyboard.press("Tab")
+      }
+      assert.equal(await form.locator('button[type="submit"]').evaluate(element => element === document.activeElement), true, "Tab reached Create")
+      // One scroller: the form body in a tall panel, the whole panel in a short one.
+      const tall = viewport.height === 600
+      assert.equal(await scrolls(f.page, "form.mission-editor > .window-body"), tall, `the form body scrolls only in a tall panel (${viewport.height}px)`)
+      assert.equal(await scrolls(f.page, ".mission-control"), !tall, `the panel scrolls only in a short one (${viewport.height}px)`)
+      assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+    } finally { await f.close() }
+  }
+})
+
+test("a very short panel scrolls the whole creation form: Options opens and every control stays reachable", async () => {
+  const f = await open({ viewport: { width: 220, height: 120 } })
+  try {
+    await openCreation(f.page)
+    const form = f.page.locator("form.mission-editor")
+    for (const control of [form.getByRole("textbox", { name: "Notes", exact: true }), form.getByRole("button", { name: "Save as brief", exact: true }),
+      form.getByRole("button", { name: "Cancel", exact: true }), form.locator('button[type="submit"]')]) {
+      // A trial click scrolls the control into view and checks that the pointer reaches it.
+      await control.click({ trial: true })
+    }
+    assert.equal(await scrolls(f.page, "form.mission-editor > .window-body"), false, "the body never scrolls inside the scrolling panel")
+    assert.equal(await scrolls(f.page, ".mission-control"), true)
+    assert.deepEqual(f.mutations, []); assert.deepEqual(f.errors, [])
+  } finally { await f.close() }
+})
+
 test("the gear opens Settings on the Missions section; the panel has no inline preferences", async () => {
   const f = await open()
   try {
