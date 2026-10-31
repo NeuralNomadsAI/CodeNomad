@@ -12,7 +12,7 @@ import { fileURLToPath } from "node:url"
 import { assertNoSentinels, FAKE_INTEGRATION_SENTINELS, packFakeIntegration, startFakeHost } from "./fixtures/fake-integration/index.mjs"
 import { startFakeNpmRegistry } from "./fixtures/fake-npm-registry.mjs"
 import { withProductRuntime, writeFixtureServiceRegistration } from "./native-product-fixture.mjs"
-import { integrationMarkerSchema, integrationRpcSchemas } from "../packages/server/src/opencode/integrations/contract.ts"
+import { integrationMarkerSchema, readIntegrationRpcOutput } from "../packages/server/src/opencode/integrations/contract.ts"
 
 const PYTHON_HOST = fileURLToPath(new URL("./fixtures/fake-integration/python-host.py", import.meta.url))
 const python = ["python3", "python"].find(command => spawnSync(command, ["-I", "-c", "import sys; assert sys.version_info >= (3, 8)"], { windowsHide: true }).status === 0)
@@ -36,8 +36,7 @@ try {
   }, async ({ client, root, env, connection }) => {
     const call = async (rpcID, method, input = {}, directory = root) => {
       const { output } = await client.rpc.call({ rpcID, method, input, location: { directory } })
-      const parsed = integrationRpcSchemas[`${method}.output`].safeParse(output)
-      assert(parsed.success, `${rpcID}.${method} answers within the contract: ${JSON.stringify(output)}`)
+      assert(readIntegrationRpcOutput(`${method}.output`, output).ok, `${rpcID}.${method} answers within the contract: ${JSON.stringify(output)}`)
       assertNoSentinels(output, secrets, `${rpcID}.${method}`)
       return output
     }

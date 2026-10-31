@@ -11,6 +11,8 @@ import {
   integrationCatalogSchema,
   integrationMarkerSchema,
   integrationRpcSchemas,
+  type IntegrationRpcOutputName,
+  readIntegrationRpcOutput,
 } from "./contract"
 
 // AC-F1: every zod schema accepts and refuses exactly the samples its vendored JSON Schema does.
@@ -275,6 +277,45 @@ describe("integration RPC parity", () => {
       assertParity(name, integrationRpcSchemas[name as keyof typeof integrationRpcSchemas], validators.rpc(name), samples)
     })
   }
+})
+
+// The definitions an integration registers: rpc.schema.json without `pattern`, which OpenCode refuses.
+const withoutPatterns = (value: unknown): unknown => Array.isArray(value) ? value.map(withoutPatterns)
+  : typeof value === "object" && value !== null
+    ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== "pattern").map(([key, item]) => [key, withoutPatterns(item)])) : value
+const registered = new Ajv2020({ strict: true, strictRequired: false, allErrors: true })
+registered.addSchema(withoutPatterns(rpcJson) as object)
+
+describe("integration RPC output reader", () => {
+  const outputs = Object.keys(rpcSamples).filter((name): name is IntegrationRpcOutputName => name.endsWith(".output"))
+
+  it("returns the conforming output without its unknown fields", () => {
+    const read = readIntegrationRpcOutput("status.output", { ...status, future: true })
+    assert.ok(read.ok)
+    assert.deepEqual(read.value, status)
+  })
+
+  it("treats every non-conforming sample as an integration error and echoes none of it", () => {
+    for (const name of outputs) for (const sample of rpcSamples[name].filter(sample => !sample.valid)) {
+      const read = readIntegrationRpcOutput(name, sample.value)
+      assert.deepEqual(read, { ok: false, error: "non-conforming" }, `${name}: "${sample.name}"`)
+    }
+  })
+
+  it("refuses what OpenCode lets through once the patterns are gone", () => {
+    const passedThrough: string[] = []
+    for (const name of outputs) {
+      const validate = registered.getSchema(`${rpcJson.$id}#/$defs/${name}`)
+      assert.ok(validate, name)
+      for (const sample of rpcSamples[name].filter(sample => !sample.valid && validate(sample.value))) {
+        passedThrough.push(`${name}: ${sample.name}`)
+        assert.equal(readIntegrationRpcOutput(name, sample.value).ok, false, `${name}: "${sample.name}"`)
+      }
+    }
+    // Paths, separators and control characters in display text, malformed versions and IDs.
+    for (const expected of ["hosts.output: document path", "hosts.output: offer ID with a dot", "installHost.output: Windows path in detail",
+      "status.output: two-part version", "status.output: app version with a control character"]) assert.ok(passedThrough.includes(expected), expected)
+  })
 })
 
 describe("vendored specification", () => {

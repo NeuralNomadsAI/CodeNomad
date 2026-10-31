@@ -1,6 +1,6 @@
 {
   "repository": "https://github.com/NeuralNomadsAI/opencode-integrations",
-  "revision": "dac13a74860232464d75c4a5840449d40a1b7bbf",
+  "revision": "68eb8aa80a80e1ebee96a8ea7e9082f5eba86985",
   "draft": "0.1",
   "files": {
     "packages/server/src/opencode/integrations/vendor/catalog.schema.json": { "source": "spec/schemas/catalog.schema.json", "blob": "425f7fbe16c8ada6ba2600058c7e843c3e973ddf" },

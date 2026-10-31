@@ -41,9 +41,14 @@ blob IDs (`git rev-parse <revision>:<source>`), adapt `contract.ts` and extend t
 
 OpenCode imports RPC definitions through Effect's JSON Schema import, which refuses `pattern` ("Patterns may block
 validation and are disabled"; OpenCode 2.2.5): a call whose declared output schema has a pattern fails with
-`rpc.invalid_output`. Integration packages register their definitions without `pattern` and validate themselves
-every input whose definition loses a pattern, as well as the opaque `advertise` and `withdraw` inputs; readers
-revalidate outputs with `contract.ts`.
+`rpc.invalid_output`. Integration packages (spec/rpc-contract.md §4) register their definitions without
+`pattern` and validate themselves every input whose definition loses a pattern, as well as the opaque `advertise`
+and `withdraw` inputs. OpenCode therefore lets through outputs the specification forbids (a path as a document, a
+malformed version or ID, a control character): CodeNomad reads every RPC output through
+`readIntegrationRpcOutput(name, value)`, the full schema with its patterns and bounds. A non-conforming output is
+an integration error (`{ ok: false, error: "non-conforming" }`), never trusted or partially used, and the refused
+value is never echoed. `contract.test.ts` checks that every sample the pattern-free definitions accept but the
+specification refuses is refused by the reader.
 
 ## Test fixtures
 
@@ -87,6 +92,8 @@ Commands:
 ## Agent conventions
 
 - Never add integration types to `api-types.ts`; export them from `integration-types.ts`.
+- Read every integration RPC output through `readIntegrationRpcOutput`; never use a raw `rpc.call` output, and
+  report a non-conforming one as an integration error without its content.
 - Keep `contract.ts` equal to the vendored JSON Schemas. A stricter server check (for example refusing
   path-like strings) belongs to the code that projects a status, never to the contract schemas.
 - The RPC ID of an integration comes from the catalog on the server, never from a client.

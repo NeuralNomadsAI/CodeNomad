@@ -6,6 +6,8 @@ export type {
   IntegrationHostOffer,
   IntegrationMarker,
   IntegrationRpcDefinition,
+  IntegrationRpcOutputName,
+  IntegrationRpcOutputRead,
   IntegrationRpcValue,
   IntegrationStatus,
 } from "./opencode/integrations/contract"

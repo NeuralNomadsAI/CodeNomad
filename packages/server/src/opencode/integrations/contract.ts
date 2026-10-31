@@ -203,3 +203,18 @@ export const integrationRpcSchemas = {
 } as const satisfies Record<string, z.ZodTypeAny>
 export type IntegrationRpcDefinition = keyof typeof integrationRpcSchemas
 export type IntegrationRpcValue<Name extends IntegrationRpcDefinition> = z.infer<(typeof integrationRpcSchemas)[Name]>
+export type IntegrationRpcOutputName = Extract<IntegrationRpcDefinition, `${string}.output`>
+export type IntegrationRpcOutputRead<Name extends IntegrationRpcOutputName> =
+  | { ok: true; value: IntegrationRpcValue<Name> }
+  | { ok: false; error: "non-conforming" }
+
+/**
+ * The only way to read an integration's RPC output. Integrations register their definitions without `pattern`
+ * (OpenCode refuses it), so OpenCode lets through values the specification forbids: the full schema, patterns and
+ * bounds included, decides here. A non-conforming output is an integration error, never partially used, and the
+ * refused value is never echoed.
+ */
+export function readIntegrationRpcOutput<Name extends IntegrationRpcOutputName>(name: Name, value: unknown): IntegrationRpcOutputRead<Name> {
+  const parsed = integrationRpcSchemas[name].safeParse(value)
+  return parsed.success ? { ok: true, value: parsed.data as IntegrationRpcValue<Name> } : { ok: false, error: "non-conforming" }
+}
