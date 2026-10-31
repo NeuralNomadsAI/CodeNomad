@@ -1,7 +1,7 @@
 import { Match, Show, Switch, batch, createComputed, createEffect, createMemo, createSignal, createUniqueId, onCleanup, untrack, type Component, type JSX } from "solid-js"
 import { AlertTriangle, Flag, Loader2, RefreshCw, Settings } from "lucide-solid"
 
-import type { MissionActivityProjection, MissionMap } from "../../../../../../../server/src/api-types"
+import type { MissionActivityProjection, MissionPanelMap } from "../../../../../../../server/src/api-types"
 import type { MissionUnavailableReason } from "../../../../../../../server/src/missions/model"
 import { activateMissionDemand, deactivateMissionDemand, missionStore } from "../../../../../stores/missions"
 import { activeParentSessionId, getAuthoritativelyDeletedSessionIdsForInstance, hydrateRestoredSessionChain, sessions, setActiveSessionFromList } from "../../../../../stores/sessions"
@@ -74,7 +74,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   const missions = () => state().missions
   const rows = () => state().summaries
   const family = (id: string) => state().activity?.missions.find(item => item.missionId === id)?.family
-  const includesSession = (value: MissionMap, id: string) => value.coordinatorSessionId === id
+  const includesSession = (value: MissionPanelMap, id: string) => value.coordinatorSessionId === id
     || missionIncludesSession(value.actors, id, family(value.id)) || missionDerivedSessionIncludes(props.instanceId, value, id)
   const directory = () => instances().get(props.instanceId)?.folder
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? state().projectID ?? missions()[0]?.projectID
@@ -99,7 +99,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
   // Playbook details need no Mission or conversation; the editor stays open beside them. Reading is
   // not a panel intent: the editor's operation stays current, and the reader change itself fences
   // in-flight conversation navigation (conversationEpoch).
-  const showPlaybook = (template: MissionMap["template"], taskMode: "native" | "independent") => {
+  const showPlaybook = (template: MissionPanelMap["template"], taskMode: "native" | "independent") => {
     batch(() => {
       showSessionChatFor(props.activeSessionId() ?? "", scope())
       updateMissionProjectView(scope(), { reader: { missionId: template, kind: "playbook", taskMode } })
@@ -407,7 +407,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
       <Show when={selectedRow() && !mission() && state().status !== "error"}><p role="status">{props.t("missions.control.loading")}</p></Show>
       <Show when={selectedOneTimeId()} keyed>{id => {
         // Keep the last known snapshot while the keyed detail is being disposed.
-        const selected = createMemo<MissionMap>(previous => missions().find(value => value.id === id) ?? previous!)
+        const selected = createMemo<MissionPanelMap>(previous => missions().find(value => value.id === id) ?? previous!)
         return <section id={detailId} class="mission-detail" aria-label={missionDisplayTitle(selected())}>
           <MissionSelectedActions instanceId={props.instanceId} mission={selected()} active={props.isActive?.() ?? true}
             disabled={Boolean(editor())} messagingDisabled={messagingDisabled()}
@@ -478,7 +478,7 @@ const StateMessage: Component<{
   </div>
 )
 
-function statusKey(status: MissionMap["status"]): string {
+function statusKey(status: MissionPanelMap["status"]): string {
   return `missions.control.status.${status}`
 }
 

@@ -5,7 +5,9 @@ import { missionMutationErrors } from "./rpc-errors"
 import { lifecycleInputSchema, lifecycleOperationSchema } from "./lifecycle-schema"
 import { MAX_PROJECTED_CLEANUPS, missionCleanupSchema } from "./cleanup-projection"
 import { MISSION_TITLE_MAX } from "./mission-title"
-import { MISSION_LIST_MAX_INCLUDE, missionSummarySchema } from "./mission-summary"
+import { MISSION_LIST_MAX_INCLUDE, MISSION_SUMMARY_OBJECTIVE, missionSummarySchema } from "./mission-summary"
+import { MISSION_BODY_FIELDS } from "./mission-content-wire"
+import { MISSION_BRIEFING_CONTENT, MISSION_EXCERPT_MAX } from "./mission-panel-map"
 import { missionBriefingResponsesSchema, missionBriefingSnapshotSchema } from "./briefing"
 import { taskExecutionModeRpcSchema, taskGenerationSchema, nativeTaskBindingSchema, nativeTaskExecutionSchema, nativeCallBindingSchema } from "./native-wire-schema"
 import { recurrenceCurrentContentWire } from "./recurrence-current"
@@ -32,7 +34,7 @@ const location = {
   additionalProperties: false,
 } as const
 
-// Body descriptors (`describeMissionBodies`), keyed by body field.
+// Body descriptors (`describeMissionBodies`), keyed by body field: in compact maps only.
 const bodies = {
   type: "object",
   additionalProperties: {
@@ -44,7 +46,6 @@ const bodies = {
 const report = {
   type: "object",
   properties: {
-    bodies,
     id: { type: "string" },
     taskKey: { type: "string" },
     sessionId: { type: "string" },
@@ -132,7 +133,6 @@ const mission = {
           report,
           lateReports: { type: "array", items: report },
           outstandingExecution: { type: "boolean" },
-          bodies,
         },
         required: ["id", "key", "title", "brief", "role", "blockedBy", "status", "createdAt", "updatedAt", "outstandingExecution"],
         additionalProperties: false,
@@ -150,14 +150,12 @@ const mission = {
           retiredTasks: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, replacementTaskKey: { type: "string" } }, required: ["taskKey"], additionalProperties: false } },
           dependencyUpdates: { type: "array", items: { type: "object", properties: { taskKey: { type: "string" }, before: stringArray, after: stringArray }, required: ["taskKey", "before", "after"], additionalProperties: false } },
           createdAt: { type: "number" },
-          bodies,
         },
         required: ["revision", "addedTaskKeys", "retiredTasks", "dependencyUpdates", "createdAt"],
         additionalProperties: false,
       },
     },
     historyTruncated: { type: "boolean" },
-    bodies,
     frontier: stringArray,
     claims: stringArray,
     createdAt: { type: "number" },
@@ -172,6 +170,54 @@ const mission = {
 } as const
 
 export const sharedMissionMap = mission
+
+/** `value` without `keys`, every other property kept. */
+function omit<T extends object, K extends keyof T>(value: T, keys: readonly K[]): Omit<T, K> {
+  return Object.fromEntries(Object.entries(value).filter(([key]) => !(keys as readonly PropertyKey[]).includes(key))) as Omit<T, K>
+}
+const unlisted = (required: readonly string[], fields: readonly string[]) => required.filter(field => !fields.includes(field))
+
+// The compact map (`compactMissionMap`) of the list and mission reads: the full map's
+// schema without the body fields (`MISSION_BODY_FIELDS`), with their descriptors
+// (`bodies`) and with rows and bounded excerpts in place of the mixed ones. Any other
+// field passes as it is.
+const excerpt = { type: "string", maxLength: 2 * MISSION_EXCERPT_MAX + 1 } as const
+const reportRow = {
+  ...report,
+  properties: { ...omit(report.properties, MISSION_BODY_FIELDS.report), bodies, excerpt, decidedBy: { type: "string", enum: ["human", "coordinator"] } },
+  required: [...unlisted(report.required, MISSION_BODY_FIELDS.report), "excerpt"],
+} as const
+const [nativeMode, independentMode] = taskExecutionModeRpcSchema.oneOf
+const executionModeRow = { oneOf: [nativeMode, {
+  ...independentMode, properties: { ...omit(independentMode.properties, ["explanation"]), excerpt },
+  required: [...unlisted(independentMode.required, ["explanation"]), "excerpt"],
+}] } as const
+const taskSchema = mission.properties.tasks.items
+const taskRow = {
+  ...taskSchema,
+  properties: { ...omit(taskSchema.properties, MISSION_BODY_FIELDS.task), bodies, executionMode: executionModeRow, report: reportRow,
+    lateReports: { type: "array", items: reportRow } },
+  required: [...unlisted(taskSchema.required, MISSION_BODY_FIELDS.task), "bodies"],
+} as const
+const changeSchema = mission.properties.history.items
+const changeRow = {
+  ...changeSchema, properties: { ...omit(changeSchema.properties, MISSION_BODY_FIELDS.change), bodies, excerpt },
+  required: [...unlisted(changeSchema.required, MISSION_BODY_FIELDS.change), "bodies"],
+} as const
+const briefingIdentity = {
+  ...missionBriefingSnapshotSchema, properties: omit(missionBriefingSnapshotSchema.properties, MISSION_BRIEFING_CONTENT),
+  required: unlisted(missionBriefingSnapshotSchema.required, MISSION_BRIEFING_CONTENT),
+} as const
+const compactMission = {
+  ...mission,
+  properties: {
+    ...omit(mission.properties, [...MISSION_BODY_FIELDS.mission, "tasks", "reports", "history"]), bodies,
+    excerpt: { type: "string", maxLength: 2 * MISSION_SUMMARY_OBJECTIVE }, briefing: briefingIdentity,
+    tasks: { type: "array", items: taskRow }, reports: { type: "array", items: reportRow },
+    history: { ...mission.properties.history, items: changeRow },
+  },
+  required: [...unlisted(mission.required, MISSION_BODY_FIELDS.mission), "excerpt", "bodies"],
+} as const
 
 const mutationMissionResult = {
   type: "object",
@@ -313,14 +359,14 @@ export const CODENOMAD_MISSIONS_RPC = {
         include: { type: "array", maxItems: MISSION_LIST_MAX_INCLUDE, items: { type: "string", minLength: 1, maxLength: 100 } },
         summariesVersion: { type: "string", minLength: 1, maxLength: 64 },
       }, additionalProperties: false },
-      output: { type: "object", properties: { ...snapshotProperties,
+      output: { type: "object", properties: { ...snapshotProperties, missions: { type: "array", items: compactMission },
         summaries: { type: "array", items: missionSummarySchema }, summariesVersion: { type: "string" } },
         required: ["version", "projectID", "generatedAt", "missions", "discardedEvents", "cleanups", "summariesVersion"], additionalProperties: false },
     },
     mission: {
       input: { type: "object", properties: { missionID: { type: "string", minLength: 1, maxLength: 100 } }, required: ["missionID"], additionalProperties: false },
       output: { type: "object", properties: {
-        version: snapshotProperties.version, projectID: snapshotProperties.projectID, generatedAt: snapshotProperties.generatedAt, mission,
+        version: snapshotProperties.version, projectID: snapshotProperties.projectID, generatedAt: snapshotProperties.generatedAt, mission: compactMission,
         cleanups: snapshotProperties.cleanups, cleanupUnavailable: { type: "boolean" }, controlUnavailable: { type: "boolean" },
         notificationUnavailable: { type: "boolean" },
       }, required: ["version", "projectID", "generatedAt", "cleanups"], additionalProperties: false },

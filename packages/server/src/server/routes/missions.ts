@@ -2,15 +2,16 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify"
 import { z } from "zod"
 
 import type { OpenCodeClient } from "@opencode/client"
-import type { MissionActivityProjection, MissionList, MissionListResponse, MissionListUnavailableResponse, MissionMap, MissionRead,
-  MissionReadResponse, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
+import type { MissionActivityProjection, MissionList, MissionListResponse, MissionListUnavailableResponse, MissionMap, MissionPanelMap,
+  MissionRead, MissionReadResponse, MissionSnapshot, MissionUnavailableReason } from "../../missions/model"
+import { compactMissionMap, compactMissionReads } from "../../missions/mission-compact-map"
+import { projectMissionActivity, type MissionActivityInput } from "../../missions/activity"
 import { MISSION_LIST_MAX_INCLUDE } from "../../missions/mission-summary"
 import { missionContentRequestSchema, type MissionContentResponse, type MissionContentResult } from "../../missions/mission-content"
 import { CODENOMAD_MISSIONS_RPC, CODENOMAD_MISSIONS_RPC_ID } from "../../missions/rpc"
 import type { WorkspaceManager } from "../../workspaces/manager"
 import { locationRequestOptions, sameLocation } from "../../opencode/compatibility/location"
 import { readMissionMutationError } from "../../missions/rpc-errors"
-import { projectMissionActivity } from "../../missions/activity"
 import type { WorktreeDeletionFence } from "../../workspaces/worktree-session-evacuation"
 import { captureDisplayIdentities } from "../../workspaces/worktree-display-identity"
 import { prepareMissionCreation, MissionCreationPreparationError } from "./mission-creation-pipeline"
@@ -65,41 +66,38 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   registerMissionRecurrenceCreate(app, deps)
   registerMissionRecurrenceCurrent(app, deps)
   registerMissionPlaybookRoutes(app)
-  // Open and included missions as full maps plus one summary row per mission,
-  // with activity for those maps only. A plugin without `list` (a reload can
-  // briefly pair builds) answers with its full snapshot and no summaries.
+  // Open and included missions as compact maps plus one summary row per mission,
+  // with activity for those maps only. Maps are compacted here too: a reload can
+  // briefly pair this backend with a plugin that lists full maps. A plugin without
+  // `list` is unavailable: its only other read, the snapshot, carries every full map.
   app.get<{ Params: { id: string }; Querystring: Record<string, unknown> }>("/api/workspaces/:id/missions", async (request, reply) => {
     const query = ListQuerySchema.safeParse(request.query ?? {})
     if (!query.success) return reply.code(400).send({ error: "Invalid mission list request" })
     const input = { ...(query.data.include ? { include: query.data.include } : {}),
       ...(query.data.summaries ? { summariesVersion: query.data.summaries } : {}) }
     return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign, observe }): Promise<MissionListResponse> => {
-      // The registered RPC validates this JSON-Schema output before the generated client returns it.
-      let listed: MissionSnapshot & Partial<Pick<MissionList, "summaries" | "summariesVersion">>
-      try { listed = await rpc.list(input, call) as MissionList }
-      catch (error) {
-        if (!isMissingMethod(error)) throw error
-        listed = await rpc.snapshot({}, call) as MissionSnapshot
-      }
+      // The registered RPC validates this JSON-Schema output against the plugin's own schema.
+      const listed = compactMissionReads(await rpc.list(input, call) as MissionList)
       if (listed.projectID !== projectID) return foreign()
       return { available: true, ...listed, activity: await observe(listed) }
     })
   })
 
-  // One mission's range for display reconciliation (lost acknowledgements,
-  // cleanup retries). Hints-based project flags: never admission authority.
+  // One mission's range, its map compact, for display reconciliation (lost
+  // acknowledgements, cleanup retries). Hints-based project flags: never admission
+  // authority. A plugin without `mission` answers from its snapshot, one map compacted.
   app.get<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID", async (request, reply) => {
     const params = MissionReadParamsSchema.safeParse(request.params)
     if (!params.success) return reply.code(400).send({ error: "Invalid mission read request" })
     return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionReadResponse> => {
-      let read: MissionRead
+      let read: MissionRead<MissionMap | MissionPanelMap>
       try { read = await rpc.mission({ missionID: params.data.missionID }, call) as MissionRead }
       catch (error) {
         if (!isMissingMethod(error)) throw error
         read = missionReadFromSnapshot(await rpc.snapshot({}, call) as MissionSnapshot, params.data.missionID)
       }
       if (read.projectID !== projectID) return foreign()
-      return { available: true, ...read }
+      return { available: true, ...read, ...(read.mission ? { mission: compactMissionMap(read.mission) } : {}) }
     })
   })
 
@@ -123,7 +121,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   app.get<{ Params: { id: string; missionID: string } }>("/api/workspaces/:id/missions/:missionID/admission", async (request, reply) => {
     const params = MissionReadParamsSchema.safeParse(request.params)
     if (!params.success) return reply.code(400).send({ error: "Invalid mission read request" })
-    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionReadResponse> => {
+    return readMissionPlugin(request, reply, deps, async ({ rpc, call, projectID, foreign }): Promise<MissionReadResponse<MissionMap>> => {
       const read = missionReadFromSnapshot(await rpc.snapshot({}, call) as MissionSnapshot, params.data.missionID)
       if (read.projectID !== projectID) return foreign()
       return { available: true, ...read }
@@ -212,7 +210,7 @@ interface MissionPluginRead {
   /** A response naming another project: logged, answered 502 plugin-unavailable. */
   foreign(): MissionListUnavailableResponse
   /** Display activity of these maps' actors, fenced by this read's view and connection. */
-  observe(snapshot: MissionSnapshot): Promise<MissionActivityProjection>
+  observe(read: MissionActivityInput): Promise<MissionActivityProjection>
 }
 
 /** The read routes' shared path to the owned Location's active plugin. */
@@ -303,7 +301,7 @@ function unavailable(reason: MissionUnavailableReason): MissionListUnavailableRe
 
 /** One mission's read projected from a full snapshot: its map (stamped with the
  * project flags), its cleanups and the project flags. */
-function missionReadFromSnapshot(snapshot: MissionSnapshot, missionID: string): MissionRead {
+function missionReadFromSnapshot(snapshot: MissionSnapshot, missionID: string): MissionRead<MissionMap> {
   const mission = snapshot.missions.find(value => value.id === missionID)
   return { version: snapshot.version, projectID: snapshot.projectID, generatedAt: snapshot.generatedAt, ...(mission ? { mission } : {}),
     cleanups: (snapshot.cleanups ?? []).filter(cleanup => cleanup.missionID === missionID),

@@ -10,6 +10,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { runWithDiagnosticCleanup } from "./fixture-diagnostic-boundary"
 import { missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
+import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, server: ViteDevServer, url: string
 before(async () => {
@@ -90,7 +91,7 @@ test("certified rejection while hidden releases only its owned intent; reactivat
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: [current], generatedAt: reads, discardedEvents: 0 } }) }
+      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: reads, discardedEvents: 0 } }) }
       calls.push(route.request().postDataJSON() as Input)
       if (calls.length === 1) { submitted(); await held; current = { ...current, revision: 2 }; return route.fulfill({ status: 409, json: { code: "revision-conflict" } }) }
       current = { ...current, revision: 3, runState: "paused" }; return route.fulfill({ json: { mission: current } })
@@ -119,7 +120,7 @@ test("uncertain row remount and native reconnect invalidations retain exact orig
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [current, mission("two")], generatedAt: current.revision, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current, mission("two")]), generatedAt: current.revision, discardedEvents: 0 } })
       calls.push(route.request().postDataJSON() as Input); current = { ...current, revision: current.revision + 1 }
       return route.fulfill({ status: 409, json: {} })
     })
@@ -144,7 +145,7 @@ for (const outcome of ["rejected", "acknowledged", "unknown", "foreign-ack"] as 
     try {
       await page.route("**/api/**", route => route.fulfill({ json: {} }))
       await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-        if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: [current, mission("two")], generatedAt: reads, discardedEvents: 0 } }) }
+        if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([current, mission("two")]), generatedAt: reads, discardedEvents: 0 } }) }
         calls.push(route.request().postDataJSON() as Input); submitted(); await held; current = { ...current, revision: 2 }
         return outcome === "rejected" ? route.fulfill({ status: 409, json: { code: "revision-conflict" } })
           : outcome === "unknown" ? route.fulfill({ status: 409, json: {} })
@@ -174,7 +175,7 @@ test("directory/project source ABA retains original uncertainty; stale completio
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: [current], generatedAt: reads, discardedEvents: 0 } }) }
+      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: reads, discardedEvents: 0 } }) }
       calls.push(route.request().postDataJSON() as Input)
       if (calls.length === 1) { submitted(); await held; current = { ...current, revision: 2 } }
       return route.fulfill({ status: 409, json: {} })
@@ -210,7 +211,7 @@ test("window capacity fails closed without eviction; exact release enables admis
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [mission(), mission("two")], generatedAt: 1, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([mission(), mission("two")]), generatedAt: 1, discardedEvents: 0 } })
       calls.push(route.request().postDataJSON() as Input); return route.fulfill({ status: 409, json: {} })
     })
     await open(page); await pause(page).click(); await settle(page)
@@ -244,7 +245,7 @@ test("authoritative operation replacement wins over a late rejected local intent
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", async route => {
-      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: [current], generatedAt: reads, discardedEvents: 0 } }) }
+      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: reads, discardedEvents: 0 } }) }
       calls.push(route.request().postDataJSON() as Input)
       if (calls.length === 1) { submitted(); await held; return route.fulfill({ status: 409, json: { code: "revision-conflict" } }) }
       return route.fulfill({ status: 503, json: { code: "control-pending" } })
@@ -271,7 +272,7 @@ test("same-project metadata hydration cannot enable fresh admission or erase the
   try {
     await page.route("**/api/**", route => route.fulfill({ json: {} }))
     await page.route("**/api/workspaces/mission-visibility/missions**", route => {
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: [current, mission("two")], generatedAt: current.revision, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, missions: panelMissions([current, mission("two")]), generatedAt: current.revision, discardedEvents: 0 } })
       calls.push(route.request().postDataJSON() as Input); current = { ...current, revision: current.revision + 1 }
       return route.fulfill({ status: 409, json: {} })
     })

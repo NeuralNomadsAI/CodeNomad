@@ -1,5 +1,6 @@
-// Shared with the UI, which derives rows from full snapshots: keep it free of Node modules.
+// Shared with the UI, which derives rows from the maps of a list without summaries: keep it free of Node modules.
 import type { MissionMap } from "./model"
+import { isFullMissionMap, type MissionPanelMap } from "./mission-panel-map"
 import { MISSION_TITLE_MAX } from "./mission-title"
 
 /** Missions a `list` read returns as full maps besides the open ones (the panel's selection and reader). */
@@ -26,10 +27,20 @@ export interface MissionSummary {
   revision: number
 }
 
-export function missionSummary(mission: MissionMap): MissionSummary {
+/** An objective's display label: whitespace runs collapsed (a newline kept), at most `MISSION_SUMMARY_OBJECTIVE` code points. */
+export function missionObjectiveLabel(objective: string): string {
+  return Array.from(objective.trim().replace(/\s+/g, run => run.includes("\n") ? "\n" : " ")).slice(0, MISSION_SUMMARY_OBJECTIVE).join("")
+}
+
+/** The objective label of either shape: a compact map's excerpt, or a full map's own. */
+export function missionPanelObjective(map: MissionPanelMap): string {
+  return isFullMissionMap(map) ? missionObjectiveLabel(map.objective) : map.excerpt ?? ""
+}
+
+export function missionSummary(mission: MissionMap | MissionPanelMap): MissionSummary {
   return {
     id: mission.id, ...(mission.title === undefined ? {} : { title: mission.title }),
-    objective: Array.from(mission.objective.trim().replace(/\s+/g, run => run.includes("\n") ? "\n" : " ")).slice(0, MISSION_SUMMARY_OBJECTIVE).join(""),
+    objective: missionPanelObjective(mission),
     status: mission.status, ...(mission.runState === undefined ? {} : { runState: mission.runState }),
     coordinatorSessionId: mission.coordinatorSessionId, actorSessionIds: mission.actors.map(actor => actor.sessionId), updatedAt: mission.updatedAt,
     ...(mission.finishSequence === undefined ? {} : { finishSequence: mission.finishSequence }), revision: mission.revision,

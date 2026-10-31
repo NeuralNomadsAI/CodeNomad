@@ -1,5 +1,5 @@
 import { Show, createEffect, createMemo, createSignal, onCleanup } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { isRejectedLifecycleIntent, type MissionLifecycleInput } from "../lib/mission-lifecycle-request"
 import { useI18n } from "../lib/i18n"
@@ -20,7 +20,7 @@ export interface MissionControlRetry { pending: () => boolean; reconcile: (missi
 
 /** Play/Pause/Stop for the selected Mission: one contextual primary action and
  * Stop. Unresolved requests are checked, and resent only on explicit refresh. */
-export function createMissionLifecycle(props: { instanceId: string; mission: MissionMap; disabled?: boolean
+export function createMissionLifecycle(props: { instanceId: string; mission: MissionPanelMap; disabled?: boolean
   /** Observed activity: some actor or its sub-agents still runs. */
   working?: boolean }) {
   const { t } = useI18n()

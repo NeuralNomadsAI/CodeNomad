@@ -17,7 +17,7 @@ const available = (objective: string): MissionListResponse => ({
     id: `mission-${objective}`,
     projectID: "project-1",
     projectCanonical: "/repo",
-    objective,
+    excerpt: objective,
     template: "custom",
     status: "active",
     coordinatorSessionId: "session-1",
@@ -42,7 +42,7 @@ test("loads durable mission snapshots and represents optional unavailability", a
   const store = createMissionStore(async () => responses.shift()!)
   await store.ensure("instance-1")
   assert.equal(store.state("instance-1").status, "ready")
-  assert.equal(store.state("instance-1").missions[0]?.objective, "first")
+  assert.equal(store.state("instance-1").missions[0]?.excerpt, "first")
   assert.equal(store.state("instance-1").activity?.generatedAt, 11)
   await store.refresh("instance-1")
   assert.deepEqual(store.state("instance-1"), {
@@ -81,7 +81,7 @@ const row = (id: string, status: "active" | "completed" = "completed") => ({ id,
 test("a summaries backend gets the wanted maps and the held version; rows survive an omitted list", async () => {
   const open = available("open")
   if (!open.available) throw new Error("fixture")
-  const closed = { ...open.missions[0], id: "mission-closed", objective: "closed", status: "completed" as const }
+  const closed = { ...open.missions[0], id: "mission-closed", excerpt: "closed", status: "completed" as const }
   const requests: unknown[] = []
   const responses: MissionListResponse[] = [
     { ...open, summaries: [row("mission-open", "active"), row("mission-closed")], summariesVersion: "v1" },
@@ -240,7 +240,7 @@ test("coalesces an in-flight invalidation into one trailing refresh", async () =
   assert.equal(resolvers.length, 2)
   resolvers[1](available("current"))
   await Promise.all([first, trailing])
-  assert.equal(store.state("instance-1").missions[0]?.objective, "current")
+  assert.equal(store.state("instance-1").missions[0]?.excerpt, "current")
 })
 
 test("tracks visible demand independently from cached snapshots", async () => {
@@ -265,7 +265,7 @@ test("hiding the panel cancels a queued trailing read but preserves the current 
   resolve(available("cached"))
   await Promise.all([first, trailing])
   assert.equal(requests, 1)
-  assert.equal(store.state("instance-1").missions[0]?.objective, "cached")
+  assert.equal(store.state("instance-1").missions[0]?.excerpt, "cached")
   assert.deepEqual(store.demandedInstanceIds(), [])
 })
 
@@ -290,7 +290,7 @@ test("preserves the last map through transient errors and clears stopped workspa
   fail = true
   await store.refresh("instance-1")
   assert.equal(store.state("instance-1").status, "error")
-  assert.equal(store.state("instance-1").missions[0]?.objective, "durable")
+  assert.equal(store.state("instance-1").missions[0]?.excerpt, "durable")
   store.clear("instance-1")
   assert.equal(store.state("instance-1").status, "idle")
 })

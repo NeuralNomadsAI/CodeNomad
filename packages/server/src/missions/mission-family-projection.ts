@@ -1,7 +1,7 @@
 import type { SessionInfo } from "@opencode/client"
 import { sameLocation } from "../opencode/compatibility/location"
 import { missionTaskExecutionEvidence } from "./execution-evidence"
-import type { MissionActivityProjection, MissionMap } from "./model"
+import type { MissionActivityProjection, MissionPanelMap } from "./model"
 import { MAX_MISSION_DESCENDANTS, type NativeMissionFamilyTree } from "./native-session-family"
 
 type FamilyProjection = NonNullable<MissionActivityProjection["missions"][number]["family"]>
@@ -9,7 +9,7 @@ type FamilyProjection = NonNullable<MissionActivityProjection["missions"][number
 /** Joins caller-validated native observations to declared display context only.
  * Ordinary children never become actors, tasks, reports or control targets. */
 export function projectMissionFamily(input: {
-  mission: MissionMap
+  mission: MissionPanelMap
   trees: ReadonlyMap<string, NativeMissionFamilyTree>
   observed: boolean
   /** Declared actors this refresh did not read (its actor budget): the family is partial without them. */

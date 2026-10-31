@@ -92,8 +92,8 @@ test("every body of a large mission reads back exactly through the content RPC, 
   const f = missionPluginFixture(), plugin = await f.plugin()
   try {
     const mission = await largeMission(f)
-    // The map as the reducer derives it: the mission read's body descriptors describe its values and are none of them.
-    const reference = JSON.parse(JSON.stringify((await f.control().mission(mission.id)).mission, (key, value) => key === "bodies" ? undefined : value)) as MissionMap
+    // The map as the reducer derives it: the snapshot's full map.
+    const reference = JSON.parse(JSON.stringify((await f.control().snapshot()).missions.find(value => value.id === mission.id))) as MissionMap
     const content = (input: unknown) => plugin.rpc("content", input) as Promise<MissionContentResult>
     let multiSlice = 0
     for (const selector of selectors(reference)) {
@@ -115,17 +115,19 @@ test("every body descriptor of the list and mission reads names exactly the text
     const content = (input: unknown) => plugin.rpc("content", input) as Promise<MissionContentResult>
     const listed = await plugin.rpc("list", { include: [mission.id] }) as MissionList, read = await plugin.rpc("mission", { missionID: mission.id }) as MissionRead
     assert.ok(validList(listed), JSON.stringify(validList.errors)); assert.ok(validRead(read), JSON.stringify(validRead.errors))
+    // Which bodies the mission has: its full map's. The compact maps name each by its descriptor.
+    const full = (await f.control().snapshot()).missions.find(value => value.id === mission.id)!
     for (const map of [listed.missions.find(value => value.id === mission.id)!, read.mission!]) {
-      type Owner = [MissionContentSelector["kind"], object, (field: string) => MissionContentSelector]
+      type Owner = [MissionContentSelector["kind"], object, object, (field: string) => MissionContentSelector]
       const owners: Owner[] = [
-        ["mission", map, field => ({ kind: "mission", field })],
-        ...map.tasks.map((task): Owner => ["task", task, field => ({ kind: "task", taskKey: task.key, field })]),
-        ...map.reports.map((report): Owner => ["report", report, field => ({ kind: "report", reportId: report.id, field })]),
-        ...map.history.map((change): Owner => ["change", change, field => ({ kind: "change", change: change.revision, field })]),
+        ["mission", full, map, field => ({ kind: "mission", field })],
+        ...full.tasks.map((task, index): Owner => ["task", task, map.tasks[index], field => ({ kind: "task", taskKey: task.key, field })]),
+        ...full.reports.map((report, index): Owner => ["report", report, map.reports[index], field => ({ kind: "report", reportId: report.id, field })]),
+        ...full.history.map((change, index): Owner => ["change", change, map.history[index], field => ({ kind: "change", change: change.revision, field })]),
       ]
       let described = 0
-      for (const [kind, owner, selector] of owners) {
-        const bodies = (owner as { bodies?: MissionBodyDescriptors }).bodies ?? {}
+      for (const [kind, owner, compact, selector] of owners) {
+        const bodies = (compact as { bodies?: MissionBodyDescriptors }).bodies ?? {}
         for (const field of MISSION_BODY_FIELDS[kind]) {
           if ((owner as Record<string, unknown>)[field] === undefined) { assert.equal(bodies[field], undefined, `${kind} ${field}`); continue }
           const whole = await readWhole(content, mission.id, selector(field))

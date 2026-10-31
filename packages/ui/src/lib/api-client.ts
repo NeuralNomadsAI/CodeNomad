@@ -728,6 +728,7 @@ export const serverApi = {
     const query = params.toString()
     return request<MissionListResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions${query ? `?${query}` : ""}`)
   },
+  /** One mission's compact map and cleanups, for display reconciliation (lost acknowledgements, cleanup retries). */
   fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
     return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
   },
@@ -741,9 +742,9 @@ export const serverApi = {
   fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
     return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)
   },
-  /** The same read from the authoritative full snapshot, for admitting an application-authored prompt. */
-  fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
-    return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/admission`)
+  /** The same read, with the full map, from the authoritative full snapshot, for admitting an application-authored prompt. */
+  fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse<MissionMap>> {
+    return request<MissionReadResponse<MissionMap>>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/admission`)
   },
   fetchMissionCurrentPassage(instanceId: string, scheduleID: string, signal?: AbortSignal): Promise<import("../../../server/src/api-types").MissionRecurrenceCurrent> {
     return request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/recurrence/${encodeURIComponent(scheduleID)}/current`, { signal })

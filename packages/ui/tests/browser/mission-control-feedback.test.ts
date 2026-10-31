@@ -10,6 +10,7 @@ import { missionReadFixture } from "./mission-read-fixture"
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-navigation"
+import { panelMissions } from "./mission-content-fixture"
 
 // Real MissionControl/RightPanel fixtures for feedback that must survive hidden
 // views: certified lifecycle rejection, superseded exact briefing responses and
@@ -68,7 +69,7 @@ async function visible(missions: () => MissionMap[], activity?: () => unknown) {
       location: { directory: "/fixture" }, schedules: [] } })
     if (route.request().method() !== "GET") return route.fallback()
     counter.reads++
-    return route.fulfill({ json: { available: true, projectID: "fixture", missions: missions(), generatedAt: counter.reads, discardedEvents: 0,
+    return route.fulfill({ json: { available: true, projectID: "fixture", missions: panelMissions(missions()), generatedAt: counter.reads, discardedEvents: 0,
       ...(activity ? { activity: activity() } : {}) } })
   })
   await page.goto(`${base}/visibility`, { timeout: 60_000 })
@@ -176,7 +177,7 @@ async function navigable(values: MissionMap[]) {
     if (pathname.includes("/instructions/") && request.method() !== "GET") return route.fulfill({ status: 204, body: "" })
     if (pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture",
       location: { directory: "/fixture" }, schedules: [] } })
-    if (pathname.endsWith("/missions")) { counter.reads++; return route.fulfill({ json: { available: true, projectID: "project", missions: values,
+    if (pathname.endsWith("/missions")) { counter.reads++; return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(values),
       generatedAt: counter.reads, discardedEvents: 0 } }) }
     const read = missionReadFixture(pathname, request.method(), values)
     if (read) return route.fulfill({ json: read })

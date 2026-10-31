@@ -6,6 +6,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
+import { panelMissions } from "./mission-content-fixture"
 
 // Real MissionControl with the full stylesheet: single-scroller policy on short
 // layouts, measured dependency rail endpoints and native picker key semantics.
@@ -44,7 +45,7 @@ async function open(context: BrowserContextOptions, missions: MissionMap[], sele
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname
-    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions, generatedAt: 1, discardedEvents: 0 } })
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0 } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",
       projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] }) })
     return route.fulfill({ json: {} })

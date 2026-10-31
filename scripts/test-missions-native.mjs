@@ -55,7 +55,7 @@ const { registerAutomationPluginRoute } = await tsImport("../packages/server/src
 const { registerMissionRoutes } = await tsImport("../packages/server/src/server/routes/missions.ts", import.meta.url)
 const { WorktreeDeletionFence } = await tsImport("../packages/server/src/workspaces/worktree-session-evacuation.ts", import.meta.url)
 const { CODENOMAD_MISSIONS_RPC } = await tsImport("../packages/server/src/missions/rpc.ts", import.meta.url)
-const { describeMissionBodies } = await tsImport("../packages/server/src/missions/mission-body-descriptors.ts", import.meta.url)
+const { compactMissionMap } = await tsImport("../packages/server/src/missions/mission-compact-map.ts", import.meta.url)
 const { isMissionTaskSession } = await tsImport("../packages/server/src/missions/session-identity.ts", import.meta.url)
 let child, stopped, manager, plugin, removeBridge, output = "", failure, held, hold = false, stage = "setup"
 const diagnosticReads = []
@@ -813,7 +813,7 @@ try {
   assert.equal(withHistory.discardedEvents, 0)
   assert.equal(withHistory.cleanups.length, 20)
   assert(!withHistory.cleanups.some(item => item.missionID === settled.at(-1).missionID), "The oldest settled deletion was purged")
-  // The panel's reads through the real routes and bundle: one row per live map, full maps
+  // The panel's reads through the real routes and bundle: one row per live map, compact maps
   // only for open and included missions, activity only for those maps.
   const panel = (suffix = "") => bridge.inject({ method: "GET", url: missionURL + suffix }).then(response => response.json())
   const finished = id => history.some(item => item.id === id)
@@ -823,16 +823,17 @@ try {
   assert.deepEqual(listed.summaries.filter(row => finished(row.id)).map(row => [row.id, row.status, row.revision, row.updatedAt]),
     withHistory.missions.filter(mission => finished(mission.id)).map(mission => [mission.id, mission.status, mission.revision, mission.updatedAt]),
     "Finished missions list as rows in snapshot order")
-  assert.ok(listed.missions.some(mission => mission.id === live.id), "The open mission's full map is listed")
+  assert.ok(listed.missions.some(mission => mission.id === live.id), "The open mission's compact map is listed")
   assert(!listed.missions.some(mission => finished(mission.id)), "No finished map is loaded unasked")
   assert.deepEqual(listed.activity.missions.map(item => item.missionId).sort(), listed.missions.map(mission => mission.id).sort(), "Activity observes only the listed maps")
-  // Panel reads carry each body's descriptor beside it, as the bundle computes them from the same map.
+  // Panel reads carry each body's descriptor in its place, as the bundle computes them from the same map.
   const included = await panel(`?include=${history[1].id}&summaries=${listed.summariesVersion}`)
-  const finishedMap = describeMissionBodies(withHistory.missions.find(mission => mission.id === history[1].id))
+  const finishedMap = compactMissionMap(withHistory.missions.find(mission => mission.id === history[1].id))
   assert.deepEqual(included.missions.find(mission => mission.id === history[1].id), finishedMap,
-    "An included finished mission's range reads as its snapshot map")
+    "An included finished mission's range reads as its snapshot map, compact")
   assert.deepEqual((await panel(`/${history[1].id}`)).mission, finishedMap, "The single-mission read")
-  assert.ok(finishedMap.bodies.objective?.digest, "with its body descriptors")
+  assert.ok(finishedMap.bodies.objective?.digest && finishedMap.objective === undefined && finishedMap.excerpt, "with body descriptors in place of its bodies")
+  assert.ok(withHistory.missions.find(mission => mission.id === history[1].id).objective, "The snapshot keeps its bodies")
   // Probe which reads see the whole journal: a damaged entry written beside the
   // bundle (as another process would) is visible to full reads at once and to
   // the activation's index only after its next rebuild, a minute away.

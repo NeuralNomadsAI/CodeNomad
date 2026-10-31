@@ -1,7 +1,7 @@
 import { For, Show, createMemo, createUniqueId } from "solid-js"
 import { Dynamic } from "solid-js/web"
 import { AlertTriangle, ArrowUpRight, Check, ChevronRight, Circle, CircleDot, CircleSlash, Clock, MessageCircleQuestion, XCircle } from "lucide-solid"
-import type { MissionActorActivity, MissionMap, MissionTask } from "../../../server/src/api-types"
+import type { MissionActorActivity, MissionPanelMap, MissionPanelTask } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
 import { missionDerivedSessionActive } from "../stores/mission-task-sessions"
@@ -17,7 +17,7 @@ export type MissionTaskState = "done" | "active" | "input" | "assigned" | "ready
  * "waiting"; an open native Form/permission is "input". Admission is only
  * "assigned": observed native activity of the task's own conversation alone
  * makes a task "active". */
-export function missionTaskState(task: MissionTask, activity?: MissionActorActivity["state"]): MissionTaskState {
+export function missionTaskState(task: MissionPanelTask, activity?: MissionActorActivity["state"]): MissionTaskState {
   if (task.status === "completed") return "done"
   if (task.status === "withdrawn" || task.replacedByTaskKey) return "retired"
   if (task.status === "failed") return "failed"
@@ -32,7 +32,7 @@ export function missionTaskState(task: MissionTask, activity?: MissionActorActiv
 /** A natively delegated task has no declared actor: the live status of its exact
  * linked conversation stands in. Loaded sessions supply open requests; the native
  * active set covers children the session list has not loaded. */
-function conversationActivity(instanceId: string, mission: MissionMap, sessionId: string): MissionActorActivity["state"] | undefined {
+function conversationActivity(instanceId: string, mission: MissionPanelMap, sessionId: string): MissionActorActivity["state"] | undefined {
   const session = sessions().get(instanceId)?.get(sessionId)
   if (session?.pendingPermission) return "permission"
   if (session?.pendingForm) return "form"
@@ -46,10 +46,10 @@ const ICONS = { done: Check, active: CircleDot, input: MessageCircleQuestion, as
 /** The Mission's single task view: declared dependencies drawn beside one row
  * per task, each row a status icon and title toggling the exact task reader. */
 export function MissionTaskTree(props: {
-  mission: MissionMap; instanceId: string; activity?: MissionActorActivity[]
-  reading: (task: MissionTask) => boolean; onRead: (task: MissionTask) => void
+  mission: MissionPanelMap; instanceId: string; activity?: MissionActorActivity[]
+  reading: (task: MissionPanelTask) => boolean; onRead: (task: MissionPanelTask) => void
   /** The task's exact owned conversation, once one is known. */
-  conversation: (task: MissionTask) => string | undefined; onOpenConversation: (sessionId: string) => void
+  conversation: (task: MissionPanelTask) => string | undefined; onOpenConversation: (sessionId: string) => void
   disabled?: boolean; onRecoveryAdmitted?: () => void | Promise<void>
 }) {
   const { t } = useI18n()

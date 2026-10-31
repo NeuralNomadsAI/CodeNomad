@@ -5,6 +5,7 @@ import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
 import { routeMissionContent } from "./mission-content-fixture"
 import { chromium, type Browser, type Page } from "playwright"
+import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 let cache: Awaited<ReturnType<typeof createFixtureCache>>
@@ -27,7 +28,7 @@ async function open(missions: unknown[]) {
   page.setDefaultNavigationTimeout(90_000)
   page.on("pageerror", error => console.error("fixture error", error))
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-  await page.route("**/api/workspaces/browser-instance/missions", route => route.fulfill({ json: { available: true, missions, generatedAt: 1, discardedEvents: 0 } }))
+  await page.route("**/api/workspaces/browser-instance/missions", route => route.fulfill({ json: { available: true, missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0 } }))
   await routeMissionContent(page, () => missions)
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).fixture))

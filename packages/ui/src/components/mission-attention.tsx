@@ -1,7 +1,7 @@
 import { For, Show, createMemo, type Component } from "solid-js"
 import { MessageCircleQuestion } from "lucide-solid"
 
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { getFormQueue } from "../stores/forms"
 import { getPermissionQueue } from "../stores/instances"
@@ -18,7 +18,7 @@ import { selectMissionAttention, type MissionObservedFamily } from "./mission-at
  */
 export const MissionAttention: Component<{
   instanceId: string
-  mission: MissionMap
+  mission: MissionPanelMap
   family?: MissionObservedFamily
   onOpenActor: (sessionId: string, request?: { kind: "form" | "permission"; id: string }) => Promise<void>
 }> = (props) => {

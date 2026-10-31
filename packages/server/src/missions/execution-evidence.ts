@@ -1,6 +1,6 @@
-import type { MissionNativeBinding, MissionTask } from "./model"
+import type { MissionNativeBinding, MissionPanelTask } from "./model"
 
-type TaskEvidence = Pick<MissionTask, "status" | "actorSessionId" | "admissionId" | "nativeBinding" | "nativeExecution"
+type TaskEvidence = Pick<MissionPanelTask, "status" | "actorSessionId" | "admissionId" | "nativeBinding" | "nativeExecution"
   | "report" | "lateReports" | "outstandingExecution" | "contractGeneration">
 
 const identity = (value: string) => typeof value === "string" && value.trim().length > 0

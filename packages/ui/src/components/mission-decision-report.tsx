@@ -1,19 +1,23 @@
 import { For, Show, createMemo } from "solid-js"
-import type { MissionMap, MissionReport } from "../../../server/src/api-types"
+import type { MissionPanelMap, MissionPanelReport, MissionReport } from "../../../server/src/api-types"
 import { coordinatorDecisionArtifact, humanDecisionArtifact, missionDecisionMaker } from "../../../server/src/missions/decision-artifact"
+import { isFullMissionMap } from "../../../server/src/missions/mission-panel-map"
 import { useI18n } from "../lib/i18n"
 import { MissionReaderSection } from "./mission-reader"
 
-/** Who settled a report's Wayfinder decision, read only from gated reports; undefined otherwise. */
-export function missionReportDecisionMaker(mission: MissionMap, report: MissionReport) {
-  return missionDecisionMaker(mission.template, mission.tasks.find(task => task.key === report.taskKey), report)
+/** Who settled a report's Wayfinder decision, read only from gated reports; undefined
+ * otherwise: a compact map's `decidedBy`, or a passage's own artifact. */
+export function missionReportDecisionMaker(mission: MissionPanelMap, report: MissionPanelReport) {
+  if (!isFullMissionMap(mission)) return report.decidedBy
+  return missionDecisionMaker(mission.template, mission.tasks.find(task => task.key === report.taskKey), report as MissionReport)
 }
 
 /** A settled decision: who decided (the coordinator, or the human in CodeNomad), then the
  * question and its outcome, from `artifact`, the report's artifact as its reader read it. */
-export function MissionDecisionReport(props: { mission: MissionMap; report: MissionReport; artifact: unknown; identity: string; instanceId: string }) {
+export function MissionDecisionReport(props: { mission: MissionPanelMap; report: MissionPanelReport; artifact: unknown; identity: string; instanceId: string }) {
   const { t } = useI18n()
-  const maker = createMemo(() => missionReportDecisionMaker(props.mission, { ...props.report, artifact: props.artifact as MissionReport["artifact"] }))
+  const maker = createMemo(() => missionDecisionMaker(props.mission.template, props.mission.tasks.find(task => task.key === props.report.taskKey),
+    { ...props.report, artifact: props.artifact as MissionReport["artifact"] }))
   const sections = createMemo((): Array<{ label: string; text: string }> => {
     const by = maker()
     if (by === "coordinator") {

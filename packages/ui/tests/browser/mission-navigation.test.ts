@@ -12,6 +12,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { clickMissionAction, missionPickerField, selectMission, toggleMissionOverview } from "./mission-actions"
 import type {} from "./fixtures/mission-navigation"
+import { panelMissions } from "./mission-content-fixture"
 
 let server: ViteDevServer, browser: Browser, url: string
 const ownedHTTP = { listeningAt: 0, closedAt: 0, accepted: 0, open: 0, peak: 0, requests: 0, unfinished: 0, finished: 0, closedResponses: 0,
@@ -125,7 +126,7 @@ async function setup(missing = false) {
   await page.route("**/api/**", async route => {
     const pathname = new URL(route.request().url()).pathname
     requests.push(`${route.request().method()} ${pathname}`)
-    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [mission("A"), mission("B")], generatedAt: 1, discardedEvents: 0 } })
+    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project",
       projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {

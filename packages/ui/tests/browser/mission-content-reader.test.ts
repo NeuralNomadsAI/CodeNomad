@@ -5,7 +5,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
-import { describedMissions, missionContentFixture } from "./mission-content-fixture"
+import { panelMissions, missionContentFixture } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -27,8 +27,8 @@ function mission(id: string, objective: string, revision = 2): MissionMap {
 }
 
 interface ContentRead { missionID: string; field: string; offset: number; digest?: string }
-/** The reader over `initial` maps; `described` serves them with body descriptors, as the plugin's list does. */
-async function setup(initial: MissionMap[], { described = false } = {}) {
+/** The reader over `initial` maps, listed compact as the plugin's list returns them; content reads answer from the full maps. */
+async function setup(initial: MissionMap[]) {
   const page = await browser.newPage({ viewport: { width: 1200, height: 850 }, locale: "en-US" }), errors: string[] = []
   page.setDefaultTimeout(10_000)
   page.on("pageerror", error => errors.push(error.message))
@@ -51,7 +51,7 @@ async function setup(initial: MissionMap[], { described = false } = {}) {
       return route.fulfill({ json: content }).catch(() => undefined)
     }
     return route.fulfill({ json: address.pathname.endsWith("/missions")
-      ? { available: true, projectID: "project", missions: described ? describedMissions(values) : values, generatedAt: 1, discardedEvents: 0, activity: { generatedAt: 1, missions: [] } } : {} })
+      ? { available: true, projectID: "project", missions: panelMissions(values), generatedAt: 1, discardedEvents: 0, activity: { generatedAt: 1, missions: [] } } : {} })
   })
   await page.goto(url, { timeout: 30_000 })
   return {
@@ -181,7 +181,7 @@ test("a failed continuation shows its error and Retry beside the page; a failed 
 })
 
 test("a refresh that fails keeps the last good page with its error, and Retry reads the newer body", { timeout: 60_000 }, async () => {
-  const f = await setup([mission("a", "first objective")], { described: true })
+  const f = await setup([mission("a", "first objective")])
   try {
     await show(f.page, "a")
     await objective(f.page).getByText("first objective", { exact: true }).waitFor()
@@ -197,7 +197,7 @@ test("a refresh that fails keeps the last good page with its error, and Retry re
   } finally { await f.page.close() }
 })
 
-test("an older plugin after supported reads shows the map's own values, in paged and whole-value sections alike", { timeout: 60_000 }, async () => {
+test("a plugin without content reads fails each section with Retry beside its last good page, never a map value; Retry reads once it answers", { timeout: 60_000 }, async () => {
   const report = (summary: string, evidence: string) => ({ id: "report", taskKey: "", sessionId: "coordinator-a", outcome: "completed" as const,
     summary, evidence: [evidence], next: [], createdAt: 1, delivery: "coordinator-readout" as const })
   const f = await setup([{ ...mission("a", "objective"), reports: [report("old summary", "old evidence")] }])
@@ -207,17 +207,23 @@ test("an older plugin after supported reads shows the map's own values, in paged
     await section(f.page, "Evidence").getByText("old evidence", { exact: true }).waitFor()
     f.serve([{ ...mission("a", "objective", 3), reports: [report("new summary", "new evidence")] }]); f.unsupported(true)
     await refresh(f.page)
-    await section(f.page, "Summary").getByText("new summary", { exact: true }).waitFor()
-    await section(f.page, "Evidence").getByText("new evidence", { exact: true }).waitFor()
-    assert.equal(await f.page.locator(".mission-reader").getByText("old summary", { exact: true }).count(), 0)
-    assert.equal(await f.page.locator(".mission-reader").getByText("old evidence", { exact: true }).count(), 0)
+    for (const label of ["Summary", "Evidence"]) await section(f.page, label).getByText(UNREADABLE).waitFor()
+    await settle(f.page)
+    assert.deepEqual([await section(f.page, "Summary").getByText("old summary", { exact: true }).count(),
+      await f.page.locator(".mission-reader").getByText("new summary", { exact: true }).count()], [1, 0], "the last good page stays; the compact map holds no value to show")
+    f.unsupported(false)
+    for (const [label, text] of [["Summary", "new summary"], ["Evidence", "new evidence"]]) {
+      await section(f.page, label).getByRole("button", { name: "Try again", exact: true }).click()
+      await section(f.page, label).getByText(text, { exact: true }).waitFor()
+    }
+    assert.equal(await f.page.locator(".mission-reader").getByText(UNREADABLE).count(), 0)
     assert.deepEqual(f.errors, [])
   } finally { await f.page.close() }
 })
 
 test("unrelated revisions read no unchanged body; a changed one is read once", { timeout: 60_000 }, async () => {
   const base = { ...mission("a", "objective text"), notes: "notes text" }
-  const f = await setup([base], { described: true })
+  const f = await setup([base])
   try {
     await show(f.page, "a")
     await section(f.page, "Notes").getByText("notes text", { exact: true }).waitFor()

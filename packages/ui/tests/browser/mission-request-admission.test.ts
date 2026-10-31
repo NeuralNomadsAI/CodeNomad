@@ -6,6 +6,7 @@ import { fixture } from "../../../server/src/missions/journal-history-fixture"
 import { registerMissionRoutes } from "../../../server/src/server/routes/missions"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
+import { panelMissions } from "./mission-content-fixture"
 
 // "Request an update" sends an application-authored native prompt: its admission
 // reads the authoritative full snapshot, never the panel's hints.
@@ -52,7 +53,7 @@ test("project damage the hints have not seen refuses the coordinator request: no
     if (pathname === "/api/events") return route.fulfill({ contentType: "text/event-stream", body: ": fixture\n\n" })
     if (pathname.includes("/instructions/") && request.method() !== "GET") return route.fulfill({ status: 204, body: "" })
     // The panel still holds the healthy map it listed before the damage landed.
-    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [display], generatedAt: 2, discardedEvents: 0 } })
+    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([display]), generatedAt: 2, discardedEvents: 0 } })
     if (pathname.includes(`/missions/${mission.id}`)) {
       reads.push(pathname)
       const response = await app.inject({ method: "GET", url: pathname.replace(/^.*\/api\/workspaces\/[^/]+/, "/api/workspaces/fixture") })

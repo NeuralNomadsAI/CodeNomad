@@ -48,11 +48,13 @@ export function validMissionModels(input: unknown): boolean {
   return input === undefined || (Array.isArray(input) && (input.length === 0 || normalizeMissionModels(input).length === input.length))
 }
 
-/** The reusable inputs recorded on an existing one-time Mission, in any status:
- * its current objective, verbatim notes, template and frozen profiles/task mode.
- * Identity, plan, results and lifecycle state never become part of a brief. */
-export function missionRecordedBrief(mission: Pick<MissionMap, "objective" | "notes" | "template" | "profiles" | "taskMode">): Omit<UserMissionModel, "version" | "id" | "name"> {
-  return { objective: mission.objective, notes: mission.notes ?? "", template: mission.template,
+/** The reusable inputs recorded on an existing one-time Mission, in any status: its
+ * current objective and verbatim notes (read from one snapshot, `useRecordedBriefInputs`),
+ * template and frozen profiles/task mode. Identity, plan, results and lifecycle state
+ * never become part of a brief. */
+export function missionRecordedBrief(mission: Pick<MissionMap, "template" | "profiles" | "taskMode">,
+  inputs: { objective: string; notes: string }): Omit<UserMissionModel, "version" | "id" | "name"> {
+  return { objective: inputs.objective, notes: inputs.notes, template: mission.template,
     ...(mission.profiles === undefined ? {} : { profiles: structuredClone(mission.profiles) }),
     ...(mission.taskMode === undefined ? {} : { taskMode: mission.taskMode }) }
 }

@@ -18,7 +18,7 @@ import { missionTaskConversation } from "./mission-task-navigation"
 import { demandMissionTaskSessions, missionDerivedSessionIncludes, missionDerivedTaskSession } from "../stores/mission-task-sessions"
 import { missionReports, missionReportIsPrevious, missionTaskReport, missionProgress } from "./mission-progress-model"
 import { missionMarkdownPage } from "../lib/mission-markdown-pages"
-import { missionBriefingFreshness } from "./mission-briefing-model"
+import { missionBriefed, missionBriefingFreshness } from "./mission-briefing-model"
 import { useMissionCurrentPassage } from "../stores/mission-recurrence"
 import { MissionPassageSectionContent, type MissionPassageSection } from "./mission-passage-section"
 
@@ -35,8 +35,9 @@ import type { MissionContentSelector } from "../../../server/src/missions/missio
 import { useMissionBody } from "../stores/mission-content"
 import { missionBodyCovers, missionBodyNeed } from "../lib/mission-body-pages"
 import { MissionBodyPending, missionReaderBody, useReaderValue, useReaderValues, type MissionBodyRead, type MissionReaderBody } from "./mission-reader-body"
-import { useReportBodies } from "./mission-report-prose"
-import type { MissionReport } from "../../../server/src/api-types"
+import { missionReportHas, useReportBodies } from "./mission-report-prose"
+import { missionBodyPresent, missionOwnBody } from "../lib/mission-bodies"
+import type { MissionPanelMap, MissionReport } from "../../../server/src/api-types"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -54,13 +55,11 @@ export function MissionReaderSection(props: { text?: string; body?: MissionReade
   const [copying, setCopying] = createSignal(false)
   const remote = useMissionBody(() => props.body && props.active !== false ? props.body : undefined,
     () => copying() ? Infinity : missionBodyNeed(remote.state().body, page(), READER_PAGE_SIZE))
-  /** What the section shows: the loaded text, its whole length and the value it is cut from.
-   * A plugin without content reads shows the map's own value, whatever was read before. */
+  /** What the section shows: the loaded text, its whole length and the value it is cut from. */
   const shown = createMemo(() => {
     if (props.read && !props.read.settled) return undefined
     if (!props.body) return { text: props.text ?? "", characters: (props.text ?? "").length, value: props.text ?? "" }
     const state = remote.state()
-    if (state.status === "unsupported") return { text: props.body.fallback, characters: props.body.fallback.length, value: props.body.fallback }
     if (state.status === "missing") return { text: "", characters: 0, value: "" }
     return state.body && { text: state.body.text, characters: state.body.characters, value: state.body.digest }
   })
@@ -188,7 +187,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     : target()?.kind === "task" ? task()?.title : target()?.kind === "report"
     ? mission()?.tasks.find(task => task.key === report()?.taskKey)?.title ?? report()?.taskKey
     : t(target()?.kind === "change" ? "missions.control.history.title"
-      : mission()?.briefing && !mission()?.summary ? "missions.briefing.title" : "missions.control.overview")
+      : missionBriefed(mission()) ? "missions.briefing.title" : "missions.control.overview")
   const [navigationError, setNavigationError] = createSignal(false)
   const captureNavigation = createMissionViewFence(() => JSON.stringify([
     props.instanceId, props.scope, target(), instances().get(props.instanceId)?.folder,
@@ -236,28 +235,34 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   // A one-time mission's bodies come from the content route; a passage's from its own map.
   const oneTime = () => Boolean(target()) && !target()!.recurrence && target()!.kind !== "recurrence" && target()!.kind !== "playbook"
   const reading = { instanceId: () => props.instanceId, mission, oneTime }
-  const readerBody = (selector: MissionContentSelector, fallback: string | undefined) => missionReaderBody(props.instanceId, mission(), oneTime(), selector, fallback)
-  const changeObjective = useReaderValue<MissionPlanChange["objective"]>({ ...reading, local: () => change()?.objective,
-    selector: () => target()?.kind === "change" && change()?.objective ? { kind: "change", change: change()!.revision, field: "objective" } : undefined })
-  const changeNotes = useReaderValue<MissionPlanChange["notes"]>({ ...reading, local: () => change()?.notes,
-    selector: () => target()?.kind === "change" && change()?.notes ? { kind: "change", change: change()!.revision, field: "notes" } : undefined })
+  const readerBody = (selector: MissionContentSelector) => missionReaderBody(props.instanceId, mission(), oneTime(), selector)
+  /** A body section: a passage's own text, or a one-time mission's body, present as the map records it. */
+  const bodySection = (label: string, selector: MissionContentSelector) => ({ label, text: missionOwnBody<string>(mission(), selector) ?? "",
+    present: missionBodyPresent(mission(), selector, "text"), body: readerBody(selector) })
+  const changeField = (field: "objective" | "notes") => () => {
+    const value = change()
+    const selector = value && { kind: "change" as const, change: value.revision, field }
+    return target()?.kind === "change" && selector && missionBodyPresent(mission(), selector, "value") ? selector : undefined
+  }
+  const changeObjective = useReaderValue<MissionPlanChange["objective"]>({ ...reading, selector: changeField("objective") })
+  const changeNotes = useReaderValue<MissionPlanChange["notes"]>({ ...reading, selector: changeField("notes") })
   const reportBodies = useReportBodies({ ...reading, report: () => target()?.kind === "report" ? report() : undefined })
   const overview = () => target()?.kind === "overview" ? mission() : undefined
-  const briefed = () => Boolean(overview()?.briefing && !overview()?.summary)
-  const briefing = useReaderValue<MissionBriefing>({ ...reading, local: () => mission()?.briefing,
-    selector: () => briefed() ? { kind: "mission", field: "briefing" } : undefined })
+  const briefed = () => missionBriefed(overview())
+  const briefing = useReaderValue<MissionBriefing>({ ...reading, selector: () => briefed() ? { kind: "mission", field: "briefing" } : undefined })
+  const summarized = (value: MissionPanelMap) => missionBodyPresent(value, { kind: "mission", field: "summary" }, "text")
   // The overview's latest recorded results and open obstacles, each task's report read whole.
   const progress = createMemo(() => {
     const value = overview()
-    if (!value || value.summary || briefed()) return { recorded: [], blockers: [] }
+    if (!value || summarized(value) || briefed()) return { recorded: [], blockers: [] }
     const current = missionProgress(value)
     return { recorded: current.tasks.filter(task => missionTaskReport(value, task)?.outcome === "completed")
       .sort((a, b) => b.report!.createdAt - a.report!.createdAt).slice(0, 3),
       blockers: value.status === "active" ? current.blockers.slice(0, 3) : [] }
   })
   // Each is its task's current result, read as the task's own copy (shared with its task reader).
-  const results = useReaderValues<MissionReport>({ ...reading, items: () => [...progress().recorded, ...progress().blockers].map(task => ({
-    selector: { kind: "task" as const, taskKey: task.key, field: "report" }, local: () => task.report })) })
+  const results = useReaderValues<MissionReport>({ ...reading, items: () => [...progress().recorded, ...progress().blockers].map(task =>
+    ({ kind: "task" as const, taskKey: task.key, field: "report" })) })
   const resultReads = { value: () => undefined, settled: () => results.read().settled, read: results.read }
   /** A section formatted from a body read whole: present as the map records it, shown once read. */
   const whole = <T,>(read: { value: () => T | undefined; settled: () => boolean; read: () => MissionBodyRead },
@@ -269,11 +274,13 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       const value = change()
       const taskName = (key: string) => mission()?.tasks.find(task => task.key === key)?.title ?? key
       const difference = (before: string, after: string) => `### ${t("missions.control.history.before")}\n\n${before || "—"}\n\n### ${t("missions.control.history.after")}\n\n${after || "—"}`
+      const reason = { kind: "change" as const, change: value?.revision ?? 0, field: "reason" }
+      // A change without a reason (an edit) says so.
       return value ? [
-        { label: "missions.control.summary", text: value.reason ?? t("missions.control.edit"),
-          body: value.reason === undefined ? undefined : readerBody({ kind: "change", change: value.revision, field: "reason" }, value.reason) },
-        { label: "missions.control.objective", ...whole(changeObjective, Boolean(value.objective), objective => objective ? difference(objective.before, objective.after) : "") },
-        { label: "missions.control.notes", ...whole(changeNotes, Boolean(value.notes), notes => notes ? difference(notes.before ?? "", notes.after ?? "") : "") },
+        missionBodyPresent(mission(), reason, "value") ? bodySection("missions.control.summary", reason)
+          : { label: "missions.control.summary", text: t("missions.control.edit") },
+        { label: "missions.control.objective", ...whole(changeObjective, Boolean(changeField("objective")()), objective => objective ? difference(objective.before, objective.after) : "") },
+        { label: "missions.control.notes", ...whole(changeNotes, Boolean(changeField("notes")()), notes => notes ? difference(notes.before ?? "", notes.after ?? "") : "") },
         { label: "missions.control.route.title", text: value.addedTaskKeys.map(taskName).join("\n\n") },
         { label: "missions.control.task.status.superseded", text: value.retiredTasks.map(task => `${taskName(task.taskKey)}${task.replacementTaskKey ? ` → ${taskName(task.replacementTaskKey)}` : ""}`).join("\n\n") },
         { label: "missions.control.task.details", text: value.dependencyUpdates.map(task => `## ${taskName(task.taskKey)}\n\n${difference(task.before.map(taskName).join(", "), task.after.map(taskName).join(", "))}`).join("\n\n") },
@@ -283,21 +290,23 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     if (target()?.kind === "report") {
       const value = report()
       return value ? [
-        { label: "missions.control.summary", present: Boolean(value.summary), ...reportBodies.summary() },
-        { label: "missions.control.report.next", ...whole(reportBodies.next, value.next.length > 0, next => (next ?? []).join("\n\n")) },
-        { label: "missions.control.report.evidence", ...whole(reportBodies.evidence, value.evidence.length > 0, evidence => (evidence ?? []).join("\n\n")) },
+        { label: "missions.control.summary", present: missionReportHas(mission(), value, "summary"), ...reportBodies.summary() },
+        { label: "missions.control.report.next", ...whole(reportBodies.next, missionReportHas(mission(), value, "next"), next => (next ?? []).join("\n\n")) },
+        { label: "missions.control.report.evidence", ...whole(reportBodies.evidence, missionReportHas(mission(), value, "evidence"), evidence => (evidence ?? []).join("\n\n")) },
       ] : []
     }
     const value = mission()
     if (!value) return []
-    const objective = { label: "missions.control.objective", text: value.objective, body: readerBody({ kind: "mission", field: "objective" }, value.objective) }
-    const notes = { label: "missions.control.notes", text: value.notes ?? "", body: value.notes === undefined ? undefined : readerBody({ kind: "mission", field: "notes" }, value.notes) }
+    const objective = bodySection("missions.control.objective", { kind: "mission", field: "objective" })
+    const notes = bodySection("missions.control.notes", { kind: "mission", field: "notes" })
     if (briefed()) {
-      const recorded = value.briefing!, shown = briefing.value()
+      // The briefing is read whole: its summary (never empty) shows meanwhile, each other section once read with items.
+      const shown = briefing.value()
       return [
-        { label: "missions.control.summary", ...whole(briefing, Boolean(recorded.summary), shown => shown?.summary ?? "") },
+        { label: "missions.control.summary", ...whole(briefing, true, shown => shown?.summary ?? "") },
         ...(["achieved", "ongoing", "obstacles", "next"] as const).map(section => ({
-          label: `missions.briefing.${section}`, ...whole(briefing, recorded[section].some(item => item.text), shown => shown?.[section].map(item => item.text).join("\n\n") ?? ""),
+          label: `missions.briefing.${section}`, ...whole(briefing, Boolean(briefing.settled() && shown?.[section].some(item => item.text)),
+            shown => shown?.[section].map(item => item.text).join("\n\n") ?? ""),
           taskKeys: shown ? [...new Set(shown[section].flatMap(item => item.taskKeys))] : [],
         })),
         objective, notes,
@@ -306,8 +315,8 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     const { recorded, blockers } = progress(), summaries = results.values()
     const composed = (tasks: typeof recorded, from: number) => tasks.map((task, index) => `${task.title}\n\n${summaries[from + index]?.summary ?? ""}`).join("\n\n")
     return [
-      { label: "missions.control.summary", text: value.summary ?? "", body: value.summary === undefined ? undefined : readerBody({ kind: "mission", field: "summary" }, value.summary) },
-      ...(!value.summary ? [
+      bodySection("missions.control.summary", { kind: "mission", field: "summary" }),
+      ...(!summarized(value) ? [
         { label: "missions.tracking.recorded", ...whole(resultReads, recorded.length > 0, () => composed(recorded, 0)), taskKeys: recorded.map(task => task.key) },
         { label: "missions.tracking.obstacles", ...whole(resultReads, blockers.length > 0, () => composed(blockers, recorded.length)), taskKeys: blockers.map(task => task.key) },
       ] : []),
@@ -375,7 +384,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
             schedule={schedule()} passageID={target()?.itemId}
             onSelect={passageID => updateMissionProjectView(props.scope, { reader: { ...target()!, itemId: passageID } })} />}</Show>
       </Show>
-      <Show when={target()?.kind === "overview" && mission()?.briefing && !mission()?.summary}>
+      <Show when={target()?.kind === "overview" && missionBriefed(mission())}>
         <p class="mission-briefing-meta">{t("missions.briefing.authored")} · {new Date(mission()!.briefing!.createdAt).toLocaleString(locale())}</p>
         <Show when={missionBriefingFreshness(mission()!).changed}><p class="mission-briefing-stale">{t("missions.briefing.changed")}</p></Show>
       </Show>
@@ -420,7 +429,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
           identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} />}</Show>
         <details class="mission-report-technical"><summary>{t("missions.control.task.details")}</summary>
           <MissionReportNotification report={value()} />
-          <Show when={value().artifact !== undefined}><MissionReaderSection label="missions.control.artifact" raw
+          <Show when={missionReportHas(mission(), value(), "artifact")}><MissionReaderSection label="missions.control.artifact" raw
             text={reportBodies.artifact.settled() ? JSON.stringify(reportBodies.artifact.value(), null, 2) : ""} read={reportBodies.artifact.read()}
             identity={JSON.stringify([props.instanceId, props.scope, target(), value().id])} instanceId={props.instanceId} source={sectionSource("artifact")} /></Show>
         </details>

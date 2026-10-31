@@ -7,7 +7,7 @@ import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import type { MissionMap, MissionReport, MissionTask } from "../../../server/src/api-types"
 import { missionMessages as en } from "../../src/lib/i18n/messages/en/missions"
 import { captureMissionView } from "./mission-view-capture"
-import { serveMissionContent } from "./mission-content-fixture"
+import { listedMissions, panelMissions, routeMissionContent } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -29,11 +29,14 @@ function snapshot() {
     artifact: { source: "x".repeat(19_000) + "RAW_TAIL" }, notificationStatus: "pending", delivery: "coordinator-notification" }
   const task: MissionTask = { id: "task", key: "work", title: "Retired review", brief: "Original brief", role: "specialist",
     status: "withdrawn", blockedBy: [], lateReports: [report], outstandingExecution: false, createdAt: 1, updatedAt: 2 }
+  // The mission's own reports hold every report, as the reducer keeps them.
   const mission: MissionMap = { version: 1, id: "mission", projectID: "project", projectCanonical: "/fixture", objective: "Original objective",
     summary: "Verified final outcome", template: "custom", coordinatorSessionId: "coordinator", status: "completed", actors: [],
-    tasks: [task], reports: [], frontier: [], claims: [], revision: 2, createdAt: 1, updatedAt: 2, history: [], historyTruncated: false }
+    tasks: [task], reports: [report], frontier: [], claims: [], revision: 2, createdAt: 1, updatedAt: 2, history: [], historyTruncated: false }
   return { available: true, projectID: "project", missions: [mission], generatedAt: 1 }
 }
+/** `value` as the list read returns it: its maps compact. */
+const listed = (value: ReturnType<typeof snapshot>) => ({ ...value, missions: panelMissions(value.missions) })
 
 test("direct result reading preserves retained late sources and hides technical artifacts by default", async () => {
   const page = await browser.newPage({ viewport: { width: 1000, height: 800 } }), mutations: string[] = [], errors: string[] = []
@@ -41,10 +44,10 @@ test("direct result reading preserves retained late sources and hides technical 
   try {
     await page.route("**/api/**", route => {
       if (route.request().method() !== "GET") mutations.push(route.request().url())
-      return route.fulfill({ json: route.request().url().includes("/missions") ? snapshot()
+      return route.fulfill({ json: route.request().url().includes("/missions") ? listed(snapshot())
         : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
-    await serveMissionContent(page)
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     await page.evaluate(() => (window as any).resultReader.show("report", "late"))
@@ -80,9 +83,9 @@ test("direct result reading preserves retained late sources and hides technical 
 test("mission outcome precedes the original objective in the overview reader", async () => {
   const page = await browser.newPage()
   try {
-    await page.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/missions") ? snapshot()
+    await page.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/missions") ? listed(snapshot())
       : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} }))
-    await serveMissionContent(page)
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     await page.evaluate(() => (window as any).resultReader.show("overview"))
@@ -97,9 +100,9 @@ test("a historical non-late report is explicitly identified as a previous attemp
   const page = await browser.newPage(), value = snapshot()
   value.missions[0].tasks[0].lateReports![0].late = false
   try {
-    await page.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/missions") ? value
+    await page.route("**/api/**", route => route.fulfill({ json: route.request().url().includes("/missions") ? listed(value)
       : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} }))
-    await serveMissionContent(page)
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     await page.evaluate(() => (window as any).resultReader.show("report", "late"))
@@ -120,9 +123,9 @@ test("a current one-line remote summary has no Page 1 of 11 illusion and aligns 
         version: 1, projectID: "project", missionID: "mission", scheduleID: "schedule", passageID: "passage", revision: 2, page: 0, pageCount: 1,
         sourceText: new URL(route.request().url()).searchParams.get("section") === "summary" ? "Exact current summary" : "Exact section", markdownText: null,
       } })
-      return route.fulfill({ json: path.endsWith("/missions") ? value : path.endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
+      return route.fulfill({ json: path.endsWith("/missions") ? listed(value) : path.endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
-    await serveMissionContent(page)
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     await page.evaluate(() => (window as any).resultReader.showCurrent())
@@ -155,14 +158,14 @@ test("decision readers name who decided: the coordinator's own decision, never s
     // An unproven model-written claim gets no decision label at all.
     decision("legacy", { kind: "decision", question: "Which format?", humanAnswer: true }),
   ]
-  mission.reports = []
+  mission.reports = mission.tasks.map(task => task.report!)
   try {
     await page.route("**/api/**", route => {
       if (route.request().method() !== "GET") mutations.push(route.request().url())
-      return route.fulfill({ json: route.request().url().endsWith("/missions") ? value
+      return route.fulfill({ json: route.request().url().endsWith("/missions") ? listed(value)
         : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
-    await serveMissionContent(page)
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     const reader = page.locator(".mission-reader")
@@ -213,10 +216,10 @@ test("comparison task and direct readers show verdict, model names and bounded c
   try {
     await page.route("**/api/**", route => {
       if (route.request().method() !== "GET") mutations.push(route.request().url())
-      return route.fulfill({ json: route.request().url().endsWith("/missions") ? value
+      return route.fulfill({ json: route.request().url().endsWith("/missions") ? listed(value)
         : route.request().url().endsWith("/storage/config/ui") ? { settings: { locale: "en" } } : {} })
     })
-    await serveMissionContent(page)
+    await routeMissionContent(page, listedMissions)
     await page.goto(url)
     await page.waitForFunction(() => Boolean((window as any).resultReader))
     for (const [kind, id] of [["report", "late"], ["task", "task"]]) {

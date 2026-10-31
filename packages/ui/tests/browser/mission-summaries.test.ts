@@ -6,7 +6,7 @@ import { missionSummary } from "../../../server/src/missions/mission-summary"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { inlineMissionEntry, missionDetail, missionRefresh, missionToolbarAction, selectMission } from "./mission-actions"
-import { routeMissionContent } from "./mission-content-fixture"
+import { routeMissionContent, panelMissions } from "./mission-content-fixture"
 
 // A backend that lists summaries: the open mission as a full map, closed ones as
 // rows until the panel includes them, and unchanged rows skipped by version.
@@ -23,12 +23,13 @@ after(async () => { await browser?.close() })
 const actor = (sessionId: string): MissionActor =>
   ({ sessionId, title: sessionId, kind: "coordinator", managed: false, roles: ["coordinator"], location: { directory: "fixture" }, joinedAt: 1 })
 function mission(id: string, patch: Partial<MissionMap> = {}): MissionMap {
+  // The mission's own reports hold every report, as the reducer keeps them.
+  const report = { id: `rpt_${id}`, taskKey: "work", sessionId: `ses_${id}`, outcome: "completed" as const, summary: `Result of ${id}`, evidence: [], next: [], createdAt: 1 }
   return { version: 1, id, projectID: "project", projectCanonical: "/fixture", objective: `Objective ${id}`, template: "custom", notes: "",
     coordinatorSessionId: `ses_${id}`, status: "active", runState: "running", actors: [actor(`ses_${id}`)], frontier: [], claims: [], revision: 1,
-    createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, reports: [],
+    createdAt: 1, updatedAt: 1, history: [], historyTruncated: false, reports: [report],
     tasks: [{ id: `task-${id}`, key: "work", title: `Work of ${id}`, brief: "Brief", role: "research", status: "completed",
-      blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1,
-      report: { id: `rpt_${id}`, taskKey: "work", sessionId: `ses_${id}`, outcome: "completed", summary: `Result of ${id}`, evidence: [], next: [], createdAt: 1 } }], ...patch }
+      blockedBy: [], outstandingExecution: false, createdAt: 1, updatedAt: 1, report }], ...patch }
 }
 
 async function open() {
@@ -47,7 +48,7 @@ async function open() {
     const include = (query.get("include") ?? "").split(",").filter(Boolean)
     const listed = maps.filter(value => value.status === "active" || include.includes(value.id))
     return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: Date.now(), discardedEvents: 0, cleanups: [],
-      missions: listed, ...(query.get("summaries") === "v1" ? {} : { summaries: maps.map(missionSummary) }), summariesVersion: "v1",
+      missions: panelMissions(listed), ...(query.get("summaries") === "v1" ? {} : { summaries: maps.map(missionSummary) }), summariesVersion: "v1",
       activity: { generatedAt: Date.now(), missions: listed.map(value => ({ missionId: value.id,
         actors: [{ sessionId: value.coordinatorSessionId, state: value.status === "active" ? "running" : "unknown" }] })) } } })
   })
@@ -68,7 +69,7 @@ async function panel(maps: MissionMap[], answer: (include: string[], read: numbe
     const status = await answer(include, includes.length)
     if (status) return route.fulfill({ status, json: { error: "unavailable" } })
     const listed = maps.filter(value => value.status === "active" || include.includes(value.id))
-    return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: 2, discardedEvents: 0, cleanups: [], missions: listed,
+    return route.fulfill({ json: { available: true, version: 1, projectID: "project", generatedAt: 2, discardedEvents: 0, cleanups: [], missions: panelMissions(listed),
       summaries: maps.map(missionSummary), summariesVersion: "v1", activity: { generatedAt: 2, missions: [] } } })
   })
   await routeMissionContent(page, () => maps)

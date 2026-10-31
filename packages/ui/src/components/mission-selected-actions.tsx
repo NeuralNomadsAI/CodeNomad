@@ -1,5 +1,5 @@
 import { createSignal, onCleanup } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionActorActivityState } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { MissionActionBar } from "./mission-action-bar"
@@ -17,7 +17,7 @@ import { missionStore } from "../stores/missions"
  * Mission. An unconfirmed lifecycle control is resent only through the panel's
  * explicit refresh, registered here. */
 export function MissionSelectedActions(props: {
-  instanceId: string; mission: MissionMap; active: boolean; disabled: boolean; messagingDisabled: boolean
+  instanceId: string; mission: MissionPanelMap; active: boolean; disabled: boolean; messagingDisabled: boolean
   reading: boolean; onToggleReader: () => void
   coordinatorActivity?: MissionActorActivityState; onOpenCoordinator: () => void; onAdmitted: () => Promise<void>
   /** Observed activity: some actor or its sub-agents still runs. */
@@ -57,8 +57,7 @@ export function MissionSelectedActions(props: {
     refresh: () => missionStore.refresh(props.instanceId) })
   const recordedBrief = () => {
     const inputs = brief.values()
-    return inputs ? { ...missionRecordedBrief(inputs.target), objective: inputs.objective, notes: inputs.notes }
-      : { ...missionRecordedBrief(props.mission), objective: "", notes: "" }
+    return inputs ? missionRecordedBrief(inputs.target, inputs) : missionRecordedBrief(props.mission, { objective: "", notes: "" })
   }
   const requestLabel = () => !briefing.waiting() ? t("missionsPanel.action.requestUpdate")
     : t(briefing.state() === "uncertain" ? "missionsPanel.action.requestUpdateUncertain" : "missionsPanel.action.requestUpdatePending")

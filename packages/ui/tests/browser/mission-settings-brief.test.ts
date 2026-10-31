@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
-import { missionContentFixture } from "./mission-content-fixture"
+import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
@@ -51,7 +51,7 @@ async function setup(page: Page, preferences: "accept" | "reject") {
     if (request.method() !== "GET") { missionWrites.push(path); return route.abort() }
     return route.fulfill({ json: path.endsWith("/missions/recurrence")
       ? recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] })
-      : { available: true, projectID: "project", missions: [finished], generatedAt: 1, discardedEvents: 0 } })
+      : { available: true, projectID: "project", missions: panelMissions([finished]), generatedAt: 1, discardedEvents: 0 } })
   })
   await page.goto(url)
   await page.evaluate(async () => {

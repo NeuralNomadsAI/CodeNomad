@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, on, untrack } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import { missionBodySource, useMissionBody } from "../stores/mission-content"
 
 /** Times Save as brief starts again from a newer map when a recorded input changed. */
@@ -16,20 +16,19 @@ export type MissionTargetValue =
 /** `field` of `target`, the snapshot an intent (an edit, a saved brief) starts from. Only
  * the body whose digest the target's descriptor names is its value, whatever the cache
  * retained; a whole body of another digest read at or after the target's revision means
- * the field changed since. An absent field is a member of the snapshot. A map without
- * descriptors, or a plugin without content reads, gives the target's own value. */
-export function useTargetBody(instanceId: () => string, target: () => MissionMap | undefined, field: "objective" | "notes") {
+ * the field changed since. A field the target names no descriptor of is absent, a member
+ * of the snapshot. */
+export function useTargetBody(instanceId: () => string, target: () => MissionPanelMap | undefined, field: "objective" | "notes") {
   const descriptor = () => target()?.bodies?.[field]
   const read = useMissionBody(() => {
     const value = target()
-    return value && descriptor() && value[field] !== undefined ? missionBodySource(instanceId(), value, { kind: "mission", field }) : undefined
+    return value && descriptor() ? missionBodySource(instanceId(), value, { kind: "mission", field }) : undefined
   })
   return createMemo((): MissionTargetValue => {
     const value = target(), expected = descriptor()
     if (!value) return { state: "reading" }
-    if (value[field] === undefined) return { state: "ready", value: undefined }
+    if (!expected) return { state: "ready", value: undefined }
     const state = read.state(), body = state.body
-    if (!expected || state.status === "unsupported") return { state: "ready", value: value[field] }
     const whole = body !== undefined && body.text.length === body.characters
     if (whole && body.digest === expected.digest) return { state: "ready", value: body.text }
     if (whole && body.revision >= value.revision || state.status === "missing" && (state.revision ?? 0) >= value.revision) return { state: "changed" }
@@ -55,10 +54,10 @@ export function retryMissionTarget(values: readonly MissionTargetValue[]): void 
  * An input that changed since starts it again from the newest map (refreshed once if the
  * shown one has not caught up), at most `MAX_BRIEF_RESTARTS` times; then, or when a refresh
  * brings no newer map, it is `changed` until `retry` starts again from the current map. */
-export function useRecordedBriefInputs(props: { instanceId: () => string; mission: () => MissionMap; open: () => boolean; refresh: () => Promise<void> }) {
-  const [target, setTarget] = createSignal<MissionMap>()
+export function useRecordedBriefInputs(props: { instanceId: () => string; mission: () => MissionPanelMap; open: () => boolean; refresh: () => Promise<void> }) {
+  const [target, setTarget] = createSignal<MissionPanelMap>()
   const [restarts, setRestarts] = createSignal(0)
-  const [refreshed, setRefreshed] = createSignal<{ target: MissionMap; settled: boolean }>()
+  const [refreshed, setRefreshed] = createSignal<{ target: MissionPanelMap; settled: boolean }>()
   const begin = () => { setRestarts(0); setRefreshed(undefined); setTarget(props.open() ? props.mission() : undefined) }
   createEffect(on(props.open, () => untrack(begin)))
   const objective = useTargetBody(props.instanceId, target, "objective"), notes = useTargetBody(props.instanceId, target, "notes")

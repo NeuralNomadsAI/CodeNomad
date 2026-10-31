@@ -9,6 +9,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { clickMissionAction, missionPickerField, toggleMissionOverview } from "./mission-actions"
 import type {} from "./fixtures/mission-cross-navigation"
+import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -40,7 +41,7 @@ async function setup(missing = false) {
   await page.route("**/api/**", async route => {
     const pathname = new URL(route.request().url()).pathname; requests.push(`${route.request().method()} ${pathname}`)
     const location = { directory: "/fixture" }
-    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [mission("A"), mission("B")], generatedAt: 1, discardedEvents: 0 } })
+    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A"), mission("B")]), generatedAt: 1, discardedEvents: 0 } })
     if (pathname.endsWith("/instance/api/session/ses_A")) {
       if (defer) { reached.release(); await hold.promise }
       await route.fulfill(missing ? { status: 404, json: { name: "NotFoundError", data: { message: "Missing session" } } }
