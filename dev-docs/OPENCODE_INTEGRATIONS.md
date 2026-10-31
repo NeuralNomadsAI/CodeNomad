@@ -41,8 +41,9 @@ blob IDs (`git rev-parse <revision>:<source>`), adapt `contract.ts` and extend t
 
 OpenCode imports RPC definitions through Effect's JSON Schema import, which refuses `pattern` ("Patterns may block
 validation and are disabled"; OpenCode 2.2.5): a call whose declared output schema has a pattern fails with
-`rpc.invalid_output`. Integration packages register their definitions without `pattern` and validate every input
-themselves; readers revalidate outputs with `contract.ts`.
+`rpc.invalid_output`. Integration packages register their definitions without `pattern` and validate themselves
+every input whose definition loses a pattern, as well as the opaque `advertise` and `withdraw` inputs; readers
+revalidate outputs with `contract.ts`.
 
 ## Test fixtures
 
@@ -64,9 +65,9 @@ themselves; readers revalidate outputs with `contract.ts`.
   its port in the application version, `helloOverride` rewrites its hello); `findSentinels`/`assertNoSentinels`
   scan any value for them.
 - `scripts/fixtures/fake-integration/python-host.py` runs the vendored reference client (`Service.discover`, then
-  `advertise_all` or `withdraw_all`) under an audit hook. It reports every opened, listed or written path outside
-  the Python installation, every name resolution and connection, and any child process, raw socket, `ctypes` or
-  `shutil` use, which escapes the hook and fails the check. Metadata reads (`os.stat`, `os.path.exists`) raise no
+  `advertise_all` or `withdraw_all`) under an audit hook. It reports every written path, every opened or listed path
+  outside the Python installation and the script folder, every name resolution and connection, and any child process, raw socket, `ctypes`, `shutil`
+  or Windows registry use, which escapes the hook and fails the check. Metadata reads (`os.stat`, `os.path.exists`) raise no
   audit event; the fixture environment keeps the home, profile and XDG folders they resolve inside the fixture.
 - `writeFixtureServiceRegistration(env, registration)` (`scripts/native-product-fixture.mjs`) writes the fixture
   daemon's `service.json` under the fixture's `XDG_STATE_HOME`; `withProductRuntime` passes its `env` to `run`.
