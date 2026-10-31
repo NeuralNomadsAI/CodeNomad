@@ -60,11 +60,15 @@ export function assertFixtureEnvironment(env) {
 // `projectConfig` lets the daemon read a fixture project's own `.opencode/` folder. Project discovery
 // walks every ancestor directory, so outside CI the fixture must live outside the user's home
 // (`CODENOMAD_NATIVE_FIXTURE_PARENT`), or it would read the user's own agents and skills.
-export async function withProductRuntime(cli, prepare, run, { projectConfig = false } = {}) {
+// `registry` points the daemon's package installs at a loopback fake npm registry
+// (`npm_config_registry`), so package fixtures never reach the public registry.
+export async function withProductRuntime(cli, prepare, run, { projectConfig = false, registry } = {}) {
   assert(cli && path.isAbsolute(cli), "Pass an absolute isolated CLI executable path")
+  assert(!registry || /^http:\/\/127\.0\.0\.1:\d+\/?$/.test(registry), "A fixture registry must be loopback")
   const root = await mkdtemp(path.join(await fixtureParent({ projectConfig }), "product-native-"))
   const password = randomUUID()
   const env = await fixtureEnvironment(root, {
+    ...(registry ? { npm_config_registry: registry, npm_config_audit: "false", npm_config_fund: "false" } : {}),
     OPENCODE_CONFIG_DIR: path.join(root, "config"), OPENCODE_DB: path.join(root, "fixture.db"),
     ...(projectConfig ? {} : { OPENCODE_CONFIG_PROJECT_DISABLE: "1" }), OPENCODE_DISABLE_MODELS_FETCH: "1", OPENCODE_DISABLE_FFF: "1",
     OPENCODE_SERVER_PASSWORD: password })

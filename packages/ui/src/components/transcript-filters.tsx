@@ -4,6 +4,7 @@ import { Dynamic } from "solid-js/web"
 import { For, Show, createMemo, createSignal } from "solid-js"
 import { ChevronDown, ChevronRight, Eye, EyeOff, ListFilter } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
+import { nativeSelectListOpen } from "../lib/native-select-open"
 import { showToastNotification } from "../lib/notifications"
 import { afterSweep, toggleSweepGroup } from "../lib/toggle-sweep"
 import { useConfig, type Preferences, type ToolCallExpansionPreset, type VisibilityPreference } from "../stores/preferences"
@@ -22,11 +23,6 @@ interface TranscriptFiltersProps {
   open?: boolean
   onOpenChange?: (open: boolean) => void
   overflowAnchor?: () => HTMLElement | undefined
-}
-
-// Customizable selects expose their list as :open; system lists consume Escape themselves.
-function presetListOpen(select: HTMLSelectElement) {
-  try { return select.matches(":open") } catch { return false }
 }
 
 export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
@@ -100,7 +96,7 @@ export default function TranscriptFilters(props: TranscriptFiltersProps = {}) {
           <div class="transcript-filters-preset">
             <select class="selector-trigger" value={preset()} aria-disabled={saving()}
               // Escape closes an open list first: keep it from the popup's document listener (not delegated).
-              on:keydown={(event) => { if (event.key === "Escape" && presetListOpen(event.currentTarget)) event.stopPropagation() }}
+              on:keydown={(event) => { if (event.key === "Escape" && nativeSelectListOpen(event.currentTarget)) event.stopPropagation() }}
               aria-label={t("settings.behavior.expansionPresets.ariaLabel")} title={t("settings.behavior.expansionPresets.ariaLabel")}
               onChange={(event) => {
                 const select = event.currentTarget, value = select.value

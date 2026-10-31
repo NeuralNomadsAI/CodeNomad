@@ -7,7 +7,7 @@ CodeNomad stellt OpenCodes native MCP-Verbindungen, Plugin-Aktivierung, Skills u
 | Integration | Wo handeln | Was die Steuerung ändert |
 | --- | --- | --- |
 | MCP-Server | **Status → MCP-Server** | Native Verbindung an der angezeigten Location; installiert keinen Server. |
-| Natives Plugin | **Status → Plugins** | Dauerhafte Aktivierungsregel **Global** oder **Projekt**; bei einem Paket-Plugin eine ausdrückliche Prüfung oder Aktualisierung dieses Pakets. Installiert oder entfernt keine Pakete. |
+| Natives Plugin | **Status → Plugins** | Fügt eine Paketdeklaration hinzu oder entfernt sie und setzt eine dauerhafte Aktivierungsregel **Global** oder **Projekt**; bei einem Paket-Plugin eine ausdrückliche Prüfung oder Aktualisierung dieses Pakets. |
 | Skill | `@`-Menü im Eingabefeld | Expliziter Anhang an den nächsten Prompt in der Location der Unterhaltung. |
 | Benutzerdefinierter Befehl | `/`-Menü im Eingabefeld | Führt einen von OpenCode für diese Location angebotenen Befehl aus. |
 
@@ -25,7 +25,7 @@ Erscheint kein Server, prüfen Sie aktive Location und native Konfiguration. Pr�
 
 ## Plugins global oder projektbezogen aktivieren {#plugins}
 
-1. Installieren/deklarieren Sie das native Plugin mit OpenCode; öffnen Sie dann **Status → Plugins**.
+1. [Fügen Sie das Plugin hinzu](#plugin-sources) oder deklarieren Sie es in der OpenCode-Konfiguration; öffnen Sie dann **Status → Plugins**.
 2. Zeigen Sie auf den Namen oder fokussieren Sie ihn, um Quelle, Laufzeitfehler und Konfigurationszieldetails zu prüfen.
 3. Schalten Sie **Global** oder **Projekt** bewusst um. Warten Sie den Schreibvorgang ab und verwenden Sie bei unklarem Zustand **Plugin-Steuerung aktualisieren**.
 4. Verwenden Sie bei einem aus einem Paket installierten Plugin das Symbol neben seinem Namen. Sein Menü nennt den genauen Vorgang: **Updates für … prüfen** für das Paket oder **… aktualisieren**, sobald eine neuere Version gefunden wurde.
@@ -37,6 +37,19 @@ Diese Schalter ergänzen exakte Aktivierungsregeln und bewahren Quelldeklaration
 Eine Paketaktualisierung ändert dieses Paket im gemeinsamen Cache von OpenCode für jede Location, die es verwendet, wie sein Tooltip angibt; sie ändert keine Aktivierungsregeln, startet OpenCode nicht neu und lädt keine Konfiguration neu. Lokale, integrierte und vom SDK bereitgestellte Plugins haben keine Paketaktion. Ein Paket, das vor dem Melden seiner Plugin-ID scheitert, wird unter seinem Paketnamen aufgeführt, mit dem Fehler in seinem Tooltip und Prüf-/Aktualisierungsaktionen, aber ohne Aktivierungsschalter. Eine fehlgeschlagene Prüfung oder Aktualisierung wird gemeldet und nie automatisch wiederholt.
 
 Die Oberfläche behält im verborgenen Zustand ihren letzten Schnappschuss und prüft beim Anzeigen, nach nativen Änderungen/Wiederverbindung und expliziter Aktualisierung erneut. Gespeicherte Regel und aktuelle Laufzeitverfügbarkeit können kurzzeitig abweichen. Bleibt ein Plugin nicht verfügbar, prüfen Sie Tooltip und native Konfiguration vor **OpenCode-Konfiguration neu laden**; dies betrifft alle geladenen Locations, nicht nur dieses Plugin. Fehlerhafte Konfiguration oder gleichzeitige Bearbeitung wird nicht stillschweigend überschrieben: Beheben Sie das Problem, aktualisieren Sie und wiederholen Sie ausdrücklich.
+
+## Plugin hinzufügen oder entfernen {#plugin-sources}
+
+1. Wählen Sie in **Status → Plugins** **Plugin hinzufügen** (das Plus-Symbol neben **Plugin-Steuerung aktualisieren**).
+2. Geben Sie ein Paket aus der npm-Registry (`name`, `name@1.2.3`, `@scope/name@^1`) oder ein Git-Repository (`github:besitzer/repo`, `git+https://…`) ein.
+3. Behalten Sie **Global** bei, außer das Plugin soll nur für dieses Projekt laufen, und wählen Sie **Hinzufügen**.
+4. Die neue Zeile zeigt **Wird installiert**, bis OpenCode sie meldet. Danach wird sie eine normale Plugin-Zeile mit Schaltern oder eine fehlgeschlagene Zeile.
+
+Zum Entfernen öffnen Sie das Menü neben dem Namen und wählen **Aus Global entfernen** oder **Aus Projekt entfernen**. Nur die Deklaration in der Konfigurationsdatei dieses Bereichs wird gelöscht; ihre Aktivierungsregeln für **Global**/**Projekt** bleiben als Regeln erhalten, und der Paket-Cache von OpenCode bleibt bestehen.
+
+Der Code des Plugins läuft mit Ihren Rechten in OpenCode. Ein **Projekt**-Eintrag läuft jedes Mal, wenn dieser Ordner in OpenCode geöffnet wird, und Pakete mit Teilen für die OpenCode-Desktop-App laden diese nur aus **Global**; der Tooltip weist darauf hin, wenn ein solches Paket anderswo deklariert ist. Lokale Pfade, Konfigurationsvariablen und Plugin-IDs werden hier abgelehnt: Deklarieren Sie lokale Plugins in der Konfigurationsdatei. Ein Paket, das bereits in einer für diese Location geltenden Konfiguration deklariert ist, wird abgelehnt, unabhängig von Version, Bereich oder Form.
+
+Zeigen Sie auf den Namen eines Plugins oder fokussieren Sie ihn, um Version, **Update verfügbar** und bei einer fehlgeschlagenen Installation den Fehler mit seiner Referenz im OpenCode-Protokoll zu sehen. Eine Zeile, die OpenCode nach zwei Minuten nicht gemeldet hat, zeigt **Nicht bestätigt** mit der Aktion **Plugin-Steuerung aktualisieren**: Das Plugin ist vielleicht deaktiviert, oder seine Installation wurde nie abgeschlossen (siehe [Fehlerbehebung](troubleshooting.md#providers-and-addons)).
 
 ## Skills anhängen {#skills}
 

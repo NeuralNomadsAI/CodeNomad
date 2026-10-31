@@ -94,8 +94,8 @@ export class PluginControls {
     logger: Logger
   }) {}
 
-  async read(workspaceId: string, location: PluginControlLocation): Promise<PluginControlsSnapshot> {
-    const context = await this.readContext(workspaceId, location)
+  async read(workspaceId: string, location: PluginControlLocation, signal?: AbortSignal): Promise<PluginControlsSnapshot> {
+    const context = await this.readContext(workspaceId, location, signal)
     return buildSnapshot(context)
   }
 
@@ -117,11 +117,13 @@ export class PluginControls {
     location: PluginControlLocation,
     scope: PluginControlScope,
     edit: (document: PluginControlDocument) => string,
+    // Aborts the daemon reads and, re-checked under the lock, the commit itself.
+    signal?: AbortSignal,
   ): Promise<void> {
     const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const key = scope === "global" ? `${workspaceId}\nglobal` : `${workspaceId}\nproject\n${directory}`
     return this.serializeMutation(key, async () => {
-      const context = await this.readContext(workspaceId, location)
+      const context = await this.readContext(workspaceId, location, signal)
       const target = context.targets.find(target => target.scope === scope)
       if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
       const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
@@ -132,7 +134,7 @@ export class PluginControls {
         const document = await readPluginControlDocument(target.ioPath, context.fileSystem)
         const updated = edit(document)
         await replacePluginControlDocument(document, updated, {
-          beforeCommit: () => assertCurrentConnection(context.connection),
+          beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
         }, context.fileSystem)
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
       finally { release() }
@@ -397,8 +399,9 @@ function controlsForDocuments(
   for (const document of documents) {
     document.plugins.forEach((entry, entryIndex) => {
       if (typeof entry !== "string") {
-        sources.push({ target: entry.package, scope: document.scope, path: document.path, entryIndex, hasOptions: entry.options !== undefined })
         const runtimeId = runtimeIdForConfiguredTarget(context, document, entry.package, runtimeById, runtimeSourceIds)
+        sources.push({ target: entry.package, scope: document.scope, path: document.path, entryIndex, hasOptions: entry.options !== undefined,
+          ...(runtimeId ? { pluginId: runtimeId } : {}) })
         const isFirstRuntimeSourceDeclaration = Boolean(runtimeId && !declaredTargets.has(entry.package))
         const selectsPlugin = entry.package.startsWith("opencode.")
           || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(entry.package))
@@ -426,7 +429,8 @@ function controlsForDocuments(
       const selectsPlugin = selector === "*" || selector.endsWith(".*") || selector.startsWith("opencode.")
         || (!isFirstRuntimeSourceDeclaration && knownDefinitions.has(selector))
       if (!selectsPlugin) {
-        sources.push({ target: selector, scope: document.scope, path: document.path, entryIndex, hasOptions: false })
+        sources.push({ target: selector, scope: document.scope, path: document.path, entryIndex, hasOptions: false,
+          ...(runtimeSourceId ? { pluginId: runtimeSourceId } : {}) })
         declaredTargets.add(selector)
         if (runtimeSourceId) {
           if (rules.some((rule) => !rule.enabled && matchesSelector(rule.selector, runtimeSourceId))) {
@@ -662,6 +666,8 @@ function normalizeRuntimeEntry(plugin: PluginInfo, index: number): PluginRuntime
     ...(plugin.features.server === true ? { server: true as const } : {}),
     ...(plugin.features.tui === true ? { tui: true as const } : {}),
     ...(plugin.features.rpc === true ? { rpc: true as const } : {}),
+    // Newer services report GUI packages; the pinned client type predates the flag.
+    ...((plugin.features as Record<string, unknown>).gui === true ? { gui: true as const } : {}),
   } : {}
   const state = plugin.state.status === "active"
     ? { status: "active" as const }

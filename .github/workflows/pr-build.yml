@@ -217,6 +217,10 @@ jobs:
           # and hot reload of the written values.
           node --import tsx scripts/test-image-settings-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Plugins surface add/remove: loopback fake registry install, 404 failure
+          # with a native ref, duplicate and stale refusals, unload with cache kept.
+          node --import tsx scripts/test-plugin-sources-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Design agent and skills copied into a project's .opencode/: native
           # discovery, notices kept out of model text, skills unlisted but loadable.
           node --import tsx scripts/test-design-content-native.mjs $cli
@@ -372,6 +376,7 @@ jobs:
           packages/ui/src/stores/plugin-controls.test.ts
           packages/ui/src/stores/plugin-controls-demand.test.ts
           packages/ui/src/stores/plugin-controls-events.test.ts
+          packages/ui/src/stores/plugin-sources.test.ts
           packages/ui/src/stores/message-prompt-display.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts

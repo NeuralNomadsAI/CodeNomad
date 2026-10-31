@@ -7,7 +7,7 @@ CodeNomad exposes OpenCode's native MCP connections, plugin activation, skills a
 | Integration | Where to act | What the control changes |
 | --- | --- | --- |
 | MCP server | **Status → MCP Servers** | Native connection at the displayed Location; does not install a server. |
-| Native plugin | **Status → Plugins** | Persistent **Global** or **Project** activation rule; for a package plugin, an explicit check or update of that package. Does not install or remove packages. |
+| Native plugin | **Status → Plugins** | Adds or removes a package declaration, and sets a persistent **Global** or **Project** activation rule; for a package plugin, an explicit check or update of that package. |
 | Skill | Composer `@` menu | Explicit attachment to the next prompt in the conversation's Location. |
 | Custom command | Composer `/` menu | Runs a command exposed by OpenCode for that Location. |
 
@@ -25,7 +25,7 @@ If no server appears, verify the active Location and its native configuration. I
 
 ## Activate plugins at Global or Project scope {#plugins}
 
-1. Install/declare the native plugin with OpenCode; then open **Status → Plugins**.
+1. [Add the plugin](#plugin-sources) or declare it in OpenCode's configuration; then open **Status → Plugins**.
 2. Hover or focus its name to inspect source, runtime failure and configuration-target details.
 3. Toggle **Global** or **Project** deliberately. Wait for the write and use **Refresh plugin controls** if the state is unclear.
 4. For a plugin installed from a package, use the icon beside its name. Its menu names the exact operation: **Check updates for** the package, or **Update** it once a newer version is found.
@@ -37,6 +37,19 @@ These switches append exact activation rules while preserving source declaration
 A package update changes that package in OpenCode's shared cache for every Location using it, as its tooltip states; it does not change activation rules, restart OpenCode or reload configuration. Local, built-in and SDK-provided plugins have no package action. A package that fails before reporting its plugin ID is listed by its package name, with the failure in its tooltip and check/update actions but no activation switches. A failed check or update is reported and never retried automatically.
 
 The surface retains its last snapshot while hidden and revalidates when shown, on native changes/reconnect and on explicit refresh. A saved rule and live runtime availability can briefly differ. If a plugin remains unavailable, inspect its tooltip and native configuration before choosing **Reload OpenCode configuration**; that action affects all loaded Locations, not just this plugin. Malformed configuration or a concurrent edit is not silently overwritten: resolve it, refresh and retry explicitly.
+
+## Add or remove a plugin {#plugin-sources}
+
+1. In **Status → Plugins**, select **Add plugin** (the plus icon beside **Refresh plugin controls**).
+2. Enter a package from the npm registry (`name`, `name@1.2.3`, `@scope/name@^1`) or a Git repository (`github:owner/repo`, `git+https://…`).
+3. Keep **Global** unless the plugin should run only for this project, then select **Add**.
+4. The new row shows **Installing** until OpenCode reports it. It then becomes an ordinary plugin row with its switches, or a failed row.
+
+To remove a plugin, open the menu beside its name and select **Remove from Global** or **Remove from Project**. Only the declaration in that scope's configuration file is deleted; its **Global**/**Project** activation rules stay as rules, and OpenCode's package cache is left in place.
+
+The plugin's code runs with your permissions inside OpenCode. A **Project** entry runs whenever that folder is opened in OpenCode, and packages with parts for OpenCode's desktop app load those parts only from **Global**; the tooltip says so when such a package is declared elsewhere. Local paths, configuration variables and plugin IDs are refused here: declare local plugins in the configuration file. A package already declared in a configuration that applies to this Location is refused, whatever its version, range or form.
+
+Hover or focus a plugin's name to see its version, **Update available** and, for a failed install, the error with its reference in the OpenCode log. A row that OpenCode has not reported after two minutes shows **Not confirmed** with a **Refresh plugin controls** action: the plugin may be disabled, or its installation never completed (see [Troubleshooting](troubleshooting.md#providers-and-addons)).
 
 ## Attach skills {#skills}
 

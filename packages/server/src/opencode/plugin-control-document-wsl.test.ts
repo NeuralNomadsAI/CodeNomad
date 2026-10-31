@@ -8,6 +8,7 @@ import {
   type WslPluginControlExecution,
   type WslPluginControlExecutor,
 } from "./plugin-control-document-wsl"
+import { removePluginSourceEntry } from "./plugin-source-document"
 
 describe("WSL plugin control documents", () => {
   it("keeps native paths and source permissions in WSL operations", async () => {
@@ -140,6 +141,26 @@ describe("WSL plugin control documents", () => {
 
       assert.equal(runWsl(distro!, `stat -c '%a' -- "$1"`, target).trim(), "600")
       assert.match(runWsl(distro!, `cat -- "$1"`, target), /"-acme"/)
+    } finally {
+      runWsl(distro!, `rm -rf -- "$1"`, root)
+    }
+  })
+
+  it("adds and removes plugin sources through the same WSL replacement, keeping 0600", { skip: !distro }, async () => {
+    const root = `/tmp/codenomad-plugin-controls-${randomBytes(8).toString("hex")}`
+    const target = `${root}/opencode.jsonc`
+    try {
+      runWsl(distro!, `mkdir -m 700 -- "$1" && printf '%s\\n' '{ // keep' '"plugins": [{ "package": "obj", "options": {} }, "-obj.id"] }' > "$2" && chmod 600 -- "$2"`, root, target)
+      const fileSystem = createWslPluginControlDocumentFileSystem(distro!)
+      let document = await readPluginControlDocument(target, fileSystem)
+      await replacePluginControlDocument(document, appendPluginControlRule(document, "fixture-plugin@1"), undefined, fileSystem)
+      document = await readPluginControlDocument(target, fileSystem)
+      assert.deepEqual(document.plugins, [{ package: "obj", options: {} }, "-obj.id", "fixture-plugin@1"])
+      await replacePluginControlDocument(document, removePluginSourceEntry(document, 0, "obj"), undefined, fileSystem)
+      document = await readPluginControlDocument(target, fileSystem)
+      assert.deepEqual(document.plugins, ["-obj.id", "fixture-plugin@1"])
+      assert.match(document.text, /\/\/ keep/)
+      assert.equal(runWsl(distro!, `stat -c '%a' -- "$1"`, target).trim(), "600")
     } finally {
       runWsl(distro!, `rm -rf -- "$1"`, root)
     }

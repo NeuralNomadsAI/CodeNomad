@@ -7,7 +7,7 @@ CodeNomad expose les connexions MCP natives, l’activation des plugins, les com
 | Intégration | Où agir | Ce que la commande change |
 | --- | --- | --- |
 | Serveur MCP | **Statut → Serveurs MCP** | Connexion native à la Location affichée ; n’installe pas de serveur. |
-| Plugin natif | **Statut → Plugins** | Règle d’activation persistante **Global** ou **Projet** ; pour un plugin issu d’un paquet, vérification ou mise à jour explicite de ce paquet. N’installe ni ne retire de paquets. |
+| Plugin natif | **Statut → Plugins** | Ajoute ou retire la déclaration d’un paquet, et fixe une règle d’activation persistante **Global** ou **Projet** ; pour un plugin issu d’un paquet, vérification ou mise à jour explicite de ce paquet. |
 | Compétence | Menu `@` de saisie | Pièce jointe explicite au prochain prompt dans la Location de la conversation. |
 | Commande personnalisée | Menu `/` de saisie | Exécute une commande exposée par OpenCode pour cette Location. |
 
@@ -25,7 +25,7 @@ Si aucun serveur n’apparaît, vérifiez la Location active et sa configuration
 
 ## Activer les plugins à la portée Global ou Projet {#plugins}
 
-1. Installez/déclarez le plugin natif avec OpenCode ; puis ouvrez **Statut → Plugins**.
+1. [Ajoutez le plugin](#plugin-sources) ou déclarez-le dans la configuration d’OpenCode ; puis ouvrez **Statut → Plugins**.
 2. Survolez ou focalisez son nom pour inspecter source, échec d’exécution et détails de cible de configuration.
 3. Basculez délibérément **Global** ou **Projet**. Attendez l’écriture et utilisez **Actualiser les contrôles des plugins** si l’état est incertain.
 4. Pour un plugin installé depuis un paquet, utilisez l’icône à côté de son nom. Son menu nomme l’opération exacte : **Vérifier les mises à jour de** ce paquet, ou le **Mettre à jour** une fois une version plus récente trouvée.
@@ -37,6 +37,19 @@ Ces commutateurs ajoutent des règles d’activation exactes en préservant les 
 Une mise à jour de paquet modifie ce paquet dans le cache partagé d’OpenCode pour toutes les Locations qui l’utilisent, comme l’indique son infobulle ; elle ne change pas les règles d’activation, ne redémarre pas OpenCode et ne recharge pas la configuration. Les plugins locaux, intégrés et fournis par le SDK n’ont pas d’action de paquet. Un paquet qui échoue avant de communiquer l’ID de son plugin est listé sous son nom de paquet, avec l’échec dans son infobulle et les actions de vérification/mise à jour, mais sans commutateurs d’activation. Une vérification ou mise à jour échouée est signalée et jamais réessayée automatiquement.
 
 La surface conserve son dernier instantané quand elle est masquée et le revalide à l’affichage, aux changements natifs/reconnexions et à l’actualisation explicite. Une règle enregistrée et la disponibilité réelle peuvent brièvement différer. Si un plugin reste indisponible, inspectez son infobulle et sa configuration native avant **Recharger la configuration OpenCode** ; cette action affecte toutes les Locations chargées, pas seulement ce plugin. Une configuration mal formée ou une modification concurrente n’est pas écrasée silencieusement : résolvez-la, actualisez et réessayez explicitement.
+
+## Ajouter ou retirer un plugin {#plugin-sources}
+
+1. Dans **Statut → Plugins**, choisissez **Ajouter un plugin** (l’icône plus à côté de **Actualiser les contrôles des plugins**).
+2. Saisissez un paquet du registre npm (`nom`, `nom@1.2.3`, `@scope/nom@^1`) ou un dépôt Git (`github:propriétaire/dépôt`, `git+https://…`).
+3. Gardez **Global**, sauf si le plugin ne doit s’exécuter que pour ce projet, puis choisissez **Ajouter**.
+4. La nouvelle ligne affiche **Installation** jusqu’à ce qu’OpenCode la signale. Elle devient alors une ligne de plugin ordinaire avec ses commutateurs, ou une ligne en échec.
+
+Pour retirer un plugin, ouvrez le menu à côté de son nom et choisissez **Retirer de Global** ou **Retirer de Projet**. Seule la déclaration du fichier de configuration de cette portée est supprimée ; ses règles d’activation **Global**/**Projet** restent des règles, et le cache de paquets d’OpenCode reste en place.
+
+Le code du plugin s’exécute avec vos droits dans OpenCode. Une entrée **Projet** s’exécute chaque fois que ce dossier est ouvert dans OpenCode, et les paquets qui ont des parties pour l’application de bureau d’OpenCode ne les chargent que depuis **Global** ; l’infobulle le signale quand un tel paquet est déclaré ailleurs. Les chemins locaux, les variables de configuration et les ID de plugin sont refusés ici : déclarez les plugins locaux dans le fichier de configuration. Un paquet déjà déclaré dans une configuration qui s’applique à cette Location est refusé, quelle que soit sa version, sa plage ou sa forme.
+
+Survolez ou ciblez le nom d’un plugin pour voir sa version, **Mise à jour disponible** et, pour une installation en échec, l’erreur avec sa référence dans le journal d’OpenCode. Une ligne qu’OpenCode n’a pas signalée au bout de deux minutes affiche **Non confirmé** avec l’action **Actualiser les contrôles des plugins** : le plugin est peut-être désactivé, ou son installation n’a jamais abouti (voir [Dépannage](troubleshooting.md#providers-and-addons)).
 
 ## Joindre des compétences {#skills}
 

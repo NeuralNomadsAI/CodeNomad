@@ -159,6 +159,7 @@ await updatePreferences({ locale: "en" })
   reads: () => reads,
   failedPackagesOnly: () => {
     snapshot.controls = []
+    snapshot.configured.sources = []
     snapshot.runtime = ["opencode-ponytail", "opencode-gemini-auth@latest", "opencode-ponytail"].map((target, index) => ({
       key: `failed-${index}`, source: { type: "package", target }, features: {},
       state: { status: "failed", error: "Package failed before exporting a plugin ID" },

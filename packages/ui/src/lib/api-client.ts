@@ -74,6 +74,7 @@ import type {
   WorktreeGitDiffResponse,
   WorktreeGitStatusResponse,
 } from "../../../server/src/api-types"
+import type { PluginSourceAddRequest, PluginSourceMutationResponse, PluginSourceRemoveRequest } from "../../../server/src/plugin-source-types"
 import { getClientIdentity } from "./client-identity"
 import { getLogger } from "./logger"
 import { attachEventSourceHandlers } from "./event-source-handlers"
@@ -455,6 +456,12 @@ export const serverApi = {
       method: "PATCH",
       body: JSON.stringify(payload),
     })
+  },
+  addPluginSource(instanceId: string, payload: PluginSourceAddRequest): Promise<PluginSourceMutationResponse> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-sources`, { method: "POST", body: JSON.stringify(payload) })
+  },
+  removePluginSource(instanceId: string, payload: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
+    return request(`/api/workspaces/${encodeURIComponent(instanceId)}/plugin-sources`, { method: "DELETE", body: JSON.stringify(payload) })
   },
   setServerPassword(password: string): Promise<{ ok: boolean; username: string; passwordUserProvided: boolean }> {
     return request<{ ok: boolean; username: string; passwordUserProvided: boolean }>("/api/auth/password", {

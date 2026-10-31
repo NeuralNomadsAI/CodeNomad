@@ -487,7 +487,8 @@ export interface PluginRuntimeInventoryEntry {
   key: string
   id?: string
   source: PluginRuntimeSource
-  features: { server?: true; tui?: true; rpc?: true }
+  /** `gui`: the package ships parts the OpenCode desktop app loads only from Global configuration. */
+  features: { server?: true; tui?: true; rpc?: true; gui?: true }
   state: { status: "active" } | { status: "failed"; error: string; ref?: string }
 }
 
@@ -506,6 +507,8 @@ export interface PluginConfiguredSource {
   path?: string
   entryIndex: number
   hasOptions: boolean
+  /** The runtime plugin this declaration loaded, when the inventory reports it. */
+  pluginId?: string
 }
 
 export type PluginScopeRuleState = "default" | "enabled" | "disabled"
