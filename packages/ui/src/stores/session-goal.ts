@@ -8,7 +8,8 @@ import { serverEvents } from "../lib/server-events"
 import { executeCustomCommand } from "./session-actions"
 import { createSessionGoalStore } from "./session-goal-store"
 
-export const sessionGoals = createSessionGoalStore((instanceId, sessionId) => serverApi.fetchSessionGoal(instanceId, sessionId))
+// The signal leaves the shared background budget's queue or aborts the request once the Session is hidden.
+export const sessionGoals = createSessionGoalStore((instanceId, sessionId, signal) => serverApi.fetchSessionGoal(instanceId, sessionId, signal))
 
 // Changes published while the stream was down are lost: re-read what is shown.
 const reconnects = createEventRefreshScheduler(instanceId => sessionGoals.refreshDemanded(instanceId))

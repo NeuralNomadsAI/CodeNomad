@@ -111,12 +111,21 @@ test("the goal line sits above Tokens and drives /goal pause, resume and clear f
     await page.mouse.move(0, 0)
     await tooltip.waitFor({ state: "hidden" })
 
-    // Pause is in flight: the line's actions wait for it.
+    // Pause by keyboard while the command is in flight: the line's actions wait for it,
+    // and the busy toggle keeps focus.
     await call(page, "hold")
-    await goal.getByRole("button", { name: "Pause goal" }).click()
+    const toggle = await goal.getByRole("button", { name: "Pause goal" }).elementHandle()
+    await toggle!.focus()
+    await page.keyboard.press("Enter")
     await waitFor(async () => (await call(page, "commands")).length === 1, "Pause sends the command")
-    assert.equal(await goal.getByRole("button", { name: "Pause goal" }).isDisabled(), true)
-    assert.equal(await goal.getByRole("button", { name: "Clear goal" }).isDisabled(), true)
+    await waitFor(async () => await toggle!.getAttribute("aria-disabled") === "true", "the toggle is busy while its command runs")
+    assert.equal(await goal.getByRole("button", { name: "Clear goal" }).getAttribute("aria-disabled"), "true")
+    assert.equal(await toggle!.evaluate(element => element === document.activeElement), true, "the busy toggle keeps keyboard focus")
+    await page.keyboard.press("Enter")
+    // Activate Clear without moving focus off the toggle.
+    await goal.getByRole("button", { name: "Clear goal" }).evaluate(element => (element as HTMLButtonElement).click())
+    await page.waitForTimeout(50)
+    assert.equal((await call(page, "commands")).length, 1, "busy actions ignore activation")
     const readsBeforeChange = reads.length
     answers.ses_goal = { status: "goal", goal: paused }
     await call(page, "changed", "ses_goal", paused)
@@ -126,7 +135,9 @@ test("the goal line sits above Tokens and drives /goal pause, resume and clear f
     // The change updates the line: Paused, Resume, and the reason as its description and tooltip.
     const resume = goal.getByRole("button", { name: "Resume goal" })
     await resume.waitFor()
-    await waitFor(async () => !await resume.isDisabled(), "actions return once the command settles")
+    await waitFor(async () => await resume.getAttribute("aria-disabled") !== "true", "actions return once the command settles")
+    assert.equal(await toggle!.evaluate(element => element === document.activeElement && element.getAttribute("aria-label") === "Resume goal"), true,
+      "focus stays on the same toggle, which now resumes")
     await waitFor(() => reads.length > readsBeforeChange, "the outcome is read after the command")
     assert.equal(await goal.locator(".session-goal-badge").innerText(), "Paused")
     const describedBy = await goal.getAttribute("aria-describedby")
@@ -172,7 +183,7 @@ test("a completed goal keeps only Clear, a failed command shows its error and th
     await call(page, "failNext", "No goal is set.")
     await goal.getByRole("button", { name: "Clear goal" }).click()
     await page.getByText("No goal is set.", { exact: true }).waitFor()
-    await waitFor(async () => !await goal.getByRole("button", { name: "Clear goal" }).isDisabled(), "a failed command releases the actions")
+    await waitFor(async () => await goal.getByRole("button", { name: "Clear goal" }).getAttribute("aria-disabled") !== "true", "a failed command releases the actions")
 
     // Another session has its own (no) goal; switching back shows this one again.
     await call(page, "select", "ses_other")

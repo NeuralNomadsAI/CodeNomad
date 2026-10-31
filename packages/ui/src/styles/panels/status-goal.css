@@ -46,7 +46,7 @@
   height: 24px;
 }
 
-.session-goal-line .window-icon-button:disabled {
+.session-goal-line .window-icon-button[aria-disabled="true"] {
   opacity: 0.5;
   cursor: default;
   background: transparent;

@@ -32,7 +32,11 @@ const SessionGoalLine: Component<SessionGoalLineProps> = (props) => {
     return snapshot.status === "goal" ? snapshot.goal : null
   })
   const busy = () => sessionGoals.busy(props.instanceId, props.sessionId)
-  const run = (action: "pause" | "resume" | "clear") => void runSessionGoalCommand(props.instanceId, props.sessionId, action)
+  // Busy actions stay focusable (`aria-disabled`, activation ignored): a disabled
+  // focused button would hand keyboard focus to the page while its command runs.
+  const run = (action: "pause" | "resume" | "clear") => {
+    if (!busy()) void runSessionGoalCommand(props.instanceId, props.sessionId, action)
+  }
 
   return (
     <Show when={goal()}>
@@ -63,13 +67,13 @@ const SessionGoalLine: Component<SessionGoalLineProps> = (props) => {
               <span class="sr-only">{rounds()}</span>
             </span>
             <Show when={current().status !== "complete"}>
-              <button type="button" class="window-icon-button" aria-label={toggleLabel()} title={toggleLabel()} disabled={busy()}
+              <button type="button" class="window-icon-button" aria-label={toggleLabel()} title={toggleLabel()} aria-disabled={busy()}
                 onClick={() => run(current().status === "paused" ? "resume" : "pause")}>
                 <Show when={current().status === "paused"} fallback={<Pause aria-hidden="true" />}><Play aria-hidden="true" /></Show>
               </button>
             </Show>
             <button type="button" class="window-icon-button" aria-label={t("instanceShell.goal.actions.clear")}
-              title={t("instanceShell.goal.actions.clear")} disabled={busy()} onClick={() => run("clear")}>
+              title={t("instanceShell.goal.actions.clear")} aria-disabled={busy()} onClick={() => run("clear")}>
               <Trash2 aria-hidden="true" />
             </button>
           </div>

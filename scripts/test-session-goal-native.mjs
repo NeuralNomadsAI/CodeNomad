@@ -64,7 +64,10 @@ await withProductRuntime(process.argv[2], async () => ({}), async ({ client, roo
     const paused = (await read()).body.goal
     assert.equal(typeof paused.reason, "string")
     assert.equal(paused.maxRounds > 0 && paused.rounds >= 0, true)
-    assert.equal(changes().at(-1).event.data.goal?.status, "paused", "the pause was published too")
+    // The read can answer before the relay delivers the same write's event.
+    await until(() => changes().some(event => event.event.data.goal?.status === "paused"), "the pause is relayed too", 15_000)
+    const pausedChange = changes().find(event => event.event.data.goal?.status === "paused")
+    assert.equal(pausedChange.event.data.goal.reason, paused.reason, "the relayed pause carries the read's reason")
 
     const before = changes().length
     await command("resume")
