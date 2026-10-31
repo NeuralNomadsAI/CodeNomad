@@ -69,6 +69,47 @@ async function writeLease(lease: string, content: string) {
   } finally { await rm(temporary, { force: true }) }
 }
 
+// Concurrent installers publishing the same bytes can each move the name once.
+const BUNDLE_REPAIR_ATTEMPTS = 4
+
+/**
+ * The identity of `plugin` when it is one regular file holding exactly `bundle`,
+ * read through a single handle; undefined when it is absent or holds anything else.
+ */
+async function verifiedBundle(plugin: string, bundle: Uint8Array, hash: string): Promise<{ dev: number; ino: number } | undefined> {
+  const handle = await open(plugin, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT" || error.code === "ELOOP") return undefined
+    throw error
+  })
+  if (!handle) return undefined
+  try {
+    const info = await handle.stat(), named = await lstat(plugin).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === "ENOENT") return undefined
+      throw error
+    })
+    if (!named || !info.isFile() || !named.isFile() || named.isSymbolicLink() || info.nlink !== 1
+      || info.dev !== named.dev || info.ino !== named.ino || info.size !== bundle.byteLength) return undefined
+    const actual = createHash("sha256"), chunk = Buffer.alloc(64 * 1024)
+    for (let offset = 0; offset < bundle.byteLength;) {
+      const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, bundle.byteLength - offset), offset)
+      if (!bytesRead) return undefined
+      actual.update(chunk.subarray(0, bytesRead))
+      offset += bytesRead
+    }
+    if (actual.digest("hex") !== hash || (await handle.read(chunk, 0, 1, bundle.byteLength)).bytesRead) return undefined
+    return { dev: info.dev, ino: info.ino }
+  } finally { await handle.close() }
+}
+
+/** Renames a complete private copy over `plugin`, replacing the name itself (never a link's target). */
+async function publishBundle(plugin: string, bundle: Uint8Array) {
+  const temporary = `${plugin}.${randomUUID()}.tmp`
+  try {
+    await writeFile(temporary, bundle, { flag: "wx" })
+    await rename(temporary, plugin)
+  } finally { await rm(temporary, { force: true }) }
+}
+
 /**
  * `leaseContent` is the backend's current lease state (empty when it requests
  * nothing). The lease is created with it and rewritten only when it changes:
@@ -112,36 +153,28 @@ export async function installDesktopPluginPresence(
   await mkdir(path.dirname(entry), { recursive: true })
   assertCurrent()
   // Immutable, content-addressed payloads keep running instances independent of upgrades.
-  await writeFile(plugin, bundle, { flag: "wx" }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== "EEXIST") throw error
-  })
-  const handle = await open(plugin, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0)).catch((error: NodeJS.ErrnoException) => {
-    if (error.code === "ELOOP") throw new Error("Managed plugin bundle differs from its digest")
-    throw error
-  })
-  let identity: { dev: number; ino: number }
-  try {
-    const info = await handle.stat(), named = await lstat(plugin)
-    if (!info.isFile() || !named.isFile() || named.isSymbolicLink() || info.nlink !== 1
-      || info.dev !== named.dev || info.ino !== named.ino || info.size !== bundle.byteLength) {
-      throw new Error("Managed plugin bundle differs from its digest")
-    }
-    identity = { dev: info.dev, ino: info.ino }
-    const actual = createHash("sha256"), chunk = Buffer.alloc(64 * 1024)
-    for (let offset = 0; offset < bundle.byteLength;) {
-      const { bytesRead } = await handle.read(chunk, 0, Math.min(chunk.length, bundle.byteLength - offset), offset)
-      if (!bytesRead) throw new Error("Managed plugin bundle is incomplete")
-      actual.update(chunk.subarray(0, bytesRead))
-      offset += bytesRead
-    }
-    if (actual.digest("hex") !== hash || (await handle.read(chunk, 0, 1, bundle.byteLength)).bytesRead) {
-      throw new Error("Managed plugin bundle differs from its digest")
-    }
-  } finally { await handle.close() }
+  // A payload is only ever published whole, by renaming a complete temporary copy, and a
+  // name holding other bytes (cut short by a killed process, or not a single regular file)
+  // is replaced the same way: the entry only ever points at verified bytes.
+  let identity = await verifiedBundle(plugin, bundle, hash)
+  let failure: unknown
+  for (let attempt = 0; !identity && attempt < BUNDLE_REPAIR_ATTEMPTS; attempt += 1) {
+    assertCurrent()
+    failure = await publishBundle(plugin, bundle).then(() => undefined, (error: unknown) => error)
+    identity = await verifiedBundle(plugin, bundle, hash)
+  }
+  if (!identity) {
+    // The server compiles against a library without `Error.cause`.
+    throw Object.assign(new Error(`Managed plugin bundle differs from its digest and could not be replaced: ${plugin}. `
+      + "Stop other CodeNomad servers using this OpenCode configuration, or delete that file, then reconnect."), { cause: failure })
+  }
   const assertBundlePath = async () => {
     const named = await lstat(plugin)
-    if (!named.isFile() || named.isSymbolicLink() || named.nlink !== 1 || named.size !== bundle.byteLength
-      || named.dev !== identity.dev || named.ino !== identity.ino) throw new Error("Managed plugin bundle differs from its digest")
+    if (named.isFile() && !named.isSymbolicLink() && named.nlink === 1 && named.size === bundle.byteLength
+      && named.dev === identity!.dev && named.ino === identity!.ino) return
+    // Another installer may have published the same bytes meanwhile.
+    identity = await verifiedBundle(plugin, bundle, hash)
+    if (!identity) throw new Error(`Managed plugin bundle changed while it was being installed: ${plugin}`)
   }
   await assertBundlePath()
   assertCurrent()

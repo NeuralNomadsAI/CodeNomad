@@ -404,7 +404,7 @@ export function showToastNotification(payload: ToastPayload): ToastHandle {
   const id = toast.custom(
     () => (
       <div
-        class={`pointer-events-auto relative w-[320px] max-w-[360px] border px-4 py-3 shadow-xl ${accent.container}`}
+        class={`pointer-events-auto relative w-[320px] max-w-[calc(100vw-2rem)] border px-4 py-3 shadow-xl ${accent.container}`}
       >
         <button
           type="button"

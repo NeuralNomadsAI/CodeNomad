@@ -1,28 +1,53 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { createHash } from "node:crypto"
-import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
+import { lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
 import { installDesktopPluginPresence } from "./desktop-plugin-installation"
 import { DesktopPluginLifecycle } from "./desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./desktop-plugin-paths"
 
-test("a content-addressed Missions bundle cannot be reused with different bytes", async (t) => {
+test("a content-addressed Missions bundle holding other bytes is replaced before reuse", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-bundle-"))
   const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
   const bundle = Buffer.from("trusted"), hash = createHash("sha256").update(bundle).digest("hex")
   const stop = await installDesktopPluginPresence("missions", bundle, paths)
-  t.after(async () => { await stop(); await rm(root, { recursive: true, force: true }) })
   const entry = path.join(paths.config, "plugins", "codenomad-missions.ts")
   const before = await readFile(entry, "utf8")
-  await writeFile(path.join(paths.data, "missions", `${hash}.mjs`), "changed")
-  await assert.rejects(installDesktopPluginPresence("missions", bundle, paths), /bundle differs/)
+  const payload = path.join(paths.data, "missions", `${hash}.mjs`)
+  await writeFile(payload, "changed")
+  const next = await installDesktopPluginPresence("missions", bundle, paths)
+  t.after(async () => { await stop(); await next(); await rm(root, { recursive: true, force: true }) })
+  assert.deepEqual(await readFile(payload), bundle)
   assert.equal(await readFile(entry, "utf8"), before)
-  assert.equal((await readdir(path.join(paths.data, "missions", "presence"))).length, 1)
+  assert.equal((await readdir(path.join(paths.data, "missions"))).filter((name) => name.endsWith(".tmp")).length, 0)
 })
 
-test("an existing digest-named Missions bundle cannot be a symlink", async (t) => {
+test("a payload cut short by an interrupted first install is repaired on every later connection", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-partial-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
+  const bundle = Buffer.alloc(256 * 1024, 7), hash = createHash("sha256").update(bundle).digest("hex")
+  const directory = path.join(paths.data, "missions")
+  await mkdir(directory, { recursive: true })
+  await writeFile(path.join(directory, `${hash}.mjs`), bundle.subarray(0, 64 * 1024))
+  const stop = await installDesktopPluginPresence("missions", bundle, paths)
+  await stop()
+  assert.deepEqual(await readFile(path.join(directory, `${hash}.mjs`)), bundle)
+})
+
+test("installers sharing one data directory never observe each other's partial payload", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-race-"))
+  t.after(() => rm(root, { recursive: true, force: true }))
+  const data = path.join(root, "data"), bundle = Buffer.alloc(2 * 1024 * 1024, 3)
+  const results = await Promise.allSettled([0, 1, 2, 3].map((index) =>
+    installDesktopPluginPresence("missions", bundle, { config: path.join(root, `config-${index}`), data })))
+  for (const result of results) if (result.status === "fulfilled") await result.value()
+  assert.deepEqual(results.map((result) => result.status === "rejected" ? String(result.reason) : "ok"), ["ok", "ok", "ok", "ok"])
+})
+
+test("a digest-named Missions bundle that is a symlink is replaced without touching its target", async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-link-"))
   t.after(() => rm(root, { recursive: true, force: true }))
   const paths = { config: path.join(root, "config"), data: path.join(root, "data") }
@@ -30,10 +55,14 @@ test("an existing digest-named Missions bundle cannot be a symlink", async (t) =
   const directory = path.join(paths.data, "missions")
   await mkdir(directory, { recursive: true })
   const target = path.join(root, "target.mjs")
-  await writeFile(target, bundle)
-  await symlink(target, path.join(directory, `${hash}.mjs`), "file")
-  await assert.rejects(installDesktopPluginPresence("missions", bundle, paths), /bundle differs/)
-  await assert.rejects(readFile(path.join(paths.config, "plugins", "codenomad-missions.ts")), { code: "ENOENT" })
+  await writeFile(target, "elsewhere")
+  const payload = path.join(directory, `${hash}.mjs`)
+  await symlink(target, payload, "file")
+  const stop = await installDesktopPluginPresence("missions", bundle, paths)
+  await stop()
+  assert.equal((await lstat(payload)).isSymbolicLink(), false)
+  assert.deepEqual(await readFile(payload), bundle)
+  assert.equal(await readFile(target, "utf8"), "elsewhere")
 })
 
 test("WSL preserves existing outside-root native storage with a drive-backed config", async (t) => {

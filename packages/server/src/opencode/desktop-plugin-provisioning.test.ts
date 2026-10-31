@@ -70,7 +70,8 @@ test("failures on the current connection are still errors, at each provisioning 
   ] as const) {
     const { calls, logger } = recordingLogger()
     assert.equal(await provisionDesktopPlugins({ connection: current, logger, ...options }), false)
-    assert.deepEqual(calls.map(({ level, message }) => ({ level, message })), [{ level: "error", message }])
+    assert.deepEqual(calls.map(({ level }) => level), ["error"])
+    assert(calls[0].message.startsWith(`${message}. `), calls[0].message)
   }
 
   const { calls, logger } = recordingLogger()
@@ -85,4 +86,24 @@ test("failures on the current connection are still errors, at each provisioning 
   assert.equal(await provisionDesktopPlugins({ connection: replaced, logger: late.logger,
     resolvePaths: async () => ({ config: "/root" }), install: async () => { throw new Error("stale") } }), false)
   assert.deepEqual(late.calls.map(call => call.level), ["debug"], "an install cut short by a replacement is superseded too")
+})
+
+test("a failure repeated by every reconnection is logged as an error once, until provisioning succeeds", async () => {
+  const current = { assertCurrent() {} }
+  const reported = new Set<string>()
+  const { calls, logger } = recordingLogger()
+  let failure: string | undefined = "Managed plugin bundle differs from its digest"
+  const provision = () => provisionDesktopPlugins({ connection: current, logger, reported,
+    resolvePaths: async () => ({ config: "/root" }),
+    install: async () => { if (failure) throw new Error(failure) } })
+  for (let attempt = 0; attempt < 8; attempt += 1) assert.equal(await provision(), false)
+  failure = "another failure"
+  assert.equal(await provision(), false)
+  assert.deepEqual(calls.map(call => call.level), ["error", ...Array(7).fill("debug"), "error"])
+  assert.match(calls[0].message, /cannot list questions and permissions that were already waiting/)
+  failure = undefined
+  assert.equal(await provision(), true)
+  failure = "another failure"
+  assert.equal(await provision(), false)
+  assert.equal(calls.at(-1)?.level, "error", "a success re-arms the error")
 })

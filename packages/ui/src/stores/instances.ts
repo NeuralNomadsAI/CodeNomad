@@ -37,6 +37,7 @@ import { refreshSessionRuntimeStatus } from "./session-api"
 import { buildV2RequestLocations, locationAuthorityKey, locationWorkspaceID, requestLocationOptions, toRequestLocation, type RequestLocation } from "./request-locations"
 import { backgroundReads } from "../lib/background-read-queue"
 import { normalizeWorkspacePath } from "./app-session-reconciliation"
+import { claimPendingRecoveryNotice, pendingRecoveryNoticeKey, releasePendingRecoveryNotices } from "./pending-recovery-notices"
 import { fetchCommands, clearCommands } from "./commands"
 import { getInstanceRefreshTargets, type InstanceRefreshTarget } from "./instance-invalidation"
 import { ConnectionResyncGate } from "./connection-resync-gate"
@@ -290,8 +291,14 @@ function notifyPendingRecovery(instanceId: string, cause: PendingRecoveryCause):
       .map((session) => session.title || session.id)
   }
   const { title, message } = describePendingRecovery(cause, instance ? getInstanceLabel(instance) : instanceId, sessionTitlesIn, tGlobal)
+  if (!claimPendingRecoveryNotice(pendingRecoveryNoticeKey(pendingRecoveryProject(instanceId), cause, message))) return
   // A project diagnostic, not a request itself: it keeps its bubble and History entry.
   showToastNotification({ category: "projects", title, message, variant: "warning" })
+}
+
+function pendingRecoveryProject(instanceId: string): string {
+  const folder = instances().get(instanceId)?.folder
+  return folder ? normalizeWorkspacePath(folder) : instanceId
 }
 
 // A cause marks an attempt that counts toward the warning; without one, the state only changes.
@@ -1045,6 +1052,7 @@ async function runPendingRequestSync(
       for (const result of results) if (result.status === "rejected") throw result.reason
       if (!targetLocations && isCurrent()) {
         successfulPendingRecoveries.set(instanceId, (successfulPendingRecoveries.get(instanceId) ?? 0) + 1)
+        releasePendingRecoveryNotices(pendingRecoveryProject(instanceId))
         markPendingRecovery(instanceId, false)
       }
       return

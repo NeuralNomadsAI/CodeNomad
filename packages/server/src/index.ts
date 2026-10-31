@@ -405,10 +405,12 @@ async function main() {
   let missionBridge: "pending" | "published" | "failed" = "pending"
   let settleMissionBridge!: (published: boolean) => void
   const missionBridgeSettled = new Promise<boolean>(resolve => { settleMissionBridge = resolve })
+  const reportedProvisioningFailures = new Set<string>()
   const prepareDesktopPlugins: NonNullable<ConstructorParameters<typeof WorkspaceManager>[0]["prepareDesktopPlugins"]> = (launch, connection, deadlineAt) =>
     provisionDesktopPlugins({
       connection,
       logger,
+      reported: reportedProvisioningFailures,
       resolvePaths: () => resolveDesktopPluginPaths(connection, launch, deadlineAt),
       install: async paths => {
         const missions = await missionBridgeSettled
