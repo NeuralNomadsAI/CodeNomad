@@ -54,6 +54,7 @@
     "@types/node-forge": "^1.3.14",
     "@types/npm-package-arg": "^6.1.4",
     "@types/yauzl": "^2.10.0",
+    "ajv2020": "npm:ajv@^8.20.0",
     "cross-env": "^7.0.3",
     "esbuild": "^0.25.12",
     "tsx": "^4.20.6",

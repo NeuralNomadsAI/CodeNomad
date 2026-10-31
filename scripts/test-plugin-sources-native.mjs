@@ -5,31 +5,17 @@
 import assert from "node:assert/strict"
 import { spawnSync } from "node:child_process"
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises"
-import { createServer } from "node:http"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { parse } from "jsonc-parser"
+import { startFakeNpmRegistry } from "./fixtures/fake-npm-registry.mjs"
 import { withProductRuntime } from "./native-product-fixture.mjs"
 import { PluginControls } from "../packages/server/src/opencode/plugin-controls.ts"
 import { PluginSources } from "../packages/server/src/opencode/plugin-sources.ts"
 
-const archives = new Map(), requested = []
-let base
-const registry = createServer((req, res) => {
-  const url = req.url.split("?")[0]
-  requested.push(url)
-  if (url.startsWith("/fixture-plugin/-/")) {
-    const archive = archives.get(url.split("/").at(-1))
-    res.writeHead(archive ? 200 : 404, { "Content-Type": "application/octet-stream" }); res.end(archive); return
-  }
-  // Every other name, including the missing integration, is unknown to this registry.
-  if (url !== "/fixture-plugin") { res.writeHead(404, { "Content-Type": "application/json" }); res.end('{"error":"Not found"}'); return }
-  res.setHeader("Content-Type", "application/json")
-  res.end(JSON.stringify({ name: "fixture-plugin", "dist-tags": { latest: "1.0.0" }, versions: { "1.0.0": { name: "fixture-plugin", version: "1.0.0",
-    dist: { tarball: `${base}/fixture-plugin/-/1.0.0.tgz` } } } }))
-})
-await new Promise(resolve => registry.listen(0, "127.0.0.1", resolve))
-base = `http://127.0.0.1:${registry.address().port}`
+// Every name but fixture-plugin, including the missing one, is unknown to this registry.
+const registry = await startFakeNpmRegistry()
+const { requested } = registry
 
 let configDirectory
 try {
@@ -42,7 +28,7 @@ try {
     const tarball = path.join(root, "1.0.0.tgz")
     const tar = spawnSync("tar", ["-czf", tarball, "-C", staging, "package"], { encoding: "utf8" })
     assert.equal(tar.status, 0, tar.stderr)
-    archives.set("1.0.0.tgz", await readFile(tarball))
+    registry.publish("fixture-plugin", "1.0.0", await readFile(tarball))
     await writeFile(path.join(directory, "opencode.jsonc"), '{\n  // fixture comment\n  "plugins": []\n}\n')
     return {}
   }, async ({ client, root, connection }) => {
@@ -91,8 +77,8 @@ try {
     assert.deepEqual(plugins, ["missing-plugin@1.0.0"], "removal deletes exactly the displayed entry")
     assert.ok(await containsPackage(root, "fixture-plugin"), "The native package cache is left in place")
     console.log("PASS native add (registry spec, version), 404 failure with ref, duplicate refusal, stale removal, removal unload with cache kept")
-  }, { registry: base })
-} finally { registry.closeAllConnections(); await new Promise(resolve => registry.close(resolve)) }
+  }, { registry: registry.url })
+} finally { await registry.close() }
 
 async function containsPackage(directory, name, depth = 0) {
   if (depth > 8) return false
