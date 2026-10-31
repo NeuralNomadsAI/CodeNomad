@@ -355,12 +355,20 @@ Independent roots use only their own native agent/project permissions.
 ## Distribution and environment
 
 The content-addressed bundle is provisioned into the authenticated daemon's
-`config.get` discovery root; backend leases live outside that watched root. Tools, context hooks and typed
-RPC initially register through backend presence. `retainMissionWork` preserves
-registered Missions while active/unsettled work, receipts or uncertain storage
+`config.get` discovery root; backend leases live outside that watched root. Tools,
+their context hook and the passage prompt hook register once at plugin load,
+independently of presence ([MISSIONS_RECURRING.md](MISSIONS_RECURRING.md)); the typed
+RPC and the ordinary one-time route register through backend presence. Without
+either route, the context hook removes every `mission_*` tool from the model
+request and the executors refuse. `retainMissionWork` preserves
+the presence registration while active/unsettled work, receipts or uncertain storage
 remain, including after lease loss; subsequent protected sends still pass the
 owning backend's fresh admission checks. Never install project-local files; the
-server typecheck covers the plugin contract.
+server typecheck covers the plugin contract. Qualify presence loss with
+`MISSIONS_LIFETIME_NATIVE_CLI=<absolute-isolated-opencode-cli> npx tsx --test src/opencode/missions/presence-native.test.ts`
+(in `packages/server`): it observes the presence registration through the native
+`codenomad.missions` RPC, and the tools through the native tool list and the model
+request.
 
 Assignment prompts and report synthetics use a narrow authenticated loopback bridge mode. The owning backend reconciles the persisted task/report via `codenomad.missions.snapshot`, validates complete native session ownership and selection, acquires the worktree mutation fence, and applies the current full profile environment before admission. Native environment errors are redacted and fail closed. Environment data never travels through the UI or plugin. Multiple owning backends are rejected rather than choosing a profile arbitrarily.
 
