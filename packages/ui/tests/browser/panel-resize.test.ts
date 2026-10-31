@@ -80,6 +80,32 @@ for (const locale of ["en", "he"] as const) {
         assert.ok(await page.evaluate(() => (window as any).resizeProbe.outsideMoves > 0))
       } finally { await page.close() }
     })
+
+    test(`${locale} ${side} panel keeps resizing when the opposite panel closes`, async () => {
+      const page = await openPage()
+      try {
+        await page.evaluate(locale => (window as any).fixture.setLocale(locale), locale)
+        await page.waitForFunction(dir => document.documentElement.dir === dir, locale === "he" ? "rtl" : "ltr")
+        const panel = page.locator(side === "left" ? ".session-sidebar-container" : ".session-right-panel")
+        const startWidth = (await panel.boundingBox())!.width
+        const { handle, x, y } = await startDrag(page, side)
+        const direction = (side === "left" ? 1 : -1) * (locale === "he" ? -1 : 1)
+        await page.mouse.move(x + direction * 40, y)
+        assert.ok(Math.abs((await panel.boundingBox())!.width - startWidth - 40) <= 1)
+
+        const oppositeSide = side === "left" ? "right" : "left"
+        await page.evaluate(side => (window as any).fixture.viewAction(`view-${side}-panel`), oppositeSide)
+        assert.equal(await page.locator(`.session-resize-handle--${oppositeSide}`).count(), 0)
+        await page.mouse.move(x + direction * 80, y)
+        assert.ok(Math.abs((await panel.boundingBox())!.width - startWidth - 80) <= 1)
+        assert.deepEqual(await handle.evaluate(element => ({
+          captured: element.hasPointerCapture((window as any).resizeProbe.pointerId),
+          active: element.classList.contains("is-resizing"),
+        })), { captured: true, active: true })
+        await page.mouse.up()
+        await assertStopped(page)
+      } finally { await page.close() }
+    })
   }
 }
 
@@ -132,7 +158,22 @@ test("touch resizing uses capture and clears it on cancellation", async () => {
 test("secondary mouse button does not start resizing", async () => {
   const page = await openPage()
   try {
-    await page.locator(".session-resize-handle--left").click({ button: "right" })
-    assert.equal(await page.locator(".session-resize-handle--left").evaluate(element => element.classList.contains("is-resizing")), false)
+    const handle = page.locator(".session-resize-handle--left")
+    const panel = page.locator(".session-sidebar-container")
+    const startWidth = (await panel.boundingBox())!.width
+    await handle.evaluate(element => {
+      element.addEventListener("pointerdown", event => { (window as any).secondaryPointerId = (event as PointerEvent).pointerId }, { once: true })
+    })
+    const box = (await handle.boundingBox())!
+    const x = box.x + box.width / 2, y = box.y + 160
+    await page.mouse.move(x, y)
+    await page.mouse.down({ button: "right" })
+    await page.mouse.move(x + 100, y, { steps: 8 })
+    assert.equal((await panel.boundingBox())!.width, startWidth)
+    assert.deepEqual(await handle.evaluate(element => ({
+      captured: element.hasPointerCapture((window as any).secondaryPointerId),
+      active: element.classList.contains("is-resizing"),
+    })), { captured: false, active: false })
+    await page.mouse.up({ button: "right" })
   } finally { await page.close() }
 })

@@ -770,7 +770,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           }}
         >
           <div
-            ref={() => onCleanup(stopDrawerResize)}
+            ref={() => onCleanup(() => { if (activeResizeSide() === "left") stopDrawerResize() })}
             class={`session-resize-handle session-resize-handle--left ${activeResizeSide() === "left" ? "is-resizing" : ""}`}
             onPointerDown={handleDrawerResizePointerDown("left")}
             onPointerMove={handleDrawerResizePointerMove}
@@ -840,7 +840,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           }}
         >
           <div
-            ref={() => onCleanup(stopDrawerResize)}
+            ref={() => onCleanup(() => { if (activeResizeSide() === "right") stopDrawerResize() })}
             class={`session-resize-handle session-resize-handle--right ${activeResizeSide() === "right" ? "is-resizing" : ""}`}
             onPointerDown={handleDrawerResizePointerDown("right")}
             onPointerMove={handleDrawerResizePointerMove}
