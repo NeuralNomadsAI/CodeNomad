@@ -58,6 +58,9 @@ import { registerPluginControlRoutes } from "./routes/plugin-controls"
 import { PluginControls } from "../opencode/plugin-controls"
 import { PluginSources } from "../opencode/plugin-sources"
 import { registerPluginSourceRoutes } from "./routes/plugin-sources"
+import { registerIntegrationRoutes } from "./routes/integrations"
+import { IntegrationCatalogSource } from "../opencode/integrations/catalog"
+import { IntegrationsReader } from "../opencode/integrations/integrations"
 import { WebSearchSettings } from "../opencode/websearch-settings"
 import { ServiceUsage } from "../opencode/service-usage"
 import { registerServiceUsageRoutes } from "./routes/service-usage"
@@ -135,6 +138,8 @@ interface HttpServerDeps {
   worktreeDeletionFence?: WorktreeDeletionFence
   /** See `registerMissionRoutes`. */
   missionsHost?: () => boolean
+  /** Shared by every listener of one backend; a fresh in-memory one serves a lone server. */
+  integrationCatalog?: IntegrationCatalogSource
 }
 
 interface HttpServerStartResult {
@@ -341,7 +346,9 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerTemporaryWorkspaceRoutes(app, { workspaceManager: deps.workspaceManager, worktreeDeletionFence, eventBus: deps.eventBus })
   const configurationControls = new PluginControls({ workspaceManager: deps.workspaceManager, worktreeDeletionFence, logger: apiLogger })
   registerPluginControlRoutes(app, { controls: configurationControls })
-  registerPluginSourceRoutes(app, { sources: new PluginSources({ documents: configurationControls, logger: apiLogger }) })
+  const integrationCatalog = deps.integrationCatalog ?? new IntegrationCatalogSource({ logger: apiLogger })
+  registerPluginSourceRoutes(app, { sources: new PluginSources({ documents: configurationControls, logger: apiLogger, catalog: integrationCatalog }) })
+  registerIntegrationRoutes(app, { integrations: new IntegrationsReader({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog }) })
   registerWebSearchSettingsRoutes(app, new WebSearchSettings(configurationControls))
   registerSubagentDepthSettingsRoutes(app, new SubagentDepthSettings(configurationControls, deps.workspaceManager))
   const imageSettings = new ImageSettings(configurationControls, deps.workspaceManager)

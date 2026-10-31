@@ -23,6 +23,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.localPath": "Yerel yollar buradan eklenemez. Bunları OpenCode yapılandırma dosyasında tanımlayın.",
   "instanceServiceStatus.plugins.sources.errors.pluginId": "Bu bir paket değil, bir eklenti kimliği veya etkinleştirme kuralı.",
   "instanceServiceStatus.plugins.sources.errors.duplicate": "Bu paket, burada geçerli olan bir OpenCode yapılandırmasında zaten tanımlı.",
+  "instanceServiceStatus.plugins.sources.errors.globalOnly": "Bu entegrasyon yalnızca {global} yapılandırmasından çalışır. {global} kapsamını seçin.",
   "instanceServiceStatus.plugins.sources.errors.forbidden": "Bu çalışma alanının {scope} yapılandırmasını değiştirme izni yok.",
   "instanceServiceStatus.plugins.sources.errors.conflict": "Kaydederken {scope} yapılandırması değişti. Yeniden deneyin.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} OpenCode yapılandırması bozuk. Değiştirilmedi.",

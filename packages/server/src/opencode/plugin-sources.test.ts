@@ -8,8 +8,10 @@ import { parse } from "jsonc-parser"
 import { PluginControls } from "./plugin-controls"
 import { PluginSources } from "./plugin-sources"
 import { registerPluginSourceRoutes } from "../server/routes/plugin-sources"
+import { catalogEntry, catalogOf } from "./integrations/catalog-fixture"
+import type { IntegrationCatalog } from "./integrations/contract"
 
-async function fixture(options: { sameScopes?: boolean } = {}) {
+async function fixture(options: { sameScopes?: boolean; catalog?: IntegrationCatalog } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), "plugin-sources-"))
   const global = path.join(root, "global")
   const project = options.sameScopes ? global : path.join(root, "project")
@@ -41,7 +43,8 @@ async function fixture(options: { sameScopes?: boolean } = {}) {
     getHostPathForServicePath: async (_id: string, value: string) => value,
   }
   const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} }, logger: { info() {} } as any })
-  const sources = new PluginSources({ documents: controls, logger: { info() {} } as any })
+  const catalog = options.catalog && { read: async () => ({ state: "fresh" as const, catalog: options.catalog! }) }
+  const sources = new PluginSources({ documents: controls, logger: { info() {} } as any, catalog })
   return { root, globalFile, projectFile, project, state, controls, sources, location: { directory: project },
     cleanup: () => rm(root, { recursive: true, force: true }) }
 }
@@ -78,6 +81,25 @@ describe("plugin source mutations", () => {
       await writeFile(f.projectFile, JSON.stringify({ plugins: ["late"] }))
       await assert.rejects(f.sources.add("w", { location: f.location, scope: "global", spec: "late@1" }), code("duplicate"))
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins.length, 4, "refusals write nothing")
+    } finally { await f.cleanup() }
+  })
+
+  it("adds a recognised native integration to Global only, and a Git build and a registry spec of one integration collide", async () => {
+    const GIT = "github:NeuralNomadsAI/opencode-integrations#"
+    const f = await fixture({ catalog: catalogOf(catalogEntry("fixture", { sources: { git: [GIT] } }), catalogEntry("mail", { family: "api" })) })
+    try {
+      await writeFile(f.globalFile, "{}")
+      for (const spec of ["@neuralnomads/opencode-fixture@^0.1", "fx@npm:@neuralnomads/opencode-fixture", `${GIT}path:/integrations/fixture`]) {
+        await assert.rejects(f.sources.add("w", { location: f.location, scope: "project", spec }), code("global-only", "invalid"), spec)
+      }
+      await assert.rejects(readFile(f.projectFile), "a refused Project add writes nothing")
+      await f.sources.add("w", { location: f.location, scope: "project", spec: "@neuralnomads/opencode-mail" })
+      await f.sources.add("w", { location: f.location, scope: "global", spec: `${GIT}fixture-v0.1.0::path:/integrations/fixture` })
+      await assert.rejects(f.sources.add("w", { location: f.location, scope: "global", spec: "@neuralnomads/opencode-fixture" }), code("duplicate", "conflict"))
+      // Loaded from an entry no way names (a local build): its plugin ID still designates it.
+      await writeFile(f.globalFile, "{}")
+      f.state.runtime = [{ id: "neuralnomads.fixture", source: { type: "local", path: "/builds/fixture/index.js" }, state: { status: "active" } }]
+      await assert.rejects(f.sources.add("w", { location: f.location, scope: "global", spec: "@neuralnomads/opencode-fixture" }), code("duplicate", "conflict"))
     } finally { await f.cleanup() }
   })
 

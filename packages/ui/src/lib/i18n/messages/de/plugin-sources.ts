@@ -23,6 +23,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.localPath": "Lokale Pfade können hier nicht hinzugefügt werden. Tragen Sie sie in die OpenCode-Konfigurationsdatei ein.",
   "instanceServiceStatus.plugins.sources.errors.pluginId": "Das ist eine Plugin-ID oder eine Aktivierungsregel, kein Paket.",
   "instanceServiceStatus.plugins.sources.errors.duplicate": "Dieses Paket ist bereits in einer hier geltenden OpenCode-Konfiguration eingetragen.",
+  "instanceServiceStatus.plugins.sources.errors.globalOnly": "Diese Integration funktioniert nur aus der Konfiguration {global}. Wählen Sie {global}.",
   "instanceServiceStatus.plugins.sources.errors.forbidden": "Dieser Arbeitsbereich darf die Konfiguration {scope} nicht ändern.",
   "instanceServiceStatus.plugins.sources.errors.conflict": "Die Konfiguration {scope} hat sich beim Speichern geändert. Versuchen Sie es erneut.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "Die OpenCode-Konfiguration {scope} ist fehlerhaft. Sie wurde nicht geändert.",

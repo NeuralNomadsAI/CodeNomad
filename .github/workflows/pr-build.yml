@@ -226,6 +226,10 @@ jobs:
           # discovery advertising a fake host, no host secret in outputs or log.
           node --import tsx scripts/test-integration-fixtures-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Integration recognition: loaded, marker mismatch and rule-disabled fake
+          # packages, catalog RPC IDs only, Global-only and duplicate adds refused.
+          node --import tsx scripts/test-integrations-recognition-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Design agent and skills copied into a project's .opencode/: native
           # discovery, notices kept out of model text, skills unlisted but loadable.
           node --import tsx scripts/test-design-content-native.mjs $cli
@@ -382,6 +386,7 @@ jobs:
           packages/ui/src/stores/plugin-controls-demand.test.ts
           packages/ui/src/stores/plugin-controls-events.test.ts
           packages/ui/src/stores/plugin-sources.test.ts
+          packages/ui/src/stores/integrations-store.test.ts
           packages/ui/src/stores/message-prompt-display.test.ts
           packages/ui/src/stores/message-v2/instance-store.test.ts
           packages/ui/src/stores/message-v2/message-hydration-authority.test.ts

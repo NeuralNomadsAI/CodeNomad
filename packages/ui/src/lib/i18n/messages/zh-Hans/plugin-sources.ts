@@ -23,6 +23,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.localPath": "此处不能添加本地路径。请在 OpenCode 配置文件中声明。",
   "instanceServiceStatus.plugins.sources.errors.pluginId": "这是插件 ID 或启用规则，不是软件包。",
   "instanceServiceStatus.plugins.sources.errors.duplicate": "此软件包已在适用于此处的 OpenCode 配置中声明。",
+  "instanceServiceStatus.plugins.sources.errors.globalOnly": "此集成仅在 {global} 配置中有效。请选择 {global}。",
   "instanceServiceStatus.plugins.sources.errors.forbidden": "此工作区无权更改{scope}配置。",
   "instanceServiceStatus.plugins.sources.errors.conflict": "保存时{scope}配置已更改。请重试。",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} OpenCode 配置格式错误，未作更改。",

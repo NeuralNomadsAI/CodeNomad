@@ -49,6 +49,8 @@ Zum Entfernen öffnen Sie das Menü neben dem Namen und wählen **Aus Global ent
 
 Der Code des Plugins läuft mit Ihren Rechten in OpenCode. Ein **Projekt**-Eintrag läuft jedes Mal, wenn dieser Ordner in OpenCode geöffnet wird, und Pakete mit Teilen für die OpenCode-Desktop-App laden diese nur aus **Global**; der Tooltip weist darauf hin, wenn ein solches Paket anderswo deklariert ist. Lokale Pfade, Konfigurationsvariablen und Plugin-IDs werden hier abgelehnt: Deklarieren Sie lokale Plugins in der Konfigurationsdatei. Ein Paket, das bereits in einer für diese Location geltenden Konfiguration deklariert ist, wird abgelehnt, unabhängig von Version, Bereich oder Form.
 
+Eine OpenCode-Integration aus dem geprüften Katalog (zum Beispiel die Blender-Integration) wird schon vor der Installation erkannt. Eine Integration mit einem Teil in einer Anwendung wird nur unter **Global** hinzugefügt: **Projekt** wird für sie abgelehnt. Ihr Registry-Paket und ihre Git-Builds gelten als ein Paket; eine zweite Form einer bereits eingetragenen oder geladenen Integration wird abgelehnt.
+
 Zeigen Sie auf den Namen eines Plugins oder fokussieren Sie ihn, um Version, **Update verfügbar** und bei einer fehlgeschlagenen Installation den Fehler mit seiner Referenz im OpenCode-Protokoll zu sehen. Eine Zeile, die OpenCode nach zwei Minuten nicht gemeldet hat, zeigt **Nicht bestätigt** mit der Aktion **Plugin-Steuerung aktualisieren**: Das Plugin ist vielleicht deaktiviert, oder seine Installation wurde nie abgeschlossen (siehe [Fehlerbehebung](troubleshooting.md#providers-and-addons)).
 
 ## Skills anhängen {#skills}

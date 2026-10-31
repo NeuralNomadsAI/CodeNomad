@@ -46,7 +46,7 @@ export function PluginSourceAdd(props: {
       setOpen(false)
     } catch (failure) {
       log.error("Failed to add plugin source", { scope: target, error: failure })
-      setError(t(errorKey(failure), { scope: scopeLabel(target) }))
+      setError(t(errorKey(failure), { scope: scopeLabel(target), global: scopeLabel("global") }))
     } finally {
       setPending(false)
     }
@@ -104,6 +104,7 @@ function errorKey(error: unknown): string {
     "local-path": "instanceServiceStatus.plugins.sources.errors.localPath",
     "plugin-id": "instanceServiceStatus.plugins.sources.errors.pluginId",
     duplicate: "instanceServiceStatus.plugins.sources.errors.duplicate",
+    "global-only": "instanceServiceStatus.plugins.sources.errors.globalOnly",
     timeout: "instanceServiceStatus.plugins.sources.errors.timeout",
   }
   if (error.code && known[error.code]) return known[error.code]!

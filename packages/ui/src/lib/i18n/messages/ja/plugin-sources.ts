@@ -23,6 +23,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.localPath": "ローカルパスはここでは追加できません。OpenCode の設定ファイルに記述してください。",
   "instanceServiceStatus.plugins.sources.errors.pluginId": "これはプラグイン ID または有効化ルールで、パッケージではありません。",
   "instanceServiceStatus.plugins.sources.errors.duplicate": "このパッケージは、ここに適用される OpenCode 設定ですでに宣言されています。",
+  "instanceServiceStatus.plugins.sources.errors.globalOnly": "この統合は {global} 設定からのみ動作します。{global} を選択してください。",
   "instanceServiceStatus.plugins.sources.errors.forbidden": "このワークスペースは {scope} の設定を変更できません。",
   "instanceServiceStatus.plugins.sources.errors.conflict": "保存中に {scope} の設定が変更されました。もう一度お試しください。",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} の OpenCode 設定の形式が正しくありません。変更されていません。",

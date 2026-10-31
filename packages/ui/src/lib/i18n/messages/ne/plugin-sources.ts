@@ -23,6 +23,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.localPath": "स्थानीय पथहरू यहाँ थप्न सकिँदैन। तिनलाई OpenCode कन्फिगरेसन फाइलमा घोषणा गर्नुहोस्।",
   "instanceServiceStatus.plugins.sources.errors.pluginId": "यो प्याकेज होइन, प्लगइन ID वा सक्रियता नियम हो।",
   "instanceServiceStatus.plugins.sources.errors.duplicate": "यो प्याकेज यहाँ लागू हुने OpenCode कन्फिगरेसनमा पहिल्यै घोषणा गरिएको छ।",
+  "instanceServiceStatus.plugins.sources.errors.globalOnly": "यो एकीकरण {global} कन्फिगरेसनबाट मात्र काम गर्छ। {global} छान्नुहोस्।",
   "instanceServiceStatus.plugins.sources.errors.forbidden": "यो कार्यक्षेत्रलाई {scope} कन्फिगरेसन बदल्ने अनुमति छैन।",
   "instanceServiceStatus.plugins.sources.errors.conflict": "सेभ गर्दा {scope} कन्फिगरेसन बदलियो। फेरि प्रयास गर्नुहोस्।",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} OpenCode कन्फिगरेसन बिग्रिएको छ। यसलाई बदलिएन।",

@@ -23,6 +23,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.localPath": "Las rutas locales no se pueden añadir aquí. Decláralas en el archivo de configuración de OpenCode.",
   "instanceServiceStatus.plugins.sources.errors.pluginId": "Esto es un ID de plugin o una regla de activación, no un paquete.",
   "instanceServiceStatus.plugins.sources.errors.duplicate": "Este paquete ya está declarado en una configuración de OpenCode que se aplica aquí.",
+  "instanceServiceStatus.plugins.sources.errors.globalOnly": "Esta integración solo funciona desde la configuración {global}. Elige {global}.",
   "instanceServiceStatus.plugins.sources.errors.forbidden": "Este espacio de trabajo no puede cambiar la configuración {scope}.",
   "instanceServiceStatus.plugins.sources.errors.conflict": "La configuración {scope} cambió mientras se guardaba. Inténtalo de nuevo.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "La configuración {scope} de OpenCode está mal formada. No se modificó.",

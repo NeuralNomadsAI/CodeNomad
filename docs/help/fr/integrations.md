@@ -49,6 +49,8 @@ Pour retirer un plugin, ouvrez le menu à côté de son nom et choisissez **Reti
 
 Le code du plugin s’exécute avec vos droits dans OpenCode. Une entrée **Projet** s’exécute chaque fois que ce dossier est ouvert dans OpenCode, et les paquets qui ont des parties pour l’application de bureau d’OpenCode ne les chargent que depuis **Global** ; l’infobulle le signale quand un tel paquet est déclaré ailleurs. Les chemins locaux, les variables de configuration et les ID de plugin sont refusés ici : déclarez les plugins locaux dans le fichier de configuration. Un paquet déjà déclaré dans une configuration qui s’applique à cette Location est refusé, quelle que soit sa version, sa plage ou sa forme.
 
+Une intégration OpenCode du catalogue revu (par exemple l’intégration Blender) est reconnue avant son installation. Celle qui a une partie dans une application s’ajoute en **Global** seulement : **Projet** est refusé pour elle. Son paquet du registre et ses builds Git comptent comme un seul paquet : ajouter une seconde forme d’une intégration déjà déclarée ou chargée est refusé.
+
 Survolez ou ciblez le nom d’un plugin pour voir sa version, **Mise à jour disponible** et, pour une installation en échec, l’erreur avec sa référence dans le journal d’OpenCode. Une ligne qu’OpenCode n’a pas signalée au bout de deux minutes affiche **Non confirmé** avec l’action **Actualiser les contrôles des plugins** : le plugin est peut-être désactivé, ou son installation n’a jamais abouti (voir [Dépannage](troubleshooting.md#providers-and-addons)).
 
 ## Joindre des compétences {#skills}
