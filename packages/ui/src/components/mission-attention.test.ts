@@ -83,12 +83,12 @@ it("a partial family correlates the members of the actors one refresh read", () 
 })
 
 /** The selector only reads a task's identity and, when present, its report. */
-const task = (id: string, outcome?: "blocked" | "completed", summary = `Reported ${outcome}.`): MissionAttentionTask => ({
+const task = (id: string, outcome?: "blocked" | "completed"): MissionAttentionTask => ({
   id,
   key: "mission-ux",
   title: "Choose the journey",
   status: outcome === "blocked" ? "needs-input" : outcome === "completed" ? "completed" : "ready",
-  ...(outcome ? { report: { outcome, summary } } : {}),
+  ...(outcome ? { report: { outcome } } : {}),
 })
 
 const source = (overrides: Partial<MissionAttentionSource> = {}): MissionAttentionSource => ({
@@ -139,7 +139,7 @@ describe("selectMissionAttention", () => {
   it("reports a blockage as history rather than as a live wait", () => {
     // A `blocked` report is what produces the historical `needs-input` task
     // status, so the actor has already returned: it must not read as a live wait.
-    const tasks = [task("task-1", "blocked", "Waiting on a coordinator decision.")]
+    const tasks = [task("task-1", "blocked")]
     assert.deepEqual(selectMissionAttention(source({ tasks })), [])
   })
 

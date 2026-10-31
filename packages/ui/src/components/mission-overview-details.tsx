@@ -1,5 +1,5 @@
 import { For, Show, createMemo } from "solid-js"
-import type { MissionMap, MissionReport } from "../../../server/src/api-types"
+import type { MissionPanelMap, MissionPanelReport } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { missionStore } from "../stores/missions"
 import { updateMissionProjectView, type MissionReaderTarget } from "../stores/mission-view-state"
@@ -7,19 +7,20 @@ import { MissionCleanupPanel } from "./mission-cleanup"
 import { MissionProfileSummary } from "./mission-profile-summary"
 import { missionReportIsPrevious, missionReports } from "./mission-progress-model"
 import { missionReportDecisionMaker } from "./mission-decision-report"
+import { missionChangeExcerpt } from "../../../server/src/missions/mission-panel-map"
 
 /** Secondary overview material, folded at the bottom of the central overview
  * reader: plan changes, reports, conversation cleanup history and identifiers.
  * The panel keeps none of it. */
 export function MissionOverviewDetails(props: {
-  instanceId: string; scope: string; mission: MissionMap; recurrence?: MissionReaderTarget["recurrence"]
+  instanceId: string; scope: string; mission: MissionPanelMap; recurrence?: MissionReaderTarget["recurrence"]
 }) {
   const { t, locale } = useI18n()
   const open = (kind: MissionReaderTarget["kind"], itemId: string) =>
     updateMissionProjectView(props.scope, { reader: { missionId: props.mission.id, kind, itemId, recurrence: props.recurrence } })
   const history = () => [...(props.mission.history ?? [])].reverse()
   const reports = createMemo(() => missionReports(props.mission))
-  const reportTarget = (report: MissionReport) => {
+  const reportTarget = (report: MissionPanelReport) => {
     const task = props.mission.tasks.find(task => task.report?.id === report.id)
     return !props.mission.reports.some(item => item.id === report.id) && task ? { kind: "task" as const, id: task.id } : { kind: "report" as const, id: report.id }
   }
@@ -37,7 +38,7 @@ export function MissionOverviewDetails(props: {
         <Show when={props.mission.historyTruncated}><p>{t("missions.control.history.truncated", { count: history().length })}</p></Show>
         <ol class="mission-reader-links"><For each={history()}>{change => <li>
           <button type="button" class="window-text-button" onClick={() => open("change", String(change.revision))}>
-            {change.reason ?? t("missions.control.edit")}</button>
+            {missionChangeExcerpt(change) ?? t("missions.control.edit")}</button>
           <small>{when(change.createdAt)} · {author(change.actorSessionId, change.source)}</small>
         </li>}</For></ol>
       </details>

@@ -1,15 +1,29 @@
 import { Show } from "solid-js"
-import type { MissionMap, MissionReport } from "../../../server/src/api-types"
+import type { MissionPanelMap, MissionPanelReport, MissionReport } from "../../../server/src/api-types"
+import { isFullMissionReport } from "../../../server/src/missions/mission-panel-map"
+import { missionBodyPresent, missionOwnBody } from "../lib/mission-bodies"
 import { MissionComparisonReport } from "./mission-comparison-report"
 import { MissionDecisionReport } from "./mission-decision-report"
 import type { MissionPassageSection } from "./mission-passage-section"
 import { MissionReaderSection } from "./mission-reader"
 import { missionReaderBody, useReaderValue, type MissionBodyRead, type MissionReaderBody } from "./mission-reader-body"
 
+/** Whether `report` records its `field` with content: a passage's full report from its own
+ * value, a compact row from its descriptor in the map's reports (`missionBodyPresent`). */
+export function missionReportHas(mission: MissionPanelMap | undefined, report: MissionPanelReport | undefined, field: "summary" | "next" | "evidence" | "artifact") {
+  if (!report) return false
+  const shape = field === "summary" ? "text" : field === "artifact" ? "value" : "list"
+  if (isFullMissionReport(report)) {
+    const value: unknown = report[field]
+    return shape === "text" ? Boolean(value) : shape === "list" ? Array.isArray(value) && value.length > 0 : value !== undefined
+  }
+  return missionBodyPresent(mission, { kind: "report", reportId: report.id, field }, shape)
+}
+
 interface ReportSource {
   instanceId: () => string
-  mission: () => MissionMap | undefined
-  report: () => MissionReport | undefined
+  mission: () => MissionPanelMap | undefined
+  report: () => MissionPanelReport | undefined
   /** A one-time mission's bodies come from the content route; a passage's from its own map. */
   oneTime: () => boolean
   /** False while the report is hidden: nothing is read. */
@@ -31,23 +45,24 @@ export function useReportBodies(props: ReportSource) {
     return late && { task: late, field: "lateReports" as const, pick: (value: unknown) => (value as MissionReport[] | undefined)?.find(item => item.id === report.id) }
   }
   const reading = { instanceId: props.instanceId, mission: props.mission, oneTime: props.oneTime, active: props.active }
-  const copy = useReaderValue<unknown>({ ...reading, local: () => { const place = owned(); return place && place.task[place.field] },
+  const copy = useReaderValue<unknown>({ ...reading,
     selector: () => { const place = owned(); return place && { kind: "task", taskKey: place.task.key, field: place.field } } })
   const ownCopy = () => owned()?.pick(copy.value())
   const field = <K extends "next" | "evidence" | "artifact">(name: K): Whole<MissionReport[K]> => {
-    const own = useReaderValue<MissionReport[K]>({ ...reading, local: () => props.report()?.[name], selector: () => {
-      const report = props.report(), value = report?.[name]
-      return report && !owned() && (Array.isArray(value) ? value.length : value !== undefined) ? { kind: "report", reportId: report.id, field: name } : undefined
+    const own = useReaderValue<MissionReport[K]>({ ...reading, selector: () => {
+      const report = props.report()
+      return report && !owned() && missionReportHas(props.mission(), report, name) ? { kind: "report", reportId: report.id, field: name } : undefined
     } })
     const read = () => owned() ? copy : own
     return { value: () => owned() ? ownCopy()?.[name] : own.value(), settled: () => read().settled(), read: () => read().read() }
   }
   return {
-    /** The summary: a paged body, or text from the task's copy once read. */
+    /** The summary: a paged body (a passage's own text), or text from the task's copy once read. */
     summary: (): { text: string; body?: MissionReaderBody; read?: MissionBodyRead } => {
       const report = props.report(), mission = props.mission()
       if (!report) return { text: "" }
-      if (!owned()) return { text: report.summary, body: missionReaderBody(props.instanceId(), mission, props.oneTime(), { kind: "report", reportId: report.id, field: "summary" }, report.summary) }
+      const selector = { kind: "report" as const, reportId: report.id, field: "summary" }
+      if (!owned()) return { text: missionOwnBody<string>(mission, selector) ?? "", body: missionReaderBody(props.instanceId(), mission, props.oneTime(), selector) }
       return { text: copy.settled() ? ownCopy()?.summary ?? "" : "", read: copy.read() }
     },
     next: field("next"), evidence: field("evidence"), artifact: field("artifact"),
@@ -55,7 +70,7 @@ export function useReportBodies(props: ReportSource) {
 }
 
 interface ReportProps {
-  instanceId: string; mission: MissionMap; report: MissionReport; identity: string
+  instanceId: string; mission: MissionPanelMap; report: MissionPanelReport; identity: string
   /** A one-time mission's bodies come from the content route; a passage's from its own map. */
   oneTime: boolean
 }
@@ -65,12 +80,12 @@ const source = (props: ReportProps, active?: () => boolean): ReportSource => ({ 
 /** A report's prose (summary, next steps, evidence) and its Compare and decision readouts. */
 export function MissionReportProse(props: ReportProps & { source: (label: string) => MissionPassageSection | undefined }) {
   const bodies = useReportBodies(source(props))
-  const listSection = (label: string, field: "next" | "evidence") => <Show when={props.report[field].length}>
+  const listSection = (label: string, field: "next" | "evidence") => <Show when={missionReportHas(props.mission, props.report, field)}>
     <MissionReaderSection label={label} text={bodies[field].settled() ? (bodies[field].value() ?? []).join("\n\n") : ""}
       read={bodies[field].read()} identity={props.identity} instanceId={props.instanceId} source={props.source(label)} />
   </Show>
   return <>
-    <Show when={props.report.summary}><MissionReaderSection label="missions.control.summary" text={bodies.summary().text}
+    <Show when={missionReportHas(props.mission, props.report, "summary")}><MissionReaderSection label="missions.control.summary" text={bodies.summary().text}
       body={bodies.summary().body} read={bodies.summary().read}
       identity={props.identity} instanceId={props.instanceId} source={props.source("missions.control.summary")} /></Show>
     {listSection("missions.control.report.next", "next")}
@@ -83,7 +98,7 @@ export function MissionReportProse(props: ReportProps & { source: (label: string
 /** A report's raw artifact, read only while `active` (its open disclosure). */
 export function MissionReportArtifact(props: ReportProps & { active: boolean; source?: MissionPassageSection }) {
   const bodies = useReportBodies(source(props, () => props.active))
-  return <Show when={props.report.artifact !== undefined}><MissionReaderSection label="missions.control.artifact" raw
+  return <Show when={missionReportHas(props.mission, props.report, "artifact")}><MissionReaderSection label="missions.control.artifact" raw
     text={bodies.artifact.settled() ? JSON.stringify(bodies.artifact.value(), null, 2) : ""} read={bodies.artifact.read()}
     identity={props.identity} instanceId={props.instanceId} source={props.source} /></Show>
 }

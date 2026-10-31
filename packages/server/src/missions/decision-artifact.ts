@@ -65,7 +65,7 @@ export function claimsDecisionMaker(artifact: unknown): boolean {
 /** Who settled a completed native Wayfinder decision task. Only gated reports qualify:
  * the coordinator's readout (its own decision, or a human answer the gate verified)
  * and the decision conversation's native return, which the gate verified too. */
-export function missionDecisionMaker(template: MissionTemplateId, task: Pick<MissionTask, "role" | "executionMode"> | undefined,
+export function missionDecisionMaker(template: MissionTemplateId, task: Pick<MissionTask, "role"> & { executionMode?: { kind: string } } | undefined,
   report: Pick<MissionReport, "outcome" | "delivery" | "artifact">): "human" | "coordinator" | undefined {
   if (template !== "wayfinder" || task?.role !== "decision" || task.executionMode?.kind !== "native" || report.outcome !== "completed") return undefined
   if (report.delivery === "coordinator-readout") {

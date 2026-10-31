@@ -1,8 +1,8 @@
 import { createSignal } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionLifecycleInput } from "../lib/mission-lifecycle-request"
 
-export function missionLifecycleSource(instanceId: string, mission: MissionMap, location: {
+export function missionLifecycleSource(instanceId: string, mission: MissionPanelMap, location: {
   directory?: string; proxyPath?: string; projectID?: string; snapshotProjectID?: string
 }): string {
   const coordinator = mission.actors?.find(actor => actor.kind === "coordinator" && actor.sessionId === mission.coordinatorSessionId)

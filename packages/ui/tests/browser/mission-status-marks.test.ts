@@ -7,6 +7,7 @@ import type { RecurrenceSchedule } from "../../src/stores/mission-recurrence"
 import { borrowFixture } from "./fixture-borrow"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { inlineMissionEntry, missionPicker, missionPickerExpander, missionPickerField, missionToolbarAction, selectMission } from "./mission-actions"
+import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -39,7 +40,7 @@ async function open(missions: () => MissionMap[], activity: () => Array<{ missio
     saveClientState: async (_token, snapshot) => { localStorage.setItem("fixture-native", JSON.stringify(snapshot)); return true },
   } })`)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
-  await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, projectID: "project", missions: missions(),
+  await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(missions()),
     generatedAt: Date.now(), discardedEvents: 0, activity: { generatedAt: Date.now(), missions: activity() } } }))
   // A pending passage's current mission map: its coordinator and one independent actor.
   await page.route(url => url.pathname.endsWith("/current"), route => {

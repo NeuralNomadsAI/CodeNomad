@@ -1,17 +1,18 @@
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionMap, MissionPanelMap } from "../../../server/src/api-types"
 import { serverApi } from "./api-client"
 import { instances } from "../stores/instances"
 import { hydrateRestoredSessionChain } from "../stores/sessions"
 import { sendMessage } from "../stores/session-actions"
 
-export function missionAcceptsMessage(mission: MissionMap): boolean {
+export function missionAcceptsMessage(mission: MissionPanelMap): boolean {
   return mission.status === "active" && (!mission.runState || mission.runState === "running")
     && !mission.control?.pending.length && !mission.controlUnavailable
 }
 
-/** Ordinary admission, not a workflow mutation. Caller owns the view/connection fence. */
+/** Ordinary admission, not a workflow mutation. Caller owns the view/connection fence.
+ * `text` is written from the admission read's full map. */
 export async function sendMissionCoordinatorMessage(input: {
-  instanceId: string; mission: MissionMap; current: () => boolean
+  instanceId: string; mission: MissionPanelMap; current: () => boolean
   text: (fresh: MissionMap) => string; onSending: () => void
 }): Promise<{ state: "admitted"; messageId: string } | { state: "error" | "uncertain" }> {
   let attempted = false

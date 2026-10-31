@@ -11,6 +11,7 @@ import { captureMissionView } from "./mission-view-capture"
 import { missionContentFixture } from "./mission-content-fixture"
 import { inlineMissionEntry, missionDetail, missionEntryStatus, missionGeneralAction, missionPicker, selectMission,
   selectedMissionTitle } from "./mission-actions"
+import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -71,7 +72,7 @@ async function open(page: Page, missions: MissionMap[], schedules: RecurrenceSch
   await page.route("**/api/**", route => {
     const path = new URL(route.request().url()).pathname, content = missionContentFixture(route.request().url(), route.request().method(), missions)
     if (content) return route.fulfill({ json: content })
-    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions, generatedAt: 1, discardedEvents: 0,
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: missions.map(value => ({ missionId: value.id, actors: value === active ? activeActivity : [] })) } } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project",
       projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules }) })

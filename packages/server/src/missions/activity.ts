@@ -1,7 +1,7 @@
 import { isSessionNotFoundError, type LocationRef, type OpenCodeClient, type ShellInfo } from "@opencode/client"
 
 import { locationRequestOptions, sameLocation } from "../opencode/compatibility/location"
-import type { MissionActivityProjection, MissionSnapshot } from "./model"
+import type { MissionActivityProjection, MissionPanelMap, MissionSnapshot } from "./model"
 import { MAX_MISSION_DESCENDANTS, observeActiveDescendant, readNativeMissionFamilyTree, type NativeMissionFamilyTree } from "./native-session-family"
 import { projectMissionFamily } from "./mission-family-projection"
 import { runningMissionShellRelation } from "./native-shell-correlation"
@@ -44,13 +44,17 @@ interface LocationRead {
   failed: boolean
 }
 
+/** The maps a display read returns (compact, or a snapshot's) and their project. */
+export type MissionActivityInput = Pick<MissionSnapshot, "projectID"> & Partial<Omit<MissionSnapshot, "projectID" | "missions">>
+  & { missions: readonly MissionPanelMap[] }
+
 /**
  * Builds a bounded, display-only reconciliation of a Mission snapshot with current
  * native state. It never infers execution from the journal's last outcome.
  */
 export async function projectMissionActivity(input: {
   client: OpenCodeClient
-  snapshot: MissionSnapshot
+  snapshot: MissionActivityInput
   workspaceID: string
   ownsLocation: OwnsLocation
   /** Required for observed family membership; capture real connection/deletion
@@ -77,9 +81,9 @@ export async function projectMissionActivity(input: {
   // The snapshot is ordered by most recent update; a stable sort puts running missions
   // first, with gracefully paused ones whose steps may still be finishing (the panel
   // offers Interrupt now only while it observes them), then the other active ones.
-  const pausing = (mission: MissionSnapshot["missions"][number]) => mission.status === "active" && !mission.controlUnavailable
+  const pausing = (mission: MissionPanelMap) => mission.status === "active" && !mission.controlUnavailable
     && mission.runState === "paused" && mission.control?.action === "pause" && Boolean(mission.control.graceful)
-  const rank = (mission: MissionSnapshot["missions"][number]) => missionIsRunning(mission) || pausing(mission) ? 2 : mission.status === "active" ? 1 : 0
+  const rank = (mission: MissionPanelMap) => missionIsRunning(mission) || pausing(mission) ? 2 : mission.status === "active" ? 1 : 0
   const missions = [...input.snapshot.missions].sort((left, right) => rank(right) - rank(left))
   const occurrences = missions.flatMap(mission => mission.actors.map(actor => ({ mission, actor })))
   const actorIDs = [...new Set(occurrences.map(({ actor }) => actor.sessionId))]

@@ -1,5 +1,5 @@
 import { createEffect, createMemo, createSignal, onCleanup, untrack } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import { missionBodyDescriptor, type MissionBodyDescriptor, type MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import { serverApi } from "../lib/api-client"
 import { serverEvents } from "../lib/server-events"
@@ -11,13 +11,14 @@ export const missionContent = createMissionContentStore((ref, query, signal) =>
   serverApi.fetchMissionContent(ref.instanceId, ref.missionID, { ...ref.selector, ...query }, signal))
 
 /** A body a reader shows, the revision of the map it was chosen from and that map's
- * descriptor of it (absent from a map without descriptors). */
+ * descriptor of it (absent when the map names no such body). */
 export interface MissionBodySource { ref: MissionBodyRef; revision: number; descriptor?: MissionBodyDescriptor }
 
-export function missionBodySource(instanceId: string, mission: MissionMap, selector: MissionContentSelector): MissionBodySource {
+export function missionBodySource(instanceId: string, mission: MissionPanelMap, selector: MissionContentSelector): MissionBodySource {
   const descriptor = missionBodyDescriptor(mission, selector)
   return { ref: { instanceId, projectID: mission.projectID, missionID: mission.id, selector }, revision: mission.revision, ...(descriptor ? { descriptor } : {}) }
 }
+
 
 const clients = new WeakMap<object, number>()
 let clientCount = 0
@@ -55,15 +56,13 @@ export function useMissionBody(source: () => MissionBodySource | undefined, need
   }
 }
 
-/** A body shown whole (lists, artifacts, briefings, edited fields): `fallback`, the map's
- * own value, from a plugin without content reads, else its value once every slice of one
- * digest is read, JSON parsed. `settled` is false until then; `failed` reports a failed
- * read even while the last good value stays shown. */
-export function useMissionBodyValue<T>(source: () => (MissionBodySource & { fallback: () => T }) | undefined) {
+/** A body shown whole (lists, artifacts, briefings, edited fields): its value once every
+ * slice of one digest is read, JSON parsed. `settled` is false until then; `failed`
+ * reports a failed read even while the last good value stays shown. */
+export function useMissionBodyValue<T>(source: () => MissionBodySource | undefined) {
   const read = useMissionBody(source)
   const resolved = createMemo<{ value: T | undefined } | undefined>(() => {
     const state = read.state(), body = state.body
-    if (state.status === "unsupported") return { value: source()?.fallback() }
     if (state.status === "missing") return { value: undefined }
     if (body && body.text.length === body.characters) {
       try { return { value: (body.json ? JSON.parse(body.text) : body.text) as T } } catch { return undefined }

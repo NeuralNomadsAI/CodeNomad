@@ -17,6 +17,7 @@ import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import { missionPicker, missionPopupOption } from "./mission-actions"
 import type {} from "./fixtures/mission-native-family"
+import { panelMissions } from "./mission-content-fixture"
 
 let server: ViteDevServer, browser: Browser, url: string, output: string
 before(async () => {
@@ -141,7 +142,7 @@ async function setup(label: string, narrow = false, independent = false) {
       return route.fulfill({ json: navigationWindowResultSchema.parse({ status: "window", messages: nativeHistory(input.sessionID),
         older: null, newer: null, resume: { kind: "latest" }, latest: true }) })
     }
-    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [mission("A", independent), mission("B")], generatedAt: 1, discardedEvents: 0,
+    if (pathname.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("A", independent), mission("B")]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: "A", actors: independent ? [
         { sessionId: "ses_A", state: "running" }, { sessionId: "ses_actor", state: "running" },
       ] : [], family }, { missionId: "B", actors: [], family: { state: "unknown", members: [] } }] } } })

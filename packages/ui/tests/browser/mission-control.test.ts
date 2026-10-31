@@ -10,7 +10,7 @@ import { clickMissionAction, inlineMissionEntry, missionGeneralAction, missionPi
   missionRefresh, missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
 
 import { borrowFixture } from "./fixture-borrow"
-import { isMissionContentRequest, serveMissionContent } from "./mission-content-fixture"
+import { isMissionContentRequest, listedMissions, panelMissions, routeMissionContent } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -50,7 +50,7 @@ async function setup(page: Page, windowContext: "local" | "remote" = "local") {
   `)
   await page.route("**/api/**", route => route.fulfill({ contentType: "application/json", body: "{}" }))
   await page.route("**/api/workspaces/fixture/subagent-depth*", route => route.fulfill({ json: { location: { directory: "fixture" }, capability: null, effectiveDepth: null, project: null } }))
-  await serveMissionContent(page)
+  await routeMissionContent(page, listedMissions)
 }
 const fixtureCall = (page: Page, method: string, arg?: unknown) => page.evaluate(({ method, arg }) => (window as any).missionFixture[method](arg), { method, arg })
 /** Polls a condition on test-process state, such as what a route handler recorded. */
@@ -121,7 +121,7 @@ test("Missions preferences open in Settings from the panel gear, save each choic
   let owner: any = { settings: { missionProfileDefaults: [], unrelated: "keep" } }
   try {
     await setup(page, "remote")
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [mission("preferences")], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([mission("preferences")]), generatedAt: 1, discardedEvents: 0 } }))
     await page.route("**/api/storage/config/ui*", route => {
       if (route.request().method() === "GET") return route.fulfill({ json: owner })
       const body = route.request().postDataJSON(); writes.push(body)
@@ -627,7 +627,7 @@ test("reader toggles highlight the exact visible content and toggle it off witho
     await page.route("**/api/workspaces/fixture/missions**", route => {
       if (isMissionContentRequest(route.request().url())) return route.fallback()
       if (route.request().method() !== "GET") writes.push(route.request().method())
-      return route.fulfill({ json: { available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0 } })
+      return route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: value.revision, discardedEvents: 0 } })
     })
     await page.goto(url)
     await selectMission(page, "Objective toggle")
@@ -669,7 +669,7 @@ test("finished missions omit dead controls and duplicate report/cleanup sections
     const value = { ...mission("minimal"), status: "completed" as const, summary: "Une livraison vérifiée avec ses preuves." }
     const cleanups = [{ deletionID: "deleted", missionID: "old", requestID: "cleanup", expectedRevision: 1, deleteManagedSessions: true,
       objective: "Ancienne mission", removed: 1, retained: 1, pending: 0, reasons: ["children"], createdAt: 1 }]
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], cleanups, generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), cleanups, generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     assert.equal(await page.locator(".mission-control").locator("form, textarea, .mission-index-primary").count(), 0)
     await pickLocalized(page, "Objective minimal")
@@ -708,7 +708,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
     await page.route("**/api/workspaces/fixture/missions**", route => {
       if (isMissionContentRequest(route.request().url())) return route.fallback()
       if (route.request().method() !== "GET") mutations.push(route.request().method())
-      return route.fulfill({ json: { available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0,
+      return route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: value.revision, discardedEvents: 0,
         activity: { generatedAt: value.revision, missions: [{ missionId: value.id, actors: activity }] } } })
     })
     const refresh = async () => {
@@ -725,7 +725,7 @@ test("mission journey exposes honest progress, real human requests and result-fi
       try {
         if (mobile) {
           await setup(target)
-          await target.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0,
+          await target.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: value.revision, discardedEvents: 0,
             activity: { generatedAt: value.revision, missions: [{ missionId: value.id, actors: activity }] } } }))
           await target.goto(url)
           await selectMission(target, value.objective)
@@ -875,7 +875,7 @@ test("current report readers honor task-owned results instead of stale history c
     const current = { ...stale, summary: "Authoritative current task result.", evidence: ["Current source proof: exact bytes retained."], next: ["Proceed to independent review."] }
     value.tasks[0].report = current
     value.reports = [stale]
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, value.objective)
     await (await openResultHistory(page)).getByRole("button", { name: "Inspect evidence", exact: true }).click()
@@ -896,7 +896,7 @@ test("paginated evidence copies its entire unchanged source without touching the
     value.reports[0].summary = "The full inventory is available below."
     value.reports[0].evidence = [source]
     value.tasks[0].report = value.reports[0]
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, value.objective)
     await (await openResultHistory(page)).getByRole("button", { name: "Inspect evidence", exact: true }).click()
@@ -931,7 +931,7 @@ test("one Play control starts and resumes; partial Pause survives remount and St
       if (isMissionContentRequest(route.request().url())) return route.fallback()
       if (route.request().method() === "GET") return failMap
         ? route.fulfill({ status: 503, json: { error: "Map unavailable" } })
-        : route.fulfill({ json: { available: true, missions: [current], generatedAt: 1, discardedEvents: 0 } })
+        : route.fulfill({ json: { available: true, missions: panelMissions([current]), generatedAt: 1, discardedEvents: 0 } })
       const input = route.request().postDataJSON()
       calls.push(input)
       current = { ...current, revision: current.revision + 1,
@@ -1004,7 +1004,7 @@ test("mission selection, focus and reader survive native invalidations, remount 
   try {
     await setup(page)
     let revision = 1
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [mission("one"), { ...mission("two"), revision }], generatedAt: revision, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([mission("one"), { ...mission("two"), revision }]), generatedAt: revision, discardedEvents: 0 } }))
     await page.goto(url)
     assert.equal(await selectedCard(page).count(), 0, "two candidate Missions: nothing is selected or detailed by default")
     await selectMission(page, "Objective two")
@@ -1062,7 +1062,7 @@ test("edits keep drafts and original revision during refresh, and creation retri
         if (failDelete) { failDelete = false; return route.fulfill({ status: 503, body: "Cleanup pending" }) }
         return route.fulfill({ json: { deleted: true } })
       }
-      return route.fulfill({ json: { available: true, missions: list.map(m => ({ ...m, revision })), cleanups, generatedAt: revision, discardedEvents: 0 } })
+      return route.fulfill({ json: { available: true, missions: panelMissions(list.map(m => ({ ...m, revision }))), cleanups, generatedAt: revision, discardedEvents: 0 } })
     })
     await page.goto(url)
     await clickMissionAction(page, "Edit selected mission", "Objective one")
@@ -1114,7 +1114,7 @@ test("a saved report remains visibly pending until native notification admission
     value.reports[0].notificationStatus = "pending"
     value.tasks[0].report = value.reports[0]
     await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: {
-      available: true, missions: [value], generatedAt: value.revision, discardedEvents: 0,
+      available: true, missions: panelMissions([value]), generatedAt: value.revision, discardedEvents: 0,
     } }))
     await page.goto(url)
     await selectMission(page, value.objective)
@@ -1142,7 +1142,7 @@ test("dependency navigation reveals the linked task and revised plans retain rea
       dependencyUpdates: [{ taskKey: "task-next", before: [], after: ["task-one"] }] },
       { revision: 13, source: "user", createdAt: 101, notes: { before: "Old notes", after: "Human clarification" }, addedTaskKeys: [], retiredTasks: [], dependencyUpdates: [] }]
     value.historyTruncated = true
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, value.objective)
     await taskButton(page, "task-next").click()
@@ -1176,7 +1176,7 @@ test("background native questions settle and requested execution remains distinc
     const value = mission("attention")
     value.actors = [{ sessionId: "ses_background", title: "Background assistant", kind: "specialist", managed: false, roles: ["research"], location: { directory: "fixture" }, joinedAt: 1 }]
     value.tasks[0] = { ...value.tasks[0], actorSessionId: "ses_background", execution: { agent: "build", model: { providerID: "requested", id: "chosen", variant: "high" } } }
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: [value], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([value]), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, value.objective)
     await taskButton(page, "task-one").click()
@@ -1203,7 +1203,7 @@ test("the real session retains its transcript nodes and draft while a long missi
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 1000, height: 800 } })
   try {
     await setup(page)
-    await page.route("**/api/workspaces/browser-instance/missions", route => route.fulfill({ json: { available: true, missions: [mission("reader")], generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/browser-instance/missions", route => route.fulfill({ json: { available: true, missions: panelMissions([mission("reader")]), generatedAt: 1, discardedEvents: 0 } }))
     await page.route("**/api/workspaces/browser-instance/files/preview?*", route => route.fulfill({ json: { contents: "# Workspace reader\n\nFile preview content", encoding: "utf-8" } }))
     await page.goto(url.replace("/mission-fixture", "/mission-session-fixture"))
     await page.waitForFunction(() => Boolean((window as any).fixture))
@@ -1256,7 +1256,7 @@ test("compact mission rows retain a completed branching plan, direct readers and
     ]
     value.reports[0].taskKey = "review"
     let missions = [value, { ...mission("other"), objective: "Validate desktop packaging", status: "completed" }]
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions, generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     await selectMission(page, "Ship the Mission Centre")
     assert.deepEqual(await page.locator(".mission-tree li").evaluateAll(rows => rows.map(row => (row as HTMLElement).dataset.taskKey)), ["research", "design", "implement", "review", "verify", "publish"])
@@ -1319,7 +1319,7 @@ test("top-level mission rows expose short one-line titles, semantic states, read
     const missions = (["active", "completed", "failed"] as const).map((status, i) => ({ ...mission(`row-${i}`), status,
       objective: `Mission ${i}: improve the desktop navigation and keep the whole project easy to understand`,
       notes: `Full context for mission ${i}`, coordinatorSessionId: `ses_coordinator_${i}` }))
-    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions, generatedAt: 1, discardedEvents: 0 } }))
+    await page.route("**/api/workspaces/fixture/missions", route => route.fulfill({ json: { available: true, missions: panelMissions(missions), generatedAt: 1, discardedEvents: 0 } }))
     await page.goto(url)
     // Rows carry the whole first sentence; CSS ellipsis shortens it at the row edge and the full context stays in the reader.
     const titleOf = (index: number) => missions[index].objective
@@ -1401,7 +1401,7 @@ test("native activity stays separate from the plan and refreshes only while Miss
       admissionId: `admission-${index}`, outstandingExecution: false, createdAt: 1, updatedAt: 1,
     }))
     let requests = 0
-    const response = () => ({ available: true, missions: [value], generatedAt: requests, discardedEvents: 0,
+    const response = () => ({ available: true, missions: panelMissions([value]), generatedAt: requests, discardedEvents: 0,
       activity: { generatedAt: requests, missions: [{ missionId: value.id, actors: [
         { sessionId: "ses_running", state: "running" },
         { sessionId: "ses_background", state: "background" },

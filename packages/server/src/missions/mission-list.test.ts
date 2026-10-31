@@ -4,24 +4,24 @@ import test from "node:test"
 import type { MissionDeleteInput } from "./control-types"
 import { fixture, seedCrossMission, step, type HistoryFixture } from "./journal-history-fixture"
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
-import { describeMissionBodies } from "./mission-body-descriptors"
+import { compactMissionMap } from "./mission-compact-map"
 import type { MissionSnapshot } from "./model"
 
 /** The panel's reads equal what the full snapshot shows: every row, the open and
- * included maps (with their body descriptors), the cleanup history and the project flags. */
+ * included maps (compact: body descriptors in place of bodies), the cleanup history and the project flags. */
 async function assertListed(f: HistoryFixture, label: string, include: string[]) {
   const snapshot = await f.journal.snapshot()
   const open = new Set(await f.journal.readHints(hints => hints.openIDs()))
   const listed = await f.control().list({ include })
   assert.deepEqual(listed.summaries, snapshot.missions.map(missionSummary), `${label}: rows`)
-  assert.deepEqual(listed.missions, snapshot.missions.filter(mission => open.has(mission.id) || include.includes(mission.id)).map(describeMissionBodies), `${label}: full maps`)
+  assert.deepEqual(listed.missions, snapshot.missions.filter(mission => open.has(mission.id) || include.includes(mission.id)).map(compactMissionMap), `${label}: compact maps`)
   const flags = (value: Pick<MissionSnapshot, "controlUnavailable" | "notificationUnavailable" | "cleanupUnavailable" | "discardedEvents" | "cleanups">) =>
     [value.discardedEvents, value.controlUnavailable, value.notificationUnavailable, value.cleanupUnavailable, value.cleanups]
   assert.deepEqual(flags(listed), flags(snapshot), `${label}: history and flags`)
   for (const missionID of include) {
     const read = await f.control().mission(missionID)
     const shown = snapshot.missions.find(mission => mission.id === missionID)
-    assert.deepEqual(read.mission, shown && describeMissionBodies(shown), `${label}: read ${missionID}`)
+    assert.deepEqual(read.mission, shown && compactMissionMap(shown), `${label}: read ${missionID}`)
     for (const cleanup of snapshot.cleanups ?? []) if (cleanup.missionID === missionID) assert.ok(read.cleanups.some(item => item.deletionID === cleanup.deletionID), `${label}: ${missionID} cleanup`)
     assert.deepEqual([read.controlUnavailable, read.notificationUnavailable], [snapshot.controlUnavailable, snapshot.notificationUnavailable], `${label}: read flags`)
     if (snapshot.cleanupUnavailable) assert.equal(read.cleanupUnavailable, true, `${label}: read cleanup flag`)
@@ -82,7 +82,7 @@ test("rows miss a foreign write until the rebuild, while an included mission's r
   assert.equal((await f.control().list()).summaries?.some(row => row.id === "msn_elsewhere"), false, "a hint, never proof")
   const selected = await f.control().list({ include: ["msn_elsewhere"] })
   assert.deepEqual([selected.missions.some(value => value.id === "msn_elsewhere"), selected.summaries?.[0]?.id], [true, "msn_elsewhere"])
-  assert.equal((await f.control().mission("msn_elsewhere")).mission?.objective, "Elsewhere")
+  assert.equal((await f.control().mission("msn_elsewhere")).mission?.excerpt, "Elsewhere")
   f.advanceIndexClock(60_000)
   assert.equal((await f.control().list()).summaries?.[0]?.id, "msn_elsewhere")
 })

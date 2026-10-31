@@ -1,4 +1,4 @@
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import { getLogger } from "../lib/logger"
 import { instances } from "./instances"
 import { createMissionTaskSessions } from "./mission-task-session-reads"
@@ -13,7 +13,7 @@ const store = createMissionTaskSessions({
 })
 
 /** Visible demand; see `createMissionTaskSessions` for the read and fencing policy. */
-export function demandMissionTaskSessions(instanceId: string, mission: MissionMap, pulse = 0): void {
+export function demandMissionTaskSessions(instanceId: string, mission: MissionPanelMap, pulse = 0): void {
   void store.demand(instanceId, mission, pulse)
 }
 

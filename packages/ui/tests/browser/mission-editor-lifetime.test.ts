@@ -7,7 +7,7 @@ import { chromium, type Browser, type Page } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
 import { clickMissionAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
-import { missionContentFixture } from "./mission-content-fixture"
+import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 
 const EDIT = "Edit selected mission"
 
@@ -91,7 +91,7 @@ for (const method of ["POST", "PATCH"] as const) for (const phase of ["mutation"
           if (request.method() === "GET") {
             const version = ++reads
             if (completed && phase === "refresh" && new URL(request.url()).pathname.includes("/fixture/")) { reached.release(); await hold.promise }
-            return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: list, cleanups: [], generatedAt: version, discardedEvents: 0 } })
+            return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: panelMissions(list), cleanups: [], generatedAt: version, discardedEvents: 0 } })
           }
           requests.push({ method: request.method(), input: request.postDataJSON() as Record<string, unknown> })
           if (phase === "mutation") { reached.release(); await hold.promise }
@@ -142,7 +142,7 @@ for (const method of ["POST", "PATCH"] as const) test(`current legitimate ${meth
     await page.route("**/api/workspaces/fixture/missions**", route => {
       const content = missionContentFixture(route.request().url(), route.request().method(), list)
       if (content) return route.fulfill({ json: content })
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: list, generatedAt: 1, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
       writes++
       const saved = { ...mission(method === "POST" ? "saved" : "one"), objective: "Saved result", revision: method === "POST" ? 1 : 2 }
       list = method === "POST" ? [...list, saved] : list.map(item => item.id === saved.id ? saved : item)
@@ -176,7 +176,7 @@ for (const method of ["POST", "PATCH"] as const) test(`an unsent ${method} draft
     await page.route("**/api/workspaces/*/missions**", route => {
       const content = missionContentFixture(route.request().url(), route.request().method(), list)
       if (content) return route.fulfill({ json: content })
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: list, generatedAt: 1, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
       writes.push(route.request().postDataJSON() as Record<string, unknown>)
       const saved = { ...mission(method === "POST" ? "saved" : "one"), objective: "Kept draft", revision: method === "POST" ? 1 : 2 }
       list = method === "POST" ? [...list, saved] : [saved]
@@ -240,7 +240,7 @@ test("creation-uncertain retains original request/draft across close, remount an
     await page.route("**/api/workspaces/fixture/missions**", route => {
       const content = missionContentFixture(route.request().url(), route.request().method(), list)
       if (content) return route.fulfill({ json: content })
-      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, projectID: "project", missions: list, generatedAt: reads, discardedEvents: 0 } }) }
+      if (route.request().method() === "GET") { reads++; return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(list), generatedAt: reads, discardedEvents: 0 } }) }
       attempts.push(route.request().postDataJSON() as Record<string, unknown>)
       return route.fulfill({ status: 409, json: { code: "creation-uncertain", error: "Mission creation settlement is unknown; deletion remains blocked" } })
     })
@@ -289,7 +289,7 @@ for (const method of ["POST", "PATCH"] as const) test(`late ${method} rejection 
     await page.route("**/api/workspaces/fixture/missions**", async route => {
       const content = missionContentFixture(route.request().url(), route.request().method(), [mission("one"), mission("two")])
       if (content) return route.fulfill({ json: content })
-      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: [mission("one"), mission("two")], generatedAt: 1, discardedEvents: 0 } })
+      if (route.request().method() === "GET") return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([mission("one"), mission("two")]), generatedAt: 1, discardedEvents: 0 } })
       requests.push(route.request().postDataJSON() as Record<string, unknown>)
       reached.release(); await hold.promise
       return route.fulfill({ status: 409, json: { code: method === "POST" ? "creation-uncertain" : "revision-conflict", error: "private source credential" } })

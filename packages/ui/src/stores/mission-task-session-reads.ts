@@ -1,5 +1,5 @@
 import { createSignal } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import { parseMissionChildTaskKey, parseMissionTaskSessions } from "../../../server/src/missions/task-sessions"
 import type { OpenCodeClient } from "./opencode-client"
 import { listMessageWindow } from "./session-message-pages"
@@ -30,14 +30,14 @@ interface Entry {
   active: ReadonlySet<string>
 }
 
-const keyOf = (instanceId: string, mission: Pick<MissionMap, "id" | "coordinatorSessionId" | "projectID">) =>
+const keyOf = (instanceId: string, mission: Pick<MissionPanelMap, "id" | "coordinatorSessionId" | "projectID">) =>
   JSON.stringify([instanceId, mission.projectID, mission.id, mission.coordinatorSessionId])
 
 function link(sessions: Map<string, string[]>, key: string, id: string): void {
   sessions.set(key, [...(sessions.get(key) ?? []).filter(value => value !== id), id])
 }
 
-const unlinked = (mission: MissionMap, sessions: Map<string, string[]>) => mission.tasks.some(task =>
+const unlinked = (mission: MissionPanelMap, sessions: Map<string, string[]>) => mission.tasks.some(task =>
   !task.actorSessionId && !sessions.has(task.key) && !["completed", "failed", "withdrawn"].includes(task.status))
 
 export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
@@ -50,7 +50,7 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
    * rereads the native active set and, while a live task is unlinked, the
    * coordinator's direct children. A child without an admitted first message stays
    * unexamined, so a later pulse of the same revision reads it again. */
-  function demand(instanceId: string, mission: MissionMap, pulse = 0): Promise<void> {
+  function demand(instanceId: string, mission: MissionPanelMap, pulse = 0): Promise<void> {
     const key = keyOf(instanceId, mission), connection = deps.connection(instanceId)
     const generation = deps.generation(instanceId)
     const stamp = `${generation}:${mission.revision}`
@@ -110,17 +110,17 @@ export function createMissionTaskSessions(deps: MissionTaskSessionDeps) {
     return flight.done
   }
 
-  const sessionsOf = (instanceId: string, mission: MissionMap) => entries().get(keyOf(instanceId, mission))?.sessions
+  const sessionsOf = (instanceId: string, mission: MissionPanelMap) => entries().get(keyOf(instanceId, mission))?.sessions
 
   return {
     demand,
     /** Latest exact child for a task, if native evidence proves one. */
-    taskSession: (instanceId: string, mission: MissionMap, taskKey: string) =>
+    taskSession: (instanceId: string, mission: MissionPanelMap, taskKey: string) =>
       sessionsOf(instanceId, mission)?.get(taskKey)?.at(-1),
     /** Whether a linked conversation was natively active at the latest read. */
-    sessionActive: (instanceId: string, mission: MissionMap, sessionId: string) =>
+    sessionActive: (instanceId: string, mission: MissionPanelMap, sessionId: string) =>
       entries().get(keyOf(instanceId, mission))?.active.has(sessionId) === true,
-    sessionIncludes: (instanceId: string, mission: MissionMap, sessionId: string) => {
+    sessionIncludes: (instanceId: string, mission: MissionPanelMap, sessionId: string) => {
       const sessions = sessionsOf(instanceId, mission)
       return Boolean(sessions && [...sessions.values()].some(ids => ids.includes(sessionId)))
     },

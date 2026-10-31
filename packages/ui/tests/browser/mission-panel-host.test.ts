@@ -6,6 +6,7 @@ import { borrowFixture } from "./fixture-borrow"
 import { chromium, type Browser, type BrowserContextOptions, type Page } from "playwright"
 import type { MissionMap, MissionTask } from "../../../server/src/api-types"
 import { missionPickerExpander, missionPickerField, missionPopupOption, missionDetail, missionGeneralAction, inlineMissionEntry, selectMission, selectedMissionTitle } from "./mission-actions"
+import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -46,7 +47,7 @@ async function open(options: BrowserContextOptions = {}) {
   await page.route("**/api/**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
     if (request.method() !== "GET") mutations.push(`${request.method()} ${path}`)
-    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: [LONG, SHORT], generatedAt: 1, discardedEvents: 0,
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions([LONG, SHORT]), generatedAt: 1, discardedEvents: 0,
       activity: { generatedAt: 1, missions: [{ missionId: "long", actors: [{ sessionId: "ses_worker", state: "running" }] }, { missionId: "short", actors: [] }] } } })
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
     return route.fulfill({ json: {} })

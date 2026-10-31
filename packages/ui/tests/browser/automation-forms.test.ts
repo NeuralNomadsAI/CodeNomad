@@ -10,6 +10,7 @@ import { launchAutomationBrowser, openAutomationPage } from "./automation-sessio
 import { createFixtureCache } from "./fixture-cache"
 import { createFixtureShutdown } from "./fixture-shutdown"
 import type {} from "./fixtures/mission-editor-lifetime"
+import { panelMissions } from "./mission-content-fixture"
 
 // The real codenomad.inspect/act controller drives real pages over Chromium's DevTools
 // endpoint, exactly as it drives the CodeNomad window (#1008).
@@ -187,7 +188,7 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
     await page.route("**/api/workspaces/fixture/missions**", route => {
       const request = route.request(), pathname = new URL(request.url()).pathname
       if (request.method() === "GET") return route.fulfill({ json: pathname.endsWith("/missions/recurrence") ? emptyRecurrence()
-        : { available: true, projectID: "project", missions: list, generatedAt: 1, discardedEvents: 0 } })
+        : { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
       const body = request.postDataJSON()
       creates.push(body)
       list = [createdMission(body)]
@@ -219,7 +220,7 @@ test("an agent fills the real Mission editor: the title is replaced, not concate
 // The controller aims once, then dispatches: Options' first depth result, or a mission map
 // refresh adding a panel banner while the form is open, may land in between.
 const existing = { ...createdMission({ title: "Existing mission", objective: "Existing mission", template: "custom" }), id: "msn_existing" }
-const map = (extra: Record<string, unknown> = {}) => ({ json: { available: true, projectID: "project", missions: [existing], generatedAt: 1, discardedEvents: 0, ...extra } })
+const map = (extra: Record<string, unknown> = {}) => ({ json: { available: true, projectID: "project", missions: panelMissions([existing]), generatedAt: 1, discardedEvents: 0, ...extra } })
 const depth = (supported: boolean) => ({ json: { location: { directory: "/fixture" }, capability: supported ? { minimum: 0 } : null,
   effectiveDepth: supported ? 1 : null, project: supported ? { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } : null } })
 const HELD_OUTCOMES = [

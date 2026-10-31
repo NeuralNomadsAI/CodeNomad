@@ -1,8 +1,8 @@
-import type { MissionListUnavailableResponse, MissionMap } from "./model"
+import type { MissionListUnavailableResponse, MissionPanelMap } from "./model"
 
 /** Which body a map shows, without its text: the length and digest of the text a
- * content read slices from it (`contentText`, `contentDigest`). The list and mission
- * reads put one beside each body field, in the owner's `bodies`. */
+ * content read slices from it (`contentText`, `contentDigest`). The compact maps of the
+ * list and mission reads carry one in place of each body field, in the owner's `bodies`. */
 export interface MissionBodyDescriptor { characters: number; digest: string }
 export type MissionBodyDescriptors = Partial<Record<string, MissionBodyDescriptor>>
 
@@ -54,9 +54,9 @@ export type MissionContentResult = { version: 1; projectID: string; missionID: s
 export type MissionContentResponse = ({ available: true } & MissionContentResult) | MissionListUnavailableResponse
 
 /** The descriptor `mission` gives the body at `selector`: a report's from the mission's
- * own `reports`, which the report selector reads. Undefined when the map names none: no
- * such body, or a map from a plugin that sends no descriptors. */
-export function missionBodyDescriptor(mission: MissionMap, selector: MissionContentSelector): MissionBodyDescriptor | undefined {
+ * own `reports`, which hold every report and which the report selector reads. Undefined
+ * when the map names none: no such body, or a full map (descriptors are on compact maps only). */
+export function missionBodyDescriptor(mission: MissionPanelMap, selector: MissionContentSelector): MissionBodyDescriptor | undefined {
   if (selector.kind === "mission") return mission.bodies?.[selector.field]
   if (selector.kind === "task") return mission.tasks.find(task => task.key === selector.taskKey)?.bodies?.[selector.field]
   if (selector.kind === "report") return mission.reports.find(report => report.id === selector.reportId)?.bodies?.[selector.field]

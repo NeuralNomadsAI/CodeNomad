@@ -1,6 +1,6 @@
 import { createSignal, untrack } from "solid-js"
 
-import type { MissionActivityProjection, MissionListResponse, MissionMap, MissionSummary } from "../../../server/src/api-types"
+import type { MissionActivityProjection, MissionListResponse, MissionPanelMap, MissionSummary } from "../../../server/src/api-types"
 import type { MissionCleanup, MissionUnavailableReason } from "../../../server/src/missions/model"
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "../../../server/src/missions/mission-summary"
 
@@ -9,8 +9,8 @@ export type MissionLoadStatus = "idle" | "loading" | "ready" | "unavailable" | "
 export interface MissionViewState {
   status: MissionLoadStatus
   projectID?: string
-  /** Full maps: the open and wanted missions, or every one from a full snapshot. */
-  missions: MissionMap[]
+  /** Compact maps (`compactMissionMap`): the open and wanted missions, or every one of a list without summaries. */
+  missions: MissionPanelMap[]
   /** One row per mission, in display order. */
   summaries: MissionSummary[]
   /** Set while the backend lists summaries; the next read sends it back to skip unchanged rows. */
@@ -86,8 +86,8 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
           ...(previous.cleanups?.length ? { cleanups: previous.cleanups, cleanupUnavailable: true } : {}) })
         return
       }
-      // A full snapshot (a plugin without summaries) carries every map; an
-      // omitted list repeats the version this read sent.
+      // A list without summaries carries every map; an omitted list repeats the
+      // version this read sent.
       const summaries = response.summariesVersion === undefined ? response.missions.map(missionSummary)
         : response.summaries ?? (response.summariesVersion === request.summariesVersion ? previous.summaries : undefined)
       if (!summaries) throw new Error("Mission list omitted summaries this view does not hold")

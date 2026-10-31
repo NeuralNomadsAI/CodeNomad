@@ -17,6 +17,7 @@ import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrenc
 import { currentRecurrenceContent } from "../../../server/src/missions/recurrence-current"
 import { captureMissionView } from "./mission-view-capture"
 import { missionToolbarAction, selectMission, selectedMissionTitle } from "./mission-actions"
+import { panelMissions } from "./mission-content-fixture"
 
 let server: ViteDevServer, browser: Browser, url: string
 before(async () => {
@@ -65,7 +66,7 @@ test("actual MissionControl reuses the current task tree and attention, with bri
         ordinary = { ...mission, id: "msn_ordinary", objective: route.request().postDataJSON().objective, tasks: [], reports: [] }
         return route.fulfill({ json: { mission: ordinary } })
       }
-      return route.fulfill({ json: { available: true, projectID: "project", missions: ordinary ? [ordinary] : [], generatedAt: 1, discardedEvents: 0 } })
+      return route.fulfill({ json: { available: true, projectID: "project", missions: panelMissions(ordinary ? [ordinary] : []), generatedAt: 1, discardedEvents: 0 } })
     }
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: recurrenceSnapshotSchema.parse({ version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [{ id: "rec_current", title: "Daily commit review", revision: 2,
       state: "interrupted", interruptionReason: "service-restart", clock: { time: "08:15", zone: "UTC" }, nextDueAt: null, actions: [], controls: [],

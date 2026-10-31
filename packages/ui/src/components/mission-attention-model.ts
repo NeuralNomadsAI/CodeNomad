@@ -84,7 +84,7 @@ export interface MissionAttentionTask {
   title: string
   status: string
   replacedByTaskKey?: string
-  report?: { outcome: string; summary: string }
+  report?: { outcome: string }
 }
 
 export interface MissionAttentionSource {

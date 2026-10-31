@@ -6,7 +6,7 @@ import { MissionJournal, stableToken, type MissionStorage, type MissionView } fr
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "./mission-summary"
 import { readMissionContent, type MissionContentRequest, type MissionContentResult } from "./mission-content"
 import type { MissionIndexHints, MissionJournalIndex } from "./journal-index"
-import { describeMissionBodies } from "./mission-body-descriptors"
+import { compactMissionMap } from "./mission-compact-map"
 import {
   MISSION_SCHEMA_VERSION,
   missionPlanChanges,
@@ -145,8 +145,8 @@ export class MissionControl {
   }
 
   /**
-   * The panel's read-mostly list: full maps of the open missions (`openIDs`)
-   * and of `include`, each re-read from its range, and a summary row per live
+   * The panel's read-mostly list: compact maps (`compactMissionMap`) of the open
+   * missions (`openIDs`) and of `include`, each re-read from its range, and a summary row per live
    * map in snapshot order, those just re-read refreshed from their maps. Rows
    * and the cleanup history are hints: a foreign write shows by the next
    * rebuild. Summaries are omitted when `summariesVersion` already names them.
@@ -165,7 +165,8 @@ export class MissionControl {
       ...hinted.ids.flatMap(missionID => fresh(missionID) && !known.has(missionID) ? [missionSummary(fresh(missionID)!)] : [])]
       .sort((left, right) => right.updatedAt - left.updatedAt)
     const order = new Map(rows.map((row, index) => [row.id, index]))
-    const missions = hinted.ids.flatMap(missionID => fresh(missionID) ? [describeMissionBodies(stampDamage(fresh(missionID)!, damage))] : [])
+    // Compact copies: every map this control reads keeps its bodies.
+    const missions = hinted.ids.flatMap(missionID => fresh(missionID) ? [compactMissionMap(stampDamage(fresh(missionID)!, damage))] : [])
       .sort((left, right) => order.get(left.id)! - order.get(right.id)!)
     const summariesVersion = stableToken(JSON.stringify(rows), 32)
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
@@ -173,14 +174,14 @@ export class MissionControl {
       ...(summariesVersion === input.summariesVersion ? {} : { summaries: rows }), summariesVersion }
   }
 
-  /** One mission's range for display reconciliation, with its own cleanups and
-   * the hints' project damage flags (read-mostly: never a write's authority). */
+  /** One mission's range for display reconciliation, its map compact, with its own
+   * cleanups and the hints' project damage flags (read-mostly: never a write's authority). */
   async mission(missionID: string): Promise<MissionRead> {
     const aggregate = await this.journal.readHints(hints => hints.aggregate())
     const view = await this.journal.missionView(missionID)
     const damage = projectDamage(aggregate, [view])
     return { version: MISSION_SCHEMA_VERSION, projectID: this.options.project.id, generatedAt: (this.options.now ?? Date.now)(),
-      ...(view.mission ? { mission: describeMissionBodies(stampDamage(view.mission, damage)) } : {}), cleanups: view.cleanups ?? [], ...damage }
+      ...(view.mission ? { mission: compactMissionMap(stampDamage(view.mission, damage)) } : {}), cleanups: view.cleanups ?? [], ...damage }
   }
 
   /** One mission body for display, in slices (`readMissionContent`): one read of that

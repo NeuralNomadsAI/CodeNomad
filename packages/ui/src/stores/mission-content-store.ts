@@ -5,8 +5,8 @@ import type { MissionBodyDescriptor, MissionContentResponse, MissionContentSelec
 export interface MissionBodyRef { instanceId: string; projectID: string; missionID: string; selector: MissionContentSelector }
 /** A body's text from offset 0, cut from exactly one digest: never two values joined. */
 export interface MissionBody { digest: string; revision: number; characters: number; json: boolean; text: string }
-/** `unsupported`: the plugin has no content reads (readers show the map's own value). */
-export type MissionBodyStatus = "loading" | "ready" | "missing" | "unsupported" | "error"
+/** `error`: the last read failed, a plugin without content reads included. */
+export type MissionBodyStatus = "loading" | "ready" | "missing" | "error"
 /** `revision`: the mission revision of the last accepted answer. */
 export interface MissionBodyState { status: MissionBodyStatus; body?: MissionBody; revision?: number }
 
@@ -16,9 +16,9 @@ export interface MissionBodyConsumer {
   state: Accessor<MissionBodyState>
   /** The prefix this consumer shows, in characters; `Infinity` for the whole value. */
   need(characters: number): void
-  /** The body this consumer's map shows: its descriptor (absent from a map without
-   * descriptors) at the map's revision. A shown body of another digest, or with no
-   * descriptor one read before that revision, is read again; the newest map wins. */
+  /** The body this consumer's map shows: its descriptor at the map's revision. A shown
+   * body of another digest is read again; the newest map wins. A map naming no such
+   * body (no descriptor) expects nothing. */
   expect(descriptor: MissionBodyDescriptor | undefined, revision: number | undefined): void
   retry(): void
   release(): void
@@ -45,8 +45,8 @@ interface Entry {
   pending?: MissionBody
   /** The mission revision of the last accepted answer. */
   answered?: number
-  /** The body the newest map shown by a reader names: its digest when the map has descriptors. */
-  expected?: { revision: number; digest?: string }
+  /** The body the newest map shown by a reader names. */
+  expected?: { revision: number; digest: string }
   /** Counts recovery invalidations: an answer to a read sent before the latest is superseded. */
   epoch: number
   stale: boolean
@@ -75,11 +75,10 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
    * newest map names, or newer than that map: a map catches up with a later answer. */
   const satisfies = (entry: Entry, digest: string | undefined, revision: number | undefined) => {
     const expected = entry.expected
-    return !expected || expected.digest !== undefined && digest === expected.digest || (revision ?? 0) >= expected.revision
+    return !expected || digest === expected.digest || (revision ?? 0) >= expected.revision
   }
   /** Whether what the entry holds is the body the newest map names (or nothing is held yet). */
   const fresh = (entry: Entry) => {
-    if (entry.status === "unsupported") return true
     if (entry.status === "missing") return satisfies(entry, undefined, entry.answered)
     const body = entry.pending ?? entry.display
     return !body || satisfies(entry, body.digest, body.revision)
@@ -118,9 +117,12 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
       if (++entry.restarts > MAX_RESTARTS) throw new Error("Mission content predates its map")
       entry.stale = true
     }
+    // Unavailable (a plugin without content reads included): a failure, parked until
+    // new demand, an invalidation (a plugin update) or Retry.
     if (response.available === false) {
-      entry.status = response.reason === "plugin-unavailable" ? "unsupported" : "error"
-      entry.parked = entry.status === "error"
+      entry.status = "error"
+      entry.parked = true
+      entry.pending = undefined
       entry.stale = false
       return
     }
@@ -195,7 +197,7 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
     if (!fresh(entry)) entry.stale = true
     const shown = entry.pending ?? entry.display
     if (entry.stale || !shown) {
-      if (!entry.stale && (entry.status === "missing" || entry.status === "unsupported")) return
+      if (!entry.stale && entry.status === "missing") return
       read(entry, { offset: 0 })
     } else if (!covers(shown, need(entry))) read(entry, { digest: shown.digest, offset: shown.text.length })
   }
@@ -227,10 +229,10 @@ export function createMissionContentStore(fetch: MissionContentFetch, budget = M
         pump(owner)
       },
       expect: (descriptor, revision) => {
-        if (revision === undefined || !owner.consumers.has(id)) return
+        if (!descriptor || revision === undefined || !owner.consumers.has(id)) return
         const expected = owner.expected
-        if (expected && (revision < expected.revision || revision === expected.revision && descriptor?.digest === expected.digest)) return
-        owner.expected = { revision, ...(descriptor ? { digest: descriptor.digest } : {}) }
+        if (expected && (revision < expected.revision || revision === expected.revision && descriptor.digest === expected.digest)) return
+        owner.expected = { revision, digest: descriptor.digest }
         // A read in flight checks the newest map when it settles.
         if (owner.controller || owner.stale || owner.status === "loading" || fresh(owner)) return
         owner.stale = true

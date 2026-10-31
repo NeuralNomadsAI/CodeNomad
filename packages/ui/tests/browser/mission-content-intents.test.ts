@@ -4,7 +4,7 @@ import { chromium, type Browser, type Page, type Route } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
-import { describedMissions, missionContentFixture } from "./mission-content-fixture"
+import { panelMissions, missionContentFixture } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -49,7 +49,7 @@ async function panel(options: { list: () => MissionMap; content: () => MissionMa
       return route.fulfill({ json: { mission: { ...options.list(), objective: input.objective, notes: input.notes, revision: options.list().revision + 1 } } })
     }
     if (path.endsWith("/missions/recurrence")) return route.fulfill({ json: { version: 1, projectID: "project", projectCanonical: "/fixture", location: { directory: "/fixture" }, schedules: [] } })
-    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: describedMissions([options.list()]),
+    if (path.endsWith("/missions")) return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: panelMissions([options.list()]),
       cleanups: [], generatedAt: 1, discardedEvents: 0, activity: { generatedAt: 1, missions: [] } } })
     if (path.endsWith("/subagent-depth")) return route.fulfill({ json: { location: { directory: "/fixture" }, capability: { minimum: 0 }, effectiveDepth: 1,
       project: { path: "/fixture/.opencode/opencode.jsonc", depth: null, expectation: "e" } } })
@@ -123,7 +123,7 @@ test("a Reopen in progress keeps the old form read-only, so no draft is lost to 
   await f.page.route(target => target.pathname === "/api/workspaces/fixture/missions", async route => {
     if (hold) { entered?.release(); await hold.promise }
     if (failList) return route.fulfill({ status: 503, json: { error: "Mission map unavailable" } })
-    return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: describedMissions([listed]), cleanups: [], generatedAt: 1,
+    return route.fulfill({ json: { available: true, version: 1, projectID: "project", missions: panelMissions([listed]), cleanups: [], generatedAt: 1,
       discardedEvents: 0, activity: { generatedAt: 1, missions: [] } } }).catch(() => undefined)
   })
   const reopen = () => f.page.locator("form.mission-editor").getByRole("button", { name: "Reopen", exact: true })
@@ -203,6 +203,25 @@ test("Save as brief stays ready through unrelated revisions and reads each input
     await saveBrief(f.page).click(); await saved
     const record = f.preferenceWrites.find(patch => patch.settings?.missionModels)?.settings.missionModels[0]
     assert.deepEqual([record.objective, record.notes], ["Objective stays", "Notes stay"])
+    assert.deepEqual(f.errors, [])
+  } finally { await f.page.close() }
+})
+
+test("a map without notes names no notes body: Save as brief and the edit form read only its objective and take empty notes", { timeout: 90_000 }, async () => {
+  const listed = mission(2, "only-objective")
+  const f = await panel({ list: () => listed, content: () => listed })
+  try {
+    await briefButton(f.page).click()
+    await f.page.getByLabel("Brief name", { exact: true }).fill("No notes")
+    await f.page.waitForFunction(() => !(document.querySelector(".mission-brief-save button[type=button]") as HTMLButtonElement)?.disabled)
+    const saved = f.page.waitForResponse(response => response.url().includes("/storage/config/ui") && response.request().method() !== "GET")
+    await saveBrief(f.page).click(); await saved
+    const record = f.preferenceWrites.find(patch => patch.settings?.missionModels)?.settings.missionModels[0]
+    assert.deepEqual([record.objective, record.notes], ["only-objective", ""])
+    await f.page.getByRole("button", { name: "Edit selected mission", exact: true }).click()
+    await f.page.waitForFunction(() => !(document.querySelector("form.mission-editor textarea") as HTMLTextAreaElement)?.disabled)
+    assert.deepEqual([await fields(f.page).nth(0).inputValue(), await fields(f.page).nth(1).inputValue()], ["only-objective", ""])
+    assert.deepEqual([...new Set(f.reads.map(address => address.searchParams.get("field")))], ["objective"], "the absent notes are never read")
     assert.deepEqual(f.errors, [])
   } finally { await f.page.close() }
 })

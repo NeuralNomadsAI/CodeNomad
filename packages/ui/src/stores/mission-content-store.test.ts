@@ -9,6 +9,8 @@ import { missionBodyCovers, missionBodyNeed } from "../lib/mission-body-pages"
 
 const ref = (missionID = "mission", field = "objective"): MissionBodyRef => ({ instanceId: "instance", projectID: "project", missionID, selector: { kind: "mission", field } })
 const digest = (text: string) => createHash("sha256").update(text, "utf16le").digest("base64url")
+/** A map's descriptor of `text`. */
+const describe = (text: string) => ({ characters: text.length, digest: digest(text) })
 const flush = () => new Promise(resolve => setImmediate(resolve))
 
 /** A content route over mutable values, cutting `slice` characters per answer; each read waits for `release`. */
@@ -105,13 +107,13 @@ test("a passive refresh keeps the last good body until the newer one covers what
   s.values.set("mission:objective", "the new value, longer than one slice")
   s.revisions.set("mission", 2)
   reader.need(20)
-  reader.expect(undefined, 1)
+  reader.expect(describe("old value!"), 1)
   await flush()
-  assert.equal(s.reads.length, 1, "a revision the body was read at needs no read")
+  assert.equal(s.reads.length, 1, "the body its map names needs no read")
   s.hold(true)
-  reader.expect(undefined, 2)
-  reader.expect(undefined, 2)
-  assert.equal(s.reads.length, 2, "an invalidation reads once, coalesced")
+  reader.expect(describe("the new value, longer than one slice"), 2)
+  reader.expect(describe("the new value, longer than one slice"), 2)
+  assert.equal(s.reads.length, 2, "a newer body reads once, coalesced")
   s.reads[1].settle(); await flush()
   assert.equal(reader.state().body?.text, "old value!", "the newer first slice does not cover the shown prefix yet")
   s.reads[2].settle(); await flush()
@@ -120,7 +122,7 @@ test("a passive refresh keeps the last good body until the newer one covers what
   // A failed refresh keeps the display and parks until demand, an invalidation or a retry.
   s.hold(false); s.failing(true)
   s.revisions.set("mission", 3)
-  reader.expect(undefined, 3)
+  reader.expect(describe("a third value the map names"), 3)
   await flush(); await flush()
   assert.deepEqual([reader.state().status, reader.state().body?.text], ["error", "the new value, longe"])
   const failed = s.reads.length
@@ -139,9 +141,9 @@ test("a revision shown while the first slice is read is read again once if that 
   s.values.set("mission:objective", "revision one")
   s.hold(true)
   const reader = store.use(ref(), "connection")
-  reader.expect(undefined, 1)
+  reader.expect(describe("revision one"), 1)
   // The map moves on while the read runs; the value changes with it, after the answer was cut.
-  reader.expect(undefined, 2)
+  reader.expect(describe("revision two"), 2)
   s.reads[0].settle(); await flush()
   s.values.set("mission:objective", "revision two")
   s.revisions.set("mission", 2)
@@ -149,15 +151,14 @@ test("a revision shown while the first slice is read is read again once if that 
   s.reads[1].settle(); await flush(); await flush()
   assert.equal(reader.state().body?.text, "revision t")
   assert.equal(reader.state().body?.revision, 2)
-  reader.expect(undefined, 2)
+  reader.expect(describe("revision two"), 2)
   await flush()
-  assert.equal(s.reads.length, 2, "an answer at the shown revision is final")
+  assert.equal(s.reads.length, 2, "an answer of the shown body is final")
   reader.release()
 })
 
 test("a shown body is read again only when its map's descriptor names another digest, never for unrelated revisions", async () => {
   const s = server(10), store = createMissionContentStore(s.fetch)
-  const describe = (text: string) => ({ characters: text.length, digest: digest(text) })
   s.values.set("mission:objective", "stable objective")
   const reader = store.use(ref(), "connection")
   reader.need(Infinity)
@@ -251,17 +252,37 @@ test("late answers never publish across a mission switch, a released reader or a
   aStates.dispose(); b.release(); moved.release()
 })
 
-test("a plugin without content reads, a missing body and a stopped workspace answer once each", async () => {
+test("a map naming no descriptor of a shown body expects nothing: newer revisions alone read nothing", async () => {
+  const s = server(10), store = createMissionContentStore(s.fetch)
+  s.values.set("mission:objective", "a shown body")
+  const reader = store.use(ref(), "connection")
+  reader.need(Infinity)
+  for (let index = 0; index < 4; index++) await flush()
+  const settled = s.reads.length
+  for (let revision = 2; revision <= 6; revision++) { s.revisions.set("mission", revision); reader.expect(undefined, revision); await flush() }
+  assert.equal(s.reads.length, settled, "only a descriptor's digest reads a body again")
+  assert.equal(reader.state().body?.text, "a shown body")
+  reader.release()
+})
+
+test("a plugin without content reads fails until Retry, a missing body and a stopped workspace answer once each", async () => {
   const s = server(10), store = createMissionContentStore(s.fetch)
   s.unavailable("plugin-unavailable")
+  s.values.set("mission:objective", "objective")
   const old = store.use(ref(), "connection")
   await flush(); await flush()
-  assert.deepEqual([old.state().status, s.reads.length], ["unsupported", 1], "readers fall back to the map; nothing is retried")
-  old.release()
+  assert.deepEqual([old.state().status, s.reads.length], ["error", 1], "a failure, parked: nothing is read again meanwhile")
+  old.need(Infinity)
+  await flush()
+  assert.equal(s.reads.length, 1)
   s.unavailable(undefined)
+  old.retry()
+  await flush(); await flush()
+  assert.deepEqual([old.state().status, old.state().body?.text, s.reads.length], ["ready", "objective", 2], "Retry reads it once the plugin answers")
+  old.release()
   const missing = store.use(ref("mission", "summary"), "connection")
   await flush(); await flush()
-  assert.deepEqual([missing.state().status, s.reads.length], ["missing", 2])
+  assert.deepEqual([missing.state().status, s.reads.length], ["missing", 3])
   missing.release()
   s.values.set("mission:notes", "notes")
   const shown = store.use(ref("mission", "notes"), "connection")

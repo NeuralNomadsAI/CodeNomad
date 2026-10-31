@@ -170,13 +170,14 @@ describe("immutable Mission model library edits", () => {
 
   it("projects only a finished Mission's recorded brief inputs into a valid brief", () => {
     const profiles = { coordinator: execution, roles: { specialist: execution } }
-    const mission = { id: "msn_done", projectID: "project", title: "Audit", objective: "Audit dependencies", notes: "  keep verbatim\n",
+    // A compact map: its objective and notes come from one snapshot's content reads.
+    const mission = { id: "msn_done", projectID: "project", title: "Audit", excerpt: "Audit dependencies",
       template: "custom" as const, profiles, taskMode: "independent" as const, status: "completed", runState: "stopped",
-      coordinatorSessionId: "ses_coordinator", revision: 7, summary: "Done", reports: [{ taskKey: "x" }], actors: [], tasks: [] }
-    const brief = missionRecordedBrief(mission)
+      coordinatorSessionId: "ses_coordinator", revision: 7, reports: [{ taskKey: "x" }], actors: [], tasks: [] }
+    const brief = missionRecordedBrief(mission, { objective: "Audit dependencies", notes: "  keep verbatim\n" })
     assert.deepEqual(brief, { objective: "Audit dependencies", notes: "  keep verbatim\n", template: "custom", profiles, taskMode: "independent" })
     assert.notEqual(brief.profiles, profiles, "profiles are copied, not shared with the snapshot")
     assert.deepEqual(parseMissionModel({ ...model(), ...brief }).notes, "  keep verbatim\n")
-    assert.deepEqual(missionRecordedBrief({ objective: "Historical", template: "wayfinder" }), { objective: "Historical", notes: "", template: "wayfinder" })
+    assert.deepEqual(missionRecordedBrief({ template: "wayfinder" }, { objective: "Historical", notes: "" }), { objective: "Historical", notes: "", template: "wayfinder" })
   })
 })

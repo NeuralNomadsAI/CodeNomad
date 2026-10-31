@@ -1,6 +1,6 @@
 import { Show, createSignal, createUniqueId, onCleanup } from "solid-js"
 import { RefreshCw } from "lucide-solid"
-import type { MissionActorActivity, MissionMap } from "../../../server/src/api-types"
+import type { MissionActorActivity, MissionPanelMap } from "../../../server/src/api-types"
 import { serverApi } from "../lib/api-client"
 import { useI18n } from "../lib/i18n"
 import { canRecoverMissionReport } from "./mission-native-execution-model"
@@ -8,7 +8,7 @@ import type { ActionOverflowMenuItem } from "./action-overflow-menu"
 
 export type MissionRecoveryButtonProps = {
   instanceId: string
-  mission: MissionMap
+  mission: MissionPanelMap
   activity?: MissionActorActivity["state"]
   disabled?: boolean
   /** Refresh display state only; admission is not proof of consumption or completion. */

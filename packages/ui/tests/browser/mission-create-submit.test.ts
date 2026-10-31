@@ -8,6 +8,7 @@ import type { MissionMap } from "../../../server/src/api-types"
 import type {} from "./fixtures/mission-editor-lifetime"
 import { captureMissionView } from "./mission-view-capture"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
+import { panelMissions } from "./mission-content-fixture"
 
 let browser: Browser, url: string
 before(async () => {
@@ -46,7 +47,7 @@ async function setup(page: Page) {
     const request = route.request(), path = new URL(request.url()).pathname
     if (path.endsWith("/control")) { controls.push(path); return route.abort() }
     if (request.method() === "GET") return route.fulfill({ json: path.endsWith("/missions/recurrence") ? emptyRecurrence()
-      : { available: true, projectID: "project", missions: list, generatedAt: 1, discardedEvents: 0 } })
+      : { available: true, projectID: "project", missions: panelMissions(list), generatedAt: 1, discardedEvents: 0 } })
     if (path.endsWith("/missions/recurrence")) {
       creates.push(request.postDataJSON())
       return route.fulfill({ json: { schedule: { id: "rec_created", revision: 0, state: "paused", digest: "d".repeat(64), projectID: "project", projectCanonical: "/fixture" } } })

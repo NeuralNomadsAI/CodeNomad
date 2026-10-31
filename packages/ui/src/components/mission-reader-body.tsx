@@ -1,28 +1,26 @@
 import { Show, createMemo, mapArray } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import { useI18n } from "../lib/i18n"
+import { missionOwnBody } from "../lib/mission-bodies"
 import { missionBodySource, useMissionBodyValue, type MissionBodySource } from "../stores/mission-content"
 
-/** A string body a reader section pages through the content route. `fallback` is the
- * map's own text, shown only by a plugin without content reads. */
-export interface MissionReaderBody extends MissionBodySource { fallback: string }
+/** A string body a reader section pages through the content route. */
+export type MissionReaderBody = MissionBodySource
 
 /** The body of a one-time mission at `selector`; undefined for a passage, whose readers
  * keep its own map and archived pages. */
-export function missionReaderBody(instanceId: string, mission: MissionMap | undefined, oneTime: boolean,
-  selector: MissionContentSelector, fallback: string | undefined): MissionReaderBody | undefined {
-  return mission && oneTime ? { ...missionBodySource(instanceId, mission, selector), fallback: fallback ?? "" } : undefined
+export function missionReaderBody(instanceId: string, mission: MissionPanelMap | undefined, oneTime: boolean,
+  selector: MissionContentSelector): MissionReaderBody | undefined {
+  return mission && oneTime ? missionBodySource(instanceId, mission, selector) : undefined
 }
 
-interface ReaderValueProps<T> {
+interface ReaderValueProps {
   instanceId: () => string
-  mission: () => MissionMap | undefined
+  mission: () => MissionPanelMap | undefined
   oneTime: () => boolean
-  /** Where the body is; undefined when the map records none. */
+  /** Where the body is; undefined when the map records none. A passage's comes from its own map. */
   selector: () => MissionContentSelector | undefined
-  /** The map's own value: a passage's, or the fallback of a plugin without content reads. */
-  local: () => T | undefined
   /** False while the body is hidden (a closed disclosure): nothing is read and nothing settles. */
   active?: () => boolean
 }
@@ -34,16 +32,19 @@ export interface MissionBodyRead { settled: boolean; failed: boolean; onRetry: (
 /** A body shown whole (a list, artifact, briefing or plan-change pair): a one-time
  * mission's through the content route, a passage's from its own map. An absent body is
  * settled and empty. */
-export function useReaderValue<T>(props: ReaderValueProps<T>) {
+export function useReaderValue<T>(props: ReaderValueProps) {
   const read = useMissionBodyValue<T | undefined>(() => {
     const selector = props.selector(), mission = props.mission()
-    return selector && mission && props.oneTime() && (props.active?.() ?? true)
-      ? { ...missionBodySource(props.instanceId(), mission, selector), fallback: props.local } : undefined
+    return selector && mission && props.oneTime() && (props.active?.() ?? true) ? missionBodySource(props.instanceId(), mission, selector) : undefined
   })
   const remote = () => props.oneTime() && props.selector() !== undefined
   const settled = () => !remote() || read.settled(), failed = () => remote() && read.failed()
   return {
-    value: (): T | undefined => remote() ? read.value() : props.selector() ? props.local() : undefined,
+    value: (): T | undefined => {
+      if (remote()) return read.value()
+      const selector = props.selector()
+      return selector && missionOwnBody<T>(props.mission(), selector)
+    },
     settled,
     failed,
     read: (): MissionBodyRead => ({ settled: settled(), failed: failed(), onRetry: read.retry }),
@@ -53,14 +54,11 @@ export function useReaderValue<T>(props: ReaderValueProps<T>) {
 
 /** Several whole bodies at once (the overview's recorded results and obstacles), each read
  * like `useReaderValue`; settled once all are. */
-export function useReaderValues<T>(props: Omit<ReaderValueProps<T>, "selector" | "local"> & {
-  items: () => Array<{ selector: MissionContentSelector; local: () => T | undefined }>
-}) {
-  const keys = createMemo(() => props.items().map(item => JSON.stringify(item.selector)), [], {
+export function useReaderValues<T>(props: Omit<ReaderValueProps, "selector"> & { items: () => MissionContentSelector[] }) {
+  const keys = createMemo(() => props.items().map(selector => JSON.stringify(selector)), [], {
     equals: (left, right) => left.length === right.length && left.every((key, index) => key === right[index]) })
   const reads = mapArray(keys, key => useReaderValue<T>({ ...props,
-    selector: () => props.items().find(item => JSON.stringify(item.selector) === key)?.selector,
-    local: () => props.items().find(item => JSON.stringify(item.selector) === key)?.local() }))
+    selector: () => props.items().find(selector => JSON.stringify(selector) === key) }))
   const retry = () => { for (const read of reads()) if (read.failed()) read.retry() }
   return {
     values: () => reads().map(read => read.value()),

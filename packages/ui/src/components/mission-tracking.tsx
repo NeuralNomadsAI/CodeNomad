@@ -1,6 +1,6 @@
 import { createEffect } from "solid-js"
 import { demandMissionTaskSessions, missionDerivedTaskSession } from "../stores/mission-task-sessions"
-import type { MissionActivityProjection, MissionMap } from "../../../server/src/api-types"
+import type { MissionActivityProjection, MissionPanelMap } from "../../../server/src/api-types"
 import type { MissionReaderTarget } from "../stores/mission-view-state"
 import { MissionAttention } from "./mission-attention"
 import { MissionTaskTree } from "./mission-task-tree"
@@ -9,7 +9,7 @@ import { missionTaskConversation } from "./mission-task-navigation"
 /** Selected one-time Mission or exact admitted passage: open requests and the
  * dependency task tree. Prose stays in the reader, opened from the action bar. */
 export function MissionTracking(props: {
-  instanceId: string; mission: MissionMap; activity?: MissionActivityProjection
+  instanceId: string; mission: MissionPanelMap; activity?: MissionActivityProjection
   active: boolean; disabled: boolean; readOnly?: boolean
   reading: (target: MissionReaderTarget) => boolean; read: (target: MissionReaderTarget) => void
   onOpenActor: (id: string, request?: { id: string; kind: "form" | "permission" }) => Promise<void>

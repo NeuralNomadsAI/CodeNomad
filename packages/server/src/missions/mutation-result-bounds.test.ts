@@ -33,7 +33,7 @@ test("one task's oversized declaration result fits, and its exact canonical prom
     assert.deepEqual([declared.value.disposition, declared.value.task.key, declared.value.contract.taskKey], ["declared", "one-task", "one-task"])
     const marker = declared.value.assignmentPrompt
     assert.equal(typeof marker, "object", "the prompt gave way to its exact read")
-    const map = (await f.control().mission(mission.id)).mission!
+    const map = (await f.control().snapshot()).missions.find(value => value.id === mission.id)!
     const prompt = await readMarker(plugin.tool, coordinator, marker)
     assert.equal(prompt, buildAssignmentPrompt(map, map.tasks[0]), "the joined slices are the exact canonical prompt")
     assert.ok(JSON.stringify({ ...declared.value, assignmentPrompt: prompt }, null, 2).length > 200_000, "unbounded, the result would exceed 200,000 characters")

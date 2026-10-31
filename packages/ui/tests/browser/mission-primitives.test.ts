@@ -3,7 +3,7 @@ import { after, before, test } from "node:test"
 import { fileURLToPath } from "node:url"
 import { armFixtureNavigationBudget } from "./fixture-navigation-budget"
 import { borrowFixture } from "./fixture-borrow"
-import { missionContentFixture } from "./mission-content-fixture"
+import { missionContentFixture, panelMissions } from "./mission-content-fixture"
 import { chromium, type Browser, type Page, type Locator } from "playwright"
 import type { MissionMap } from "../../../server/src/api-types"
 
@@ -38,7 +38,7 @@ async function setup(value = mission()) {
     ?? (route.request().method() === "GET"
     && new URL(route.request().url()).pathname === "/workspaces/track3/instance/api/shell" ? { location: { directory: "/fixture" }, data: [] }
     : route.request().url().includes("/missions")
-    ? { available: true, missions: [current], generatedAt: 1, discardedEvents: 0 }
+    ? { available: true, missions: panelMissions([current]), generatedAt: 1, discardedEvents: 0 }
     : route.request().method() === "PATCH" ? route.request().postDataJSON() : {}) }))
   await page.goto(url)
   await page.waitForFunction(() => Boolean((window as any).track3))

@@ -137,7 +137,7 @@ test(`a mission of ${ACTORS} actors and ${TASKS} tasks is planned, reported, con
   assert.equal(f.calls.length, ACTORS - 5, "the coordinator and every actor with unreported work resume")
   assert.ok(f.flight.peak <= MISSION_CONTROL_CONCURRENCY)
 
-  // The panel's reads carry the whole map and its row.
+  // The panel's reads carry the compact map, every task row, and the mission's row.
   const list = await f.control().list({ include: [mission.id] })
   assert.equal(list.missions.find(item => item.id === mission.id)?.tasks.length, TASKS)
   assert.equal(list.summaries?.find(item => item.id === mission.id)?.actorSessionIds.length, ACTORS)

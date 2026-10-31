@@ -1,10 +1,10 @@
 import { For, createEffect, createSignal, onCleanup } from "solid-js"
-import type { MissionTask } from "../../../server/src/api-types"
+import type { MissionPanelTask } from "../../../server/src/api-types"
 
 /** Stable topological order, including retired work; unrelated tasks never gain an edge. */
-export function orderMissionTasks(tasks: MissionTask[]): MissionTask[] {
+export function orderMissionTasks(tasks: MissionPanelTask[]): MissionPanelTask[] {
   const remaining = new Map(tasks.map(task => [task.key, task]))
-  const ordered: MissionTask[] = []
+  const ordered: MissionPanelTask[] = []
   while (remaining.size) {
     const ready = [...remaining.values()].filter(task => !task.blockedBy.some(key => remaining.has(key)))
     // Defensive display fallback for an incomplete or cyclic historical snapshot.
@@ -21,7 +21,7 @@ const MISSION_GRAPH_WIDTH = 30
  * enters its dependent's, so the icons are the graph's nodes. Both coordinates are
  * measured: the row/button padding between the lane area and the icon belongs to
  * the edge, in the SVG's own (possibly scaled or RTL-mirrored) user space. */
-export function MissionGraph(props: { tasks: MissionTask[]; list: HTMLUListElement }) {
+export function MissionGraph(props: { tasks: MissionPanelTask[]; list: HTMLUListElement }) {
   let svg!: SVGSVGElement
   const [points, setPoints] = createSignal<Array<{ key: string; x: number; y: number }>>([])
   const [height, setHeight] = createSignal(0)

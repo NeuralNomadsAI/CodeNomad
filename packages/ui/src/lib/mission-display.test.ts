@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { MISSION_ROW_TITLE_MAX, missionClockTime, missionDisplayTitle, missionRelativeTime, missionScheduleWhen, missionShortTitle, missionZoneDiffers,
   missionZoneName } from "./mission-display"
-import { missionSummary } from "../../../server/src/missions/mission-summary"
+import { missionObjectiveLabel, missionSummary } from "../../../server/src/missions/mission-summary"
 
 test("an explicit title wins over the objective", () => {
   assert.equal(missionDisplayTitle({ title: "  Release  notes ", objective: "Write the notes." }), "Release notes")
@@ -15,7 +15,7 @@ test("row titles keep the whole first sentence for CSS truncation", () => {
   assert.ok(missionDisplayTitle({ objective: sentence }).endsWith("…"))
 })
 
-test("a summary row's objective label gives the full map's row title", () => {
+test("a summary row's objective label, or a compact map's excerpt, gives the full map's row title", () => {
   const long = "word ".repeat(120)
   const objectives = ["Fix the v1.2 parser. Then add tests.", "  Audit \t login\n\n and   everything else", long,
     `${"a".repeat(501)}.b more`, `${"a".repeat(500)}.b more`, `${"a".repeat(500)}. More`, `${"a".repeat(499)}.\tMore`, `${"é ".repeat(260)}, then, a clause`,
@@ -23,6 +23,7 @@ test("a summary row's objective label gives the full map's row title", () => {
   for (const objective of objectives) {
     const summary = missionSummary({ objective, id: "msn", status: "active", coordinatorSessionId: "ses", actors: [], updatedAt: 1, revision: 1 } as never)
     assert.equal(missionDisplayTitle(summary, MISSION_ROW_TITLE_MAX), missionDisplayTitle({ objective }, MISSION_ROW_TITLE_MAX), JSON.stringify(objective.slice(0, 40)))
+    assert.equal(missionDisplayTitle({ excerpt: missionObjectiveLabel(objective) }, MISSION_ROW_TITLE_MAX), missionDisplayTitle({ objective }, MISSION_ROW_TITLE_MAX))
   }
 })
 

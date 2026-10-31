@@ -1,5 +1,5 @@
 import { Show, createEffect } from "solid-js"
-import type { MissionMap } from "../../../server/src/api-types"
+import type { MissionPanelMap } from "../../../server/src/api-types"
 import { useI18n } from "../lib/i18n"
 import { instances } from "../stores/instances"
 import { getOpenCodeInstanceGeneration } from "../stores/opencode-data"
@@ -11,7 +11,7 @@ import { missionBriefingRequest, setMissionBriefingRequest } from "../stores/mis
 /** The explicit "Request an update" briefing request. Its state is keyed by the
  * exact Mission identity, so the row menu and the card share one request. */
 export function createMissionBriefingRequest(props: {
-  instanceId: string; mission: MissionMap; active: boolean; disabled?: boolean; readOnly?: boolean
+  instanceId: string; mission: MissionPanelMap; active: boolean; disabled?: boolean; readOnly?: boolean
 }) {
   const { t, locale } = useI18n()
   const identity = () => JSON.stringify([props.instanceId, instances().get(props.instanceId)?.folder,
