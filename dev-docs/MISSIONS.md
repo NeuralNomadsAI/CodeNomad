@@ -29,13 +29,42 @@ retain correlated report notifications and native queue delivery.
 Model-facing mutation results stay compact (`missions/tool-result.ts`): the
 disposition, current revision, run state, frontier and the affected tasks
 (status, generation, dependencies and lineage), never briefs, reports or the
-objective. Only `mission.inspect` returns the full map. Every `mission.inspect` result,
+objective. Each result stays within the inspect bound below (`boundedMutation`): a
+frontier or a declared task's `assignmentPrompt` too large for it gives way, largest
+first, to `{ omittedCharacters, read }` naming its exact `mission.inspect` read, and a
+revision lists the affected tasks that fit, in map order, with `taskPage` counting the
+rest. A coordinator reads such a prompt whole before passing it (the delegate tool says
+so; the prompt is context, never admission). Among Wayfinder decisions, only a human
+answer claimed from an unbound decision-worker conversation must prove that conversation
+was born of the exact canonical prompt; a coordinator decision and a coordinator-asked
+answer keep their own gates (§Human questions and decisions). `mission.interrupt`
+returns a receipt that fits whole; a larger one keeps `complete`, the totals and each
+conversation's outcome with its descendant counts (their session IDs left out, paged in
+receipt order with `sessionPage` if even those exceed the bound) and names in `receipt`
+a `{ kind: "receipt", digest, offset }` read of the whole original receipt. The plugin
+holds that receipt (`missions/interrupt-receipts.ts`) as its serialized original,
+content-addressed and owned by the interrupting coordinator. A task's slot is the
+coordinator, mission and task the interruption resolved, whether the call named the
+mission or not, and every successful interruption replaces the slot's previous receipt,
+a newer result that fits whole retiring it. All held receipts share one budget per
+registration, 32 MiB counting each body as UTF-16 code units (the digest's encoding):
+the current-passage reader's bound for one display read's journal in this process; the
+largest accepted receipt shape (200 conversations of 64 descendants, 240-character IDs)
+counts about 6 MB with plain IDs, so several of those, or dozens of ordinary ones, stay
+held. Beyond it the least recently held or read receipts go first, with their slots; a
+receipt larger than the whole budget (possible when its IDs need heavy JSON escaping)
+is never held, so its marker is refused from the first read, and disposal or a reload releases
+them all. Receipts outlive their mission's deletion, which runs in the separately
+registered RPC plugin: a deleted mission's coordinator may still read its own receipt
+until the budget, a replacement or a reload removes it. A read the plugin no
+longer holds is refused, never answered by replaying or re-observing the interruption.
+Only `mission.inspect` returns the full map. Every `mission.inspect` result,
 as the tool serializes it (two-space indented JSON, page metadata and markers
 included), stays within 100,000 characters (`missions/inspect-view.ts`), and nothing
 it leaves out is lost: a value a result cannot hold is replaced by
 `{ omittedCharacters, read }`, and `mission.inspect(read)` (a `content` read naming
-an inspection, map, task, report or plan-change field at the map's revision, or the
-native catalog) returns that value in slices, the string itself or the value's JSON,
+an inspection, map, task, report or plan-change field at the map's revision, the
+native catalog or a held interrupt receipt) returns that value in slices, the string itself or the value's JSON,
 each with the `next` read until the last. Every read carries the `digest` (SHA-256 of
 the UTF-16 code units, base64url, so unpaired surrogates keep distinct digests) of the
 exact text its slices are cut from, and each slice re-reads its
@@ -350,6 +379,8 @@ The authenticated owning backend reconciles saved actor locations and checks nat
 Snapshots are authoritative reconstructions of the journal. RPC events are only invalidations; the UI always reloads its list after reconnect because native event subscriptions are live-only.
 
 **Panel reads** (`missions/mission-summary.ts`, `MissionControl.list`/`mission`, `server/routes/missions.ts`). The panel never loads every full map. The read-mostly `list({ include?, summariesVersion? })` RPC takes the open missions (`openIDs()`) plus at most four `include` IDs, re-reads each range with `missionView`, and returns their full maps stamped with the project damage flags, one `MissionSummary` row per live map in snapshot order (id, title, objective label of 502 code points with whitespace runs collapsed and a newline kept, enough for the row title, status, runState, coordinator and actor session IDs, updatedAt, a finished map's `finishSequence`, revision; rows of re-read ranges come from their fresh maps, and an included map the hints missed gets its row), the hints' cleanup history and discarded count, and `summariesVersion`, a content hash of the rows; `summaries` is omitted when the caller sent that version. The `mission({ missionID })` RPC returns one range's map (absent when it holds no live map), that range's own cleanups and the project flags. Both are hints-based reads (§Journal index): rows and cleanup history can miss a foreign write until the rebuild, while included and open maps are read from storage on every call; neither authorizes anything, and every write keeps its authoritative read in the plugin. `GET /api/workspaces/:id/missions?include=<id,…>&summaries=<version>` brokers `list` and projects activity over the returned maps only; `GET /api/workspaces/:id/missions/:missionID` brokers `mission` for display reconciliation (the editor's lost-acknowledgement checks, cleanup retries). `GET /api/workspaces/:id/missions/:missionID/admission` answers the same shape from the full `snapshot` RPC: the admission read of an application-authored native prompt (the coordinator message), which hints must never authorize. A plugin build without these methods (a reload can briefly pair a new backend with an older plugin) answers `rpc.method_not_found`; the routes then fall back to `snapshot` (the list carries every map and no `summariesVersion`, the single read filters it), and any other RPC failure stays a failure. Bridge routes (assignment, report, lifecycle, prepare, root creation, task conversations) keep the full `snapshot`: they authorize native effects. The UI store (`stores/mission-store.ts`) keeps full maps (`missions`) and rows (`summaries`; derived from the maps of a full-snapshot answer). Consumers register the maps they need with `want(instanceId, owner, missionID)`: the selected Mission (MissionControl) and the central reader. Includes and the held version are sent only once the backend has answered with a `summariesVersion`, so the first read after a load or a fallback sends none; a wanted row still without its map, or a newly wanted one, schedules one coalesced follow-up read. `want` and the reads it starts run untracked, and components register through a memo of the target ID only, so store publications never re-run a registration; a mission already asked for by the read in flight starts nothing, and a failed read stays parked until new demand, an invalidation or an explicit refresh. Publication keeps the generation fence and trailing coalescing: when the wanted set changed while a read ran, the maps (and their activity) of rows wanted now that the read neither asked for nor returned stay from the last good display, and one follow-up reads the current includes unless a deactivation (`setDemand(false)`) happened while the read ran, in which case activation reads them; a reader's want needs no panel demand; an omitted list repeats the version this read sent, else the read fails and keeps the last good display. Picker rows, marks, completion seeding, empty states and the reader's absence check use the rows; the selected detail, Needs you, the task tree and the readers use full maps, and a selected row waits for its map with a loading line, which a parked failed read replaces with the stale banner and the refresh button. A closed row's permission mark counts open native requests of its declared actors; observed-family members count only for open and wanted missions.
+
+**Body reads** (`missions/mission-content.ts`, `MissionControl.content`). The read-mostly `content({ missionID, kind, field, taskKey | reportId | change, digest?, offset })` RPC returns one mission body for display in slices, from one `missionView` read of that mission's range alone (never the index or another range). Its selector names a value in the live map: a map field (`kind: "mission"`), a task's own field or its `reports` (`task`, `taskKey`), any report by ID, current, earlier or late, never the task's current one in its place (`report`, `reportId`), or a plan change's field by revision (`change`), among every change the same observation's events record (`missionPlanChanges`, the reducer's own changes, of which the map's `history` keeps the last 50), never the nearest or a newer one. The answer carries the map's `revision` and a slice: the string itself or the value's JSON (`json`), `characters`, `digest` (the inspect digest: SHA-256 of the UTF-16 code units) and `next`, the following slice's offset; each answer, as two-space JSON, stays within the inspect bound of 100,000 characters (`sliceEnd`). A first read starts at offset 0 without a digest; every later slice repeats it and is refused (`content-changed`) once the value reads differently, while revisions that leave the value alone keep its slices valid. `mission-not-found` and `content-not-found` answer the rest; a later slice without its digest or a selector naming another kind's identity is invalid input. `GET /api/workspaces/:id/missions/:missionID/content?kind&field&taskKey|reportId|change&digest&offset` brokers it with the list's ownership, plugin and project checks; a plugin without the method answers `plugin-unavailable`, never another read in its place. It is a display read: never a write's or admission's authority.
 
 Project mutation and journal-append exclusion is shared by all bundle incarnations in the native host. An in-flight mutation keeps its lock across registration disposal: a content-addressed replacement waits before reading its CAS revision. `missions-reload.test.ts` loads two independent compiled bundles and races updates across dispose/setup to verify that only one can succeed.
 

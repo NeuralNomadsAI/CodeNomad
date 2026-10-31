@@ -30,9 +30,11 @@ import { taskExecutionModeSchema, taskContractReferenceWireSchema } from "../mis
 import { parseExecutionMode, parseMissionTaskMode, missionTaskModeSchema } from "../missions/task-execution-mode"
 import { normalizeTaskDeclaration, taskContractReferenceSchema } from "../missions/task-declaration"
 import { parseMissionProfiles, missionProfilesSchema, validateMissionProfileCatalog } from "../missions/playbook-profiles"
-import { compactMission, compactMissionTask, compactMissionTasks, nativeAssignment } from "../missions/tool-result"
-import { MISSION_TASK_VIEW_FIELDS, boundedInspection, boundedMissionList, boundedTaskView, inspectionContent, inspectionContentValue,
-  type MissionInspectContent } from "../missions/inspect-view"
+import { boundedInterruption, boundedMutation, boundedRevision, compactMission, compactMissionTask, compactMissionTasks, nativeAssignment } from "../missions/tool-result"
+import { missionContentRequestSchema } from "../missions/mission-content"
+import { MISSION_TASK_VIEW_FIELDS, boundedInspection, boundedMissionList, boundedTaskView, inspectionContent,
+  inspectionContentValue, type MissionInspectContent } from "../missions/inspect-view"
+import { InterruptReceipts } from "../missions/interrupt-receipts"
 import { missionBriefingToolSchema, parseMissionBriefingRequest } from "../missions/briefing"
 import { MissionCreateNoEffectError } from "../missions/control-error"
 import { MISSION_TITLE_MAX, parseMissionTitle } from "../missions/mission-title"
@@ -111,6 +113,7 @@ export interface MissionsPluginContext extends MissionCatalogClient {
         snapshot(input: unknown): Promise<unknown>
         list(input: unknown): Promise<unknown>
         mission(input: unknown): Promise<unknown>
+        content(input: unknown): Promise<unknown>
         recurrenceSnapshot(input: unknown): Promise<unknown>
         recurrenceControl(input: unknown): Promise<unknown>
         recurrenceControlStatus(input: unknown): Promise<unknown>
@@ -218,6 +221,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
         })))
       },
       mission: async input => JSON.parse(JSON.stringify(await control.mission(requiredText(object(input).missionID, "missionID", 100)))),
+      content: async input => JSON.parse(JSON.stringify(await control.content(missionContentRequestSchema.parse(input)))),
       // Bundled Effect entry replaces this at registration with the native
       // request-graph handlers. A Promise setup graph never has Job authority.
       recurrenceSnapshot: async () => { throw new Error("Native recurrence graph unavailable") },
@@ -265,7 +269,7 @@ export async function setupMissionsPlugin(context: MissionsPluginContext, transp
     }
     rpcRegistration = await context.rpc.register(CODENOMAD_MISSIONS_RPC, {
       snapshot: tracked(handlers.snapshot), list: tracked(handlers.list), mission: tracked(handlers.mission),
-      recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
+      content: tracked(handlers.content), recurrenceSnapshot: tracked(handlers.recurrenceSnapshot),
       recurrenceControl: tracked(handlers.recurrenceControl), recurrenceControlStatus: tracked(handlers.recurrenceControlStatus),
       recurrenceRunNow: tracked(handlers.recurrenceRunNow), recurrenceRunNowStatus: tracked(handlers.recurrenceRunNowStatus),
       recurrenceRead: tracked(handlers.recurrenceRead),
@@ -319,9 +323,13 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
     assertActive(); selected.current()
     return selected
   }
+  // Interrupt receipts too large for one result, for exact receipt reads, for this
+  // registration's lifetime and within their byte budget (`InterruptReceipts`).
+  const receipts = new InterruptReceipts()
   const dispose = async () => {
     active = false
     await writer.retire(async () => { await Promise.all(registrations.map(registration => registration.dispose())) })
+    receipts.clear()
   }
   try {
     const tools = await context.tool.transform((draft) => {
@@ -351,6 +359,15 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
             selected.current()
             return textResult(inspectionContent(undefined, read, await catalog()))
           }
+          // A receipt read serves the held original interrupt result to the coordinator that received it.
+          if (read?.kind === "receipt") {
+            await selected.control.ownedRoot(selected.readSessionID)
+            selected.current()
+            const held = receipts.read(tool.sessionID, read.digest)
+            if (held === undefined) throw new Error("This interruption receipt is no longer held: each task keeps only its newest one,"
+              + " within the plugin's receipt budget, until the plugin reloads")
+            return textResult(inspectionContent(undefined, read, held))
+          }
           const result = await selected.control.inspect(selected.readSessionID, parsed, tool.id)
           const response = parsed.taskKey === undefined ? result
             : await observedTaskView(selected.control, selected.readSessionID, result.mission, parsed.taskKey)
@@ -368,7 +385,7 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
       })
       add({
         name: "delegate",
-        description: "Declare one dependency-aware native task without creating or prompting a session. Pass the returned canonical assignmentPrompt to ordinary native subagent calls for ready tasks; run independent ready work in parallel when useful and let children own bounded recursive decomposition within native permissions and configured depth. The coordinator records business readout with mission.report and taskKey, without child report copies or invocation bindings. Explicit independent execution requires a reason and may dispatch a root exception. Coordinator only; inspect the native catalog before selecting agent/model IDs. Returns a compact result: disposition, revision, frontier, the task, its contract and assignmentPrompt, and any role requirement; mission.inspect with taskKey rereads the prompt.",
+        description: "Declare one dependency-aware native task without creating or prompting a session. Pass the returned canonical assignmentPrompt to ordinary native subagent calls for ready tasks; run independent ready work in parallel when useful and let children own bounded recursive decomposition within native permissions and configured depth. The coordinator records business readout with mission.report and taskKey, without child report copies or invocation bindings. Explicit independent execution requires a reason and may dispatch a root exception. Coordinator only; inspect the native catalog before selecting agent/model IDs. Returns a compact result: disposition, revision, frontier, the task, its contract and assignmentPrompt, and any role requirement; mission.inspect with taskKey rereads the prompt. A result too large for one call replaces its assignmentPrompt or frontier by { omittedCharacters, read }: read it whole with mission.inspect(read), following each slice's next, and pass the joined prompt; never pass the marker or part of the prompt as an assignment.",
         input: delegateSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -385,16 +402,16 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           if (independent) {
             const parsed = parseDelegateInput(input)
             const result = await selected.control.delegate(tool.sessionID, parsed)
-            return textResult({ disposition: result.disposition, ...compactMission(result.mission),
-              task: compactMissionTasks(result.mission, [parsed.taskKey])[0] })
+            return textResult(boundedMutation({ disposition: result.disposition, ...compactMission(result.mission),
+              task: compactMissionTasks(result.mission, [parsed.taskKey])[0] }, result.mission))
           }
           const result = await selected.control.declare(tool.sessionID, normalizeTaskDeclaration({ ...value, blockedBy: value.blockedBy ?? [] }))
           const task = result.mission.tasks.find(candidate => candidate.key === result.contract.taskKey)
           if (!task || task.executionMode?.kind !== "native" || task.contractGeneration !== result.contract.generation) {
             throw new MissionControlError("Declared native task context unavailable", "invalid-journal")
           }
-          return textResult({ disposition: result.disposition, ...compactMission(result.mission), task: compactMissionTask(task),
-            ...nativeAssignment(result.mission, task) })
+          return textResult(boundedMutation({ disposition: result.disposition, ...compactMission(result.mission), task: compactMissionTask(task),
+            ...nativeAssignment(result.mission, task) }, result.mission))
         },
       })
       add({
@@ -409,8 +426,8 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           selected.current()
           const revision = parseReviseInput(input)
           const { mission } = await selected.control.revise(tool.sessionID, revision)
-          return textResult({ ...compactMission(mission), tasks: compactMissionTasks(mission, [...revision.addTasks,
-            ...revision.retireTasks, ...revision.dependencyUpdates].map(item => item.taskKey)) })
+          return textResult(boundedRevision(mission, [...revision.addTasks,
+            ...revision.retireTasks, ...revision.dependencyUpdates].map(item => item.taskKey)))
         },
       })
       add({
@@ -429,8 +446,8 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const result = contract === undefined ? await selected.control.report(tool.sessionID, report)
             : await selected.control.reportNative({ contract, sessionID: tool.sessionID, toolCallID: tool.id, messageID: tool.messageID }, report)
           // The control names the task it resolved, including an independent actor's omitted taskKey.
-          return textResult({ disposition: result.disposition, ...compactMission(result.mission),
-            ...(result.taskKey === undefined ? {} : { task: compactMissionTasks(result.mission, [result.taskKey])[0] }) })
+          return textResult(boundedMutation({ disposition: result.disposition, ...compactMission(result.mission),
+            ...(result.taskKey === undefined ? {} : { task: compactMissionTasks(result.mission, [result.taskKey])[0] }) }, result.mission))
         },
       })
       add({
@@ -443,12 +460,13 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, "briefing", input)
           await tool.progress({ status: "Recording project briefing" })
           selected.current()
-          return textResult(compactMission((await selected.control.briefing(tool.sessionID, parseMissionBriefingRequest(input))).mission))
+          const { mission } = await selected.control.briefing(tool.sessionID, parseMissionBriefingRequest(input))
+          return textResult(boundedMutation(compactMission(mission), mission))
         },
       })
       add({
         name: "interrupt",
-        description: "Coordinator only: stop the native conversations still running for a retired native task. Retire it with mission.revise first. Each task conversation's whole native family is interrupted deepest first and its queued inputs are cancelled; the coordinator and the plan stay unchanged. complete false means some work may still be running.",
+        description: "Coordinator only: stop the native conversations still running for a retired native task. Retire it with mission.revise first. Each task conversation's whole native family is interrupted deepest first and its queued inputs are cancelled; the coordinator and the plan stay unchanged. complete false means some work may still be running. A receipt too large for one result keeps complete, the totals and each conversation's outcome with its descendant counts, and names in receipt the read of the whole original receipt: mission.inspect(receipt.read), held for each task's newest interruption within the plugin's receipt budget until evicted or the plugin reloads; a read it no longer holds is refused.",
         input: interruptSchema,
         options: { namespace: "mission", codemode: false },
         execute: async (input, tool) => {
@@ -456,7 +474,12 @@ export async function setupMissionsBusiness(context: MissionsPluginContext,
           const selected = await route(tool.sessionID, "interrupt", input)
           await tool.progress({ status: "Stopping retired task work" })
           selected.current()
-          return textResult(await selected.control.interruptTask(tool.sessionID, parseInterruptInput(input)))
+          const { target, ...result } = await selected.control.interruptTask(tool.sessionID, parseInterruptInput(input))
+          // The task's slot is the identity the interruption resolved; its newest result always replaces the previous receipt.
+          const slot = JSON.stringify([tool.sessionID, target.missionID, target.taskKey])
+          const bounded = boundedInterruption(result, receipt => receipts.hold(tool.sessionID, slot, receipt))
+          if (bounded === result) receipts.retire(slot)
+          return textResult(bounded)
         },
       })
       add({
@@ -622,7 +645,7 @@ const inspectSchema = {
       type: "object",
       description: "Read one slice of a value a result replaced by { omittedCharacters, read }: pass that read as the whole input, then each slice's next. A slice of a value that changed since the read began is refused: inspect again for its current read.",
       properties: {
-        kind: { type: "string", enum: ["inspection", "mission", "task", "report", "change", "catalog"] },
+        kind: { type: "string", enum: ["inspection", "mission", "task", "report", "change", "catalog", "receipt"] },
         field: { type: "string", minLength: 1, maxLength: 64 },
         taskKey: { type: "string", pattern: "^[a-z0-9][a-z0-9._-]{1,63}$" },
         reportId: { type: "string", minLength: 1, maxLength: 240 },
@@ -695,7 +718,7 @@ export function parseInspectInput(input: unknown): MissionInspectInput & {
     if (value.list !== undefined || value.taskKey !== undefined || value.start !== undefined || value.taskOffset !== undefined
       || value.listOffset !== undefined || value.catalog !== undefined) throw new Error("content reads one value; use it with missionID only")
     const content = parseInspectContent(value.content)
-    if (content.kind === "catalog" && missionID !== undefined) throw new Error("A catalog read names no mission: pass its read as the whole input")
+    if ((content.kind === "catalog" || content.kind === "receipt") && missionID !== undefined) throw new Error(`A ${content.kind} read names no mission: pass its read as the whole input`)
     return { missionID, content }
   }
   if (value.taskOffset !== undefined) {
@@ -738,11 +761,11 @@ function parseInspectContent(input: unknown): MissionInspectContent {
     throw new Error("content needs its digest and a non-negative offset")
   }
   const read = { digest: value.digest, offset: Number(value.offset) }
-  if (value.kind === "catalog") {
+  if (value.kind === "catalog" || value.kind === "receipt") {
     if (value.field !== undefined || value.revision !== undefined || value.taskKey !== undefined || value.reportId !== undefined || value.change !== undefined) {
-      throw new Error("A catalog read has only its digest and offset")
+      throw new Error(`A ${value.kind} read has only its digest and offset`)
     }
-    return { kind: "catalog", ...read }
+    return { kind: value.kind, ...read }
   }
   if (!Number.isSafeInteger(value.revision) || Number(value.revision) < 1) throw new Error("content needs the positive revision of its map")
   const base = { field: requiredText(value.field, "content.field", 64), revision: Number(value.revision), ...read }

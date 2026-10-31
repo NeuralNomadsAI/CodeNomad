@@ -513,7 +513,17 @@ export function reduceMissionEvents(events: readonly MissionEvent[], now = Date.
   }
 }
 
-function reduceMission(events: readonly MissionEvent[], discarded: { count: number }): MissionMap | undefined {
+/** Every plan change one mission's events record (its `missionView` events), exactly as
+ * the reducer derives them: the map's `history` is the last `MISSION_MAX_HISTORY` of
+ * these. Empty when the events hold no live map. */
+export function missionPlanChanges(events: readonly MissionEvent[], missionID: string): MissionPlanChange[] {
+  const changes: MissionPlanChange[] = []
+  const live = reduceMission(events.filter(event => event.missionID === missionID).sort(compareEvents), { count: 0 }, changes)
+  return live ? changes : []
+}
+
+/** `changes`, when given, receives every plan change, before the map keeps its last ones. */
+function reduceMission(events: readonly MissionEvent[], discarded: { count: number }, changes?: MissionPlanChange[]): MissionMap | undefined {
   const created = events.find((event): event is MissionCreatedEvent => event.type === "mission.created")
   if (!created) {
     discarded.count += events.length
@@ -878,6 +888,7 @@ function reduceMission(events: readonly MissionEvent[], discarded: { count: numb
     if (task.report) task.report = notificationStatus(task.report)
     if (task.lateReports) task.lateReports = task.lateReports.map(notificationStatus)
   }
+  changes?.push(...history)
   return {
     version: MISSION_SCHEMA_VERSION,
     id: created.missionID,
