@@ -32,6 +32,8 @@ Si los colores se vuelven difíciles de leer, selecciona una paleta integrada o 
 
 ## Paneles y secciones de Estado {#panels-status}
 
+Arrastra el borde interior de un panel acoplado para cambiar su tamaño. El tirador permanece resaltado y mantiene la captura del puntero durante todo el arrastre, incluso si el puntero sobrepasa el borde. Suelta para terminar.
+
 1. Usa **Panel izquierdo** y **Panel derecho** en las esquinas de la cabecera exterior, o sus opciones del menú **Ver**, para mostrar u ocultar cada panel.
 2. Abre **Personalizar panel derecho** en el panel derecho. Usa las casillas para elegir pestañas integradas y secciones de Estado; al menos una sección de Estado permanece visible. Arrastra sobre estas casillas para ajustar varias a la vez.
 3. Arrastra las pestañas del panel derecho para reordenarlas. Usa **Restablecer** para restaurar las elecciones de disposición integradas.

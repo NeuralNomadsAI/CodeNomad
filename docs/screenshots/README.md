@@ -35,6 +35,15 @@ and session/project names in the adjacent `readme-workspace-data.ts`. Update thi
 data when refreshing documentation; keep product layout and styling in the real
 components.
 
+# Panel resize capture
+
+`panel-resize-drag.png` shows the real instance shell from
+`packages/ui/tests/browser/fixtures/header-windows.tsx` in a 1600×900 Chromium
+viewport. The left resize handle is active after widening the panel by 100 px;
+the pointer is over the fixture's outside-target button while still held down.
+The highlighted handle retains pointer capture. All conversation and service
+data are synthetic, with English labels and UTC timestamps.
+
 # Help home tour
 
 The help home page's `{{tour-video}}` block uses two files from the CodeNomad 1.0

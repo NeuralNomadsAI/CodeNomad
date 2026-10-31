@@ -743,7 +743,7 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
     )
     : clampRightWidth(width)
 
-  const { handleDrawerResizeMouseDown, handleDrawerResizeTouchStart } = useDrawerResize({
+  const { activeResizeSide, handleDrawerResizePointerDown, handleDrawerResizePointerMove, handleDrawerResizePointerEnd, stopDrawerResize } = useDrawerResize({
     sessionSidebarWidth: leftPanelWidth,
     rightDrawerWidth: rightPanelWidth,
     setSessionSidebarWidth,
@@ -770,9 +770,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           }}
         >
           <div
-            class="session-resize-handle session-resize-handle--left"
-            onMouseDown={handleDrawerResizeMouseDown("left")}
-            onTouchStart={handleDrawerResizeTouchStart("left")}
+            ref={() => onCleanup(stopDrawerResize)}
+            class={`session-resize-handle session-resize-handle--left ${activeResizeSide() === "left" ? "is-resizing" : ""}`}
+            onPointerDown={handleDrawerResizePointerDown("left")}
+            onPointerMove={handleDrawerResizePointerMove}
+            onPointerUp={handleDrawerResizePointerEnd}
+            onPointerCancel={handleDrawerResizePointerEnd}
+            onLostPointerCapture={handleDrawerResizePointerEnd}
             role="presentation"
             aria-hidden="true"
           />
@@ -836,9 +840,13 @@ const InstanceShell2: Component<InstanceShellProps> = (props) => {
           }}
         >
           <div
-            class="session-resize-handle session-resize-handle--right"
-            onMouseDown={handleDrawerResizeMouseDown("right")}
-            onTouchStart={handleDrawerResizeTouchStart("right")}
+            ref={() => onCleanup(stopDrawerResize)}
+            class={`session-resize-handle session-resize-handle--right ${activeResizeSide() === "right" ? "is-resizing" : ""}`}
+            onPointerDown={handleDrawerResizePointerDown("right")}
+            onPointerMove={handleDrawerResizePointerMove}
+            onPointerUp={handleDrawerResizePointerEnd}
+            onPointerCancel={handleDrawerResizePointerEnd}
+            onLostPointerCapture={handleDrawerResizePointerEnd}
             role="presentation"
             aria-hidden="true"
           />

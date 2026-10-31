@@ -32,6 +32,8 @@ Si les couleurs deviennent difficiles à lire, sélectionnez une palette intégr
 
 ## Panneaux et sections Statut {#panels-status}
 
+Faites glisser le bord intérieur d’un panneau ancré pour le redimensionner. La poignée reste surlignée et garde la capture du pointeur pendant tout le glissement, même si le pointeur dépasse son bord. Relâchez pour terminer.
+
 1. Utilisez **Volet gauche** et **Volet droit** aux coins extérieurs de l’en-tête, ou leurs entrées du menu **Affichage**, pour afficher ou masquer chaque panneau.
 2. Ouvrez **Personnaliser le panneau droit** dans le panneau droit. Utilisez les cases pour choisir les onglets intégrés et sections Statut ; au moins une section Statut reste visible. Faites glisser le pointeur sur ces cases pour en régler plusieurs d'un coup.
 3. Faites glisser les onglets du panneau droit pour les réordonner. Utilisez **Réinitialiser** pour restaurer les choix de disposition intégrée.

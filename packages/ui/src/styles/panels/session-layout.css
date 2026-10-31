@@ -284,6 +284,7 @@
 .session-resize-handle {
   @apply absolute top-0 w-1 h-full cursor-col-resize bg-transparent transition-colors;
   z-index: 10;
+  touch-action: none;
 }
 
 .session-resize-handle--left {
@@ -294,7 +295,8 @@
   inset-inline-start: 0;
 }
 
-.session-resize-handle:hover {
+.session-resize-handle:hover,
+.session-resize-handle.is-resizing {
   background-color: var(--accent-primary);
 }
 

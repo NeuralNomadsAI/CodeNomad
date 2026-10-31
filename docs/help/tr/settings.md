@@ -32,6 +32,8 @@ Renklerin okunması zorlaşırsa yerleşik bir palet seçin veya düzenlenen pal
 
 ## Paneller ve Durum bölümleri {#panels-status}
 
+Sabitlenmiş bir paneli yeniden boyutlandırmak için iç kenarını sürükleyin. İşaretçi kenarın dışına çıksa bile sürükleme boyunca tutamaç vurgulanır ve işaretçi yakalama korunur. Bitirmek için bırakın.
+
 1. Panelleri göstermek/gizlemek için dış başlık köşelerindeki **Sol panel** ve **Sağ panel** kontrollerini veya **Görünüm** menüsündeki karşılıklarını kullanın.
 2. Sağ panelde **Sağ paneli özelleştir** öğesini açın. Yerleşik sekmeleri ve Durum bölümlerini seçmek için onay kutularını kullanın; en az bir Durum bölümü görünür durumda kalır. Birkaçını tek seferde ayarlamak için bu onay kutularının üzerinde sürükleyin.
 3. Yeniden sıralamak için sağ panel sekmelerini sürükleyin. Yerleşik düzen seçeneklerini geri yüklemek için **Sıfırla** öğesini kullanın.
