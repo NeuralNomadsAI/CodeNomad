@@ -188,6 +188,21 @@ describe("integration catalog", () => {
     assert.deepEqual(fixture.state.requests.map(request => new URL(request.url, origin).searchParams.get("page")), [null, "2", "3", null])
   })
 
+  it("reads later pages again for a release found there, so its re-uploaded asset is seen", async () => {
+    reset([release(origin, "blender-v0.1.0", "app")], { seven: JSON.stringify(catalogOf(catalogEntry("fixture"))) })
+    fixture.state.pages = [[release(origin, "catalog-v7", "seven")]]
+    let now = 0
+    const source = new IntegrationCatalogSource({ releasesUrl: url, now: () => now })
+    await source.read()
+    const replaced = catalogOf(catalogEntry("fixture"), catalogEntry("other"))
+    fixture.state.pages = [[release(origin, "catalog-v7", "seven", {}, "2026-11-02T00:00:00Z")]]
+    fixture.state.assets.set("seven", JSON.stringify(replaced))
+    fixture.state.requests = []
+    now += INTEGRATION_CATALOG_CACHE_MS
+    assert.deepEqual((await source.read()).catalog, replaced)
+    assert.equal(fixture.state.requests[0]!.headers["if-none-match"], undefined, "no conditional shortcut for a later-page release")
+  })
+
   it("waits for GitHub's rate-limit reset before asking again, serving the last valid catalog", async () => {
     const catalog = catalogOf(catalogEntry("fixture"))
     reset([release(origin, "catalog-v1", "one")], { one: JSON.stringify(catalog) })

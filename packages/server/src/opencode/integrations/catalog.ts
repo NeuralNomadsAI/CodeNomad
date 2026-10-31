@@ -119,7 +119,8 @@ export class IntegrationCatalogSource {
     let url: string | undefined = this.releasesUrl
     let etag: string | null = null
     let release: Release | null = null
-    for (let page = 0; url && page < INTEGRATION_CATALOG_MAX_PAGES && !release; page++) {
+    let page = 0
+    for (; url && page < INTEGRATION_CATALOG_MAX_PAGES && !release; page++) {
       const conditional: Record<string, string> = page === 0 && this.listTag ? { "if-none-match": this.listTag.etag } : {}
       const response = await this.request(url, { ...headers, ...conditional }, signal)
       if (response.status === 304 && page === 0 && this.listTag) {
@@ -130,7 +131,9 @@ export class IntegrationCatalogSource {
       release = selectCatalogRelease(parseJson(await readBounded(response, RELEASE_LIST_MAX_BYTES)), origin)
       url = nextPage(response.headers.get("link"), origin)
     }
-    this.listTag = etag ? { etag, release } : undefined
+    // An unchanged first page vouches only for itself: a release from a later page (whose asset may be re-uploaded
+    // there) is looked up again. A new release always lands on the first page, so "none" is reusable.
+    this.listTag = etag && (!release || page === 1) ? { etag, release } : undefined
     return release
   }
 
