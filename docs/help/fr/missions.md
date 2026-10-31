@@ -14,7 +14,7 @@ Les Missions associent un plan de projet durable aux conversations natives OpenC
 
 ### Scénarios {#playbooks}
 
-Le sélecteur **Scénario** affiche juste en dessous une description en une phrase du scénario sélectionné.
+Le sélecteur **Scénario** affiche juste en dessous une description en une phrase du scénario sélectionné. **Voir les détails** ouvre le scénario sélectionné dans le lecteur central : ses étapes, ses rôles et, repliées à la fin, les instructions exactes en anglais que reçoivent ses agents. [Scénarios](playbooks.md) explique les étapes, les rôles et les questions de chaque scénario, ainsi que ce que CodeNomad vérifie.
 
 | Scénario | Travail prévu |
 | --- | --- |
@@ -67,14 +67,14 @@ Une mission est **Interrompue** quand son coordinateur s'est arrêté sans concl
 
 Seul le coordinateur vous pose des questions. Les tâches et les sous-agents qu’elles lancent lui renvoient leurs questions ouvertes, avec les options, les éléments à l’appui et une recommandation. Avant de demander, le coordinateur essaie de trancher lui-même : il lit le projet, fait des recherches, confie une investigation à une tâche, ou adopte un choix par défaut facile à défaire qu’il consigne comme hypothèse. Il ne demande que ce qu’il ne peut pas trancher : votre accord, des identifiants, des choix coûteux à défaire ou des décisions produit que l’objectif laisse ouvertes. Il regroupe les questions en attente dans un seul formulaire sous **Votre réponse est attendue** et lance d’abord le travail sans rapport.
 
-Dans **Exploration**, les tâches de décision préparent une synthèse et le coordinateur tranche chaque décision : il décide lui-même quand les éléments suffisent et que le choix est facile à défaire, garde la question dans les **Notes** pour plus tard, ou vous la pose. Le résultat indique qui a décidé :
+Dans **Exploration**, les tâches de décision préparent une synthèse et le coordinateur tranche chaque décision : il décide lui-même quand les éléments suffisent et que le choix est facile à défaire, garde la question dans les **Notes** pour plus tard, ou vous la pose. Avec **Sous-agents natifs**, le résultat de la tâche de décision indique qui a décidé :
 
 | Libellé | Signification |
 | --- | --- |
-| **Décision du coordinateur** | Le coordinateur a décidé sans vous demander ; le résultat montre sa justification et comment revenir dessus. Pour la modifier, écrivez au coordinateur depuis **Ouvrir la conversation**. |
+| **Décision du coordinateur** | Le coordinateur a décidé sans vous demander ; le résultat montre sa justification et les éventuelles indications pour revenir dessus qu’il a fournies. Pour la modifier, écrivez au coordinateur depuis **Ouvrir la conversation**. |
 | **Votre réponse** | Vous avez répondu à cette question dans le dock d’interruption de CodeNomad. |
 
-Seule une réponse donnée dans le dock d’interruption compte comme **Votre réponse** ; un agent ne peut pas répondre à votre place. Chaque question de décision se termine par l’étiquette de la seule décision qu’elle tranche, par exemple `[decision choose-seam 3fa9c21b]`. Quand plusieurs décisions sont demandées ensemble, chacune forme une question distincte avec sa propre étiquette ; une question qui nomme deux décisions n’en tranche aucune. Dans **Livraison produit**, un objectif qui décrit déjà précisément le changement de comportement vaut spécification approuvée ; sinon, le coordinateur vous demande de l’approuver, en regroupant les approbations en attente.
+Seule une réponse donnée dans le dock d’interruption compte comme **Votre réponse** ; un agent ne peut pas répondre à votre place. Avec **Sous-agents natifs**, chaque question de décision se termine par l’étiquette de la seule décision qu’elle tranche, par exemple `[decision choose-seam 3fa9c21b]`. Quand plusieurs décisions sont demandées ensemble, chacune forme une question distincte avec sa propre étiquette ; une question qui nomme deux décisions n’en tranche aucune. Avec **Sessions indépendantes**, le coordinateur consigne plutôt chaque issue dans les **Notes**, en précisant qui, de lui ou de vous, a décidé. Dans **Livraison produit**, un objectif qui décrit déjà précisément le changement de comportement vaut spécification approuvée ; sinon, le coordinateur vous demande de l’approuver, en regroupant les approbations en attente.
 
 ### Points de situation et demandes de mise à jour {#briefings}
 

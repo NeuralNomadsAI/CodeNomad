@@ -40,6 +40,8 @@ export function MissionEditor(props: {
   captureOperation?: () => (() => boolean)
   onSaved: (mission?: MissionMap) => void; onCancel: () => void
   onOpenPreferences?: () => void
+  /** Opens the selected playbook's details under the chosen task-session policy. */
+  onShowPlaybook?: (template: MissionMap["template"], taskMode: MissionTaskMode) => void
   onRecurrenceSaved?: () => void
   onRecurrenceRefresh?: () => void
   /** On unmount: the idle draft to reopen, or undefined while a request is in flight or held. */
@@ -399,6 +401,12 @@ export function MissionEditor(props: {
           </select>
         </label>
         <p id={ids.templateDescription}>{t(`missions.control.template.${template()}.description`)}</p>
+        {/* Steps, roles and the exact instructions open in the central reader. On narrow layouts that
+            closes the panel, ending the view a request in flight completes in, so wait for it. */}
+        <Show when={props.onShowPlaybook}>
+          <button type="button" class="window-text-button" aria-describedby={ids.templateDescription} disabled={pending() || creationPending()}
+            onClick={() => props.onShowPlaybook?.(template(), taskMode() ?? "native")}>{t("missions.playbook.details")}</button>
+        </Show>
       </div>
       <MissionTaskModeControls value={taskMode() ?? "native"} disabled={locked()}
         onChange={value => { setTaskMode(value); setCustomTaskMode(true) }} />

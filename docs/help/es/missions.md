@@ -14,7 +14,7 @@ Las Misiones combinan un plan de proyecto duradero con conversaciones nativas de
 
 ### Guiones {#playbooks}
 
-El selector **Guion** muestra justo debajo una descripción de una frase del guion seleccionado.
+El selector **Guion** muestra justo debajo una descripción de una frase del guion seleccionado. **Ver detalles** abre el guion seleccionado en el lector central: sus pasos, sus roles y, plegadas al final, las instrucciones exactas en inglés que reciben sus agentes. [Guiones](playbooks.md) explica los pasos, roles y preguntas de cada guion, y lo que CodeNomad comprueba.
 
 | Guion | Trabajo previsto |
 | --- | --- |
@@ -67,14 +67,14 @@ Una misión está **Interrumpida** cuando su coordinador se detuvo sin concluir 
 
 Solo el coordinador te hace preguntas. Las tareas y los subagentes que lanzan le devuelven sus preguntas abiertas, con las opciones, las evidencias y una recomendación. Antes de preguntar, el coordinador intenta resolver la cuestión por sí mismo: lee el proyecto, investiga, encarga una investigación a una tarea o adopta un valor por defecto fácil de deshacer y lo registra como supuesto. Solo pregunta lo que no puede resolver: tu consentimiento, credenciales, elecciones costosas de deshacer o decisiones de producto que el objetivo deja abiertas. Agrupa las preguntas pendientes en un solo formulario en **Te necesita** y antes pone en marcha el trabajo no relacionado.
 
-En **Exploración**, las tareas de decisión preparan un resumen y el coordinador resuelve cada decisión: decide por sí mismo cuando las evidencias bastan y la elección es fácil de deshacer, deja la pregunta en las **Notas** para más adelante o te la hace. El resultado indica quién decidió:
+En **Exploración**, las tareas de decisión preparan un resumen y el coordinador resuelve cada decisión: decide por sí mismo cuando las evidencias bastan y la elección es fácil de deshacer, deja la pregunta en las **Notas** para más adelante o te la hace. Con **Subagentes nativos**, el resultado de la tarea de decisión indica quién decidió:
 
 | Etiqueta | Significado |
 | --- | --- |
-| **Decisión del coordinador** | El coordinador decidió sin preguntarte; el resultado muestra su justificación y cómo revertirla. Para cambiarla, escribe al coordinador desde **Abrir conversación**. |
+| **Decisión del coordinador** | El coordinador decidió sin preguntarte; el resultado muestra su justificación y las indicaciones para revertirla que haya dado. Para cambiarla, escribe al coordinador desde **Abrir conversación**. |
 | **Tu respuesta** | Respondiste esta pregunta en el panel de interrupciones de CodeNomad. |
 
-Solo una respuesta que des en el panel de interrupciones cuenta como **Tu respuesta**; un agente no puede responder por ti. Cada pregunta de decisión termina con la etiqueta de la única decisión que resuelve, por ejemplo `[decision choose-seam 3fa9c21b]`. Cuando se preguntan varias decisiones juntas, cada una es una pregunta aparte con su propia etiqueta; una pregunta que nombra dos decisiones no resuelve ninguna. En **Entrega de producto**, un objetivo que ya describe con precisión el cambio de comportamiento cuenta como especificación aprobada; si no, el coordinador te pide que la apruebes y agrupa las aprobaciones pendientes.
+Solo una respuesta que des en el panel de interrupciones cuenta como **Tu respuesta**; un agente no puede responder por ti. Con **Subagentes nativos**, cada pregunta de decisión termina con la etiqueta de la única decisión que resuelve, por ejemplo `[decision choose-seam 3fa9c21b]`. Cuando se preguntan varias decisiones juntas, cada una es una pregunta aparte con su propia etiqueta; una pregunta que nombra dos decisiones no resuelve ninguna. Con **Sesiones independientes**, el coordinador registra en cambio cada resultado en las **Notas**, indicando si decidió él o tú. En **Entrega de producto**, un objetivo que ya describe con precisión el cambio de comportamiento cuenta como especificación aprobada; si no, el coordinador te pide que la apruebes y agrupa las aprobaciones pendientes.
 
 ### Informes de situación y solicitudes de actualización {#briefings}
 

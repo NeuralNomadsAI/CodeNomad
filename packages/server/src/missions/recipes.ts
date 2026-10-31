@@ -1,5 +1,6 @@
 import type { MissionMap, MissionTask, MissionTemplateId } from "./model"
 import type { MissionTaskMode } from "./task-execution-mode"
+import type { MissionPlaybookDetails } from "./playbook-details"
 
 export interface MissionRoleGuide {
   id: string
@@ -293,6 +294,34 @@ export function missionRecipeCatalog(): Array<Pick<MissionRecipe, "id" | "title"
     sequence: recipe.sequence,
     roles: recipe.roles.map((role) => role.id),
   }))
+}
+
+/** Stand-ins for one mission's own data in the texts `missionPlaybookDetails` exports. */
+export const PLAYBOOK_PLACEHOLDERS = { missionID: "[mission ID]", objective: "[objective]", notes: "[notes]", taskKey: "[task key]",
+  taskTitle: "[task title]", taskBrief: "[task brief]", blockedBy: "[blocked by]", taskStatus: "[task status]" } as const
+
+/** For the human details view: each playbook with the complete texts the builders below send, built by
+ * them from placeholder mission data, so every instruction an actor receives is exposed. */
+export function missionPlaybookDetails(taskMode: MissionTaskMode = "native"): MissionPlaybookDetails {
+  const data = PLAYBOOK_PLACEHOLDERS, location = { directory: "/" }
+  const coordinator = { sessionId: "coordinator", kind: "coordinator", managed: false, title: "", roles: ["coordinator"], location, joinedAt: 0 }
+  return { taskMode, placeholders: { ...data }, playbooks: Object.values(recipes).map(({ id }) => {
+    const mission = { id: data.missionID, objective: data.objective, notes: data.notes, template: id, taskMode,
+      coordinatorSessionId: coordinator.sessionId, actors: [coordinator], tasks: [] } as unknown as MissionMap
+    const task = (role: string) => ({ id: data.taskKey, key: data.taskKey, title: data.taskTitle, brief: data.taskBrief, role,
+      status: data.taskStatus, blockedBy: [data.blockedBy], actorSessionId: "task", executionMode: taskMode === "native"
+        ? { kind: "native", parentTaskKey: null } : { kind: "independent", reason: "playbook", explanation: "" } }) as unknown as MissionTask
+    // An independent task session also receives the specialist context on every turn.
+    const session = (role: string) => buildActorContext({ ...mission, tasks: [task(role)],
+      actors: [coordinator, { ...coordinator, sessionId: "task", kind: "specialist", roles: [role] }] } as MissionMap, "task")
+    const playbook = structuredClone(getMissionRecipe(id, taskMode))
+    return { ...playbook, prompts: {
+      coordinator: { once: buildActorContext(mission, coordinator.sessionId, { backendActions: true, completedFinalOnly: true }),
+        daily: buildActorContext(mission, coordinator.sessionId) },
+      roles: Object.fromEntries(playbook.roles.map(role => [role.id, { assignment: buildAssignmentPrompt(mission, task(role.id)),
+        ...(taskMode === "independent" ? { session: session(role.id) } : {}) }])),
+    } }
+  }) }
 }
 
 export function buildAssignmentPrompt(mission: MissionMap, task: MissionTask): string {

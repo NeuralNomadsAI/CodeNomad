@@ -19,6 +19,7 @@ import { registerMissionRecurrenceSnapshot } from "./mission-recurrence-snapshot
 import { registerMissionRecurrenceCreate } from "./mission-recurrence-create"
 import type { SettingsService } from "../../settings/service"
 import { registerMissionRecurrenceCurrent } from "./mission-recurrence-current"
+import { registerMissionPlaybookRoutes } from "./mission-playbooks"
 import { MissionMapMutationError, prepareMissionMapMutation } from "./mission-map-mutation"
 import type { AuthManager } from "../../auth/manager"
 import type { RemoteControlManager } from "../../remote-control/manager"
@@ -56,6 +57,7 @@ export function registerMissionRoutes(app: FastifyInstance, deps: MissionRouteDe
   registerMissionRecurrenceSnapshot(app, deps)
   registerMissionRecurrenceCreate(app, deps)
   registerMissionRecurrenceCurrent(app, deps)
+  registerMissionPlaybookRoutes(app)
   // Open and included missions as full maps plus one summary row per mission,
   // with activity for those maps only. A plugin without `list` (a reload can
   // briefly pair builds) answers with its full snapshot and no summaries.

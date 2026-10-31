@@ -1,10 +1,14 @@
 import { createSignal } from "solid-js"
 import { readClientLayoutValue, writeClientLayoutValue, removeClientLayoutValue } from "./client-state"
+import { missionProfileRoles } from "../../../server/src/missions/playbook-profiles"
 
 export interface MissionReaderTarget {
+  /** For `playbook`, the playbook id, read without any Mission. */
   missionId: string
-  kind: "overview" | "task" | "report" | "change" | "recurrence"
+  kind: "overview" | "task" | "report" | "change" | "recurrence" | "playbook"
   itemId?: string
+  /** `playbook` only: the task-session policy whose coordinator contract is shown. */
+  taskMode?: "native" | "independent"
   /** Exact isolated passage scope; never a native session selector. */
   recurrence?: { instanceId: string; projectID: string; scheduleID: string; passageID: string }
   /** Recurrence readers do not inherit a selected one-shot Mission's authority. */
@@ -44,10 +48,12 @@ export function missionProjectView(scope: string): ProjectView {
       if (stored.listExpanded === true) value.listExpanded = true
       if (stored.tasksCollapsed === true) value.tasksCollapsed = true
       const r = stored.reader
-      if (r && typeof r.missionId === "string" && ["overview", "task", "report", "change", "recurrence"].includes(r.kind)
+      if (r && typeof r.missionId === "string" && ["overview", "task", "report", "change", "recurrence", "playbook"].includes(r.kind)
         && (r.itemId === undefined || typeof r.itemId === "string")
         && (r.recurrence === undefined || ["instanceId", "projectID", "scheduleID", "passageID"].every(key => typeof r.recurrence?.[key] === "string"))
-        && (r.kind !== "recurrence" || typeof r.instanceId === "string" && typeof r.projectID === "string")) value.reader = r
+        && (r.kind !== "recurrence" || typeof r.instanceId === "string" && typeof r.projectID === "string")
+        && (r.kind !== "playbook" || Object.prototype.hasOwnProperty.call(missionProfileRoles, r.missionId) && r.recurrence === undefined
+          && (r.taskMode === undefined || r.taskMode === "native" || r.taskMode === "independent"))) value.reader = r
     } catch { /* Ignore malformed saved layout. */ }
     projects.set(storageKey, value)
   }

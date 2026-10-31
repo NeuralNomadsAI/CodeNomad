@@ -29,6 +29,8 @@ import { MissionReaderNumber } from "./mission-reader-number"
 import { MissionOverviewDetails } from "./mission-overview-details"
 import { MissionComparisonReport } from "./mission-comparison-report"
 import { MissionDecisionReport } from "./mission-decision-report"
+import { MissionPlaybookReader } from "./mission-playbook-reader"
+import type { MissionTemplateId } from "../../../server/src/missions/model"
 
 // One bounded page per section, including raw artifacts. Leave shared Markdown/tool budgets alone.
 const READER_PAGE_SIZE = 9_000
@@ -103,7 +105,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const activity = () => target()?.recurrence ? passage()?.activity : missionStore.state(props.instanceId).activity
   const sectionSource = (label: string): MissionPassageSection | undefined => {
     const owner = target()?.recurrence, value = mission(), kind = target()?.kind
-    if (!owner || !value || !kind || kind === "recurrence") return
+    if (!owner || !value || !kind || kind === "recurrence" || kind === "playbook") return
     const section = label === "missions.tracking.recorded" ? "achieved" : label === "missions.tracking.obstacles" ? "obstacles" : label.split(".").at(-1)!
     if (!["summary", "objective", "notes", "evidence", "next", "brief", "artifact", "achieved", "ongoing", "obstacles"].includes(section)) return
     return { scheduleID: owner.scheduleID, passageID: owner.passageID, projectID: owner.projectID,
@@ -124,7 +126,9 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     return value && result && missionReportIsPrevious(value, result)
   }
   const change = () => mission()?.history?.find(change => String(change.revision) === target()?.itemId)
-  const title = () => target()?.kind === "recurrence" ? recurrence()?.title ?? t("missions.recurrence.reader", { id: target()?.missionId ?? "" })
+  const playbook = () => target()?.kind === "playbook" ? target()!.missionId as MissionTemplateId : undefined
+  const title = () => playbook() ? t("missions.playbook.title", { name: t(`missions.control.template.${playbook()}`) })
+    : target()?.kind === "recurrence" ? recurrence()?.title ?? t("missions.recurrence.reader", { id: target()?.missionId ?? "" })
     : target()?.kind === "task" ? task()?.title : target()?.kind === "report"
     ? mission()?.tasks.find(task => task.key === report()?.taskKey)?.title ?? report()?.taskKey
     : t(target()?.kind === "change" ? "missions.control.history.title"
@@ -174,7 +178,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     })
   }
   const sections = createMemo<Array<{ label: string; text: string; raw?: boolean; taskKeys?: string[] }>>(() => {
-    if (target()?.kind === "recurrence") return []
+    if (target()?.kind === "recurrence" || playbook()) return []
     if (target()?.kind === "change") {
       const value = change()
       const taskName = (key: string) => mission()?.tasks.find(task => task.key === key)?.title ?? key
@@ -243,7 +247,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   const wantOwner = `reader:${props.scope}`
   const wantedMission = createMemo(() => {
     const value = target()
-    return value && !value.recurrence && value.kind !== "recurrence" ? value.missionId : undefined
+    return value && !value.recurrence && value.kind !== "recurrence" && value.kind !== "playbook" ? value.missionId : undefined
   })
   createEffect(() => {
     const instanceId = props.instanceId, missionId = wantedMission()
@@ -252,7 +256,7 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   })
   // A restored reader waits for session-list restoration before its first read.
   createEffect(() => {
-    if (sessionListRestored(props.instanceId) && !target()?.recurrence && target()?.kind !== "recurrence") untrack(() => void missionStore.ensure(props.instanceId))
+    if (sessionListRestored(props.instanceId) && !target()?.recurrence && target()?.kind !== "recurrence" && !playbook()) untrack(() => void missionStore.ensure(props.instanceId))
   })
   onMount(() => {
     if (document.activeElement instanceof HTMLElement) returnFocus = document.activeElement
@@ -293,8 +297,9 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
       <Show when={target()?.kind === "report" && report()}>{value =>
         <p>{t(`missions.control.report.outcome.${value().outcome}`)}</p>
       }</Show>
+      <Show when={playbook()}>{id => <MissionPlaybookReader playbook={id()} taskMode={target()?.taskMode ?? "native"} />}</Show>
       <Show when={target()?.kind !== "recurrence" && target()?.kind === "task" && task() && mission()} fallback={
-        <Show when={target()?.kind !== "recurrence"}>
+        <Show when={target()?.kind !== "recurrence" && !playbook()}>
         <Show when={sections().length} fallback={<p>{t(missionStore.state(props.instanceId).status === "loading" ? "missions.control.loading" : "missions.control.reader.missing")}</p>}>
         <For each={sections().map(section => section.label)}>{label => {
           const section = () => sections().find(section => section.label === label)!

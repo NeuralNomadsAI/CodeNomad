@@ -96,6 +96,16 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     if (open) settleMissionEditor(open)
   }
   const openPreferences = () => void openSettings("missions")
+  // Playbook details need no Mission or conversation; the editor stays open beside them. Reading is
+  // not a panel intent: the editor's operation stays current, and the reader change itself fences
+  // in-flight conversation navigation (conversationEpoch).
+  const showPlaybook = (template: MissionMap["template"], taskMode: "native" | "independent") => {
+    batch(() => {
+      showSessionChatFor(props.activeSessionId() ?? "", scope())
+      updateMissionProjectView(scope(), { reader: { missionId: template, kind: "playbook", taskMode } })
+    })
+    props.onRevealConversation?.()
+  }
 
   const conversation = () => ({ session: props.activeSessionId(), parent: activeParentSessionId().get(props.instanceId),
     preview: getSessionPreview(props.activeSessionId() ?? "", scope()), reader: missionProjectView(scope()).reader })
@@ -359,7 +369,7 @@ const MissionControl: Component<MissionControlProps> = (props) => {
           completionCurrent = () => origin() && operation === intent
           return completionCurrent
         }}
-        onCancel={closeEditor} onOpenPreferences={openPreferences}
+        onCancel={closeEditor} onOpenPreferences={openPreferences} onShowPlaybook={showPlaybook}
         onRecurrenceRefresh={() => setRecurrenceRefresh(value => value + 1)}
         onRecurrenceSaved={() => { if (!completionCurrent() || editor() !== action) return; settleMissionEditor(action); setRecurrenceRefresh(value => value + 1) }}
         onSaved={saved => {

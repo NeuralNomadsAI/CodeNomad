@@ -1,0 +1,24 @@
+/* Playbook details reader: description, steps, roles, then the folded English instructions. */
+.mission-playbook-reader { max-width: 90ch; overflow-wrap: anywhere; }
+.mission-playbook-reader h3 { margin-block: var(--space-lg) var(--space-xs); font-size: var(--font-size-base); font-weight: var(--font-weight-semibold); }
+.mission-playbook-note { color: var(--text-secondary); font-size: var(--font-size-sm); }
+.mission-playbook-failure { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-xs); }
+.mission-playbook-steps { margin: 0; padding-inline-start: var(--space-lg); list-style: decimal; }
+.mission-playbook-steps > li { margin-block: var(--space-xs); }
+.mission-playbook-roles { display: grid; gap: var(--space-xs); margin: 0; }
+.mission-playbook-roles > dt { font-weight: var(--font-weight-semibold); }
+.mission-playbook-roles > dd { margin: 0 0 var(--space-sm); color: var(--text-secondary); }
+.mission-playbook-instructions > summary { font-size: var(--font-size-base); }
+/* One fold per recipient, each holding the complete text it receives. */
+.mission-playbook-prompt { margin-block: var(--space-sm); }
+.mission-playbook-prompt > summary { cursor: pointer; font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.mission-playbook-prompt[open] > summary { margin-block-end: var(--space-xs); }
+.mission-playbook-prompt > h4 { margin-block: var(--space-sm) var(--space-xs); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium); }
+.mission-playbook-prompt > pre {
+  margin: 0;
+  padding: var(--space-sm);
+  border: 1px solid var(--border-base);
+  background: var(--surface-inset);
+  font-family: var(--font-family-mono);
+  font-size: var(--font-size-sm);
+}

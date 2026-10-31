@@ -720,6 +720,10 @@ export const serverApi = {
   fetchMission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
     return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}`)
   },
+  /** This backend's playbook definitions, as its Missions prompts are built from them. */
+  fetchMissionPlaybooks(taskMode: import("../../../server/src/missions/task-execution-mode").MissionTaskMode): Promise<import("../../../server/src/missions/playbook-details").MissionPlaybookDetails> {
+    return request(`/api/missions/playbooks?taskMode=${encodeURIComponent(taskMode)}`)
+  },
   /** The same read from the authoritative full snapshot, for admitting an application-authored prompt. */
   fetchMissionAdmission(instanceId: string, missionId: string): Promise<MissionReadResponse> {
     return request<MissionReadResponse>(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/admission`)

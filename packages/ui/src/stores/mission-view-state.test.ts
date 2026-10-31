@@ -15,15 +15,22 @@ Object.assign(globalThis, { window: {
 } })
 const { initializeClientState } = await import("./client-state")
 await initializeClientState()
-const { markMissionsFinishedSeen, missionFinishedSeen } = await import("./mission-view-state")
+const { markMissionsFinishedSeen, missionFinishedSeen, missionProjectView, updateMissionProjectView } = await import("./mission-view-state")
+const playbookReader = { missionId: "debug", kind: "playbook", taskMode: "independent" } as const
 
 if (reload) {
   test("a fresh window keeps every seen completion and the unseen one", () => {
     assert.equal(ids.slice(0, -1).every(id => missionFinishedSeen("project", id)), true)
     assert.equal(missionFinishedSeen("project", ids.at(-1)!), false)
   })
+  test("a fresh window restores a playbook reader and drops one naming no playbook", () => {
+    assert.deepEqual(missionProjectView("project").reader, playbookReader)
+    assert.equal(missionProjectView("unknown-playbook").reader, undefined)
+  })
 } else {
   test("seen completions persist for the most completed Missions a project journal can hold", () => {
+    updateMissionProjectView("project", { reader: playbookReader })
+    updateMissionProjectView("unknown-playbook", { reader: { missionId: "toString", kind: "playbook" } })
     markMissionsFinishedSeen("project", [], ids.slice(0, -1))
     markMissionsFinishedSeen("project", [], ids)
     assert.equal(missionFinishedSeen("project", ids.at(-1)!), false, "a later completion starts unseen")
@@ -32,7 +39,7 @@ if (reload) {
     const { NODE_TEST_CONTEXT: _parent, ...env } = process.env
     const output = execFileSync(process.execPath, ["--conditions=browser", "--import", "tsx", fileURLToPath(import.meta.url)],
       { env: { ...env, MISSION_SEEN_STORAGE: JSON.stringify([...storage]) }, encoding: "utf8" })
-    assert.match(output, /pass 1\b/)
+    assert.match(output, /pass 2\b/)
     assert.match(output, /fail 0\b/)
   })
 }
