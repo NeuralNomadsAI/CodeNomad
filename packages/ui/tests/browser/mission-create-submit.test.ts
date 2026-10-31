@@ -210,6 +210,42 @@ test("a creation submitted before the panel's first list read lands still closes
   } finally { firstRead.resolve(); reply.resolve(); await page.close() }
 })
 
+// The instance's metadata still names the creation's project while the first list read reports
+// another one: that first report is another view, so the creation's completion cannot close it.
+test("a first list read reporting another project than the instance's fences a creation still in flight", async () => {
+  const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
+  const fixture = await setup(page)
+  const firstRead = Promise.withResolvers<void>(), posted = Promise.withResolvers<void>(), reply = Promise.withResolvers<void>()
+  const completionRead = Promise.withResolvers<void>()
+  let reads = 0
+  await page.route("**/api/workspaces/fixture/missions", async route => {
+    if (route.request().method() === "POST") { posted.resolve(); await reply.promise; return route.fallback() }
+    if (route.request().method() !== "GET") return route.fallback()
+    if (reads++ === 0) await firstRead.promise
+    else completionRead.resolve()
+    return route.fulfill({ json: { available: true, projectID: "other-project", missions: [], generatedAt: 1, discardedEvents: 0 } })
+  })
+  try {
+    await page.goto(url)
+    await page.getByRole("button", { name: "Create mission", exact: true }).click()
+    const form = page.locator("form.mission-editor")
+    await form.getByLabel(OBJECTIVE, { exact: true }).fill("Created in the instance's project")
+    await submitReady(page)
+    await form.getByRole("button", { name: "Create", exact: true }).click()
+    await posted.promise
+    firstRead.resolve()
+    await page.waitForFunction(() => window.missionEditorLifetime.state("fixture").projectID === "other-project")
+    reply.resolve()
+    // Either outcome of the completion reads the list again: decide only after that read.
+    await completionRead.promise
+    assert.equal(await page.evaluate(() => Boolean(document.querySelector("form.mission-editor"))), true,
+      "the other project's view is not closed by the original project's completion")
+    assert.equal((await page.evaluate(() => window.missionEditorLifetime.selectedHistory())).includes("msn_created"), false)
+    assert.equal(fixture.creates.length, 1)
+    assert.deepEqual(fixture.errors, [])
+  } finally { firstRead.resolve(); reply.resolve(); await page.close() }
+})
+
 test("a definitive creation rejection releases the request, keeps the draft editable and admits a corrected creation", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 1000 } })
   const fixture = await setup(page)

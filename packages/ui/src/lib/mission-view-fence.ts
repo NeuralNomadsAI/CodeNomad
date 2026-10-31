@@ -1,13 +1,16 @@
 import { createComputed, createMemo, onCleanup } from "solid-js"
 
-/** Counts replacements of a value a view learns from a read, for its fence identity. The first
- * report reveals what the view already showed, and an unknown value (an unavailable or cleared
- * read) keeps the last one: only a different reported value is another view. */
-export function createReportedChanges(value: () => string | undefined): () => number {
-  const reported = createMemo<{ value?: string; changes: number }>(previous => {
-    const next = value()
-    return next === undefined || next === previous.value ? previous
-      : { value: next, changes: previous.changes + (previous.value === undefined ? 0 : 1) }
+/** Counts changes of a value a view learns from a read, for its fence identity. Within one scope
+ * (instance and Location), the first report is the view already shown when it matches the value
+ * the view knew from elsewhere, or when it knew none; one that contradicts it is another view.
+ * An unknown value (an unavailable or cleared read) keeps the last one; a later different report
+ * is another view. */
+export function createReportedChanges(scope: () => string, value: () => string | undefined, known: () => string | undefined): () => number {
+  const reported = createMemo<{ scope?: string; value?: string; changes: number }>(previous => {
+    const where = scope(), next = value(), last = previous.scope === where ? previous.value : undefined
+    if (next === undefined || next === last) return previous.scope === where ? previous : { scope: where, changes: previous.changes }
+    const expected = last ?? known()
+    return { scope: where, value: next, changes: previous.changes + (expected === undefined || expected === next ? 0 : 1) }
   }, { changes: 0 })
   return () => reported().changes
 }

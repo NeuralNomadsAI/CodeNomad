@@ -78,9 +78,11 @@ const MissionControl: Component<MissionControlProps> = (props) => {
     || missionIncludesSession(value.actors, id, family(value.id)) || missionDerivedSessionIncludes(props.instanceId, value, id)
   const directory = () => instances().get(props.instanceId)?.folder
   const projectID = () => instances().get(props.instanceId)?.metadata?.project?.id ?? state().projectID ?? missions()[0]?.projectID
-  // The first list read reports the project this view already shows: an operation captured before
-  // it landed (a creation an agent submits right after opening the panel) still completes here.
-  const listProjectChanges = createReportedChanges(() => state().projectID)
+  // A first list read that reports the instance's project is the view already shown: an operation
+  // captured before it landed (a creation an agent submits right after opening the panel) still
+  // completes here. One that reports another project is another view.
+  const listProjectChanges = createReportedChanges(() => JSON.stringify([props.instanceId, directory()]), () => state().projectID,
+    () => instances().get(props.instanceId)?.metadata?.project?.id)
   const captureView = createMissionViewFence(() => JSON.stringify([props.instanceId, directory(), projectID(), listProjectChanges()]), () => props.isActive?.() ?? true)
   let intent = 0
   const selectMission = (id: string) => { intent++; updateMissionProjectView(scope(), { selected: id, selectedRecurrence: undefined }) }
