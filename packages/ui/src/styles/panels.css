@@ -13,6 +13,7 @@
 @import "./components/new-instance-launcher.css";
 @import "./panels/right-panel.css";
 @import "./panels/status-tokens.css";
+@import "./panels/status-goal.css";
 @import "./panels/mission-control.css";
 @import "./panels/mission-recurrence.css";
 @import "./panels/mission-create.css";

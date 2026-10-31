@@ -9,7 +9,8 @@
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }
 
-.git-change-section-header:hover {
+.git-change-section-header:hover,
+.session-goal-line .window-icon-button:hover:not(:disabled) {
   background-color: var(--surface-secondary);
   background-image: linear-gradient(var(--surface-hover-overlay), var(--surface-hover-overlay));
 }

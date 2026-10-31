@@ -1,0 +1,64 @@
+/* The shown session's /goal on one row above the Status sections
+   (components/session/session-goal-line.tsx). */
+.session-goal-line {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+  padding-block: 0.25rem;
+  padding-inline: 0.75rem 0.5rem;
+  border-bottom: 1px solid var(--border-base);
+  background-color: var(--surface-secondary);
+  color: var(--text-primary);
+  font-size: 0.75rem;
+  line-height: 1rem;
+}
+
+.session-goal-summary {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+
+.session-goal-summary:focus-visible {
+  outline: 1px solid var(--focus-ring-color);
+  outline-offset: 2px;
+}
+
+.session-goal-objective {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-goal-rounds {
+  flex: 0 0 auto;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.session-goal-line .window-icon-button {
+  width: 24px;
+  height: 24px;
+}
+
+.session-goal-line .window-icon-button:disabled {
+  opacity: 0.5;
+  cursor: default;
+  background: transparent;
+}
+
+.session-goal-tooltip {
+  max-width: min(20rem, calc(100vw - 24px));
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+
+.session-goal-tooltip-reason {
+  margin-top: var(--space-xs);
+  color: var(--text-secondary);
+}

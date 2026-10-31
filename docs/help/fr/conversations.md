@@ -83,6 +83,14 @@ C’est une demande au modèle distincte utilisant le contexte de la session. El
 
 Fermer annule la demande annexe en attente sans interrompre la session principale. Quitter la conversation active efface cette fenêtre éphémère ; copiez d’abord ce dont vous avez besoin. Les réponses vides/erreurs apparaissent ici plutôt que comme messages de transcription.
 
+## Continuer jusqu’à un objectif avec /goal {#goal}
+
+1. Envoyez `/goal` suivi d’un objectif, par exemple `/goal Make every test pass`. La session continue de travailler, tour après tour, jusqu’à ce que le relecteur d’objectif d’OpenCode juge l’objectif atteint.
+2. Tant que la conversation a un objectif, **Statut** l’affiche sur une ligne au-dessus de **Tokens** : son état (**Actif**, **En pause** ou **Atteint**), l’objectif et les tours utilisés sur le maximum autorisé. Survolez l’objectif ou donnez-lui le focus pour le lire en entier, avec la raison du dernier changement, par exemple pourquoi l’objectif s’est mis en pause ou a été atteint.
+3. Utilisez **Mettre l'objectif en pause** ou **Reprendre l'objectif** sur cette ligne, ou envoyez `/goal pause` ou `/goal resume`. Utilisez **Effacer l'objectif** ou `/goal clear` pour supprimer l’objectif.
+
+Un objectif appartient à sa conversation : les sous-sessions et les bifurcations commencent sans objectif. OpenCode met aussi un objectif en pause de lui-même quand vous arrêtez la session, quand une exécution échoue, quand il ne progresse plus, à sa limite de tours ou au redémarrage du service ; reprenez-le pour continuer. Mettre en pause ou effacer n’annule pas le travail déjà fait. Une commande qui ne s’applique pas, comme une mise en pause sans objectif actif, affiche le message d’OpenCode. Sans objectif, ou avec un service OpenCode qui ne prend pas en charge les objectifs, la ligne n’apparaît pas.
+
 ## Bifurquer, annuler et récupérer une exécution échouée {#fork-errors}
 
 1. Sur un message, choisissez **Bifurquer après ce message** pour créer une conversation après ce point sans remplacer l’originale.

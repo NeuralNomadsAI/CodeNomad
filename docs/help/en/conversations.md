@@ -83,6 +83,14 @@ This is one separate model request using the session context. It does not run a 
 
 Closing cancels the pending side request without interrupting the main session. Leaving the active conversation clears this ephemeral window; copy anything you need first. Empty/error responses appear here rather than becoming transcript messages.
 
+## Keep working toward a goal with /goal {#goal}
+
+1. Send `/goal` followed by an objective, for example `/goal Make every test pass`. The session keeps working, turn after turn, until OpenCode's goal reviewer decides the objective is met.
+2. While the conversation has a goal, **Status** shows it on one line above **Tokens**: its state (**Active**, **Paused** or **Complete**), the objective and the rounds used out of the allowed maximum. Hover or focus the objective to read it whole, with the reason for the last change, such as why the goal paused or was met.
+3. Use **Pause goal** or **Resume goal** on that line, or send `/goal pause` or `/goal resume`. Use **Clear goal** or `/goal clear` to remove the goal.
+
+A goal belongs to its conversation: subsessions and forks start without one. OpenCode also pauses a goal itself when you stop the session, when a run fails, when it stops making progress, at its round limit or when the service restarts; resume it to continue. Pausing or clearing does not undo work already done. A command that does not apply, such as pausing without an active goal, shows OpenCode's message. Without a goal, or with an OpenCode service that has no goal support, the line does not appear.
+
 ## Fork, undo and recover a failed run {#fork-errors}
 
 1. On a message, choose **Fork after this message** to create a conversation after that point without replacing the original.

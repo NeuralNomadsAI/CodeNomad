@@ -83,6 +83,14 @@ Bu, oturum bağlamını kullanan ayrı bir model isteğidir. Bir araç döngüs�
 
 Kapatmak ana oturumu kesmeden bekleyen yan isteği iptal eder. Etkin konuşmadan ayrılmak bu geçici pencereyi temizler; gerekeni önce kopyalayın. Boş/hatalı yanıtlar konuşma mesajına dönüşmeden burada gösterilir.
 
+## /goal ile bir hedefe doğru çalışmayı sürdürün {#goal}
+
+1. `/goal` ve ardından bir hedef gönderin, örneğin `/goal Make every test pass`. Oturum, OpenCode'un hedef denetçisi hedefe ulaşıldığına karar verene kadar tur tur çalışmayı sürdürür.
+2. Görüşmenin bir hedefi olduğu sürece **Durum**, onu **Tokenlar** üzerinde tek bir satırda gösterir: durumu (**Etkin**, **Duraklatıldı** veya **Ulaşıldı**), hedef ve izin verilen en fazla turdan kullanılan turlar. Hedefin tamamını, son değişikliğin nedeniyle (hedefin neden duraklatıldığı veya neden ulaşıldığı gibi) birlikte okumak için hedefin üzerine gelin veya ona odaklanın.
+3. O satırda **Hedefi duraklat** veya **Hedefi sürdür** öğesini kullanın ya da `/goal pause` veya `/goal resume` gönderin. Hedefi kaldırmak için **Hedefi temizle** öğesini veya `/goal clear` komutunu kullanın.
+
+Bir hedef kendi görüşmesine aittir: alt oturumlar ve çatallar hedefsiz başlar. OpenCode; oturumu durdurduğunuzda, bir çalıştırma başarısız olduğunda, ilerleme durduğunda, tur sınırına ulaşıldığında veya hizmet yeniden başladığında hedefi kendisi de duraklatır; devam etmek için sürdürün. Duraklatmak veya temizlemek, yapılmış işi geri almaz. Etkin hedef yokken duraklatmak gibi geçerli olmayan bir komut OpenCode'un iletisini gösterir. Hedef yoksa veya hedef desteği olmayan bir OpenCode hizmetinde satır görünmez.
+
 ## Başarısız bir çalıştırmayı çatallayın, geri alın ve kurtarın {#fork-errors}
 
 1. Bir mesajda, bu noktadan sonra orijinali değiştirmeden bir konuşma oluşturmak için **Bu mesajdan sonra fork'la** öğesini seçin.

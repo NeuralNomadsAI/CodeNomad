@@ -227,6 +227,9 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node scripts/test-session-aside-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # Status goal line: /goal through the goal route, native commands and the event relay.
+          node --import tsx scripts/test-session-goal-native.mjs $cli
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
           node --conditions=browser --import tsx scripts/test-blank-session-cleanup-native.mjs $cli
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # Recurring schedule journeys (~6.5 min) qualify the latest stable
@@ -377,6 +380,7 @@ jobs:
           packages/ui/src/stores/message-v2/normalizers.test.ts
           packages/ui/src/stores/request-locations.test.ts
           packages/ui/src/stores/shell-store.test.ts
+          packages/ui/src/stores/session-goal-store.test.ts
           packages/ui/src/stores/session-generation-recovery.test.ts
           packages/ui/src/stores/session-outline-persistence.test.ts
           packages/ui/src/stores/session-pagination.test.ts
