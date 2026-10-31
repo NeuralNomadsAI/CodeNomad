@@ -4,7 +4,8 @@ import Fastify from "fastify"
 import { registerMissionPlaybookRoutes } from "./mission-playbooks"
 import type { MissionJsonValue, MissionMap, MissionTask, MissionTemplateId } from "../../missions/model"
 import { missionProfileRoles } from "../../missions/playbook-profiles"
-import { buildActorContext, getMissionRecipe, missionRecipeCatalog } from "../../missions/recipes"
+import { COMPLETED_FINAL_ONLY, COORDINATOR_DECISION_SHAPE, HUMAN_QUESTIONS, WAYFINDER_DECISION_REQUIREMENT, buildActorContext, getMissionRecipe,
+  missionRecipeCatalog } from "../../missions/recipes"
 import type { MissionPlaybookDetails } from "../../missions/playbook-details"
 import type { MissionTaskMode } from "../../missions/task-execution-mode"
 import { nativeAssignment } from "../../missions/tool-result"
@@ -76,6 +77,26 @@ for (const taskMode of modes) {
     }
   })
 }
+
+test("the export carries the question, decision and safety rules where each recipient receives them", async () => {
+  for (const taskMode of modes) {
+    for (const playbook of (await details(taskMode)).playbooks) {
+      const { once, daily } = playbook.prompts.coordinator
+      for (const context of [once, daily]) assert.ok(context.includes(HUMAN_QUESTIONS), `${taskMode} ${playbook.id} coordinator asks only irreducible questions`)
+      assert.ok(once.includes(COMPLETED_FINAL_ONLY) && !daily.includes(COMPLETED_FINAL_ONLY), `${playbook.id}: only one-time missions finish completed only`)
+      assert.equal(/except when the mission objective or notes explicitly ask for that specific action/.test(once), playbook.id !== "custom",
+        `${playbook.id}: every coordinator but Flexible mission's carries the safety boundary`)
+      for (const { assignment } of Object.values(playbook.prompts.roles)) {
+        assert.match(assignment, /Only the mission coordinator asks the human\. Task actors and their helpers never ask the human/)
+        assert.match(assignment, /a task actor also needs its brief to assign that action/)
+      }
+      if (playbook.id !== "wayfinder") continue
+      assert.equal(once.includes(WAYFINDER_DECISION_REQUIREMENT), taskMode === "native")
+      assert.equal(once.includes(COORDINATOR_DECISION_SHAPE), taskMode === "native")
+      assert.equal(/A decision worker reports its decision brief through mission\.report/.test(once), taskMode === "independent")
+    }
+  }
+})
 
 test("whole-text comparison catches an instruction added to or missing from what an actor receives", async () => {
   const exported = await details("independent")
