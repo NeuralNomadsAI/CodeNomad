@@ -4,7 +4,7 @@ import { createHash } from "node:crypto"
 import { lstat, mkdir, mkdtemp, open, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { installDesktopPluginPresence } from "./desktop-plugin-installation"
+import { bundleRepairSchedule, installDesktopPluginPresence } from "./desktop-plugin-installation"
 import { DesktopPluginLifecycle } from "./desktop-plugin-lifecycle"
 import { resolveDesktopPluginPaths } from "./desktop-plugin-paths"
 
@@ -79,6 +79,44 @@ test("a directory link at the payload name is replaced without touching its targ
   const stop = await installDesktopPluginPresence("missions", bundle, paths)
   await stop()
   assert.equal((await lstat(payload)).isFile(), true)
+  assert.deepEqual(await readFile(payload), bundle)
+  assert.equal(await readFile(path.join(target, "sentinel"), "utf8"), "keep")
+})
+
+test("an installer that observed a link never deletes the payload another installer published meanwhile", {
+  skip: process.platform !== "win32" && "only Windows refuses to rename a file over a directory link",
+}, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codenomad-missions-link-race-"))
+  t.after(async () => { delete bundleRepairSchedule.beforeLinkRemoval; await rm(root, { recursive: true, force: true }) })
+  const data = path.join(root, "data")
+  const bundle = Buffer.from("trusted"), hash = createHash("sha256").update(bundle).digest("hex")
+  const directory = path.join(data, "missions"), payload = path.join(directory, `${hash}.mjs`)
+  await mkdir(directory, { recursive: true })
+  const target = path.join(root, "target")
+  await mkdir(target)
+  await writeFile(path.join(target, "sentinel"), "keep")
+  await symlink(target, payload, "junction")
+  // A observes the link and pauses right before removing it; B repairs the name meanwhile.
+  let paused!: () => void, resume!: () => void
+  const pausedA = new Promise<void>((resolve) => { paused = resolve })
+  const resumeA = new Promise<void>((resolve) => { resume = resolve })
+  let calls = 0
+  bundleRepairSchedule.beforeLinkRemoval = async () => {
+    if (++calls !== 1) return
+    paused()
+    await resumeA
+  }
+  const installA = installDesktopPluginPresence("missions", bundle, { config: path.join(root, "config-a"), data })
+  await pausedA
+  const stopB = await installDesktopPluginPresence("missions", bundle, { config: path.join(root, "config-b"), data })
+  const published = await lstat(payload)
+  resume()
+  const stopA = await installA
+  await stopA()
+  await stopB()
+  const after = await lstat(payload)
+  assert.equal(after.isFile(), true)
+  assert.equal(after.ino, published.ino, "the payload B verified was neither deleted nor replaced")
   assert.deepEqual(await readFile(payload), bundle)
   assert.equal(await readFile(path.join(target, "sentinel"), "utf8"), "keep")
 })

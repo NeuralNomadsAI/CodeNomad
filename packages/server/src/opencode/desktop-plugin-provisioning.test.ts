@@ -130,4 +130,15 @@ test("a persistent filesystem failure naming a fresh lease or temporary file eac
   assert.equal(await provisionDesktopPlugins({ connection: { assertCurrent() {} }, logger, reported,
     resolvePaths: async () => ({ config: root }), install: install("elsewhere") }), false)
   assert.equal(calls.at(-1)?.level, "error", "a failure at another destination is a different problem")
+
+  // Directories named by UUIDs are stable destinations: only generated file names are masked.
+  const first = randomUUID(), second = randomUUID()
+  const levels = async (directory: string) => {
+    const before = calls.length
+    await provisionDesktopPlugins({ connection: { assertCurrent() {} }, logger, reported,
+      resolvePaths: async () => ({ config: root }), install: install(directory) })
+    return calls.slice(before).map(call => call.level)
+  }
+  assert.deepEqual([...await levels(first), ...await levels(second), ...await levels(first), ...await levels(second)],
+    ["error", "error", "debug", "debug"])
 })

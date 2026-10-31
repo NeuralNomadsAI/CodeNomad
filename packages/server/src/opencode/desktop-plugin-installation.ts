@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto"
-import { constants } from "node:fs"
-import { lstat, mkdir, open, readFile, rename, rm, rmdir, stat, unlink, writeFile, utimes } from "node:fs/promises"
+import { constants, type Stats } from "node:fs"
+import { lstat, mkdir, open, readFile, rename, rm, rmdir, stat, writeFile, utimes } from "node:fs/promises"
 import path from "node:path"
 import { setTimeout as delay } from "node:timers/promises"
 import { fileURLToPath, pathToFileURL } from "node:url"
@@ -117,33 +117,45 @@ async function verifiedBundle(plugin: string, bundle: Uint8Array, hash: string):
   } finally { await handle.close() }
 }
 
+/** Test-only scheduling seam: runs after a directory link was observed, before it is removed. */
+export const bundleRepairSchedule: { beforeLinkRemoval?: (plugin: string) => Promise<void> } = {}
+
 /**
  * Renames a complete private copy over `plugin`, replacing the name itself, never a
- * link's target. Windows cannot rename a file over a directory link (a junction or a
- * directory symlink), so such a link is removed first, without recursion; an ordinary
- * directory is never removed.
+ * link's target: a rename replaces a file link atomically. Windows cannot rename a file
+ * over a directory link (a junction or a directory symlink); such a link is removed with
+ * `rmdir`, which never removes a regular file another installer published meanwhile,
+ * nor a link's target. When the name changed instead, nothing is replaced: the caller
+ * verifies what is there now. An ordinary directory is never removed.
  */
 async function publishBundle(plugin: string, bundle: Uint8Array) {
-  const named = await lstatOrUndefined(plugin)
-  if (named?.isDirectory()) {
-    throw new Error(`Managed plugin bundle path is a directory, which CodeNomad never removes: ${plugin}. Delete it, then reconnect.`)
+  const refuseDirectory = (named: Stats | undefined) => {
+    if (named?.isDirectory()) {
+      throw new Error(`Managed plugin bundle path is a directory, which CodeNomad never removes: ${plugin}. Delete it, then reconnect.`)
+    }
   }
-  if (named?.isSymbolicLink()) {
-    // unlink removes a file link; rmdir removes only a directory link, never its target.
-    await unlink(plugin).catch(async (error: NodeJS.ErrnoException) => {
-      if (error.code === "ENOENT") return
-      if (error.code !== "EPERM" && error.code !== "EISDIR") throw error
-      const current = await lstatOrUndefined(plugin)
-      if (!current) return
-      // Another process replaced the name meanwhile: leave whatever is there now.
-      if (!current.isSymbolicLink() || current.ino !== named.ino || current.dev !== named.dev) return
-      await rmdir(plugin)
-    })
-  }
+  refuseDirectory(await lstatOrUndefined(plugin))
   const temporary = `${plugin}.${randomUUID()}.tmp`
   try {
     await writeFile(temporary, bundle, { flag: "wx" })
-    await rename(temporary, plugin)
+    try {
+      await rename(temporary, plugin)
+      return
+    } catch (error) {
+      const code = errorCode(error)
+      if (code !== "EPERM" && code !== "EISDIR" && code !== "EACCES") throw error
+      const named = await lstatOrUndefined(plugin)
+      refuseDirectory(named)
+      // Not a link (a locked file, for example): the caller backs off and retries.
+      if (!named?.isSymbolicLink()) throw error
+    }
+    await bundleRepairSchedule.beforeLinkRemoval?.(plugin)
+    const removed = await rmdir(plugin).then(() => true, (error: NodeJS.ErrnoException) => {
+      // The link is gone or became something else: another installer repaired the name.
+      if (error.code === "ENOENT" || error.code === "ENOTDIR" || error.code === "ENOTEMPTY" || error.code === "EEXIST") return false
+      throw error
+    })
+    if (removed) await rename(temporary, plugin)
   } finally { await rm(temporary, { force: true }) }
 }
 

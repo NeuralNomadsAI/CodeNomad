@@ -12,12 +12,13 @@ interface DesktopPluginProvisioning<Paths> {
 const CONSEQUENCE = "Until this succeeds, CodeNomad cannot list questions and permissions that were already waiting, "
   + "and Missions and automation are unavailable. Each new OpenCode connection retries; identical failures are logged once."
 
-// Leases and temporary copies get fresh UUID names on every attempt.
-const GENERATED_ID = /[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}/gi
+// Leases (`<uuid>.lease`) and temporary copies (`<name>.<uuid>.tmp`) get fresh UUIDs on
+// every attempt; a UUID anywhere else, such as a directory name, is a stable destination.
+const GENERATED_ID = /[\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12}(?=\.(?:lease|tmp)(?![^\\/\s'"]*[\\/]))/gi
 
 /**
  * What stays the same while one problem repeats: a filesystem error's code, operation
- * and path without generated names, else its message without them.
+ * and path without generated file names, else its message without them.
  */
 function failureIdentity(error: unknown): string {
   const { code, syscall, path: file } = (error ?? {}) as NodeJS.ErrnoException
