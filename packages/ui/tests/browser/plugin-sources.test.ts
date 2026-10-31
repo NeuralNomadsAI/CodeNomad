@@ -110,6 +110,10 @@ test("an install failure shows its native reference, and a refused spec stays in
     await dialog.getByLabel("Package", { exact: true }).fill("./local")
     await dialog.getByRole("button", { name: "Add", exact: true }).click()
     await dialog.getByText("Local paths cannot be added here. Declare them in the OpenCode configuration file.", { exact: true }).waitFor()
+    await page.evaluate(() => (window as any).fixture.failNextAdd(503, "timeout"))
+    await dialog.getByLabel("Package", { exact: true }).fill("slow-plugin")
+    await dialog.getByRole("button", { name: "Add", exact: true }).click()
+    await dialog.getByText("OpenCode did not answer in time. Nothing was added; try again.", { exact: true }).waitFor()
     await page.keyboard.press("Escape")
     await dialog.waitFor({ state: "hidden" })
 

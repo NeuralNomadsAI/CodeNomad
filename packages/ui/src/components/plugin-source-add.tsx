@@ -104,6 +104,7 @@ function errorKey(error: unknown): string {
     "local-path": "instanceServiceStatus.plugins.sources.errors.localPath",
     "plugin-id": "instanceServiceStatus.plugins.sources.errors.pluginId",
     duplicate: "instanceServiceStatus.plugins.sources.errors.duplicate",
+    timeout: "instanceServiceStatus.plugins.sources.errors.timeout",
   }
   if (error.code && known[error.code]) return known[error.code]!
   if (error.status === 403) return "instanceServiceStatus.plugins.sources.errors.forbidden"

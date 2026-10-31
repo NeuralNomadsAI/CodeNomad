@@ -31,9 +31,12 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   Bitbucket). Specs are printable ASCII only. The check spans both scopes while
   the document lock covers one file, so adds share one server-wide queue (every
   workspace shares the Global document). Each turn has a
-  `PLUGIN_SOURCE_ADD_TIMEOUT_MS` (20 s) deadline: an unresponsive service is
-  refused as `timeout` (503), releases the queue, and its abandoned turn never
-  writes afterwards.
+  `PLUGIN_SOURCE_ADD_TIMEOUT_MS` (20 s) deadline that aborts it: daemon reads
+  receive the signal (`read`, `readConfigDocuments`, `editConfigDocument`) and the
+  commit re-checks it under the lock, so the turn's own outcome is reported and
+  `timeout` (503) means nothing was written. A client that ignores the signal
+  releases the queue after a 5 s grace; the abandoned turn then fails its next
+  signal check, before any write.
 - **Removal** requires, under the document primitive, that `plugins[entryIndex]`
   still declares `target` (a string, or an object's `package`); otherwise `stale`
   (409). The result must parse to the original minus exactly that element.

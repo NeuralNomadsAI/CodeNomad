@@ -27,6 +27,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.conflict": "सेभ गर्दा {scope} कन्फिगरेसन बदलियो। फेरि प्रयास गर्नुहोस्।",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} OpenCode कन्फिगरेसन बिग्रिएको छ। यसलाई बदलिएन।",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "यो स्थानका लागि {scope} कन्फिगरेसन उपलब्ध छैन।",
+  "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode ले समयमै जवाफ दिएन। केही थपिएन; फेरि प्रयास गर्नुहोस्।",
   "instanceServiceStatus.plugins.sources.errors.remove": "{name} लाई {scope} बाट हटाउन सकिएन।",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "देखाइएपछि {scope} कन्फिगरेसनमा {name} बदलियो। रिफ्रेस गरेर फेरि प्रयास गर्नुहोस्।",
 } as const

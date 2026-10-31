@@ -27,6 +27,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.conflict": "Kaydederken {scope} yapılandırması değişti. Yeniden deneyin.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} OpenCode yapılandırması bozuk. Değiştirilmedi.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "{scope} yapılandırması bu konum için kullanılamıyor.",
+  "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode zamanında yanıt vermedi. Hiçbir şey eklenmedi; yeniden deneyin.",
   "instanceServiceStatus.plugins.sources.errors.remove": "{name}, {scope} kapsamından kaldırılamadı.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name}, gösterildikten sonra {scope} yapılandırmasında değişti. Yenileyip yeniden deneyin.",
 } as const

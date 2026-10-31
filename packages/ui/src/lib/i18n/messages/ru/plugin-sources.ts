@@ -27,6 +27,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.conflict": "Конфигурация {scope} изменилась во время сохранения. Попробуйте ещё раз.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "Конфигурация OpenCode {scope} повреждена. Она не изменена.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "Конфигурация {scope} недоступна для этого расположения.",
+  "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode не ответил вовремя. Ничего не добавлено; попробуйте ещё раз.",
   "instanceServiceStatus.plugins.sources.errors.remove": "Не удалось удалить {name} из {scope}.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} изменился в конфигурации {scope} после показа. Обновите и попробуйте ещё раз.",
 } as const

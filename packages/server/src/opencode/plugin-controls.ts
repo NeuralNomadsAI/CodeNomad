@@ -117,11 +117,13 @@ export class PluginControls {
     location: PluginControlLocation,
     scope: PluginControlScope,
     edit: (document: PluginControlDocument) => string,
+    // Aborts the daemon reads and, re-checked under the lock, the commit itself.
+    signal?: AbortSignal,
   ): Promise<void> {
     const directory = location.directory.trim().replace(/[\\/]+$/, "").toLowerCase()
     const key = scope === "global" ? `${workspaceId}\nglobal` : `${workspaceId}\nproject\n${directory}`
     return this.serializeMutation(key, async () => {
-      const context = await this.readContext(workspaceId, location)
+      const context = await this.readContext(workspaceId, location, signal)
       const target = context.targets.find(target => target.scope === scope)
       if (!target) throw new PluginControlsError("OpenCode configuration scope is unavailable", "unavailable")
       const identity = await this.options.workspaceManager.getWorktreeIdentityForPath(workspaceId, context.location.directory)
@@ -132,7 +134,7 @@ export class PluginControls {
         const document = await readPluginControlDocument(target.ioPath, context.fileSystem)
         const updated = edit(document)
         await replacePluginControlDocument(document, updated, {
-          beforeCommit: () => assertCurrentConnection(context.connection),
+          beforeCommit: () => { assertCurrentConnection(context.connection); signal?.throwIfAborted() },
         }, context.fileSystem)
       } catch (error) { throw error instanceof PluginControlDocumentError ? mapDocumentError(error) : error }
       finally { release() }

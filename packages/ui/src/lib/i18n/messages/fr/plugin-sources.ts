@@ -27,6 +27,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.conflict": "La configuration {scope} a changé pendant l'enregistrement. Réessayez.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "La configuration OpenCode {scope} est mal formée. Elle n'a pas été modifiée.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "La configuration {scope} est indisponible pour cet emplacement.",
+  "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode n'a pas répondu à temps. Rien n'a été ajouté ; réessayez.",
   "instanceServiceStatus.plugins.sources.errors.remove": "{name} n'a pas pu être retiré de {scope}.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} a changé dans la configuration {scope} depuis son affichage. Actualisez et réessayez.",
 } as const

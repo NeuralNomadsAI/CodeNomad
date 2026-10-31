@@ -101,7 +101,8 @@ describe("plugin source mutations", () => {
     const f = await fixture()
     try {
       await writeFile(f.globalFile, "{}")
-      const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any, addTimeoutMs: 50 })
+      // This fake client ignores the abort signal: the grace period still releases the queue.
+      const sources = new PluginSources({ documents: f.controls, logger: { info() {} } as any, addTimeoutMs: 50, abortGraceMs: 20 })
       let release!: () => void
       f.state.gate = new Promise<void>(resolve => { release = resolve })
       const stalled = sources.add("w", { location: f.location, scope: "global", spec: "stalled-plugin" })
@@ -114,6 +115,22 @@ describe("plugin source mutations", () => {
       release()
       await new Promise(resolve => setTimeout(resolve, 50))
       assert.deepEqual(parse(await readFile(f.globalFile, "utf8")).plugins, ["next-plugin"], "the abandoned add never writes")
+    } finally { await f.cleanup() }
+  })
+
+  it("re-checks an aborted signal under the lock before the document commit", async () => {
+    const f = await fixture()
+    try {
+      await writeFile(f.globalFile, "{}")
+      const controller = new AbortController()
+      let edited = false
+      await assert.rejects(f.controls.editConfigDocument("w", f.location, "global", document => {
+        edited = true
+        controller.abort()
+        return `${document.text.trim().slice(0, -1)}"plugins": ["late"] }\n`
+      }, controller.signal))
+      assert.equal(edited, true, "the abort lands after the edit, during the commit")
+      assert.equal(await readFile(f.globalFile, "utf8"), "{}")
     } finally { await f.cleanup() }
   })
 

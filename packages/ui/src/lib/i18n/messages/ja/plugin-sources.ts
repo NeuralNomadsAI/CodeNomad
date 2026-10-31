@@ -27,6 +27,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.conflict": "保存中に {scope} の設定が変更されました。もう一度お試しください。",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "{scope} の OpenCode 設定の形式が正しくありません。変更されていません。",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "この場所では {scope} の設定を利用できません。",
+  "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode が時間内に応答しませんでした。何も追加されていません。もう一度お試しください。",
   "instanceServiceStatus.plugins.sources.errors.remove": "{name} を{scope}から削除できませんでした。",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "表示後に {scope} の設定で {name} が変更されました。更新してもう一度お試しください。",
 } as const

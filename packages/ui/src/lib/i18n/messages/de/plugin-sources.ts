@@ -27,6 +27,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.conflict": "Die Konfiguration {scope} hat sich beim Speichern geändert. Versuchen Sie es erneut.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "Die OpenCode-Konfiguration {scope} ist fehlerhaft. Sie wurde nicht geändert.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "Die Konfiguration {scope} ist für diesen Ort nicht verfügbar.",
+  "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode hat nicht rechtzeitig geantwortet. Es wurde nichts hinzugefügt; versuchen Sie es erneut.",
   "instanceServiceStatus.plugins.sources.errors.remove": "{name} konnte nicht aus {scope} entfernt werden.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} hat sich in der Konfiguration {scope} seit der Anzeige geändert. Aktualisieren Sie und versuchen Sie es erneut.",
 } as const

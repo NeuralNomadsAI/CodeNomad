@@ -27,6 +27,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.conflict": "The {scope} configuration changed while saving. Try again.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "The {scope} OpenCode configuration is malformed. It was not changed.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "The {scope} configuration is unavailable for this location.",
+  "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode did not answer in time. Nothing was added; try again.",
   "instanceServiceStatus.plugins.sources.errors.remove": "{name} could not be removed from {scope}.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} changed in the {scope} configuration since it was shown. Refresh and try again.",
 } as const

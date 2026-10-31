@@ -27,6 +27,7 @@ export const pluginSourceMessages = {
   "instanceServiceStatus.plugins.sources.errors.conflict": "תצורת {scope} השתנתה בזמן השמירה. נסו שוב.",
   "instanceServiceStatus.plugins.sources.errors.invalidConfig": "תצורת OpenCode של {scope} פגומה. היא לא שונתה.",
   "instanceServiceStatus.plugins.sources.errors.unavailable": "תצורת {scope} אינה זמינה למיקום הזה.",
+  "instanceServiceStatus.plugins.sources.errors.timeout": "OpenCode לא הגיב בזמן. דבר לא נוסף; נסו שוב.",
   "instanceServiceStatus.plugins.sources.errors.remove": "לא ניתן היה להסיר את {name} מ-{scope}.",
   "instanceServiceStatus.plugins.sources.errors.removeStale": "{name} השתנה בתצורת {scope} מאז שהוצג. רעננו ונסו שוב.",
 } as const
