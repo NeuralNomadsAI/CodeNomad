@@ -66,9 +66,10 @@ revalidate outputs with `contract.ts`.
   scan any value for them.
 - `scripts/fixtures/fake-integration/python-host.py` runs the vendored reference client (`Service.discover`, then
   `advertise_all` or `withdraw_all`) under an audit hook. It reports every written path, every opened or listed path
-  outside the Python installation and the script folder, every name resolution and connection, and any child process, raw socket, `ctypes`, `shutil`
-  or Windows registry use, which escapes the hook and fails the check. Metadata reads (`os.stat`, `os.path.exists`) raise no
-  audit event; the fixture environment keeps the home, profile and XDG folders they resolve inside the fixture.
+  outside the Python installation and the script folder, every name resolution and connection, and any child
+  process, raw socket, `ctypes`, `shutil` or Windows registry use, which escapes the hook and fails the check.
+  Metadata reads (`os.stat`, `os.path.exists`) raise no audit event; the fixture environment keeps the home, profile
+  and XDG folders they resolve inside the fixture.
 - `writeFixtureServiceRegistration(env, registration)` (`scripts/native-product-fixture.mjs`) writes the fixture
   daemon's `service.json` under the fixture's `XDG_STATE_HOME`; `withProductRuntime` passes its `env` to `run`.
 
