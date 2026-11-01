@@ -58,4 +58,5 @@ Start with [README](../README.md) for installation and usage, then
 - [Remote Control](REMOTE_CONTROL.md): OpenTunnel transport, pairing and device admission.
 - [Tauri backports](../packages/tauri-app/vendor/README.md): upstream provenance, validation commands and override removal criteria.
 - [Build guide](../BUILD.md): packaging and platform build commands.
+- [Code signing policy](../CODE_SIGNING.md): Windows SignPath signing in the release workflows, its configuration and approvals.
 - [Contributing](../CONTRIBUTING.md): development and test workflows.
