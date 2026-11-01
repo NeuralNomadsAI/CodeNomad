@@ -312,7 +312,12 @@ test("a changed attention sequence counts nothing read before it as covered, and
   try {
     const notice = f.page.locator(".mission-tree-attention"), failure = f.page.locator(".mission-tree-read")
     const blocked = () => f.page.locator('.mission-tree-node[data-status="needs-input"]').count()
-    const idle = () => f.page.waitForFunction(async () => !(await import("/src/stores/missions.ts")).missionStore.state("fixture").taskReads?.blockages?.loading)
+    const idle = () => f.page.waitForFunction(async () => {
+      const state = (await import("/src/stores/missions.ts")).missionStore.state("fixture")
+      return state.status === "ready" && !state.taskReads?.blockages?.loading
+        && document.querySelectorAll(".mission-tree-node").length === state.missions.find(value => value.id === "blockages")?.tasks.length
+        && !document.querySelector(".mission-tree-attention button:disabled")
+    })
     const showThem = async () => { await notice.getByRole("button", { name: "Show them", exact: true }).click(); await idle() }
     for (let click = 0; click < 10 && await notice.count(); click++) await showThem()
     assert.deepEqual([await notice.count(), await blocked()], [0, 200])
@@ -494,6 +499,49 @@ test("a real reconnect fences a held task continuation and never publishes its r
     assert.deepEqual(await rows(f.page), original)
     assert.ok(reads <= 3, "one bounded revalidation after reconnect, no loop")
     assert.deepEqual(mutations, [])
+    assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.page.context().close() }
+})
+
+for (const recovery of ["fresh", "retry"] as const) test(`a central reader without a mounted panel keeps reconnect ${recovery} distinct from absence`, async () => {
+  const value = paged(), f = await open(value)
+  let entered!: () => void, release!: () => void, sends = 0, allow = recovery === "fresh"
+  const ready = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
+  await f.page.route("**/missions/panel-page", async route => {
+    const request = route.request(), answer = missionTaskFixture(request.url(), request.method(), [value], "project", request.postData())
+    if (++sends === 1) { entered(); await gate }
+    else if (!allow) return route.fulfill({ status: 503, json: {} })
+    return route.fulfill({ json: answer }).catch(() => {})
+  })
+  try {
+    await f.page.evaluate(async () => {
+      ;(window as any).missionFixture.mount(false)
+      ;(await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { reader: { missionId: "paged", kind: "task", itemId: "task-t108" } })
+    })
+    await ready
+    assert.equal(await f.page.locator(".mission-tree").count(), 0)
+    assert.deepEqual(await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.demandedInstanceIds()), ["fixture"])
+    const replacementFailed = !allow ? f.page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions/panel-page") && response.status() === 503) : undefined
+    await f.page.evaluate(async () => {
+      const { serverEvents } = await import("/src/lib/server-events.ts")
+      ;(serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId: "fixture", status: "connected" }])
+    })
+    release()
+    const reader = f.page.locator(".mission-reader")
+    if (!allow) {
+      await replacementFailed
+      await reader.getByRole("button", { name: "Try again", exact: true }).waitFor()
+      assert.equal(await reader.getByText("This mission content is no longer available.", { exact: true }).count(), 0)
+      await f.page.waitForFunction(async () => {
+        const read = (await import("/src/stores/missions.ts")).missionStore.state("fixture").taskReads?.paged
+        return !read?.loading && read?.failure?.reason === "unavailable"
+      })
+      allow = true
+      await reader.getByRole("button", { name: "Try again", exact: true }).click()
+    }
+    await reader.getByRole("heading", { name: "Task t108", exact: true }).waitFor()
+    assert.equal(await reader.getByText("This mission content is no longer available.", { exact: true }).count(), 0)
+    assert.equal(sends, recovery === "fresh" ? 2 : 3, "one owned replacement attempt, then explicit Retry only")
     assert.deepEqual(f.errors, [])
   } finally { release?.(); await f.page.context().close() }
 })

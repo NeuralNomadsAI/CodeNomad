@@ -5,6 +5,8 @@ import type { MissionCleanup, MissionUnavailableReason } from "../../../server/s
 import { MISSION_LIST_MAX_INCLUDE, missionSummary } from "../../../server/src/missions/mission-summary"
 import { MISSION_TASK_PAGE, type MissionTaskPageResponse, type MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
 import { MissionTaskPageReadError, type MissionTaskPageFailure } from "../lib/mission-task-page-read"
+import { assertTaskReadLive, raceTaskRead, TASK_READ_TIMEOUT_MS } from "../lib/mission-task-read-lifetime"
+import type { MissionTaskPageContext } from "../lib/mission-task-page-schema"
 import { answerTaskRequest, coverAttention, createTaskPageCache, failTaskRequest, mergeTaskPages, recordTaskRequest, reorderTaskPageCache, taskRequestsOf,
   type MissionTaskPageCache } from "./mission-task-pages"
 
@@ -41,7 +43,7 @@ export interface MissionTaskAttentionRead { sequence: string; windows: number[] 
  * another order (the list is read again, and the read with it), or not sent (no paged map). */
 export type MissionTaskReadResult = "read" | "failed" | "reordered" | "skipped"
 export type MissionTaskFetch = (instanceId: string, missionId: string, request: MissionTaskRequest,
-  scope: { projectID: string; current(): boolean; signal: AbortSignal }) => Promise<MissionTaskPageResponse>
+  scope: { projectID: string; current(): boolean; signal: AbortSignal; deadline: number; context?: MissionTaskPageContext }) => Promise<MissionTaskPageResponse>
 
 const EMPTY_STATE: MissionViewState = { status: "idle", missions: [], summaries: [] }
 
@@ -50,8 +52,9 @@ export interface MissionStore {
   trackedInstanceIds(): string[]
   demandedInstanceIds(): string[]
   setDemand(instanceId: string, demanded: boolean): void
-  /** `owner` (the selection, a reader) needs `missionId`'s full map; undefined releases it. */
-  want(instanceId: string, owner: string, missionId: string | undefined): void
+  /** `owner` needs this map; undefined releases it. A central taskReader also owns
+   * read-only refresh demand when the panel is unmounted. */
+  want(instanceId: string, owner: string, missionId: string | undefined, taskReader?: boolean): void
   ensure(instanceId: string): Promise<void>
   refresh(instanceId: string): Promise<void>
   /** Reads more of a listed paged map's tasks, a window or tasks by name, into that map. */
@@ -69,6 +72,16 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   const inFlight = new Map<string, Promise<void>>()
   const trailing = new Set<string>()
   const wants = new Map<string, Map<string, string>>()
+  const readerDemand = new Map<string, Set<string>>()
+  const ownerLifetimes = new Map<string, Map<string, { generation: number; active: boolean; controller: AbortController }>>()
+  let ownershipGeneration = 0
+  const acquireOwner = (instanceId: string, missionId: string) => {
+    let lifetimes = ownerLifetimes.get(instanceId)
+    if (!lifetimes) ownerLifetimes.set(instanceId, lifetimes = new Map())
+    let lifetime = lifetimes.get(missionId)
+    if (!lifetime?.active) lifetimes.set(missionId, lifetime = { generation: ++ownershipGeneration, active: true, controller: new AbortController() })
+    return lifetime
+  }
   /** The includes of each instance's read in flight. */
   const requested = new Map<string, readonly string[]>()
   /** Deactivations per instance: a read's own follow-up survives only if none happened while it ran. */
@@ -86,10 +99,10 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   /** Reads further running, per instance and mission. */
   const running = new Map<string, Map<string, number>>()
   /** What the panel shows of reads further: running or failed, and the attention covered. */
-  const pageState = (instanceId: string, missions: readonly MissionPanelMap[]): Pick<MissionViewState, "taskReads" | "taskAttention"> => {
+  const pageState = (instanceId: string, missions: readonly MissionPanelMap[], pending?: { id: string; cache: MissionTaskPageCache }): Pick<MissionViewState, "taskReads" | "taskAttention"> => {
     const reads: Record<string, MissionTaskRead> = {}, attention: Record<string, MissionTaskAttentionRead> = {}
     for (const map of missions) {
-      const cache = pages.get(instanceId)?.get(map.id), count = running.get(instanceId)?.get(map.id) ?? 0
+      const cache = pending?.id === map.id ? pending.cache : pages.get(instanceId)?.get(map.id), count = running.get(instanceId)?.get(map.id) ?? 0
       const failure = cache && [...cache.failures.values()][0]
       if (count || failure) reads[map.id] = { loading: count > 0, ...(failure ? { failure } : {}) }
       if (cache?.attention?.windows.size) attention[map.id] = { sequence: cache.attention.sequence, windows: [...cache.attention.windows.keys()] }
@@ -210,62 +223,87 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
    * else dropped for the next list read, which reads it again in its order (the request is
    * recorded first). */
   function readTasks(instanceId: string, missionId: string, request: MissionTaskRequest): Promise<MissionTaskReadResult> {
+    const deadline = performance.now() + TASK_READ_TIMEOUT_MS
     request = structuredClone(request)
     const key = JSON.stringify([instanceId, missionId]), epoch = epochs.get(instanceId) ?? 0
-    const wasWanted = wanted(instanceId).includes(missionId)
+    // No indefinite unowned reads: callers register selection/reader ownership first.
+    if (![...wants.get(instanceId)?.values() ?? []].includes(missionId)) return Promise.resolve("skipped")
+    const owner = acquireOwner(instanceId, missionId), ownership = owner.generation
     // The same request already waiting in this mission's chain is that read.
-    const signature = JSON.stringify([key, epoch, request])
+    const signature = JSON.stringify([key, epoch, ownership, request])
     const waiting = queuedReads.get(signature)
     if (waiting) return waiting
+    const shownMap = peek(instanceId).missions.find(value => value.id === missionId), order = shownMap?.taskPage?.order
+    if (!shownMap || !order || !fetchTasks) return Promise.resolve("skipped")
+    const owned = pages.get(instanceId) ?? new Map<string, MissionTaskPageCache>()
+    pages.set(instanceId, owned)
+    let cache = owned.get(missionId)
+    if (!cache) owned.set(missionId, cache = createTaskPageCache(order))
+    else if (cache.order !== order) reorderTaskPageCache(cache, order)
+    recordTaskRequest(cache, request)
+    const base = bases.get(instanceId)?.get(missionId) ?? shownMap
+    const attention = base.taskPage?.attention
+    const context: MissionTaskPageContext = { revision: base.revision, order, total: base.taskPage!.total, reports: base.taskPage!.reports,
+      counts: { ...base.taskPage!.counts }, excludedKeys: base.tasks.map(task => task.key),
+      ...(attention ? { attention: { sequence: attention.sequence, omitted: attention.omitted, ...(attention.keys ? { keys: [...attention.keys] } : {}) } } : {}) }
+    let lifetime = taskLifetimes.get(instanceId)
+    if (!lifetime) taskLifetimes.set(instanceId, lifetime = new AbortController())
+    const signal = AbortSignal.any([lifetime.signal, owner.controller.signal, AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))])
+    const current = () => (epochs.get(instanceId) ?? 0) === epoch && pages.get(instanceId)?.get(missionId) === cache
+      && ownerLifetimes.get(instanceId)?.get(missionId) === owner && owner.active && owner.generation === ownership
+      && peek(instanceId).projectID === shownMap.projectID && peek(instanceId).missions.some(map => map.id === missionId && map.taskPage?.order === order)
+    const assertCurrent = () => {
+      if (!current()) throw new DOMException("Obsolete task owner", "AbortError")
+      assertTaskReadLive(signal, deadline)
+    }
+    tally(instanceId, missionId, 1)
+    publishPages(instanceId)
     const run = async (): Promise<MissionTaskReadResult> => {
-      queuedReads.delete(signature)
-      const shownMap = peek(instanceId).missions.find(value => value.id === missionId), order = shownMap?.taskPage?.order
-      if (!shownMap || !order || !fetchTasks || (epochs.get(instanceId) ?? 0) !== epoch
-        || wasWanted && !wanted(instanceId).includes(missionId)) return "skipped"
-      const owned = pages.get(instanceId) ?? new Map<string, MissionTaskPageCache>()
-      pages.set(instanceId, owned)
-      let cache = owned.get(missionId)
-      if (!cache) owned.set(missionId, cache = createTaskPageCache(order))
-      else if (cache.order !== order) reorderTaskPageCache(cache, order)
-      recordTaskRequest(cache, request)
-      let lifetime = taskLifetimes.get(instanceId)
-      if (!lifetime) taskLifetimes.set(instanceId, lifetime = new AbortController())
-      const current = () => (epochs.get(instanceId) ?? 0) === epoch && pages.get(instanceId)?.get(missionId) === cache
-        && peek(instanceId).projectID === shownMap.projectID && peek(instanceId).missions.some(map => map.id === missionId && map.taskPage?.order === order)
-        && (!wasWanted || wanted(instanceId).includes(missionId))
-      tally(instanceId, missionId, 1)
-      publishPages(instanceId)
+      if (queuedReads.get(signature) === next) queuedReads.delete(signature)
+      assertCurrent()
+      const response = await raceTaskRead(fetchTasks(instanceId, missionId, { ...request, order }, { projectID: shownMap.projectID, current, signal, deadline, context }), signal)
+      assertCurrent()
+      if (!response.available) throw new MissionTaskPageReadError("unavailable")
+      if (response.projectID !== shownMap.projectID || response.missionID !== missionId) throw new MissionTaskPageReadError("invalid")
+      const latest = peek(instanceId).missions.find(value => value.id === missionId)
+      if ("refused" in response || response.taskPage.order !== latest?.taskPage?.order || cache.order !== response.taskPage.order) {
+        if (!("refused" in response) || response.refused === "order-changed") void refresh(instanceId)
+        return "reordered"
+      }
+      assertCurrent()
+      const candidate: MissionTaskPageCache = { ...cache, rows: new Map(cache.rows), reports: new Map(cache.reports), reads: new Map(cache.reads),
+        parked: new Map(cache.parked), failures: new Map(cache.failures),
+        ...(cache.attention ? { attention: { ...cache.attention, windows: new Map(cache.attention.windows) } } : {}) }
+      answerTaskRequest(candidate, request, response.revision ?? 0, { ...response, attention: response.taskPage.attention })
+      const base = bases.get(instanceId)?.get(missionId)
+      const missions = peek(instanceId).missions.map(map => map.id === missionId ? mergeTaskPages(base ?? map, candidate) : map)
+      const publication = { ...peek(instanceId), missions, ...pageState(instanceId, missions, { id: missionId, cache: candidate }) }
+      assertCurrent() // after all validation/merge work, before cache or signal publication
+      Object.assign(cache, candidate)
+      update(instanceId, publication)
+      return "read"
+    }
+    const queued = (pageReads.get(key) ?? Promise.resolve()).then(run, run)
+    const next = (async (): Promise<MissionTaskReadResult> => {
       try {
-        const response = await fetchTasks(instanceId, missionId, { ...request, order }, { projectID: shownMap.projectID, current, signal: lifetime.signal })
-        if (!current()) return "skipped"
-        if (!response.available) throw new Error("Missions are unavailable")
-        const latest = peek(instanceId).missions.find(value => value.id === missionId)
-        // Another order, or a map no longer listed: the next list read shows the map in its
-        // order and reads these rows again.
-        if ("refused" in response || response.taskPage.order !== latest?.taskPage?.order || pages.get(instanceId)?.get(missionId) !== cache
-          || cache.order !== response.taskPage.order) {
-          if (!("refused" in response) || response.refused === "order-changed") void refresh(instanceId)
-          return "reordered"
-        }
-        answerTaskRequest(cache, request, response.revision ?? 0, { ...response, attention: response.taskPage.attention })
-        const base = bases.get(instanceId)?.get(missionId)
-        publishPages(instanceId, peek(instanceId).missions.map(map => map.id === missionId ? mergeTaskPages(base ?? map, cache) : map))
-        return "read"
+        return await raceTaskRead(queued, signal)
       } catch (error) {
         // A failure keeps the rows shown and parks the read, its failure shown until a read
         // answers it; an explicit read further or a later revision tries again.
-        if (!current()) return "skipped"
+        if (!current() || error instanceof Error && error.name === "AbortError") return "skipped"
         failTaskRequest(cache, request, shownMap.revision, error instanceof Error ? error.message : String(error),
-          error instanceof MissionTaskPageReadError ? error.reason : undefined)
+          error instanceof MissionTaskPageReadError ? error.reason : error instanceof Error && error.name === "TimeoutError" ? "deadline" : undefined)
         return "failed"
       } finally {
         if ((epochs.get(instanceId) ?? 0) === epoch) { tally(instanceId, missionId, -1); publishPages(instanceId) }
       }
-    }
-    const next = (pageReads.get(key) ?? Promise.resolve()).then(run, run)
+    })()
     pageReads.set(key, next)
     queuedReads.set(signature, next)
-    void next.finally(() => { if (pageReads.get(key) === next) pageReads.delete(key) })
+    void next.finally(() => {
+      if (pageReads.get(key) === next) pageReads.delete(key)
+      if (queuedReads.get(signature) === next) queuedReads.delete(signature)
+    })
     return next
   }
 
@@ -292,7 +330,7 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
   return {
     state,
     trackedInstanceIds: () => [...states().keys()],
-    demandedInstanceIds: () => [...demand],
+    demandedInstanceIds: () => [...new Set([...demand, ...readerDemand.keys()])],
     setDemand: (instanceId, demanded) => {
       if (demanded) demand.add(instanceId)
       else {
@@ -301,13 +339,26 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
         cancellations.set(instanceId, (cancellations.get(instanceId) ?? 0) + 1)
       }
     },
-    want: (instanceId, owner, missionId) => untrack(() => {
+    want: (instanceId, owner, missionId, taskReader = false) => untrack(() => {
       const owners = wants.get(instanceId) ?? new Map<string, string>()
+      const readers = readerDemand.get(instanceId) ?? new Set<string>()
+      if (missionId && taskReader) readers.add(owner)
+      else readers.delete(owner)
+      if (readers.size) readerDemand.set(instanceId, readers)
+      else readerDemand.delete(instanceId)
       if (owners.get(owner) === missionId) return
+      const previous = owners.get(owner)
       if (missionId) owners.set(owner, missionId)
       else owners.delete(owner)
       if (owners.size) wants.set(instanceId, owners)
       else wants.delete(instanceId)
+      if (previous && ![...owners.values()].includes(previous)) {
+        const lifetime = ownerLifetimes.get(instanceId)?.get(previous)
+        if (lifetime) { lifetime.active = false; lifetime.generation = ++ownershipGeneration; lifetime.controller.abort() }
+        ownerLifetimes.get(instanceId)?.delete(previous)
+        if (ownerLifetimes.get(instanceId)?.size === 0) ownerLifetimes.delete(instanceId)
+      }
+      if (missionId) acquireOwner(instanceId, missionId)
       const current = peek(instanceId)
       // Already asked for by the read in flight, or held: nothing to read.
       if (!missionId || current.status === "idle" || requested.get(instanceId)?.includes(missionId)) return
@@ -334,6 +385,8 @@ export function createMissionStore(fetchMissions: (instanceId: string, request: 
       taskLifetimes.get(instanceId)?.abort()
       taskLifetimes.delete(instanceId)
       pages.delete(instanceId)
+      for (const lifetime of ownerLifetimes.get(instanceId)?.values() ?? []) lifetime.controller.abort()
+      ownerLifetimes.delete(instanceId)
       bases.delete(instanceId)
       running.delete(instanceId)
       demand.delete(instanceId)

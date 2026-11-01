@@ -1452,7 +1452,7 @@ test("top-level mission rows expose short one-line titles, semantic states, read
   } finally { await page.close() }
 })
 
-test("native activity stays separate from the plan and refreshes only while Missions is visible", async () => {
+test("native activity stays separate from the plan and refreshes only while a Missions panel or reader owns demand", async () => {
   const page = await browser.newPage({ locale: "en-US", viewport: { width: 900, height: 850 } })
   try {
     await setup(page)
@@ -1496,6 +1496,13 @@ test("native activity stays separate from the plan and refreshes only while Miss
     assert.deepEqual(await states(), ["active", "active", "assigned", "assigned"])
 
     await fixtureCall(page, "mount", false)
+    const readerOwned = requests
+    const readerRefresh = page.waitForResponse(response => response.url().endsWith("/missions"))
+    await fixtureCall(page, "refresh")
+    await readerRefresh
+    assert.ok(requests > readerOwned, "the still-open central reader owns read-only refresh demand")
+    await page.locator(".mission-reader").getByRole("button", { name: "Back to chat", exact: true }).click()
+    await page.locator(".mission-reader").waitFor({ state: "detached" })
     const hidden = requests
     await fixtureCall(page, "refresh")
     await page.waitForTimeout(100)

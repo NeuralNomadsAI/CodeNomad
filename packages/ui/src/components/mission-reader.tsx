@@ -1,4 +1,4 @@
-import { For, Show, batch, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
+import { For, Show, batch, createComputed, createEffect, createMemo, createSignal, onCleanup, onMount, untrack } from "solid-js"
 import { ArrowUpRight, X } from "lucide-solid"
 import { useI18n } from "../lib/i18n"
 import { missionStore } from "../stores/missions"
@@ -186,13 +186,25 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   // A target task or report its compact map's page does not hold is read by ID, once per
   // display order; the read's outcome shows in its place: reading, failed with Retry (which
   // repeats it), or absent once a read answered without it.
+  // Register synchronously before any target-read effect. The central reader owns
+  // refresh demand independently of the panel and its visibility.
+  const wantOwner = `reader:${props.scope}`
+  const wantedMission = createMemo(() => {
+    const value = target()
+    return value && !value.recurrence && value.kind !== "recurrence" && value.kind !== "playbook" ? value.missionId : undefined
+  })
+  createComputed(() => {
+    const instanceId = props.instanceId, missionId = wantedMission()
+    untrack(() => missionStore.want(instanceId, wantOwner, missionId, true))
+    onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
+  })
   const taskPage = () => { const value = mission(); return value && "taskPage" in value ? value.taskPage : undefined }
   const targetRequest = createMemo(() => {
     const value = mission(), current = target(), page = taskPage()
     if (!value || !page || !current?.itemId || current.recurrence) return undefined
     const request: MissionTaskRequest | undefined = current.kind === "task" && !task() ? { ids: [current.itemId] }
       : current.kind === "report" && !report() ? { reportIds: [current.itemId] } : undefined
-    return request && { key: JSON.stringify([props.instanceId, value.id, page.order, request]), missionId: value.id, request }
+    return request && { key: JSON.stringify([props.instanceId, props.scope, value.projectID, value.id, page.order, request]), missionId: value.id, request }
   }, undefined, { equals: (left, right) => left?.key === right?.key })
   const [targetReads, setTargetReads] = createSignal(new Map<string, "loading" | "failed" | "read">())
   const readTarget = (wanted: NonNullable<ReturnType<typeof targetRequest>>) => {
@@ -200,18 +212,34 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
     settle("loading")
     // Another order changes the target's key, whose read follows the list read.
     void missionStore.loadTasks(props.instanceId, wanted.missionId, wanted.request)
-      .then(result => settle(result === "failed" ? "failed" : result === "reordered" ? "loading" : "read"))
+      .then(result => settle(result === "read" ? "read" : "failed"))
   }
   createEffect(() => {
     const wanted = targetRequest()
     if (wanted && !untrack(targetReads).has(wanted.key)) untrack(() => readTarget(wanted))
   })
-  const targetState = () => { const wanted = targetRequest(); return wanted && (targetReads().get(wanted.key) ?? "loading") }
+  const targetState = () => {
+    const wanted = targetRequest()
+    if (wanted) return targetReads().get(wanted.key) ?? "loading"
+    if (!target()?.recurrence && ["task", "report"].includes(target()?.kind ?? "") && !mission()) {
+      const status = missionStore.state(props.instanceId).status
+      if (status === "error" || status === "unavailable") return "failed"
+      if (status === "loading" || status === "idle") return "loading"
+    }
+  }
   const targetChanged = () => {
     const wanted = targetRequest(), failure = wanted && missionStore.state(props.instanceId).taskReads?.[wanted.missionId]?.failure
     return failure?.reason === "changed" && JSON.stringify(failure.request) === JSON.stringify(wanted?.request)
   }
-  const retryTarget = () => { const wanted = targetRequest(); if (wanted) readTarget(wanted) }
+  const retryTarget = async () => {
+    const wanted = targetRequest()
+    if (wanted) { readTarget(wanted); return }
+    const identity = JSON.stringify([props.instanceId, props.scope, target()])
+    await missionStore.refresh(props.instanceId)
+    if (JSON.stringify([props.instanceId, props.scope, target()]) !== identity) return
+    const refreshed = targetRequest()
+    if (refreshed) readTarget(refreshed)
+  }
   const playbook = () => target()?.kind === "playbook" ? target()!.missionId as MissionTemplateId : undefined
   const title = () => playbook() ? t("missions.playbook.title", { name: t(`missions.control.template.${playbook()}`) })
     : target()?.kind === "recurrence" ? recurrence()?.title ?? t("missions.recurrence.reader", { id: target()?.missionId ?? "" })
@@ -381,16 +409,6 @@ export function MissionReader(props: { instanceId: string; scope: string }) {
   })
   // The reader needs its one-time Mission's full map, open or not. Only the
   // instance and target identities drive the registration, never store publications.
-  const wantOwner = `reader:${props.scope}`
-  const wantedMission = createMemo(() => {
-    const value = target()
-    return value && !value.recurrence && value.kind !== "recurrence" && value.kind !== "playbook" ? value.missionId : undefined
-  })
-  createEffect(() => {
-    const instanceId = props.instanceId, missionId = wantedMission()
-    untrack(() => missionStore.want(instanceId, wantOwner, missionId))
-    onCleanup(() => missionStore.want(instanceId, wantOwner, undefined))
-  })
   // A restored reader waits for session-list restoration before its first read.
   createEffect(() => {
     if (sessionListRestored(props.instanceId) && !target()?.recurrence && target()?.kind !== "recurrence" && !playbook()) untrack(() => void missionStore.ensure(props.instanceId))
