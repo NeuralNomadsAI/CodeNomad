@@ -12,7 +12,7 @@
   <zip-file>
     <zip-file path="CodeNomad-Electron-windows-x64-${version}.zip">
       <pe-file path="CodeNomad.exe" product-name="CodeNomad" product-version="${productVersion}">
-        <authenticode-sign description="CodeNomad" description-url="https://github.com/NeuralNomadsAI/CodeNomad" />
+        <authenticode-sign />
       </pe-file>
     </zip-file>
   </zip-file>

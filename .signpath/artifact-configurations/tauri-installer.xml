@@ -8,7 +8,7 @@
   </parameters>
   <zip-file>
     <pe-file path="CodeNomad-Tauri-windows-x64-${version}.exe" product-name="CodeNomad" product-version="${version}">
-      <authenticode-sign description="CodeNomad" description-url="https://github.com/NeuralNomadsAI/CodeNomad" />
+      <authenticode-sign />
     </pe-file>
   </zip-file>
 </artifact-configuration>
