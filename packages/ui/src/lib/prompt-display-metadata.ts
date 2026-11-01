@@ -7,9 +7,9 @@ export interface PromptDisplaySegment {
   kind: PromptDisplaySegmentKind
   text: string
   /**
-   * Pasted text inside a fenced code block: `text` is the whole fenced block
-   * (rendered as one code block) and `content` the lines between its fences,
-   * which the pasted-text summary counts and copies.
+   * Pasted text inside a fenced code block: `content` is the code between the
+   * block's fences, which the pasted-text summary counts and copies, and `text`
+   * that code re-fenced so it renders as one literal code block.
    */
   content?: string
 }
@@ -213,18 +213,40 @@ export function splitPromptDisplaySections(
 interface FencedPasteRegion {
   start: number
   end: number
+  /** The opening fence run (e.g. "```") and its info string. */
+  marker: string
+  info: string
   contentStart: number
   contentEnd: number
 }
 
 // CommonMark fence lines: up to three spaces of indentation, then at least three
-// backticks or tildes; a backtick opener's info string holds no backtick.
+// backticks or tildes; a backtick opener's info string holds no backtick, and a
+// closer is followed only by spaces or tabs.
 const FENCE_LINE_PATTERN = /^ {0,3}(`{3,}|~{3,})(.*)$/
+const CLOSING_FENCE_SUFFIX = /^[ \t]*$/
 
 function readFenceLine(line: string): { marker: string; length: number; info: string } | null {
   const match = FENCE_LINE_PATTERN.exec(line.endsWith("\r") ? line.slice(0, -1) : line)
   if (!match) return null
   return { marker: match[1][0], length: match[1].length, info: match[2] }
+}
+
+/**
+ * Re-fences grouped code for display with a fence longer than any run of its
+ * marker in the code, so pasted fence lines stay literal code. The sent text is
+ * unchanged.
+ */
+function renderFencedCode(marker: string, info: string, code: string): string {
+  const char = marker[0]
+  let longestRun = 0
+  let run = 0
+  for (let index = 0; index < code.length; index += 1) {
+    run = code[index] === char ? run + 1 : 0
+    if (run > longestRun) longestRun = run
+  }
+  const fence = char.repeat(Math.max(marker.length, longestRun + 1))
+  return `${fence}${info}\n${code}\n${fence}`
 }
 
 /**
@@ -235,7 +257,7 @@ function readFenceLine(line: string): { marker: string; length: number; info: st
  */
 function findFencedPasteRegions(text: string, pastedRanges: Array<{ start: number; end: number }>): FencedPasteRegion[] {
   const regions: FencedPasteRegion[] = []
-  let open: { marker: string; length: number; start: number; contentStart: number; hasPaste: boolean } | null = null
+  let open: { marker: string; info: string; start: number; contentStart: number; hasPaste: boolean } | null = null
   let rangeIndex = 0
   let lineStart = 0
 
@@ -248,7 +270,8 @@ function findFencedPasteRegions(text: string, pastedRanges: Array<{ start: numbe
       const rangeEnd = pastedRanges[rangeIndex].end
       rangeIndex += 1
       if (rangeEnd > lineEnd) {
-        lineEnd = text.indexOf("\n", rangeEnd)
+        // A paste ending in a line break ends its line; the next line is untouched.
+        lineEnd = text[rangeEnd - 1] === "\n" ? rangeEnd - 1 : text.indexOf("\n", rangeEnd)
         if (lineEnd < 0) lineEnd = text.length
       }
     }
@@ -259,11 +282,14 @@ function findFencedPasteRegions(text: string, pastedRanges: Array<{ start: numbe
       const fence = readFenceLine(text.slice(lineStart, lineEnd))
       if (!open) {
         if (fence && !(fence.marker === "`" && fence.info.includes("`"))) {
-          open = { marker: fence.marker, length: fence.length, start: lineStart, contentStart: Math.min(lineEnd + 1, text.length), hasPaste: false }
+          open = { marker: fence.marker.repeat(fence.length), info: fence.info, start: lineStart, contentStart: Math.min(lineEnd + 1, text.length), hasPaste: false }
         }
-      } else if (fence && fence.marker === open.marker && fence.length >= open.length && fence.info.trim() === "") {
+      } else if (fence && fence.marker === open.marker[0] && fence.length >= open.marker.length && CLOSING_FENCE_SUFFIX.test(fence.info)) {
         if (open.hasPaste) {
-          regions.push({ start: open.start, end: lineEnd, contentStart: open.contentStart, contentEnd: Math.max(open.contentStart, lineStart - 1) })
+          // The line break before the closer, LF or CRLF, is not code.
+          const contentEnd = lineStart - (text[lineStart - 2] === "\r" ? 2 : 1)
+          regions.push({ start: open.start, end: lineEnd, marker: open.marker, info: open.info,
+            contentStart: open.contentStart, contentEnd: Math.max(open.contentStart, contentEnd) })
         }
         open = null
       }
@@ -275,7 +301,8 @@ function findFencedPasteRegions(text: string, pastedRanges: Array<{ start: numbe
 
   // An unclosed fence runs to the end of the message.
   if (open?.hasPaste) {
-    regions.push({ start: open.start, end: text.length, contentStart: open.contentStart, contentEnd: text.length })
+    regions.push({ start: open.start, end: text.length, marker: open.marker, info: open.info,
+      contentStart: open.contentStart, contentEnd: text.length })
   }
   return regions
 }
@@ -308,11 +335,8 @@ function groupFencedPastedSegments(segments: PromptDisplaySegment[]): PromptDisp
       const region = regions[regionIndex]
       if (region && cursor >= region.start) {
         if (cursor === region.start) {
-          grouped.push({
-            kind: "pasted",
-            text: text.slice(region.start, region.end),
-            content: text.slice(region.contentStart, region.contentEnd),
-          })
+          const content = text.slice(region.contentStart, region.contentEnd)
+          grouped.push({ kind: "pasted", text: renderFencedCode(region.marker, region.info, content), content })
         }
         cursor = Math.min(segmentEnd, region.end)
         if (cursor === region.end) regionIndex += 1

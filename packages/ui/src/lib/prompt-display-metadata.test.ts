@@ -147,7 +147,7 @@ describe("splitPromptDisplaySections", () => {
     const unclosed = sections("Log:\n```\n[pasted #1]", [paste("l1\nl2\nl3\nl4")])
     assert.deepEqual(unclosed.sections, [
       { kind: "inline", text: "Log:\n" },
-      { kind: "pasted", text: "```\nl1\nl2\nl3\nl4", content: "l1\nl2\nl3\nl4" },
+      { kind: "pasted", text: "```\nl1\nl2\nl3\nl4\n```", content: "l1\nl2\nl3\nl4" },
     ])
 
     const fencedPaste = "```\ncode\n```\nprose"
@@ -156,6 +156,44 @@ describe("splitPromptDisplaySections", () => {
       { kind: "inline", text: "Intro\n" },
       { kind: "pasted", text: fencedPaste },
       { kind: "inline", text: "\n```\nafter" },
+    ])
+  })
+
+  it("ends a paste ending in a line break before the closing fence typed after it", () => {
+    const result = sections("```json\n[pasted #1]```\nAfter", [paste("a\nb\nc\nd\n")])
+
+    assert.equal(result.sent, "```json\na\nb\nc\nd\n```\nAfter")
+    assert.deepEqual(result.sections, [
+      { kind: "pasted", text: "```json\na\nb\nc\nd\n```", content: "a\nb\nc\nd" },
+      { kind: "inline", text: "\nAfter" },
+    ])
+  })
+
+  it("re-fences grouped code so fences inside the paste stay literal", () => {
+    const backticks = sections("```\n[pasted #1]\n```", [paste("first\n```\nlast\n`````\nline")])
+    assert.deepEqual(backticks.sections, [{
+      kind: "pasted", text: "``````\nfirst\n```\nlast\n`````\nline\n``````", content: "first\n```\nlast\n`````\nline",
+    }])
+
+    const tildes = sections("~~~~ md\n[pasted #1]\n~~~~", [paste("a\n~~~~~~\nb\n```\nc")])
+    assert.deepEqual(tildes.sections, [{
+      kind: "pasted", text: "~~~~~~~ md\na\n~~~~~~\nb\n```\nc\n~~~~~~~", content: "a\n~~~~~~\nb\n```\nc",
+    }])
+  })
+
+  it("closes fences only on space or tab suffixes", () => {
+    const result = sections("```\n[pasted #1]\n``` \nAfter\n``` \t\nOut", [paste("a\nb\nc\nd")])
+    assert.deepEqual(result.sections, [
+      { kind: "pasted", text: "````\na\nb\nc\nd\n``` \nAfter\n````", content: "a\nb\nc\nd\n``` \nAfter" },
+      { kind: "inline", text: "\nOut" },
+    ])
+  })
+
+  it("excludes the CRLF before the closing fence from the copied code", () => {
+    const result = sections("```json\r\n[pasted #1]\r\n```\r\nAfter", [paste("a\nb\nc\nd")])
+    assert.deepEqual(result.sections, [
+      { kind: "pasted", text: "```json\na\nb\nc\nd\n```", content: "a\nb\nc\nd" },
+      { kind: "inline", text: "\nAfter" },
     ])
   })
 
