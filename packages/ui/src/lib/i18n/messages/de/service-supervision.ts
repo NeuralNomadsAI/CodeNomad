@@ -26,7 +26,7 @@ export const serviceSupervisionMessages = {
   "settings.supervision.cause.guard-failed": "Der Wächter hat einen Fehler gemeldet.",
   "settings.supervision.cause.artifact-missing": "Eine erforderliche Überwachungsdatei fehlt. Zur Reparatur erneut versuchen.",
   "settings.supervision.cause.wsl-forwarding-unavailable": "Windows erreicht den WSL-Dienst nicht. Localhost-Weiterleitung für die gewählte Distribution aktivieren und erneut versuchen.",
-  "settings.supervision.cause.linux-linger-deferred": "Die Überwachung ist aus. Das Zurücksetzen von Linux-Linger wartet auf eine andere Überwachung, die es noch benötigt. Nach deren Deaktivierung erneut versuchen.",
+  "settings.supervision.cause.linux-linger-deferred": "Die Überwachung ist aus. Das Zurücksetzen von Linux-Linger wird aufgeschoben, damit OpenCode weiterläuft. Versuchen Sie es erneut, sobald eine Benutzersitzung geöffnet ist oder die freigegebenen OpenCode-Prozesse beendet sind und ein sicheres Zurücksetzen möglich ist.",
   "settings.supervision.cause.linux-linger-uncertain": "Die Zuständigkeit für Linux-Linger konnte nicht überprüft werden. Vor dem erneuten Versuch die Benutzerdienste prüfen.",
   "settings.supervision.cause.linux-linger-permission-required": "Linux benötigt eine Berechtigung zum Ändern von Linger. Auf dem Ausführungshost autorisieren und erneut versuchen; die angeforderte Auswahl bleibt erhalten.",
   "settings.supervision.cause.linux-linger-disabled": "Linux-Linger ist aus. Erneut versuchen, um alle aktivierten Benutzerdienste vor der Anmeldung zu starten.",

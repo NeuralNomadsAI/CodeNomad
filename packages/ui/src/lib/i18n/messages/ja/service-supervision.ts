@@ -26,7 +26,7 @@ export const serviceSupervisionMessages = {
   "settings.supervision.cause.guard-failed": "監視プロセスが失敗を報告しました。",
   "settings.supervision.cause.artifact-missing": "監視に必要なファイルがありません。再試行して修復してください。",
   "settings.supervision.cause.wsl-forwarding-unavailable": "Windows から WSL サービスに接続できません。選択したディストリビューションの localhost 転送を有効にして再試行してください。",
-  "settings.supervision.cause.linux-linger-deferred": "監視はオフです。他のサービス監視が必要としている間、Linux linger の復元は保留されます。その監視を無効にしてから再試行してください。",
+  "settings.supervision.cause.linux-linger-deferred": "監視はオフです。OpenCode の動作を継続するため、Linux linger の復元を保留しています。ユーザーセッションが開かれるか、監視から解放された OpenCode プロセスが終了し、安全に復元できる状態になってから再試行してください。",
   "settings.supervision.cause.linux-linger-uncertain": "Linux linger の所有関係を検証できませんでした。再試行前にユーザーサービスを確認してください。",
   "settings.supervision.cause.linux-linger-permission-required": "Linux linger の変更には権限が必要です。実行ホストで許可して再試行してください。要求した設定は維持されます。",
   "settings.supervision.cause.linux-linger-disabled": "Linux linger は無効です。再試行すると、有効なすべてのユーザーサービスがログイン前に起動するようになります。",

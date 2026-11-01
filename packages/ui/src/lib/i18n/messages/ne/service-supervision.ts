@@ -26,7 +26,7 @@ export const serviceSupervisionMessages = {
   "settings.supervision.cause.guard-failed": "सुपरभाइजरले त्रुटि रिपोर्ट गर्‍यो।",
   "settings.supervision.cause.artifact-missing": "निगरानीलाई आवश्यक फाइल छैन। मर्मत गर्न फेरि प्रयास गर्नुहोस्।",
   "settings.supervision.cause.wsl-forwarding-unavailable": "Windows ले WSL सेवामा पुग्न सकेन। चयन गरिएको वितरणमा localhost forwarding सक्षम गरेर फेरि प्रयास गर्नुहोस्।",
-  "settings.supervision.cause.linux-linger-deferred": "निगरानी बन्द छ। अर्को निगरानीलाई आवश्यक रहँदासम्म Linux linger पुनर्स्थापना स्थगित छ। त्यो बन्द गरेपछि फेरि प्रयास गर्नुहोस्।",
+  "settings.supervision.cause.linux-linger-deferred": "निगरानी बन्द छ। OpenCode चलिरहोस् भनेर Linux linger पुनर्स्थापना स्थगित छ। प्रयोगकर्ता सत्र खुलेपछि वा निगरानीबाट मुक्त OpenCode प्रक्रियाहरू समाप्त भई सुरक्षित पुनर्स्थापना सम्भव भएपछि फेरि प्रयास गर्नुहोस्।",
   "settings.supervision.cause.linux-linger-uncertain": "Linux linger को स्वामित्व प्रमाणित गर्न सकिएन। फेरि प्रयास गर्नुअघि प्रयोगकर्ता सेवाहरू जाँच्नुहोस्।",
   "settings.supervision.cause.linux-linger-permission-required": "Linux मा linger बदल्न अनुमति चाहिन्छ। कार्यान्वयन होस्टमा अनुमति दिएर फेरि प्रयास गर्नुहोस्; अनुरोध गरिएको प्राथमिकता जोगिन्छ।",
   "settings.supervision.cause.linux-linger-disabled": "Linux linger बन्द छ। सबै सक्षम प्रयोगकर्ता सेवाहरू लगइनअघि सुरु गर्न फेरि प्रयास गर्नुहोस्।",

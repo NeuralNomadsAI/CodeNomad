@@ -3,7 +3,7 @@ import path from "node:path"
 import { z } from "zod"
 import { Service } from "@opencode/client/service"
 import type { ProcessLookup } from "./process-identity"
-import { nativeSupervisionStartPermitted, readSupervisionHealth } from "./service-supervision-health"
+import { nativeSupervisionStartPermitted, readSupervisionSample } from "./service-supervision-health"
 import type { SupervisionManifest } from "./service-supervision-contract"
 import { readNativeScheduleIncarnation } from "../opencode/missions/native-schedule-transport-identity"
 import { supervisionTargetReady } from "./service-supervision-target"
@@ -69,7 +69,7 @@ export async function wslSupervisionPaths(manifest: SupervisionManifest, runtime
 export async function readWslSupervisionSample(manifest: SupervisionManifest, runtime: WslSupervisionRuntime,
   discover: typeof Service.discover = Service.discover, checkTarget = false) {
   const files = await wslSupervisionPaths(manifest, runtime)
-  const health = await readSupervisionHealth(files.registration, { lookup: wslSupervisionLookup(runtime), discover })
+  const { health, identity } = await readSupervisionSample(files.registration, { lookup: wslSupervisionLookup(runtime), discover })
   const permitted = await nativeSupervisionStartPermitted(files.config)
   let forwardingUnavailable = false
   if (health.state === "unhealthy") {
@@ -81,7 +81,7 @@ export async function readWslSupervisionSample(manifest: SupervisionManifest, ru
       "PATH=/usr/bin:/bin", manifest.target.binary, "service", "status"], 3000).catch(() => undefined)
     forwardingUnavailable = native !== undefined && native === readNativeScheduleIncarnation(files.registration).url
   }
-  return { revision: manifest.revision, desired: manifest.desired, binary: manifest.target.binary, health, permitted,
+  return { revision: manifest.revision, desired: manifest.desired, binary: manifest.target.binary, health, identity, permitted,
     ...(checkTarget ? { targetReady: await supervisionTargetReady(manifest.target,
       file => runSupervisionWsl(runtime, ["/usr/bin/wslpath", "-w", file]), { namespace: manifest.namespace,
         run: args => runSupervisionWsl(runtime, ["/usr/bin/env", "-i", ...Object.entries(runtime.environment).map(([key, value]) => `${key}=${value}`),

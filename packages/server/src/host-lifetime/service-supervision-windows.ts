@@ -5,7 +5,7 @@ import { randomUUID } from "node:crypto"
 import { z } from "zod"
 import { ServiceSupervisionStore } from "./service-supervision-store"
 import { SupervisionError, type SupervisionObservation } from "./service-supervision-contract"
-import { readSupervisionHealth } from "./service-supervision-health"
+import { readSupervisionHealth, supervisionReleasePreserved } from "./service-supervision-health"
 import { lookupProcess } from "./process-identity"
 import { privateStorage, type StoragePolicy } from "./storage"
 import { readWindowsRecovery } from "./service-supervision-windows-recovery"
@@ -126,14 +126,13 @@ export class WindowsServiceSupervision {
     if (manifest.revision !== expectedRevision) throw new SupervisionError("conflict")
     if (manifest.desired === "unset") return
     const releasing = manifest.desired === "off" && this.runtime.wsl
-      ? (await readWslSupervisionSample(manifest, this.runtime.wsl)).health : undefined
+      ? await readWslSupervisionSample(manifest, this.runtime.wsl) : undefined
     const tasks = await this.run(manifest.desired === "on" ? "install" : "remove", expectedRevision)
     if (manifest.desired === "on" ? [tasks.main, tasks.recovery].some(state => state === "absent" || state === "Disabled")
       : tasks.main !== "absent" || tasks.recovery !== "absent") throw new SupervisionError("busy")
     if (releasing && this.runtime.wsl) {
-      const after = (await readWslSupervisionSample(manifest, this.runtime.wsl)).health
-      if (!["healthy", "absent"].includes(releasing.state) || !["healthy", "absent"].includes(after.state)
-        || releasing.state === "healthy" && JSON.stringify(releasing) !== JSON.stringify(after)) throw new SupervisionError("busy")
+      const after = await readWslSupervisionSample(manifest, this.runtime.wsl)
+      if (!supervisionReleasePreserved(releasing, after)) throw new SupervisionError("busy")
     }
     // Ack is separately serialized with OFF and Start; a changed intent wins.
     await this.store.acknowledge(expectedRevision)

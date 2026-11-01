@@ -26,7 +26,7 @@ export const serviceSupervisionMessages = {
   "settings.supervision.cause.guard-failed": "监管进程报告失败。",
   "settings.supervision.cause.artifact-missing": "缺少必要的监管文件。请重试以修复。",
   "settings.supervision.cause.wsl-forwarding-unavailable": "Windows 无法连接 WSL 服务。请为所选发行版启用 localhost 转发后重试。",
-  "settings.supervision.cause.linux-linger-deferred": "监管已关闭。其他监管仍需要 Linux linger，恢复操作暂缓。请关闭该监管后重试。",
+  "settings.supervision.cause.linux-linger-deferred": "监管已关闭。为保持 OpenCode 运行，已暂缓恢复 Linux linger 设置。请在用户会话打开，或脱离监管的 OpenCode 进程退出、可以安全恢复后重试。",
   "settings.supervision.cause.linux-linger-uncertain": "无法验证 Linux linger 的归属。重试前请检查用户服务。",
   "settings.supervision.cause.linux-linger-permission-required": "Linux 更改 linger 需要授权。请在执行主机上授权后重试；请求的偏好设置会保留。",
   "settings.supervision.cause.linux-linger-disabled": "Linux linger 已禁用。重试将使所有已启用的用户服务在登录前启动。",

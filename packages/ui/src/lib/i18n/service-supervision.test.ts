@@ -17,3 +17,23 @@ test("every supervision cause, state and placeholder is translated in all ten lo
     }
   }
 })
+
+test("deferred Linux rollback explains both safe retry conditions in every locale", async () => {
+  const conditions = {
+    en: ["user session", "processes have exited", "safe restoration"],
+    fr: ["session utilisateur", "processus OpenCode libérés sont terminés", "restauration sûre"],
+    de: ["Benutzersitzung", "OpenCode-Prozesse beendet", "sicheres Zurücksetzen"],
+    es: ["sesión de usuario", "terminado los procesos OpenCode liberados", "restauración segura"],
+    he: ["הפעלת משתמש", "תהליכי OpenCode ששוחררו הסתיימו", "בבטחה"],
+    ja: ["ユーザーセッション", "OpenCode プロセスが終了", "安全に復元"],
+    ne: ["प्रयोगकर्ता सत्र", "OpenCode प्रक्रियाहरू समाप्त", "सुरक्षित पुनर्स्थापना"],
+    ru: ["пользовательский сеанс", "процессы OpenCode завершились", "безопасным"],
+    tr: ["kullanıcı oturumu", "OpenCode süreçleri sonlandığında", "güvenli geri alma"],
+    "zh-Hans": ["用户会话", "OpenCode 进程退出", "安全恢复"],
+  }
+  for (const [locale, fragments] of Object.entries(conditions)) {
+    const { serviceSupervisionMessages: messages } = await import(`./messages/${locale}/service-supervision.ts`)
+    for (const fragment of fragments)
+      assert.ok(messages["settings.supervision.cause.linux-linger-deferred"].includes(fragment), `${locale}: ${fragment}`)
+  }
+})

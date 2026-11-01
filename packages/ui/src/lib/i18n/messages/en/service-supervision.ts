@@ -26,7 +26,7 @@ export const serviceSupervisionMessages = {
   "settings.supervision.cause.guard-failed": "The supervisor reported a failure.",
   "settings.supervision.cause.artifact-missing": "A required supervision file is missing. Retry to repair it.",
   "settings.supervision.cause.wsl-forwarding-unavailable": "Windows cannot reach the WSL service. Enable localhost forwarding for the selected distribution, then retry.",
-  "settings.supervision.cause.linux-linger-deferred": "Supervision is off. Restoring Linux lingering is deferred while another service supervision still needs it. Retry after disabling that supervision.",
+  "settings.supervision.cause.linux-linger-deferred": "Supervision is off. Restoring Linux lingering is deferred to keep OpenCode running. Retry once a user session is open or the released OpenCode processes have exited, allowing safe restoration.",
   "settings.supervision.cause.linux-linger-uncertain": "Ownership of Linux lingering could not be verified. Review the user's services before retrying.",
   "settings.supervision.cause.linux-linger-permission-required": "Linux requires permission to change lingering. Authorize it on the execution host, then retry; the requested preference is kept.",
   "settings.supervision.cause.linux-linger-disabled": "Linux lingering is disabled. Retry to enable startup before login for all enabled user services.",

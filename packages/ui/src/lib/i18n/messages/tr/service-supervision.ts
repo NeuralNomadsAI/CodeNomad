@@ -26,7 +26,7 @@ export const serviceSupervisionMessages = {
   "settings.supervision.cause.guard-failed": "Gözetmen bir hata bildirdi.",
   "settings.supervision.cause.artifact-missing": "Gözetim için gerekli bir dosya eksik. Onarmak için yeniden deneyin.",
   "settings.supervision.cause.wsl-forwarding-unavailable": "Windows WSL hizmetine erişemiyor. Seçili dağıtım için localhost yönlendirmesini etkinleştirip yeniden deneyin.",
-  "settings.supervision.cause.linux-linger-deferred": "Gözetim kapalı. Başka bir gözetim gerektirdiği sürece Linux linger geri alma ertelenir. O gözetimi kapattıktan sonra yeniden deneyin.",
+  "settings.supervision.cause.linux-linger-deferred": "Gözetim kapalı. OpenCode çalışmaya devam etsin diye Linux linger ayarını geri alma ertelendi. Bir kullanıcı oturumu açıldığında veya gözetimden bırakılan OpenCode süreçleri sonlandığında ve güvenli geri alma mümkün olduğunda yeniden deneyin.",
   "settings.supervision.cause.linux-linger-uncertain": "Linux linger sahipliği doğrulanamadı. Yeniden denemeden önce kullanıcı hizmetlerini inceleyin.",
   "settings.supervision.cause.linux-linger-permission-required": "Linux linger değişikliği için izin gerekiyor. Yürütme sunucusunda izin verip yeniden deneyin; istenen tercih korunur.",
   "settings.supervision.cause.linux-linger-disabled": "Linux linger kapalı. Etkin tüm kullanıcı hizmetlerinin oturum açılmadan başlaması için yeniden deneyin.",

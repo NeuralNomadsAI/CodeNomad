@@ -7,12 +7,14 @@ $ProgressPreference='SilentlyContinue'
 # Only fixed, owned paths are passed by the adapter. The directory has a private
 # DACL; user/profile environment and command strings never enter this script.
 if ($Key -notmatch '^[a-f0-9]{64}$' -or [IO.Path]::GetFileName($Directory) -ne $Key) { exit 1 }
-function ReadJson($file,$limit) {
+function ReadJson($file,$limit,$json=$null) {
   $item=Get-Item -LiteralPath $file -Force
   if ($item.PSIsContainer -or ($item.Attributes -band 1024) -ne 0 -or $item.Length -gt $limit) { throw 'invalid-file' }
   $bytes=[IO.File]::ReadAllBytes($file)
   if ($bytes.Length -gt $limit) { throw 'bounded' }
-  return [Text.Encoding]::UTF8.GetString($bytes)|ConvertFrom-Json
+  $text=[Text.Encoding]::UTF8.GetString($bytes)
+  if ($json) { $json.Value=$text }
+  return $text|ConvertFrom-Json
 }
 function Manifest {
   $m=ReadJson (Join-Path $Directory 'manifest.json') 65536
@@ -151,9 +153,15 @@ try {
     if (!$a -or !$b -or $a.State -in @('Running','Queued')) { exit 0 }
     $last=Join-Path $Directory 'last-start.json'
     if ([IO.File]::Exists($last)) {
-      $record=ReadJson $last 1024
+      $json=$null; $record=ReadJson $last 1024 ([ref]$json)
       if ($record.key -ne $Key) { throw 'cooldown-identity' }
-      if (([datetime]::UtcNow-[datetime]$record.at).TotalSeconds -lt 5) { exit 0 }
+      # Validate the wire value: ConvertFrom-Json can return DateTime and even
+      # normalize invalid offsets. Only the two-field proof written below is accepted.
+      $proof=[regex]::Match($json,'\A\s*\{\s*(?:"key"\s*:\s*"[a-f0-9]{64}"\s*,\s*"at"\s*:\s*"(?<at>[^"\\]*)"|"at"\s*:\s*"(?<at>[^"\\]*)"\s*,\s*"key"\s*:\s*"[a-f0-9]{64}")\s*\}\s*\z')
+      $at=[datetimeoffset]::MinValue
+      if (!$proof.Success -or $proof.Groups['at'].Value -cnotmatch '\A[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,7})?(?:Z|[+-](?:(?:0[0-9]|1[0-3]):[0-5][0-9]|14:00))\z' -or
+        ![datetimeoffset]::TryParse($proof.Groups['at'].Value,[Globalization.CultureInfo]::InvariantCulture,[Globalization.DateTimeStyles]::None,[ref]$at)) { throw 'cooldown-time' }
+      if (([datetimeoffset]::UtcNow-$at.ToUniversalTime()).TotalSeconds -lt 5) { exit 0 }
     }
     # One bounded attempt; the independent OS tick retains the retry obligation.
     $gate=$null

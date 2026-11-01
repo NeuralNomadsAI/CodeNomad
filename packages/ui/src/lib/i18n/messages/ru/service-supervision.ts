@@ -26,7 +26,7 @@ export const serviceSupervisionMessages = {
   "settings.supervision.cause.guard-failed": "Надзиратель сообщил об ошибке.",
   "settings.supervision.cause.artifact-missing": "Отсутствует необходимый файл надзора. Повторите попытку для восстановления.",
   "settings.supervision.cause.wsl-forwarding-unavailable": "Windows не может подключиться к службе WSL. Включите перенаправление localhost для выбранного дистрибутива и повторите попытку.",
-  "settings.supervision.cause.linux-linger-deferred": "Надзор выключен. Восстановление Linux linger отложено, пока он нужен другому надзору. Повторите попытку после его отключения.",
+  "settings.supervision.cause.linux-linger-deferred": "Надзор выключен. Восстановление Linux linger отложено, чтобы OpenCode продолжал работать. Повторите попытку, когда открыт пользовательский сеанс или освобождённые от надзора процессы OpenCode завершились и восстановление стало безопасным.",
   "settings.supervision.cause.linux-linger-uncertain": "Не удалось проверить принадлежность Linux linger. Проверьте службы пользователя перед повторной попыткой.",
   "settings.supervision.cause.linux-linger-permission-required": "Linux требует разрешения для изменения linger. Разрешите на узле выполнения и повторите попытку; запрошенная настройка сохранена.",
   "settings.supervision.cause.linux-linger-disabled": "Linux linger выключен. Повторите попытку, чтобы все включённые службы пользователя запускались до входа.",

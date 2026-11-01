@@ -26,7 +26,7 @@ export const serviceSupervisionMessages = {
   "settings.supervision.cause.guard-failed": "El supervisor notificó un fallo.",
   "settings.supervision.cause.artifact-missing": "Falta un archivo necesario para la supervisión. Reintenta para repararlo.",
   "settings.supervision.cause.wsl-forwarding-unavailable": "Windows no puede conectar con el servicio WSL. Activa el reenvío localhost de la distribución elegida y reintenta.",
-  "settings.supervision.cause.linux-linger-deferred": "La supervisión está desactivada. Restaurar linger espera a que otra supervisión deje de necesitarlo. Reintenta después de desactivarla.",
+  "settings.supervision.cause.linux-linger-deferred": "La supervisión está desactivada. La restauración de linger en Linux se aplaza para mantener OpenCode en funcionamiento. Reintenta cuando haya una sesión de usuario abierta o hayan terminado los procesos OpenCode liberados, permitiendo una restauración segura.",
   "settings.supervision.cause.linux-linger-uncertain": "No se pudo verificar la propiedad de linger. Revisa los servicios del usuario antes de reintentar.",
   "settings.supervision.cause.linux-linger-permission-required": "Linux exige permiso para cambiar linger. Autorízalo en el host de ejecución y reintenta; se conserva la preferencia solicitada.",
   "settings.supervision.cause.linux-linger-disabled": "Linger está desactivado. Reintenta para iniciar antes de la sesión todos los servicios de usuario habilitados.",

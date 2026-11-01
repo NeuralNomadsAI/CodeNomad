@@ -452,6 +452,13 @@ the child without a signal at OFF, allowing its Windows client to exit before ta
 removal. A subsequent ON observes the same surviving service before considering
 another spawn.
 
+WSL OFF acknowledgement compares the exact registration PID/id/URL/version and
+Linux boot/start identity before and after owned task removal, independently of
+HTTP health. A live HTTP 500 or slow service survives removal with the same
+incarnation. A lost, replaced or unreadable identity for an observed live service
+keeps acknowledgement pending for the original OFF and explicit Retry;
+installed-resource and namespace checks remain required.
+
 Health uses exact native registration paths mapped through the selected distro,
 Linux `/proc` boot/start identities and official read-only authenticated discovery
 from Windows. This also verifies localhost forwarding. A live Linux PID with failed

@@ -26,7 +26,7 @@ export const serviceSupervisionMessages = {
   "settings.supervision.cause.guard-failed": "המשגיח דיווח על כשל.",
   "settings.supervision.cause.artifact-missing": "חסר קובץ הדרוש להשגחה. נסה שוב כדי לתקן.",
   "settings.supervision.cause.wsl-forwarding-unavailable": "Windows אינו יכול להגיע לשירות WSL. הפעל העברת localhost בהפצה שנבחרה ונסה שוב.",
-  "settings.supervision.cause.linux-linger-deferred": "ההשגחה כבויה. שחזור linger נדחה כל עוד השגחה אחרת זקוקה לו. נסה שוב לאחר כיבויה.",
+  "settings.supervision.cause.linux-linger-deferred": "ההשגחה כבויה. שחזור linger ב־Linux נדחה כדי להשאיר את OpenCode פועל. נסה שוב כשנפתחת הפעלת משתמש או לאחר שתהליכי OpenCode ששוחררו הסתיימו, כך שניתן לשחזר בבטחה.",
   "settings.supervision.cause.linux-linger-uncertain": "לא ניתן היה לאמת את הבעלות על linger. בדוק את שירותי המשתמש לפני ניסיון נוסף.",
   "settings.supervision.cause.linux-linger-permission-required": "Linux דורש הרשאה לשינוי linger. אשר במארח ההרצה ונסה שוב; ההעדפה המבוקשת נשמרת.",
   "settings.supervision.cause.linux-linger-disabled": "Linger כבוי. נסה שוב כדי להפעיל לפני הכניסה את כל שירותי המשתמש המאופשרים.",
