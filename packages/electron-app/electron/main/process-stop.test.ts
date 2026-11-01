@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { execFile, spawn } from "node:child_process"
 import { EventEmitter, once } from "node:events"
+import { readFile } from "node:fs/promises"
 import { registerHooks } from "node:module"
 import { setTimeout as delay } from "node:timers/promises"
 import test from "node:test"
@@ -187,7 +188,7 @@ test("Linux captures ready processes without per-process helper commands", {
   timeout: 5_000,
 }, async () => {
   const child = spawn(process.execPath, ["-e", `
-    process.title = 'fixture ) space\\n*'
+    process.title = 'fx ) a\\n*'
     setInterval(() => {}, 1000)
     process.stdout.write('ready')
   `], { windowsHide: true, stdio: ["ignore", "pipe", "inherit"] })
@@ -195,6 +196,7 @@ test("Linux captures ready processes without per-process helper commands", {
   try {
     await once(child.stdout!, "data")
     assert.ok(child.pid)
+    assert.equal(await readFile(`/proc/${child.pid}/comm`, "utf8"), "fx ) a\n*\n")
     const identity = await getProcessStartIdentityAsync(child.pid, 1_500)
     assert.ok(identity)
     const tree = await captureProcessTree(child.pid, "linux", (command, args, options) => {
