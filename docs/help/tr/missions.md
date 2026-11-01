@@ -49,6 +49,8 @@ Grafik tamamlanan ve plandan çıkarılan işleri de içerir. Bir görevi planda
 
 Büyük bir plan, görevlerinin bir sayfasını gösterir: bağımlılık sırasına göre ilk 50 görev ve engeller, hatalar ve en yeni sonuçlar gibi ilgi gerektiren en fazla 20 görev. Yüklenmemiş her görev dizisi **N görev gösterilmiyor** olarak görünür; **Daha fazla göster** oradan sonraki 50 görevi yükler. Sayfanın tutabileceğinden fazla görev ilgi beklediğinde **N görev daha ilgi bekliyor** görevin türe göre sayılarını verir, **Göster** de bu görevleri yükler. Kesikli kısa bir çizgi gösterilmeyen bir bağımlılığı veya bağımlı görevi işaretler; bir görevin okuyucusundaki bağımlılık bağlantısı önce o görevi yükler. Bir görevin okuyucusu en yeni sonuçlarını gösterir; **N önceki sonuç gösterilmiyor**, tüm geçmişi yükleyen **Tümünü göster** seçeneğini sunar. Bir görev veya rapor yüklenemediğinde okuyucu bunu belirtir; **Tekrar dene** onu yeniden yükler.
 
+Görev sayfaları yalnızca istenen sayfa tamamen alındıktan sonra görünür. Başarısız veya değişen okuma, son gösterilen görevleri korur. Okuma sırasında liste değişirse **Yenile**, ardından **Tekrar dene** kullanın; sayfa baştan okunur. Eksik bir bölüm, görevin veya isteğin bulunmadığını kanıtlamaz; okumayı yeniden denemek çalışma başlatmaz. Görevler eklentisi sayfayı sağlayamazsa yeniden bağlandıktan veya eklentiyi yeniden yükledikten sonra deneyin.
+
 ### Renkler ve kesintiye uğrayan görevler {#status-colours}
 
 Görev işaretleri, görev düğümü simgeleri ve listenin oku oturum listesinin renklerini kullanır: renk yalnızca şu anda size ihtiyaç duyan şeyi gösterir.

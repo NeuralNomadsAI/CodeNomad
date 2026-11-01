@@ -77,6 +77,7 @@ export const missionsPanelMessages = {
   "missionsPanel.tasks.omitted.other": "{count} tasks not shown",
   "missionsPanel.tasks.showMore": "Show more",
   "missionsPanel.tasks.readFailed": "These tasks could not be read.",
+  "missionsPanel.tasks.readChanged": "The task list changed during this read. Refresh, then try again.",
   "missionsPanel.task.omittedDependencies.one": "{count} dependency not shown",
   "missionsPanel.task.omittedDependencies.other": "{count} dependencies not shown",
   "missionsPanel.task.omittedDependents.one": "{count} dependent task not shown",

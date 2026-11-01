@@ -77,6 +77,7 @@ export const missionsPanelMessages = {
   "missionsPanel.tasks.omitted.other": "{count} 件のタスクを表示していません",
   "missionsPanel.tasks.showMore": "さらに表示",
   "missionsPanel.tasks.readFailed": "これらのタスクを読み込めませんでした。",
+  "missionsPanel.tasks.readChanged": "読み込み中にタスク一覧が変更されました。更新してから再試行してください。",
   "missionsPanel.task.omittedDependencies.one": "{count} 件の依存先を表示していません",
   "missionsPanel.task.omittedDependencies.other": "{count} 件の依存先を表示していません",
   "missionsPanel.task.omittedDependents.one": "{count} 件の後続タスクを表示していません",

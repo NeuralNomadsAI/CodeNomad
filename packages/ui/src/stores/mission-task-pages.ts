@@ -1,6 +1,7 @@
 import type { MissionPanelMap, MissionPanelReport, MissionPanelTask } from "../../../server/src/api-types"
 import { missionBodyOwner, type MissionContentSelector } from "../../../server/src/missions/mission-content-wire"
 import type { MissionTaskAttention, MissionTaskRequest } from "../../../server/src/missions/mission-panel-map"
+import type { MissionTaskPageFailure } from "../lib/mission-task-page-read"
 
 /** A value a page answered, with that page's revision. */
 interface Read<T> { value: T; revision: number }
@@ -21,7 +22,7 @@ export interface MissionTaskPageCache {
   /** Reads that failed, with the map's revision then: parked until a later revision. */
   parked: Map<string, number>
   /** Failed reads by request, kept until a read answers every unit of theirs. */
-  failures: Map<string, { error: string; request: MissionTaskRequest }>
+  failures: Map<string, { error: string; request: MissionTaskRequest; reason?: MissionTaskPageFailure }>
   attention?: MissionTaskAttentionCoverage
 }
 
@@ -43,9 +44,9 @@ export function reorderTaskPageCache(cache: MissionTaskPageCache, order: string)
 
 /** Parks `request` after it failed while the map was at `revision`, and keeps its failure
  * until a read answers it, whatever reads succeed meanwhile. */
-export function failTaskRequest(cache: MissionTaskPageCache, request: MissionTaskRequest, revision: number, error: string): void {
+export function failTaskRequest(cache: MissionTaskPageCache, request: MissionTaskRequest, revision: number, error: string, reason?: MissionTaskPageFailure): void {
   for (const unit of units(request)) cache.parked.set(unit, revision)
-  cache.failures.set(JSON.stringify(units(request)), { error, request })
+  cache.failures.set(JSON.stringify(units(request)), { error, request, ...(reason ? { reason } : {}) })
 }
 
 const units = (request: MissionTaskRequest) => [...request.offset !== undefined ? [`o:${request.offset}`] : [],

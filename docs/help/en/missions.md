@@ -49,6 +49,8 @@ The graph includes completed and retired work. Retiring a task does not itself s
 
 A large plan shows a page of its tasks: the first 50 in dependency order and up to 20 that need attention, such as blockages, failures and the newest results. Each run of tasks not loaded shows as **N tasks not shown**; **Show more** loads the next 50 there. When more tasks need attention than the page holds, **N more tasks need attention** gives the mission's counts by kind, and **Show them** loads those tasks. A dashed stub marks a dependency or a dependent task that is not shown, and a dependency link in a task's reader loads its task first. A task's reader shows its newest results; **N earlier results not shown** offers **Show all**, which loads its whole history. When a task or report cannot be loaded, the reader says so; **Try again** loads it again.
 
+Task pages appear only after the requested page has arrived completely. A failed or changed read keeps the last shown tasks. If the task list changes during a read, use **Refresh**, then **Try again**; retrying starts that page again. A missing part never means a task or request is absent, and retrying a read never starts work. If the Missions plugin cannot provide the page, retry after reconnecting or reloading the plugin.
+
 ### Colours and interrupted missions {#status-colours}
 
 Mission marks, task icons and the list's chevron use the session list's colours: colour shows only what needs you now.

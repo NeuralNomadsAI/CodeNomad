@@ -179,7 +179,7 @@ export function MissionTaskTree(props: {
         <Show when={linked()}><MissionGraph tasks={ordered()} list={list} omitted={omitted()} /></Show>
       </div>
       <Show when={read()?.failure}>{failed =>
-        <p class="mission-tree-read" role="status">{t("missionsPanel.tasks.readFailed")}{" "}
+        <p class="mission-tree-read" role="status">{t(failed().reason === "changed" ? "missionsPanel.tasks.readChanged" : "missionsPanel.tasks.readFailed")}{" "}
           <button type="button" class="window-text-button" onClick={() => readFurther(failed().request)}>{t("missions.control.retry")}</button></p>}</Show>
     </Show>
     </div>

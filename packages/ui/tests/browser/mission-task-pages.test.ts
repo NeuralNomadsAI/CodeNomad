@@ -7,7 +7,7 @@ import type { MissionMap, MissionPanelMap, MissionReport, MissionTask } from "..
 import { compactMissionMap } from "../../../server/src/missions/mission-compact-map"
 import { missionTaskOrder } from "../../../server/src/missions/mission-task-order"
 import { recurrenceSnapshotSchema } from "../../../server/src/missions/recurrence-control-contract"
-import { missionContentFixture, missionTaskFixture, olderPluginMap, panelMissions } from "./mission-content-fixture"
+import { missionContentFixture, missionTaskFixture, missionTaskQuery, olderPluginMap, panelMissions } from "./mission-content-fixture"
 
 // Real MissionControl and reader over a compact map that holds a page of its tasks:
 // the tree's gaps, the graph's omitted edges, reads further and Needs you beyond the page.
@@ -55,10 +55,10 @@ async function open(value: MissionMap, activity: Array<{ sessionId: string; stat
     claimClientStateAccess:async()=>true,loadClientState:async()=>({isPrimary:true,restoreEnabled:true,snapshot:null}),saveClientState:async()=>true}})`)
   await page.route("**/api/**", route => {
     const request = route.request(), path = new URL(request.url()).pathname
-    const tasks = missionTaskFixture(request.url(), request.method(), [current])
+    const tasks = missionTaskFixture(request.url(), request.method(), [current], "project", request.postData())
     if (tasks) {
-      reads.push(decodeURIComponent(new URL(request.url()).search))
-      const failing = typeof failTasks === "function" ? failTasks(new URL(request.url()).searchParams) : failTasks
+      reads.push(decodeURIComponent(missionTaskQuery(request)))
+      const failing = typeof failTasks === "function" ? failTasks(new URLSearchParams(missionTaskQuery(request))) : failTasks
       return failing ? route.fulfill({ status: 503, json: { error: "Temporary task read failure" } }) : route.fulfill({ json: tasks })
     }
     const content = missionContentFixture(request.url(), request.method(), [current])
@@ -312,7 +312,12 @@ test("a changed attention sequence counts nothing read before it as covered, and
   try {
     const notice = f.page.locator(".mission-tree-attention"), failure = f.page.locator(".mission-tree-read")
     const blocked = () => f.page.locator('.mission-tree-node[data-status="needs-input"]').count()
-    const idle = () => f.page.waitForFunction(async () => !(await import("/src/stores/missions.ts")).missionStore.state("fixture").taskReads?.blockages?.loading)
+    const idle = () => f.page.waitForFunction(async () => {
+      const state = (await import("/src/stores/missions.ts")).missionStore.state("fixture")
+      return state.status === "ready" && !state.taskReads?.blockages?.loading
+        && document.querySelectorAll(".mission-tree-node").length === state.missions.find(value => value.id === "blockages")?.tasks.length
+        && !document.querySelector(".mission-tree-attention button:disabled")
+    })
     const showThem = async () => { await notice.getByRole("button", { name: "Show them", exact: true }).click(); await idle() }
     for (let click = 0; click < 10 && await notice.count(); click++) await showThem()
     assert.deepEqual([await notice.count(), await blocked()], [0, 200])
@@ -419,4 +424,124 @@ test("Needs you lists the request of an actor whose task is outside the loaded p
     assert.equal(await page.locator('.mission-tree-node[data-task-key="t118"]').count(), 0, "reading nothing further")
     assert.deepEqual(errors, [])
   } finally { await page.context().close() }
+})
+
+for (const failure of ["network", "changed"] as const) test(`sliced task ${failure} keeps rows/toolbars mounted and retries only from an explicit click`, async () => {
+  const value = paged()
+  value.tasks = value.tasks.map(task => ({ ...task, title: task.title + "\0".repeat(180) }))
+  const f = await open(value)
+  let fail = true
+  const wire: Array<{ task: unknown; cursor?: unknown }> = [], bytes: number[] = [], mutations: string[] = [], oldTasks: string[] = []
+  f.page.on("request", request => {
+    if (/\/missions\/[^/]+\/tasks\?/.test(request.url())) oldTasks.push(request.url())
+    if (request.method() !== "GET" && /\/missions\/[^/]+\/(control|recover)|\/session\/[^/]+\/(prompt|message|synthetic)/.test(request.url())) mutations.push(request.url())
+  })
+  await f.page.route("**/missions/panel-page", route => {
+    const request = route.request(), input = request.postDataJSON()
+    wire.push(input)
+    assert.deepEqual([input.source, input.task.missionID], ["tasks", value.id])
+    assert.equal(request.method(), "POST"); assert.ok(Buffer.byteLength(request.postData()!) <= 16_384)
+    if (fail && input.cursor) return failure === "network" ? route.fulfill({ status: 503, json: { error: "Offline" } })
+      : route.fulfill({ json: { available: false, reason: "changed" } })
+    const answer = missionTaskFixture(request.url(), request.method(), [value], "project", request.postData())
+    bytes.push(Buffer.byteLength(JSON.stringify(answer)))
+    return route.fulfill({ json: answer })
+  })
+  try {
+    const original = await rows(f.page), toolbar = f.page.locator(".mission-action-bar"), element = await toolbar.elementHandle()
+    await f.page.locator(".mission-tree-gap").first().getByRole("button", { name: "Show more", exact: true }).click()
+    const read = f.page.locator(".mission-tree-read")
+    await read.waitFor()
+    assert.match(await read.innerText(), failure === "changed" ? /task list changed/ : /tasks could not be read/)
+    assert.deepEqual(await rows(f.page), original, "no partial row publication")
+    assert.equal(await toolbar.evaluate((current, original) => current === original, element), true)
+    const failedCalls = wire.length
+    await f.refresh(); await settle(f.page)
+    assert.equal(wire.length, failedCalls, "same-revision refresh leaves the failed logical selector parked")
+    fail = false
+    await read.getByRole("button", { name: "Try again", exact: true }).click()
+    await f.page.waitForFunction(() => document.querySelectorAll(".mission-tree-node").length === 101)
+    assert.equal(wire[failedCalls].cursor, undefined, "explicit Retry starts at the first slice")
+    assert.ok(wire.length > failedCalls + 1, "the full logical window needed several bounded transfers")
+    assert.ok(Math.max(...bytes) <= 65_536)
+    assert.deepEqual(oldTasks, []); assert.deepEqual(mutations, []); assert.deepEqual(f.errors, [])
+  } finally { await f.page.context().close() }
+})
+
+test("a real reconnect fences a held task continuation and never publishes its rows or sends a mutation", async () => {
+  const value = paged()
+  value.tasks = value.tasks.map(task => ({ ...task, title: task.title + "\0".repeat(180) }))
+  const f = await open(value)
+  let release!: () => void, entered!: () => void, reconnected = false
+  const gate = new Promise<void>(resolve => { release = resolve }), held = new Promise<void>(resolve => { entered = resolve })
+  let reads = 0
+  const mutations: string[] = []
+  f.page.on("request", request => {
+    if (request.method() !== "GET" && /\/missions\/[^/]+\/(control|recover)|\/session\/[^/]+\/(prompt|message|synthetic)/.test(request.url())) mutations.push(request.url())
+  })
+  await f.page.route("**/missions/panel-page", async route => {
+    reads++
+    if (reconnected) return route.fulfill({ status: 503, json: {} })
+    const request = route.request(), answer = missionTaskFixture(request.url(), request.method(), [value], "project", request.postData())
+    if (request.postDataJSON().cursor) { entered(); await gate }
+    return route.fulfill({ json: answer }).catch(() => {})
+  })
+  try {
+    const original = await rows(f.page)
+    await f.page.locator(".mission-tree-gap").first().getByRole("button", { name: "Show more", exact: true }).click()
+    await held; reconnected = true
+    await f.page.evaluate(async () => {
+      const { serverEvents } = await import("/src/lib/server-events.ts")
+      ;(serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId: "fixture", status: "connected" }])
+    })
+    release()
+    await f.page.locator(".mission-tree-read").waitFor()
+    assert.deepEqual(await rows(f.page), original)
+    assert.ok(reads <= 3, "one bounded revalidation after reconnect, no loop")
+    assert.deepEqual(mutations, [])
+    assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.page.context().close() }
+})
+
+for (const recovery of ["fresh", "retry"] as const) test(`a central reader without a mounted panel keeps reconnect ${recovery} distinct from absence`, async () => {
+  const value = paged(), f = await open(value)
+  let entered!: () => void, release!: () => void, sends = 0, allow = recovery === "fresh"
+  const ready = new Promise<void>(resolve => { entered = resolve }), gate = new Promise<void>(resolve => { release = resolve })
+  await f.page.route("**/missions/panel-page", async route => {
+    const request = route.request(), answer = missionTaskFixture(request.url(), request.method(), [value], "project", request.postData())
+    if (++sends === 1) { entered(); await gate }
+    else if (!allow) return route.fulfill({ status: 503, json: {} })
+    return route.fulfill({ json: answer }).catch(() => {})
+  })
+  try {
+    await f.page.evaluate(async () => {
+      ;(window as any).missionFixture.mount(false)
+      ;(await import("/src/stores/mission-view-state.ts")).updateMissionProjectView("fixture", { reader: { missionId: "paged", kind: "task", itemId: "task-t108" } })
+    })
+    await ready
+    assert.equal(await f.page.locator(".mission-tree").count(), 0)
+    assert.deepEqual(await f.page.evaluate(async () => (await import("/src/stores/missions.ts")).missionStore.demandedInstanceIds()), ["fixture"])
+    const replacementFailed = !allow ? f.page.waitForResponse(response => new URL(response.url()).pathname.endsWith("/missions/panel-page") && response.status() === 503) : undefined
+    await f.page.evaluate(async () => {
+      const { serverEvents } = await import("/src/lib/server-events.ts")
+      ;(serverEvents as any).dispatchBatch([{ type: "instance.eventStatus", instanceId: "fixture", status: "connected" }])
+    })
+    release()
+    const reader = f.page.locator(".mission-reader")
+    if (!allow) {
+      await replacementFailed
+      await reader.getByRole("button", { name: "Try again", exact: true }).waitFor()
+      assert.equal(await reader.getByText("This mission content is no longer available.", { exact: true }).count(), 0)
+      await f.page.waitForFunction(async () => {
+        const read = (await import("/src/stores/missions.ts")).missionStore.state("fixture").taskReads?.paged
+        return !read?.loading && read?.failure?.reason === "unavailable"
+      })
+      allow = true
+      await reader.getByRole("button", { name: "Try again", exact: true }).click()
+    }
+    await reader.getByRole("heading", { name: "Task t108", exact: true }).waitFor()
+    assert.equal(await reader.getByText("This mission content is no longer available.", { exact: true }).count(), 0)
+    assert.equal(sends, recovery === "fresh" ? 2 : 3, "one owned replacement attempt, then explicit Retry only")
+    assert.deepEqual(f.errors, [])
+  } finally { release?.(); await f.page.context().close() }
 })

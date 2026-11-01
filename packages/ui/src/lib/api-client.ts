@@ -85,6 +85,9 @@ import { missionLifecycleRequest, type MissionLifecycleInput } from "./mission-l
 import { authenticatedFetch } from "./auth-recovery"
 import { CODENOMAD_API_BASE as API_BASE } from "./api-base"
 import { backgroundReads } from "./background-read-queue"
+import { readMissionTaskPage } from "./mission-task-page-read"
+import { assertTaskReadLive, TASK_READ_TIMEOUT_MS } from "./mission-task-read-lifetime"
+import type { MissionTaskPageContext } from "./mission-task-page-schema"
 import { DEFERRED_MEDIA_HEADER, DEFERRED_MEDIA_VALUE } from "../../../server/src/opencode/session-media-contract"
 
 const DEFAULT_EVENTS_PATH = typeof window !== "undefined" ? window.__CODENOMAD_EVENTS_URL__ ?? "/api/events" : "/api/events"
@@ -734,14 +737,20 @@ export const serverApi = {
   },
   /** More of one mission's tasks for display: a window of its display order or tasks by name;
    * it shares the secondary read budget. */
-  fetchMissionTasks(instanceId: string, missionId: string, input: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest):
+  fetchMissionTasks(instanceId: string, missionId: string, input: import("../../../server/src/missions/mission-panel-map").MissionTaskRequest,
+    scope: { projectID: string; current(): boolean; signal?: AbortSignal; deadline?: number; context?: MissionTaskPageContext }):
     Promise<import("../../../server/src/missions/mission-panel-map").MissionTaskPageResponse> {
-    const params = new URLSearchParams()
-    if (input.order) params.set("order", input.order)
-    if (input.offset !== undefined) params.set("offset", String(input.offset))
-    if (input.attention !== undefined) params.set("attention", String(input.attention))
-    for (const [name, values] of [["keys", input.keys], ["ids", input.ids], ["reports", input.reportIds]] as const) if (values?.length) params.set(name, values.join(","))
-    return secondaryRead(undefined, () => request(`/api/workspaces/${encodeURIComponent(instanceId)}/missions/${encodeURIComponent(missionId)}/tasks?${params}`))
+    const deadline = Math.min(scope.deadline ?? Infinity, performance.now() + TASK_READ_TIMEOUT_MS)
+    const timeout = AbortSignal.timeout(Math.max(0, Math.ceil(deadline - performance.now())))
+    const signal = scope.signal ? AbortSignal.any([scope.signal, timeout]) : timeout
+    const path = `/api/workspaces/${encodeURIComponent(instanceId)}/missions/panel-page`
+    return readMissionTaskPage(missionId, input, { ...scope, signal, deadline, runTransfer: read => secondaryRead(signal, read), exchange: body => {
+      if (!scope.current()) throw new DOMException("Obsolete task read", "AbortError")
+      assertTaskReadLive(signal, deadline)
+      return authenticatedFetch(API_BASE ? new URL(path, API_BASE).toString() : path, {
+        method: "POST", body, signal, credentials: "include", headers: { "Content-Type": "application/json" },
+      })
+    } })
   },
   /** One slice of a mission body, for display only; it shares the secondary read budget. */
   fetchMissionContent(instanceId: string, missionId: string, input: Omit<import("../../../server/src/missions/mission-content-wire").MissionContentRequest, "missionID">,

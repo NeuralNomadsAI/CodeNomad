@@ -77,6 +77,7 @@ export const missionsPanelMessages = {
   "missionsPanel.tasks.omitted.other": "{count} कार्यहरू देखाइएका छैनन्",
   "missionsPanel.tasks.showMore": "थप देखाउनुहोस्",
   "missionsPanel.tasks.readFailed": "यी कार्यहरू पढ्न सकिएन।",
+  "missionsPanel.tasks.readChanged": "पढ्ने क्रममा कार्य सूची परिवर्तन भयो। ताजा गरेर फेरि प्रयास गर्नुहोस्।",
   "missionsPanel.task.omittedDependencies.one": "{count} निर्भरता देखाइएको छैन",
   "missionsPanel.task.omittedDependencies.other": "{count} निर्भरताहरू देखाइएका छैनन्",
   "missionsPanel.task.omittedDependents.one": "{count} निर्भर कार्य देखाइएको छैन",

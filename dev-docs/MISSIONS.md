@@ -457,8 +457,70 @@ types, byte counter and paginator live in `missions/mission-panel-page.ts`.
   across unrelated revisions. End-of-page means partial discovery until `next` is absent;
   a partial row supplies no absence, deletion or mutation evidence.
 
-The route is opt-in: the UI's selection, marks, requests and cleanup retries keep their
-existing display contract. Consumers adopting this transport key pages by workspace,
+Task reads further in the one-time UI use `panelPage`'s task source through
+`lib/mission-task-page-read.ts`: one explicit window or named read, reconstructed
+under its first digest, fixed row length and required project/mission/revision/damage
+header, and hash-verified before publication. The actual response body is capped at
+64 KiB before JSON parsing, selectors at 16 KiB. Each transfer keeps its secondary
+slot through stream consumption or cancellation, then releases it before the next
+transfer. One 30-second deadline begins at store admission, including the serialized
+mission queue and secondary queue, and covers stream reads, hashing, validation and
+publication. Error cancellation also shares that lifetime: expiry releases its slot,
+observes late cleanup rejection and preserves the original read failure. Consumed bodies
+skip cancellation; a reader's pending cancellation is reused rather than requested twice.
+Async hashing is raced with abort; synchronous work rechecks the monotonic
+deadline before publication. Deadline failure parks a failed read; superseded ownership
+returns `skipped`, which the reader shows with Retry rather than absence.
+Partial text lives only for that operation. A failure parks the selector beside last-good rows; explicit Retry
+starts at the first slice. Changed content has its own refresh/retry message and
+zero automatic restarts or legacy task-route fallback. Connection/plugin events,
+clear and wanted-owner changes fence in-flight slices and publication. The last owner
+releasing a mission aborts its reads and advances its ownership generation; A→B→A
+starts a new lifetime. Concurrent owners share the live lifetime. Unowned task reads
+are skipped. The central reader registers ownership before its first target read and
+keeps read-only refresh demand with the panel unmounted. The task cache keeps per-row
+revisions and existing explicit window/attention coverage.
+
+Task window admission (`mission-task-window-budget.ts`, `mission-task-page-schema.ts`)
+uses limits on a requested window, independent of mission totals:
+
+| Value | Consumer limit |
+| --- | --- |
+| Rows | 50 tasks, 200 top-level reports; one nested late report per task |
+| Logical JSON text | 8,388,608 UTF-16 code units (16 MiB of UTF-16 input, plus hash brackets) |
+| Logical text encoded as UTF-8 | 24 MiB |
+| Cumulative response bodies for one window | 64 MiB |
+| JSON structure before parsing | 262,144 opening-container/comma/colon tokens outside strings; depth 24 |
+| Body descriptors | 64 per owner, names at most 64 units, validated length/digest values |
+
+The 8 Mi-unit text ceiling accommodates current compact row budgets, including 24
+240-unit dependencies per task and maximum-width native bindings, current/late reports
+and body descriptors. Unknown metadata shares these budgets and stays intact when
+accepted. An over-budget window refuses `too-large` before concatenation/hash allocation;
+excess known nested shapes refuse `invalid`. The retained last-good display stays mounted.
+These consumer limits bound renderer admission; a producer still reconstructs, serializes
+and hashes its source for each transfer.
+
+After hash verification, known compact fields and cardinalities, status/report counters,
+named selector membership and report/task relationships are checked before adoption.
+Explicitly named taskless reports and legitimate empty named answers remain valid.
+Attention uses the existing execution-evidence predicate, observed pending notifications
+and business states. A same-revision base map additionally identifies excluded pins and
+its first omitted keys; another revision can change priority without changing task order.
+The consumer validates these observable facts, retaining uncertainty about unseen priority
+positions. Strict refusal alternatives preserve `damaged` and `changed` independently.
+
+UTF-16LE SHA-256 uses WebCrypto where available and pinned `@noble/hashes` SHA-256 on
+supported insecure HTTP web origins. Both paths validate identical bytes, including lone
+surrogates, under the same logical budget and deadline.
+The producer/consumer contract tests live in `packages/ui/tests/contracts/`, outside
+the browser application's source graph, and run in the Missions UI unit CI step.
+
+Picker discovery, selected/wanted maps, activity and cleanup display retain the list
+contract; exact cleanup reconciliation retains its single-mission read. Completion
+seeding uses that complete inventory.
+The recurrence-passage reader keeps its own transport.
+Consumers adopting this transport key pages by workspace,
 project and the complete source selector, retain each page's own revision, and keep a
 failed middle page's cursor for explicit Retry. An unrelated successful page never
 authorizes the failed page's rows. The paginator holds no retained snapshot or polling
