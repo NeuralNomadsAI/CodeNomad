@@ -10,7 +10,7 @@ export const instanceMessages = {
   "panelExtensions.api4.opencode.designAgent": "Añade el agente Design de CodeNomad y sus habilidades de imagen a OpenCode mientras esta extensión esté activada.",
   "panelExtensions.api4.panel.preferences": "Recordar los ajustes propios de este panel.",
   "panelExtensions.api4.bundles.read": "Leer el catálogo de integraciones OpenCode, su estado en este proyecto y las aplicaciones abiertas disponibles.",
-  "panelExtensions.api4.bundles.manage": "Pedirle instalar o actualizar integraciones OpenCode del catálogo, activarlas o desactivarlas, instalar su componente de aplicación y vincular una aplicación abierta a la conversación mostrada. Cada acción requiere su propia confirmación de CodeNomad.",
+  "panelExtensions.api4.bundles.manage": "Pedirle instalar, actualizar o retirar integraciones OpenCode del catálogo, activarlas o desactivarlas, instalar su componente de aplicación y vincular una aplicación abierta a la conversación mostrada. Cada acción requiere su propia confirmación de CodeNomad.",
   "panelExtensions.empty": "No hay extensiones instaladas.",
   "panelExtensions.catalog.title": "Disponibles en línea",
   "panelExtensions.catalog.search": "Buscar extensiones",

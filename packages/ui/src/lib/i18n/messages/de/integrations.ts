@@ -44,6 +44,4 @@ export const integrationMessages = {
   "integrations.outcome.busy": "Diese Unterhaltung ist bereits mit einem anderen offenen Dokument verbunden. Trennen Sie sie zuerst in der Anwendung.",
   "integrations.outcome.gone": "Das Angebot ist abgelaufen. Geben Sie das Dokument erneut frei und öffnen Sie dieses Fenster erneut.",
   "integrations.outcome.refused": "Die Anwendung hat die Verbindung abgelehnt. Prüfen Sie ihre Freigabeeinstellungen und versuchen Sie es erneut.",
-  "integrations.error.attachedSessions": "Entfernen abgelehnt: Diese Integration hat verbundene Unterhaltungen. Trennen Sie diese in der Anwendung und versuchen Sie es erneut.",
-  "integrations.error.unverified": "Entfernen abgelehnt: Verbindungen konnten nicht geprüft werden. Aktivieren Sie die Integration, aktualisieren Sie Plugins und versuchen Sie es erneut.",
 }

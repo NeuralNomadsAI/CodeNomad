@@ -10,7 +10,7 @@ export const instanceMessages = {
   "panelExtensions.api4.opencode.designAgent": "Добавляет в OpenCode агент Design от CodeNomad и его навыки работы с изображениями, пока это расширение включено.",
   "panelExtensions.api4.panel.preferences": "Запоминать собственные настройки этой панели.",
   "panelExtensions.api4.bundles.read": "Читать каталог интеграций OpenCode, их состояние в этом проекте и доступные открытые приложения.",
-  "panelExtensions.api4.bundles.manage": "Запрашивать у вас установку или обновление интеграций OpenCode из каталога, их включение или отключение, установку компонента приложения и привязку открытого приложения к отображаемому разговору. Каждое действие требует отдельного подтверждения CodeNomad.",
+  "panelExtensions.api4.bundles.manage": "Запрашивать у вас установку, обновление или удаление интеграций OpenCode из каталога, их включение или отключение, установку компонента приложения и привязку открытого приложения к отображаемому разговору. Каждое действие требует отдельного подтверждения CodeNomad.",
   "panelExtensions.empty": "Нет установленных расширений.",
   "panelExtensions.catalog.title": "Доступны онлайн",
   "panelExtensions.catalog.search": "Поиск расширений",

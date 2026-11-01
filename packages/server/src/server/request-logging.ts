@@ -4,7 +4,7 @@ import { isHumanAnswerProofPayload } from "../missions/human-answer"
 import { isRecurrenceProofPayload } from "../missions/recurrence-control-proof"
 
 const integrationRoute = "/api/workspaces/:id/integrations"
-const integrationRoutes = new Set([integrationRoute, ...["hosts", "binding", "attach", "detach", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
+const integrationRoutes = new Set([integrationRoute, "/api/workspaces/:id/plugin-sources", ...["hosts", "binding", "attach", "detach", "install-host"].map(action => `${integrationRoute}/:integrationId/${action}`)])
 const bundlesRoute = "/api/panel-extensions/:id/bundles"
 const bundlesRoutes = new Set(["catalog", "state", "hosts", "mount", "manage", "control"].map(method => `${bundlesRoute}/${method}`))
 
@@ -23,6 +23,7 @@ function integrationLogRoute(request: FastifyRequest): string | undefined {
   // rejects them. Only fixed templates may describe this namespace in a log.
   const segments = parts.flatMap(part => part.split(/[\\/;?#]/)).filter(Boolean)
   if (segments[0] === "api" && segments[1] === "panel-extensions" && segments.slice(2).includes("bundles")) return `${bundlesRoute}/*`
+  if (parts[1] === "api" && parts[2] === "workspaces" && parts[4] === "plugin-sources") return "/api/workspaces/:id/plugin-sources/*"
 }
 
 /** Integration diagnostics contain only fixed routes and completion metadata, including rejected requests. */

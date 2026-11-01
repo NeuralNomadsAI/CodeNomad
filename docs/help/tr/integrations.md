@@ -82,7 +82,9 @@ Kabul edilmiş işlemin sonucu veya hatası, hedef konuşma görüntülenirken y
 
 Kayıtlı Q8 meta verileri yalnızca yeniden bağlama önerisi sunar: **Yeniden bağla**, seçicide ancak aynı entegrasyon ve etikete sahip teklif varsa görünür ve açık onay gerektirir. Güncel bağlantının yetkili bilgisi, entegrasyonun oturum bazındaki okumasından gelir.
 
-Eklentiler, katalog kullanılamadığında bir bildirim veya eskiyse alınma zamanı ile son geçerli kataloğu gösterir. Yeniden denemek için yenileyin. Bağlı konuşmalar varsa veya bağlantılar doğrulanamıyorsa kaldırma reddedilir. Uygulamada bağlantıları kesin, gerekirse entegrasyonu etkinleştirin, sonra yenileyip yeniden deneyin.
+Eklentiler, katalog kullanılamadığında bir bildirim veya eskiyse alınma zamanı ile son geçerli kataloğu gösterir. Yeniden denemek için yenileyin.
+
+Kaldırma uyarısı eklentiyi ve tam kapsamı adlandırır. **İptal** odaklanır; **Genel/Proje kapsamından kaldır** 600 ms sonra kullanılabilir ve açık bir işlem gerektirir. Kullanan konuşmalarda kullanılabilirliği ve bağlantıları kesebilir; Genel kapsam diğer projeleri de etkileyebilir. Gönderimden önce iptal, süre dolması veya gezinme hiçbir şeyi değiştirmez. Yalnızca onaylanan bildirim kaldırılır; kurallar, önbellek, uygulama dosyaları ve kayıtlı bağlantı ipuçları korunur. Yapılandırma değişirse yeniden seçim ve onay gerekir. Başarı bildirimin kaldırıldığını belirtir; çalışma durumu OpenCode yeniden yüklemesini izler. Yanıt kaybolursa yeniden denemeden önce yenileyip yapılandırmayı kontrol edin. Yeniden kurulum kullanılabilirliği geri getirebilir; yeniden yükleme veya bağlama gerekebilir ve kesilen işlemler devam etmeyebilir.
 
 ## Uygulama entegrasyonunu kurun veya güncelleyin {#application-installation}
 

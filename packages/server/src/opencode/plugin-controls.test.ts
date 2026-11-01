@@ -45,7 +45,7 @@ describe("OpenCode V2 plugin activation controls", () => {
     const entered = deferred(), release = deferred()
     const edit = f.controls.editConfigDocument("workspace", f.location, "global", async () => {
       entered.resolve(); await release.promise; return '{"plugins":["known"]}'
-    }, undefined, new NativeMutationAdmission(authority))
+    }, undefined, undefined, new NativeMutationAdmission(authority))
     const rejected = assert.rejects(edit, error => error === refusal)
     await entered.promise
     revoked = true

@@ -697,3 +697,133 @@ test("confirmation strings contain only bounded safe display fields", async () =
     assert.equal((await f.prepare({ action: "update", integration: "fixture", scope: "global" })).display.conversation.length, 120)
   } finally { await f.cleanup() }
 })
+
+test("confirmed removal uses the same snapshot revision, exact object entry and shared native writer without status or cleanup", async () => {
+  for (const staleCatalog of [false, true]) {
+    const f = await fixture(true)
+    try {
+      const text = '\uFEFF{\r\n // retained\r\n "plugins": ["unrelated", {"package":' + JSON.stringify(f.spec)
+        + ',"options":{"secret":"PRIVATE_OPTIONS"}}, "-neuralnomads.fixture"], "keep":true\r\n}\r\n'
+      await writeFile(f.file, text)
+      f.state.metadata = { foreign: "PRIVATE_FOREIGN_SESSION", attachment: "PRIVATE_Q8" }
+      f.state.status = { deliberately: "PRIVATE_BROKEN_STATUS" }
+      if (staleCatalog) f.catalog.snapshot = () => ({ state: "stale" as any, catalog: f.state.catalog })
+      const expectedRevision = (await f.controls.read("w", f.context.location)).targets.find(target => target.scope === "global")!.expectedRevision
+      const original = f.sources.remove.bind(f.sources), received: unknown[] = []
+      f.sources.remove = async (...args) => { received.push(args[1]); return original(...args) }
+      const plan = await f.prepare({ action: "remove", integration: "fixture", scope: "global" })
+      assert.ok(!JSON.stringify(plan.display).includes("PRIVATE_")); assert.equal(plan.display.action, "remove")
+      let submitted = 0
+      await f.dispatch(plan, () => { submitted++ })
+      assert.equal(submitted, 1)
+      assert.deepEqual(received, [{ location: f.context.location, scope: "global", target: f.spec, entryIndex: 1, expectedRevision }])
+      assert.deepEqual(parse(await readFile(f.file, "utf8")), { plugins: ["unrelated", "-neuralnomads.fixture"], keep: true })
+      assert.ok((await readFile(f.file, "utf8")).startsWith('\uFEFF{\r\n // retained'))
+      assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, []); assert.deepEqual(f.state.packageUpdates, [])
+      assert.deepEqual(f.state.metadata, { foreign: "PRIVATE_FOREIGN_SESSION", attachment: "PRIVATE_Q8" })
+      // A still-loaded runtime and the watcher's stale native declaration never masquerade as removal authority.
+      assert.equal(f.state.runtime.length, 1); assert.deepEqual(await plan.readTarget(f.abort.signal), plan.target)
+      assert.ok(f.catalogReads.every(options => (options as any)?.refresh === false))
+    } finally { await f.cleanup() }
+  }
+})
+
+test("removal refuses absent, ambiguous, multiple, inherited, inline and nonpreferred declarations, never first-candidate guessing", async () => {
+  for (const variant of ["absent", "ambiguous", "multiple", "inherited", "inline", "nonpreferred", "unavailable"] as const) {
+    const f = await fixture(true)
+    try {
+      if (variant === "absent") await writeFile(f.file, '{"plugins":[]}')
+      else if (variant === "multiple") await writeFile(f.file, JSON.stringify({ plugins: [f.spec, f.spec + "0"] }))
+      else if (variant === "nonpreferred") await splitGlobalDocuments(f)
+      else if (variant === "ambiguous") f.state.runtime[0].id = "foreign.plugin"
+      else if (variant === "inline") {
+        await writeFile(f.file, '{"plugins":[]}')
+        f.state.configEntries = [{ type: "directory", path: f.global }, { type: "document", info: { plugins: [f.spec] } }]
+      } else if (variant === "inherited") {
+        const file = path.join(f.root, "opencode.jsonc")
+        await writeFile(file, JSON.stringify({ plugins: [f.spec] })); await writeFile(f.file, '{"plugins":[]}')
+        f.state.documentPaths.push(file)
+      } else f.catalog.snapshot = () => ({ state: "unavailable" as any, catalog: f.state.catalog })
+      const before = await readFile(f.file, "utf8")
+      await assert.rejects(f.prepare({ action: "remove", integration: "fixture", scope: "global" }), variant)
+      assert.equal(await readFile(f.file, "utf8"), before)
+      assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, [])
+    } finally { await f.cleanup() }
+  }
+})
+
+test("removal plans reject full-entry/options, bytes, mode, destination, catalogue/range, identity and source-index drift before submission", async () => {
+  for (const change of ["options", "bytes", "mode", "destination", "range", "source", "index", "session", "location", "connection", "revoke"] as const) {
+    const f = await fixture(true), mode = (await stat(f.file)).mode & 0o777
+    try {
+      await writeFile(f.file, JSON.stringify({ plugins: [{ package: f.spec, options: { secret: "PRIVATE_BEFORE" } }] }))
+      const plan = await f.prepare({ action: "remove", integration: "fixture", scope: "global" })
+      if (change === "options") await writeFile(f.file, JSON.stringify({ plugins: [{ package: f.spec, options: { secret: "PRIVATE_AFTER" } }] }))
+      else if (change === "bytes") await writeFile(f.file, (await readFile(f.file, "utf8")) + "\n")
+      else if (change === "mode") await chmod(f.file, mode ^ 0o200)
+      else if (change === "destination") f.state.globalDirectory = f.project
+      else if (change === "range") f.state.catalog.integrations[0]!.range = "^0.2"
+      else if (change === "source") await writeFile(f.file, JSON.stringify({ plugins: [f.spec + "0"] }))
+      else if (change === "index") await writeFile(f.file, JSON.stringify({ plugins: ["unrelated", f.spec] }))
+      else if (change === "session") f.state.session = "ses_replaced"
+      else if (change === "location") f.state.directory = f.global
+      else if (change === "connection") f.state.current = false
+      else f.abort.abort()
+      const before = await readFile(f.file, "utf8"); let submitted = 0
+      await assert.rejects(f.dispatch(plan, () => { submitted++ }), change)
+      assert.equal(submitted, 0); assert.equal(await readFile(f.file, "utf8"), before)
+      assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, [])
+    } finally { await chmod(f.file, mode); await f.cleanup() }
+  }
+})
+
+test("removal revalidates after the real config queue wait and preserves postdispatch uncertainty without replay", async () => {
+  for (const stage of ["queue", "prepared", "postdispatch"] as const) {
+    const f = await fixture(true), entered = deferred(), release = deferred()
+    try {
+      const plan = await f.prepare({ action: "remove", integration: "fixture", scope: "global" })
+      let submitted = 0
+      if (stage === "queue") {
+        const first = f.controls.editConfigDocument("w", f.context.location, "global", async document => { entered.resolve(); await release.promise; return document.text })
+        await entered.promise
+        const work = f.dispatch(plan, () => { submitted++ }), rejected = assert.rejects(work)
+        f.abort.abort(); release.resolve(); await first; await rejected
+      } else {
+        f.state.onAuthorize = async () => {
+          const names = await readdir(f.global)
+          if (stage === "prepared" && names.some(name => name.endsWith(".tmp"))) f.abort.abort()
+          if (stage === "postdispatch" && parse(await readFile(f.file, "utf8")).plugins.length === 0) f.abort.abort()
+        }
+        await assert.rejects(f.dispatch(plan, () => { submitted++ }), error => stage !== "postdispatch" || error instanceof NativeMutationUncertainError)
+      }
+      assert.equal(submitted, stage === "postdispatch" ? 1 : 0)
+      assert.deepEqual(parse(await readFile(f.file, "utf8")).plugins, stage === "postdispatch" ? [] : [f.spec])
+      assert.deepEqual(await readdir(f.global), ["opencode.jsonc"])
+      assert.deepEqual(f.state.rpc, []); assert.deepEqual(f.state.updates, [])
+    } finally { release.resolve(); await f.cleanup() }
+  }
+})
+
+test("removal confirms only after observed source removal; a lost acknowledgement emits failed once after submission", async () => {
+  for (const lost of [false, true]) {
+    const f = await fixture(true), ready = deferred(), reached = deferred(), release = deferred(), done = deferred(), events: any[] = []
+    let now = 0, view: BundlesConfirmation | null = null
+    const lifecycle = new BundlesLifecycle({ now: () => now, setTimeout: () => ({}), clearTimeout() {} })
+    try {
+      const remove = f.sources.remove.bind(f.sources)
+      f.sources.remove = async (...args) => { const result = await remove(...args); reached.resolve(); await release.promise; if (lost) throw new Error("PRIVATE_LOST_ACK"); return result }
+      const owner = lifecycle.mount({ extension: "fixture.panel", digest: "a".repeat(64), authority: f.context.authority, signal: f.abort.signal,
+        show(value) { view = value; if (value) ready.resolve() }, changed(event) { events.push(event); done.resolve() } })
+      const request = lifecycle.request(owner, signal => f.actions.prepare(f.context, { action: "remove", integration: "fixture", scope: "global" }, signal))
+      request.afterAck(); await ready.promise
+      const planID = view!.planID
+      lifecycle.displayed(owner, planID); now = 600; await lifecycle.confirmChecked(owner, planID)
+      await reached.promise
+      assert.equal(events.length, 0, "submission alone is not removal success")
+      assert.deepEqual(parse(await readFile(f.file, "utf8")).plugins, [])
+      release.resolve(); await done.promise
+      assert.equal(events.length, 1); assert.equal(events[0].outcome, lost ? "failed" : "confirmed")
+      await assert.rejects(lifecycle.confirmChecked(owner, planID)); assert.equal(events.length, 1)
+    } finally { release.resolve(); lifecycle.dispose(); await f.cleanup() }
+  }
+})

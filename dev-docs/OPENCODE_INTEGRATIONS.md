@@ -155,16 +155,34 @@ within the backend. Both `detached` and `none` remove the hint. Q8 is a display 
 matching integration and label; the plugin's live bindings retain authority. Concurrent writers in other clients
 share native whole-object replacement semantics.
 
-### Removal safety and host installation
+### Confirmed source removal
 
-Every source removal goes through the central `PluginSources.remove` guard (`integrations/removal.ts`). For a
-recognised native source, including a local source correlated by runtime plugin ID, removal requires a fresh,
-conforming status with `attachedSessions: 0`. A positive count gives `attached-sessions` (409); missing authority,
-inactive/unsupported status, ambiguity or read failure gives `attachment-unverified` (409), preserving the config.
-The count is read under the configuration mutation queue's pinned connection, whose authority is checked again
-at commit, independently of session metadata. An external attachment after the read remains a coordination limit.
-Contract 1 provides an aggregate binding count;
-safe detach-all removal requires an integration-owned binding enumeration contract.
+Every plugin uses `PluginSources.remove` and the shared configuration-document primitive. The native Plugins
+surface warns of interrupted availability and connections, with an additional other-projects warning for Global,
+then requires explicit scoped confirmation after 600 ms with Cancel initially focused. Pending consent expires
+after 120 s and is revoked on navigation, invalidation or disconnect. The captured document revision binds full
+declarations/options, content, native mode, destination and connection; changed authority requires a fresh selection
+and confirmation ([source mutation contract](PLUGIN_CONTROLS.md#mutation-guarantees)).
+
+Catalog availability, recognition, family and zero/nonzero/unknown binding counts leave ordinary exact-source
+removal available. Removal performs zero integration status, binding, session census, detach, reattach or metadata
+calls. Saved Q8 hints, application/host/user files, package cache, activation rules and other declarations remain.
+Success describes the removed declaration; effective runtime/binding displays follow native reload and existing
+events/reads. A response lost after submission leaves an uncertain outcome: reconcile the actual configuration,
+then require a new explicit action if needed. Reinstallation may restore availability, with reload or reattachment
+sometimes needed; interrupted operations retain their own completion state.
+
+The `bundles.manage` bridge requests removal of a catalogue integration through the
+same `PluginSources.remove(workspaceId, request, authority?)` service. A valid fresh or
+stale catalogue and exactly one unambiguous writable source are required. Its scope,
+path, source, index and HMAC revision come from the same `PluginControls.read`; the
+confirmation binds the full document/options, destination, mode and connection. Missing,
+multiple, inherited or non-preferred-target declarations are refused. The bridge keeps
+native integration removal Global-only; ordinary Plugins removal also supports exact
+native Project sources. Each action has its own trusted confirmation and the shared
+interruption/Global/recovery warnings. Success requires observing removal in the exact
+bound document; a lost response or post-dispatch failure yields a fixed uncertain
+`failed` event and requires a configuration read before any fresh explicit action.
 
 ### Application installation
 
@@ -286,20 +304,22 @@ The read budget is 60 calls per extension in a sliding minute, four in flight an
 the fifth in-flight call and HTTP 429 report `busy`. Integration/plugin/configuration and exact-session events
 and reconnects coalesce over 300 ms into `{ kind: "state" }` notifications. Navigation, moves/deletion,
 disconnect and unmount invalidate old reads; never poll. `bundles.manage` requires `bundles.read` in the
-manifest. Its fixed `request` (install/update), `setActive`, `installHost` and `attach`
+manifest. Its fixed `request` (install/update/remove), `setActive`, `installHost` and `attach`
 methods use the shared trusted confirmation lifecycle through an owner-authenticated
-mount. Request ACKs precede preparation; each terminal `confirmed` event denotes
+mount. Request ACKs precede preparation. Removal's terminal `confirmed` follows
+observed exact-document source removal; other methods' `confirmed` events denote
 native submission, with actual state supplied by subsequent authoritative reads.
-The development bridge returns `invalid` for remove and detach. Direct local detach
-awaits a trustworthy explicit-action boundary for an opaque frame; removal has its
-separate confirmed-action adapter delivery.
+The development bridge returns `invalid` for detach. Direct local detach
+awaits a trustworthy explicit-action boundary for an opaque frame.
 See [Panel extensions](PANEL_EXTENSIONS.md#draft-integration-reads) for the boundary.
 The trusted internal confirmation lifecycle and revocable store leases are described in
 [Internal integration confirmation lifecycle](PANEL_EXTENSIONS.md#internal-integration-confirmation-lifecycle).
 The vendored source remains `54d6e5d0f4c22e74d228822fcaaa0912818a8b46`, draft 0.2, spec 0, RPC contract 1.
 
 `panel-extensions/bundles-actions.ts` derives package ranges, activation IDs and
-native targets from the reviewed catalogue and current native inventory. Plans bind
+native targets from the reviewed catalogue and current native inventory. Removal resolves
+one exact writable source and its HMAC revision from the same plugin snapshot, without
+status/binding/census/detach calls or Q8/cache/application-file cleanup. Plans bind
 the exact write target and source declaration bytes/destination/mode, runtime
 provenance, selected offer and installation action. Native operations require Global;
 host installation requires an explicit inspected `absent/install` or versioned
@@ -362,7 +382,7 @@ Commands:
 - `node --import tsx --test packages/server/src/server/routes/integration-attachments.test.ts
   packages/server/src/opencode/plugin-sources.test.ts`: real route/service checks for strict inputs, ownership and
   connection changes, missing/moved sessions, full output validation, path refusal, sanitized failures, bounded
-  calls, exact Q8 metadata preservation/removal and removal's verified-zero guard with unchanged files on refusal.
+  calls and exact Q8 metadata preservation/removal. Source removal tests cover D25 independently of attachment authority.
   Binding qualification covers full closed output validation before projection, authoritative none versus unknown,
   strict query parsing, two sessions/Locations, moved sessions, exact native identity, cancellation and late replies.
   Installation qualification covers the strict empty body, catalog-derived fixed `installHost({ target: "default" })`,

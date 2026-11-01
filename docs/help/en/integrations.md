@@ -82,7 +82,9 @@ An admitted action keeps its result or error through native changes and reconnec
 
 Saved Q8 metadata supplies only a reattach suggestion: **Reattach** appears in the picker only for an offer with the same integration and label, and requires explicit confirmation. Current binding authority comes from the integration's per-session read.
 
-Plugins shows **Integration catalog unavailable** when no catalog can be read, or the last valid catalog with its fetch time when stale. Refresh Plugins to retry. Removal is refused while conversations are attached or their attachments cannot be verified; detach them in the application, enable the integration if needed, then refresh and retry.
+Plugins shows **Integration catalog unavailable** when no catalog can be read, or the last valid catalog with its fetch time when stale. Refresh Plugins to retry.
+
+Removing any plugin opens a warning naming the plugin and exact scope. **Cancel** is initially focused; **Remove from Global/Project** becomes available after 600 ms and needs an explicit click or keyboard action. Removal can interrupt availability and connections in conversations using the plugin; Global can also affect other projects. Cancellation, expiry or navigation before submission leaves everything unchanged. CodeNomad removes only the confirmed declaration, preserving activation rules, package cache, application files and saved attachment hints. Changed configuration requires a fresh selection and confirmation. Success confirms the declaration was removed; runtime state follows OpenCode's reload. If the response is lost, refresh Plugins to check the actual configuration before a new attempt. Reinstalling may restore availability, with a reload or reattachment sometimes needed; interrupted operations may not resume.
 
 ## Install or update the application integration {#application-installation}
 

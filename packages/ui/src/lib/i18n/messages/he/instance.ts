@@ -10,7 +10,7 @@ export const instanceMessages = {
   "panelExtensions.api4.opencode.designAgent": "מוסיפה ל-OpenCode את סוכן Design של CodeNomad ואת מיומנויות התמונה שלו כל עוד הרחבה זו מופעלת.",
   "panelExtensions.api4.panel.preferences": "זכירת ההגדרות הייחודיות של לוח זה.",
   "panelExtensions.api4.bundles.read": "קריאת קטלוג האינטגרציות של OpenCode, מצבן בפרויקט זה והיישומים הפתוחים הזמינים.",
-  "panelExtensions.api4.bundles.manage": "בקשה ממך להתקין או לעדכן אינטגרציות OpenCode מהקטלוג, להפעיל או להשבית אותן, להתקין את הרכיב שלהן ביישום ולחבר יישום פתוח לשיחה המוצגת. כל פעולה דורשת אישור נפרד של CodeNomad.",
+  "panelExtensions.api4.bundles.manage": "בקשה ממך להתקין, לעדכן או להסיר אינטגרציות OpenCode מהקטלוג, להפעיל או להשבית אותן, להתקין את הרכיב שלהן ביישום ולחבר יישום פתוח לשיחה המוצגת. כל פעולה דורשת אישור נפרד של CodeNomad.",
   "panelExtensions.empty": "אין הרחבות מותקנות.",
   "panelExtensions.catalog.title": "זמינות ברשת",
   "panelExtensions.catalog.search": "חיפוש הרחבות",

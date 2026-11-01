@@ -17,8 +17,6 @@ import {
 } from "./plugin-source-document"
 import type { IntegrationCatalogSource } from "./integrations/catalog"
 import { integrationsForSpec } from "./integrations/recognition"
-import type { IntegrationsReader } from "./integrations/integrations"
-import { checkIntegrationRemoval } from "./integrations/removal"
 import { NativeMutationAdmission, type NativeMutationAuthority } from "./native-mutation-authority"
 
 export class PluginSourcesError extends PluginControlsError {
@@ -45,7 +43,7 @@ export class PluginSources {
   // One queue for the whole server: the Global document is shared by every workspace.
   private addTail: Promise<void> = Promise.resolve()
 
-  constructor(private readonly options: { documents: Documents; logger: Logger; catalog?: Catalog; integrations?: Pick<IntegrationsReader, "read">; addTimeoutMs?: number; abortGraceMs?: number }) {}
+  constructor(private readonly options: { documents: Documents; logger: Logger; catalog?: Catalog; addTimeoutMs?: number; abortGraceMs?: number }) {}
 
   add(workspaceId: string, request: PluginSourceAddRequest, authority?: NativeMutationAuthority): Promise<PluginSourceMutationResponse> {
     const admission = new NativeMutationAdmission(authority)
@@ -114,7 +112,7 @@ export class PluginSources {
       signal.throwIfAborted()
       assertNotDeclared(document.plugins.map(pluginEntryTarget), identities, ids, identify)
       return appendPluginControlRule(document, spec)
-    }, signal, admission)
+    }, signal, undefined, admission)
     signal.throwIfAborted()
     await admission.revalidate()
     signal.throwIfAborted()
@@ -122,13 +120,16 @@ export class PluginSources {
     return { scope, spec, reloadPending: true }
   }
 
-  async remove(workspaceId: string, request: PluginSourceRemoveRequest): Promise<PluginSourceMutationResponse> {
+  async remove(workspaceId: string, request: PluginSourceRemoveRequest, authority?: NativeMutationAuthority): Promise<PluginSourceMutationResponse> {
+    request = { ...request, location: { ...request.location } }
+    const admission = new NativeMutationAdmission(authority)
     const { scope, target, entryIndex } = request
-    await this.options.documents.editConfigDocument(workspaceId, request.location, scope, async document => {
-      // Read binding authority under the mutation queue's pinned connection. The shared primitive
-      // rechecks that connection at commit, including across these asynchronous native reads.
-      const blocked = await checkIntegrationRemoval(this.options, workspaceId, request)
-      if (blocked) throw new PluginSourcesError("Integration removal requires verified detached sessions", "conflict", blocked)
+    if (!/^[a-f0-9]{64}$/.test(request.expectedRevision ?? "")) {
+      throw new PluginSourcesError("OpenCode configuration confirmation is unavailable", "conflict", "stale")
+    }
+    try {
+      await admission.revalidate()
+      await this.options.documents.editConfigDocument(workspaceId, request.location, scope, document => {
       try {
         return removePluginSourceEntry(document, entryIndex, target)
       } catch (error) {
@@ -137,7 +138,13 @@ export class PluginSources {
         }
         throw error
       }
-    })
+      }, undefined, request.expectedRevision, admission)
+      await admission.revalidate()
+    } catch (error) {
+      error = admission.failure(error)
+      if (error instanceof PluginControlsError && error.kind === "conflict") throw new PluginSourcesError("OpenCode configuration changed since confirmation", "conflict", "stale")
+      throw error
+    }
     this.options.logger.info({ workspaceId, scope }, "Removed OpenCode plugin source")
     return { scope, spec: target, reloadPending: true }
   }

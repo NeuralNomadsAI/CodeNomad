@@ -44,6 +44,4 @@ export const integrationMessages = {
   "integrations.outcome.busy": "この会話は別の開いているドキュメントに接続済みです。アプリで切断してから再試行してください。",
   "integrations.outcome.gone": "公開の有効期限が切れました。ドキュメントを再公開し、このウィンドウを開き直してください。",
   "integrations.outcome.refused": "アプリが接続を拒否しました。共有設定を確認して再試行してください。",
-  "integrations.error.attachedSessions": "削除できません：この連携には接続中の会話があります。アプリで切断してから再試行してください。",
-  "integrations.error.unverified": "削除できません：接続を検証できませんでした。連携を有効にし、プラグインを更新して再試行してください。",
 }

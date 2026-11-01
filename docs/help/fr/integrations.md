@@ -82,7 +82,9 @@ Une action admise conserve son résultat ou son erreur malgré les changements n
 
 La métadonnée Q8 sauvegardée fournit uniquement une suggestion de rattachement : **Rattacher** apparaît dans le sélecteur seulement pour une offre de même intégration et de même étiquette, avec confirmation explicite. L’autorité sur la liaison actuelle provient de la lecture par session de l’intégration.
 
-Plugins affiche **Catalogue d’intégrations indisponible** si aucun catalogue n’est lisible, ou le dernier catalogue valide avec son heure de récupération s’il est périmé. Actualisez Plugins pour réessayer. Le retrait est refusé si des conversations sont attachées ou si les liaisons sont invérifiables ; détachez-les dans l’application, activez l’intégration si nécessaire, puis actualisez et réessayez.
+Plugins affiche **Catalogue d’intégrations indisponible** si aucun catalogue n’est lisible, ou le dernier catalogue valide avec son heure de récupération s’il est périmé. Actualisez Plugins pour réessayer.
+
+Retirer un plugin ouvre un avertissement nommant le plugin et sa portée exacte. **Annuler** reçoit le focus ; **Retirer de Global/Projet** devient disponible après 600 ms et exige une action explicite. Le retrait peut interrompre la disponibilité et les connexions des conversations utilisant le plugin ; Global peut aussi affecter d’autres projets. Annuler, laisser expirer ou naviguer avant l’envoi conserve tout inchangé. Seule la déclaration confirmée est retirée : règles d’activation, cache, fichiers d’application et indications d’attachement sont conservés. Une configuration modifiée exige une nouvelle sélection et confirmation. Le succès confirme le retrait de la déclaration ; l’état effectif suit le rechargement d’OpenCode. Si la réponse est perdue, actualisez Plugins pour vérifier la configuration avant une nouvelle tentative. Réinstaller peut rétablir la disponibilité ; un rechargement ou rattachement peut être nécessaire, sans reprise garantie des opérations interrompues.
 
 ## Installer ou mettre à jour l’intégration de l’application {#application-installation}
 

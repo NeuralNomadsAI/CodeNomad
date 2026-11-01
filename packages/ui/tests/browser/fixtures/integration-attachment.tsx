@@ -25,7 +25,7 @@ const runtime = { key: "blender", id: "neuralnomads.blender", source: { type: "p
 serverApi.getPluginControls = async () => ({ location: { directory: directory() }, runtime: [runtime],
   configured: { sources: [source], rules: [] },
   controls: [{ id: runtime.id, builtin: false, global: "enabled", project: "default", effective: "enabled", runtime }],
-  targets: [{ scope: "global", path: source.path, exists: true }, { scope: "project", path: "/repo/opencode.jsonc", exists: true }],
+  targets: [{ scope: "global", path: source.path, exists: true, expectedRevision: "a".repeat(64) }, { scope: "project", path: "/repo/opencode.jsonc", exists: true, expectedRevision: "b".repeat(64) }],
 })
 render(() => <ConfigProvider><I18nProvider><ThemeProvider>
   <Show when={plugins()}><div style={{ position: "fixed", top: "80px", left: "10px", width: "360px", "z-index": 100, background: "var(--surface-canvas)" }}>

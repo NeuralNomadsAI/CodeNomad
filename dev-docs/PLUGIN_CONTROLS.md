@@ -11,10 +11,9 @@ CodeNomad writes the declaration and OpenCode resolves, installs and loads it.
 
 `POST /api/workspaces/:id/plugin-sources` (`{ location, scope, spec }`) appends
 one string entry at the end of the scope's `plugins`; `DELETE` (`{ location,
-scope, target, entryIndex }`) removes one entry. Both routes are strict, map
+scope, target, entryIndex, expectedRevision }`) removes one entry. Both routes are strict, map
 errors like the activation route and add a stable `code` (`invalid-spec`,
-`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`,
-`attached-sessions`, `attachment-unverified`).
+`local-path`, `plugin-id`, `duplicate`, `stale`, `timeout`, `global-only`).
 
 - **Accepted specs** match OpenCode's own `plugin add`: registry versions, ranges,
   tags and `npm:` aliases, and remote Git specs, parsed with `npm-package-arg`.
@@ -43,10 +42,12 @@ errors like the activation route and add a stable `code` (`invalid-spec`,
   (409). The result must parse to the original minus exactly that element.
   Activation rules (`id`/`-id`) are left in place, and OpenCode's package cache is
   never touched.
-  A catalog-recognised native integration additionally requires a fresh,
-  conforming `attachedSessions: 0`; positive counts and unavailable authority
-  refuse removal with 409 before editing. The integration's aggregate RPC count
-  is the authority ([attachment safety](OPENCODE_INTEGRATIONS.md#removal-safety-and-host-installation)).
+  Every plugin uses the ordinary source removal, independently of catalog, family or binding count.
+  The trusted Cancel-first confirmation names the plugin and exact scope, warns of interrupted availability
+  and connections (including other projects for Global), and enables its scoped removal action after 600 ms.
+  Unsent consent expires after 120 s and is revoked by navigation, invalidation or disconnection.
+  Cancellation and expiry perform no mutation. The captured request is sent once; uncertain responses
+  reconcile actual configuration through the existing invalidation/read path before any fresh user action.
   The same associated row offers application install/update only when a fresh active native integration reports
   `host.action`. It uses the shared Cancel-first machine/package-version confirmation and the sessionless,
   outcome-only installation route ([application installation](OPENCODE_INTEGRATIONS.md#application-installation)).
@@ -157,8 +158,17 @@ commands without a generic metadata round-trip.
 operation. Activation rules and source declarations use the same primitive:
 source add/remove runs through `PluginControls.editConfigDocument`, whose awaited
 callback edits the freshly read document (`plugin-source-document.ts` holds the
-spec validation, package identity and removal edit). Attachment authority is read
-inside that queue; the pinned connection is rechecked before committing its edit.
+spec validation, package identity and removal edit). The pinned connection is rechecked before committing its edit.
+
+`PluginControls.read` supplies `targets[].expectedRevision` only when the displayed daemon plugin entries
+match the raw writable document, including full options. The opaque HMAC binds the workspace, canonical
+Location, scope, logical/physical destination, selected WSL distro, current authenticated client identity,
+document existence, native mode, BOM and complete text. Its random key and connection tokens stay private
+to the service instance; configuration values stay out of the token and diagnostics. Mutation-produced
+overlays acquire removal authority through reconciliation. `PluginSources.remove` requires this token;
+`editConfigDocument(id, location, scope, edit, signal?, expectedRevision?, admission?)` compares it inside the existing mutation queue before
+editing the freshly read document. Changed options at the same source/index, content, destination, mode or
+connection refuse with `stale` and require a fresh selection/confirmation.
 
 1. Read at most 4 MiB and require valid UTF-8 JSON/JSONC with one array-valued
    `plugins` key.
@@ -177,7 +187,10 @@ inside that queue; the pinned connection is rechecked before committing its edit
    first with the source mode explicitly restored after creation (host `umask`
    cannot tighten it); an external mode-only change is a conflict. Crash
    leftovers (`*.tmp` with per-process random names) are never read and remain
-   inert; locks self-heal after 30 s.
+   inert; locks self-heal after 30 s. Byte/mode comparisons and nonce verification detect conflicts before
+   the atomic rename. An external editor can write after the last comparison; the native filesystem
+   replacement boundary applies to that final interval. Never promise conditional atomic replacement
+   against non-participating editors.
 
 WSL performs bounded inspect/read/create/chmod/sync/rename operations inside the
 selected distro, retaining native modes such as `0600`. Shell helpers prefer portable fallbacks (`realpath`,
@@ -236,9 +249,10 @@ cancellation/deadline. Never construct authority from an iframe/request boolean 
 a cached successful authorization. Extension-facing mutation adapters supply
 this context on every call through the owner-bound bundles transport.
 
-`PluginSources.add(..., authority?)` and `PluginControls.mutate(..., authority?)`
+`PluginSources.add(..., authority?)`, `PluginSources.remove(workspaceId, request, authority?)`
+and `PluginControls.mutate(..., authority?)`
 revalidate inside their existing queues and after asynchronous prerequisites.
-Nested `editConfigDocument(..., signal?, admission?)` carries the same per-call
+Nested `editConfigDocument(id, location, scope, edit, signal?, expectedRevision?, admission?)` carries the same per-call
 `NativeMutationAdmission` through the document queue. The writer asserts before
 preparation and final dispatch; its synchronous `onDispatch` observer marks only
 host `rename` or WSL commit-command submission. Its asynchronous `revalidate`
@@ -254,7 +268,7 @@ for one `plugin.update`; trusted catalogue adapters derive that target themselve
 Native package serialization occurs after this dispatch boundary. Existing UI
 package calls retain their native proxy path.
 
-One sticky admission state spans a source add's two queues, commit and deadline
+One sticky admission state spans source add/remove queues, commit and deadline
 handler. Before submission, authority refusal leaves the destination unchanged;
 owned preparation is cleaned on later refusal. After submission, any failure,
 revocation or cancellation in an authority-bearing action becomes the fixed
@@ -262,6 +276,21 @@ revocation or cancellation in an authority-bearing action becomes the fixed
 409 presented as a zero-effect refusal. Revalidation also precedes success.
 Ordinary callers may omit authority and retain their existing error contract.
 Never replay an uncertain action automatically.
+
+The trusted `bundles.manage` removal adapter resolves a single catalogue-recognised
+writable declaration in the requested scope's preferred target. It captures scope,
+path, source, entry index and HMAC revision from the same `PluginControls.read` before
+confirmation, with the full document/options, destination, mode and connection bound
+through dispatch and reconciliation. A valid fresh or stale catalogue is sufficient;
+missing, ambiguous, multiple, inherited or non-target sources fail closed. Never choose
+the first candidate. The bridge requires Global for native integrations, including
+removal; ordinary Plugins removal retains exact native Project-source support.
+The trusted dialog reuses `instanceServiceStatus.plugins.sources.removeWarning`,
+`removeGlobalWarning` and `removeRecovery`, with Cancel focused, a 600-ms guard and
+two-minute expiry. Its terminal removal `confirmed` requires observing source removal
+in the exact bound document. Lost responses and post-dispatch failures emit a fixed
+uncertain `failed` result; reconcile configuration before a new explicit action.
+Keep removal free of status/binding/census/detach/Q8 IO and package-cache or application-file cleanup.
 
 These boundaries fence local submission. Already dispatched native requests and
 WSL commands retain their external lifetime; cancellation and queue release provide
@@ -294,6 +323,11 @@ guessed paths.
 - source add/remove ownership, scope availability, duplicates across scopes,
   rule retention, inventory correlation and the strict route:
   `plugin-sources.test.ts`
+- confirmed-document revisions, full-options and connection replacement refusals, ordinary native removal
+  without catalog/status/binding/census IO, and durable removal versus runtime state: `plugin-sources.test.ts`.
+  `node --import tsx scripts/test-plugin-removal-native.mjs <absolute-cli>` qualifies the real authenticated
+  HTTP route with an active native binding, unchanged Q8 and application/user files, and debug/trace scans
+  inside a private runtime. The source and package-cache qualification also runs `test-plugin-sources-native.mjs`.
 - native WSL path operations and permission retention, including source
   add/remove: `plugin-control-document-wsl.test.ts` (set
   `CODENOMAD_TEST_WSL_PLUGIN_CONTROLS` to a distro for the native fixture)

@@ -50,7 +50,7 @@ interface Pending {
 const sameTarget = (a: BundlesTarget, b: BundlesTarget) =>
   (Object.keys(a) as Array<keyof BundlesTarget>).every(key => a[key] === b[key]) && Object.keys(a).length === Object.keys(b).length
 
-/** One backend/profile arbiter, shared by every extension/window. Memory only; no public mutator routes. */
+/** One in-memory backend/profile arbiter, shared by every extension/window through the trusted transport. */
 export class BundlesLifecycle {
   private active?: Pending
   private strikes = new Map<string, { times: number[]; until: number }>()
@@ -174,9 +174,11 @@ export class BundlesLifecycle {
       await prepared.dispatch(authority, () => {
         if (submitted) throw new Error("Bundles request already submitted")
         authority.assertCurrent(); submitted = true
-        // This event means admitted transmission, independent of its later native outcome.
-        pending.notified = true
-        pending.owner.changed({ kind: "request", requestID: pending.requestID, outcome: "confirmed" })
+        // Removal confirms only after its builder observes the exact expected document.
+        if (prepared.display.action !== "remove") {
+          pending.notified = true
+          pending.owner.changed({ kind: "request", requestID: pending.requestID, outcome: "confirmed" })
+        }
       })
       this.finish(pending, submitted ? "confirmed" : "failed")
     } catch { this.finish(pending, this.expired(pending) ? "expired" : "failed") }

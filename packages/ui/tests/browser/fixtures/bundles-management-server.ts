@@ -124,7 +124,7 @@ export async function bundlesManagementServer() {
   registerPanelExtensionBundlesManagementRoutes(app, { transport })
   registerPanelExtensionBundlesRoutes(app, { store, workspaceManager: manager, catalog, integrations, attachments, budget: lifecycle.budget })
   const address = await app.listen({ host: "127.0.0.1", port: 0 })
-  return { app, address, state, requests, streamFrames, file, spec, entry,
+   return { app, address, state, requests, streamFrames, file, spec, entry, controls, sources, project,
     hold: (key: string) => held.add(key), release,
     flushTerminals() { state.holdTerminal = false; for (const write of terminals.splice(0)) write() },
     async reset(installed = true) {

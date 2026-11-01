@@ -13,6 +13,7 @@ export interface PluginSourceRemoveRequest {
   scope: PluginControlScope
   target: string
   entryIndex: number
+  expectedRevision: string
 }
 
 /** Durable configured state only: the daemon reports loading through `plugin.list` afterwards. */
@@ -26,4 +27,4 @@ export interface PluginSourceMutationResponse {
  * a plugin ID or activation selector; `stale`: the entry changed since it was displayed;
  * `timeout`: OpenCode did not answer within the add deadline; `global-only`: a recognised `native`
  * integration added to Project (D18). */
-export type PluginSourceErrorCode = "invalid-spec" | "local-path" | "duplicate" | "plugin-id" | "stale" | "timeout" | "global-only" | "attached-sessions" | "attachment-unverified"
+export type PluginSourceErrorCode = "invalid-spec" | "local-path" | "duplicate" | "plugin-id" | "stale" | "timeout" | "global-only"

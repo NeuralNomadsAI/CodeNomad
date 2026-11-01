@@ -44,6 +44,4 @@ export const integrationMessages = {
   "integrations.outcome.busy": "This conversation is already bound to another live document. Detach it in the application before trying again.",
   "integrations.outcome.gone": "The offer has expired. Offer the document again and reopen this window.",
   "integrations.outcome.refused": "The application refused the attachment. Check its sharing settings and try again.",
-  "integrations.error.attachedSessions": "Removal refused: this integration has attached conversations. Detach them in the application, then try again.",
-  "integrations.error.unverified": "Removal refused: attachments could not be verified. Enable the integration, refresh Plugins and try again.",
 }

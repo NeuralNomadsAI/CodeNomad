@@ -44,6 +44,4 @@ export const integrationMessages = {
   "integrations.outcome.busy": "Bu konuşma başka bir açık belgeye zaten bağlı. Yeniden denemeden önce uygulamada bağlantıyı kesin.",
   "integrations.outcome.gone": "Teklifin süresi doldu. Belgeyi yeniden sunun ve bu pencereyi yeniden açın.",
   "integrations.outcome.refused": "Uygulama bağlantıyı reddetti. Paylaşım ayarlarını kontrol edip yeniden deneyin.",
-  "integrations.error.attachedSessions": "Kaldırma reddedildi: bu entegrasyonun bağlı konuşmaları var. Uygulamada bağlantılarını kesip yeniden deneyin.",
-  "integrations.error.unverified": "Kaldırma reddedildi: bağlantılar doğrulanamadı. Entegrasyonu etkinleştirin, Eklentiler'i yenileyin ve yeniden deneyin.",
 }

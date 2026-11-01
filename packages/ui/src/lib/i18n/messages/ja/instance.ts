@@ -10,7 +10,7 @@ export const instanceMessages = {
   "panelExtensions.api4.opencode.designAgent": "この拡張機能が有効な間、CodeNomad の Design エージェントとその画像スキルを OpenCode に追加します。",
   "panelExtensions.api4.panel.preferences": "このパネル独自の設定を記憶します。",
   "panelExtensions.api4.bundles.read": "OpenCode 統合のカタログ、このプロジェクトでの状態、利用可能な起動中のアプリケーションを読み取ります。",
-  "panelExtensions.api4.bundles.manage": "カタログ内の OpenCode 統合のインストールや更新、有効化や無効化、アプリケーション側コンポーネントのインストール、起動中のアプリケーションと表示中の会話の接続を依頼できます。各操作には個別の CodeNomad 確認が必要です。",
+  "panelExtensions.api4.bundles.manage": "カタログ内の OpenCode 統合のインストール、更新、削除、有効化や無効化、アプリケーション側コンポーネントのインストール、起動中のアプリケーションと表示中の会話の接続を依頼できます。各操作には個別の CodeNomad 確認が必要です。",
   "panelExtensions.empty": "インストール済みの拡張機能はありません。",
   "panelExtensions.catalog.title": "オンラインで利用可能",
   "panelExtensions.catalog.search": "拡張機能を検索",

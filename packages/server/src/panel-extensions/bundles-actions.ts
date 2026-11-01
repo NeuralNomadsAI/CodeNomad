@@ -8,16 +8,18 @@ import { integrationStatusSchema, type IntegrationStatus } from "../opencode/int
 import type { IntegrationAttachments } from "../opencode/integrations/attachments"
 import { recognizeIntegrations } from "../opencode/integrations/recognition"
 import { looksLikePath, readIntegrationStatuses } from "../opencode/integrations/status"
-import type { NativeMutationAuthority } from "../opencode/native-mutation-authority"
+import { NativeMutationUncertainError, type NativeMutationAuthority } from "../opencode/native-mutation-authority"
 import { appendPluginControlRule, encodePluginControlOriginal, type PluginControlDocument } from "../opencode/plugin-control-document"
 import type { PluginControls } from "../opencode/plugin-controls"
 import type { PluginSources } from "../opencode/plugin-sources"
 import type { PluginPackages } from "../opencode/plugin-packages"
+import { removePluginSourceEntry } from "../opencode/plugin-source-document"
+import type { PluginSourceRemoveRequest } from "../plugin-source-types"
 import { bundlesHostsResultSchema, bundlesSessionSchema } from "./bundles-contract"
 import type { BundlesPrepared, BundlesTarget } from "./bundles-lifecycle"
 
 export type BundlesAction =
-  | { action: "install" | "update"; integration: string; scope: PluginControlScope }
+  | { action: "install" | "update" | "remove"; integration: string; scope: PluginControlScope }
   | { action: "setActive"; integration: string; scope: PluginControlScope; active: boolean }
   | { action: "installHost"; integration: string }
   | { action: "attach"; integration: string; offerID: string }
@@ -34,7 +36,7 @@ export interface BundlesActionsDeps {
   workspaceManager: Pick<WorkspaceManager, "getSharedServiceConnection">
   catalog: Pick<IntegrationCatalogSource, "read" | "snapshot">
   controls: Pick<PluginControls, "read" | "readConfigDocuments" | "readSourceDocument" | "mutate">
-  sources: Pick<PluginSources, "add">
+  sources: Pick<PluginSources, "add" | "remove">
   packages: Pick<PluginPackages, "update">
   attachments: Pick<IntegrationAttachments, "assertHostInstallationSupported" | "hosts" | "attach" | "detach" | "installHost">
 }
@@ -80,12 +82,14 @@ export class BundlesActions {
     if (scope !== "global" && scope !== "project") stale()
     if (action.action === "setActive" && typeof action.active !== "boolean") stale()
     if (action.action === "attach" && !/^[A-Za-z0-9_-]{8,64}$/.test(action.offerID)) stale()
-    if (!["install", "update", "setActive", "installHost", "attach"].includes(action.action)) stale()
+    if (!["install", "update", "remove", "setActive", "installHost", "attach"].includes(action.action)) stale()
     let submitted = false, beforeDocument: string | undefined, afterDocument: string | undefined
     let nativeTarget: string | undefined
     let updateBefore: { version: string | undefined } | undefined
     let beforeHost: NonNullable<IntegrationStatus["host"]> | undefined
     let beforeDeclaration: string | undefined
+    let removal: PluginSourceRemoveRequest | undefined, removalSource: string | undefined, removalEntry: unknown
+    let requireRemoved = false
 
     const read = async (readSignal: AbortSignal) => {
       const currentSignal = AbortSignal.any([signal, readSignal])
@@ -108,17 +112,41 @@ export class BundlesActions {
       const scopeTarget = snapshot.targets.find(candidate => candidate.scope === scope)
       if (!targetDocument || !scopeTarget || targetDocument.path !== scopeTarget.path) stale()
       const identity = JSON.stringify([targetDocument.path, documentIdentity(targetDocument.document)])
-      const writesConfig = action.action === "install" || action.action === "setActive"
+      const writesConfig = action.action === "install" || action.action === "setActive" || action.action === "remove"
       if (beforeDocument === undefined) {
         beforeDocument = identity
-        if (writesConfig) {
+        if (writesConfig && action.action !== "remove") {
           const rule = action.action === "install" ? `${entry.package}@${entry.range}` : `${action.action === "setActive" && action.active ? "" : "-"}${entry.plugin}`
           afterDocument = JSON.stringify([targetDocument.path, documentIdentity(targetDocument.document, appendPluginControlRule(targetDocument.document, rule))])
+        }
+      }
+      if (action.action === "remove") {
+        const sourceIdentity = (source: typeof recognition.sources[number]) => JSON.stringify([
+          source.scope, source.path, source.target, source.entryIndex, source.hasOptions,
+        ])
+        if (submitted && identity === afterDocument) {
+          // Native config discovery may still show the removed source until its watcher catches up.
+          // Only that exact stale row or its absence is expected; every other candidate fails closed.
+          if (recognition.sources.length > 1 || recognition.sources.some(source => sourceIdentity(source) !== removalSource)) stale()
+        } else {
+          const [source] = recognition.sources
+          if (requireRemoved || recognition.sources.length !== 1 || !source || source.scope !== scope
+            || source.path !== scopeTarget.path || !scopeTarget.expectedRevision) stale()
+          if (!removal) {
+            removal = Object.freeze({ location: context.location, scope, target: source.target, entryIndex: source.entryIndex,
+              expectedRevision: scopeTarget.expectedRevision })
+            removalSource = sourceIdentity(source)
+            removalEntry = structuredClone(targetDocument.document.plugins[source.entryIndex])
+            afterDocument = JSON.stringify([targetDocument.path, documentIdentity(targetDocument.document,
+              removePluginSourceEntry(targetDocument.document, source.entryIndex, source.target))])
+          }
+          if (sourceIdentity(source) !== removalSource || scopeTarget.expectedRevision !== removal.expectedRevision) stale()
         }
       }
       // Config writes alone may normalize their exact expected bytes/destination/mode after submission.
       const document = submitted && writesConfig && identity === afterDocument ? beforeDocument : identity
       let runtimeIdentity: unknown, declaration: unknown
+      if (removal) declaration = { source: removalSource, entry: removalEntry, revision: removal.expectedRevision }
       const pinsRuntime = action.action === "attach" || action.action === "installHost" || action.action === "update"
       if (pinsRuntime || action.action === "setActive" && entry.family === "native") {
         const source = recognition.sources[0]
@@ -236,6 +264,13 @@ export class BundlesActions {
         switch (action.action) {
           case "install": await this.deps.sources.add(context.instanceId, { location: context.location, scope,
             spec: `${initial.entry.package}@${initial.entry.range}` }, fenced); break
+          case "remove":
+            try {
+              await this.deps.sources.remove(context.instanceId, removal!, fenced)
+              requireRemoved = true
+              await fenced.revalidate()
+            } catch (error) { throw submitted ? new NativeMutationUncertainError() : error }
+            break
           case "setActive": await this.deps.controls.mutate(context.instanceId, { location: context.location, scope,
             pluginId: initial.entry.plugin, enabled: action.active }, fenced); break
           case "update": await this.deps.packages.update(context.instanceId, context.location, nativeTarget!, signal, fenced); break

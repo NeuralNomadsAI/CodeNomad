@@ -122,6 +122,9 @@ try {
     const foreignLocation = await client.location.get({ location: { directory: other } })
     const session = await client.session.create({ location, title: "B displayed conversation" })
     const foreign = await client.session.create({ location: { directory: foreignLocation.directory }, title: "FOREIGN_DOCUMENT_SENTINEL" })
+    await client.session.update({ sessionID: foreign.id, metadata: { secret: "FOREIGN_METADATA_SENTINEL" } })
+    secrets.add("FOREIGN_METADATA_SENTINEL"); secrets.add("PRIVATE_D25_OPTIONS")
+    secrets.add("PRIVATE_CACHE_KEEP"); secrets.add("PRIVATE_APPLICATION_KEEP")
     const metadata = { unrelated: { keep: "B preservation sentinel" } }
     await client.session.update({ sessionID: session.id, metadata })
     const calls = [], updates = [], logs = [], native = [], relayed = [], projected = [], dispatches = []
@@ -165,8 +168,13 @@ try {
     const controls = new PluginControls({ workspaceManager: manager, worktreeDeletionFence: { enter: () => () => {} }, logger })
     const integrations = new IntegrationsReader({ controls, workspaceManager: manager, catalog })
     const attachments = new IntegrationAttachments({ controls, workspaceManager: manager, catalog })
-    const sources = new PluginSources({ documents: controls, logger, catalog, integrations })
-    const remove = sources.remove.bind(sources); sources.remove = (...args) => { removals++; return remove(...args) }
+    const sources = new PluginSources({ documents: controls, logger, catalog })
+    let uncertainRemoval = false
+    const remove = sources.remove.bind(sources); sources.remove = async (...args) => {
+      removals++; const value = await remove(...args)
+      if (uncertainRemoval) throw new Error("Private lost response after actual source removal")
+      return value
+    }
     const packages = new PluginPackages({ controls, workspaceManager: manager })
     const actions = new BundlesActions({ workspaceManager: manager, catalog, controls, sources, packages, attachments })
     const observedActions = { accepts: action => actions.accepts(action), prepare: async (...args) => {
@@ -331,10 +339,9 @@ try {
       absent(attached.metadata, [...secrets, root, foreign.id, "authority", "attachedSessions"], "native Q8 metadata")
       const beforeInvalid = { calls: calls.length, removals, config: await readFile(configFile, "utf8") }
       assert.deepEqual(await manage(mounted, "detach", { integration: "fixture" }), { outcome: "invalid" })
-      assert.deepEqual(await manage(mounted, "request", requestInput("remove")), { outcome: "invalid" })
       assert.equal(calls.length, beforeInvalid.calls); assert.equal(removals, beforeInvalid.removals)
       assert.equal(await readFile(configFile, "utf8"), beforeInvalid.config)
-      console.log("PASS B attach: real binding/Q8 read-back with unrelated metadata; foreign-only binding stays none; public detach/remove invalid with zero native RPC/removal")
+      console.log("PASS B attach: real binding/Q8 read-back with unrelated metadata; foreign-only binding stays none; public detach invalid with zero native RPC/removal")
 
       // Cancellation and the backend-wide arbiter operate through actual owner HTTP/SSE.
       const cancelAck = await begin(mounted, owner, "setActive", { integration: "fixture", scope: "global", enabled: false })
@@ -419,6 +426,56 @@ try {
         console.log(`PASS B real Blender ${version}: immutable kit ${pin}, private payload/resources, management attach, real binding and Q8 read-back`)
       } else console.log("GAP B real Blender pilot omitted: supply integration checkout and executable; fake host install/attach only")
 
+      // D25: same authenticated mount/plan lane, actual source service, no binding/status gate.
+      skew += 61_000
+      const cacheCanary = path.join(env.XDG_CACHE_HOME, "d25-keep"), appCanary = path.join(root, "application-keep")
+      await mkdir(env.XDG_CACHE_HOME, { recursive: true })
+      await writeFile(cacheCanary, "PRIVATE_CACHE_KEEP"); await writeFile(appCanary, "PRIVATE_APPLICATION_KEEP")
+      const beforeMetadata = (await client.session.get({ sessionID: session.id })).metadata
+      const beforeForeign = (await client.session.get({ sessionID: foreign.id })).metadata
+      const beforeRemoval = removals, beforeCalls = calls.length
+      const cancelled = await begin(mounted, owner, "request", requestInput("remove"))
+      const cancelRemovalView = await plan(owner, cancelled.requestID)
+      await control(mounted, "cancel", { planID: cancelRemovalView.planID })
+      assert.equal((await terminal(owner, cancelled.requestID)).outcome, "cancelled")
+      assert.equal(removals, beforeRemoval); assert.equal(calls.length, beforeCalls); skew += 61_000
+      const drift = await begin(mounted, owner, "request", requestInput("remove")), driftView = await plan(owner, drift.requestID)
+      const originalConfig = await readFile(configFile, "utf8")
+      const changedConfig = parse(originalConfig)
+      changedConfig.plugins = changedConfig.plugins.map(entry => entry === exact ? { package: exact, options: { token: "PRIVATE_D25_OPTIONS" } } : entry)
+      await writeFile(configFile, JSON.stringify(changedConfig, null, 2))
+      assert.equal((await approve(mounted, owner, driftView, 409)).outcome, "failed")
+      assert.equal(removals, beforeRemoval); assert.equal(calls.length, beforeCalls)
+      await writeFile(configFile, originalConfig); await runtime("0.1.2"); skew += 61_000
+      await until("native source/options reconciliation before fresh removal consent", async () =>
+        (await controls.read("fixture", location)).targets.find(target => target.scope === "global")?.expectedRevision)
+      uncertainRemoval = true
+      const uncertainRemove = await begin(mounted, owner, "request", requestInput("remove"))
+      const uncertainRemoveView = await plan(owner, uncertainRemove.requestID)
+      assert.equal((await approve(mounted, owner, uncertainRemoveView)).outcome, "failed")
+      await until("real removal dispatch finishes", () => dispatches.at(-1)?.done)
+      assert(dispatches.at(-1).error instanceof NativeMutationUncertainError)
+      assert.equal(removals, beforeRemoval + 1); assert.equal(calls.length, beforeCalls, "remove submits zero status, binding, detach or census RPCs")
+      assert(!parse(await readFile(configFile, "utf8")).plugins.some(entry => (typeof entry === "string" ? entry : entry.package) === exact))
+      await post("control", { ...mounted, command: "confirm", planID: uncertainRemoveView.planID }, 409)
+      await delay(200); assert.equal(removals, beforeRemoval + 1, "lost removal acknowledgement never replays")
+      assert.deepEqual((await client.session.get({ sessionID: session.id })).metadata, beforeMetadata)
+      assert.deepEqual((await client.session.get({ sessionID: foreign.id })).metadata, beforeForeign)
+      assert.equal(await readFile(cacheCanary, "utf8"), "PRIVATE_CACHE_KEEP"); assert.equal(await readFile(appCanary, "utf8"), "PRIVATE_APPLICATION_KEEP")
+      uncertainRemoval = false; skew += 61_000
+      // A new explicit action and consent installs again; this is separate from the lost removal request.
+      await until("native configuration sees the removed source", async () => !(await controls.read("fixture", location)).configured.sources.some(source => source.target === exact))
+      await execute(mounted, owner, "request", requestInput("install")); await runtime("0.1.2")
+      const removeCalls = calls.length
+      const removedView = await execute(mounted, owner, "request", requestInput("remove"))
+      assert.equal(removedView.action, "remove"); assert.equal(removedView.scope, "global")
+      assert.equal(calls.length, removeCalls)
+      assert(!parse(await readFile(configFile, "utf8")).plugins.some(entry => (typeof entry === "string" ? entry : entry.package) === exact))
+      assert.deepEqual((await client.session.get({ sessionID: session.id })).metadata, beforeMetadata)
+      assert.deepEqual((await client.session.get({ sessionID: foreign.id })).metadata, beforeForeign)
+      assert.equal(await readFile(cacheCanary, "utf8"), "PRIVATE_CACHE_KEEP"); assert.equal(await readFile(appCanary, "utf8"), "PRIVATE_APPLICATION_KEEP")
+      console.log("PASS D25 removal: private HTTP/SSE confirmation, cancellation/options drift, exact source observed, postdispatch lost response uncertain without replay, Q8/foreign metadata/cache/application sentinels preserved, zero status/detach/census RPCs")
+
       await delay(200)
       const ownerPrivate = [...secrets].filter(value => value !== outsider.owner && value !== otherMount.mountID)
       absent(outsider.frames, ownerPrivate, "foreign SSE lane")
@@ -456,5 +513,5 @@ try {
   }, { registry: registry.url })
   await scanLogs(fixtureRoot)
   console.log("PASS B fixture daemon/backend/Blender logs: host sentinels and private owner/mount/plan/request identities absent")
-  console.log("GAPS B: renderer focus/MessagePort acceptance, real Blender installer, backend-kernel WSL variants, dispatched cancellation races, and Global-removal coordination remain separate")
+  console.log("GAPS B: renderer focus/MessagePort acceptance, full desktop mutation/privacy, real Blender installer, backend-kernel WSL variants and dispatched cancellation terminality remain separate; manual GUI/B4 gates retained")
 } finally { await host.close(); await registry.close() }

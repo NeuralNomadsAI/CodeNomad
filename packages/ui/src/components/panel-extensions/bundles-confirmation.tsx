@@ -34,7 +34,7 @@ export function BundlesConfirmationView(props: { view: BundlesConfirmation;
   return <Dialog open modal onOpenChange={open => { if (!open) dismiss() }}>
     <Portal>
       <Overlay class="modal-overlay z-[60]" />
-      <Content class="alert-dialog window-shell modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-md -translate-x-1/2 -translate-y-1/2 border border-base shadow-2xl"
+      <Content class="alert-dialog guarded-confirmation window-shell modal-surface fixed left-1/2 top-1/2 z-[1310] w-full max-w-md -translate-x-1/2 -translate-y-1/2 border border-base shadow-2xl"
         onOpenAutoFocus={event => { event.preventDefault(); cancel?.focus() }}
         onCloseAutoFocus={event => { event.preventDefault(); if (returnFocus?.isConnected) returnFocus.focus() }}>
         <div class="window-header"><Title class="window-title">{t("integrations.confirmation.title")}</Title></div>
@@ -45,12 +45,19 @@ export function BundlesConfirmationView(props: { view: BundlesConfirmation;
           <Show when={props.view.document}><p>{t("integrations.application")}: <bdi>{props.view.document}</bdi></p></Show>
           <Description>{t("integrations.confirmation.machine")}</Description>
           <Show when={props.view.action === "attach"}><p>{t("integrations.warning")}</p></Show>
+          <Show when={props.view.action === "remove"}>
+            <p>{t("instanceServiceStatus.plugins.sources.removeWarning")}</p>
+            <Show when={props.view.scope === "global"}><p>{t("instanceServiceStatus.plugins.sources.removeGlobalWarning")}</p></Show>
+            <p>{t("instanceServiceStatus.plugins.sources.removeRecovery")}</p>
+          </Show>
         </div>
         <div class="window-footer">
           <button ref={cancel} type="button" class="button-secondary" onClick={dismiss}>{t("alertDialog.actions.cancel")}</button>
           <button type="button" class="button-primary" disabled={!ready()} onClick={() => {
             if (Date.now() - shownAt >= BUNDLES_CONFIRM_GUARD_MS) props.confirm(props.view.planID)
-          }}>{t("alertDialog.actions.confirm")}</button>
+          }}>{props.view.action === "remove" ? t("instanceServiceStatus.plugins.sources.remove", {
+            scope: t(`instanceServiceStatus.plugins.scope.${props.view.scope}`),
+          }) : t("alertDialog.actions.confirm")}</button>
         </div>
       </Content>
     </Portal>

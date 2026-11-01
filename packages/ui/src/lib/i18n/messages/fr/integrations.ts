@@ -44,6 +44,4 @@ export const integrationMessages = {
   "integrations.outcome.busy": "Cette conversation est déjà liée à un autre document ouvert. Détachez-la dans l’application avant de réessayer.",
   "integrations.outcome.gone": "L’offre a expiré. Proposez de nouveau le document et rouvrez cette fenêtre.",
   "integrations.outcome.refused": "L’application a refusé l’attachement. Vérifiez ses réglages de partage et réessayez.",
-  "integrations.error.attachedSessions": "Retrait refusé : des conversations sont attachées à cette intégration. Détachez-les dans l’application, puis réessayez.",
-  "integrations.error.unverified": "Retrait refusé : les liaisons n’ont pas pu être vérifiées. Activez l’intégration, actualisez Plugins et réessayez.",
 }

@@ -79,11 +79,15 @@ async function open(width = 1500, height = 850) {
   const model = { state: "ok", offers: 1, family: "native", host: "ok", catalog: "fresh", association: 4, outcome: "attached", detachOutcome: "detached", removeCode: "", hold: undefined as Route | undefined, holdHosts: false, holdAttach: false, holdDetach: false,
     binding: "none", bindingLabel: "Scene", bindingExtra: false, holdBinding: false, bindingRequests: [] as Route[], bindingBySession: {} as Record<string, { state: string; label?: string }>,
     hostAction: undefined as "install" | "update" | undefined, associationScope: "global", version: "1.0.0", installOutcome: "installed", holdInstall: false,
-    failure: undefined as { action: "read" | "hosts" | "attach" | "detach" | "install-host" | "binding"; kind: FailureKind } | undefined }
+    failure: undefined as { action: "read" | "hosts" | "attach" | "detach" | "install-host" | "binding" | "remove"; kind: FailureKind } | undefined }
   await page.route("**/api/**", async route => {
     const request = route.request(), parsed = new URL(request.url())
-    if (parsed.pathname.endsWith("/plugin-sources") && request.method() === "DELETE" && model.removeCode) {
-      return route.fulfill({ status: 409, json: { code: model.removeCode, error: "Removal refused" } })
+    if (parsed.pathname.endsWith("/plugin-sources") && request.method() === "DELETE") {
+      calls.push({ action: "remove", directory: null, body: request.postDataJSON(), method: request.method() })
+      if (model.failure?.action === "remove") return failResponse(route, model.failure.kind)
+      if (model.removeCode) return route.fulfill({ status: 409, json: { code: model.removeCode, error: "Removal refused" } })
+      const body = request.postDataJSON()
+      return route.fulfill({ json: { scope: body.scope, spec: body.target, reloadPending: true } })
     }
     const match = parsed.pathname.match(/\/integrations(?:\/blender\/(hosts|attach|detach|install-host|binding))?$/)
     if (!match) return route.fulfill({ json: {} })
@@ -525,13 +529,17 @@ test("Plugins uses safe source association, displays catalog staleness, and unsu
     await dialog.waitFor()
     assert.equal(await dialog.getByRole("button", { name: "Cancel", exact: true }).evaluate(el => el === document.activeElement), true)
     await dialog.getByRole("button", { name: "Cancel", exact: true }).click()
-    for (const code of ["attached-sessions", "attachment-unverified"]) {
+    for (const code of ["stale"]) {
       model.removeCode = code
       await row.getByRole("button").click()
       await page.getByRole("menuitem", { name: "Remove from Global", exact: true }).click()
+      const removal = page.getByRole("dialog", { name: /Remove from Global/ })
+      await removal.waitFor()
+      await page.waitForTimeout(650)
+      await removal.getByRole("button", { name: "Remove from Global", exact: true }).click()
       await page.waitForTimeout(150)
       const history = await call(page, "toasts")
-      assert.match(JSON.stringify(history), code === "attached-sessions" ? /Detach them in the application/ : /Enable the integration, refresh Plugins/)
+      assert.match(JSON.stringify(history), /changed in the Global configuration/)
     }
     model.association = 99
     await call(page, "event", "config.updated")
@@ -555,6 +563,30 @@ test("Plugins uses safe source association, displays catalog staleness, and unsu
     assert.equal(calls.filter(call => call.action === "hosts").length, hostsBefore)
   } finally { await finish() }
 })
+for (const kind of failureKinds) test(`D25 removal ${kind}: confidential uncertainty, one submission and no detach`, async () => {
+  const { page, calls, model, finish } = await open()
+  try {
+    await call(page, "plugins", true)
+    model.binding = "attached"
+    model.failure = { action: "remove", kind }
+    const row = page.locator('[data-plugin-id="neuralnomads.blender"]')
+    await row.getByRole("button").click()
+    await page.getByRole("menuitem", { name: "Remove from Global", exact: true }).click()
+    const dialog = page.getByRole("dialog", { name: /Remove from Global/ })
+    await dialog.waitFor()
+    assert.match(await dialog.innerText(), /other projects/)
+    await page.waitForTimeout(650)
+    await dialog.getByRole("button", { name: "Remove from Global", exact: true }).click()
+    await page.waitForFunction(() => JSON.stringify((window as any).integrationFixture.toasts()).includes("could not be confirmed"))
+    await call(page, "event", "plugin.updated")
+    await call(page, "event", "config.updated")
+    await page.waitForTimeout(400)
+    assert.equal(calls.filter(call => call.action === "remove").length, 1)
+    assert.equal(calls.filter(call => ["detach", "attach"].includes(call.action)).length, 0)
+    assert.equal(model.binding, "attached")
+  } finally { await finish() }
+})
+
 test("aggregate bindings and saved hints never enable attachment without active native offers", async () => {
   const { page, calls, model, finish } = await open()
   try {

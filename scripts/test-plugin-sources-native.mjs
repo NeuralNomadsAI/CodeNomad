@@ -68,10 +68,12 @@ try {
     assert.match(failed.ref ?? "", /^err_/, `A failed install reports a native ref: ${JSON.stringify(failed)}`)
     assert.ok(requested.some(url => url.startsWith("/missing-plugin")), "The install reached the loopback registry only")
 
-    const declared = (await controls.read("fixture", location)).configured.sources.find(source => source.target === "fixture-plugin@1.0.0")
-    await assert.rejects(sources.remove("fixture", { location, scope: "global", target: "fixture-plugin@1.0.0", entryIndex: declared.entryIndex + 1 }),
+    const confirmed = await controls.read("fixture", location)
+    const declared = confirmed.configured.sources.find(source => source.target === "fixture-plugin@1.0.0")
+    const expectedRevision = confirmed.targets.find(target => target.scope === "global").expectedRevision
+    await assert.rejects(sources.remove("fixture", { location, scope: "global", target: "fixture-plugin@1.0.0", entryIndex: declared.entryIndex + 1, expectedRevision }),
       error => error.code === "stale")
-    await sources.remove("fixture", { location, scope: "global", target: declared.target, entryIndex: declared.entryIndex })
+    await sources.remove("fixture", { location, scope: "global", target: declared.target, entryIndex: declared.entryIndex, expectedRevision })
     await settle(value => !runtimeFor(value, "fixture-plugin@1.0.0") && !value.runtime.some(entry => entry.id === "fixture.package"), "Removal")
     const plugins = parse(await readFile(path.join(configDirectory, "opencode.jsonc"), "utf8")).plugins
     assert.deepEqual(plugins, ["missing-plugin@1.0.0"], "removal deletes exactly the displayed entry")

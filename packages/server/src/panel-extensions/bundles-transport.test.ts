@@ -97,14 +97,13 @@ test("ACK requires owner-only start; a 30-second human wait survives preparation
   } finally { h.transport.dispose() }
 })
 
-test("all windows share one arbiter; remove and detach never reach the builder", async () => {
+test("all windows share one arbiter for removal too; detach never reaches the builder", async () => {
   const h = harness()
   try {
     const a = h.open(), b = h.open(), one = await h.mount(a.owner), two = await h.mount(b.owner)
     assert.deepEqual(await h.transport.manage(request(), extension, { owner: a.owner, ...one, method: "detach", input: { integration: "blender" } }), { outcome: "invalid" })
-    assert.deepEqual(await h.transport.manage(request(), extension, { owner: a.owner, ...one, method: "request", input: { action: "remove", integration: "blender", scope: "global" } }), { outcome: "invalid" })
+    assert.equal((await h.transport.manage(request(), extension, { owner: a.owner, ...one, method: "request", input: { action: "remove", integration: "blender", scope: "global" } })).outcome, "confirming")
     assert.equal(h.state().prepared, 0)
-    assert.equal((await h.manage(a.owner, one.mountID)).outcome, "confirming")
     assert.deepEqual(await h.manage(b.owner, two.mountID), { outcome: "busy" })
     a.close(); assert.equal((await h.manage(b.owner, two.mountID)).outcome, "confirming")
   } finally { h.transport.dispose() }

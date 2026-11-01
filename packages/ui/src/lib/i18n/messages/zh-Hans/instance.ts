@@ -10,7 +10,7 @@ export const instanceMessages = {
   "panelExtensions.api4.opencode.designAgent": "在此扩展启用期间，将 CodeNomad 的 Design 智能体及其图像技能添加到 OpenCode。",
   "panelExtensions.api4.panel.preferences": "记住此面板自身的设置。",
   "panelExtensions.api4.bundles.read": "读取 OpenCode 集成目录、它们在此项目中的状态以及可用的已打开应用程序。",
-  "panelExtensions.api4.bundles.manage": "请求您安装或更新目录中的 OpenCode 集成、启用或停用集成、安装其应用端组件，以及将已打开的应用程序连接到所显示的对话。每项操作都需要单独的 CodeNomad 确认。",
+  "panelExtensions.api4.bundles.manage": "请求您安装、更新或移除目录中的 OpenCode 集成、启用或停用集成、安装其应用端组件，以及将已打开的应用程序连接到所显示的对话。每项操作都需要单独的 CodeNomad 确认。",
   "panelExtensions.empty": "未安装扩展。",
   "panelExtensions.catalog.title": "在线可用",
   "panelExtensions.catalog.search": "搜索扩展",

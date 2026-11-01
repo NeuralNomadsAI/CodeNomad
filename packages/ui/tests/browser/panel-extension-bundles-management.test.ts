@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import { before, after, test } from "node:test"
 import { readFile, writeFile } from "node:fs/promises"
+import { parse } from "jsonc-parser"
 import { fileURLToPath } from "node:url"
 import { chromium, type Page } from "playwright"
 import { createServer, type ViteDevServer } from "vite"
@@ -130,7 +131,7 @@ async function ask(page: Page, method = "attach", input: unknown = { integration
 }
 async function confirm(page: Page) {
   const requestID = await frame(page).locator("body").evaluate(() => (window as any).results.at(-1).requestID)
-  await page.getByRole("button", { name: "Confirm", exact: true }).click()
+  await page.getByRole("button", { name: /^(Confirm|Remove from Global|Remove from Project)$/ }).click()
   await page.getByRole("dialog").waitFor({ state: "detached" })
   await terminal(page, requestID)
 }
@@ -182,6 +183,7 @@ const safeCalls = [
   ["request", { action: "install", integration: "fixture", scope: "global" }, false],
   ["setActive", { integration: "fixture", scope: "global", enabled: false }, true],
   ["request", { action: "update", integration: "fixture", scope: "global" }, true],
+  ["request", { action: "remove", integration: "fixture", scope: "global" }, true],
   ["installHost", { integration: "fixture" }, true],
   ["attach", { integration: "fixture", offerID: "offer_fixture" }, true],
 ] as const
@@ -365,22 +367,130 @@ test("all safe methods use actual native service adapters; install/activation wr
   }
 })
 
-test("script/background detach and remove refuse; raw authority/inherited/control attacks dispatch nothing", async () => {
+test("removal public port needs trusted Global warning and confirmation; exact source only, no bindings/Q8 cleanup or optimistic stop", async () => {
+  const { page, clean } = await open()
+  try {
+    const original = JSON.stringify({ plugins: [{ package: backend.spec, options: { secret: "PRIVATE_OPTIONS" } }, "-neuralnomads.fixture", "ordinary-plugin"], preserved: true })
+    await writeFile(backend.file, original)
+    const metadata = structuredClone(backend.state.metadata), bindings = [...backend.state.binding.entries()]
+    const input = { action: "remove", integration: "fixture", scope: "global" }
+    await ask(page, "request", input)
+    const dialog = page.getByRole("dialog"), text = await dialog.innerText()
+    assert.equal(await page.getByRole("button", { name: "Remove from Global", exact: true }).isDisabled(), true)
+    assert.ok(text.includes("Remove: OpenCode for fixture")); assert.ok(text.includes("Global"))
+    assert.ok(text.includes("may interrupt its availability and connections"))
+    assert.ok(text.includes("conversations in other projects")); assert.ok(text.includes("Reinstalling may restore"))
+    assert.ok(!text.includes("PRIVATE_")); assert.ok(!text.includes(backend.spec))
+    assert.equal(await page.getByRole("button", { name: "Cancel", exact: true }).evaluate(el => el === document.activeElement), true)
+    await page.setViewportSize({ width: 360, height: 380 })
+    const bounds = await dialog.boundingBox(), actionBounds = await page.getByRole("button", { name: "Remove from Global", exact: true }).boundingBox()
+    assert.ok(bounds && bounds.y >= 0 && bounds.y + bounds.height <= 380)
+    assert.ok(actionBounds && actionBounds.y >= 0 && actionBounds.y + actionBounds.height <= 380)
+    await page.keyboard.press("Enter"); await dialog.waitFor({ state: "detached" })
+    assert.equal(await readFile(backend.file, "utf8"), original)
+    assert.deepEqual(backend.state.rpc, [])
+    const ack = await ask(page, "request", input)
+    await confirm(page)
+    assert.equal((await terminal(page, ack.requestID)).outcome, "confirmed")
+    assert.deepEqual(parse(await readFile(backend.file, "utf8")), { plugins: ["-neuralnomads.fixture", "ordinary-plugin"], preserved: true })
+    assert.equal(backend.state.runtime.length, 1, "source removal never claims runtime stop")
+    assert.deepEqual(backend.state.metadata, metadata); assert.deepEqual([...backend.state.binding.entries()], bindings)
+    assert.deepEqual(backend.state.updates, []); assert.deepEqual(backend.state.packages, [])
+    assert.ok(!backend.state.rpc.some(method => ["attachHost", "detachHost", "installHost"].includes(method)))
+    await page.waitForTimeout(100)
+    assert.equal(await frame(page).locator("#trigger").evaluate(el => el === document.activeElement), true)
+    await clean()
+  } finally { await page.close() }
+})
+
+test("removal source/options/range drift and ambiguous or missing candidates have no effects through the public port", async () => {
+  for (const change of ["options", "range", "index", "multiple", "missing", "ambiguous"] as const) {
+    const { page, clean } = await open()
+    try {
+      const original = JSON.stringify({ plugins: [{ package: backend.spec, options: { secret: "PRIVATE_BEFORE" } }] })
+      await writeFile(backend.file, original)
+      if (change === "multiple") await writeFile(backend.file, JSON.stringify({ plugins: [backend.spec, backend.spec + "0"] }))
+      else if (change === "missing") await writeFile(backend.file, '{"plugins":[]}')
+      else if (change === "ambiguous") backend.state.runtime[0].id = "foreign.plugin"
+      const input = { action: "remove", integration: "fixture", scope: "global" }
+      if (["multiple", "missing", "ambiguous"].includes(change)) {
+        const ack = await frame(page).locator("body").evaluate((_body, input) => (window as any).call("request", input), input)
+        assert.equal((await terminal(page, ack.requestID)).outcome, "failed")
+        assert.equal(await page.getByRole("dialog").count(), 0)
+      } else {
+        const ack = await ask(page, "request", input)
+        if (change === "options") await writeFile(backend.file, JSON.stringify({ plugins: [{ package: backend.spec, options: { secret: "PRIVATE_AFTER" } }] }))
+        else if (change === "index") await writeFile(backend.file, JSON.stringify({ plugins: ["ordinary", backend.spec] }))
+        else backend.entry.range = "^0.2"
+        await confirm(page)
+        assert.equal((await terminal(page, ack.requestID)).outcome, "failed")
+      }
+      assert.ok(parse(await readFile(backend.file, "utf8")).plugins.length || change === "missing")
+      assert.deepEqual(backend.state.rpc, []); assert.deepEqual(backend.state.updates, []); assert.deepEqual(backend.state.packages, [])
+      await clean()
+    } finally { await page.close() }
+  }
+})
+
+test("removal waiting in real native config queue cannot outlive revocation or navigation", async () => {
+  for (const change of ["revoke", "navigate"] as const) {
+    const { page, clean } = await open()
+    let release!: () => void
+    const gate = new Promise<void>(resolve => { release = resolve })
+    let queued: Promise<void> | undefined
+    try {
+      await ask(page, "request", { action: "remove", integration: "fixture", scope: "global" })
+      let entered!: () => void
+      const ready = new Promise<void>(resolve => { entered = resolve })
+      queued = backend.controls.editConfigDocument("api4-instance", { directory: backend.project }, "global", async document => { entered(); await gate; return document.text })
+      await ready
+      await page.getByRole("button", { name: "Remove from Global", exact: true }).click()
+      await page.getByRole("dialog").waitFor({ state: "detached" })
+      if (change === "revoke") await backend.revoke()
+      else await page.evaluate(() => (window as any).fixture.show("ses_other"))
+      release(); await queued; await page.waitForTimeout(100)
+      assert.deepEqual(parse(await readFile(backend.file, "utf8")).plugins, [backend.spec])
+      assert.deepEqual(backend.state.rpc, []); assert.deepEqual(backend.state.updates, [])
+      await clean()
+    } finally { release(); await queued; await page.close() }
+  }
+})
+
+test("removal lost response stays failed and unreplayed although real source removal is observed", async () => {
+  const { page, clean } = await open(), remove = backend.sources.remove.bind(backend.sources)
+  let calls = 0
+  backend.sources.remove = async (...args) => { calls++; await remove(...args); throw new Error("PRIVATE_LOST_REMOVAL_RESPONSE") }
+  try {
+    const metadata = structuredClone(backend.state.metadata)
+    const ack = await ask(page, "request", { action: "remove", integration: "fixture", scope: "global" })
+    await confirm(page)
+    assert.equal((await terminal(page, ack.requestID)).outcome, "failed")
+    assert.deepEqual(parse(await readFile(backend.file, "utf8")).plugins, [])
+    await page.waitForTimeout(150)
+    assert.equal(calls, 1)
+    assert.deepEqual(await frame(page).locator("body").evaluate(() => (window as any).changes.filter((value: any) => value.kind === "request")),
+      [{ kind: "request", requestID: ack.requestID, outcome: "failed" }])
+    assert.deepEqual(backend.state.metadata, metadata); assert.deepEqual(backend.state.updates, [])
+    await clean()
+  } finally { backend.sources.remove = remove; await page.close() }
+})
+
+test("script/background detach refuses; raw authority/inherited/control attacks dispatch nothing", async () => {
   const { page, clean } = await open()
   try {
     const before = await readFile(backend.file, "utf8")
     assert.deepEqual(await frame(page).locator("body").evaluate(async () => Promise.all([
       (window as any).call("detach", { integration: "fixture" }),
-      (window as any).call("request", { action: "remove", integration: "fixture", scope: "global" }),
-    ])), [{ outcome: "invalid" }, { outcome: "invalid" }])
+    ])), [{ outcome: "invalid" }])
     await frame(page).locator("body").evaluate(() => {
-      ["constructor", "__proto__", "confirm", "userRemount", "dispose", "attach"].forEach((method, index) => (window as any).rawPort.postMessage({
-        type: "api4:request", id: 900 + index, capability: "bundles", method, input: { integration: "fixture", owner: "forged", userActivation: true } }))
+      ["constructor", "__proto__", "confirm", "userRemount", "dispose", "attach", "request"].forEach((method, index) => (window as any).rawPort.postMessage({
+        type: "api4:request", id: 900 + index, capability: "bundles", method, input: { action: "remove", scope: "global", integration: "fixture",
+          owner: "forged", userActivation: true, spec: "PRIVATE_SPEC", path: "PRIVATE_PATH", sessionID: "ses_foreign", rpcID: "arbitrary", confirm: true } }))
     })
     await page.waitForTimeout(100)
     assert.equal(backend.state.prepares, 0); assert.deepEqual(backend.state.rpc, [])
     assert.deepEqual(await frame(page).locator("body").evaluate(() => (window as any).messages.filter((message: any) => message.id >= 900)
-      .map((message: any) => message.error)), Array(6).fill(true))
+      .map((message: any) => message.error)), Array(7).fill(true))
     assert.equal(await page.getByRole("dialog").count(), 0); assert.equal(await readFile(backend.file, "utf8"), before)
     await clean()
   } finally { await page.close() }

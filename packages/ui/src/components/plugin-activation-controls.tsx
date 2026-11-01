@@ -72,6 +72,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
     return cachedLocation
   }
   const state = createMemo(() => pluginControlsCache.state(props.instanceId, requestLocation()))
+  const consentEpoch = () => state().invalidationRevision
   const snapshot = createMemo(() => state().snapshot)
   const controls = createMemo(() => (
     snapshot()?.controls.filter((control) => !control.builtin && control.runtime?.source.type !== "builtin") ?? []
@@ -272,7 +273,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
             <Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content>
           </Tooltip.Portal>
         </Tooltip><PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={pluginId}
-          source={control()?.runtime?.source} removable={removable()} active={props.active} attach={attachFor(removable())} installHost={installFor(removable())} /></div>
+          source={control()?.runtime?.source} removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} attach={attachFor(removable())} installHost={installFor(removable())} /></div>
         {renderSwitch("global")}
         {renderSwitch("project")}
       </div>
@@ -300,7 +301,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <Tooltip.Portal><Tooltip.Content class="section-info-tooltip plugin-control-tooltip">{details()}</Tooltip.Content></Tooltip.Portal>
         </Tooltip>
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} source={entry()?.source}
-          removable={removable()} active={props.active} attach={attachFor(removable())} installHost={installFor(removable())} />
+          removable={removable()} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} attach={attachFor(removable())} installHost={installFor(removable())} />
       </div>
     </div>
   }
@@ -330,7 +331,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           </span>
         </Show>
         <PluginRowActions instanceId={props.instanceId} location={requestLocation()} name={target} removable={removable()}
-          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} attach={attachFor(removable())} installHost={installFor(removable())} />
+          refresh={state() === "unconfirmed" ? refresh : undefined} active={props.active} consentEpoch={consentEpoch()} sessionId={props.session?.id} attach={attachFor(removable())} installHost={installFor(removable())} />
       </div>
     </div>
   }
@@ -357,6 +358,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
           <button
             type="button"
             class="icon-button-compact"
+            data-plugin-refresh
             title={t("instanceServiceStatus.plugins.refresh")}
             aria-label={t("instanceServiceStatus.plugins.refresh")}
             aria-busy={state().loading || state().refreshing}
@@ -400,7 +402,7 @@ export const PluginActivationControls: Component<PluginActivationControlsProps> 
 }
 
 function sameSource(left: PluginConfiguredSource, right: PluginConfiguredSource): boolean {
-  return left.scope === right.scope && left.target === right.target && left.entryIndex === right.entryIndex && left.path === right.path
+  return left.scope === right.scope && left.target === right.target && left.entryIndex === right.entryIndex && left.path === right.path && left.expectedRevision === right.expectedRevision
 }
 
 function scopeChecked(control: PluginActivationControl, scope: PluginControlScope): boolean {

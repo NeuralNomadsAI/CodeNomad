@@ -513,6 +513,8 @@ export interface PluginConfiguredSource {
   hasOptions: boolean
   /** The runtime plugin this declaration loaded, when the inventory reports it. */
   pluginId?: string
+  /** Opaque confirmed-document identity, present on writable removal descriptors. */
+  expectedRevision?: string
 }
 
 export type PluginScopeRuleState = "default" | "enabled" | "disabled"
@@ -532,6 +534,8 @@ export interface PluginControlTarget {
   scope: PluginControlScope
   path: string
   exists: boolean
+  /** Opaque identity of the current raw document and authenticated connection. */
+  expectedRevision?: string
 }
 
 export interface PluginControlsSnapshot {

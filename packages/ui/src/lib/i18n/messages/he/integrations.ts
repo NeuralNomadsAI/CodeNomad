@@ -44,6 +44,4 @@ export const integrationMessages = {
   "integrations.outcome.busy": "שיחה זו כבר מחוברת למסמך פתוח אחר. יש לנתק אותה ביישום לפני ניסיון נוסף.",
   "integrations.outcome.gone": "תוקף ההצעה פג. יש להציע את המסמך שוב ולפתוח חלון זה מחדש.",
   "integrations.outcome.refused": "היישום סירב לחיבור. יש לבדוק את הגדרות השיתוף שלו ולנסות שוב.",
-  "integrations.error.attachedSessions": "ההסרה סורבה: לאינטגרציה זו יש שיחות מחוברות. יש לנתק אותן ביישום ולנסות שוב.",
-  "integrations.error.unverified": "ההסרה סורבה: לא ניתן לאמת את החיבורים. יש להפעיל את האינטגרציה, לרענן את התוספים ולנסות שוב.",
 }

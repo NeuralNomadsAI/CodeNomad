@@ -242,7 +242,7 @@ exact package before and after IO. Never add a permission registry, generic RPC 
 | `opencode.designAgent` | none | while enabled, this backend's leases request the Design agent (`opencode/design/demand.ts`) |
 | `panel.preferences` | `preferences.get()`, `preferences.set(object)` | the server profile's store, per extension |
 | `bundles.read` (draft) | `bundles.catalog()`, `bundles.state()`, `bundles.hosts({ integration })`, `bundles.onChanged(listener)` | the conversation captured by the mounted host; fixed integration readers and exact-session `bindingRead` |
-| `bundles.manage` (requires `bundles.read`) | `bundles.request({ action, integration, scope })`, `bundles.setActive({ integration, scope, enabled })`, `bundles.installHost({ integration })`, `bundles.attach({ integration, offerID })`, `bundles.detach({ integration })` | authenticated parent-owned mount and backend confirmation lifecycle; detach and removal return `invalid` |
+| `bundles.manage` (requires `bundles.read`) | `bundles.request({ action, integration, scope })`, `bundles.setActive({ integration, scope, enabled })`, `bundles.installHost({ integration })`, `bundles.attach({ integration, offerID })`, `bundles.detach({ integration })` | authenticated parent-owned mount and backend confirmation lifecycle; `request` supports install/update/remove; `detach` returns `invalid` |
 
 ```js
 const status = await codenomad.images.status()
@@ -341,7 +341,7 @@ exfiltrate them like API 2 bytes, which the install sentence and the help state.
 The read surface consists of `catalog()`, `state()`, `hosts({ integration })`
 and `onChanged(listener)`. Declaring `bundles.manage` also defines the five fixed management methods above on the frozen object.
 Installation shows both permissions' full consent sentences when declared. Management
-covers requests to install, update, enable or disable an integration, install its
+covers requests to install, update, remove, enable or disable a catalogue integration, install its
 application component and attach an application to the displayed conversation; each
 action has its own CodeNomad confirmation. Each manifest permission is unique and belongs
 to the finite set; APIs 1 to 3 retain their exact tuples.
@@ -349,7 +349,8 @@ to the finite set; APIs 1 to 3 retain their exact tuples.
 Management inputs use the backend's strict discriminated schemas. ACKs are
 `{ outcome: "confirming", requestID }`, `{ outcome: "busy" }` or `{ outcome: "invalid" }`.
 Admission uses the existing in-memory catalogue snapshot: unknown integrations and
-native Project-scoped requests/activation answer `invalid` and count toward the shared budget.
+native Project-scoped requests/activation, including removal, answer `invalid` and count toward the shared budget.
+This bridge-local Global restriction leaves exact native Project sources removable through Plugins.
 The existing shared four-request cap and 19.5-second method deadline apply to the ACK;
 the human wait continues independently. `api4-channel.ts` posts the ACK to the captured
 port before its deferred host function sends `start` to the backend.
@@ -365,6 +366,23 @@ Disposal, navigation and native disconnect revoke management and close its modal
 The existing right-panel toolbar offers **Reload extension** for the active managing
 extension; only its trusted click invokes `userRemount`. Automatic mounting preserves
 rate/cancellation history and never replays actions.
+
+Removal preparation accepts a valid fresh or stale catalogue and resolves exactly one
+recognised writable declaration in the requested scope's preferred write target. Missing,
+ambiguous, multiple, inherited or non-target sources are refused; never select the first
+candidate. The scope, path, source, entry index and HMAC `expectedRevision` come from the
+same `PluginControls.read` before confirmation. The plan also binds the full document and
+source options, physical destination, mode and authenticated connection. Confirmation
+revalidates that capture and calls the shared `PluginSources.remove` with genuine mutation
+authority. Removal performs no integration status, binding, session census, detach or Q8
+IO and leaves package cache, application/user files, activation rules and other declarations intact.
+
+The trusted removal dialog reuses
+`instanceServiceStatus.plugins.sources.removeWarning`, `removeGlobalWarning` and
+`removeRecovery`: availability and connections may be interrupted, Global may affect
+other projects and conversations, and recovery may require reinstalling, reloading or
+reattaching; interrupted operations may not resume. Its Cancel-first focus, 600-ms guard
+and two-minute expiry follow the shared confirmation lifecycle.
 
 The modal awaits the `displayed` response before starting its own 600-ms guard, keeps
 Cancel initially focused and retains Kobalte's modal trap. On management invocation,
@@ -453,7 +471,11 @@ the mounted exact package. Operation-specific preparation and dispatch use trust
   reads consent and the complete captured target, and synchronous assertions enforce
   live disposal/revocation/expiry at dispatch. The callback calls `submitted()` exactly
   at native transmission while retaining that authority across subsequent prerequisites.
-  `confirmed` means admitted transmission; actual state follows authoritative reads.
+  For removal, `confirmed` follows observed deletion of the captured source from the
+  exact bound document. ACKs and runtime disappearance never settle removal success.
+  A lost response or any post-dispatch failure emits the fixed uncertain `failed`
+  result; re-read configuration and require a fresh explicit action, never automatic replay.
+  For the other methods, `confirmed` means admitted transmission; actual state follows authoritative reads.
   A refusal emits `failed`. Cancellation and expiry have their own outcomes. Each accepted
   request emits one terminal event on its captured port, independently of 300-ms state
   invalidations. Submitted work requires reconciliation and fresh consent for a fresh action.
@@ -463,9 +485,10 @@ the mounted exact package. Operation-specific preparation and dispatch use trust
   `resetCutoffForUserRemount()` is reserved to a trusted explicit user-remount action;
   automatic mounts preserve strikes/cutoff and every remount preserves rate history.
 
-The draft public transport returns `invalid` for `detach()` and
-`request({ action: "remove", ... })`. The internal local detach builder remains a
-trusted in-process entry point.
+The draft public transport returns `invalid` for `detach()`, whose opaque-frame
+explicit-action boundary remains unqualified. The internal local detach builder remains
+a trusted in-process entry point. `request({ action: "remove", ... })` uses the confirmed
+exact-source removal adapter above.
 
 Checks: `bundles-lifecycle.test.ts` exercises live store leases, target conflicts, expiry,
 quota/cutoff boundaries and revocation across awaits. `tests/browser/bundles-confirmation.test.ts`

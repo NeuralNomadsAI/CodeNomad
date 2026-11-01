@@ -6,6 +6,7 @@ import { registerRequestLogging } from "../http-server"
 import { registerIntegrationRoutes } from "../routes/integrations"
 import { registerIntegrationAttachmentRoutes } from "../routes/integration-attachments"
 import { PluginControlsError } from "../../opencode/plugin-controls"
+import { registerPluginSourceRoutes } from "../routes/plugin-sources"
 
 const secret = "private-sentinel-not-a-secret-key"
 const root = "/api/workspaces/w/integrations"
@@ -21,6 +22,7 @@ function harness(level: "debug" | "trace") {
   const state = { error: undefined as unknown }
   const read = async () => { if (state.error) throw state.error; return { integrations: [] } as never }
   registerIntegrationRoutes(app, { integrations: { read } })
+  registerPluginSourceRoutes(app, { sources: { add: read, remove: read } })
   registerIntegrationAttachmentRoutes(app, { attachments: {
     hosts: async () => { await read(); return { offers: [] } },
     attach: async () => { await read(); return { outcome: "attached" } },
@@ -35,6 +37,26 @@ function harness(level: "debug" | "trace") {
 }
 
 for (const level of ["debug", "trace"] as const) {
+  test(`${level}: plugin source configuration and error diagnostics remain private`, async t => {
+    const f = harness(level)
+    t.after(() => f.app.close())
+    const payload = { location: { directory: secret }, scope: "global", target: secret, entryIndex: 0, expectedRevision: "a".repeat(64) }
+    for (const error of [undefined, new Error(secret), new PluginControlsError(secret, "unavailable"), new PluginControlsError(secret, "forbidden")]) {
+      f.state.error = error
+      const response = await f.app.inject({ method: "DELETE", url: `/api/workspaces/${secret}/plugin-sources?private=${secret}`, payload })
+      assert.equal(response.body.includes(secret), false)
+      f.check()
+    }
+    await f.app.inject({ method: "DELETE", url: `/api/workspaces/${secret}/plugin-sources`, payload: { ...payload, [secret]: secret } })
+    f.check()
+    const records = f.records().filter(record => record.msg.startsWith("HTTP request"))
+    assert.ok(records.length >= 5)
+    for (const record of records) {
+      assert.equal(record.url, "/api/workspaces/:id/plugin-sources")
+      for (const key of ["params", "query", "body", "err"]) assert.equal(key in record, false)
+    }
+  })
+
   test(`${level}: actual request logs project integration paths, rejected query/body and native errors`, async t => {
     const f = harness(level)
     t.after(() => f.app.close())

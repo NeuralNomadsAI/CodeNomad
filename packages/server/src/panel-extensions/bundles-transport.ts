@@ -179,14 +179,13 @@ export class BundlesTransport {
     const mounted = this.ownedMount(request, extension, input)
     try { this.assertMounted(mounted); signal.throwIfAborted() }
     catch (error) { this.lifecycle.budget.take(extension, "manage"); throw error }
-    // Removal needs integration-owned enumeration; direct detach needs a proven specific user click.
-    if (input.method === "detach" || input.method === "request" && input.input.action === "remove") {
+    // Direct detach needs a proven specific user click; requests use the trusted confirmation.
+    if (input.method === "detach") {
       return { outcome: this.lifecycle.budget.take(extension, "manage") ? "invalid" : "busy" }
     }
     let action: BundlesAction
     switch (input.method) {
       case "request": {
-        if (input.input.action === "remove") return { outcome: "invalid" }
         action = { ...input.input, action: input.input.action }; break
       }
       case "setActive": action = { action: "setActive", integration: input.input.integration, scope: input.input.scope, active: input.input.enabled }; break

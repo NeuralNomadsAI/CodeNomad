@@ -356,7 +356,7 @@ export function createHttpServer(deps: HttpServerDeps) {
   registerPluginControlRoutes(app, { controls: configurationControls })
   const integrationCatalog = deps.integrationCatalog ?? new IntegrationCatalogSource({ logger: apiLogger })
   const integrations = new IntegrationsReader({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog })
-  const pluginSources = new PluginSources({ documents: configurationControls, logger: apiLogger, catalog: integrationCatalog, integrations })
+  const pluginSources = new PluginSources({ documents: configurationControls, logger: apiLogger, catalog: integrationCatalog })
   registerPluginSourceRoutes(app, { sources: pluginSources })
   registerIntegrationRoutes(app, { integrations })
   const integrationAttachments = new IntegrationAttachments({ controls: configurationControls, workspaceManager: deps.workspaceManager, catalog: integrationCatalog })
